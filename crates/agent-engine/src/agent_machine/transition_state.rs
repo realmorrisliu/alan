@@ -7,6 +7,9 @@ use crate::tape::ContentPart;
 use alan_agent_protocol::{PlanItem, Submission};
 use serde::{Deserialize, Serialize};
 
+#[path = "submission_queue.rs"]
+mod submission_queue;
+
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
 const AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS: usize = 256;
@@ -68,26 +71,29 @@ pub(crate) struct NormalizedToolCall {
     pub(crate) arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingToolReplayBatch {
+    pub(crate) tool_calls: Vec<NormalizedToolCall>,
+    pub(crate) resume_with_generation: bool,
+    pub(crate) explicit_command: bool,
+}
+
 /// Best-effort work retained by Machine until the outer Process loop can run it.
 #[derive(Debug, Clone)]
 pub(crate) enum DeferredRuntimeAction {
     TurnMemoryPromotion(crate::runtime::TurnMemoryPromotionJob),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(super) struct MachineTransitionState {
-    /// Identifier of the submission currently accepted by this Machine.
-    current_submission_id: Option<String>,
+    pub(super) input_broker: super::input_queue::TurnInputBroker,
+
     pending: HashMap<String, PendingYield>,
-    pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
+    pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
     turn_activity: TurnActivityState,
-    /// Submissions buffered during turn execution that need to be requeued
-    /// after the turn completes (e.g., user input during tool execution).
-    buffered_inband_submissions: VecDeque<Submission>,
-    /// Queued context for `InputMode::NextTurn`.
-    queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
+
     /// Number of automatic mid-turn compactions already performed in the active turn.
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
@@ -118,16 +124,38 @@ const GUARDIAN_DENIAL_WINDOW: usize = 50;
 const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 
 impl AgentMachine {
+    #[cfg(test)]
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
-        self.transition_state.current_submission_id = Some(submission_id.into());
+        self.accept_submission_identity(alan_agent_protocol::UiSubmission {
+            submission_id: submission_id.into(),
+            intent: alan_agent_protocol::InputIntent::Agent,
+        });
+    }
+
+    pub(crate) fn accept_submission_identity(
+        &mut self,
+        identity: alan_agent_protocol::UiSubmission,
+    ) {
+        self.transition_state.input_broker.state().active_submission = Some(identity);
+        self.transition_state.input_broker.record_activity();
     }
 
     pub(crate) fn finish_submission(&mut self) {
-        self.transition_state.current_submission_id = None;
+        self.transition_state.input_broker.state().active_submission = None;
+        self.transition_state.input_broker.record_activity();
     }
 
-    pub(crate) fn current_submission_id(&self) -> Option<&str> {
-        self.transition_state.current_submission_id.as_deref()
+    pub(crate) fn current_submission_identity(&self) -> Option<alan_agent_protocol::UiSubmission> {
+        self.transition_state
+            .input_broker
+            .state()
+            .active_submission
+            .clone()
+    }
+
+    pub(crate) fn current_submission_id(&self) -> Option<String> {
+        self.current_submission_identity()
+            .map(|input| input.submission_id)
     }
 
     /// Record a guardian review outcome (true = denied). Returns true when the
@@ -189,7 +217,9 @@ impl AgentMachine {
         self.transition_state.pending_tool_replay_batches.clear();
         self.transition_state.pending_order.clear();
         self.transition_state.turn_activity = TurnActivityState::Idle;
-        self.transition_state.buffered_inband_submissions.clear();
+        if !self.transition_state.input_broker.is_paused() {
+            self.transition_state.input_broker.state().buffered.clear();
+        }
         self.transition_state.active_turn_message_start = None;
         self.transition_state.active_skills.clear();
         self.transition_state.active_turn_request_control_intent =
@@ -210,57 +240,35 @@ impl AgentMachine {
         self.transition_state.last_compaction_prompt_tokens = None;
     }
 
-    /// Queue `next_turn` input parts. Returns `Some(new_len)` on success, `None` on overflow.
-    pub(crate) fn queue_next_turn_input(&mut self, parts: Vec<ContentPart>) -> Option<usize> {
-        if self.transition_state.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
-            return None;
-        }
-        self.transition_state
-            .queued_next_turn_inputs
-            .push_back(parts);
-        Some(self.transition_state.queued_next_turn_inputs.len())
-    }
-
-    /// Drain queued `next_turn` input parts in FIFO order.
-    pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
-        std::mem::take(&mut self.transition_state.queued_next_turn_inputs)
-    }
-
-    /// Number of queued `next_turn` payloads.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "queue count is exposed for the adjacent turn-state tests"
-        )
-    )]
-    pub(crate) fn queued_next_turn_input_count(&self) -> usize {
-        self.transition_state.queued_next_turn_inputs.len()
-    }
-
     /// Drain all buffered inband submissions.
     pub(crate) fn drain_buffered_inband_submissions(&mut self) -> VecDeque<Submission> {
-        std::mem::take(&mut self.transition_state.buffered_inband_submissions)
+        std::mem::take(&mut self.transition_state.input_broker.state().buffered)
     }
 
     /// Push a submission to the buffered inband submissions queue.
     pub(crate) fn push_buffered_inband_submission(&mut self, submission: Submission) {
         self.transition_state
-            .buffered_inband_submissions
+            .input_broker
+            .state()
+            .buffered
             .push_back(submission);
     }
 
     /// Pop a submission from the buffered inband submissions queue.
     pub(crate) fn pop_buffered_inband_submission(&mut self) -> Option<Submission> {
         self.transition_state
-            .buffered_inband_submissions
+            .input_broker
+            .state()
+            .buffered
             .pop_front()
     }
 
     /// Count user input submissions in the buffered queue
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
         self.transition_state
-            .buffered_inband_submissions
+            .input_broker
+            .state()
+            .buffered
             .iter()
             .filter(|submission| matches!(submission.op, alan_agent_protocol::Op::Input { .. }))
             .count()
@@ -268,8 +276,8 @@ impl AgentMachine {
 
     /// Clear buffered inband submissions and return the count
     pub(crate) fn clear_buffered_inband_submissions(&mut self) -> usize {
-        let count = self.transition_state.buffered_inband_submissions.len();
-        self.transition_state.buffered_inband_submissions.clear();
+        let count = self.transition_state.input_broker.state().buffered.len();
+        self.transition_state.input_broker.state().buffered.clear();
         count
     }
 
@@ -488,16 +496,32 @@ impl AgentMachine {
         &mut self,
         checkpoint_id: impl Into<String>,
         tool_calls: Vec<NormalizedToolCall>,
+        resume_with_generation: bool,
     ) {
-        self.transition_state
+        self.transition_state.pending_tool_replay_batches.insert(
+            checkpoint_id.into(),
+            PendingToolReplayBatch {
+                tool_calls,
+                resume_with_generation,
+                explicit_command: !resume_with_generation,
+            },
+        );
+    }
+
+    pub(crate) fn set_tool_replay_continuation(&mut self, checkpoint_id: &str, generate: bool) {
+        if let Some(batch) = self
+            .transition_state
             .pending_tool_replay_batches
-            .insert(checkpoint_id.into(), tool_calls);
+            .get_mut(checkpoint_id)
+        {
+            batch.resume_with_generation = generate;
+        }
     }
 
     pub(crate) fn take_tool_replay_batch(
         &mut self,
         checkpoint_id: &str,
-    ) -> Option<Vec<NormalizedToolCall>> {
+    ) -> Option<PendingToolReplayBatch> {
         self.transition_state
             .pending_tool_replay_batches
             .remove(checkpoint_id)
@@ -571,7 +595,15 @@ mod tests {
         assert_eq!(machine.current_submission_id(), None);
 
         machine.accept_submission("sub-1");
-        assert_eq!(machine.current_submission_id(), Some("sub-1"));
+        assert_eq!(machine.current_submission_id().as_deref(), Some("sub-1"));
+        machine.add_user_message("request");
+        machine.add_assistant_message("response", None);
+        assert_eq!(machine.messages()[0].submission_id(), Some("sub-1"));
+        assert_eq!(machine.messages()[1].submission_id(), Some("sub-1"));
+        assert_eq!(
+            serde_json::to_value(&machine.messages()[0]).unwrap()["submission_id"],
+            "sub-1"
+        );
 
         machine.finish_submission();
         assert_eq!(machine.current_submission_id(), None);
@@ -824,6 +856,7 @@ mod tests {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -831,6 +864,7 @@ mod tests {
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
                 content: vec![alan_agent_protocol::ContentPart::structured(
@@ -862,6 +896,7 @@ mod tests {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -869,6 +904,7 @@ mod tests {
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
                 content: vec![alan_agent_protocol::ContentPart::structured(
@@ -889,6 +925,7 @@ mod tests {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -896,6 +933,7 @@ mod tests {
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("two")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -905,43 +943,6 @@ mod tests {
         let count = state.clear_buffered_inband_submissions();
         assert_eq!(count, 2);
         assert!(state.pop_buffered_inband_submission().is_none());
-    }
-
-    #[test]
-    fn test_queue_next_turn_inputs_fifo_and_drain() {
-        let mut state = AgentMachine::new();
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
-            Some(1)
-        );
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-2")]),
-            Some(2)
-        );
-        assert_eq!(state.queued_next_turn_input_count(), 2);
-
-        let drained = state.drain_next_turn_inputs();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[0]), "ctx-1");
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[1]), "ctx-2");
-        assert_eq!(state.queued_next_turn_input_count(), 0);
-    }
-
-    #[test]
-    fn test_queue_next_turn_inputs_overflow_is_rejected() {
-        let mut state = AgentMachine::new();
-        for _ in 0..MAX_QUEUED_NEXT_TURN_INPUTS {
-            assert!(
-                state
-                    .queue_next_turn_input(vec![ContentPart::text("queued")])
-                    .is_some()
-            );
-        }
-        assert!(
-            state
-                .queue_next_turn_input(vec![ContentPart::text("overflow")])
-                .is_none()
-        );
     }
 
     #[test]
@@ -960,12 +961,13 @@ mod tests {
             },
         ];
 
-        state.set_tool_replay_batch("cp-1", tool_calls);
+        state.set_tool_replay_batch("cp-1", tool_calls, true);
 
         let retrieved = state.take_tool_replay_batch("cp-1").unwrap();
-        assert_eq!(retrieved.len(), 2);
-        assert_eq!(retrieved[0].id, "call-1");
-        assert_eq!(retrieved[1].id, "call-2");
+        assert!(retrieved.resume_with_generation);
+        assert_eq!(retrieved.tool_calls.len(), 2);
+        assert_eq!(retrieved.tool_calls[0].id, "call-1");
+        assert_eq!(retrieved.tool_calls[1].id, "call-2");
 
         // Should be removed after take
         assert!(state.take_tool_replay_batch("cp-1").is_none());

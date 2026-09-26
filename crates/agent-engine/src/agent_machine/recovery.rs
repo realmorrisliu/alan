@@ -347,6 +347,7 @@ impl AgentMachine {
             machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
 
+        machine.input_broker().restore_from_events(&event_records)?;
         let recovered_messages = machine.messages().to_vec();
         if (!recovered_messages.is_empty()
             || recovered_compaction.is_some()
@@ -391,6 +392,7 @@ impl AgentMachine {
             }
         }
 
+        machine.input_broker().persist().await?;
         Ok(machine)
     }
 }

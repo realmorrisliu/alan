@@ -7,8 +7,9 @@ use tokio_util::sync::CancellationToken;
 use crate::runtime::turn_input::{TurnInputBroker, next_pending_interaction_submission};
 
 use super::{
-    AcceptedSubmissionOutcome, RuntimeLoopState, TransitionCompletion,
-    handle_submission_with_cancel, handle_submission_with_cancel_and_steering,
+    AcceptedSubmissionOutcome, DeferredRuntimeAction, DeferredRuntimeActionExit, RuntimeLoopState,
+    TransitionCompletion, handle_submission_with_cancel,
+    handle_submission_with_cancel_and_steering,
 };
 
 pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
@@ -22,36 +23,40 @@ pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
     )
 }
 
-pub(crate) async fn advance_accepted_submission(
-    state: &mut RuntimeLoopState,
+pub(crate) fn advance_accepted_submission<'a>(
+    state: &'a mut RuntimeLoopState,
     submission: Submission,
-    broker: &TurnInputBroker,
-    cancel: &CancellationToken,
-) -> AcceptedSubmissionOutcome {
+    broker: &'a TurnInputBroker,
+    cancel: &'a CancellationToken,
+) -> impl std::future::Future<Output = AcceptedSubmissionOutcome> + 'a {
+    let initial_id = submission.id.clone();
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    state.machine.accept_submission(submission.id.clone());
-    let mut emit = |_event: Event| async {};
+    async move {
+        let mut emit = |_event: Event| async {};
 
-    let result = if requeue_inband_submissions {
-        drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
-    } else {
-        handle_submission_with_cancel(state, submission, &mut emit, cancel).await
-    }
-    .map(|()| {
-        if state.machine.has_pending_interaction() {
-            TransitionCompletion::Paused
+        let result = if requeue_inband_submissions {
+            drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
         } else {
-            TransitionCompletion::Completed
+            handle_submission_with_cancel(state, submission, &mut emit, cancel).await
         }
-    });
+        .map(|()| {
+            if state.machine.has_pending_interaction() {
+                TransitionCompletion::Paused
+            } else {
+                TransitionCompletion::Completed
+            }
+        });
 
-    let deferred_actions = state.machine.drain_deferred_runtime_actions();
-    state.machine.finish_submission();
+        let deferred_actions = state.machine.drain_deferred_runtime_actions();
+        let submission_id = state.machine.current_submission_id().unwrap_or(initial_id);
+        state.machine.finish_submission();
 
-    AcceptedSubmissionOutcome {
-        result,
-        requeue_inband_submissions,
-        deferred_actions,
+        AcceptedSubmissionOutcome {
+            submission_id,
+            result,
+            requeue_inband_submissions,
+            deferred_actions,
+        }
     }
 }
 
@@ -66,8 +71,6 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    broker.clear().await;
-    let _ = state.machine.clear_buffered_inband_submissions();
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
     handle_submission_with_cancel_and_steering(
@@ -80,6 +83,10 @@ where
     .await?;
 
     loop {
+        if cancel.is_cancelled() || (broker.is_paused() && !state.machine.has_pending_interaction())
+        {
+            break;
+        }
         let next_submission = if state.machine.has_pending_interaction() {
             let RuntimeLoopState { machine, .. } = state;
             next_pending_interaction_submission(
@@ -97,10 +104,23 @@ where
             broker.try_recv().await
         };
 
-        let Some(next_submission) = next_submission else {
+        let Some(mut next_submission) = next_submission else {
             break;
         };
-        state.machine.accept_submission(next_submission.id.clone());
+        // A command admitted in-band was already eligible to steer the active turn. If that
+        // turn ends before another Tool boundary, dispatch it now without requiring a new turn.
+        if next_submission.intent == alan_agent_protocol::InputIntent::Command
+            && let Op::Input {
+                mode: InputMode::Steer,
+                parts,
+            } = next_submission.op
+        {
+            next_submission.op = Op::Input {
+                parts,
+                mode: InputMode::FollowUp,
+            };
+        }
+        track_active_task_submission(&mut state.machine, &next_submission);
         handle_submission_with_cancel_and_steering(
             state,
             next_submission,
@@ -112,4 +132,103 @@ where
     }
 
     Ok(())
+}
+
+pub(crate) fn track_active_task_submission(
+    machine: &mut crate::agent_machine::AgentMachine,
+    submission: &Submission,
+) {
+    if accepts_inband_submissions(&submission.op) {
+        machine.accept_submission_identity(submission.into());
+    }
+}
+
+pub(crate) async fn run_deferred_runtime_action_with_cancel(
+    state: &mut RuntimeLoopState,
+    action: DeferredRuntimeAction,
+    cancel: &CancellationToken,
+) -> DeferredRuntimeActionExit {
+    match action {
+        DeferredRuntimeAction::TurnMemoryPromotion(job) => {
+            let generation = state.namespace_generation();
+            match super::super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
+                &generation,
+                &job,
+                cancel,
+            )
+            .await
+            {
+                Ok(()) => DeferredRuntimeActionExit::Completed,
+                Err(_) if cancel.is_cancelled() => DeferredRuntimeActionExit::Cancelled,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        context = job.warning_context,
+                        "Failed to capture confirmed turn memory"
+                    );
+                    DeferredRuntimeActionExit::Completed
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_machine::AgentMachine;
+    use alan_agent_protocol::{ContentPart, InputIntent};
+
+    #[test]
+    fn accepted_input_can_be_targeted_before_execution_is_polled() {
+        let mut machine = AgentMachine::new();
+        let submission = Submission::new(Op::Turn {
+            parts: vec![ContentPart::text("not executed yet")],
+            context: None,
+        });
+        track_active_task_submission(&mut machine, &submission);
+        let queue = machine.input_broker();
+        assert_eq!(
+            queue
+                .activity_snapshot()
+                .active_submission
+                .unwrap()
+                .submission_id,
+            submission.id
+        );
+        assert!(queue.interrupt(&submission.id).unwrap());
+        assert!(queue.is_paused());
+        assert!(machine.messages().is_empty());
+    }
+
+    #[test]
+    fn resume_control_keeps_assistant_output_correlated_to_original_turn() {
+        let mut machine = AgentMachine::new();
+        let turn = Submission {
+            id: "turn-id".into(),
+            intent: InputIntent::Agent,
+            op: Op::Turn {
+                parts: vec![ContentPart::text("request")],
+                context: None,
+            },
+        };
+        track_active_task_submission(&mut machine, &turn);
+        machine.add_user_message("request");
+
+        let resume = Submission {
+            id: "resume-id".into(),
+            intent: InputIntent::Agent,
+            op: Op::Resume {
+                request_id: "confirmation".into(),
+                content: Vec::new(),
+            },
+        };
+        track_active_task_submission(&mut machine, &resume);
+        machine.add_assistant_message("answer", None);
+
+        assert_eq!(
+            machine.messages().last().unwrap().submission_id(),
+            Some("turn-id")
+        );
+    }
 }

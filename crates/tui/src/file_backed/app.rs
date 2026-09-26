@@ -1,40 +1,31 @@
 //! File-backed TUI input handling and application state transitions.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     hash::BuildHasher,
 };
 
 use alan_agent_protocol::{
-    UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot,
-    UiThinkingSnapshot, UiThinkingState, YieldKind,
+    InputIntent, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot,
+    UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState, YieldKind,
 };
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use crate::completion::{self, CompletionCandidate, CompletionSources, CompletionState};
-use crate::composer::{Composer, ComposerKeyOutcome};
+use crate::composer::{Composer, ComposerInput, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
 use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
 use crate::transcript_ui::{
-    INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
+    INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
 };
 
-use super::file_surface::{TapeRecordV1, response_text_from_content};
-fn default_commands() -> Vec<CompletionCandidate> {
-    [
-        ("compact", "summarize context"),
-        ("rollback", "undo the last turn"),
-        ("clear", "clear the transcript"),
-        ("help", "show key bindings"),
-        ("quit", "exit alan"),
-    ]
-    .into_iter()
-    .map(|(value, detail)| CompletionCandidate::new(value, Some(detail.to_string())))
-    .collect()
-}
+use super::commands::default_commands;
+use super::file_surface::{
+    ActionSnapshot, TapeRecordV1, response_text_from_content, sync_action_snapshot,
+};
 
 pub(super) enum FileBackedEvent {
     Terminal(TerminalEvent),
@@ -52,7 +43,7 @@ pub(super) enum FileBackedEvent {
 
 #[derive(Debug)]
 pub(super) enum FileBackedAction {
-    Submit(String),
+    Submit(ComposerInput),
     Resume {
         request_id: String,
         response: String,
@@ -71,6 +62,9 @@ pub(super) struct FileBackedApp {
     pub(super) composer: Composer,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
+    pub(super) command_submission_ids: HashSet<String>,
+    pub(super) tape_user_cells: HashMap<String, usize>,
+    pub(super) pending_command_actions: HashMap<String, ActionSnapshot>,
     pub(super) activity: UiActivitySnapshot,
     pub(super) plan: UiPlanSnapshot,
     pub(super) thinking: UiThinkingSnapshot,
@@ -105,6 +99,9 @@ impl FileBackedApp {
             composer: Composer::default(),
             transcript: Vec::new(),
             action_cells: BTreeMap::new(),
+            command_submission_ids: HashSet::new(),
+            tape_user_cells: HashMap::new(),
+            pending_command_actions: HashMap::new(),
             activity: UiActivitySnapshot::idle(),
             plan: UiPlanSnapshot::empty(),
             thinking: UiThinkingSnapshot::idle(),
@@ -133,6 +130,10 @@ impl FileBackedApp {
         self.completion_sources.files = files;
     }
 
+    pub(super) fn mark_command_submission(&mut self, submission_id: impl Into<String>) {
+        self.command_submission_ids.insert(submission_id.into());
+    }
+
     pub(super) fn dispatch(&mut self, event: FileBackedEvent) -> Option<FileBackedAction> {
         match event {
             FileBackedEvent::Terminal(TerminalEvent::Key(key)) => self.handle_key(key),
@@ -142,7 +143,11 @@ impl FileBackedApp {
                         form.insert_char(ch);
                     }
                 } else {
-                    self.composer.insert_text(&text);
+                    if self.pending_yield.is_some() {
+                        self.composer.insert_text_literal(&text);
+                    } else {
+                        self.composer.insert_text(&text);
+                    }
                     self.refresh_completion();
                 }
                 None
@@ -216,13 +221,20 @@ impl FileBackedApp {
                 code: KeyCode::Char('/'),
                 modifiers,
                 ..
-            } if modifiers.is_empty() && self.composer.text().is_empty() => {
+            } if modifiers.is_empty()
+                && self.composer.text().is_empty()
+                && self.composer.intent() == InputIntent::Agent =>
+            {
                 self.composer.set_text("/");
                 self.refresh_completion();
                 None
             }
             _ => {
-                let outcome = self.composer.handle_key(key);
+                let outcome = if self.pending_yield.is_some() {
+                    self.composer.handle_key_literal(key)
+                } else {
+                    self.composer.handle_key(key)
+                };
                 self.refresh_completion();
                 match outcome {
                     ComposerKeyOutcome::Submit => self.handle_submit(),
@@ -387,61 +399,44 @@ impl FileBackedApp {
             }
         }
 
-        let text = self.composer.take_submit()?;
+        let Some(input) = self.composer.take_submit() else {
+            if self.composer.intent() != InputIntent::Agent
+                && self.composer.text().trim().is_empty()
+            {
+                self.notice = Some("missing content after input prefix".to_string());
+            }
+            return None;
+        };
         self.completion = None;
-        self.composer.remember(&text);
-        if text.starts_with('/') {
-            return self.handle_command(&text);
+        self.composer.remember_input(input.intent, &input.body);
+        if input.intent == InputIntent::Agent && input.body.starts_with('/') {
+            return self.handle_command(&input.body);
         }
-        self.transcript.push(HistoryCell::User(text.clone()));
-        self.reconciler.on_local_submit(&text);
+        Some(FileBackedAction::Submit(input))
+    }
+
+    pub(super) fn accept_submission(&mut self, input: &ComposerInput) {
+        self.transcript
+            .push(if input.intent == InputIntent::Command {
+                HistoryCell::Command(input.body.clone())
+            } else {
+                HistoryCell::User(input.body.clone())
+            });
+        self.reconciler.on_local_submit(&input.body);
         self.pending_remote_turn_start = None;
-        Some(FileBackedAction::Submit(text))
+    }
+
+    pub(super) fn restore_rejected_submission(&mut self, input: &ComposerInput) {
+        self.composer.restore_rejected_input(input);
     }
 
     pub(super) fn enter_submits_agent_task(&self) -> bool {
         if self.form.is_some() || self.pending_yield.is_some() || self.completion.is_some() {
             return false;
         }
-        let text = self.composer.text().trim();
-        !text.is_empty() && !text.starts_with('/')
-    }
-
-    pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {
-        let command = text.strip_prefix('/')?;
-        let name = command.split_whitespace().next().unwrap_or("");
-        match name {
-            "quit" => {
-                self.should_quit = true;
-                Some(FileBackedAction::Quit)
-            }
-            "compact" => Some(FileBackedAction::MachineCtl {
-                command: "compact".to_string(),
-                success_notice: "compact requested".to_string(),
-            }),
-            "rollback" => Some(FileBackedAction::MachineCtl {
-                command: "rollback".to_string(),
-                success_notice: "rollback requested".to_string(),
-            }),
-            "clear" => {
-                self.transcript.clear();
-                self.action_cells.clear();
-                self.pending_remote_turn_start = None;
-                self.scrollback_front_is_partial = false;
-                None
-            }
-            "help" => {
-                self.notice = Some(
-                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
-                        .to_string(),
-                );
-                None
-            }
-            _ => {
-                self.notice = Some(format!("unknown command: /{name}"));
-                None
-            }
-        }
+        let text = self.composer.text();
+        !text.trim().is_empty()
+            && (self.composer.intent() != InputIntent::Agent || !text.starts_with('/'))
     }
 
     pub(super) fn set_pending_yield(&mut self, pending: PendingYieldCell) {
@@ -513,14 +508,15 @@ impl FileBackedApp {
         self.transcript.push(cell);
     }
 
-    pub(super) fn insert_user_boundary(&mut self, content: String) {
+    pub(super) fn insert_user_boundary(&mut self, cell: HistoryCell) -> usize {
         let index = self
             .pending_remote_turn_start
             .take()
             .unwrap_or(self.transcript.len())
             .min(self.transcript.len());
-        self.transcript.insert(index, HistoryCell::User(content));
+        self.transcript.insert(index, cell);
         self.shift_action_cells_for_insert(index);
+        index
     }
 
     pub(super) fn flush_held_stream_after_boundary(&mut self) {
@@ -552,7 +548,7 @@ impl FileBackedApp {
     pub(super) fn current_turn_has_user_boundary(&self) -> bool {
         for cell in self.transcript.iter().rev() {
             match cell {
-                HistoryCell::User(_) => return true,
+                HistoryCell::User(_) | HistoryCell::Command(_) => return true,
                 HistoryCell::Assistant(_) => return false,
                 _ => {}
             }
@@ -567,7 +563,9 @@ impl FileBackedApp {
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
             match cell {
                 HistoryCell::Assistant(_) => return Some(idx),
-                HistoryCell::User(_) | HistoryCell::PendingYield(_) => return None,
+                HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::PendingYield(_) => {
+                    return None;
+                }
                 _ => {}
             }
         }
@@ -581,14 +579,39 @@ impl FileBackedApp {
         if record.kind != "message" {
             return;
         }
+        let mut matched_command_action = None;
         match record.role.as_str() {
             "user" => {
                 self.count_tape_user_prompt(&record.content);
+                let pending_action = record
+                    .submission_id
+                    .as_ref()
+                    .and_then(|id| self.pending_command_actions.remove(id));
+                let is_command = pending_action.is_some()
+                    || record
+                        .submission_id
+                        .as_deref()
+                        .is_some_and(|id| self.command_submission_ids.contains(id));
                 match self.reconciler.on_user_record(&record.content) {
                     UserDecision::Drop => {}
-                    UserDecision::Push(content) => self.insert_user_boundary(content),
+                    UserDecision::Push(content) => {
+                        let cell = if is_command {
+                            HistoryCell::Command(content)
+                        } else {
+                            HistoryCell::User(content)
+                        };
+                        let index = self.insert_user_boundary(cell);
+                        if let Some(submission_id) = &record.submission_id {
+                            self.tape_user_cells.insert(submission_id.clone(), index);
+                        }
+                    }
                 }
                 self.flush_held_stream_after_boundary();
+                if let (Some(submission_id), Some(action)) = (&record.submission_id, pending_action)
+                {
+                    self.mark_command_submission(submission_id.clone());
+                    matched_command_action = Some(action);
+                }
             }
             "assistant" => {
                 let idx = self.current_assistant_cell();
@@ -614,6 +637,9 @@ impl FileBackedApp {
                 }
             }
             _ => {}
+        }
+        if let Some(snapshot) = matched_command_action {
+            sync_action_snapshot(self, snapshot);
         }
     }
 
@@ -755,6 +781,11 @@ impl FileBackedApp {
         if cells_to_remove > 0 {
             self.transcript.drain(0..cells_to_remove);
             self.shift_action_cells(cells_to_remove);
+            self.tape_user_cells
+                .retain(|_, index| *index >= cells_to_remove);
+            for index in self.tape_user_cells.values_mut() {
+                *index -= cells_to_remove;
+            }
             self.shift_pending_remote_turn_start(cells_to_remove);
             self.scrollback_front_is_partial = false;
         }
@@ -786,6 +817,11 @@ impl FileBackedApp {
 
     pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
         for index in self.action_cells.values_mut() {
+            if *index >= inserted_at {
+                *index += 1;
+            }
+        }
+        for index in self.tape_user_cells.values_mut() {
             if *index >= inserted_at {
                 *index += 1;
             }
@@ -829,6 +865,9 @@ impl FileBackedApp {
 
     pub(super) fn reset_for_root_process_change(&mut self) {
         self.action_cells.clear();
+        self.command_submission_ids.clear();
+        self.tape_user_cells.clear();
+        self.pending_command_actions.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
         self.thinking = UiThinkingSnapshot::idle();
@@ -869,11 +908,13 @@ impl FileBackedApp {
     pub(super) fn composer_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         let segments = self.composer.text().split('\n').collect::<Vec<_>>();
+        let prompt = self.input_prompt_prefix();
+        let continuation = " ".repeat(unicode_width::UnicodeWidthStr::width(prompt));
         for (idx, segment) in segments.iter().enumerate() {
             let prompt = if idx == 0 {
-                self.input_prompt_prefix()
+                prompt.to_string()
             } else {
-                INLINE_PROMPT_CONTINUATION
+                continuation.clone()
             };
             lines.push(Line::from(vec![
                 Span::styled(prompt, Style::default().fg(Color::Green)),
@@ -892,6 +933,8 @@ impl FileBackedApp {
     pub(super) fn input_prompt_prefix(&self) -> &'static str {
         if self.pending_yield.is_some() {
             INLINE_WAITING_PROMPT_PREFIX
+        } else if self.composer.intent() == InputIntent::Command {
+            INLINE_COMMAND_PROMPT_PREFIX
         } else {
             INLINE_PROMPT_PREFIX
         }

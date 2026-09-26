@@ -29,6 +29,7 @@ fn project_messages_preserves_rich_attachment_parts() {
                 metadata: json!({"image_url": "https://example.com/cat.png"}),
             },
         ],
+        submission_id: None,
     }];
 
     let projected = project_messages(&messages, true);
@@ -53,6 +54,7 @@ fn project_messages_preserves_structured_input_without_attachment() {
     let data = json!({"resume_id": "resume-123", "section": "experience"});
     let messages = vec![MachineMessage::User {
         parts: vec![ContentPart::Structured { data: data.clone() }],
+        submission_id: None,
     }];
 
     let projected = project_messages(&messages, true);

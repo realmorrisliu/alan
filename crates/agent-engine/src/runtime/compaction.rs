@@ -271,7 +271,7 @@ fn build_compaction_attempt_snapshot(
 
 fn compaction_submission_id(machine: &AgentMachine, request: &CompactionRequest) -> Option<String> {
     matches!(request.mode(), CompactionMode::Manual)
-        .then(|| machine.current_submission_id().map(str::to_owned))
+        .then(|| machine.current_submission_id())
         .flatten()
 }
 

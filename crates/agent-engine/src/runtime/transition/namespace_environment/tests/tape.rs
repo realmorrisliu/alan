@@ -45,6 +45,38 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
     assert!(tape.contains(r#""content":"after lease""#), "{tape}");
 }
 
+#[tokio::test]
+async fn turn_tape_projection_persists_its_submission_id() {
+    let agentfs = Arc::new(AgentFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+    environment
+        .agent_files()
+        .write_turn_tape_state(Some("submission-1"), Some("request"), "response")
+        .await
+        .unwrap();
+
+    let tape = shell.cat("/agent/1/machine/tape").await.unwrap();
+    let records: Vec<serde_json::Value> = String::from_utf8(tape)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["role"], "user");
+    assert_eq!(records[0]["submission_id"], "submission-1");
+    assert_eq!(records[1]["role"], "assistant");
+    assert_eq!(records[1]["submission_id"], "submission-1");
+}
+
 #[test]
 fn tape_record_shape_is_content_addressable_ready() {
     let record = tape_record_bytes("assistant", "stable text").unwrap();

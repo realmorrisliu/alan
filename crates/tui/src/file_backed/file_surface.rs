@@ -1,8 +1,8 @@
 //! AgentFS file observation, command writes, and snapshot projection.
 
 use alan_agent_protocol::{
-    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivitySnapshot,
-    UiActivityState, UiEvent, YieldKind,
+    ContentPart, InputIntent, InputMode, StructuredInputQuestion, ToolResultPresentation,
+    UiActivitySnapshot, UiEvent, UserInputRecord, YieldKind,
 };
 use anyhow::{Context, Result, anyhow};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
@@ -15,6 +15,8 @@ use super::app::{FileBackedApp, FileBackedEvent};
 use super::tail::tail_with_history;
 mod attachment;
 
+#[cfg(test)]
+pub(super) use attachment::hydrate_tape_history;
 pub(super) use attachment::{hydrate_and_open_tails, reattach_to_current_agent};
 
 pub(super) async fn sync_requests_from_files(
@@ -27,16 +29,6 @@ pub(super) async fn sync_requests_from_files(
         Some(snapshot) => app.set_pending_yield(request_snapshot_to_pending_yield(snapshot)?),
         None => app.clear_pending_yield(),
     }
-    Ok(())
-}
-
-pub(super) async fn hydrate_actions_from_files(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    app: &mut FileBackedApp,
-) -> Result<()> {
-    let snapshots = read_action_snapshots(shell, agent_path).await?;
-    hydrate_actions_from_snapshots(app, snapshots);
     Ok(())
 }
 
@@ -60,48 +52,10 @@ pub(super) struct WatchTails {
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
     pub(super) ui_history: Vec<u8>,
+    pub(super) tape_history: Vec<u8>,
 }
 
-#[derive(Default)]
-pub(super) struct CorrelatedUiTask {
-    pub(super) started: bool,
-    pub(super) state: Option<UiActivityState>,
-    pub(super) error: Option<String>,
-}
-
-pub(super) fn correlated_ui_task(
-    ui_history: &[u8],
-    submitted_at_ms: u64,
-) -> Result<CorrelatedUiTask> {
-    let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
-    let mut task = CorrelatedUiTask::default();
-    for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
-        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")?;
-        if !task.started {
-            if let UiEvent::Activity { snapshot } = event
-                && snapshot.state == UiActivityState::Running
-                && snapshot
-                    .started_at_ms
-                    .is_some_and(|started_at| started_at >= submitted_at_ms)
-            {
-                task.started = true;
-                task.state = Some(UiActivityState::Running);
-            }
-            continue;
-        }
-        match event {
-            UiEvent::Activity { snapshot } => {
-                task.state = Some(snapshot.state);
-                if snapshot.state == UiActivityState::Idle {
-                    break;
-                }
-            }
-            UiEvent::Error { message, .. } => task.error = Some(message),
-            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
-        }
-    }
-    Ok(task)
-}
+pub(super) use super::activity::{correlated_ui_task, observe_input_activity};
 
 pub(super) async fn send_event_or_shutdown(
     tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
@@ -495,6 +449,7 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
     format!("{agent_path}/requests/{request_id}/response")
 }
 
+#[cfg(test)]
 pub(super) async fn write_agent_input(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -504,6 +459,22 @@ pub(super) async fn write_agent_input(
         .write(&agent_input_path(agent_path), text.as_bytes())
         .await
         .map_err(|err| anyhow!("write agent input failed: {err:?}"))
+}
+
+pub(super) async fn write_agent_submission(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    intent: InputIntent,
+    body: &str,
+) -> Result<String> {
+    let record = UserInputRecord::new(intent, InputMode::FollowUp, body);
+    let submission_id = record.submission_id.clone();
+    let payload = record.encode_payload()?;
+    shell
+        .write(&agent_input_path(agent_path), &payload)
+        .await
+        .map_err(|err| anyhow!("write agent submission failed: {err:?}"))?;
+    Ok(submission_id)
 }
 
 pub(super) async fn write_request_response(
@@ -582,7 +553,7 @@ async fn read_request_snapshot(
     })
 }
 
-async fn read_action_snapshots(
+pub(super) async fn read_action_snapshots(
     shell: &alan_shell::Shell,
     agent_path: &str,
 ) -> Result<Vec<ActionSnapshot>> {
@@ -646,6 +617,7 @@ fn request_sort_key(request_id: &str) -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 pub(super) fn parse_tape_history(raw: &str) -> Vec<HistoryCell> {
     let mut cells = Vec::new();
     for line in raw.lines() {
@@ -775,9 +747,73 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);
     }
-    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
-        app.upsert_action_cell(snapshot.id, cell);
+    let command_call_id = matches!(snapshot.name.as_str(), "bash" | "cd")
+        .then(|| serde_json::from_str::<Value>(&snapshot.result).ok())
+        .flatten()
+        .and_then(|result| {
+            result
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let explicit_command = command_call_id
+        .as_deref()
+        .is_some_and(|call_id| app.classify_command_submission(call_id));
+    if !explicit_command && command_call_id.is_some() {
+        app.mark_pending_remote_turn_start_if_unbounded();
     }
+    let cell = if explicit_command {
+        command_action_history_cell(&snapshot).or_else(|| {
+            (!action_status_is_running(&snapshot.status))
+                .then(|| HistoryCell::Error("command result is unavailable".to_string()))
+        })
+    } else {
+        action_snapshot_to_history_cell(&snapshot)
+    };
+    if let Some(cell) = cell {
+        app.upsert_action_cell(snapshot.id.clone(), cell);
+    }
+    if !explicit_command
+        && app.pending_remote_turn_start.is_some()
+        && let Some(call_id) = command_call_id
+        && is_submission_id(&call_id)
+    {
+        app.pending_command_actions.insert(call_id, snapshot);
+    }
+}
+
+impl FileBackedApp {
+    pub(super) fn classify_command_submission(&mut self, submission_id: &str) -> bool {
+        if self.command_submission_ids.contains(submission_id) {
+            self.tape_user_cells.remove(submission_id);
+            return true;
+        }
+        let Some(index) = self.tape_user_cells.remove(submission_id) else {
+            return false;
+        };
+        let Some(cell) = self.transcript.get_mut(index) else {
+            return false;
+        };
+        match cell {
+            HistoryCell::User(text) => *cell = HistoryCell::Command(text.clone()),
+            HistoryCell::Command(_) => {}
+            _ => return false,
+        }
+        self.command_submission_ids
+            .insert(submission_id.to_string());
+        true
+    }
+}
+
+fn is_submission_id(value: &str) -> bool {
+    // UserInputRecord requires UUID submission IDs; provider tool IDs are not
+    // candidates for delayed tape correlation.
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
 }
 
 fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
@@ -846,6 +882,38 @@ fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryC
     })
 }
 
+fn command_action_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
+    if !matches!(snapshot.status.trim(), "completed" | "failed") {
+        return None;
+    }
+    let output: Value = serde_json::from_str(&snapshot.output).ok()?;
+    let result: Value = serde_json::from_str(&snapshot.result).ok()?;
+    let stdout = output.get("stdout")?.as_str()?;
+    let stderr = output.get("stderr")?.as_str()?;
+    let exit_code = result
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .and_then(|code| i32::try_from(code).ok())?;
+
+    let mut lines = command_stream_lines(stdout, "");
+    lines.extend(command_stream_lines(stderr, "stderr> "));
+    if exit_code != 0 {
+        lines.push(format!("error> command exited with status {exit_code}"));
+    }
+    Some(HistoryCell::Rendered(lines))
+}
+
+fn command_stream_lines(stream: &str, prefix: &str) -> Vec<String> {
+    let stream = stream.strip_suffix('\n').unwrap_or(stream);
+    if stream.is_empty() {
+        return Vec::new();
+    }
+    stream
+        .split('\n')
+        .map(|line| format!("{prefix}{line}"))
+        .collect()
+}
+
 fn action_title(snapshot: &ActionSnapshot) -> String {
     let trimmed = snapshot.name.trim();
     if !trimmed.is_empty() {
@@ -883,4 +951,6 @@ pub(super) struct TapeRecordV1 {
     pub(super) kind: String,
     pub(super) role: String,
     pub(super) content: String,
+    #[serde(default)]
+    pub(super) submission_id: Option<String>,
 }

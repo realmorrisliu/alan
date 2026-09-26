@@ -2,6 +2,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
+use alan_agent_protocol::{InputIntent, parse_input_prefix};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// The bottom input editor: readline-style editing plus persisted history recall.
@@ -9,6 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub struct Composer {
     buffer: String,
     cursor: usize,
+    intent: InputIntent,
     history: Vec<String>,
     /// Index into `history` while recalling; `None` while editing the live buffer.
     history_index: Option<usize>,
@@ -16,6 +18,14 @@ pub struct Composer {
     stash: Option<String>,
     history_path: Option<PathBuf>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ComposerInput {
+    pub(super) intent: InputIntent,
+    pub(super) body: String,
+}
+
+const HISTORY_INPUT_PREFIX: &str = "\u{001e}alan-input-v1:";
 
 impl Composer {
     /// Build a composer seeded with prior history and a path to append new entries to.
@@ -35,9 +45,14 @@ impl Composer {
         self.cursor
     }
 
+    pub(crate) fn intent(&self) -> InputIntent {
+        self.intent
+    }
+
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.buffer = text.into();
         self.cursor = self.buffer.len();
+        self.intent = InputIntent::Agent;
         self.reset_recall();
     }
 
@@ -48,42 +63,79 @@ impl Composer {
     }
 
     pub fn insert_text(&mut self, text: &str) {
+        if self.buffer.is_empty() && self.cursor == 0 && self.intent == InputIntent::Agent {
+            let (intent, body) = parse_input_prefix(text);
+            self.intent = intent;
+            self.insert_text_literal(body);
+        } else {
+            self.insert_text_literal(text);
+        }
+    }
+
+    pub(crate) fn insert_text_literal(&mut self, text: &str) {
         self.buffer.insert_str(self.cursor, text);
         self.cursor += text.len();
         self.reset_recall();
     }
 
-    pub fn take_submit(&mut self) -> Option<String> {
-        let text = self.buffer.trim().to_string();
-        if text.is_empty() {
+    pub(super) fn restore_rejected_input(&mut self, input: &ComposerInput) {
+        self.buffer = input.body.clone();
+        self.cursor = self.buffer.len();
+        self.intent = input.intent;
+        self.reset_recall();
+    }
+
+    pub(super) fn take_submit(&mut self) -> Option<ComposerInput> {
+        if self.buffer.trim().is_empty() {
             return None;
         }
+        let input = ComposerInput {
+            intent: self.intent,
+            body: self.buffer.clone(),
+        };
         self.buffer.clear();
         self.cursor = 0;
+        self.intent = InputIntent::Agent;
         self.reset_recall();
-        Some(text)
+        Some(input)
     }
 
     /// Record a submitted entry into history (adjacent-deduplicated) and persist it.
     pub fn remember(&mut self, entry: &str) {
-        let entry = entry.trim();
+        self.remember_input(InputIntent::Agent, entry.trim());
+    }
+
+    pub(super) fn remember_input(&mut self, intent: InputIntent, body: &str) {
+        let entry = encode_history_input(intent, body);
         if entry.is_empty() {
             return;
         }
-        if self.history.last().map(String::as_str) == Some(entry) {
+        if self.history.last() == Some(&entry) {
             self.reset_recall();
             return;
         }
-        self.history.push(entry.to_string());
+        self.history.push(entry.clone());
         self.reset_recall();
         if let Some(path) = &self.history_path
-            && let Err(err) = append_history_line(path, entry)
+            && let Err(err) = append_history_line(path, &entry)
         {
             tracing::warn!(%err, "failed to persist composer history");
         }
     }
 
     pub fn handle_key(&mut self, event: KeyEvent) -> ComposerKeyOutcome {
+        self.handle_key_with_prefix(event, true)
+    }
+
+    pub(crate) fn handle_key_literal(&mut self, event: KeyEvent) -> ComposerKeyOutcome {
+        self.handle_key_with_prefix(event, false)
+    }
+
+    fn handle_key_with_prefix(
+        &mut self,
+        event: KeyEvent,
+        parse_prefix: bool,
+    ) -> ComposerKeyOutcome {
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         let alt = event.modifiers.contains(KeyModifiers::ALT);
         match event.code {
@@ -131,7 +183,11 @@ impl Composer {
                 ComposerKeyOutcome::Changed
             }
             KeyCode::Char(ch) => {
-                self.insert_text(&ch.to_string());
+                if parse_prefix {
+                    self.insert_text(&ch.to_string());
+                } else {
+                    self.insert_text_literal(&ch.to_string());
+                }
                 ComposerKeyOutcome::Changed
             }
             KeyCode::Backspace => {
@@ -142,7 +198,13 @@ impl Composer {
                     self.reset_recall();
                     ComposerKeyOutcome::Changed
                 } else {
-                    ComposerKeyOutcome::Ignored
+                    if self.buffer.is_empty() && self.intent != InputIntent::Agent {
+                        self.intent = InputIntent::Agent;
+                        self.reset_recall();
+                        ComposerKeyOutcome::Changed
+                    } else {
+                        ComposerKeyOutcome::Ignored
+                    }
                 }
             }
             KeyCode::Left => {
@@ -183,14 +245,15 @@ impl Composer {
         }
         let next_index = match self.history_index {
             None => {
-                self.stash = Some(self.buffer.clone());
+                self.stash = Some(encode_history_input(self.intent, &self.buffer));
                 self.history.len() - 1
             }
             Some(0) => 0,
             Some(index) => index - 1,
         };
         self.history_index = Some(next_index);
-        self.buffer = self.history[next_index].clone();
+        let entry = self.history[next_index].clone();
+        self.restore_history_entry(&entry);
         self.cursor = self.buffer.len();
     }
 
@@ -198,14 +261,27 @@ impl Composer {
         let Some(index) = self.history_index else {
             return;
         };
-        if index + 1 < self.history.len() {
+        let entry = if index + 1 < self.history.len() {
             self.history_index = Some(index + 1);
-            self.buffer = self.history[index + 1].clone();
+            self.history[index + 1].clone()
         } else {
             self.history_index = None;
-            self.buffer = self.stash.take().unwrap_or_default();
-        }
+            self.stash.take().unwrap_or_default()
+        };
+        self.restore_history_entry(&entry);
         self.cursor = self.buffer.len();
+    }
+
+    fn restore_history_entry(&mut self, entry: &str) {
+        if let Some(encoded) = entry.strip_prefix(HISTORY_INPUT_PREFIX)
+            && let Ok((intent, body)) = serde_json::from_str::<(InputIntent, String)>(encoded)
+        {
+            self.intent = intent;
+            self.buffer = body;
+            return;
+        }
+        self.intent = InputIntent::Agent;
+        self.buffer = entry.to_string();
     }
 
     fn delete_word_back(&mut self) {
@@ -269,6 +345,16 @@ impl Composer {
     }
 }
 
+fn encode_history_input(intent: InputIntent, body: &str) -> String {
+    match intent {
+        InputIntent::Agent => body.to_string(),
+        InputIntent::ForceAgent | InputIntent::Command => {
+            let encoded = serde_json::to_string(&(intent, body)).unwrap_or_default();
+            format!("{HISTORY_INPUT_PREFIX}{encoded}")
+        }
+    }
+}
+
 fn append_history_line(path: &PathBuf, entry: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -323,8 +409,39 @@ mod tests {
             composer.handle_key(key(KeyCode::Enter)),
             ComposerKeyOutcome::Submit
         );
-        assert_eq!(composer.take_submit(), Some("hi".into()));
+        assert_eq!(
+            composer.take_submit(),
+            Some(ComposerInput {
+                intent: InputIntent::Agent,
+                body: "hi".into()
+            })
+        );
         assert_eq!(composer.text(), "");
+    }
+
+    #[test]
+    fn composer_preserves_agent_body_whitespace() {
+        let body = "  indented\ncode  ";
+        let mut composer = Composer::default();
+        composer.insert_text(body);
+
+        assert_eq!(
+            composer.take_submit(),
+            Some(ComposerInput {
+                intent: InputIntent::Agent,
+                body: body.into(),
+            })
+        );
+
+        let mut composer = Composer::default();
+        composer.insert_text(&format!(":{body}"));
+        assert_eq!(
+            composer.take_submit(),
+            Some(ComposerInput {
+                intent: InputIntent::ForceAgent,
+                body: body.into(),
+            })
+        );
     }
 
     #[test]
@@ -334,6 +451,39 @@ mod tests {
         composer.handle_key(key(KeyCode::Left));
         composer.insert_text("b\n");
         assert_eq!(composer.text(), "ab\nc");
+    }
+
+    #[test]
+    fn composer_parses_prefixes_only_at_the_start_of_an_empty_entry() {
+        let mut composer = Composer::default();
+        composer.insert_text(":!explain this");
+        assert_eq!(composer.intent(), InputIntent::ForceAgent);
+        assert_eq!(composer.text(), "!explain this");
+
+        composer.insert_text(" ! stays literal");
+        assert_eq!(composer.text(), "!explain this ! stays literal");
+    }
+
+    #[test]
+    fn composer_empty_command_can_return_to_agent_entry_with_backspace() {
+        let mut composer = Composer::default();
+        composer.insert_text("!");
+        assert_eq!(composer.intent(), InputIntent::Command);
+        assert_eq!(composer.text(), "");
+
+        composer.handle_key(key(KeyCode::Backspace));
+        assert_eq!(composer.intent(), InputIntent::Agent);
+        assert_eq!(composer.text(), "");
+    }
+
+    #[test]
+    fn composer_history_restores_command_intent_and_exact_body() {
+        let mut composer = Composer::default();
+        composer.remember_input(InputIntent::Command, "  printf 'a\\nb'  ");
+        composer.handle_key(key(KeyCode::Up));
+
+        assert_eq!(composer.intent(), InputIntent::Command);
+        assert_eq!(composer.text(), "  printf 'a\\nb'  ");
     }
 
     #[test]

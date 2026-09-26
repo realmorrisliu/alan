@@ -5,10 +5,14 @@
 //! loop needs.
 
 mod accepted_submission;
+mod explicit_command;
 mod namespace_environment;
 mod turn_execution;
 
-pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
+pub(crate) use accepted_submission::{
+    accepts_inband_submissions, advance_accepted_submission,
+    run_deferred_runtime_action_with_cancel, track_active_task_submission,
+};
 use turn_execution::run_turn_with_cancel;
 
 #[cfg(test)]
@@ -24,10 +28,9 @@ pub use namespace_environment::{
 
 use std::collections::VecDeque;
 
-use alan_agent_protocol::{Event, Op, Submission};
+use alan_agent_protocol::{Event, InputIntent, InputMode, Op, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 
 use crate::{
     agent_machine::{AgentMachine, DeferredRuntimeAction, NormalizedToolCall, TurnActivityState},
@@ -87,6 +90,7 @@ pub(crate) enum TransitionCompletion {
 }
 
 pub(crate) struct AcceptedSubmissionOutcome {
+    pub(crate) submission_id: String,
     pub(crate) result: Result<TransitionCompletion>,
     pub(crate) requeue_inband_submissions: bool,
     pub(crate) deferred_actions: VecDeque<DeferredRuntimeAction>,
@@ -588,6 +592,7 @@ where
             } => {
                 refresh_context |= call_refresh;
                 if handle_queued_steering_inputs(
+                    &state.agent_files(),
                     &mut state.machine,
                     tool_calls,
                     idx + 1,
@@ -596,19 +601,26 @@ where
                 )
                 .await?
                 {
+                    let resume_with_generation = !tool_calls.iter().any(|call| {
+                        state.machine.current_submission_id().as_deref() == Some(call.id.as_str())
+                    });
+                    if explicit_command::run_queued_steering_commands(
+                        state,
+                        emit,
+                        inputs.cancel,
+                        resume_with_generation,
+                    )
+                    .await?
+                    {
+                        return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
+                    }
                     return Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop {
                         refresh_context: true,
                     });
                 }
             }
             ToolOrchestratorOutcome::PauseTurn => {
-                if let Some(pending) = state.machine.pending_confirmation()
-                    && replays_tool_calls(&pending.checkpoint_type)
-                {
-                    state
-                        .machine
-                        .set_tool_replay_batch(pending.checkpoint_id, tool_calls[idx..].to_vec());
-                }
+                explicit_command::retain_pending_tool_batch(state, &tool_calls[idx..]);
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
             ToolOrchestratorOutcome::EndTurn => {
@@ -715,9 +727,47 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let op = submission.op;
+    state.machine.input_broker().persist().await?;
+    let Submission { id, intent, op } = submission;
 
-    match handle_runtime_op(state, op, emit).await? {
+    if intent == InputIntent::Command && matches!(&op, Op::Input { .. }) {
+        return explicit_command::handle_explicit_command(
+            state,
+            id,
+            op,
+            emit,
+            cancel,
+            steering_broker,
+        )
+        .await;
+    }
+
+    let action = handle_runtime_op(state, op, emit).await?;
+    let action = if let RuntimeOpAction::FinishRejectedExplicitCommand {
+        tool_call,
+        resume_with_generation,
+    } = action
+    {
+        explicit_command::finish_failed_explicit_command(
+            state,
+            &tool_call,
+            "command was rejected by the user",
+            Some("rejected"),
+            emit,
+        )
+        .await?;
+        if !resume_with_generation {
+            return Ok(());
+        }
+        RuntimeOpAction::RunTurn {
+            turn_kind: TurnRunKind::ResumeTurn,
+            user_input: None,
+            activate_task: false,
+        }
+    } else {
+        action
+    };
+    match action {
         RuntimeOpAction::NoTurn => Ok(()),
         RuntimeOpAction::RunTurn {
             turn_kind,
@@ -821,6 +871,7 @@ where
         }
         RuntimeOpAction::ReplayApprovedToolBatch {
             tool_calls,
+            resume_with_generation,
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
         } => {
@@ -840,29 +891,33 @@ where
             {
                 Ok(outcome) => match outcome {
                     ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                        let turn_outcome = match run_turn_with_cancel(
-                            state,
-                            TurnRunKind::ResumeTurn,
-                            None,
-                            emit,
-                            cancel,
-                            steering_broker,
-                        )
-                        .await
-                        {
-                            Ok(outcome) => outcome,
-                            Err(err) => {
-                                state.machine.set_turn_activity(TurnActivityState::Idle);
-                                return Err(err);
-                            }
-                        };
-                        state.machine.set_turn_activity(
-                            if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                                TurnActivityState::Paused
-                            } else {
-                                TurnActivityState::Idle
-                            },
-                        );
+                        if resume_with_generation {
+                            let turn_outcome = match run_turn_with_cancel(
+                                state,
+                                TurnRunKind::ResumeTurn,
+                                None,
+                                emit,
+                                cancel,
+                                steering_broker,
+                            )
+                            .await
+                            {
+                                Ok(outcome) => outcome,
+                                Err(err) => {
+                                    state.machine.set_turn_activity(TurnActivityState::Idle);
+                                    return Err(err);
+                                }
+                            };
+                            state.machine.set_turn_activity(
+                                if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
+                                    TurnActivityState::Paused
+                                } else {
+                                    TurnActivityState::Idle
+                                },
+                            );
+                        } else {
+                            state.machine.set_turn_activity(TurnActivityState::Idle);
+                        }
                     }
                     ToolBatchOrchestratorOutcome::PauseTurn => {
                         state.machine.set_turn_activity(TurnActivityState::Paused);
@@ -885,6 +940,7 @@ where
             };
             Ok(())
         }
+        RuntimeOpAction::FinishRejectedExplicitCommand { .. } => unreachable!("resolved above"),
     }
 }
 
@@ -909,36 +965,6 @@ async fn finalize_replayed_tool_end_turn_best_effort(
     }
 
     state.machine.set_turn_activity(TurnActivityState::Idle);
-}
-
-pub(super) async fn run_deferred_runtime_action_with_cancel(
-    state: &mut RuntimeLoopState,
-    action: DeferredRuntimeAction,
-    cancel: &CancellationToken,
-) -> DeferredRuntimeActionExit {
-    match action {
-        DeferredRuntimeAction::TurnMemoryPromotion(job) => {
-            let generation = state.namespace_generation();
-            match super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
-                &generation,
-                &job,
-                cancel,
-            )
-            .await
-            {
-                Ok(()) => DeferredRuntimeActionExit::Completed,
-                Err(_) if cancel.is_cancelled() => DeferredRuntimeActionExit::Cancelled,
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        context = job.warning_context,
-                        "Failed to capture confirmed turn memory"
-                    );
-                    DeferredRuntimeActionExit::Completed
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

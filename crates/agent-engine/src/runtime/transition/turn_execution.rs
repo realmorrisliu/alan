@@ -172,12 +172,15 @@ where
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state.machine.reset_auto_mid_turn_compaction_state();
-        crate::runtime::ui_surfaces::turn_started(&state.agent_files())
-            .await
-            .context("write turn-start UI state")?;
+        crate::runtime::ui_surfaces::turn_started(
+            &state.agent_files(),
+            &state.machine.input_broker(),
+        )
+        .await
+        .context("write turn-start UI state")?;
         emit(Event::TurnStarted {}).await;
     } else {
-        crate::runtime::ui_surfaces::resumed(&state.agent_files())
+        crate::runtime::ui_surfaces::resumed(&state.agent_files(), &state.machine.input_broker())
             .await
             .context("write resumed turn UI state")?;
     }
@@ -428,9 +431,13 @@ where
                 }
                 log_generation_failure(request_start, &error);
                 let message = generation_error_message(&error);
-                crate::runtime::ui_surfaces::error_notice(&agent_files, &message)
-                    .await
-                    .context("write generation error UI state")?;
+                crate::runtime::ui_surfaces::error_notice(
+                    &agent_files,
+                    &message,
+                    state.machine.current_submission_id().as_deref(),
+                )
+                .await
+                .context("write generation error UI state")?;
                 emit(Event::Error {
                     message,
                     recoverable: true,
@@ -579,12 +586,17 @@ where
 
         if assistant_message_persisted && !response.content.is_empty() {
             let namespace_input_text = namespace_user_input_for_tape.take();
+            let submission_id = state.machine.current_submission_id();
             agent_files
                 .write_assistant_output(&response.content)
                 .await
                 .context("write namespace assistant output")?;
             agent_files
-                .write_turn_tape_state(namespace_input_text.as_deref(), &response.content)
+                .write_turn_tape_state(
+                    submission_id.as_deref(),
+                    namespace_input_text.as_deref(),
+                    &response.content,
+                )
                 .await
                 .context("write namespace turn tape state")?;
         }
@@ -656,12 +668,17 @@ where
                 &response.redacted_thinking,
             );
             let namespace_input_text = namespace_user_input_for_tape.take();
+            let submission_id = state.machine.current_submission_id();
             agent_files
                 .write_assistant_output(fallback_text)
                 .await
                 .context("write namespace fallback assistant output")?;
             agent_files
-                .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
+                .write_turn_tape_state(
+                    submission_id.as_deref(),
+                    namespace_input_text.as_deref(),
+                    fallback_text,
+                )
                 .await
                 .context("write namespace fallback turn tape state")?;
             let memory_runtime = turn_memory_runtime(state);
@@ -683,9 +700,13 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
-            crate::runtime::ui_surfaces::turn_completed(&state.agent_files(), false)
-                .await
-                .context("write fallback turn completion UI state")?;
+            crate::runtime::ui_surfaces::turn_completed(
+                &state.agent_files(),
+                &state.machine.input_broker(),
+                false,
+            )
+            .await
+            .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
@@ -699,7 +720,13 @@ where
             },
         )
         .await;
-        emit_task_completed_success(&agent_files, emit, "Task completed").await?;
+        emit_task_completed_success(
+            &agent_files,
+            &state.machine.input_broker(),
+            emit,
+            "Task completed",
+        )
+        .await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
 }

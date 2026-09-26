@@ -83,13 +83,19 @@ impl ToolResponse {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
     /// User input (can contain text, attachments, structured data).
-    User { parts: Vec<ContentPart> },
+    User {
+        parts: Vec<ContentPart>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission_id: Option<String>,
+    },
 
     /// Assistant output (content + optional tool call requests).
     Assistant {
         parts: Vec<ContentPart>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_requests: Vec<ToolRequest>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission_id: Option<String>,
     },
 
     /// Tool execution results.
@@ -122,12 +128,16 @@ impl Message {
     pub fn user(text: impl Into<String>) -> Self {
         Message::User {
             parts: vec![ContentPart::text(text)],
+            submission_id: None,
         }
     }
 
     /// Create a user message with multiple content parts.
     pub fn user_parts(parts: Vec<ContentPart>) -> Self {
-        Message::User { parts }
+        Message::User {
+            parts,
+            submission_id: None,
+        }
     }
 
     /// Create an assistant message with text content.
@@ -135,6 +145,7 @@ impl Message {
         Message::Assistant {
             parts: vec![ContentPart::text(text)],
             tool_requests: vec![],
+            submission_id: None,
         }
     }
 
@@ -143,6 +154,16 @@ impl Message {
         Message::Assistant {
             parts: vec![ContentPart::text(text)],
             tool_requests,
+            submission_id: None,
+        }
+    }
+
+    /// Create an assistant message from the full content parts and tool calls.
+    pub fn assistant_parts(parts: Vec<ContentPart>, tool_requests: Vec<ToolRequest>) -> Self {
+        Message::Assistant {
+            parts,
+            tool_requests,
+            submission_id: None,
         }
     }
 
@@ -157,6 +178,32 @@ impl Message {
     pub fn tool_structured(id: impl Into<String>, data: serde_json::Value) -> Self {
         Message::Tool {
             responses: vec![ToolResponse::structured(id, data)],
+        }
+    }
+
+    /// Associate user-visible tape messages with the accepted Process input.
+    pub fn with_submission_id(mut self, submission_id: Option<String>) -> Self {
+        match &mut self {
+            Message::User {
+                submission_id: current,
+                ..
+            }
+            | Message::Assistant {
+                submission_id: current,
+                ..
+            } => *current = submission_id,
+            Message::Tool { .. } | Message::System { .. } | Message::Context { .. } => {}
+        }
+        self
+    }
+
+    /// Return the accepted Process input associated with this message, if any.
+    pub fn submission_id(&self) -> Option<&str> {
+        match self {
+            Message::User { submission_id, .. } | Message::Assistant { submission_id, .. } => {
+                submission_id.as_deref()
+            }
+            Message::Tool { .. } | Message::System { .. } | Message::Context { .. } => None,
         }
     }
 
@@ -196,7 +243,7 @@ impl Message {
     /// For Tool messages, returns an empty slice (use `tool_responses()` instead).
     pub fn parts(&self) -> &[ContentPart] {
         match self {
-            Message::User { parts }
+            Message::User { parts, .. }
             | Message::Assistant { parts, .. }
             | Message::System { parts }
             | Message::Context { parts } => parts,
@@ -225,7 +272,7 @@ impl Message {
     /// For Tool messages, concatenates all response text.
     pub fn text_content(&self) -> String {
         match self {
-            Message::User { parts }
+            Message::User { parts, .. }
             | Message::Assistant { parts, .. }
             | Message::System { parts }
             | Message::Context { parts } => parts
@@ -711,7 +758,7 @@ fn is_non_control_user_turn_boundary(message: &Message) -> bool {
 
 fn is_internal_control_message(message: &Message) -> bool {
     match message {
-        Message::User { parts } => parts.iter().any(is_internal_control_part),
+        Message::User { parts, .. } => parts.iter().any(is_internal_control_part),
         _ => false,
     }
 }

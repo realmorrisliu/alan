@@ -27,6 +27,11 @@ The complete boundary SHALL include input route, correlated submission outcome,
 shared cwd and pending queue/pause state. Multiple clients observe the same
 authority through files.
 
+`machine/ui/activity` and its activity events SHALL include the runtime-published
+logical cwd in the optional `cwd` field. This is an observation of the Process
+execution binding, not an independent directory owner or native authority.
+Older retained snapshots without the field leave the directory undisplayed.
+
 #### Scenario: Host attaches after a turn has started
 - **WHEN** a host opens an already-running Agent Process
 - **THEN** it hydrates snapshots and resumes streams from `/agent/<pid>` and

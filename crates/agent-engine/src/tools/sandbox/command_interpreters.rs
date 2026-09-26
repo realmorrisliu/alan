@@ -1,17 +1,144 @@
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
+use super::command_project_dispatchers::{
+    git_subcommand_can_invoke_configured_helpers, is_project_code_dispatcher,
+};
 
 pub(super) fn opaque_command_dispatcher_display(
     display: &str,
     command: &str,
     args: &[String],
+    reject_project_code_dispatchers: bool,
 ) -> Option<String> {
     if command == "xargs" {
+        return Some(display.to_string());
+    }
+    if reject_project_code_dispatchers && command == "git" && has_uninspectable_git_dispatch(args) {
+        return Some(format!("{display} extension"));
+    }
+    if reject_project_code_dispatchers && is_project_code_dispatcher(command, args) {
         return Some(display.to_string());
     }
     (command == "find")
         .then_some(())
         .and_then(|()| find_dispatch_clause(args))
         .map(|clause| format!("{display} {clause}"))
+}
+
+fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
+    // ponytail: known built-ins stay narrow; unknown subcommands remain opaque.
+    const BUILTINS: &str = concat!(
+        "add blame branch cat-file checkout cherry-pick clean clone commit ",
+        "describe diff diff-files diff-index diff-tree fetch format-patch grep help init log ",
+        "ls-files ls-tree merge merge-base mv notes pull push rebase remote reset restore ",
+        "revert rev-list rev-parse rm shortlog show show-ref stash status switch tag worktree"
+    );
+
+    let mut index = 0;
+    while let Some(argument) = args.get(index).map(String::as_str) {
+        match argument {
+            "-c" | "--config-env" => return true,
+            "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--super-prefix" => {
+                index += 2;
+                if index > args.len() {
+                    return true;
+                }
+            }
+            "-p"
+            | "--paginate"
+            | "--no-pager"
+            | "--bare"
+            | "--no-replace-objects"
+            | "--no-optional-locks"
+            | "--literal-pathspecs"
+            | "--glob-pathspecs"
+            | "--noglob-pathspecs"
+            | "--icase-pathspecs"
+            | "--exec-path" => index += 1,
+            "--version" | "-v" | "--help" | "-h" => return false,
+            argument
+                if argument.starts_with("-C")
+                    || argument.starts_with("--git-dir=")
+                    || argument.starts_with("--work-tree=")
+                    || argument.starts_with("--namespace=")
+                    || argument.starts_with("--exec-path=") =>
+            {
+                index += 1;
+            }
+            argument if argument.starts_with("-c") || argument.starts_with("--config-env=") => {
+                return true;
+            }
+            argument if argument.starts_with('-') => return true,
+            command => {
+                let known_builtin = BUILTINS
+                    .split_ascii_whitespace()
+                    .any(|builtin| builtin == command);
+                return !known_builtin
+                    || git_subcommand_can_invoke_hooks(command, &args[index + 1..])
+                    || git_subcommand_can_invoke_configured_helpers(command, &args[index + 1..]);
+            }
+        }
+    }
+    false
+}
+
+fn git_subcommand_can_invoke_hooks(command: &str, args: &[String]) -> bool {
+    const HOOK_DISPATCHERS: &str = concat!(
+        "add am checkout cherry-pick clone commit fetch gc merge mv pull push rebase reset ",
+        "restore revert rm switch"
+    );
+
+    if HOOK_DISPATCHERS
+        .split_ascii_whitespace()
+        .any(|dispatcher| dispatcher == command)
+    {
+        return true;
+    }
+
+    match command {
+        "branch" => {
+            !args.is_empty()
+                && !args.iter().any(|arg| {
+                    matches!(
+                        arg.as_str(),
+                        "-a" | "--all"
+                            | "-l"
+                            | "--list"
+                            | "-r"
+                            | "--remotes"
+                            | "--show-current"
+                            | "--contains"
+                            | "--merged"
+                            | "--no-merged"
+                    )
+                })
+        }
+        "tag" => {
+            !args.is_empty()
+                && !args
+                    .iter()
+                    .any(|arg| matches!(arg.as_str(), "-l" | "--list" | "--contains" | "--merged"))
+        }
+        "notes" => args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "add" | "append" | "copy" | "edit" | "merge" | "prune" | "remove"
+            )
+        }),
+        "stash" => !matches!(
+            args.first().map(String::as_str),
+            Some("list" | "show" | "help" | "--help")
+        ),
+        "worktree" => args.first().is_some_and(|subcommand| {
+            matches!(subcommand.as_str(), "add" | "move" | "remove" | "prune")
+        }),
+        "remote" => args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "update" | "prune" | "set-head" | "remove" | "rename"
+            )
+        }),
+        _ => false,
+    }
 }
 
 fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
@@ -23,13 +150,11 @@ fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
             .copied()
             .find(|flag| *flag == arg)?;
         let tail = &args[index + 1..];
-        let first_child_arg = tail.first()?;
-        if first_child_arg.starts_with('-') {
-            return None;
-        }
-        tail.iter()
-            .any(|candidate| candidate == ";" || candidate == "+")
-            .then_some(flag)
+        (!tail.first()?.starts_with('-')
+            && tail
+                .iter()
+                .any(|candidate| candidate == ";" || candidate == "+"))
+        .then_some(flag)
     })
 }
 
@@ -86,8 +211,10 @@ fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<S
                 .map(|script| format!("{display} {}", script));
         }
         if matches!(arg, "-m" | "--module") {
-            let module = args.get(index + 1).map(|value| value.as_str());
-            if module.is_some_and(is_safe_python_module_runner) {
+            if args
+                .get(index + 1)
+                .is_some_and(|module| is_safe_python_module_runner(module))
+            {
                 return None;
             }
             return Some(format!("{display} {arg}"));
@@ -248,6 +375,9 @@ fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
         if exact_or_inline_option_with_value(arg, &["-f"], &["--file"]) {
             return Some(format!("{display} -f"));
         }
+        if exact_or_inline_option_with_value(arg, &["-i"], &["--include"]) {
+            return Some(format!("{display} -i"));
+        }
         if exact_or_inline_option_with_value(arg, &["-F", "-v", "-W"], &[]) {
             index += if has_attached_option_value(arg) { 1 } else { 2 };
             continue;
@@ -261,7 +391,14 @@ fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
     None
 }
 
-pub(super) fn awk_next_argument_is_data(args: &[String], candidate: &str) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AwkArgumentRole {
+    Program,
+    Data,
+    Operand,
+}
+
+pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArgumentRole {
     let mut index = 0;
     let mut program_supplied = false;
     let mut options_ended = false;
@@ -279,7 +416,17 @@ pub(super) fn awk_next_argument_is_data(args: &[String], candidate: &str) -> boo
                 program_supplied = true;
                 index += 2;
             } else {
-                return false;
+                return AwkArgumentRole::Operand;
+            }
+            continue;
+        }
+        if !options_ended && exact_or_inline_option_with_value(arg, &["-i"], &["--include"]) {
+            if has_attached_option_value(arg) {
+                index += 1;
+            } else if index + 1 < args.len() {
+                index += 2;
+            } else {
+                return AwkArgumentRole::Operand;
             }
             continue;
         }
@@ -289,7 +436,7 @@ pub(super) fn awk_next_argument_is_data(args: &[String], candidate: &str) -> boo
             } else if index + 1 < args.len() {
                 index += 2;
             } else {
-                return true;
+                return AwkArgumentRole::Data;
             }
             continue;
         }
@@ -304,14 +451,280 @@ pub(super) fn awk_next_argument_is_data(args: &[String], candidate: &str) -> boo
     if exact_or_inline_option_with_value(candidate, &["-F", "-v", "-W"], &[])
         && has_attached_option_value(candidate)
     {
-        return true;
+        return AwkArgumentRole::Data;
     }
     if exact_or_inline_option_with_value(candidate, &["-f"], &["--file"])
         && has_attached_option_value(candidate)
     {
-        return false;
+        return AwkArgumentRole::Operand;
     }
-    !program_supplied || is_awk_assignment(candidate)
+    if is_awk_assignment(candidate) {
+        AwkArgumentRole::Data
+    } else if program_supplied {
+        AwkArgumentRole::Operand
+    } else {
+        AwkArgumentRole::Program
+    }
+}
+
+pub(super) fn awk_program_has_uninspectable_io(program: &str) -> bool {
+    // ponytail: fail closed on AWK's opaque I/O hooks; single-pipe bitwise-OR is
+    // also rejected unless a supported command demonstrates that it matters.
+    let tokens = awk_tokens(program);
+    if tokens.iter().enumerate().any(|(index, token)| match token {
+        AwkToken::Identifier("system" | "ARGV" | "ARGC") => true,
+        AwkToken::Symbol('|') => {
+            !matches!(
+                tokens.get(index.wrapping_sub(1)),
+                Some(AwkToken::Symbol('|'))
+            ) && !matches!(tokens.get(index + 1), Some(AwkToken::Symbol('|')))
+        }
+        _ => false,
+    }) {
+        return true;
+    }
+
+    awk_prints_to_file(&tokens)
+}
+
+fn awk_prints_to_file(tokens: &[AwkToken<'_>]) -> bool {
+    for (index, token) in tokens.iter().enumerate() {
+        if !matches!(token, AwkToken::Identifier("print" | "printf")) {
+            continue;
+        }
+        let mut parentheses = 0usize;
+        let mut brackets = 0usize;
+        for (candidate_index, candidate) in tokens.iter().enumerate().skip(index + 1) {
+            match candidate {
+                AwkToken::Symbol('(') => parentheses += 1,
+                AwkToken::Symbol(')') => parentheses = parentheses.saturating_sub(1),
+                AwkToken::Symbol('[') => brackets += 1,
+                AwkToken::Symbol(']') => brackets = brackets.saturating_sub(1),
+                AwkToken::Symbol(';' | '}') | AwkToken::Newline
+                    if parentheses == 0 && brackets == 0 =>
+                {
+                    break;
+                }
+                AwkToken::Symbol('>')
+                    if parentheses == 0
+                        && brackets == 0
+                        && !matches!(
+                            tokens.get(candidate_index + 1),
+                            Some(AwkToken::Symbol('='))
+                        ) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+// ponytail: inspect only getline file operands; regex text may be conservatively rejected.
+// Use a real AWK parser only if that false positive affects supported commands.
+pub(super) fn awk_getline_file_paths(program: &str) -> Option<Vec<String>> {
+    let tokens = awk_tokens(program);
+    let mut paths = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if *token != AwkToken::Identifier("getline") {
+            continue;
+        }
+        let Some(source_index) = awk_getline_file_source_index(&tokens, index) else {
+            continue;
+        };
+        let Some(AwkToken::StringLiteral(path, has_escapes)) = tokens.get(source_index) else {
+            return None;
+        };
+        if *has_escapes
+            || !matches!(
+                tokens.get(source_index + 1),
+                None | Some(
+                    AwkToken::Newline
+                        | AwkToken::Symbol(')')
+                        | AwkToken::Symbol('}')
+                        | AwkToken::Symbol(';')
+                )
+            )
+        {
+            return None;
+        }
+        if path.contains("://") {
+            return None;
+        }
+        paths.push(if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("./{path}")
+        });
+    }
+    Some(paths)
+}
+
+fn awk_getline_file_source_index(tokens: &[AwkToken<'_>], getline_index: usize) -> Option<usize> {
+    let mut cursor = getline_index + 1;
+    if matches!(tokens.get(cursor), Some(AwkToken::Symbol('<'))) {
+        return Some(cursor + 1);
+    }
+
+    match tokens.get(cursor) {
+        Some(AwkToken::Identifier(_)) => cursor += 1,
+        Some(AwkToken::Symbol('$')) => {
+            cursor += 1;
+            if matches!(tokens.get(cursor), Some(AwkToken::Symbol('('))) {
+                cursor = skip_awk_group(tokens, cursor, '(', ')')?;
+            } else if tokens.get(cursor).is_some() {
+                cursor += 1;
+            } else {
+                return None;
+            }
+        }
+        Some(AwkToken::Symbol('(')) => cursor = skip_awk_group(tokens, cursor, '(', ')')?,
+        _ => return None,
+    }
+
+    while matches!(tokens.get(cursor), Some(AwkToken::Symbol('['))) {
+        cursor = skip_awk_group(tokens, cursor, '[', ']')?;
+    }
+    matches!(tokens.get(cursor), Some(AwkToken::Symbol('<'))).then_some(cursor + 1)
+}
+
+fn skip_awk_group(tokens: &[AwkToken<'_>], start: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(start) {
+        match token {
+            AwkToken::Symbol(ch) if *ch == open => depth += 1,
+            AwkToken::Symbol(ch) if *ch == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AwkToken<'a> {
+    Identifier(&'a str),
+    Number(&'a str),
+    StringLiteral(&'a str, bool),
+    RegexLiteral,
+    Symbol(char),
+    Newline,
+}
+
+fn awk_tokens(source: &str) -> Vec<AwkToken<'_>> {
+    let chars = source.char_indices().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while let Some(&(start, ch)) = chars.get(index) {
+        if ch == '#' {
+            while let Some((_, comment_char)) = chars.get(index)
+                && *comment_char != '\n'
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if ch == '"' {
+            index += 1;
+            let content_start = chars.get(index).map_or(source.len(), |(offset, _)| *offset);
+            let mut content_end = source.len();
+            let mut has_escapes = false;
+            let mut escaped = false;
+            while let Some((string_offset, string_char)) = chars.get(index) {
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if *string_char == '\\' {
+                    has_escapes = true;
+                    escaped = true;
+                } else if *string_char == '"' {
+                    content_end = *string_offset;
+                    break;
+                }
+            }
+            tokens.push(AwkToken::StringLiteral(
+                &source[content_start..content_end],
+                has_escapes,
+            ));
+            continue;
+        }
+        if ch == '/' && awk_regex_can_start(&tokens) {
+            index = skip_awk_regex(&chars, index);
+            tokens.push(AwkToken::RegexLiteral);
+            continue;
+        }
+        if ch == '\n' {
+            tokens.push(AwkToken::Newline);
+            index += 1;
+            continue;
+        }
+        if ch.is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            index += 1;
+            while let Some((_, next)) = chars.get(index)
+                && (next.is_ascii_alphanumeric() || *next == '_')
+            {
+                index += 1;
+            }
+            let end = chars.get(index).map_or(source.len(), |(offset, _)| *offset);
+            tokens.push(AwkToken::Identifier(&source[start..end]));
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            index += 1;
+            while let Some((_, next)) = chars.get(index)
+                && (next.is_ascii_alphanumeric() || matches!(*next, '_' | '.'))
+            {
+                index += 1;
+            }
+            let end = chars.get(index).map_or(source.len(), |(offset, _)| *offset);
+            tokens.push(AwkToken::Number(&source[start..end]));
+            continue;
+        }
+        tokens.push(AwkToken::Symbol(ch));
+        index += 1;
+    }
+    tokens
+}
+
+fn awk_regex_can_start(tokens: &[AwkToken<'_>]) -> bool {
+    matches!(
+        tokens.last(),
+        None | Some(AwkToken::Newline)
+            | Some(AwkToken::Symbol(
+                '(' | '{' | ';' | ',' | '~' | '!' | '=' | '&' | '|' | ':' | '?' | '<' | '>'
+            ))
+    )
+}
+
+fn skip_awk_regex(chars: &[(usize, char)], start: usize) -> usize {
+    let mut index = start + 1;
+    let mut escaped = false;
+    let mut in_character_class = false;
+    while let Some((_, ch)) = chars.get(index) {
+        index += 1;
+        if escaped {
+            escaped = false;
+        } else if *ch == '\\' {
+            escaped = true;
+        } else if *ch == '[' {
+            in_character_class = true;
+        } else if *ch == ']' {
+            in_character_class = false;
+        } else if *ch == '/' && !in_character_class {
+            break;
+        }
+    }
+    index
 }
 
 fn is_awk_assignment(arg: &str) -> bool {

@@ -21,14 +21,24 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
     /// Resolve an Agent-visible absolute path or cwd-relative path.
     fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf>;
 
+    /// Resolve an explicit user directory change to its public namespace path.
+    fn resolve_directory(&self, _namespace_cwd: &Path, _path: &Path) -> Result<PathBuf> {
+        anyhow::bail!("Host adapter does not support standalone cd")
+    }
+
     /// Translate one native adapter path back into the Process namespace.
     fn visible_path(&self, host_path: &Path) -> PathBuf;
 
-    /// Redact native backing paths from text crossing back into Alan OS.
+    /// Project captured Host-native paths to Agent-visible paths.
     fn project_text(&self, text: &str) -> String;
 
     /// Return the Host-derived native sandbox for this Tool Process.
     fn sandbox(&self) -> Result<Sandbox>;
+
+    /// Return the Host-derived sandbox for a shell action at the shared cwd.
+    fn shell_sandbox(&self) -> Result<Sandbox> {
+        self.sandbox()
+    }
 }
 
 /// Explicit Process binding for Tool execution.
@@ -135,15 +145,25 @@ impl ToolContext {
         self.execution_adapter()?.sandbox()
     }
 
+    /// Create the Host sandbox scoped to the mount containing the shared cwd.
+    pub fn shell_sandbox(&self) -> Result<Sandbox> {
+        self.execution_adapter()?.shell_sandbox()
+    }
+
     /// Return the Host-selected native cwd without retaining it in engine state.
     pub fn cwd(&self) -> Result<PathBuf> {
-        self.execution_adapter()?.cwd()
+        let adapter = self.execution_adapter()?;
+        anyhow::ensure!(
+            adapter.namespace_cwd() == self.namespace_cwd,
+            "Process cwd is no longer authorized; choose an explicit directory"
+        );
+        adapter.cwd()
     }
 
     pub fn execution_adapter(&self) -> Result<Arc<dyn ToolExecutionAdapter>> {
         self.adapter
             .clone()
-            .context("Tool Process has no explicit Host execution adapter")
+            .context("No project directory is authorized; request directory access and choose an explicit directory")
     }
 
     /// Resolve a path relative to working directory
@@ -160,7 +180,7 @@ impl ToolContext {
         )
     }
 
-    /// Redact Host backing roots from native subprocess output.
+    /// Project captured Host-native paths to Agent-visible paths.
     pub fn project_text(&self, text: &str) -> String {
         self.adapter
             .as_ref()

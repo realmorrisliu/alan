@@ -123,7 +123,7 @@ where
         runtime
             .machine
             .set_confirmation_for_request(request_id.clone(), pending.clone());
-        super::ui_surfaces::paused(&runtime.agent_files).await?;
+        super::ui_surfaces::paused(&runtime.agent_files, &runtime.machine.input_broker()).await?;
         emit(Event::Yield {
             request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -213,6 +213,7 @@ where
     let tool_result = execute_tool_effect(
         runtime.tool_execution,
         &tool_call.name,
+        &tool_call.id,
         tool_arguments.clone(),
         cancel,
         tool_timeout_secs,
@@ -402,6 +403,7 @@ pub(super) async fn tool_payload_for_tape(
 pub(super) async fn execute_tool_effect(
     tools: NamespaceToolExecution,
     tool_name: &str,
+    call_id: &str,
     tool_arguments: Value,
     cancel: &CancellationToken,
     timeout_secs: usize,
@@ -412,6 +414,7 @@ pub(super) async fn execute_tool_effect(
     let tool = tools
         .run_action_with_cancel_and_timeout(
             tool_name,
+            Some(call_id),
             &executable,
             [arguments_doc],
             cancel,

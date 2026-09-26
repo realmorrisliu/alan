@@ -3,8 +3,8 @@
 use std::sync::atomic::Ordering;
 
 use alan_agent_protocol::{
-    ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
-    UiPlanSnapshot, UiThinkingSnapshot,
+    ContentPart, InputIntent, InputMode, Op, Submission, UiActivitySnapshot, UiEvent,
+    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord, parse_input_prefix,
 };
 use alan_ap::{Fid, OpenMode};
 use anyhow::{Context, Result, bail};
@@ -40,10 +40,21 @@ impl NamespaceAgentFiles {
 
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
         let message = self.read_next_input().await?;
-        Ok(Submission::new(Op::Input {
-            parts: vec![ContentPart::text(message)],
-            mode,
-        }))
+        if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
+            return record.into_submission().map_err(anyhow::Error::msg);
+        }
+
+        let (intent, body) = parse_input_prefix(&message);
+        if body.trim().is_empty() && intent != InputIntent::Agent {
+            bail!("missing content after input prefix");
+        }
+        Ok(Submission::with_intent(
+            Op::Input {
+                parts: vec![ContentPart::text(body)],
+                mode,
+            },
+            intent,
+        ))
     }
 
     pub async fn read_next_machine_control_submission(&self) -> Result<Option<Submission>> {
@@ -74,7 +85,7 @@ impl NamespaceAgentFiles {
             if let Some(command) = record.strip_prefix("ctl:") {
                 self.control_offset
                     .store(offset + consumed, Ordering::Relaxed);
-                if let Some(submission) = machine_control_submission(command) {
+                if let Some(submission) = machine_control_submission(command)? {
                     return Ok(Some(submission));
                 }
             }
@@ -131,20 +142,38 @@ impl NamespaceAgentFiles {
         write_agent_output(&client, &self.agent_path, response).await
     }
 
+    pub async fn write_submission_start(&self, submission_id: &str, input: &str) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        let mut writer = NamespaceTapeWriter::open(client, &self.agent_path).await?;
+        writer
+            .append_submission_record("user", input, Some(submission_id))
+            .await?;
+        writer.finish().await
+    }
+
     #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_tape_records(&client, &self.agent_path, [("user", input)]).await
     }
 
-    pub async fn write_turn_tape_state(&self, input: Option<&str>, response: &str) -> Result<()> {
+    pub async fn write_turn_tape_state(
+        &self,
+        submission_id: Option<&str>,
+        input: Option<&str>,
+        response: &str,
+    ) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
-        let mut records = Vec::new();
+        let mut writer = NamespaceTapeWriter::open(client, &self.agent_path).await?;
         if let Some(input) = input.filter(|value| !value.trim().is_empty()) {
-            records.push(("user", input));
+            writer
+                .append_submission_record("user", input, submission_id)
+                .await?;
         }
-        records.push(("assistant", response));
-        write_tape_records(&client, &self.agent_path, records).await
+        writer
+            .append_submission_record("assistant", response, submission_id)
+            .await?;
+        writer.finish().await
     }
 
     #[cfg(test)]
@@ -411,6 +440,8 @@ struct TapeRecordV1<'a> {
     kind: &'static str,
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    submission_id: Option<&'a str>,
 }
 
 /// A held GENERATING lease for `machine/tape`.
@@ -435,8 +466,18 @@ impl NamespaceTapeWriter {
         })
     }
 
+    #[cfg(test)]
     pub async fn append_record(&mut self, role: &str, content: &str) -> Result<()> {
-        let bytes = tape_record_bytes(role, content)?;
+        self.append_submission_record(role, content, None).await
+    }
+
+    async fn append_submission_record(
+        &mut self,
+        role: &str,
+        content: &str,
+        submission_id: Option<&str>,
+    ) -> Result<()> {
+        let bytes = tape_record_bytes_with_submission_id(role, content, submission_id)?;
         self.client
             .write_at(self.fid, 0, &bytes)
             .await
@@ -470,6 +511,7 @@ pub(super) async fn write_agent_output(
         .with_context(|| format!("write assistant output to {output_path}"))
 }
 
+#[cfg(test)]
 pub(super) async fn write_tape_records<'a>(
     client: &NamespaceClient,
     agent_path: &str,
@@ -495,12 +537,22 @@ async fn read_current_tape_checkpoint(
     Ok(checkpoint.trim().to_string())
 }
 
+#[cfg(test)]
 pub(super) fn tape_record_bytes(role: &str, content: &str) -> Result<Vec<u8>> {
+    tape_record_bytes_with_submission_id(role, content, None)
+}
+
+fn tape_record_bytes_with_submission_id(
+    role: &str,
+    content: &str,
+    submission_id: Option<&str>,
+) -> Result<Vec<u8>> {
     let record = TapeRecordV1 {
         version: 1,
         kind: "message",
         role,
         content,
+        submission_id,
     };
     let mut bytes = serde_json::to_vec(&record).context("serialize tape record")?;
     bytes.push(b'\n');
@@ -521,8 +573,23 @@ fn request_response_content_part(response: String) -> ContentPart {
     }
 }
 
-fn machine_control_submission(command: &str) -> Option<Submission> {
-    match command.trim() {
+fn machine_control_submission(command: &str) -> Result<Option<Submission>> {
+    let command = command.trim();
+    if command.starts_with("queue-v1") {
+        let words = command.split_whitespace().collect::<Vec<_>>();
+        let op = match words.as_slice() {
+            ["queue-v1", "continue"] => Op::ContinueQueue,
+            ["queue-v1", "discard"] => Op::DiscardQueue,
+            ["queue-v1", "interrupt", id] if uuid::Uuid::parse_str(id).is_ok() => {
+                Op::InterruptSubmission {
+                    submission_id: (*id).to_owned(),
+                }
+            }
+            _ => bail!("invalid queue-v1 control"),
+        };
+        return Ok(Some(Submission::new(op)));
+    }
+    Ok(match command {
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
         // Turn interrupt is agent-runtime control (stop the current turn,
@@ -532,7 +599,7 @@ fn machine_control_submission(command: &str) -> Option<Submission> {
         // through machine/ctl.
         "interrupt" => Some(Submission::new(Op::Interrupt)),
         _ => None,
-    }
+    })
 }
 
 async fn write_request_record(

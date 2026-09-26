@@ -14,13 +14,13 @@ fn test_push_outer_submission_inserts_before_existing_deferred_actions() {
     queues.push_outer_deferred(make_deferred_action_for_test());
     queues.push_outer_submission(second_submission);
 
+    let outer_queue = std::iter::from_fn(|| queues.pop_outer()).collect::<VecDeque<_>>();
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&outer_queue),
         vec!["submission", "submission", "deferred", "deferred"]
     );
 
-    let queued_submission_ids = queues
-        .outer_queue
+    let queued_submission_ids = outer_queue
         .iter()
         .filter_map(|item| match item {
             QueuedRuntimeItem::Submission(submission) => Some(submission.id.clone()),
@@ -49,12 +49,13 @@ async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_act
     let requeued = queues.requeue_active_turn_leftovers(&mut machine).await;
 
     assert_eq!(requeued, 1);
+    let outer_queue = std::iter::from_fn(|| queues.pop_outer()).collect::<VecDeque<_>>();
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&outer_queue),
         vec!["submission", "deferred"]
     );
 
-    match queues.outer_queue.front() {
+    match outer_queue.front() {
         Some(QueuedRuntimeItem::Submission(submission)) => {
             assert_eq!(submission.id, buffered_submission_id);
         }
@@ -529,5 +530,311 @@ async fn test_namespace_machine_ctl_drives_runtime_submission_without_api_submis
     .expect("namespace machine/ctl should drive rollback submission");
     assert_eq!(rollback_notice, "rolled back 1 turns");
 
+    controller.shutdown().await.unwrap();
+}
+
+struct QueueGateProvider {
+    calls: Arc<Mutex<usize>>,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl LlmProvider for QueueGateProvider {
+    async fn generate(&mut self, _request: GenerationRequest) -> Result<GenerationResponse> {
+        let first = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls == 1
+        };
+        if first {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        Ok(mock_generation_response("done"))
+    }
+
+    async fn chat(&mut self, _system: Option<&str>, _user: &str) -> Result<String> {
+        anyhow::bail!("unused chat path")
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<mpsc::Receiver<StreamChunk>> {
+        Ok(response_stream(self.generate(request).await?))
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "mock"
+    }
+}
+
+async fn wait_for_queue_activity(
+    shell: &alan_shell::Shell,
+    predicate: impl Fn(&alan_agent_protocol::UiActivitySnapshot) -> bool,
+) -> alan_agent_protocol::UiActivitySnapshot {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let bytes = shell.cat("/agent/1/machine/ui/activity").await.unwrap();
+            let activity = serde_json::from_slice(&bytes).unwrap();
+            if predicate(&activity) {
+                return activity;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("runtime did not publish the expected queue state")
+}
+
+#[tokio::test]
+async fn runtime_file_controls_keep_accepted_inputs_paused_until_continue_or_discard() {
+    use alan_agent_protocol::{InputIntent, UiActivityState, UiEvent, UserInputRecord};
+    for verb in ["continue", "discard"] {
+        let calls = Arc::new(Mutex::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(QueueGateProvider {
+                calls: calls.clone(),
+                entered: entered.clone(),
+                release: release.clone(),
+            }),
+        );
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+        let mut core = crate::Config::default();
+        core.memory.enabled = false;
+        core.streaming_mode = crate::config::StreamingMode::Off;
+        let capabilities = crate::provider_capabilities_for_config(&core);
+        let config = AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core),
+            ..AgentProcessConfig::default()
+        };
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let mut controller = spawn_with_namespace_environment(
+            config,
+            environment,
+            crate::skills::SkillHostCapabilities::default(),
+            capabilities,
+        )
+        .unwrap();
+        controller.wait_until_ready().await.unwrap();
+        let inputs = ["active", "second", "third"]
+            .map(|text| UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, text));
+        shell
+            .write("/agent/1/io/input", &inputs[0].encode_payload().unwrap())
+            .await
+            .unwrap();
+        if tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .is_err()
+        {
+            panic!(
+                "active generation never started: {}",
+                String::from_utf8_lossy(&shell.cat("/agent/1/machine/ui/events").await.unwrap())
+            );
+        }
+        for input in &inputs[1..] {
+            shell
+                .write("/agent/1/io/input", &input.encode_payload().unwrap())
+                .await
+                .unwrap();
+        }
+        let queued = wait_for_queue_activity(&shell, |a| a.pending_submissions.len() == 2).await;
+        assert_eq!(
+            queued
+                .pending_submissions
+                .iter()
+                .map(|s| s.submission_id.as_str())
+                .collect::<Vec<_>>(),
+            inputs[1..]
+                .iter()
+                .map(|s| s.submission_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        shell
+            .write(
+                "/agent/1/machine/ctl",
+                format!("queue-v1 interrupt {}", inputs[0].submission_id).as_bytes(),
+            )
+            .await
+            .unwrap();
+        wait_for_queue_activity(&shell, |a| {
+            a.queue_paused && a.active_submission.is_none() && a.state == UiActivityState::Idle
+        })
+        .await;
+        release.notify_one();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            1,
+            "paused inputs must not reach generation"
+        );
+        let before = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        assert!(!before.contains(&inputs[1].submission_id));
+        assert!(!before.contains(&inputs[2].submission_id));
+        shell
+            .write(
+                "/agent/1/machine/ctl",
+                format!("queue-v1 {verb}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        wait_for_queue_activity(&shell, |a| {
+            !a.queue_paused
+                && a.active_submission.is_none()
+                && a.pending_submissions.is_empty()
+                && a.state == UiActivityState::Idle
+        })
+        .await;
+        let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(events.lines().any(|line| matches!(serde_json::from_str::<UiEvent>(line).unwrap(), UiEvent::Error { submission_id: Some(id), .. } if id == inputs[0].submission_id)));
+        if verb == "continue" {
+            assert_eq!(*calls.lock().unwrap(), 3);
+            let ids = tape
+                .lines()
+                .filter_map(|line| {
+                    let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                    (record["role"] == "user")
+                        .then(|| record["submission_id"].as_str().unwrap().to_owned())
+                })
+                .collect::<Vec<_>>();
+            // A cancelled generation has no assistant response/Tape projection; its UI error
+            // above owns the result. Both later turns must project in accepted order.
+            assert_eq!(
+                ids,
+                inputs[1..]
+                    .iter()
+                    .map(|s| s.submission_id.clone())
+                    .collect::<Vec<_>>()
+            );
+        } else {
+            assert_eq!(*calls.lock().unwrap(), 1);
+            for input in &inputs[1..] {
+                assert!(!tape.contains(&input.submission_id));
+                assert!(events.lines().any(|line| matches!(serde_json::from_str::<UiEvent>(line).unwrap(), UiEvent::Error { submission_id: Some(id), .. } if id == input.submission_id)));
+            }
+        }
+        controller.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn recovered_runtime_waits_for_explicit_continue_and_does_not_replay_unknown_work() {
+    use alan_agent_protocol::{InputIntent, UiActivityState};
+    let store = TempDir::new().unwrap();
+    let stores = crate::AgentRuntimeStoreBindings {
+        rollouts: store.path().join("rollouts"),
+        checkpoints: store.path().join("checkpoints"),
+        cache: store.path().join("cache"),
+        tmp: store.path().join("tmp"),
+        metadata: store.path().join("metadata"),
+    };
+    for path in [
+        &stores.rollouts,
+        &stores.checkpoints,
+        &stores.cache,
+        &stores.tmp,
+        &stores.metadata,
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let mut previous = AgentMachine::new_with_recorder_options(
+        "/proc/old",
+        "model",
+        Some(&stores.rollouts),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let unknown_id = uuid::Uuid::new_v4().to_string();
+    previous.accept_submission(&unknown_id);
+    let pending = Submission::with_intent(
+        Op::Input {
+            parts: vec![ContentPart::text("recovered input")],
+            mode: InputMode::FollowUp,
+        },
+        InputIntent::Agent,
+    );
+    let pending_id = pending.id.clone();
+    previous.input_broker().checkpoint_cwd("/".into());
+    previous.input_broker().push_outer_submission(pending);
+    previous.input_broker().persist().await.unwrap();
+    let source = previous.rollout_path().unwrap().clone();
+    let provider = MockLlmProvider::new();
+    let probe = provider.clone();
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection("default", Box::new(provider));
+    let mut ns = alan_kernel::Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    ns.mount(
+        "/mnt/llm",
+        InProcessTransport::new(llmfs),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+    let shell = alan_shell::Shell::new(root.clone());
+    let mut core = crate::Config::default();
+    core.memory.enabled = false;
+    let capabilities = crate::provider_capabilities_for_config(&core);
+    let config = AgentProcessConfig {
+        agent_config: crate::AgentConfig::from(core),
+        store_bindings: Some(stores),
+        recovery_rollout_path: Some(source),
+        ..AgentProcessConfig::default()
+    };
+    let mut controller = spawn_with_namespace_environment(
+        config,
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        crate::skills::SkillHostCapabilities::default(),
+        capabilities,
+    )
+    .unwrap();
+    controller.wait_until_ready().await.unwrap();
+    let paused = wait_for_queue_activity(&shell, |a| {
+        a.queue_paused && a.pending_submissions.len() == 1
+    })
+    .await;
+    assert_eq!(paused.pending_submissions[0].submission_id, pending_id);
+    assert!(paused.active_submission.is_none());
+    assert!(probe.recorded_requests().is_empty());
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    assert!(events.contains(&unknown_id) && events.contains("outcome is unknown"));
+    shell
+        .write("/agent/1/machine/ctl", b"queue-v1 continue")
+        .await
+        .unwrap();
+    wait_for_queue_activity(&shell, |a| {
+        !a.queue_paused
+            && a.active_submission.is_none()
+            && a.pending_submissions.is_empty()
+            && a.state == UiActivityState::Idle
+    })
+    .await;
+    assert_eq!(probe.recorded_requests().len(), 1);
+    let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+    assert!(tape.contains(&pending_id));
+    assert!(!tape.contains(&unknown_id));
     controller.shutdown().await.unwrap();
 }

@@ -54,6 +54,37 @@ pub enum InputMode {
     NextTurn,
 }
 
+/// Explicit intent carried by one ordinary input submission.
+///
+/// `Agent` is eligible for future automatic routing; `ForceAgent` and
+/// `Command` bypass it. This is independent from [`InputMode`], which controls
+/// when the submission is scheduled.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InputIntent {
+    /// Unprefixed user input. Automatic classification is not currently active.
+    #[default]
+    Agent,
+    /// Explicit `:` prefix; always use Agent interpretation.
+    ForceAgent,
+    /// Explicit `!` prefix; run the exact command body through governed execution.
+    Command,
+}
+
+/// Split one leading explicit routing prefix from an input body.
+///
+/// Only the first byte is considered. Prefix-like characters inside the body
+/// are preserved, and the returned body is never recursively parsed.
+pub fn parse_input_prefix(input: &str) -> (InputIntent, &str) {
+    if let Some(body) = input.strip_prefix('!') {
+        (InputIntent::Command, body)
+    } else if let Some(body) = input.strip_prefix(':') {
+        (InputIntent::ForceAgent, body)
+    } else {
+        (InputIntent::Agent, input)
+    }
+}
+
 /// Status for a plan item in transport-level progress updates.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +139,13 @@ pub enum Op {
     /// Interrupt current execution.
     Interrupt,
 
+    /// Interrupt one accepted input and pause later queued work.
+    InterruptSubmission { submission_id: String },
+    /// Resume the explicitly paused input queue.
+    ContinueQueue,
+    /// Discard the explicitly paused input queue without running it.
+    DiscardQueue,
+
     /// Compact the current Agent Machine context with optional guidance.
     CompactWithOptions {
         /// Optional focus for the summary handoff, for example "preserve todos".
@@ -136,6 +174,9 @@ pub struct TurnContext {
 pub struct Submission {
     /// Unique submission ID
     pub id: String,
+    /// Explicit intent for ordinary input. Non-input operations ignore this field.
+    #[serde(default)]
+    pub intent: InputIntent,
     /// The operation being submitted
     pub op: Op,
 }
@@ -143,8 +184,14 @@ pub struct Submission {
 impl Submission {
     /// Create a new submission with a generated UUID
     pub fn new(op: Op) -> Self {
+        Self::with_intent(op, InputIntent::Agent)
+    }
+
+    /// Create a new submission with explicit input intent and a generated UUID.
+    pub fn with_intent(op: Op, intent: InputIntent) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            intent,
             op,
         }
     }
@@ -152,10 +199,87 @@ impl Submission {
     /// Create a new submission with a specific ID (useful for testing)
     #[cfg(test)]
     pub fn with_id(id: &str, op: Op) -> Self {
+        Self::with_id_and_intent(id, op, InputIntent::Agent)
+    }
+
+    /// Create a submission from a stable input-record ID.
+    pub fn with_id_and_intent(id: &str, op: Op, intent: InputIntent) -> Self {
         Self {
             id: id.to_string(),
+            intent,
             op,
         }
+    }
+}
+
+/// Versioned user-input record written to `/agent/<pid>/io/input`.
+///
+/// The namespace's outer length frame remains owned by AgentFS; this record
+/// carries cross-client identity, intent, and scheduling mode in its payload.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UserInputRecord {
+    /// Version of this length-framed user input record payload.
+    pub version: u8,
+    /// Stable UUID used to correlate this input with its Process-local result.
+    pub submission_id: String,
+    /// Explicit routing intent, kept separate from scheduling mode.
+    pub intent: InputIntent,
+    /// Runtime scheduling mode for the represented input.
+    pub mode: InputMode,
+    /// Exact submitted body after consuming at most one explicit prefix.
+    pub body: String,
+}
+
+const USER_INPUT_RECORD_MAGIC: &[u8] = b"alan-input-v1\n";
+
+impl UserInputRecord {
+    /// Create a version-1 input record with a generated submission UUID.
+    pub fn new(intent: InputIntent, mode: InputMode, body: impl Into<String>) -> Self {
+        Self {
+            version: 1,
+            submission_id: uuid::Uuid::new_v4().to_string(),
+            intent,
+            mode,
+            body: body.into(),
+        }
+    }
+
+    /// Encode the versioned record payload, excluding AgentFS's outer frame.
+    pub fn encode_payload(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let mut payload = USER_INPUT_RECORD_MAGIC.to_vec();
+        payload.extend(serde_json::to_vec(self)?);
+        Ok(payload)
+    }
+
+    /// Decode a versioned payload. `Ok(None)` means it is a legacy plain-text input.
+    pub fn decode_payload(payload: &[u8]) -> Result<Option<Self>, serde_json::Error> {
+        let Some(json) = payload.strip_prefix(USER_INPUT_RECORD_MAGIC) else {
+            return Ok(None);
+        };
+        serde_json::from_slice(json).map(Some)
+    }
+
+    /// Convert a validated record into the existing runtime submission shape.
+    pub fn into_submission(self) -> Result<Submission, &'static str> {
+        if self.version != 1 {
+            return Err("unsupported user input record version");
+        }
+        if uuid::Uuid::parse_str(&self.submission_id).is_err() {
+            return Err("user input submission_id must be a UUID");
+        }
+        if self.body.trim().is_empty() {
+            return Err("user input body is empty");
+        }
+
+        Ok(Submission::with_id_and_intent(
+            &self.submission_id,
+            Op::Input {
+                parts: vec![ContentPart::text(self.body)],
+                mode: self.mode,
+            },
+            self.intent,
+        ))
     }
 }
 
@@ -305,6 +429,23 @@ mod tests {
         let deserialized: Submission = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "test-id-123");
         assert!(matches!(deserialized.op, Op::Interrupt));
+    }
+
+    #[test]
+    fn explicit_input_prefix_is_consumed_once() {
+        assert_eq!(
+            parse_input_prefix("!git status"),
+            (InputIntent::Command, "git status")
+        );
+        assert_eq!(
+            parse_input_prefix(":!explain this text"),
+            (InputIntent::ForceAgent, "!explain this text")
+        );
+        assert_eq!(
+            parse_input_prefix("please inspect ! literally"),
+            (InputIntent::Agent, "please inspect ! literally")
+        );
+        assert_eq!(parse_input_prefix("!"), (InputIntent::Command, ""));
     }
 
     // ========================================================================

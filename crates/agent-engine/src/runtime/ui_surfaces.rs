@@ -1,4 +1,4 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use alan_agent_protocol::{
     CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot, UiActivitySnapshot, UiActivityState,
@@ -6,13 +6,32 @@ use alan_agent_protocol::{
 };
 use anyhow::Result;
 
-use super::transition::NamespaceAgentFiles;
+use super::{transition::NamespaceAgentFiles, turn_input::TurnInputBroker};
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+/// The Process pump is the only activity file writer. Transitions enqueue observations.
+pub(crate) async fn flush_activity(
+    namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+) -> Result<()> {
+    queue.persist().await?;
+    let mut last = namespace.read_ui_activity_snapshot().await?;
+    for activity in queue
+        .drain_activity_events()
+        .into_iter()
+        .chain(std::iter::once(queue.activity_snapshot()))
+    {
+        if activity == last {
+            continue;
+        }
+        namespace.write_ui_activity_snapshot(&activity).await?;
+        namespace
+            .append_ui_event(&UiEvent::Activity {
+                snapshot: activity.clone(),
+            })
+            .await?;
+        last = activity;
+    }
+    Ok(())
 }
 
 pub(crate) async fn initialize(namespace: &NamespaceAgentFiles) -> Result<()> {
@@ -30,12 +49,11 @@ pub(crate) async fn initialize(namespace: &NamespaceAgentFiles) -> Result<()> {
         .await
 }
 
-pub(crate) async fn turn_started(namespace: &NamespaceAgentFiles) -> Result<()> {
-    let activity = UiActivitySnapshot::running(now_unix_ms());
-    namespace.write_ui_activity_snapshot(&activity).await?;
-    namespace
-        .append_ui_event(&UiEvent::Activity { snapshot: activity })
-        .await?;
+pub(crate) async fn turn_started(
+    namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+) -> Result<()> {
+    queue.set_ui_activity(UiActivityState::Running);
     let thinking = UiThinkingSnapshot::idle();
     namespace.write_ui_thinking_snapshot(&thinking).await?;
     namespace
@@ -48,23 +66,33 @@ pub(crate) async fn turn_started(namespace: &NamespaceAgentFiles) -> Result<()> 
         .await
 }
 
-pub(crate) async fn turn_completed(namespace: &NamespaceAgentFiles, cancelled: bool) -> Result<()> {
+pub(crate) async fn turn_completed(
+    namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+    cancelled: bool,
+) -> Result<()> {
     if cancelled {
         plan_updated(namespace, None, Vec::new()).await?;
     }
-    let activity = UiActivitySnapshot::idle();
-    namespace.write_ui_activity_snapshot(&activity).await?;
-    namespace
-        .append_ui_event(&UiEvent::Activity { snapshot: activity })
-        .await
+    queue.set_ui_activity(UiActivityState::Idle);
+    Ok(())
 }
 
-pub(crate) async fn turn_failed(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
-    error_notice(namespace, message).await?;
-    turn_completed(namespace, false).await
+pub(crate) async fn turn_failed(
+    namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+    message: &str,
+    submission_id: Option<&str>,
+) -> Result<()> {
+    error_notice(namespace, message, submission_id).await?;
+    turn_completed(namespace, queue, false).await
 }
 
-pub(crate) async fn error_notice(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
+pub(crate) async fn error_notice(
+    namespace: &NamespaceAgentFiles,
+    message: &str,
+    submission_id: Option<&str>,
+) -> Result<()> {
     let notice = UiNoticeSnapshot::new(UiNoticeKind::Error, message);
     namespace.write_ui_notice_snapshot(&notice).await?;
     namespace
@@ -74,33 +102,32 @@ pub(crate) async fn error_notice(namespace: &NamespaceAgentFiles, message: &str)
         .append_ui_event(&UiEvent::Error {
             message: message.to_string(),
             recoverable: true,
+            submission_id: submission_id.map(str::to_owned),
         })
         .await
 }
 
-pub(crate) async fn paused(namespace: &NamespaceAgentFiles) -> Result<()> {
-    let activity = UiActivitySnapshot::paused(None);
-    namespace.write_ui_activity_snapshot(&activity).await?;
-    namespace
-        .append_ui_event(&UiEvent::Activity { snapshot: activity })
-        .await
+pub(crate) async fn paused(
+    _namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+) -> Result<()> {
+    queue.set_ui_activity(UiActivityState::Paused);
+    Ok(())
 }
 
-pub(crate) async fn resumed(namespace: &NamespaceAgentFiles) -> Result<()> {
-    let activity = UiActivitySnapshot::running(now_unix_ms());
-    namespace.write_ui_activity_snapshot(&activity).await?;
-    namespace
-        .append_ui_event(&UiEvent::Activity { snapshot: activity })
-        .await
+pub(crate) async fn resumed(
+    _namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+) -> Result<()> {
+    queue.set_ui_activity(UiActivityState::Running);
+    Ok(())
 }
 
-pub(crate) async fn heartbeat(namespace: &NamespaceAgentFiles) -> Result<()> {
-    if namespace.read_ui_activity_snapshot().await?.state != UiActivityState::Running {
-        return Ok(());
-    }
-    namespace
-        .write_ui_activity_snapshot(&UiActivitySnapshot::running(now_unix_ms()))
-        .await
+pub(crate) async fn heartbeat(
+    namespace: &NamespaceAgentFiles,
+    queue: &TurnInputBroker,
+) -> Result<()> {
+    flush_activity(namespace, queue).await
 }
 
 pub(crate) async fn plan_updated(
@@ -248,8 +275,9 @@ mod tests {
     #[tokio::test]
     async fn owners_write_snapshots_and_append_ui_events() {
         let (environment, shell) = agent_files();
+        let queue = TurnInputBroker::default();
         initialize(&environment).await.unwrap();
-        turn_started(&environment).await.unwrap();
+        turn_started(&environment, &queue).await.unwrap();
         thinking(&environment, "reasoning").await.unwrap();
         plan_updated(
             &environment,
@@ -263,8 +291,9 @@ mod tests {
         .await
         .unwrap();
         warning(&environment, "retrying").await.unwrap();
-        turn_completed(&environment, false).await.unwrap();
+        turn_completed(&environment, &queue, false).await.unwrap();
 
+        flush_activity(&environment, &queue).await.unwrap();
         let activity: Value =
             serde_json::from_slice(&shell.cat("/agent/1/machine/ui/activity").await.unwrap())
                 .unwrap();
@@ -310,6 +339,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_turn_clears_plan_snapshot() {
         let (environment, shell) = agent_files();
+        let queue = TurnInputBroker::default();
         initialize(&environment).await.unwrap();
         plan_updated(
             &environment,
@@ -322,7 +352,7 @@ mod tests {
         )
         .await
         .unwrap();
-        turn_completed(&environment, true).await.unwrap();
+        turn_completed(&environment, &queue, true).await.unwrap();
 
         let plan: Value =
             serde_json::from_slice(&shell.cat("/agent/1/machine/ui/plan").await.unwrap()).unwrap();
@@ -331,27 +361,81 @@ mod tests {
 
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
-        let (environment, _) = agent_files();
+        let (environment, shell) = agent_files();
+        let queue = TurnInputBroker::default();
         initialize(&environment).await.unwrap();
-        turn_started(&environment).await.unwrap();
-        turn_failed(&environment, "provider failed").await.unwrap();
+        turn_started(&environment, &queue).await.unwrap();
+        turn_failed(
+            &environment,
+            &queue,
+            "provider failed",
+            Some("failed-input"),
+        )
+        .await
+        .unwrap();
 
         let notice = environment.read_ui_notice_snapshot().await.unwrap();
         assert_eq!(notice.kind, UiNoticeKind::Error);
         assert_eq!(notice.message, "provider failed");
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(events.lines().any(|line| matches!(
+            serde_json::from_str::<UiEvent>(line).unwrap(),
+            UiEvent::Error { submission_id: Some(id), .. } if id == "failed-input"
+        )));
     }
 
     #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
         let (environment, _) = agent_files();
+        let queue = TurnInputBroker::default();
         initialize(&environment).await.unwrap();
-        paused(&environment).await.unwrap();
+        paused(&environment, &queue).await.unwrap();
 
-        heartbeat(&environment).await.unwrap();
+        heartbeat(&environment, &queue).await.unwrap();
 
         assert_eq!(
             environment.read_ui_activity_snapshot().await.unwrap().state,
             UiActivityState::Paused
         );
+    }
+    #[tokio::test]
+    async fn activity_publisher_preserves_queue_identity_and_start_time_across_heartbeat() {
+        let (files, shell) = agent_files();
+        let mut machine = crate::agent_machine::AgentMachine::new();
+        let queue = machine.input_broker();
+        initialize(&files).await.unwrap();
+        machine.accept_submission_identity(alan_agent_protocol::UiSubmission {
+            submission_id: "active".into(),
+            intent: alan_agent_protocol::InputIntent::ForceAgent,
+        });
+        turn_started(&files, &queue).await.unwrap();
+        flush_activity(&files, &queue).await.unwrap();
+        let running = files.read_ui_activity_snapshot().await.unwrap();
+        queue.push_outer_submission(alan_agent_protocol::Submission::with_id_and_intent(
+            "next",
+            alan_agent_protocol::Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("printf next")],
+                mode: alan_agent_protocol::InputMode::FollowUp,
+            },
+            alan_agent_protocol::InputIntent::Command,
+        ));
+        heartbeat(&files, &queue).await.unwrap();
+        let queued = files.read_ui_activity_snapshot().await.unwrap();
+        assert_eq!(queued.started_at_ms, running.started_at_ms);
+        assert_eq!(queued.active_submission, running.active_submission);
+        assert_eq!(queued.pending_submissions[0].submission_id, "next");
+        queue.interrupt("active").unwrap();
+        machine.finish_submission();
+        turn_completed(&files, &queue, true).await.unwrap();
+        flush_activity(&files, &queue).await.unwrap();
+        let paused = files.read_ui_activity_snapshot().await.unwrap();
+        assert!(paused.queue_paused);
+        assert!(paused.active_submission.is_none());
+        assert_eq!(paused.pending_submissions, queued.pending_submissions);
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        let last: UiEvent = serde_json::from_str(events.lines().last().unwrap()).unwrap();
+        assert_eq!(last, UiEvent::Activity { snapshot: paused });
     }
 }

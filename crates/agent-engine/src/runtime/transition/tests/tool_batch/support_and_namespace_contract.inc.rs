@@ -14,7 +14,9 @@
         Access, Credentials, ExecNamespaceManifest, ExecSpec, MountFs, Namespace, Pid, ProcFs,
         ProcessInvocation, ProcessOutcome, ProcessRunner,
     };
-    use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
+    use alan_llm::{
+        GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
+    };
     use alan_shell::Shell;
     use async_trait::async_trait;
     use std::collections::HashMap;

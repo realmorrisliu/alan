@@ -96,6 +96,56 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .unwrap()
         .expect("interrupt command should produce a submission");
     assert!(matches!(interrupt.op, Op::Interrupt));
+
+    let id = uuid::Uuid::new_v4().to_string();
+    shell
+        .write(
+            "/agent/1/machine/ctl",
+            format!("queue-v1 interrupt {id}").as_bytes(),
+        )
+        .await
+        .unwrap();
+    let target = agent_files
+        .read_next_machine_control_submission()
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(target.op, Op::InterruptSubmission { submission_id } if submission_id == id));
+    for (verb, discard) in [("continue", false), ("discard", true)] {
+        shell
+            .write(
+                "/agent/1/machine/ctl",
+                format!("queue-v1 {verb}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let control = agent_files
+            .read_next_machine_control_submission()
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(control.op, Op::DiscardQueue) == discard);
+        assert!(matches!(control.op, Op::ContinueQueue) != discard);
+    }
+    for malformed in ["queue-v1 interrupt not-a-uuid", "queue-v1 discard extra"] {
+        shell
+            .write("/agent/1/machine/ctl", malformed.as_bytes())
+            .await
+            .unwrap();
+        assert!(
+            agent_files
+                .read_next_machine_control_submission()
+                .await
+                .is_err()
+        );
+        assert!(
+            agent_files
+                .read_next_machine_control_submission()
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]
@@ -126,6 +176,74 @@ async fn input_frame_becomes_engine_input_submission() {
             assert_eq!(mode, InputMode::FollowUp);
             assert_eq!(parts, vec![ContentPart::text("continue from files")]);
         }
+        other => panic!("expected Op::Input, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn versioned_input_frame_preserves_id_intent_mode_and_exact_body() {
+    let agentfs = Arc::new(AgentFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let record = UserInputRecord::new(
+        InputIntent::Command,
+        InputMode::FollowUp,
+        "printf '%s\\n' '!literal'",
+    );
+    let expected_id = record.submission_id.clone();
+
+    shell
+        .write("/agent/1/io/input", &record.encode_payload().unwrap())
+        .await
+        .unwrap();
+
+    let submission = environment
+        .agent_files()
+        .read_next_input_submission(InputMode::NextTurn)
+        .await
+        .unwrap();
+
+    assert_eq!(submission.id, expected_id);
+    assert_eq!(submission.intent, InputIntent::Command);
+    match submission.op {
+        Op::Input { parts, mode } => {
+            assert_eq!(mode, InputMode::FollowUp);
+            assert_eq!(parts, vec![ContentPart::text("printf '%s\\n' '!literal'")]);
+        }
+        other => panic!("expected Op::Input, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn legacy_prefixed_input_is_parsed_once() {
+    let agentfs = Arc::new(AgentFs::new());
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+    shell.write("/agent/1/io/input", b":!text").await.unwrap();
+    let submission = environment
+        .agent_files()
+        .read_next_input_submission(InputMode::FollowUp)
+        .await
+        .unwrap();
+
+    assert_eq!(submission.intent, InputIntent::ForceAgent);
+    match submission.op {
+        Op::Input { parts, .. } => assert_eq!(parts, vec![ContentPart::text("!text")]),
         other => panic!("expected Op::Input, got {other:?}"),
     }
 }

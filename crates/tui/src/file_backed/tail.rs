@@ -1,6 +1,6 @@
 use super::{
-    StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
-    interrupt_stdio_task_if_active, stdio_task_snapshot,
+    StdioTaskCompletion, StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
+    interrupt_stdio_task_if_accepted, stdio_task_snapshot,
 };
 use alan_agent_protocol::UiActivitySnapshot;
 use anyhow::{Context, Result, anyhow, bail};
@@ -239,14 +239,12 @@ pub(super) async fn open_stdio_tail_attachment(
     bail!("Root Agent kept changing while opening one-shot AgentFS streams; retry")
 }
 
-pub(super) async fn open_stdio_tail_attachment_when_idle(
+pub(super) async fn prepare_stdio_tail_attachment(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
 ) -> Result<StdioTailAttachment> {
     for attempt in 0..ROOT_AGENT_ATTACH_ATTEMPTS {
-        if let Some(attachment) =
-            try_open_stdio_tail_attachment_when_idle(shell, root_agent_path).await?
-        {
+        if let Some(attachment) = try_prepare_stdio_tail_attachment(shell, root_agent_path).await? {
             return Ok(attachment);
         }
         if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
@@ -256,7 +254,7 @@ pub(super) async fn open_stdio_tail_attachment_when_idle(
     bail!("Root Agent kept changing while preparing one-shot attachment; retry")
 }
 
-async fn try_open_stdio_tail_attachment_when_idle(
+async fn try_prepare_stdio_tail_attachment(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
 ) -> Result<Option<StdioTailAttachment>> {
@@ -264,7 +262,7 @@ async fn try_open_stdio_tail_attachment_when_idle(
     if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
         return Ok(None);
     }
-    if let Err(error) = super::require_root_agent_idle(activity.state) {
+    if let Err(error) = super::require_input_identity(&activity) {
         return if current_root_agent_pid(shell).await? == Some(root_agent_pid) {
             Err(error)
         } else {
@@ -286,7 +284,7 @@ async fn try_open_stdio_tail_attachment_when_idle(
         let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
         return Ok(None);
     }
-    if let Err(error) = require_stdio_attachment_idle(shell, &attachment).await {
+    if let Err(error) = require_stdio_attachment_identity(shell, &attachment).await {
         let current_pid = current_root_agent_pid(shell).await;
         let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
         return match current_pid {
@@ -298,7 +296,7 @@ async fn try_open_stdio_tail_attachment_when_idle(
     Ok(Some(attachment))
 }
 
-async fn require_stdio_attachment_idle(
+async fn require_stdio_attachment_identity(
     shell: &alan_shell::Shell,
     attachment: &StdioTailAttachment,
 ) -> Result<()> {
@@ -306,7 +304,7 @@ async fn require_stdio_attachment_idle(
         super::file_surface::read_activity_snapshot(shell, &attachment.agent_process_path)
             .await
             .context("read Agent activity failed")?;
-    super::require_root_agent_idle(activity.state)?;
+    super::require_input_identity(&activity)?;
     if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
         bail!("Root Agent changed before the task could be submitted; retry")
     }
@@ -328,13 +326,13 @@ pub(super) enum StdioTaskRecovery {
     Unchanged,
     Unavailable,
     Reattached,
-    Complete(String),
+    Complete(StdioTaskCompletion),
 }
 
 pub(super) async fn recover_stdio_task_after_tail_close(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     snapshot: &mut StdioTaskSnapshot,
     interrupt_requested: bool,
@@ -368,7 +366,7 @@ pub(super) async fn recover_stdio_task_after_tail_close(
 pub(super) async fn recover_stdio_task_after_root_change(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     snapshot: &mut StdioTaskSnapshot,
     interrupt_requested: bool,
@@ -407,15 +405,21 @@ pub(super) async fn recover_stdio_task_after_root_change(
     *snapshot = recovered;
 
     if interrupt_requested
-        && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, snapshot).await?
+        && interrupt_stdio_task_if_accepted(
+            shell,
+            &attachment.agent_process_path,
+            &task.record.submission_id,
+            snapshot,
+        )
+        .await?
     {
-        bail!("Agent task interrupted");
+        bail!("Agent task interruption requested");
     }
     if snapshot.activity_state == Some(super::UiActivityState::Paused) {
         bail!("Agent task needs interactive input; attach with the TTY renderer");
     }
-    if let Some(answer) = finish_stdio_task_if_ready(snapshot)? {
-        return Ok(StdioTaskRecovery::Complete(answer));
+    if let Some(completion) = finish_stdio_task_if_ready(snapshot, task.record.intent)? {
+        return Ok(StdioTaskRecovery::Complete(completion));
     }
     if snapshot.activity_state == Some(super::UiActivityState::Idle) {
         bail!(

@@ -6,7 +6,7 @@ use alan_agent_protocol::{
 };
 use serde_json::{Map, Value};
 
-use crate::transcript_ui::{INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX};
+use crate::transcript_ui::{INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX};
 
 /// Options controlling how transcript cells render.
 #[derive(Debug, Clone, Copy)]
@@ -31,6 +31,7 @@ impl RenderOpts {
 pub enum HistoryCell {
     Rendered(Vec<String>),
     User(String),
+    Command(String),
     Assistant(String),
     /// Completed thinking, collapsed to a one-line summary by default.
     Thinking {
@@ -130,6 +131,7 @@ impl HistoryCell {
                 unreachable!("handled above")
             }
             Self::User(text) => return wrap_user_prompt(text, width),
+            Self::Command(text) => return wrap_command_prompt(text, width),
             Self::Assistant(text) => return wrap_plain_text(text, width),
             Self::Tool {
                 title,
@@ -325,8 +327,16 @@ fn wrap_with_prefix(prefix: &str, body: &str, width: usize) -> Vec<String> {
 }
 
 fn wrap_user_prompt(body: &str, width: usize) -> Vec<String> {
+    wrap_prompt(body, INLINE_PROMPT_PREFIX, width)
+}
+
+fn wrap_command_prompt(body: &str, width: usize) -> Vec<String> {
+    wrap_prompt(body, INLINE_COMMAND_PROMPT_PREFIX, width)
+}
+
+fn wrap_prompt(body: &str, prefix: &str, width: usize) -> Vec<String> {
     let body_width = width
-        .saturating_sub(unicode_width::UnicodeWidthStr::width(INLINE_PROMPT_PREFIX))
+        .saturating_sub(unicode_width::UnicodeWidthStr::width(prefix))
         .max(8);
     body.split('\n')
         .flat_map(|segment| {
@@ -340,9 +350,13 @@ fn wrap_user_prompt(body: &str, width: usize) -> Vec<String> {
         .enumerate()
         .map(|(idx, line)| {
             if idx == 0 {
-                format!("{INLINE_PROMPT_PREFIX}{line}")
+                format!("{prefix}{line}")
             } else {
-                format!("{INLINE_PROMPT_CONTINUATION}{line}")
+                format!(
+                    "{:width$}{line}",
+                    "",
+                    width = unicode_width::UnicodeWidthStr::width(prefix)
+                )
             }
         })
         .collect()

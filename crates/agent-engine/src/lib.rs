@@ -38,10 +38,10 @@ pub use agent_machine::{
 pub use alan_agent_protocol::{
     AGENT_DEFINITION_DESCRIPTOR as AGENT_DEFINITION_FD,
     AGENT_DEFINITION_DESCRIPTOR_NAME as AGENT_DEFINITION_DESCRIPTOR, AgentExecutablePause,
-    AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus, ContentPart,
-    MEMORY_STORE_DESCRIPTOR as MEMORY_STORE_FD, Op, SpawnHandle, SpawnHostMount, SpawnMountAccess,
-    SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind, UiNoticeSnapshot,
-    YieldKind,
+    AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus, ContentPart, InputIntent,
+    InputMode, MEMORY_STORE_DESCRIPTOR as MEMORY_STORE_FD, Op, SpawnHandle, SpawnHostMount,
+    SpawnMountAccess, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiEvent,
+    UiNoticeKind, UiNoticeSnapshot, UserInputRecord, YieldKind,
 };
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,

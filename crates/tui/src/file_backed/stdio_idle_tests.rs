@@ -16,9 +16,10 @@ async fn one_shot_start_waits_for_root_agent_pid_during_restart() {
     publish_root_agent_pid(&namespace, 0);
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(
+            async move { prepare_stdio_tail_attachment(&attach_shell, "/agent/root").await },
+        );
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup returned before a replacement PID was published"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
@@ -43,9 +44,10 @@ async fn one_shot_start_retries_a_stale_published_root_agent_pid() {
     assert!(agent_root.unbind_process(&old_pid).await);
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(
+            async move { prepare_stdio_tail_attachment(&attach_shell, "/agent/root").await },
+        );
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup failed on the detached but published PID"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
@@ -127,9 +129,10 @@ async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_betw
     );
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(
+            async move { prepare_stdio_tail_attachment(&attach_shell, "/agent/root").await },
+        );
     tokio::time::timeout(std::time::Duration::from_secs(2), read_reached)
         .await
         .unwrap()
@@ -181,7 +184,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         .await
         .unwrap();
 
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+    let mut attachment = prepare_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     close_stdio_tails(previous.tape_tail, previous.ui_tail)
@@ -200,10 +203,12 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
 
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let answer = {
+        let mut task = StdioTaskWaitContext::new("repeat me");
+        task.record.submission_id = "repeat-submission".to_string();
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("repeat me", attachment.tape_history.clone()),
+            task,
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -216,7 +221,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         shell
             .write(
                 &format!("{agent_path}/machine/tape"),
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\"}\n",
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\",\"submission_id\":\"repeat-submission\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\",\"submission_id\":\"repeat-submission\"}\n",
             )
             .await
             .unwrap();
@@ -236,7 +241,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         shell
             .write(
                 &format!("{agent_path}/machine/tape"),
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\"}\n",
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\",\"submission_id\":\"repeat-submission\"}\n",
             )
             .await
             .unwrap();
@@ -250,7 +255,10 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         wait_for_answer.await.unwrap()
     };
 
-    assert_eq!(answer, "new answer");
+    assert_eq!(
+        answer,
+        StdioTaskCompletion::AgentAnswer("new answer".to_string())
+    );
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
@@ -266,12 +274,13 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         alan_ap::InProcessTransport::new(tail_closer.clone()),
         alan_kernel::Access::ReadWrite,
     );
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+    let mut attachment = prepare_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let (answer, new_pid) = {
-        let task = StdioTaskWaitContext::new("restart after idle", attachment.tape_history.clone());
+        let mut task = StdioTaskWaitContext::new("restart after idle");
+        task.record.submission_id = "restart-submission".to_string();
         submit_stdio_task(&shell, &task, &attachment).await.unwrap();
         assert!(!input_tail.read(4096).await.unwrap().is_empty());
         input_tail.close().await.unwrap();
@@ -290,7 +299,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\",\"submission_id\":\"restart-submission\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\",\"submission_id\":\"restart-submission\"}\n",
         )
         .await
         .unwrap();
@@ -339,7 +348,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\"}\n",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\",\"submission_id\":\"restart-submission\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\",\"submission_id\":\"restart-submission\"}\n",
         )
         .await
         .unwrap();
@@ -358,7 +367,10 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
             .unwrap();
         (answer, new_pid)
     };
-    assert_eq!(answer, "recovered answer");
+    assert_eq!(
+        answer,
+        StdioTaskCompletion::AgentAnswer("recovered answer".to_string())
+    );
     assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
@@ -433,4 +445,58 @@ async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
     );
 
     watchers.stop().await;
+}
+
+#[tokio::test]
+async fn redirected_input_reports_pending_response_without_cancelling_work() {
+    let (shell, _root, _namespace, pid) = stdio_tests::live_root_agent().await;
+    let mut attachment = tail::open_stdio_tail_attachment(&shell, "/agent/root")
+        .await
+        .unwrap();
+    let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
+    let task = StdioTaskWaitContext::new("!needs approval");
+    let event = serde_json::json!({
+        "type":"activity", "snapshot":{
+            "version":2, "state":"paused",
+            "active_submission":{"submission_id":task.record.submission_id,"intent":"command"}
+        }
+    });
+    let result = {
+        let wait = wait_for_stdio_answer(
+            &shell,
+            "/agent/root",
+            task,
+            &mut attachment,
+            std::future::pending::<anyhow::Result<()>>(),
+        );
+        tokio::pin!(wait);
+        tokio::select! {
+            result = &mut wait => panic!("returned before admission: {result:?}"),
+            input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
+        }
+        shell
+            .write(
+                "/agent/root/machine/ui/events",
+                format!("{event}\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), wait)
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Agent task needs interactive input; attach with the TTY renderer"
+    );
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap())
+            .unwrap()
+            .trim(),
+        "running"
+    );
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
+    input_tail.close().await.unwrap();
 }

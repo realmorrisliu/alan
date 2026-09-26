@@ -47,8 +47,32 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
 
 fn live_region_lines(app: &FileBackedApp) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
+    if let Some(cwd) = &app.activity.cwd {
+        lines.push(Line::styled(
+            format!("· directory: {cwd}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     if let Some(label) = app.activity_label() {
         lines.push(activity_line(app, label));
+    }
+    let queued = app.activity.pending_submissions.len();
+    let queue_label = if app.activity.queue_paused {
+        let action = if app.activity.active_submission.is_some() {
+            "waiting for active input to settle"
+        } else if app.pending_yield.is_some() || app.form.is_some() {
+            "answer the pending request first"
+        } else {
+            "/continue to run · /discard to remove"
+        };
+        Some(format!("· queue paused · {queued} pending · {action}"))
+    } else if queued > 0 {
+        Some(format!("· {queued} queued"))
+    } else {
+        None
+    };
+    if let Some(label) = queue_label {
+        lines.push(Line::styled(label, Style::default().fg(Color::Yellow)));
     }
     if let Some(notice) = &app.notice {
         lines.push(Line::styled(
@@ -272,4 +296,41 @@ fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
             Style::default().fg(Color::DarkGray),
         ),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alan_agent_protocol::{InputIntent, UiSubmission};
+
+    #[test]
+    fn queue_state_stays_visible_and_only_offers_controls_after_the_active_input_settles() {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        let input = UiSubmission {
+            submission_id: "input".into(),
+            intent: InputIntent::Command,
+        };
+        app.activity.pending_submissions.push(input.clone());
+        let visible = |app: &FileBackedApp| {
+            live_region_lines(app)
+                .0
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(visible(&app).contains("1 queued"));
+        app.activity.queue_paused = true;
+        app.activity.active_submission = Some(input);
+        let settling = visible(&app);
+        assert!(settling.contains("queue paused · 1 pending · waiting for active input to settle"));
+        assert!(!settling.contains("/continue"));
+        app.activity.active_submission = None;
+        let paused = visible(&app);
+        assert!(paused.contains("/continue to run · /discard to remove"));
+        app.activity.pending_submissions.clear();
+        assert!(visible(&app).contains("queue paused · 0 pending"));
+        app.activity.queue_paused = false;
+        assert!(!visible(&app).contains("queue"));
+    }
 }

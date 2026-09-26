@@ -285,13 +285,6 @@ impl SupervisorRuntime {
             .map(|(name, active)| (name.clone(), *active))
             .collect::<Vec<_>>();
         for (name, active) in active {
-            if name == "root-agent"
-                && self.root.as_ref().is_none_or(RootAgentProcess::is_finished)
-                && self.procfs.try_observe_process_lifecycle(active.pid)
-                    == Some((Status::Running, None))
-            {
-                self.procfs.record_exit(active.pid, 0).await;
-            }
             if let Some((Status::Exited, exit_code)) =
                 self.procfs.try_observe_process_lifecycle(active.pid)
             {

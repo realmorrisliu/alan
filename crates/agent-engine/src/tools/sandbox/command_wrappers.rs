@@ -1,14 +1,123 @@
 use super::command_interpreters::{
-    leading_eval_flag, opaque_command_dispatcher_display, opaque_script_interpreter_display,
+    AwkArgumentRole, awk_next_argument_role, awk_program_has_uninspectable_io, leading_eval_flag,
+    opaque_command_dispatcher_display, opaque_script_interpreter_display,
 };
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
 use anyhow::{Result, anyhow};
-use std::path::Path;
+use std::{ffi::OsString, path::Path};
+
+use super::path_literals::lexically_normalize_path;
+use super::sandbox_spec::SandboxHostMount;
 
 pub(super) fn validate_nested_command_evaluators(
     commands: &[Vec<String>],
     backend_name: &str,
 ) -> Result<()> {
+    validate_nested_command_evaluators_inner(commands, backend_name, false)
+}
+
+pub(super) fn validate_protected_only_command_evaluators(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    cwd: &Path,
+    host_mounts: &[SandboxHostMount],
+) -> Result<()> {
+    validate_mount_local_executables(commands, backend_name, cwd, host_mounts)?;
+    validate_nested_command_evaluators_inner(commands, backend_name, true)
+}
+
+fn validate_mount_local_executables(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    cwd: &Path,
+    host_mounts: &[SandboxHostMount],
+) -> Result<()> {
+    // ponytail: catches direct project programs; indirect code runners require kernel read
+    // confinement.
+    let mut search_paths = std::env::var_os("PATH").into_iter().collect::<Vec<_>>();
+    // Sequential shell assignments and exports persist, but this path parser does not evaluate
+    // that shell state; conservatively consider every literal PATH assignment in this submission.
+    search_paths.extend(
+        commands
+            .iter()
+            .flatten()
+            .filter_map(|word| word.strip_prefix("PATH=").map(OsString::from)),
+    );
+    for words in commands {
+        let Some(view) = nested_evaluator_view(words) else {
+            continue;
+        };
+        let executable = Path::new(view.program);
+        let executes_from_mount = if view.program.contains(std::path::MAIN_SEPARATOR) {
+            executable_path_is_in_mount(executable, cwd, host_mounts)
+        } else {
+            search_paths.iter().any(|search_path| {
+                std::env::split_paths(search_path).any(|directory| {
+                    let directory = if directory.is_absolute() {
+                        directory
+                    } else {
+                        cwd.join(directory)
+                    };
+                    executable_path_is_in_mount(&directory.join(executable), cwd, host_mounts)
+                })
+            })
+        };
+        if executes_from_mount {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects mount-local executables in ProtectedOnly mode because their file reads cannot be validated against Host Mounts",
+                backend_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn executable_path_is_in_mount(
+    executable: &Path,
+    cwd: &Path,
+    host_mounts: &[SandboxHostMount],
+) -> bool {
+    let candidate = if executable.is_absolute() {
+        executable.to_path_buf()
+    } else {
+        cwd.join(executable)
+    };
+    if !is_executable_file(&candidate) {
+        return false;
+    }
+    let lexical_candidate = lexically_normalize_path(&candidate);
+    host_mounts.iter().any(|mount| {
+        let lexical_root = lexically_normalize_path(&mount.host_path);
+        lexical_candidate.starts_with(&lexical_root)
+            || std::fs::canonicalize(&candidate)
+                .is_ok_and(|canonical| canonical.starts_with(&mount.host_path))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn validate_nested_command_evaluators_inner(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    allow_inspectable_shell_and_awk: bool,
+) -> Result<()> {
+    validate_opaque_command_dispatchers(commands, backend_name, allow_inspectable_shell_and_awk)?;
     for words in commands {
         let Some(view) = nested_evaluator_view(words) else {
             continue;
@@ -27,14 +136,30 @@ pub(super) fn validate_nested_command_evaluators(
                 view.display
             ));
         }
-        if let Some(dispatcher) =
-            opaque_command_dispatcher_display(&view.display, view.command, view.args)
+        if allow_inspectable_shell_and_awk && has_uninspectable_path_input(view.command, view.args)
         {
             return Err(anyhow!(
-                "Sandbox backend {} rejects opaque command dispatchers like {} because child command paths cannot be validated safely",
-                backend_name,
-                dispatcher
+                "Sandbox backend {} rejects commands with uninspectable path-bearing input because those paths cannot be validated against Host Mounts",
+                backend_name
             ));
+        }
+        if allow_inspectable_shell_and_awk && shell_wrapper_inline_script(words).is_some() {
+            continue;
+        }
+        if allow_inspectable_shell_and_awk
+            && matches!(view.command, "awk" | "gawk" | "mawk" | "nawk")
+        {
+            if let Some(program) = view.args.iter().enumerate().find_map(|(index, candidate)| {
+                (awk_next_argument_role(&view.args[..index], candidate) == AwkArgumentRole::Program)
+                    .then_some(candidate.as_str())
+            }) && awk_program_has_uninspectable_io(program)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects AWK programs with uninspectable file or command I/O",
+                    backend_name
+                ));
+            }
+            continue;
         }
         if let Some(flag) = leading_eval_flag(view.command, view.args) {
             return Err(anyhow!(
@@ -51,6 +176,192 @@ pub(super) fn validate_nested_command_evaluators(
                 "Sandbox backend {} rejects opaque script interpreters like {} because script bodies cannot be validated safely",
                 backend_name,
                 interpreter
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn has_uninspectable_path_input(command: &str, args: &[String]) -> bool {
+    match command {
+        // Makefiles (including the implicit default Makefile) can run arbitrary recipes.
+        "make" | "gmake" | "bmake" => true,
+        "tar" | "gtar" | "bsdtar" => args
+            .iter()
+            .any(|arg| exact_or_inline_option_with_value(arg, &["-T"], &["--files-from"])),
+        "zip" => args
+            .iter()
+            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('@')),
+        "cpio" => args.first().is_some_and(|arg| {
+            arg == "--create"
+                || arg == "--pass-through"
+                || (arg.starts_with('-')
+                    && !arg.starts_with("--")
+                    && arg[1..].chars().any(|option| matches!(option, 'o' | 'p')))
+        }),
+        "pax" => pax_reads_file_list_from_stdin(args),
+        // Curl URLs and configs can dispatch local reads the path validator cannot see.
+        "curl" => args.iter().any(|arg| {
+            exact_or_inline_option_with_value(arg, &["-K"], &["--config"])
+                || curl_file_url_argument(arg)
+        }),
+        // Sed scripts can hide path reads in the r command.
+        "sed" => args
+            .iter()
+            .any(|arg| exact_or_inline_option_with_value(arg, &["-f"], &["--file"])),
+        _ => false,
+    }
+}
+
+fn curl_file_url_argument(argument: &str) -> bool {
+    let value = argument.strip_prefix("--url=").unwrap_or(argument);
+    value
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_uninspectable_path_input;
+
+    #[test]
+    fn curl_local_file_urls_are_rejected_without_blocking_network_urls() {
+        for argument in ["file:///etc/passwd", "--url=FILE:///etc/passwd"] {
+            assert!(has_uninspectable_path_input(
+                "curl",
+                &[argument.to_string()]
+            ));
+        }
+        assert!(!has_uninspectable_path_input(
+            "curl",
+            &["https://example.test".to_string()]
+        ));
+    }
+}
+
+fn pax_reads_file_list_from_stdin(args: &[String]) -> bool {
+    let mut args = args.iter().peekable();
+    let mut write_mode = false;
+    let mut read_mode = false;
+    let mut path_operands = 0;
+
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            path_operands += args.count();
+            break;
+        }
+        let Some(options) = arg.strip_prefix('-') else {
+            path_operands += 1;
+            continue;
+        };
+        if options.is_empty() {
+            path_operands += 1;
+            continue;
+        }
+
+        for (index, option) in options.char_indices() {
+            if option == 'r' {
+                read_mode = true;
+            }
+            if option == 'w' {
+                write_mode = true;
+            }
+            if matches!(
+                option,
+                'b' | 'f' | 'o' | 'p' | 's' | 'x' | 'B' | 'E' | 'G' | 'U' | 'T'
+            ) {
+                let has_attached_value = index + option.len_utf8() < options.len();
+                let optional_value = option == 'T';
+                if !has_attached_value
+                    && (!optional_value || args.peek().is_some_and(|next| !next.starts_with('-')))
+                {
+                    args.next();
+                }
+                break;
+            }
+        }
+    }
+
+    write_mode
+        && if read_mode {
+            // Copy mode reserves the final operand for its destination directory.
+            path_operands <= 1
+        } else {
+            path_operands == 0
+        }
+}
+
+pub(super) fn validate_opaque_command_dispatchers(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    reject_project_code_dispatchers: bool,
+) -> Result<()> {
+    for words in commands {
+        if reject_project_code_dispatchers
+            && words.iter().any(|word| {
+                word.split_once('=')
+                    .map_or(word.as_str(), |(name, _)| name)
+                    .starts_with("GIT_CONFIG_")
+            })
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects Git config environment overrides in ProtectedOnly mode",
+                backend_name
+            ));
+        }
+        let Some(view) = nested_evaluator_view(words) else {
+            continue;
+        };
+        if reject_project_code_dispatchers
+            && view.clears_git_config
+            && (view.command == "git" || shell_wrapper_inline_script(words).is_some())
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects command wrappers that can clear Git config environment overrides in ProtectedOnly mode",
+                backend_name
+            ));
+        }
+        if let Some(dispatcher) = opaque_command_dispatcher_display(
+            &view.display,
+            view.command,
+            view.args,
+            reject_project_code_dispatchers,
+        ) {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects opaque command dispatchers like {} because child command paths cannot be validated safely",
+                backend_name,
+                dispatcher
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_opaque_awk_script_files(
+    commands: &[Vec<String>],
+    backend_name: &str,
+) -> Result<()> {
+    for words in commands {
+        let Some(view) = nested_evaluator_view(words) else {
+            continue;
+        };
+        if !matches!(view.command, "awk" | "gawk" | "mawk" | "nawk") {
+            continue;
+        }
+        if let Some(script) =
+            opaque_script_interpreter_display(&view.display, view.command, view.args).filter(
+                |script| {
+                    script.ends_with(" -f")
+                        || script.ends_with(" --file")
+                        || script.ends_with(" -i")
+                        || script.ends_with(" --include")
+                },
+            )
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects opaque AWK script files like {} because their file reads cannot be validated against host_mount",
+                backend_name,
+                script
             ));
         }
     }
@@ -124,13 +435,16 @@ fn command_basename(command: &str) -> &str {
 struct NestedEvaluatorView<'a> {
     display: String,
     command: &'a str,
+    program: &'a str,
     args: &'a [String],
     opaque_wrapper_display: Option<String>,
+    clears_git_config: bool,
 }
 
 fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     let mut command_index = next_command_offset(words)?;
     let mut display = command_basename(&words[command_index]).to_string();
+    let mut clears_git_config = false;
 
     loop {
         let command = command_basename(&words[command_index]);
@@ -140,8 +454,10 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
                 return Some(NestedEvaluatorView {
                     display: display.clone(),
                     command,
+                    program: &words[command_index],
                     args,
                     opaque_wrapper_display: Some(format!("{display} {flag}")),
+                    clears_git_config,
                 });
             }
             env_command_offset(args)
@@ -151,15 +467,18 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
             None
         };
 
-        let Some(next_relative_offset) = next_offset else {
+        let Some((next_relative_offset, clears)) = next_offset else {
             return Some(NestedEvaluatorView {
                 display,
                 command,
+                program: &words[command_index],
                 args,
                 opaque_wrapper_display: None,
+                clears_git_config,
             });
         };
 
+        clears_git_config |= clears;
         command_index += 1 + next_relative_offset;
         display.push(' ');
         display.push_str(command_basename(&words[command_index]));
@@ -183,8 +502,9 @@ fn next_command_offset(words: &[String]) -> Option<usize> {
     None
 }
 
-fn env_command_offset(args: &[String]) -> Option<usize> {
+fn env_command_offset(args: &[String]) -> Option<(usize, bool)> {
     let mut index = 0;
+    let mut clears_git_config = false;
     while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
         if arg == "--" {
             index += 1;
@@ -194,6 +514,8 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
             index += 1;
             continue;
         }
+        clears_git_config |=
+            env_option_clears_git_config(arg, args.get(index + 1).map(String::as_str));
         match env_option_behavior(arg) {
             Some(
                 EnvOptionBehavior::Passthrough
@@ -213,19 +535,53 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
     }
 
     args.get(index)?;
-    Some(index)
+    Some((index, clears_git_config))
 }
 
-fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<usize> {
+fn env_option_clears_git_config(arg: &str, next_arg: Option<&str>) -> bool {
+    if matches!(arg, "--ignore-environment" | "-") {
+        return true;
+    }
+    if arg == "--unset" {
+        return next_arg.is_some_and(|name| name.starts_with("GIT_CONFIG_"));
+    }
+    if let Some(name) = arg.strip_prefix("--unset=") {
+        return name.starts_with("GIT_CONFIG_");
+    }
+
+    let Some(options) = arg.strip_prefix('-').filter(|_| !arg.starts_with("--")) else {
+        return false;
+    };
+    for (index, option) in options.char_indices() {
+        match option {
+            'i' => return true,
+            'u' => {
+                let attached_name = &options[index + option.len_utf8()..];
+                return if attached_name.is_empty() {
+                    next_arg.is_some_and(|name| name.starts_with("GIT_CONFIG_"))
+                } else {
+                    attached_name.starts_with("GIT_CONFIG_")
+                };
+            }
+            // These options consume the remainder of this token or the next one;
+            // it is an operand, not another environment option.
+            'C' | 'S' => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<(usize, bool)> {
     match command {
-        "command" => command_wrapper_offset(args),
+        "command" => command_wrapper_offset(args).map(|offset| (offset, false)),
         "exec" => exec_wrapper_offset(args),
-        "builtin" => builtin_wrapper_offset(args),
-        "nice" => nice_wrapper_offset(args),
-        "nohup" => nohup_wrapper_offset(args),
-        "timeout" => timeout_wrapper_offset(args),
-        "stdbuf" => stdbuf_wrapper_offset(args),
-        "setsid" => setsid_wrapper_offset(args),
+        "builtin" => builtin_wrapper_offset(args).map(|offset| (offset, false)),
+        "nice" => nice_wrapper_offset(args).map(|offset| (offset, false)),
+        "nohup" => nohup_wrapper_offset(args).map(|offset| (offset, false)),
+        "timeout" => timeout_wrapper_offset(args).map(|offset| (offset, false)),
+        "stdbuf" => stdbuf_wrapper_offset(args).map(|offset| (offset, false)),
+        "setsid" => setsid_wrapper_offset(args).map(|offset| (offset, false)),
         _ => None,
     }
 }
@@ -265,8 +621,9 @@ fn builtin_wrapper_offset(args: &[String]) -> Option<usize> {
     Some(index)
 }
 
-fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
+fn exec_wrapper_offset(args: &[String]) -> Option<(usize, bool)> {
     let mut index = 0;
+    let mut clears_environment = false;
     while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
         if arg == "--" {
             index += 1;
@@ -277,6 +634,9 @@ fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
             continue;
         }
         if has_inline_exec_argv0(arg) || is_exec_wrapper_flag(arg) {
+            clears_environment |= arg
+                .strip_prefix('-')
+                .is_some_and(|flags| flags.contains('c'));
             index += 1;
             continue;
         }
@@ -284,7 +644,7 @@ fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
     }
 
     args.get(index)?;
-    Some(index)
+    Some((index, clears_environment))
 }
 
 fn nice_wrapper_offset(args: &[String]) -> Option<usize> {
@@ -532,6 +892,9 @@ fn env_option_behavior(arg: &str) -> Option<EnvOptionBehavior> {
 fn env_short_option_behavior(arg: &str) -> Option<EnvOptionBehavior> {
     if arg.starts_with("--") {
         return None;
+    }
+    if arg == "-" {
+        return Some(EnvOptionBehavior::Passthrough);
     }
     let rest = arg.strip_prefix('-')?;
     if rest.is_empty() {

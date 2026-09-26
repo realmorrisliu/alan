@@ -115,6 +115,7 @@ async fn test_run_turn_keeps_truthful_network_failure_explanation() {
             name: "network_probe".to_string(),
             arguments: json!({}),
         }],
+        submission_id: None,
     });
     state.machine.add_tool_message(
         "call_network",
@@ -229,6 +230,7 @@ async fn test_run_turn_recovers_network_claim_after_non_network_timeout() {
             name: "local_probe".to_string(),
             arguments: json!({}),
         }],
+        submission_id: None,
     });
     state.machine.add_tool_message(
         "call_local",
@@ -324,6 +326,7 @@ async fn test_run_turn_resume_turn_with_steer_keeps_truthful_network_failure_exp
             name: "network_probe".to_string(),
             arguments: json!({}),
         }],
+        submission_id: None,
     });
     state.machine.add_tool_message(
         "call_network",
@@ -425,6 +428,7 @@ async fn test_run_turn_new_turn_ignores_prior_failures_without_completed_assista
             name: "network_probe".to_string(),
             arguments: json!({}),
         }],
+        submission_id: None,
     });
     state.machine.add_tool_message(
         "call_network",

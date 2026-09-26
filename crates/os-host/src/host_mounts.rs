@@ -18,6 +18,8 @@ use alan_service_manager::{
 };
 use anyhow::{Context, Result};
 
+mod path_projection;
+
 /// Native Host adapter. This is the only component that turns a raw Host path
 /// into a hostfs tree and native Tool sandbox authority.
 #[derive(Debug, Default)]
@@ -52,12 +54,169 @@ struct NativeToolMount {
     access: HostMountAccess,
 }
 
+impl NativeToolMount {
+    fn sandbox_host_mount(&self) -> SandboxHostMount {
+        SandboxHostMount {
+            namespace_path: self.namespace_path.clone(),
+            host_path: self.host_path.clone(),
+            access: match self.access {
+                HostMountAccess::ReadOnly => ReifiedMountAccess::ReadOnly,
+                HostMountAccess::ReadWrite => ReifiedMountAccess::ReadWrite,
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 struct NativeToolExecutionAdapter {
     mounts: Vec<NativeToolMount>,
     namespace_cwd: PathBuf,
     cwd: PathBuf,
     sandbox: Sandbox,
+    shell_sandbox: Sandbox,
+}
+
+impl NativeToolExecutionAdapter {
+    fn resolve_namespace_directory(
+        &self,
+        mount: &NativeToolMount,
+        namespace_path: &Path,
+    ) -> Result<PathBuf> {
+        let suffix = namespace_path
+            .strip_prefix(&mount.namespace_path)
+            .expect("selected Host Mount is a namespace prefix");
+        let host_path = dunce::canonicalize(mount.host_path.join(suffix))
+            .with_context(|| format!("cannot resolve directory {}", namespace_path.display()))?;
+        anyhow::ensure!(
+            host_path.is_dir(),
+            "{} is not a directory",
+            namespace_path.display()
+        );
+        anyhow::ensure!(
+            host_path.starts_with(&mount.host_path),
+            "directory resolves outside delegated Host Mount {}",
+            mount.namespace_path.display()
+        );
+        let suffix = host_path
+            .strip_prefix(&mount.host_path)
+            .expect("checked Host Mount containment");
+        Ok(mount.namespace_path.join(suffix))
+    }
+}
+
+fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String {
+    let mut projected = String::with_capacity(text.len());
+    let mut copied_through = 0;
+    for (start, _) in text.match_indices(prefix) {
+        let end = start + prefix.len();
+        let suffix = strip_leading_terminal_sequences(&text[end..]);
+        let emphasized = path_projection::is_underscore_emphasis_path(text, start, end);
+        let boundary_before = is_path_start(text, start) || emphasized;
+        let boundary_after = is_path_end(suffix) || emphasized;
+        if boundary_before && boundary_after {
+            projected.push_str(&text[copied_through..start]);
+            projected.push_str(replacement);
+            copied_through = end;
+        }
+    }
+    projected.push_str(&text[copied_through..]);
+    projected
+}
+
+fn is_path_end(suffix: &str) -> bool {
+    let after = suffix.chars().next();
+    after.is_none_or(|ch| {
+        ch.is_whitespace()
+            || ch == std::path::MAIN_SEPARATOR
+            || matches!(
+                ch,
+                ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*' | '?' | '#'
+            )
+    }) || is_terminal_sentence_punctuation(suffix, 0)
+}
+
+fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
+    let mut suffix = text[start..].chars();
+    matches!(suffix.next(), Some('.' | '!' | '?'))
+        && suffix.next().is_none_or(|ch| {
+            ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | ')' | ']' | '}' | '\'' | '"')
+        })
+}
+
+fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
+    let mut projected = String::with_capacity(text.len());
+    let mut copied_through = 0;
+    for (start, _) in text.match_indices('/') {
+        let after = text[start + 1..].chars().next();
+        let uri_authority_delimiter =
+            text[..start].ends_with(':') && text[start..].starts_with("//");
+        if is_path_start(text, start)
+            && !uri_authority_delimiter
+            && after.is_some_and(|ch| !ch.is_whitespace() && ch != '/')
+        {
+            projected.push_str(&text[copied_through..start]);
+            projected.push_str(replacement);
+            copied_through = start + 1;
+        }
+    }
+    projected.push_str(&text[copied_through..]);
+    projected
+}
+
+fn is_path_start(text: &str, start: usize) -> bool {
+    let prefix = strip_trailing_terminal_sequences(&text[..start]);
+    let before = prefix.chars().next_back();
+    let file_uri_delimiter = prefix
+        .get(prefix.len().saturating_sub("file://".len())..)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+    file_uri_delimiter
+        || before.is_none_or(|ch| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`' | '*'
+                )
+        })
+}
+
+fn strip_trailing_terminal_sequences(mut prefix: &str) -> &str {
+    while let Some(start) = [prefix.rfind("\x1b["), prefix.rfind("\x1b]")]
+        .into_iter()
+        .flatten()
+        .filter(|start| terminal_sequence_end(&prefix[*start..]) == Some(prefix.len() - start))
+        .max()
+    {
+        prefix = &prefix[..start];
+    }
+    prefix
+}
+
+fn strip_leading_terminal_sequences(mut suffix: &str) -> &str {
+    while let Some(end) = terminal_sequence_end(suffix)
+        .or_else(|| suffix.strip_prefix("\x1b\\").map(|_| 2))
+        .or_else(|| suffix.strip_prefix('\x07').map(|_| 1))
+    {
+        suffix = &suffix[end..];
+    }
+    suffix
+}
+
+fn terminal_sequence_end(text: &str) -> Option<usize> {
+    if let Some(body) = text.strip_prefix("\x1b[") {
+        let final_byte = body
+            .bytes()
+            .position(|byte| (0x40..=0x7e).contains(&byte))?;
+        return body.as_bytes()[..final_byte]
+            .iter()
+            .all(|byte| (0x20..=0x3f).contains(byte))
+            .then_some(final_byte + 3);
+    }
+    let body = text.strip_prefix("\x1b]")?;
+    body.find('\x07')
+        .map(|index| index + 3)
+        .into_iter()
+        .chain(body.find("\x1b\\").map(|index| index + 4))
+        .min()
 }
 
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
@@ -87,6 +246,39 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
         Ok(mount.host_path.join(suffix))
     }
 
+    fn resolve_directory(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
+        if !path.is_absolute() {
+            let current = normalize_tool_namespace_path(namespace_cwd.to_path_buf())?;
+            let current_mount = longest_namespace_mount(&self.mounts, &current)
+                .context("current directory is outside delegated Host Mounts")?;
+            let namespace_path = normalize_tool_namespace_path(current.join(path))?;
+            let mount = longest_namespace_mount(&self.mounts, &namespace_path)
+                .context("directory is outside delegated Host Mounts")?;
+            anyhow::ensure!(
+                mount.namespace_path == current_mount.namespace_path,
+                "relative cd cannot switch Host Mounts; use an explicit /mnt/<grant> path"
+            );
+            return self.resolve_namespace_directory(mount, &namespace_path);
+        }
+
+        if path.starts_with("/mnt") {
+            let namespace_path = normalize_tool_namespace_path(path.to_path_buf())?;
+            let mount = longest_namespace_mount(&self.mounts, &namespace_path)
+                .context("directory is not backed by a delegated Host Mount")?;
+            return self.resolve_namespace_directory(mount, &namespace_path);
+        }
+
+        let host_path =
+            dunce::canonicalize(path).context("cannot resolve selected Host directory")?;
+        anyhow::ensure!(host_path.is_dir(), "selected Host path is not a directory");
+        let mount = longest_host_mount(&self.mounts, &host_path)
+            .context("directory is outside delegated Host Mounts")?;
+        let suffix = host_path
+            .strip_prefix(&mount.host_path)
+            .expect("selected Host Mount contains canonical directory");
+        Ok(mount.namespace_path.join(suffix))
+    }
+
     fn visible_path(&self, host_path: &Path) -> PathBuf {
         let host_path = dunce::canonicalize(host_path)
             .unwrap_or_else(|_| dunce::simplified(host_path).to_path_buf());
@@ -105,20 +297,15 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn project_text(&self, text: &str) -> String {
-        let mut projected = text.to_string();
-        let mut mounts = self.mounts.iter().collect::<Vec<_>>();
-        mounts.sort_by_key(|mount| std::cmp::Reverse(mount.host_path.as_os_str().len()));
-        for mount in mounts {
-            projected = projected.replace(
-                mount.host_path.to_string_lossy().as_ref(),
-                mount.namespace_path.to_string_lossy().as_ref(),
-            );
-        }
-        projected
+        path_projection::project_text(self, text)
     }
 
     fn sandbox(&self) -> Result<Sandbox> {
         Ok(self.sandbox.clone())
+    }
+
+    fn shell_sandbox(&self) -> Result<Sandbox> {
+        Ok(self.shell_sandbox.clone())
     }
 }
 
@@ -171,20 +358,17 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
         );
         let sandbox_mounts = mounts
             .iter()
-            .map(|mount| SandboxHostMount {
-                namespace_path: mount.namespace_path.clone(),
-                host_path: mount.host_path.clone(),
-                access: match mount.access {
-                    HostMountAccess::ReadOnly => ReifiedMountAccess::ReadOnly,
-                    HostMountAccess::ReadWrite => ReifiedMountAccess::ReadWrite,
-                },
-            })
+            .map(NativeToolMount::sandbox_host_mount)
             .collect::<Vec<_>>();
+        let shell_sandbox_mount = selected.sandbox_host_mount();
         Ok(Arc::new(NativeToolExecutionAdapter {
             mounts,
             namespace_cwd,
             cwd,
             sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&sandbox_mounts)),
+            shell_sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&[
+                shell_sandbox_mount,
+            ])),
         }))
     }
 }
@@ -266,6 +450,16 @@ fn longest_namespace_mount<'a>(
         .max_by_key(|mount| mount.namespace_path.components().count())
 }
 
+fn longest_host_mount<'a>(
+    mounts: &'a [NativeToolMount],
+    path: &Path,
+) -> Option<&'a NativeToolMount> {
+    mounts
+        .iter()
+        .filter(|mount| path.starts_with(&mount.host_path))
+        .max_by_key(|mount| mount.host_path.components().count())
+}
+
 fn validate_native_tool_mounts(mounts: &[NativeToolMount]) -> Result<()> {
     for (index, left) in mounts.iter().enumerate() {
         for right in mounts.iter().skip(index + 1) {
@@ -309,6 +503,8 @@ mod tests {
     use alan_agent_engine::tools::{ToolExecutionAuthority, ToolExecutionBinding};
     use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
     use alan_kernel::{LiveNamespace, MountFs, Namespace, Pid};
+
+    mod projection;
 
     fn service() -> Arc<HostMountService> {
         HostMountService::new(Arc::new(NativeHostMountExportAdapter))
@@ -395,9 +591,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_tool_directory_changes_resolve_only_delegated_grants() {
+        let project = tempfile::tempdir().unwrap();
+        let source = project.path().join("src");
+        std::fs::create_dir(&source).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let nested = other.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(7), namespace);
+        approve(
+            &service,
+            7,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+            project.path(),
+        )
+        .await;
+        approve(
+            &service,
+            7,
+            "/mnt/other",
+            HostMountAccess::ReadOnly,
+            other.path(),
+        )
+        .await;
+        let binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+        let adapter = binding.adapter().unwrap();
+
+        assert_eq!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("src"))
+                .unwrap(),
+            Path::new("/mnt/project/src")
+        );
+        assert_eq!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("/mnt/other/nested"))
+                .unwrap(),
+            Path::new("/mnt/other/nested")
+        );
+        assert_eq!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), other.path())
+                .unwrap(),
+            Path::new("/mnt/other")
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("../other"))
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("/mnt/missing"))
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), outside.path())
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), &project.path().join("src/file"))
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn native_approval_projects_one_handle_into_namespace_and_tool_execution() {
         let host = tempfile::tempdir().unwrap();
         std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
+        let source = host.path().join("src");
+        std::fs::create_dir(&source).unwrap();
         let service = service();
         let namespace = LiveNamespace::new(Namespace::new());
         service.register_process(Pid(7), namespace.clone());
@@ -426,17 +695,13 @@ mod tests {
 
         let execution = service.reconcile(7, binding("/mnt/project")).unwrap();
         let adapter = execution.adapter().unwrap();
-        assert_eq!(
-            adapter.cwd().unwrap(),
-            std::fs::canonicalize(host.path()).unwrap()
-        );
+        let host_root = std::fs::canonicalize(host.path()).unwrap();
+        assert_eq!(adapter.cwd().unwrap(), host_root);
         assert_eq!(
             adapter
                 .resolve_path(Path::new("/mnt/project"), Path::new("notes.txt"))
                 .unwrap(),
-            std::fs::canonicalize(host.path())
-                .unwrap()
-                .join("notes.txt")
+            host_root.join("notes.txt")
         );
         assert_eq!(
             adapter.visible_path(&host.path().join("notes.txt")),
@@ -444,13 +709,97 @@ mod tests {
         );
         let projected = adapter.project_text(&format!(
             "failed at {}",
-            std::fs::canonicalize(host.path())
-                .unwrap()
-                .join("notes.txt")
-                .display()
+            host_root.join("notes.txt").display()
         ));
-        assert_eq!(projected, "failed at /mnt/project/notes.txt");
+        assert_eq!(projected, "failed at ./notes.txt");
+        let ansi_path = format!("\x1b[31m{}\x1b[0m\n", host_root.display());
+        assert_eq!(adapter.project_text(&ansi_path), "\x1b[31m.\x1b[0m\n");
+        for terminator in ["\x1b\\", "\x07"] {
+            let osc8_path = format!(
+                "\x1b]8;;file://{0}{1}{0}\x1b]8;;{1}\n",
+                host_root.display(),
+                terminator
+            );
+            assert_eq!(
+                adapter.project_text(&osc8_path),
+                format!("\x1b]8;;file://.{0}.\x1b]8;;{0}\n", terminator)
+            );
+        }
+        let sibling_path = format!("{}-backup/notes.txt", host.path().display());
+        assert_eq!(adapter.project_text(&sibling_path), sibling_path);
+        let dotted_sibling_path = format!("{}.backup/notes.txt", host_root.display());
+        assert_eq!(
+            adapter.project_text(&dotted_sibling_path),
+            dotted_sibling_path
+        );
+        let punctuated_path = format!("failed at {}.", host_root.display());
+        assert_eq!(adapter.project_text(&punctuated_path), "failed at ..");
+        let file_uri = format!("file://{}/notes.txt", host_root.display());
+        assert_eq!(adapter.project_text(&file_uri), "file://./notes.txt");
+        let file_uri_query = format!("file://{}?line=20", host_root.display());
+        assert_eq!(adapter.project_text(&file_uri_query), "file://.?line=20");
+        let file_uri_fragment = format!("file://{}#L20", host_root.display());
+        assert_eq!(adapter.project_text(&file_uri_fragment), "file://.#L20");
+        let markdown_path = format!("failed at `{}`", host_root.display());
+        assert_eq!(adapter.project_text(&markdown_path), "failed at `.`");
+        let emphasized_path = format!("failed at **{}**", host_root.display());
+        assert_eq!(adapter.project_text(&emphasized_path), "failed at **.**");
+        let bracketed_path = format!("failed at <{}>", host_root.display());
+        assert_eq!(adapter.project_text(&bracketed_path), "failed at <.>");
+
+        let nested = service
+            .reconcile(7, binding("/mnt/project/src"))
+            .unwrap()
+            .adapter()
+            .unwrap();
+        assert_eq!(
+            nested.project_text(&std::fs::canonicalize(source).unwrap().display().to_string()),
+            "."
+        );
+        assert_eq!(
+            nested.project_text(
+                &std::fs::canonicalize(host.path().join("notes.txt"))
+                    .unwrap()
+                    .display()
+                    .to_string()
+            ),
+            "../notes.txt"
+        );
         assert!(adapter.sandbox().unwrap().is_writable(host.path()));
+    }
+
+    #[tokio::test]
+    async fn root_host_mount_projects_absolute_paths_from_the_active_cwd() {
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        approve(
+            &service,
+            7,
+            "/mnt/root",
+            HostMountAccess::ReadOnly,
+            Path::new("/"),
+        )
+        .await;
+        let adapter = service
+            .reconcile(7, binding("/mnt/root/home/user"))
+            .unwrap()
+            .adapter()
+            .unwrap();
+
+        assert_eq!(
+            adapter.project_text("realpath /etc/hosts"),
+            "realpath ../../etc/hosts"
+        );
+        assert_eq!(
+            adapter.project_text("file:///etc/hosts"),
+            "file://../../etc/hosts"
+        );
+        assert_eq!(
+            adapter.project_text("https://example.com/etc/hosts"),
+            "https://example.com/etc/hosts"
+        );
+        assert_eq!(adapter.project_text("ratio = 1 / 2"), "ratio = 1 / 2");
+        assert_eq!(adapter.project_text("/home/user/src"), "./src");
     }
 
     #[tokio::test]

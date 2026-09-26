@@ -1,289 +1,59 @@
-use super::super::reified_namespace::ReifiedNamespacePlan;
-use super::command_wrappers::is_env_assignment;
 use super::path_safety::PROTECTED_SUBPATHS;
-use super::shell_syntax::{ShellWordToken, shell_commands, shell_word_tokens_with_spans};
+use super::shell_syntax::{ShellToken, shell_commands};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
-pub(super) fn translate_reified_shell_token(
-    token: &str,
-    plan: &ReifiedNamespacePlan,
-) -> Option<String> {
-    translate_shell_token(token, &|path| {
-        plan.translate_projected_host_path(path)
-            .or_else(|| plan.translate_projected_host_path(&lexically_normalize_path(path)))
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TokenPathRole {
+    Check,
+    Data,
+    ExecutableData,
 }
 
-pub(super) fn translate_namespace_shell_token(
-    token: &str,
-    mounts: &[super::sandbox_spec::SandboxHostMount],
-) -> Option<String> {
-    translate_shell_token(token, &|path| namespace_path_to_host(path, mounts))
-}
-
-pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> bool {
+pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRole {
     let prefix = command[..token.raw_start].trim_end();
     if prefix.ends_with('>') || prefix.ends_with('<') {
-        return false;
+        return TokenPathRole::Check;
     }
 
     let Ok(commands) = shell_commands(&command[..token.raw_start]) else {
-        return false;
+        return TokenPathRole::Check;
     };
     let Some(words) = commands.last() else {
-        return false;
+        return TokenPathRole::Check;
     };
     let Some((command_name, args)) = super::command_wrappers::command_and_args(words) else {
-        return false;
+        return TokenPathRole::Check;
     };
     let command_name = Path::new(command_name)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command_name);
 
-    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk")
-        && super::command_interpreters::awk_next_argument_is_data(args, &token.decoded)
-    {
-        return true;
+    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk") {
+        return match super::command_interpreters::awk_next_argument_role(args, &token.decoded) {
+            super::command_interpreters::AwkArgumentRole::Program => TokenPathRole::ExecutableData,
+            super::command_interpreters::AwkArgumentRole::Data => TokenPathRole::Data,
+            super::command_interpreters::AwkArgumentRole::Operand => TokenPathRole::Check,
+        };
     }
 
     if matches!(command_name, "echo" | "printf") {
-        return true;
+        return TokenPathRole::Data;
     }
 
-    // ponytail: classify only data positions with known command syntax; arbitrary
-    // argv roles need a real namespace filesystem, not more command-specific guesses.
+    // ponytail: recognize only known literal-data operands; add broader shell
+    // argument semantics only if real commands are blocked by this ceiling.
     let git_commit = command_name == "git" && args.iter().any(|word| word == "commit");
-    git_commit
+    let git_commit_message = git_commit
         && (matches!(args.last().map(String::as_str), Some("-m" | "--message"))
             || token.decoded.starts_with("--message=")
-            || token.decoded.starts_with("-m"))
-}
-
-fn translate_shell_token(
-    token: &str,
-    map_path: &dyn Fn(&Path) -> Option<PathBuf>,
-) -> Option<String> {
-    if let Some(rewritten) = translate_nested_shell_token(token, map_path) {
-        return Some(shell_quote_token(&rewritten));
+            || token.decoded.starts_with("-m"));
+    if git_commit_message {
+        TokenPathRole::Data
+    } else {
+        TokenPathRole::Check
     }
-
-    let mut replacements = Vec::new();
-    for range in reified_shell_token_path_candidate_ranges(token) {
-        if replacements
-            .iter()
-            .any(|(existing, _)| ranges_overlap(existing, &range))
-        {
-            continue;
-        }
-
-        let candidate = &token[range.clone()];
-        let candidate_path = Path::new(candidate);
-        if !candidate_path.is_absolute() || is_allowed_absolute_command_path(candidate_path) {
-            continue;
-        }
-
-        let Some(mapped_path) = map_path(candidate_path) else {
-            continue;
-        };
-        replacements.push((range, mapped_path.display().to_string()));
-    }
-
-    if replacements.is_empty() {
-        return None;
-    }
-
-    replacements.sort_by_key(|(range, _)| range.start);
-    let replacement_len = replacements
-        .iter()
-        .map(|(_, replacement)| replacement.len())
-        .sum::<usize>();
-    let mut rewritten = String::with_capacity(token.len() + replacement_len);
-    let mut last = 0;
-    for (range, replacement) in replacements {
-        rewritten.push_str(&token[last..range.start]);
-        rewritten.push_str(&replacement);
-        last = range.end;
-    }
-    rewritten.push_str(&token[last..]);
-
-    Some(shell_quote_translated_token(&rewritten))
-}
-
-fn translate_nested_shell_token(
-    token: &str,
-    map_path: &dyn Fn(&Path) -> Option<PathBuf>,
-) -> Option<String> {
-    let tokens = shell_word_tokens_with_spans(token).ok()?;
-    if !looks_like_nested_shell_script(&tokens) {
-        return None;
-    }
-
-    let mut translated = String::with_capacity(token.len());
-    let mut last = 0;
-    let mut changed = false;
-    for nested_token in tokens {
-        if token_is_data_argument(token, &nested_token) {
-            continue;
-        }
-        let Some(rewritten) = translate_shell_token(&nested_token.decoded, map_path) else {
-            continue;
-        };
-        translated.push_str(&token[last..nested_token.raw_start]);
-        translated.push_str(&rewritten);
-        last = nested_token.raw_end;
-        changed = true;
-    }
-    if !changed {
-        return Some(token.to_string());
-    }
-
-    translated.push_str(&token[last..]);
-    Some(translated)
-}
-
-fn looks_like_nested_shell_script(tokens: &[ShellWordToken]) -> bool {
-    if tokens.len() < 2 {
-        return false;
-    }
-    let Some(command) = tokens
-        .iter()
-        .find(|token| !is_env_assignment(&token.decoded))
-    else {
-        return false;
-    };
-
-    !looks_like_path_token(&command.decoded)
-        && !looks_like_bare_protected_subpath_token(&command.decoded)
-}
-
-fn shell_quote_translated_token(token: &str) -> String {
-    if is_env_assignment(token) {
-        let (name, value) = token
-            .split_once('=')
-            .expect("is_env_assignment requires an equals sign");
-        return format!("{name}={}", shell_quote_token(value));
-    }
-    shell_quote_token(token)
-}
-
-pub(super) fn namespace_path_to_host(
-    path: &Path,
-    mounts: &[super::sandbox_spec::SandboxHostMount],
-) -> Option<PathBuf> {
-    if !path.is_absolute() {
-        return None;
-    }
-    let path = lexically_normalize_path(path);
-    mounts
-        .iter()
-        .filter_map(|mount| {
-            let namespace_path = lexically_normalize_path(&mount.namespace_path);
-            path.strip_prefix(&namespace_path).ok().map(|suffix| {
-                (
-                    namespace_path.components().count(),
-                    mount.host_path.join(suffix),
-                )
-            })
-        })
-        .max_by_key(|(components, _)| *components)
-        .map(|(_, host_path)| host_path)
-}
-
-fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
-    left.start < right.end && right.start < left.end
-}
-
-fn reified_shell_token_path_candidate_ranges(token: &str) -> Vec<Range<usize>> {
-    let mut ranges = Vec::new();
-    for range in colon_separated_absolute_path_component_ranges(token) {
-        push_unique_range(&mut ranges, range);
-    }
-    for range in path_like_subtoken_ranges(token) {
-        push_unique_range(&mut ranges, range);
-    }
-    for range in embedded_absolute_path_literal_ranges(token) {
-        push_path_literal_candidate_ranges(token, range, &mut ranges);
-    }
-    ranges
-}
-
-fn push_path_literal_candidate_ranges(
-    token: &str,
-    range: Range<usize>,
-    ranges: &mut Vec<Range<usize>>,
-) {
-    if let Some(split_end) = first_later_absolute_path_split(token, &range) {
-        let first_operand = trim_trailing_whitespace_range(token, range.start..split_end);
-        if first_operand.start < first_operand.end {
-            if path_literal_range_contains_flag_segment(token, &first_operand) {
-                push_whitespace_prefix_ranges(token, first_operand.clone(), ranges);
-                push_unique_range(ranges, first_operand);
-            } else {
-                push_unique_range(ranges, first_operand.clone());
-                push_whitespace_prefix_ranges(token, first_operand, ranges);
-            }
-        }
-        return;
-    }
-
-    let trimmed = trim_trailing_whitespace_range(token, range.clone());
-    if trimmed.start < trimmed.end {
-        push_unique_range(ranges, trimmed);
-    }
-
-    let literal = &token[range.clone()];
-    for (offset, ch) in literal.char_indices() {
-        if ch.is_whitespace() && offset > 0 {
-            let prefix = range.start..range.start + offset;
-            push_unique_range(ranges, prefix);
-        }
-    }
-}
-
-fn push_whitespace_prefix_ranges(token: &str, range: Range<usize>, ranges: &mut Vec<Range<usize>>) {
-    let literal = &token[range.clone()];
-    for (offset, ch) in literal.char_indices() {
-        if ch.is_whitespace() && offset > 0 {
-            push_unique_range(ranges, range.start..range.start + offset);
-        }
-    }
-}
-
-fn path_literal_range_contains_flag_segment(token: &str, range: &Range<usize>) -> bool {
-    token[range.clone()]
-        .split_whitespace()
-        .skip(1)
-        .any(|segment| segment.starts_with('-'))
-}
-
-fn first_later_absolute_path_split(token: &str, range: &Range<usize>) -> Option<usize> {
-    let literal = &token[range.clone()];
-    let mut whitespace_start = None;
-    let mut in_whitespace = false;
-    for (offset, ch) in literal.char_indices().skip(1) {
-        if ch.is_whitespace() {
-            if !in_whitespace {
-                whitespace_start = Some(offset);
-                in_whitespace = true;
-            }
-            continue;
-        }
-
-        if ch == '/' && !absolute_path_match_has_path_prefix(literal, offset) {
-            return whitespace_start.map(|split| range.start + split);
-        }
-
-        whitespace_start = None;
-        in_whitespace = false;
-    }
-    None
-}
-
-fn trim_trailing_whitespace_range(token: &str, range: Range<usize>) -> Range<usize> {
-    let trimmed = token[range.clone()].trim_end_matches(char::is_whitespace);
-    range.start..range.start + trimmed.len()
 }
 
 fn push_unique_range(ranges: &mut Vec<Range<usize>>, range: Range<usize>) {
@@ -371,6 +141,27 @@ pub(super) fn absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> 
     literals
 }
 
+pub(super) fn quoted_absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> {
+    let mut literals = Vec::new();
+    let mut string_start = None;
+    let mut escaped = false;
+    for (index, ch) in token.char_indices() {
+        if let Some(start) = string_start {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                literals.extend(absolute_path_literal_candidates(&token[start..index]));
+                string_start = None;
+            }
+        } else if ch == '"' {
+            string_start = Some(index + ch.len_utf8());
+        }
+    }
+    literals
+}
+
 fn push_absolute_path_literal_candidates(
     token: &str,
     range: Range<usize>,
@@ -436,31 +227,6 @@ fn is_absolute_path_literal_terminator(ch: char) -> bool {
         ch,
         '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '|' | '&' | ';' | ','
     )
-}
-
-fn shell_quote_token(token: &str) -> String {
-    if !token.is_empty()
-        && token.chars().all(|ch| {
-            ch.is_ascii_alphanumeric()
-                || matches!(
-                    ch,
-                    '@' | '%' | '_' | '+' | '=' | ':' | ',' | '.' | '/' | '-'
-                )
-        })
-    {
-        return token.to_string();
-    }
-
-    let mut quoted = String::from("'");
-    for ch in token.chars() {
-        if ch == '\'' {
-            quoted.push_str("'\\''");
-        } else {
-            quoted.push(ch);
-        }
-    }
-    quoted.push('\'');
-    quoted
 }
 
 pub(super) fn looks_like_path_token(token: &str) -> bool {
@@ -530,6 +296,77 @@ pub(super) fn is_allowed_absolute_command_path(path: &Path) -> bool {
         path.to_str(),
         Some("/dev/null" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr")
     )
+}
+
+pub(super) fn is_allowed_absolute_executable_path(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = lexically_normalize_path(path);
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            return false;
+        };
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            return false;
+        }
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Some(search_path) = std::env::var_os("PATH") else {
+            return false;
+        };
+
+        std::env::split_paths(&search_path).any(|directory| {
+            directory.is_absolute() && lexically_normalize_path(&directory) == parent
+        })
+    }
+
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+pub(super) fn absolute_executable_token_starts(command: &str, tokens: &[ShellToken]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut command_expected = true;
+    let mut expects_redirection_target = false;
+    let mut previous_token_end = 0;
+
+    for token in tokens {
+        let gap = &command[previous_token_end..token.raw_start];
+        if gap
+            .chars()
+            .any(|ch| matches!(ch, ';' | '|' | '&' | '(' | ')' | '{' | '}' | '\n' | '\r'))
+        {
+            command_expected = true;
+        }
+        previous_token_end = token.raw_end;
+
+        if expects_redirection_target {
+            expects_redirection_target = false;
+            continue;
+        }
+        if is_file_redirection_operator(&token.decoded) {
+            expects_redirection_target = true;
+            continue;
+        }
+        if !command_expected || super::command_wrappers::is_env_assignment(&token.decoded) {
+            continue;
+        }
+
+        command_expected = false;
+        if is_allowed_absolute_executable_path(Path::new(&token.decoded)) {
+            starts.push(token.raw_start);
+        }
+    }
+
+    starts
 }
 
 pub(super) fn lexically_normalize_path(path: &Path) -> PathBuf {

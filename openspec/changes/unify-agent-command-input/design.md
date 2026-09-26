@@ -1,5 +1,10 @@
 # Design
 
+Delivery boundary updated 2026-09-26: automatic typed routing, qualification and
+activation are owned by the active [qualify-agent-input-routing](../qualify-agent-input-routing/)
+successor. Future-routing discussion below records accepted direction, not delivery
+or a canonical-spec synchronization claim for this explicit-input change.
+
 ## Context
 
 See proposal.md for motivation and design-interview.md for confirmed choices.
@@ -96,6 +101,19 @@ scripts have the selected shell's semantics. Preflight may deny execution, but
 must not rewrite path tokens or scripts. Syntax checking cannot promise atomic
 execution: a later error can occur after earlier script effects.
 
+The explicit slice selects the system `/bin/sh` in noninteractive `-p -f -c`
+mode on the supported macOS/Linux hosts; it does not select a shell through PATH
+or source interactive startup files. Privileged shell mode ignores inherited shell
+functions and startup hooks. The shared native Process launch also removes `ENV`,
+`BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `CDPATH` and exported `BASH_FUNC_*` entries so
+nested shells cannot import them again. Pathname expansion remains disabled alongside the
+backend's existing conservative expansion preflight. Ordinary executable lookup
+still uses the backend's command PATH. Seatbelt/path-guard backends inherit the
+remaining Host environment (with the existing Seatbelt Git fsmonitor override); Linux
+reification keeps its cleared environment and verified substrate PATH. Failure
+to run the selected shell is an execution failure, never a fallback to another
+shell. Scripts are passed unchanged, and preflight rejections remain explicit.
+
 `/mnt` organizes reachable aP resources, not automatic prompt inclusion and not a
 promise of identical native paths. Host Mount Service remains the grant owner.
 Each native shell action uses only the one explicitly delegated local grant
@@ -157,6 +175,31 @@ unknown commit outcomes must not trigger automatic duplicate submission.
 The same Process/Tool launch boundary records their effects. Host lifecycle,
 credential and native authorization commands keep their existing owner.
 
+The first implemented facade is `/bin/agent_work`, discovered through the existing
+`/lib/exec/agent_work/manifest`. It supports `status TARGET`, `submit TARGET TEXT`,
+`cancel TARGET INPUT_ID`, `continue TARGET` and `discard TARGET`; TARGET is `root`
+or a visible positive Agent PID. The model calls the same executable using one JSON
+argument with `action`, `target`, and (where required) `text` or `submission_id`.
+All results are version-1 JSON. Submit returns a submission ID and `submitted`;
+queue controls return `requested`. Neither receipt means execution completed.
+Status returns the current activity projection, not Process exit/result truth.
+Errors use nonzero exit status; uncertain writes are reported without retries.
+The executable uses only its invocation namespace, with no ambient Host connection.
+Its conservative manifest capability is write, including status; no argument-based
+policy relaxation is introduced. Native shell name resolution remains unchanged.
+
+Existing operation inventory for this facade (all resolved in the invoking namespace):
+
+| Work operation | Existing owner and surface | Receipt |
+| --- | --- | --- |
+| Status | Machine activity at `/agent/TARGET/machine/ui/activity` | Current projection |
+| Submit | AgentFS `io/input`, versioned input record | Submission UUID, submitted |
+| Cancel | Machine `ctl`, targeted queue interrupt | Requested |
+| Continue / discard | Machine `ctl`, existing paused-queue controls | Requested |
+
+The facade adds no queue, lifecycle or completion store. Memory/service operations
+retain their existing owners and do not gain speculative command wrappers.
+
 ### One project file identity across editing and commands
 
 Project tools expose grant-relative paths for any delegated mount and
@@ -204,8 +247,93 @@ All attachments see it and each command resolves it at execution time. Agent
 per-action cwd does not mutate this shared value. Ordinary submissions queue
 behind active work; responses and controls do not become queued ordinary work.
 Process-local submission identity correlates output and cancellation, without
-introducing a global Conversation/Session object. Existing client task leases
-must be reconciled with ordered acceptance rather than silently bypassed.
+introducing a global Conversation/Session object. Client task leases have been
+removed after identity-based acceptance and result correlation were wired.
+
+### Submission records and result correlation
+
+The input envelope and result IDs below are implemented in this slice. The
+version-2 activity projection and multi-client renderer admission are implemented
+in this slice. Queue/cwd checkpoints recover pending inputs paused. A real Host
+integration check now covers two-client native command/cwd ordering, script-local
+cd isolation and cancellation with paused continuation. Tasks 2.5–2.8 remain open
+for their remaining cross-grant, restart and platform acceptance cases.
+Runtime failure events carry the failed submission ID even before Tape admission; redirected clients
+match that ID and never adopt another client's or an uncorrelated legacy error.
+
+The canonical write to /agent/<pid>/io/input is AgentFS's existing outer
+length-framed document containing the UTF-8 payload `alan-input-v1\n` followed
+by one strict JSON object: `version` (1), `submission_id` (UUID), `intent`
+(`agent`, `force_agent`, or `command`), `mode` (`steer`, `follow_up`, or
+`next_turn`), and exact `body`. The prefix is removed by the client and retained
+as intent; body whitespace and internal newlines are not rewritten. Empty bodies,
+unknown fields, unsupported versions, and invalid IDs are rejected. The record's
+mode maps only to protocol scheduling; intent never supplies or changes it.
+Unframed payloads remain the legacy plain-text path.
+
+Explicit command scheduling preserves the submitted command and identity.
+`follow_up` executes in the ordinary queue. A command admitted as `steer` during
+active work executes at the next safe Tool boundary, skips undispatched stale Tool
+calls and returns to the original Agent turn for replanning; required approval
+still pauses execution and rejection records the command's own failure. If the
+active turn finishes first, the already-admitted command runs next. An idle
+`steer` fails rather than creating a new turn. `next_turn` retains the complete
+command submission until an explicit Turn releases it ahead of that Turn's
+generation; its script is never merged into queued Agent context. Queue/cwd
+persistence remains a separate task below.
+The Machine now owns the shared in-band, buffered, deferred-input and ordinary
+queues plus active submission identity. Ordinary follow-up inputs stay FIFO in
+the ordinary queue; only steering and responses enter the active transition.
+The file-native versioned queue controls below are implemented in memory.
+Continue/discard reject while the current input is still settling. Interrupting
+a pending input emits its correlated failure without executing it; interrupting
+the active input cancels its transition and retains later accepted inputs. The
+clients now admit inputs without a task lock and target interruption by input ID.
+The renderer exposes `/continue` and `/discard` in command completion and help.
+A paused-queue line shows the pending count and these controls once the active
+input settles; pending request responses keep precedence. Control writes report
+only that the operation was requested; runtime snapshots/notices establish its
+outcome. Real terminal acceptance remains unfinished.
+
+The Agent Machine owns accepted order and queue state. Its existing
+machine/ui/activity snapshot becomes version 2, retaining activity state and
+start time and adding `active_submission` (optional `{submission_id, intent}`),
+`pending_submissions` (ordered `{submission_id, intent}` entries), and
+`queue_paused` (boolean). machine/ui/events appends the same snapshots; neither
+surface owns another copy of executable pending work. The Process input pump is
+the sole activity-file writer; transitions enqueue activity observations for it
+to publish in order. Queue metadata is projected from the Machine, includes
+intent but excludes input bodies, and heartbeat preserves the original start
+time. Version-1 snapshots remain readable with empty queue metadata. The current activity state remains run
+state, not a completion signal. Runtime queue controls continue to use
+machine/ctl, one UTF-8 command per write. The versioned queue-control vocabulary
+is `queue-v1 interrupt <submission_id>`, `queue-v1 continue`, and
+`queue-v1 discard`: interrupt targets one accepted submission and pauses later
+ordinary inputs, while continue/discard apply to the paused queue in order. An
+unknown or already-settled interrupt target is rejected without affecting later
+work. Existing compact, rollback, and legacy interrupt commands retain their
+current semantics.
+
+Completion is correlated through existing evidence, not prompt text, time, or
+Tape position. The append-only machine/tape projection adds submission_id to
+user and assistant message records; a direct command's Action result uses the
+same ID as call_id and carries its exit status, while Action output carries
+stdout/stderr. A pre-Tape failure is reported in a UI error event carrying that
+same ID. Interactive and redirected admission require the version-2 activity
+protocol and no longer hold a channel task lease or reject a busy/paused Agent.
+An older Host must restart before new submissions; retained version-1 history
+remains readable.
+Readers accept a result only when its ID matches their submission; missing
+evidence is unknown, never successful completion. Redirected clients now match
+version-2 activity by the same ID, distinguish pending admission from execution,
+and ignore other clients' running/paused states. Redirected interruption sends
+`queue-v1 interrupt <submission_id>` once its input is observed as accepted;
+it reports a requested interruption, not an unverified successful cancellation.
+Interactive clients also retain their input ID for acceptance, targeted
+interruption and reconnect. Identical prompt text is not recovery evidence:
+the retained Tape record must match the input ID before transcript merging.
+Rollout/checkpoint records remain the recovery authority; Tape is only a
+projection. Durable queue/cwd restoration remains unfinished.
 
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
 continuation/discard through the existing machine control surface. It does not
@@ -232,6 +360,17 @@ Never replay unknown effects automatically. Restore cwd only from reliable state
 and after checking current reachability/rights; otherwise require a new explicit
 directory choice before directory-dependent work. Missing recovery records are
 reported, not reconstructed from textual Tape or inferred from a reused PID.
+
+The Agent Runtime System Store metadata retains a versioned Root rollout reference.
+The Agent Runtime Service reads it before launching a replacement Root and atomically
+replaces it with the new runtime's rollout reference before publishing readiness.
+It is only a lineage reference; queue, cwd and unknown-effect records remain in the
+rollout. It survives Host restart and never selects a file by timestamp or PID.
+Malformed references and references outside the runtime rollout directory fail
+startup. If execution evidence exists but the reference is absent, startup reports
+the missing lineage and requires an explicitly selected prior Root rollout; an
+empty store still starts normally. A missing referenced rollout follows the engine's
+existing strict-durability failure or visible paused/unknown recovery behavior.
 
 ### Classification and staged delivery
 

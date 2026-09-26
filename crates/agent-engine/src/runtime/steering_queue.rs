@@ -1,12 +1,13 @@
-use alan_agent_protocol::{Event, InputMode, Op};
+use alan_agent_protocol::{Event, InputIntent, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
+use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, report_buffer_overflow};
 use super::turn_support::tool_result_preview;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
+    files: &super::transition::NamespaceAgentFiles,
     machine: &mut AgentMachine,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
@@ -22,38 +23,37 @@ where
     };
 
     let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
+    let mut command_steering = false;
     while let Some(submission) = broker.try_recv().await {
-        if let Op::Input {
-            parts,
-            mode: InputMode::Steer,
-        } = &submission.op
+        if submission.intent != InputIntent::Command
+            && let Op::Input {
+                parts,
+                mode: InputMode::Steer,
+            } = &submission.op
         {
             steering_inputs.push(parts.clone());
             continue;
         }
 
-        if matches!(
-            &submission.op,
-            Op::Input {
-                mode: InputMode::FollowUp,
-                ..
-            }
-        ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
+        if matches!(&submission.op, Op::Input { .. })
+            && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            emit(Event::Error {
-                message: format!(
-                    "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                ),
-                recoverable: true,
-            })
-            .await;
+            report_buffer_overflow(files, broker, &submission.id, emit).await?;
             continue;
         }
 
+        command_steering |= submission.intent == InputIntent::Command
+            && matches!(
+                submission.op,
+                Op::Input {
+                    mode: InputMode::Steer,
+                    ..
+                }
+            );
         machine.push_buffered_inband_submission(submission);
     }
 
-    if steering_inputs.is_empty() {
+    if steering_inputs.is_empty() && !command_steering {
         return Ok(false);
     }
 

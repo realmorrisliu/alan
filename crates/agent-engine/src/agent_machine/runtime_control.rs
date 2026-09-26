@@ -92,7 +92,7 @@ fn is_runtime_confirmation_control_parts(parts: &[ContentPart]) -> bool {
 
 pub(super) fn is_runtime_confirmation_control_message(message: &Message) -> bool {
     match message {
-        Message::User { parts } => is_runtime_confirmation_control_parts(parts),
+        Message::User { parts, .. } => is_runtime_confirmation_control_parts(parts),
         _ => false,
     }
 }

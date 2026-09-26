@@ -990,3 +990,8 @@ async fn package_service_process_restart_republishes_its_catalog_handle() {
     );
     manager.shutdown().await.unwrap();
 }
+
+#[path = "tests/lifecycle_contention.rs"]
+mod lifecycle_contention;
+#[path = "tests/root_recovery.rs"]
+mod root_recovery;

@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ShellWordToken {
+pub(super) struct ShellToken {
     pub(super) decoded: String,
     pub(super) raw_start: usize,
     pub(super) raw_end: usize,
@@ -375,7 +376,7 @@ where
     }
 }
 
-pub(super) fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWordToken>> {
+pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut chars = command.char_indices().peekable();
@@ -473,16 +474,29 @@ pub(super) fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWor
             }
             '<' | '>' => {
                 push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
-
+                let mut operator = String::from(ch);
+                let mut operator_end = index + ch.len_utf8();
                 match (ch, chars.peek().copied()) {
                     ('<', Some((_, '<' | '>' | '&'))) | ('>', Some((_, '>' | '&' | '|'))) => {
-                        chars.next();
-                        if ch == '<' && matches!(chars.peek(), Some((_, '-'))) {
-                            chars.next();
+                        if let Some((operator_index, operator_char)) = chars.next() {
+                            operator.push(operator_char);
+                            operator_end = operator_index + operator_char.len_utf8();
+                        }
+                        if ch == '<'
+                            && matches!(chars.peek(), Some((_, '-')))
+                            && let Some((operator_index, operator_char)) = chars.next()
+                        {
+                            operator.push(operator_char);
+                            operator_end = operator_index + operator_char.len_utf8();
                         }
                     }
                     _ => {}
                 }
+                tokens.push(ShellToken {
+                    decoded: operator,
+                    raw_start: index,
+                    raw_end: operator_end,
+                });
                 word_started = false;
             }
             _ => {
@@ -505,7 +519,7 @@ pub(super) fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWor
 }
 
 fn push_shell_word_token(
-    tokens: &mut Vec<ShellWordToken>,
+    tokens: &mut Vec<ShellToken>,
     current: &mut String,
     raw_start: &mut Option<usize>,
     raw_end: usize,
@@ -513,170 +527,11 @@ fn push_shell_word_token(
     let Some(start) = raw_start.take() else {
         return;
     };
-    tokens.push(ShellWordToken {
+    tokens.push(ShellToken {
         decoded: std::mem::take(current),
         raw_start: start,
         raw_end,
     });
-}
-
-pub(super) fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut chars = command.chars().peekable();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_comment = false;
-    let mut escaped = false;
-    let mut word_started = false;
-
-    while let Some(ch) = chars.next() {
-        if in_comment {
-            if matches!(ch, '\n' | '\r') {
-                in_comment = false;
-                word_started = false;
-            }
-            continue;
-        }
-
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            word_started = true;
-            continue;
-        }
-
-        if in_single {
-            if ch == '\'' {
-                in_single = false;
-            } else {
-                current.push(ch);
-            }
-            word_started = true;
-            continue;
-        }
-
-        if in_double {
-            match ch {
-                '\\' => {
-                    if let Some(next) = chars.next() {
-                        current.push(next);
-                        word_started = true;
-                    } else {
-                        return Err(anyhow!("Command ends with an incomplete escape sequence"));
-                    }
-                }
-                '"' => {
-                    in_double = false;
-                    word_started = true;
-                }
-                _ => {
-                    current.push(ch);
-                    word_started = true;
-                }
-            }
-            continue;
-        }
-
-        match ch {
-            '\\' => {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                    word_started = true;
-                } else {
-                    return Err(anyhow!("Command ends with an incomplete escape sequence"));
-                }
-            }
-            '\'' => {
-                in_single = true;
-                word_started = true;
-            }
-            '"' => {
-                in_double = true;
-                word_started = true;
-            }
-            '#' if !word_started => in_comment = true,
-            c if c.is_whitespace() => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                word_started = false;
-            }
-            ';' | '(' | ')' | '{' | '}' => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                word_started = false;
-            }
-            '&' | '|' => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-
-                if matches!(chars.peek(), Some(next) if *next == ch) {
-                    chars.next();
-                }
-                word_started = false;
-            }
-            '<' | '>' => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-
-                let mut operator = String::new();
-                operator.push(ch);
-                match (ch, chars.peek().copied()) {
-                    ('<', Some('<')) => {
-                        operator.push('<');
-                        chars.next();
-                        if matches!(chars.peek(), Some('-')) {
-                            operator.push('-');
-                            chars.next();
-                        }
-                    }
-                    ('<', Some('>')) => {
-                        operator.push('>');
-                        chars.next();
-                    }
-                    ('<', Some('&')) => {
-                        operator.push('&');
-                        chars.next();
-                    }
-                    ('>', Some('>')) => {
-                        operator.push('>');
-                        chars.next();
-                    }
-                    ('>', Some('&')) => {
-                        operator.push('&');
-                        chars.next();
-                    }
-                    ('>', Some('|')) => {
-                        operator.push('|');
-                        chars.next();
-                    }
-                    _ => {}
-                }
-                tokens.push(operator);
-                word_started = false;
-            }
-            _ => {
-                current.push(ch);
-                word_started = true;
-            }
-        }
-    }
-
-    if escaped {
-        return Err(anyhow!("Command ends with an incomplete escape sequence"));
-    }
-    if in_single || in_double {
-        return Err(anyhow!("Command contains an unterminated quoted string"));
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-
-    Ok(tokens)
 }
 
 pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
@@ -777,6 +632,17 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 }
                 word_started = false;
             }
+            '<' | '>' => {
+                current_word.push(ch);
+                if chars.peek() == Some(&'&') {
+                    current_word.push(chars.next().expect("peeked redirection operator"));
+                }
+                word_started = true;
+            }
+            '&' if chars.peek() == Some(&'>') => {
+                current_word.push(ch);
+                word_started = true;
+            }
             ';' | '|' | '&' | '(' | ')' | '{' | '}' => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
@@ -810,4 +676,164 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
     }
 
     Ok(commands)
+}
+
+pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
+    let normalized = normalize_shell_line_continuations(command);
+    let words = shell_tokens_with_spans(&normalized)?;
+    if words.first().map(|word| word.decoded.as_str()) != Some("cd") {
+        return Ok(None);
+    }
+    if contains_shell_control_operator(&normalized) {
+        return Ok(None);
+    }
+    let comment_free = strip_shell_comments(&normalized);
+    if contains_shell_expansion(&comment_free)
+        || contains_shell_brace_expansion(&comment_free)
+        || contains_shell_globbing(&comment_free)
+    {
+        return Err(anyhow!(
+            "standalone cd accepts a literal path; variables, substitutions, and globs are unsupported"
+        ));
+    }
+    if words.len() != 2 {
+        return Err(anyhow!(
+            "standalone cd requires exactly one directory argument"
+        ));
+    }
+
+    let directory = &words[1].decoded;
+    if directory.is_empty() {
+        return Err(anyhow!(
+            "standalone cd requires a non-empty directory argument"
+        ));
+    }
+    if directory == "-" {
+        return Err(anyhow!("standalone cd does not support `-`"));
+    }
+    if normalized[words[1].raw_start..words[1].raw_end].starts_with('~') {
+        return Err(anyhow!(
+            "standalone cd does not support home-directory expansion"
+        ));
+    }
+
+    Ok(Some(PathBuf::from(directory)))
+}
+
+pub(super) fn contains_shell_control_operator(command: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut word_started = false;
+    let mut command_started = false;
+    let mut line_break_seen = false;
+    let mut expansion_closers = Vec::new();
+    let mut chars = command.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+                line_break_seen |= command_started && expansion_closers.is_empty();
+            }
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            word_started = true;
+            continue;
+        }
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            word_started = true;
+            continue;
+        }
+        if in_double {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_double = false,
+                _ => {}
+            }
+            word_started = true;
+            continue;
+        }
+
+        if let Some(closer) = expansion_closers.last().copied() {
+            match ch {
+                '$' if matches!(chars.peek(), Some('(' | '{')) => {
+                    let opener = chars.next().expect("peeked shell expansion opener");
+                    expansion_closers.push(if opener == '(' { ')' } else { '}' });
+                    word_started = true;
+                }
+                '(' if closer == ')' => expansion_closers.push(')'),
+                ')' if closer == ')' => {
+                    expansion_closers.pop();
+                    word_started = true;
+                }
+                '{' if closer == '}' => expansion_closers.push('}'),
+                '}' if closer == '}' => {
+                    expansion_closers.pop();
+                    word_started = true;
+                }
+                '\\' => escaped = true,
+                '\'' => in_single = true,
+                '"' => in_double = true,
+                '#' if !word_started => in_comment = true,
+                c if c.is_whitespace() => word_started = false,
+                _ => word_started = true,
+            }
+            command_started = true;
+            continue;
+        }
+
+        if line_break_seen && !ch.is_whitespace() && !(ch == '#' && !word_started) {
+            return true;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+                command_started = true;
+            }
+            '\'' => {
+                in_single = true;
+                word_started = true;
+            }
+            '"' => {
+                in_double = true;
+                word_started = true;
+            }
+            '$' if matches!(chars.peek(), Some('(' | '{')) => {
+                let opener = chars.next().expect("peeked shell expansion opener");
+                expansion_closers.push(if opener == '(' { ')' } else { '}' });
+                word_started = true;
+                command_started = true;
+            }
+            '#' if !word_started => in_comment = true,
+            '\n' | '\r' => {
+                word_started = false;
+                line_break_seen |= command_started;
+            }
+            ch if ch.is_whitespace() => word_started = false,
+            '{' if chars
+                .peek()
+                .is_some_and(|next| brace_neighbor_requires_expansion(Some(*next))) =>
+            {
+                expansion_closers.push('}');
+                word_started = true;
+                command_started = true;
+            }
+            ';' | '|' | '&' | '(' | ')' | '{' | '}' | '<' | '>' => return true,
+            _ => {
+                word_started = true;
+                command_started = true;
+            }
+        }
+    }
+
+    false
 }

@@ -1,13 +1,83 @@
+use super::super::history_merge::remap_transcript_indices;
 use super::super::tail::{current_root_agent_pid, root_agent_path_for_pid, tail_with_history};
 use super::{
-    FileBackedApp, WatchTails, action_events_path, agent_output_path, correlated_ui_task,
-    hydrate_actions_from_files, parse_tape_history, read_activity_snapshot, read_json_file,
-    request_events_path, sync_requests_from_files, tail_from_live_edge, ui_events_path,
-    ui_notice_path, ui_plan_path, ui_thinking_path,
+    ActionSnapshot, FileBackedApp, TapeRecordV1, WatchTails, action_events_path, agent_output_path,
+    command_action_history_cell, correlated_ui_task, hydrate_actions_from_snapshots,
+    read_action_snapshots, read_activity_snapshot, read_json_file, request_events_path,
+    sync_requests_from_files, tail_from_live_edge, ui_events_path, ui_notice_path, ui_plan_path,
+    ui_thinking_path,
 };
 use crate::history::HistoryCell;
 use alan_agent_protocol::{UiActivityState, UiEvent};
 use anyhow::{Context, Result, anyhow, bail};
+use serde_json::Value;
+
+pub(in crate::file_backed) fn hydrate_tape_history(
+    app: &mut FileBackedApp,
+    raw: &str,
+    actions: &[ActionSnapshot],
+) {
+    app.tape_user_cells.clear();
+    app.pending_command_actions.clear();
+    let mut actions_by_submission = std::collections::HashMap::new();
+    for action in actions.iter().rev() {
+        if !matches!(action.name.as_str(), "bash" | "cd") {
+            continue;
+        }
+        let Ok(result) = serde_json::from_str::<Value>(&action.result) else {
+            continue;
+        };
+        if let Some(submission_id) = result.get("call_id").and_then(Value::as_str) {
+            actions_by_submission
+                .entry(submission_id.to_string())
+                .or_insert(action);
+        }
+    }
+
+    let mut cells = Vec::new();
+    let mut action_cells = std::collections::BTreeMap::new();
+    let mut command_submission_ids = Vec::new();
+    for line in raw.lines() {
+        let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
+            continue;
+        };
+        if record.kind != "message" {
+            continue;
+        }
+        match record.role.as_str() {
+            "user" => {
+                if let Some(submission_id) = record.submission_id {
+                    if let Some(action) = actions_by_submission.get(&submission_id).copied() {
+                        command_submission_ids.push(submission_id);
+                        cells.push(HistoryCell::Command(record.content));
+                        if matches!(action.status.trim(), "completed" | "failed") {
+                            let cell = command_action_history_cell(action).unwrap_or_else(|| {
+                                HistoryCell::Error("command result is unavailable".to_string())
+                            });
+                            action_cells.insert(action.id.clone(), cells.len());
+                            cells.push(cell);
+                        }
+                    } else {
+                        app.tape_user_cells.insert(submission_id, cells.len());
+                        cells.push(HistoryCell::User(record.content));
+                    }
+                } else {
+                    cells.push(HistoryCell::User(record.content));
+                }
+            }
+            "assistant" => match cells.last_mut() {
+                Some(HistoryCell::Assistant(text)) => text.push_str(&record.content),
+                _ => cells.push(HistoryCell::Assistant(record.content)),
+            },
+            _ => {}
+        }
+    }
+    app.transcript = cells;
+    app.action_cells = action_cells;
+    for submission_id in command_submission_ids {
+        app.mark_command_submission(submission_id);
+    }
+}
 
 /// Pin every renderer stream and snapshot read to one Root Agent Process.
 /// If the supervisor replaces it during hydration, discard the whole set and
@@ -114,11 +184,13 @@ async fn hydrate_pinned_agent(
         ui,
         tape,
         ui_history: Vec::new(),
+        tape_history: tape_history.clone(),
     };
 
     let hydrate = async {
         let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
-        app.transcript = parse_tape_history(&tape_history);
+        let action_snapshots = read_action_snapshots(shell, agent_path).await?;
+        hydrate_tape_history(app, &tape_history, &action_snapshots);
         app.seed_reconciler_from_tape_history(&tape_history);
 
         let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
@@ -154,7 +226,7 @@ async fn hydrate_pinned_agent(
             }
         }
 
-        hydrate_actions_from_files(shell, agent_path, app).await?;
+        hydrate_actions_from_snapshots(app, action_snapshots);
         sync_requests_from_files(shell, agent_path, app).await
     }
     .await;
@@ -170,7 +242,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-    submitted_task: Option<(&str, u64, usize)>,
+    submitted_task: Option<(&str, u64, usize, &str)>,
 ) -> Result<(WatchTails, bool)> {
     let mut reattached = app.clone();
     let previous_transcript = std::mem::take(&mut reattached.transcript);
@@ -179,8 +251,10 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
     let mut submitted_task_settled = false;
-    if let Some((submitted_input, submitted_at_ms, prior_matching_turns)) = submitted_task {
-        let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms)?;
+    if let Some((submitted_input, submitted_at_ms, prior_matching_turns, submission_id)) =
+        submitted_task
+    {
+        let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms, submission_id)?;
         if reattached.notice.as_ref().is_some_and(|notice| {
             current_transcript
                 .iter()
@@ -190,8 +264,15 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             reattached.notice = None;
         }
         let current_transcript =
-            remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
+            remove_error_cells_and_remap_indices(current_transcript, &mut reattached);
+        let exact_prompt =
+            super::super::activity::prompt_position(&tails.tape_history, submission_id);
+        let (submitted_input, prior_matching_turns) = exact_prompt
+            .as_ref()
+            .map(|(body, prior)| (body.as_str(), *prior))
+            .unwrap_or((submitted_input, prior_matching_turns));
         let recovered_current_turn = ui_task.started
+            && (!ui_task.identity_based || exact_prompt.is_some())
             && reattached.merge_reconnected_history(
                 current_transcript,
                 submitted_input,
@@ -204,7 +285,19 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             reattached.notice = Some(message.clone());
             reattached.transcript.push(HistoryCell::Error(message));
             submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
-        } else if !recovered_current_turn && reattached.activity.state == UiActivityState::Idle {
+        } else if !recovered_current_turn
+            && reattached.activity.state == UiActivityState::Idle
+            && !reattached
+                .activity
+                .pending_submissions
+                .iter()
+                .any(|input| input.submission_id == submission_id)
+            && !reattached
+                .activity
+                .active_submission
+                .as_ref()
+                .is_some_and(|input| input.submission_id == submission_id)
+        {
             let message =
                 "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
                     .to_string();
@@ -221,35 +314,27 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     Ok((tails, submitted_task_settled))
 }
 
-fn remove_error_cells_and_remap_actions(
+fn remove_error_cells_and_remap_indices(
     current: Vec<HistoryCell>,
-    action_cells: &mut std::collections::BTreeMap<String, usize>,
+    app: &mut FileBackedApp,
 ) -> Vec<HistoryCell> {
-    let mut action_indices = Vec::with_capacity(current.len());
+    let mut index_mapping = Vec::with_capacity(current.len());
     let mut next_index = 0;
     let current = current
         .into_iter()
         .filter_map(|cell| {
             if matches!(cell, HistoryCell::Error(_)) {
-                action_indices.push(None);
+                index_mapping.push(None);
                 None
             } else {
-                action_indices.push(Some(next_index));
+                index_mapping.push(Some(next_index));
                 next_index += 1;
                 Some(cell)
             }
         })
         .collect();
-    *action_cells = std::mem::take(action_cells)
-        .into_iter()
-        .filter_map(|(id, index)| {
-            action_indices
-                .get(index)
-                .copied()
-                .flatten()
-                .map(|index| (id, index))
-        })
-        .collect();
+    remap_transcript_indices(&mut app.action_cells, &index_mapping);
+    remap_transcript_indices(&mut app.tape_user_cells, &index_mapping);
     current
 }
 

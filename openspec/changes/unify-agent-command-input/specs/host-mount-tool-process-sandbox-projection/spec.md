@@ -88,6 +88,26 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 - **AND** structured Agent file operations may address it through their own
   delegated Host Mount checks
 
+#### Scenario: Opaque mount-local executables are rejected when reads are not kernel-confined
+- **WHEN** the active OS sandbox backend does not confine reads and a command's
+  executable resolves from the active Host Mount
+- **THEN** native Tool execution rejects the command before launch because the
+  executable could read paths that command-text validation cannot inspect
+
+#### Scenario: ProtectedOnly rejects opaque project-code dispatch
+- **WHEN** a read-unconfined backend uses ProtectedOnly checks and a Git alias,
+  package script, or project build/test/run/generation command dispatches code
+- **THEN** native Tool execution rejects the opaque dispatcher before launch
+- **AND** dispatched project code cannot read outside the active Host Mount
+  through a path hidden from the submitted command text
+
+#### Scenario: ProtectedOnly encounters an unknown executable
+- **WHEN** a command names an executable outside the backend's inspected command set
+- **THEN** execution fails closed before launch, including through command wrappers
+- **AND** an unknown runner does not become permitted merely because it is absent
+  from the known project-dispatcher list
+- **AND** this bounded command restriction does not apply to a backend with kernel read confinement
+
 #### Scenario: Native output paths remain shell-usable and private
 - **WHEN** native stdout or stderr contains a path under the active cwd grant
 - **THEN** the Host adapter projects it relative to that submission's shared cwd

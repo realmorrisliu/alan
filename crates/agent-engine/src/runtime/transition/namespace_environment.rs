@@ -19,7 +19,7 @@ use std::{
 };
 
 use alan_ap::InProcessTransport;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Configuration for one namespace-native Agent Process turn driver.
 #[derive(Debug, Clone)]
@@ -231,6 +231,23 @@ impl NamespaceRuntimeEnvironment {
     pub fn with_namespace_cwd(mut self, namespace_cwd: impl Into<PathBuf>) -> Self {
         self.namespace_cwd = namespace_cwd.into();
         self
+    }
+
+    pub(crate) fn change_process_directory(&mut self, path: &std::path::Path) -> Result<PathBuf> {
+        let namespace_cwd = self.tool_execution().change_process_directory(path)?;
+        self.namespace_cwd = namespace_cwd.clone();
+        Ok(namespace_cwd)
+    }
+
+    pub(crate) fn restore_process_directory(&mut self, path: &std::path::Path) -> Result<()> {
+        let context = self
+            .tool_process_context
+            .as_ref()
+            .context("Process has no Tool execution context")?;
+        self.namespace_cwd = path.to_path_buf();
+        context
+            .tool_runner
+            .restore_process_directory(context.pid, path)
     }
 
     pub(crate) fn generation(&self) -> NamespaceGeneration {
