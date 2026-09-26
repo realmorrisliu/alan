@@ -482,3 +482,31 @@ async fn interrupting_suspended_input_settles_its_original_identity() {
     assert!(events.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
         alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, .. } if submission_ids == ["origin"])));
 }
+
+#[tokio::test]
+async fn resumed_tool_finalization_observes_cancellation_before_idle() {
+    for cancelled in [false, true] {
+        let mut state = runtime_state_with_environment(
+            namespace_environment_with_live_process(DelayedMockProvider::new(
+                tokio::time::Duration::ZERO,
+                "unused",
+            ))
+            .await,
+        );
+        state.core_config.memory.enabled = false;
+        state.machine.accept_submission("resumed-input");
+        state.machine.set_turn_activity(TurnActivityState::Running);
+        let cancel = CancellationToken::new();
+        if cancelled {
+            cancel.cancel();
+        }
+        finalize_replayed_tool_end_turn_best_effort(
+            &mut state, &cancel, true, "test-resume", "test-resume",
+        )
+        .await;
+        assert_eq!(state.machine.submission_was_cancelled(), cancelled);
+        assert_eq!(state.machine.current_submission_id(), Some("resumed-input"));
+        assert!(state.machine.input_queue().lock().unwrap().active_submission_ids.is_empty());
+        assert!(!state.machine.is_turn_active());
+    }
+}
