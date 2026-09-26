@@ -157,3 +157,28 @@
   combined native-command restart acceptance and the remaining interruption edges.
 - Remote checks for `9a742b17` all passed, including macOS Test Suite. This evidence
   predates the queue/cwd recovery commit; fresh current-head CI remains required.
+
+- Added a real Host/Host Mount/native-shell integration check with two independent
+  aP clients. It verifies standalone cd ordering, quoted pipeline output, multiline
+  redirection/append, script-local cd isolation, failed cd preserving the shared
+  directory, correlated failure evidence, native cancellation preserving completed
+  writes, paused pending inputs and explicit continuation. All commands remain
+  model-free after the initial mount-request turn.
+- This check exposed an intermittent lock-progress failure: polling input execution
+  inside the Process pump could suspend a service-lock holder while the pump waited
+  for that same lock to publish activity. One abort-on-drop Tokio task now advances
+  the accepted input independently; RuntimeLoopState returns to the Process pump
+  on completion and the Machine remains the sole queue owner.
+- Concurrent finite AgentFS reads could combine document versions (including invalid
+  activity JSON). A fid now retains one finite-file read until offset zero starts
+  another; streams keep their offset/live-edge semantics. A chunked-read regression
+  proves concurrent snapshot updates cannot append a different document's tail.
+- Native asynchronous shell execution now owns a process group, with cleanup on
+  cancellation, timeout and completion. The cancellation regression checks that the
+  shell and its sleeping descendant group disappear. Linux reified execution uses
+  a different blocking runner and still needs its cancellation acceptance.
+- Verification so far: 1,204 engine tests plus 20 architecture checks passed (one
+  engine test ignored), all 69 AgentFS tests passed, and the previously intermittent
+  real Host scenario passed ten consecutive runs after the fixes. Complete
+  OS Host, Service Manager and TUI suites also passed. Current-head CI and the
+  remaining acceptance cases are still required before merge.

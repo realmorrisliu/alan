@@ -492,3 +492,20 @@ async fn machine_ctl_read_returns_in_band_help() {
     assert!(help.contains("compact"), "ctl help lists compact: {help:?}");
     assert!(help.contains("rollback"), "ctl help lists rollback");
 }
+
+#[tokio::test]
+async fn finite_snapshot_read_does_not_mix_concurrent_document_versions() {
+    let fs = AgentFs::new();
+    let path = &["machine", "ui", "activity"];
+    let first = br#"{"version":2,"state":"idle","pending_submissions":[],"queue_paused":false}"#;
+    let second = br#"{"version":2,"state":"running","pending_submissions":[],"queue_paused":false,"active_submission":{"submission_id":"different","intent":"command"}}"#;
+    write_doc(&fs, path, Fid(1), first).await.unwrap();
+    fs.walk(Fid::ROOT, Fid(2), &["machine".into(), "ui".into(), "activity".into()]).await.unwrap();
+    fs.open(Fid(2), OpenMode::Read).await.unwrap();
+    let mut read = fs.read(Fid(2), 0, 15).await.unwrap();
+    write_doc(&fs, path, Fid(3), second).await.unwrap();
+    read.extend(fs.read(Fid(2), 15, 4096).await.unwrap());
+    assert_eq!(read, first);
+    assert!(fs.read(Fid(2), first.len() as u64, 4096).await.unwrap().is_empty());
+    assert_eq!(fs.read(Fid(2), 0, 4096).await.unwrap(), second);
+}

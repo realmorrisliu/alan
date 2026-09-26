@@ -211,8 +211,11 @@ removed after identity-based acceptance and result correlation were wired.
 
 The input envelope and result IDs below are implemented in this slice. The
 version-2 activity projection and multi-client renderer admission are implemented
-in this slice. Durable recovery and end-to-end command/cwd ordering remain
-unfinished tasks 2.5–2.8. Runtime failure events carry the failed submission ID even before Tape admission; redirected clients
+in this slice. Queue/cwd checkpoints recover pending inputs paused. A real Host
+integration check now covers two-client native command/cwd ordering, script-local
+cd isolation and cancellation with paused continuation. Tasks 2.5–2.8 remain open
+for their remaining cross-grant, restart and platform acceptance cases.
+Runtime failure events carry the failed submission ID even before Tape admission; redirected clients
 match that ID and never adopt another client's or an uncorrelated legacy error.
 
 The canonical write to /agent/<pid>/io/input is AgentFS's existing outer

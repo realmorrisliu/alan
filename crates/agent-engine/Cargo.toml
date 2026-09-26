@@ -41,6 +41,8 @@ pin-utils.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+
+[target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
 [dev-dependencies]

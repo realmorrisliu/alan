@@ -626,12 +626,21 @@ fn spawn_with_prepared_runtime_environment(
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.agent_files();
                     let namespace_heartbeat = state.agent_files();
-                    let mut submission_fut = Box::pin(advance_accepted_submission(
-                        &mut state,
-                        submission,
-                        &broker_for_submission,
-                        &cancel,
-                    ));
+                    // File operations can suspend while holding a service lock also needed
+                    // by the input pump. Poll execution independently so publication cannot
+                    // prevent the lock holder from making progress. JoinSet aborts on drop.
+                    let mut execution = tokio::task::JoinSet::new();
+                    let execution_cancel = cancel.clone();
+                    execution.spawn(async move {
+                        let outcome = advance_accepted_submission(
+                            &mut state,
+                            submission,
+                            &broker_for_submission,
+                            &execution_cancel,
+                        )
+                        .await;
+                        (state, outcome)
+                    });
                     let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(5));
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -646,8 +655,14 @@ fn spawn_with_prepared_runtime_environment(
                         }
                         tokio::select! {
                             _ = queues.active_turn_broker.activity_changed() => {},
-                            outcome = &mut submission_fut => {
-                                drop(submission_fut);
+                            joined = execution.join_next() => {
+                                let (returned_state, outcome) = joined
+                                    .expect("one input execution task is running")
+                                    .unwrap_or_else(|error| {
+                                        namespace_input_task.abort();
+                                        panic!("Agent input execution task failed: {error}");
+                                    });
+                                state = returned_state;
                                 let terminal_ui_result = match &outcome.result {
                                     Ok(TransitionCompletion::Paused) => Ok(()),
                                     Ok(TransitionCompletion::Completed) if cancel.is_cancelled() && queues.active_turn_broker.is_paused() => super::ui_surfaces::turn_failed(
