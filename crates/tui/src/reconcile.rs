@@ -33,9 +33,6 @@
 //! - *suppression*: tape records rendered one or more responses before their
 //!   stream bytes arrived; queued late bytes are consumed in FIFO order, not
 //!   duplicated.
-//! - *pending echo*: this client's own submit text, so exactly one user record
-//!   is deduped and repeated identical prompts from other writers keep their
-//!   boundaries.
 
 /// What the app should do with a filtered stream chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,15 +43,6 @@ pub(crate) enum StreamAction {
     Append(String),
     /// Start a new assistant cell with this text.
     StartNew(String),
-}
-
-/// What the app should do with a user tape record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum UserDecision {
-    /// Confirms the local echo already on screen: no user-cell edit.
-    Drop,
-    /// Push a new user cell at the end.
-    Push(String),
 }
 
 /// What the app should do with an assistant tape record, given the located
@@ -86,8 +74,6 @@ pub(crate) struct StreamReconciler {
     /// client attached. If it was only hydrated, output bytes before the live
     /// tail edge cannot arrive later.
     current_turn_live_boundary: bool,
-    /// This client's own submit text awaiting its user tape record.
-    pending_echo: Option<String>,
 }
 
 impl StreamReconciler {
@@ -109,21 +95,8 @@ impl StreamReconciler {
         self.suppress.clear();
         self.preview_open = false;
         self.held.clear();
-        self.pending_echo = None;
         self.current_turn_live_boundary = false;
         self.awaiting_boundary = role == "assistant";
-    }
-
-    /// This client submitted a message (the app pushes the User cell). Its
-    /// boundary is already on screen, so this turn's stream renders
-    /// immediately. Suppression is intentionally preserved: unread output
-    /// tail bytes from the previous response can arrive after this boundary.
-    pub(crate) fn on_local_submit(&mut self, text: &str) {
-        self.pending_echo = Some(text.to_string());
-        self.preview_open = false;
-        self.awaiting_boundary = false;
-        self.current_turn_live_boundary = true;
-        self.held.clear();
     }
 
     /// Filter and place a stream chunk. Suppression consumes bytes a record
@@ -167,15 +140,9 @@ impl StreamReconciler {
     /// A `machine/tape` user record arrived: a turn boundary. Call
     /// [`Self::take_flushed_stream`] afterwards to render any buffered next-turn
     /// bytes that were waiting for this boundary.
-    pub(crate) fn on_user_record(&mut self, content: &str) -> UserDecision {
+    pub(crate) fn on_user_record(&mut self) {
         self.awaiting_boundary = false;
         self.current_turn_live_boundary = true;
-        // Dedupe only against this client's own pending echo.
-        if self.pending_echo.as_deref() == Some(content) {
-            self.pending_echo = None;
-            return UserDecision::Drop;
-        }
-        UserDecision::Push(content.to_string())
     }
 
     /// After a user record, return buffered next-turn stream bytes to render
@@ -310,10 +277,8 @@ mod tests {
         }
 
         fn user_record(&mut self, content: &str) {
-            match self.rec.on_user_record(content) {
-                UserDecision::Drop => {}
-                UserDecision::Push(c) => self.cells.push(Cell::User(c)),
-            }
+            self.rec.on_user_record();
+            self.cells.push(Cell::User(content.to_string()));
             if let Some(stream) = self.rec.take_flushed_stream() {
                 self.cells.push(Cell::Assistant(stream));
             }
@@ -376,7 +341,7 @@ mod tests {
             rec.on_assistant_record("The old answer".to_string(), None),
             AssistantDecision::Push("The old answer".to_string())
         );
-        rec.on_user_record("next");
+        rec.on_user_record();
         assert_eq!(
             rec.on_stream("The".to_string()),
             StreamAction::StartNew("The".to_string())
@@ -386,7 +351,7 @@ mod tests {
     #[test]
     fn live_turn_without_preview_still_suppresses_late_output_tail() {
         let mut rec = StreamReconciler::new();
-        rec.on_user_record("live");
+        rec.on_user_record();
 
         assert_eq!(
             rec.on_assistant_record("hello".to_string(), None),
@@ -436,36 +401,6 @@ mod tests {
                 Cell::Assistant("a".into()),
                 Cell::User("same".into()),
                 Cell::Assistant("a".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn local_echo_is_deduped_once() {
-        let mut m = Model::default();
-        m.rec.on_local_submit("hi");
-        m.cells.push(Cell::User("hi".into())); // app's local echo
-        m.user_record("hi"); // confirming record
-        assert_eq!(m.messages(), vec![Cell::User("hi".into())]);
-    }
-
-    #[test]
-    fn suppression_survives_local_submit_until_late_tail_is_consumed() {
-        let mut m = Model::default();
-        m.stream("hel");
-        m.assistant_record("hello"); // arms suppression for the queued "lo" tail
-        m.rec.on_local_submit("next");
-        m.cells.push(Cell::User("next".into())); // app's local echo
-        m.stream("lo"); // old response tail arrives after the new user boundary
-        m.stream("answer");
-        m.assistant_record("answer");
-
-        assert_eq!(
-            m.messages(),
-            vec![
-                Cell::Assistant("hello".into()),
-                Cell::User("next".into()),
-                Cell::Assistant("answer".into()),
             ]
         );
     }

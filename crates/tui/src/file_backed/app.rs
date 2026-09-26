@@ -14,7 +14,7 @@ use crate::completion::{self, CompletionCandidate, CompletionSources, Completion
 use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
-use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
+use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler};
 use crate::transcript_ui::{
     INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
 };
@@ -393,9 +393,7 @@ impl FileBackedApp {
         if text.trim().starts_with('/') {
             return self.handle_command(text.trim());
         }
-        self.transcript.push(HistoryCell::User(text.clone()));
-        self.reconciler.on_local_submit(&text);
-        self.pending_remote_turn_start = None;
+        // Submission may be queued behind another client. Tape owns turn boundaries.
         Some(FileBackedAction::Submit(text))
     }
 
@@ -590,10 +588,8 @@ impl FileBackedApp {
         }
         match record.role.as_str() {
             "user" => {
-                match self.reconciler.on_user_record(&record.content) {
-                    UserDecision::Drop => {}
-                    UserDecision::Push(content) => self.insert_user_boundary(content),
-                }
+                self.reconciler.on_user_record();
+                self.insert_user_boundary(record.content);
                 self.flush_held_stream_after_boundary();
             }
             "assistant" => {

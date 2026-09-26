@@ -1,12 +1,5 @@
-use std::path::{Path, PathBuf};
-use std::{
-    collections::VecDeque,
-    fs::OpenOptions,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
-};
+use std::collections::VecDeque;
+use std::path::PathBuf;
 
 #[cfg(test)]
 use alan_agent_protocol::{
@@ -28,7 +21,6 @@ mod interrupt;
 mod layout;
 mod previous_input;
 mod stdio_completion;
-mod submission;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
@@ -37,7 +29,6 @@ use interrupt::{
     settle_unknown_replaced_input,
 };
 use previous_input::discard_superseded_attachment_events;
-use submission::{prepare_root_agent_submission, require_root_agent_idle};
 
 #[cfg(test)]
 use file_surface::{
@@ -53,7 +44,7 @@ use file_surface::{
 use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
-    open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,
+    open_stdio_tail_attachment_for_submit, root_agent_path_for_pid,
 };
 
 use crate::completion::CompletionCandidate;
@@ -82,8 +73,6 @@ pub struct FileBackedRunConfig {
     pub history_path: Option<PathBuf>,
     /// Optional local skill candidates used for `$` completion.
     pub skill_candidates: Vec<CompletionCandidate>,
-    /// Shared lock path for serializing Root Agent submissions across clients.
-    pub task_submission_lock_path: Option<PathBuf>,
 }
 
 impl FileBackedRunConfig {
@@ -96,40 +85,8 @@ impl FileBackedRunConfig {
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
-            task_submission_lock_path: None,
         }
     }
-}
-
-/// Acquire the channel-scoped lock shared by interactive and redirected tasks.
-pub fn acquire_task_submission_lock(path: &Path) -> Result<std::fs::File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .with_context(|| format!("open task submission lock {}", path.display()))?;
-    let metadata = file.metadata()?;
-    // SAFETY: geteuid has no memory-safety preconditions.
-    let current_uid = unsafe { libc::geteuid() };
-    anyhow::ensure!(metadata.file_type().is_file(), "task lock is not a file");
-    anyhow::ensure!(
-        metadata.uid() == current_uid,
-        "task lock has a foreign owner"
-    );
-    anyhow::ensure!(metadata.mode() & 0o077 == 0, "task lock is not private");
-
-    // SAFETY: flock acts on the live descriptor and does not retain the pointer.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            bail!("another Alan task is already running for this channel");
-        }
-        return Err(error).context("acquire task submission lock");
-    }
-    Ok(file)
 }
 
 /// Run the inline renderer for a mounted Agent Process.
@@ -150,7 +107,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
     let follows_root_agent = config.agent_path == "/agent/root";
     let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
-    let mut _active_task_lock = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -194,7 +150,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     other => {
-                        let mut submission_lock = None;
                         let submission_requested = follows_root_agent
                             && matches!(
                                 &other,
@@ -206,23 +161,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         let blocked_submission = if submission_requested && pending_root_agent_turn.is_some() {
                             app.push_error("submit blocked: waiting for this input to complete".to_string());
                             true
-                        } else if submission_requested {
-                            match prepare_root_agent_submission(
-                                &shell,
-                                &config.agent_path,
-                                config.task_submission_lock_path.as_deref(),
-                            )
-                            .await
-                            {
-                                Ok(lock) => {
-                                    submission_lock = lock;
-                                    false
-                                }
-                                Err(err) => {
-                                    app.push_error(format!("submit blocked: {err:#}"));
-                                    true
-                                }
-                            }
                         } else {
                             false
                         };
@@ -241,7 +179,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Ok(()) => {
                                             app.notice = None;
                                             if follows_root_agent {
-                                                _active_task_lock = submission_lock.take();
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
                                                     submission_id: record.submission_id.clone(),
@@ -293,9 +230,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 }
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
-                    if pending_root_agent_turn.is_none() {
-                        _active_task_lock = None;
-                    }
                 }
                 dirty = true;
             }
@@ -326,9 +260,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     pending_root_agent_turn = None;
                 }
                 settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
-                if pending_root_agent_turn.is_none() {
-                    _active_task_lock = None;
-                }
                 if previous_pid != watchers.root_agent_pid
                     || previous_refresh_failed != watchers.pid_refresh_failed
                     || previous_turn != pending_root_agent_turn
@@ -538,7 +469,7 @@ pub async fn run_stdio_task(
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, &agent_path).await?;
+    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, &agent_path).await?;
 
     let task = StdioTaskWaitContext::new(input);
 
