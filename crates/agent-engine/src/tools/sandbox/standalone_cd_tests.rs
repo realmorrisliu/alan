@@ -77,3 +77,29 @@ fn standalone_cd_parser_rejects_unsupported_forms_explicitly() {
         );
     }
 }
+
+#[test]
+fn standalone_cd_preserves_double_quoted_shell_semantics() {
+    for command in [
+        r#"cd "$(printf "src;part")""#,
+        r#"cd "`printf "src;part"`""#,
+        r#"cd "$(printf "%s" "$(printf "src;part")")""#,
+    ] {
+        assert!(parse_standalone_cd(command).is_err(), "{command}");
+        assert_eq!(
+            parse_standalone_cd(&format!("{command} && pwd")).unwrap(),
+            None
+        );
+    }
+    for (operand, expected) in [
+        (r#""foo\bar""#, r"foo\bar"),
+        (r#""foo\\bar""#, r"foo\bar"),
+        (r#""foo\$bar""#, "foo$bar"),
+    ] {
+        let script = format!("cd {operand}");
+        assert_eq!(
+            parse_standalone_cd(&script).unwrap(),
+            Some(PathBuf::from(expected))
+        );
+    }
+}

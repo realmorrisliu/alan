@@ -376,6 +376,16 @@ where
     }
 }
 
+fn push_double_quoted_escape(word: &mut String, next: char) {
+    if next == '\n' {
+        return;
+    }
+    if !matches!(next, '$' | '`' | '"' | '\\') {
+        word.push('\\');
+    }
+    word.push(next);
+}
+
 pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -417,7 +427,7 @@ pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> 
             match ch {
                 '\\' => {
                     if let Some((_, next)) = chars.next() {
-                        current.push(next);
+                        push_double_quoted_escape(&mut current, next);
                         word_started = true;
                     } else {
                         return Err(anyhow!("Command ends with an incomplete escape sequence"));
@@ -581,7 +591,7 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
             match ch {
                 '\\' => {
                     if let Some(next) = chars.next() {
-                        current_word.push(next);
+                        push_double_quoted_escape(&mut current_word, next);
                         word_started = true;
                     } else {
                         return Err(anyhow!("Command ends with an incomplete escape sequence"));
@@ -744,6 +754,19 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
             word_started = true;
             continue;
         }
+        if in_double && (ch == '`' || (ch == '$' && matches!(chars.peek(), Some('(' | '{')))) {
+            let closer = if ch == '`' {
+                '`'
+            } else if chars.next() == Some('(') {
+                ')'
+            } else {
+                '}'
+            };
+            expansion_closers.push((closer, true));
+            in_double = false;
+            word_started = false;
+            continue;
+        }
         if in_double {
             match ch {
                 '\\' => escaped = true,
@@ -754,29 +777,32 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
             continue;
         }
 
-        if let Some(closer) = expansion_closers.last().copied() {
+        if let Some((closer, outer_double)) = expansion_closers.last().copied() {
             match ch {
                 '`' if closer == '`' => {
                     expansion_closers.pop();
+                    in_double = outer_double;
                     word_started = true;
                 }
                 '`' => {
-                    expansion_closers.push('`');
+                    expansion_closers.push(('`', false));
                     word_started = true;
                 }
                 '$' if matches!(chars.peek(), Some('(' | '{')) => {
                     let opener = chars.next().expect("peeked shell expansion opener");
-                    expansion_closers.push(if opener == '(' { ')' } else { '}' });
+                    expansion_closers.push((if opener == '(' { ')' } else { '}' }, false));
                     word_started = true;
                 }
-                '(' if closer == ')' => expansion_closers.push(')'),
+                '(' if closer == ')' => expansion_closers.push((')', false)),
                 ')' if closer == ')' => {
                     expansion_closers.pop();
+                    in_double = outer_double;
                     word_started = true;
                 }
-                '{' if closer == '}' => expansion_closers.push('}'),
+                '{' if closer == '}' => expansion_closers.push(('}', false)),
                 '}' if closer == '}' => {
                     expansion_closers.pop();
+                    in_double = outer_double;
                     word_started = true;
                 }
                 '\\' => escaped = true,
@@ -808,13 +834,13 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
                 word_started = true;
             }
             '`' => {
-                expansion_closers.push('`');
+                expansion_closers.push(('`', false));
                 word_started = true;
                 command_started = true;
             }
             '$' if matches!(chars.peek(), Some('(' | '{')) => {
                 let opener = chars.next().expect("peeked shell expansion opener");
-                expansion_closers.push(if opener == '(' { ')' } else { '}' });
+                expansion_closers.push((if opener == '(' { ')' } else { '}' }, false));
                 word_started = true;
                 command_started = true;
             }
@@ -828,7 +854,7 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
                 .peek()
                 .is_some_and(|next| brace_neighbor_requires_expansion(Some(*next))) =>
             {
-                expansion_closers.push('}');
+                expansion_closers.push(('}', false));
                 word_started = true;
                 command_started = true;
             }
@@ -846,6 +872,21 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn both_shell_readers_preserve_double_quoted_backslashes() {
+        let script = r#"printf "foo\bar" "foo\\bar" "foo\$bar""#;
+        let expected = vec!["printf", r"foo\bar", r"foo\bar", "foo$bar"];
+        assert_eq!(shell_commands(script).unwrap()[0], expected);
+        assert_eq!(
+            shell_tokens_with_spans(script)
+                .unwrap()
+                .iter()
+                .map(|token| token.decoded.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
 
     #[test]
     fn redirection_dash_belongs_to_the_target_except_for_stripped_heredocs() {
