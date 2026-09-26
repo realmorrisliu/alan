@@ -177,54 +177,69 @@ async fn native_commands_preserve_scripts_and_results_without_generation() {
         std::fs::read_to_string(project.path().join("partial.txt")).unwrap(),
         "partial"
     );
-    let running = command(&shell, "printf saved > before-interrupt.txt; sleep 30");
-    let interrupt = async {
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while !project.path().join("before-interrupt.txt").exists() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("native command started");
-        let queued = submit_command(&shell, "printf queued > queued.txt").await;
+    for control in ["continue", "discard"] {
+        let before = format!("before-{control}.txt");
+        let queued_file = format!("queued-{control}.txt");
+        let script = format!("printf saved > {before}; sleep 30");
+        let running = command(&shell, &script);
+        let interrupt = async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !project.path().join(&before).exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("native command started");
+            let queued = submit_command(&shell, &format!("printf queued > {queued_file}")).await;
+            shell
+                .write("/agent/root/machine/ctl", b"interrupt")
+                .await
+                .unwrap();
+            queued
+        };
+        let (interrupted, queued) = tokio::join!(running, interrupt);
+        assert_ne!(interrupted["exit_code"], 0);
+        let process = interrupted["process"]
+            .as_str()
+            .expect("spawned Process evidence");
+        assert!(process.starts_with("/proc/"), "{interrupted}");
+        assert_eq!(
+            shell.cat(&format!("{process}/status")).await.unwrap(),
+            b"exited\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(project.path().join(&before)).unwrap(),
+            "saved"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !project.path().join(&queued_file).exists(),
+            "interrupt must hold the next native command"
+        );
+        let activity: Value =
+            serde_json::from_slice(&shell.cat("/agent/root/machine/ui/activity").await.unwrap())
+                .unwrap();
+        assert_eq!(activity["state"], "paused");
         shell
-            .write("/agent/root/machine/ctl", b"interrupt")
+            .write(
+                "/agent/root/machine/ctl",
+                format!("queue-v1 {control}").as_bytes(),
+            )
             .await
             .unwrap();
-        queued
-    };
-    let (interrupted, queued) = tokio::join!(running, interrupt);
-    assert_ne!(interrupted["exit_code"], 0);
-    let process = interrupted["process"]
-        .as_str()
-        .expect("spawned Process evidence");
-    assert!(process.starts_with("/proc/"), "{interrupted}");
-    assert_eq!(
-        shell.cat(&format!("{process}/status")).await.unwrap(),
-        b"exited\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(project.path().join("before-interrupt.txt")).unwrap(),
-        "saved"
-    );
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        !project.path().join("queued.txt").exists(),
-        "interrupt must hold the next native command"
-    );
-    let activity: Value =
-        serde_json::from_slice(&shell.cat("/agent/root/machine/ui/activity").await.unwrap())
-            .unwrap();
-    assert_eq!(activity["state"], "paused");
-    shell
-        .write("/agent/root/machine/ctl", b"queue-v1 continue")
-        .await
-        .unwrap();
-    assert_eq!(command_result(&shell, &queued).await["exit_code"], 0);
-    assert_eq!(
-        std::fs::read_to_string(project.path().join("queued.txt")).unwrap(),
-        "queued"
-    );
+        let result = command_result(&shell, &queued).await;
+        if control == "continue" {
+            assert_eq!(result["exit_code"], 0);
+            assert_eq!(
+                std::fs::read_to_string(project.path().join(&queued_file)).unwrap(),
+                "queued"
+            );
+        } else {
+            assert_eq!(result["exit_code"], 1);
+            assert_eq!(result["process"], "", "discard never spawns a Tool Process");
+            assert!(!project.path().join(&queued_file).exists());
+        }
+    }
     assert_eq!(
         command(&shell, "printf alive > after-interrupt.txt").await["exit_code"],
         0
