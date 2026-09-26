@@ -151,16 +151,29 @@ async fn command_steering_requires_ordered_admission() {
     );
     let mut emit = |_event| async {};
     let cancel = CancellationToken::new();
-    for mode in [InputMode::Steer, InputMode::NextTurn] {
+    for (mode, body, error_text) in [
+        (InputMode::Steer, "pwd", "ordered queue admission"),
+        (InputMode::NextTurn, "pwd", "ordered queue admission"),
+        (InputMode::FollowUp, "", "missing command"),
+    ] {
         let submission = Submission {
             id: uuid::Uuid::new_v4().to_string(),
             intent: InputIntent::Command,
-            op: Op::Input { parts: vec![ContentPart::text("pwd")], mode },
+            op: Op::Input { parts: vec![ContentPart::text(body)], mode },
         };
+        let id = submission.id.clone();
         assert!(!is_turn_inband_submission(&submission));
         let error = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
             .await.unwrap_err();
-        assert!(error.to_string().contains("ordered queue admission"));
+        assert!(error.to_string().contains(error_text));
         assert!(state.machine.messages().is_empty());
+        let shell = Shell::new(state.environment.root_transport());
+        let actions = state.agent_files().action_ids().await.unwrap();
+        let base = format!("{}/actions/{}", state.environment.agent_path(), actions.last().unwrap());
+        let result: serde_json::Value = serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
+        assert_eq!(result["call_id"], id);
+        assert_eq!(result["exit_code"], 1);
+        assert_eq!(shell.cat(&format!("{base}/approval")).await.unwrap(), b"not_required");
+        assert!(shell.cat(&format!("{base}/process")).await.unwrap().is_empty());
     }
 }

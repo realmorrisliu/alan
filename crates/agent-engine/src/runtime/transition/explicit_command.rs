@@ -17,19 +17,35 @@ where
         anyhow::bail!("command intent requires an input operation");
     };
     let command = alan_agent_protocol::parts_to_text(&parts);
-    if command.trim().is_empty() {
+    let rejection = if command.trim().is_empty() {
+        Some("missing command after ! prefix")
+    } else if mode != alan_agent_protocol::InputMode::FollowUp {
+        Some("command steering and next-turn scheduling require ordered queue admission")
+    } else {
+        None
+    };
+    if let Some(message) = rejection {
+        state
+            .agent_files()
+            .write_action(
+                NamespaceActionRecord::new("bash", "failed")
+                    .with_approval("not_required")
+                    .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
+                    .with_result(
+                        serde_json::json!({"call_id":submission_id,"exit_code":1,
+                    "outcome":{"success":false,"error":message}})
+                        .to_string(),
+                    ),
+            )
+            .await?;
         emit(Event::Error {
-            message: "missing command after ! prefix".to_string(),
+            message: message.into(),
             recoverable: true,
         })
         .await;
-        return Ok(());
+        anyhow::bail!("{message}");
     }
 
-    anyhow::ensure!(
-        mode == alan_agent_protocol::InputMode::FollowUp,
-        "command steering and next-turn scheduling require ordered queue admission"
-    );
     anyhow::ensure!(
         !state.machine.is_turn_active() && !state.machine.has_pending_interaction(),
         "command follow-up requires an idle Machine until ordered admission is integrated"
@@ -219,9 +235,7 @@ async fn record_missing_command_action(
     if let Some(process) = outcome.get("process").and_then(serde_json::Value::as_str) {
         action = action.with_process(process);
     }
-    if let Some(approval) = approval {
-        action = action.with_approval(approval);
-    }
+    action = action.with_approval(approval.unwrap_or("not_required"));
     state.agent_files().write_action(action).await?;
     Ok(())
 }
