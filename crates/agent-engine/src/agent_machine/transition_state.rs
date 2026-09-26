@@ -128,6 +128,7 @@ impl AgentMachine {
         self.transition_state.current_submission_id = Some(submission_id.into());
         self.transition_state.submission_cancelled = false;
         self.transition_state.related_submission_ids.clear();
+        self.sync_active_submission_ids();
     }
 
     pub(crate) fn finish_submission(&mut self) {
@@ -137,6 +138,21 @@ impl AgentMachine {
         self.transition_state.current_submission_id = None;
         self.transition_state.submission_cancelled = false;
         self.transition_state.related_submission_ids.clear();
+        self.sync_active_submission_ids();
+    }
+
+    fn sync_active_submission_ids(&self) {
+        let mut queue = self
+            .transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned");
+        queue
+            .active_submission_ids
+            .clone_from(&self.transition_state.related_submission_ids);
+        queue
+            .active_submission_ids
+            .extend(self.transition_state.current_submission_id.clone());
     }
 
     pub(crate) fn mark_submission_cancelled(&mut self) {
@@ -164,6 +180,7 @@ impl AgentMachine {
         {
             self.transition_state.related_submission_ids.push(previous);
         }
+        self.sync_active_submission_ids();
     }
 
     pub(crate) fn related_submission_ids(&self) -> &[String] {
@@ -281,7 +298,7 @@ impl AgentMachine {
                 .expect("input queue poisoned")
                 .queued_next_turn_inputs,
         );
-        inputs
+        let parts = inputs
             .into_iter()
             .map(|(id, parts)| {
                 if let Some(id) = id
@@ -292,7 +309,9 @@ impl AgentMachine {
                 }
                 parts
             })
-            .collect()
+            .collect();
+        self.sync_active_submission_ids();
+        parts
     }
 
     /// Number of queued `next_turn` payloads.

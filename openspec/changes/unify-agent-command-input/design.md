@@ -380,3 +380,16 @@ record. Command exit status remains in the correlated Action result; completing
 input advancement does not imply a zero shell exit status. TUI event readers
 accept this variant, but client completion selection, next-turn identity and
 restart recovery still require their own delivery slices.
+
+
+### Targeted input interruption
+
+`queue-v1 interrupt <submission-id>` on `machine/ctl` maps to
+`InterruptSubmission`. It removes an unstarted ordinary, in-turn buffered or
+next-turn input and publishes its cancelled completion and Action without
+executing it. A target participating in active work cancels that transition;
+a suspended target uses the existing interrupt transition. Matching interruption
+pauses later ordinary dispatch for explicit continuation/discard. Unknown or
+settled IDs do not cancel other work or alter pause state. Accepted identities
+are visible before the transition future is first polled, while all Machine
+identity changes remain owned by the accepted-submission transition.

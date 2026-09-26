@@ -13,6 +13,8 @@ pub(crate) enum QueuedRuntimeItem {
 pub(crate) struct MachineInputQueue {
     pub(crate) pending: VecDeque<QueuedRuntimeItem>,
     pub(crate) paused: bool,
+    /// Derived lookup for Process controls while a transition borrows the Machine.
+    pub(crate) active_submission_ids: Vec<String>,
     pub(crate) inband: VecDeque<Submission>,
     pub(crate) buffered_inband_submissions: VecDeque<Submission>,
     pub(crate) queued_next_turn_inputs: VecDeque<(Option<String>, Vec<ContentPart>)>,

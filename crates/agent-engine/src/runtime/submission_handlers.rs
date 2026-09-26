@@ -99,7 +99,7 @@ where
             })
             .await;
         }
-        Op::ContinueQueue | Op::DiscardQueue => {
+        Op::ContinueQueue | Op::DiscardQueue | Op::InterruptSubmission { .. } => {
             anyhow::bail!("queue controls require Process-loop admission");
         }
         Op::Interrupt => {
