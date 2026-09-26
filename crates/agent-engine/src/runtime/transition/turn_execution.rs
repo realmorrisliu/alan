@@ -463,9 +463,6 @@ where
                 }
                 log_generation_failure(request_start, &error);
                 let message = generation_error_message(&error);
-                crate::runtime::ui_surfaces::error_notice(&agent_files, &message)
-                    .await
-                    .context("write generation error UI state")?;
                 emit(Event::Error {
                     message: message.clone(),
                     recoverable: true,
