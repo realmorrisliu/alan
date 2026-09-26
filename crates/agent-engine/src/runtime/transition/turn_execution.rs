@@ -159,6 +159,7 @@ fn build_domain_prompt_with_skills(
 }
 
 /// Run a single agent turn
+#[cfg(test)]
 pub(super) async fn run_turn_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
@@ -186,7 +187,7 @@ where
     result.and_then(|outcome| closed.map(|()| outcome))
 }
 
-async fn run_turn_with_writer<E, F>(
+pub(super) async fn run_turn_with_writer<E, F>(
     state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
     mut user_input: Option<Vec<crate::tape::ContentPart>>,

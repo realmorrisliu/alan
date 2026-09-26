@@ -184,6 +184,7 @@ pub(super) async fn replay_command<E, F>(
     approved_unknown_effect_call_id: Option<&str>,
     approved_tool_escalation_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
+    writer: &NamespaceTapeWriter,
     emit: &mut E,
 ) -> Result<()>
 where
@@ -194,7 +195,7 @@ where
         .await
         .context("write resumed command UI state")?;
     state.machine.set_turn_activity(TurnActivityState::Running);
-    let result = replay_approved_tool_batch_with_cancel(
+    let result = replay_approved_tool_batch_with_writer(
         state,
         tool_calls,
         approved_unknown_effect_call_id,
@@ -203,6 +204,7 @@ where
             explicit_command: true,
             ..inputs
         },
+        writer,
         emit,
     )
     .await;

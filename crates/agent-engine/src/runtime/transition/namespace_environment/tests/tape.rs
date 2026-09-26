@@ -61,3 +61,23 @@ fn tape_record_shape_is_content_addressable_ready() {
         "tape records must stay canonical, self-contained newline-delimited units"
     );
 }
+
+#[tokio::test]
+async fn failed_turn_runtime_closes_writer_before_returning() {
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(AgentFs::new())),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    shell.write("/agent/1/io/input", b"hello").await.unwrap();
+    let mut runtime = NamespaceTurnRuntime::new(
+        root.clone(),
+        NamespaceTurnRuntimeConfig::new("/agent/1", "missing"),
+    );
+    assert!(runtime.run_next_turn().await.is_err());
+    // No yield: an asynchronously scheduled Drop clunk would still hold the lease.
+    shell.write("/agent/1/machine/tape", b"").await.unwrap();
+}
