@@ -41,12 +41,8 @@ pub(in crate::tools) async fn output_with_capture(
         .map(|(name, _)| name.to_os_string())
         .chain(std::env::vars_os().map(|(name, _)| name))
         .filter(|name| {
-            name.to_str().is_some_and(|name| {
-                matches!(
-                    name,
-                    "ENV" | "BASH_ENV" | "SHELLOPTS" | "BASHOPTS" | "CDPATH"
-                ) || name.starts_with("BASH_FUNC_")
-            })
+            name.to_str()
+                .is_some_and(super::command_wrappers::is_shell_startup_variable)
         })
         .collect();
     for name in shell_hooks {

@@ -48,6 +48,16 @@ fn nested_shells_reject_startup_files_before_execution() {
     let sandbox = Sandbox::new(temp.path().to_path_buf());
     for script in [
         "bash -lc 'printf selected'",
+        "zsh -c 'printf selected'",
+        "zsh -f -o rcs -c 'printf selected'",
+        "env BASH_ENV=./hook bash -c 'printf selected'",
+        "BASH_ENV=./hook bash -c 'printf selected'",
+        "BASH_ENV=./hook; bash -c 'printf selected'",
+        "export BASH_ENV=./hook; bash -c 'printf selected'",
+        "declare -x BASH_ENV=./hook; bash -c 'printf selected'",
+        "env ENV=./hook command sh -c 'printf selected'",
+        "env -S 'BASH_ENV=./hook bash' -c 'printf selected'",
+        "sh -c \"env BASH_ENV=./hook bash -c 'printf selected'\"",
         "bash -o posix -lc 'printf selected'",
         "env bash --login -c 'printf selected'",
         "command bash -ic 'printf selected'",
@@ -70,4 +80,29 @@ fn nested_shells_reject_startup_files_before_execution() {
             None,
         )
         .unwrap();
+}
+
+#[test]
+fn startup_variable_text_remains_ordinary_command_data() {
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    sandbox
+        .validate_command_paths(
+            "env printf 'BASH_ENV=./hook'",
+            temp.path(),
+            PathCheckMode::ProtectedOnly,
+            None,
+        )
+        .unwrap();
+}
+
+#[test]
+fn zsh_requires_disabled_startup_files() {
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    for script in ["zsh -fc 'printf selected'", "zsh -f -c 'printf selected'"] {
+        sandbox
+            .validate_command_paths(script, temp.path(), PathCheckMode::ProtectedOnly, None)
+            .unwrap();
+    }
 }

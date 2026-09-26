@@ -92,11 +92,41 @@ pub(super) fn validate_direct_command_shapes(
 /// `bash -c <script>`, …) so it can be recursively inspected. Returns `None`
 /// for non-wrapper commands or wrappers without an inline script argument.
 pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
-    let Some(view) = nested_evaluator_view(words) else {
+    let view = nested_evaluator_view(words);
+    let prefix_end = view.as_ref().map_or(words.len(), |view| {
+        if matches!(
+            view.command,
+            "export" | "readonly" | "declare" | "typeset" | "local" | "read"
+        ) {
+            words.len()
+        } else {
+            words.len() - view.args.len()
+        }
+    });
+    for word in &words[..prefix_end] {
+        let name = word.split_once('=').map_or(word.as_str(), |(name, _)| name);
+        if is_shell_startup_variable(name) {
+            return Err(anyhow!(
+                "Shell startup files cannot be enabled by command-local variable {name}"
+            ));
+        }
+    }
+    let Some(view) = view else {
         return Ok(None);
+    };
+    if view.opaque_wrapper_display.is_some() {
+        return Err(anyhow!(
+            "Shell startup files cannot be validated through opaque environment commands"
+        ));
     };
     if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
         return Ok(None);
+    }
+    if view.command == "zsh"
+        && !(view.args.first().is_some_and(|arg| arg == "-fc")
+            || view.args.get(..2).is_some_and(|args| args == ["-f", "-c"]))
+    {
+        return Err(anyhow!("Shell startup files require zsh -f -c or zsh -fc"));
     }
     let mut options = view.args.iter().enumerate();
     while let Some((index, word)) = options.next() {
@@ -129,6 +159,13 @@ pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<Str
         }
     }
     Ok(None)
+}
+
+pub(super) fn is_shell_startup_variable(name: &str) -> bool {
+    matches!(
+        name,
+        "ENV" | "BASH_ENV" | "SHELLOPTS" | "BASHOPTS" | "CDPATH" | "ZDOTDIR"
+    ) || name.starts_with("BASH_FUNC_")
 }
 
 fn command_basename(command: &str) -> &str {
