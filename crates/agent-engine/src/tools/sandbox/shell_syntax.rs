@@ -179,15 +179,30 @@ fn is_shell_word_boundary(ch: char) -> bool {
 }
 
 pub(super) fn normalize_shell_line_continuations(command: &str) -> String {
+    normalize_continuations_outside_ranges(command, &[])
+}
+
+fn normalize_continuations_outside_ranges(
+    command: &str,
+    preserved: &[std::ops::Range<usize>],
+) -> String {
+    let mut ranges = preserved.iter().peekable();
     let mut normalized = String::with_capacity(command.len());
-    let mut chars = command.chars().peekable();
+    let mut chars = command.char_indices().peekable();
     let mut in_single = false;
     let mut in_double = false;
     let mut in_comment = false;
     let mut escaped = false;
     let mut word_started = false;
 
-    while let Some(ch) = chars.next() {
+    while let Some((offset, ch)) = chars.next() {
+        while ranges.peek().is_some_and(|range| range.end <= offset) {
+            ranges.next();
+        }
+        if ranges.peek().is_some_and(|range| range.contains(&offset)) {
+            normalized.push(ch);
+            continue;
+        }
         if in_comment {
             normalized.push(ch);
             if matches!(ch, '\n' | '\r') {
@@ -358,9 +373,9 @@ fn strip_shell_comments(command: &str) -> String {
 
 fn consume_shell_line_continuation<I>(chars: &mut std::iter::Peekable<I>) -> bool
 where
-    I: Iterator<Item = char>,
+    I: Iterator<Item = (usize, char)>,
 {
-    match chars.peek().copied() {
+    match chars.peek().map(|(_, ch)| *ch) {
         Some('\n') => {
             chars.next();
             true
@@ -671,10 +686,23 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
 }
 
 pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
-    let normalized = normalize_shell_line_continuations(command);
     // Parse syntax only: this never invokes a shell or evaluates substitutions.
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
+    let original = parser
+        .parse(command, None)
+        .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
+    let mut pending = vec![original.root_node()];
+    let mut heredocs = Vec::new();
+    while let Some(node) = pending.pop() {
+        if node.kind() == "heredoc_body" {
+            heredocs.push(node.byte_range());
+        } else {
+            pending.extend(node.named_children(&mut node.walk()));
+        }
+    }
+    heredocs.sort_by_key(|range| range.start);
+    let normalized = normalize_continuations_outside_ranges(command, &heredocs);
     let tree = parser
         .parse(&normalized, None)
         .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;

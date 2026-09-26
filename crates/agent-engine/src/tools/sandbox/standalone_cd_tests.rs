@@ -155,3 +155,16 @@ fn standalone_cd_preserves_carriage_returns_after_backslash() {
         assert_eq!(parse_standalone_cd(command).unwrap(), None);
     }
 }
+
+#[test]
+fn standalone_cd_preserves_quoted_heredoc_before_classification() {
+    for name in ["cd", "c\\\nd"] {
+        let command =
+            format!("{name} \"$(cat <<'EOF'\nE\\\nOF\n)\"\nEOF\ntouch marker\nprintf src\n)\"");
+        assert!(parse_standalone_cd(&command).is_err(), "{command}");
+        assert_eq!(
+            parse_standalone_cd(&format!("{command} && pwd")).unwrap(),
+            None
+        );
+    }
+}
