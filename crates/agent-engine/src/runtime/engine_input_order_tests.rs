@@ -169,14 +169,27 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
                     .await
                     .unwrap();
             } else {
-                tx.send(Submission::new(Op::DiscardQueue)).await.unwrap();
+                let fourth_id = uuid::Uuid::new_v4().to_string();
+                let record = serde_json::json!({"version":1,"submission_id":fourth_id,"intent":"agent","mode":"follow_up","body":"fourth"});
+                shell
+                    .write(
+                        "/agent/1/io/input",
+                        format!("alan-input-v1\n{record}").as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                // No intake wait: the control must include the just-committed file frame.
+                shell
+                    .write("/agent/1/machine/ctl", b"queue-v1 discard")
+                    .await
+                    .unwrap();
                 tokio::time::timeout(Duration::from_secs(5), async {
                     loop {
                         let notice = String::from_utf8(
                             shell.cat("/agent/1/machine/ui/notice").await.unwrap(),
                         )
                         .unwrap();
-                        if notice.contains("Discarded 2 queued inputs") {
+                        if notice.contains("Discarded 3 queued inputs") {
                             break;
                         }
                         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -198,7 +211,7 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
                     .unwrap();
                     discarded.push(result["submission_id"].as_str().unwrap().to_owned());
                 }
-                assert_eq!(discarded, [second.id, third.id]);
+                assert_eq!(discarded, [second.id, third.id, fourth_id]);
                 tx.send(Submission::new(Op::Input {
                     parts: vec![ContentPart::text("fresh")],
                     mode: InputMode::FollowUp,
@@ -238,4 +251,82 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
         controller.shutdown().await.unwrap();
         assert_eq!(order, expected);
     }
+}
+
+#[tokio::test]
+async fn discard_drains_committed_intake_and_preserves_machine_controls() {
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+    let shell = alan_shell::Shell::new(root.clone());
+    let files = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default").agent_files();
+    let mut queues = RuntimeSubmissionQueues::default();
+    assert!(
+        !queues
+            .handle_control(&Submission::new(Op::Interrupt), &files, None)
+            .await
+    );
+    assert!(
+        !queues.is_paused(),
+        "idle interruption must not pause later work"
+    );
+    // More frames than the intake channel can hold, before its reader is started.
+    for body in ["first", "second", "third"] {
+        shell
+            .write("/agent/1/io/input", body.as_bytes())
+            .await
+            .unwrap();
+    }
+    let mut intake = NamespaceInputIntake::new(files.clone());
+    let (sender, mut receiver) = mpsc::channel(4);
+    sender
+        .send(Submission::new(Op::Turn {
+            parts: vec![ContentPart::text("api")],
+            context: None,
+        }))
+        .await
+        .unwrap();
+    let compact = Submission::new(Op::CompactWithOptions { focus: None });
+    let compact_id = compact.id.clone();
+    sender.send(compact).await.unwrap();
+    queues.pause();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        intake.admit_before_discard(&files, &mut receiver, &mut queues),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(queues.outer_queue.lock().unwrap().pending.len(), 5);
+    queues
+        .handle_control(&Submission::new(Op::DiscardQueue), &files, None)
+        .await;
+    assert!(!queues.is_paused());
+    match queues.pop_outer().unwrap() {
+        QueuedRuntimeItem::Submission(input) => assert_eq!(input.id, compact_id),
+        _ => panic!("expected retained Machine control"),
+    }
+    assert!(queues.pop_outer().is_none());
+    let actions = shell
+        .ls("/agent/1/actions")
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|id| id.starts_with('a'))
+        .collect::<Vec<_>>();
+    assert_eq!(actions.len(), 4, "every discarded input receives a result");
+    for action in actions {
+        assert_eq!(
+            shell
+                .cat(&format!("/agent/1/actions/{action}/status"))
+                .await
+                .unwrap(),
+            b"failed"
+        );
+    }
+    intake.stop().await;
 }

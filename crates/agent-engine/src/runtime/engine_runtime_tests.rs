@@ -534,3 +534,42 @@ async fn test_namespace_machine_ctl_drives_runtime_submission_without_api_submis
 
     controller.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn ready_api_interrupt_precedes_queued_dispatch() {
+    let mut queues = RuntimeSubmissionQueues::default();
+    let first = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("older")],
+        mode: InputMode::FollowUp,
+    });
+    let first_id = first.id.clone();
+    queues.push_outer_submission(first);
+    let (sender, mut receiver) = mpsc::channel(4);
+    sender
+        .send(Submission::new(Op::Input {
+            parts: vec![ContentPart::text("newer")],
+            mode: InputMode::FollowUp,
+        }))
+        .await
+        .unwrap();
+    sender.send(Submission::new(Op::Interrupt)).await.unwrap();
+    let control = queues.admit_api_before_dispatch(&mut receiver).unwrap();
+    assert!(matches!(control.op, Op::Interrupt));
+    queues
+        .handle_control(
+            &control,
+            &namespace_environment_for_test().agent_files(),
+            None,
+        )
+        .await;
+    assert!(queues.is_paused());
+    assert!(
+        queues.pop_outer().is_none(),
+        "accepted interrupt must prevent dispatch"
+    );
+    let queue = queues.outer_queue.lock().unwrap();
+    assert_eq!(queue.pending.len(), 2);
+    assert!(
+        matches!(queue.pending.front(), Some(QueuedRuntimeItem::Submission(input)) if input.id == first_id)
+    );
+}
