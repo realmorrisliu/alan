@@ -164,7 +164,7 @@ async fn input_frame_larger_than_initial_read_becomes_submission() {
 }
 
 #[tokio::test]
-async fn versioned_agent_inputs_keep_client_identity_and_reject_unhandled_intents() {
+async fn versioned_inputs_keep_client_identity_and_intent() {
     use alan_agent_protocol::{InputIntent, UserInputRecord};
     let mut ns = Namespace::new();
     ns.mount(
@@ -207,14 +207,12 @@ async fn versioned_agent_inputs_keep_client_identity_and_reject_unhandled_intent
         .write("/agent/1/io/input", &command.encode_payload().unwrap())
         .await
         .unwrap();
-    assert!(
-        files
-            .read_next_input_submission(InputMode::FollowUp)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("governed command admission")
-    );
+    let admitted = files
+        .read_next_input_submission(InputMode::NextTurn)
+        .await
+        .unwrap();
+    assert_eq!(admitted.intent, InputIntent::Command);
+    assert_eq!(admitted.id, command.submission_id);
     let record = UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, "typed body");
     first_client
         .write("/agent/1/io/input", &record.encode_payload().unwrap())

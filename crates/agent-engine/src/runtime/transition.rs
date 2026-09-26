@@ -5,6 +5,7 @@
 //! loop needs.
 
 mod accepted_submission;
+mod explicit_command;
 mod namespace_environment;
 mod turn_execution;
 
@@ -605,9 +606,11 @@ where
                 if let Some(pending) = state.machine.pending_confirmation()
                     && replays_tool_calls(&pending.checkpoint_type)
                 {
-                    state
-                        .machine
-                        .set_tool_replay_batch(pending.checkpoint_id, tool_calls[idx..].to_vec());
+                    state.machine.set_tool_replay_batch(
+                        pending.checkpoint_id,
+                        tool_calls[idx..].to_vec(),
+                        true,
+                    );
                 }
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
@@ -715,11 +718,17 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    // Command activation follows the governed executor integration. Never feed it to the model.
-    anyhow::ensure!(
-        submission.intent != alan_agent_protocol::InputIntent::Command,
-        "explicit command records require governed command admission"
-    );
+    if submission.intent == alan_agent_protocol::InputIntent::Command {
+        return explicit_command::handle_explicit_command(
+            state,
+            submission.id,
+            submission.op,
+            emit,
+            cancel,
+            steering_broker,
+        )
+        .await;
+    }
     let op = submission.op;
 
     match handle_runtime_op(state, op, emit).await? {
@@ -824,11 +833,36 @@ where
             };
             Ok(())
         }
+        RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
+            explicit_command::finish_failed_explicit_command(
+                state,
+                &tool_call,
+                "command was not approved",
+                Some("rejected"),
+                emit,
+            )
+            .await
+        }
         RuntimeOpAction::ReplayApprovedToolBatch {
             tool_calls,
+            resume_with_generation,
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
         } => {
+            if !resume_with_generation {
+                return explicit_command::replay_command(
+                    state,
+                    &tool_calls,
+                    approved_unknown_effect_call_id.as_deref(),
+                    approved_tool_escalation_call_id.as_deref(),
+                    ToolOrchestratorInputs {
+                        cancel,
+                        steering_broker,
+                    },
+                    emit,
+                )
+                .await;
+            }
             state.machine.set_turn_activity(TurnActivityState::Running);
             match replay_approved_tool_batch_with_cancel(
                 state,

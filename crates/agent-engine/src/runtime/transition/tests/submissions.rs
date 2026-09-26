@@ -139,7 +139,7 @@ async fn test_handle_submission_rollback() {
 }
 
 #[tokio::test]
-async fn command_intent_cannot_enter_agent_transition_or_inband_steering() {
+async fn command_steering_requires_ordered_admission() {
     use alan_agent_protocol::{ContentPart, InputIntent};
     use crate::runtime::turn_input::is_turn_inband_submission;
     let mut state = runtime_state_with_environment(
@@ -151,7 +151,7 @@ async fn command_intent_cannot_enter_agent_transition_or_inband_steering() {
     );
     let mut emit = |_event| async {};
     let cancel = CancellationToken::new();
-    for mode in [InputMode::Steer, InputMode::FollowUp, InputMode::NextTurn] {
+    for mode in [InputMode::Steer, InputMode::NextTurn] {
         let submission = Submission {
             id: uuid::Uuid::new_v4().to_string(),
             intent: InputIntent::Command,
@@ -160,7 +160,7 @@ async fn command_intent_cannot_enter_agent_transition_or_inband_steering() {
         assert!(!is_turn_inband_submission(&submission));
         let error = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
             .await.unwrap_err();
-        assert!(error.to_string().contains("governed command admission"));
+        assert!(error.to_string().contains("ordered queue admission"));
         assert!(state.machine.messages().is_empty());
     }
 }
