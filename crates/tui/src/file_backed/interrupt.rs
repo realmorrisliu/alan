@@ -7,26 +7,7 @@ pub(super) struct PendingRootAgentTurn {
     pub(super) input: String,
     pub(super) submission_id: String,
     pub(super) submitted_process: Option<u64>,
-    pub(super) observed_active: bool,
-    pub(super) interrupt_requested: bool,
     pub(super) submitted_at_ms: u64,
-}
-
-pub(super) fn observe_root_agent_activity(
-    pending_turn: &mut Option<PendingRootAgentTurn>,
-    activity: UiActivityState,
-) -> bool {
-    if let Some(turn) = pending_turn {
-        match activity {
-            UiActivityState::Running | UiActivityState::Paused => {
-                turn.observed_active = true;
-                std::mem::take(&mut turn.interrupt_requested)
-            }
-            UiActivityState::Idle => false,
-        }
-    } else {
-        false
-    }
 }
 
 pub(super) fn observe_root_agent_completion(
@@ -83,24 +64,33 @@ pub(super) fn settle_unknown_replaced_input(
     }
 }
 
-pub(super) fn request_pending_root_interrupt(
-    pending_turn: &mut Option<PendingRootAgentTurn>,
-) -> bool {
-    let Some(turn) = pending_turn else {
-        return true;
-    };
-    if turn.observed_active {
-        true
+pub(super) async fn send_interrupt(
+    shell: &alan_shell::Shell,
+    app: &mut FileBackedApp,
+    pending: Option<&PendingRootAgentTurn>,
+    root_pid: Option<u64>,
+) {
+    let agent_path = if app.agent_path == "/agent/root" {
+        let Some(pid) = pending.map_or(root_pid, |turn| turn.submitted_process) else {
+            app.push_error("Root Agent is not attached; retry interrupt".into());
+            return;
+        };
+        format!("/agent/{pid}")
     } else {
-        turn.interrupt_requested = true;
-        false
-    }
-}
-
-pub(super) async fn send_interrupt(shell: &alan_shell::Shell, app: &mut FileBackedApp) {
-    let agent_path = app.agent_path.clone();
-    match super::file_surface::write_interrupt(shell, &agent_path).await {
-        Ok(()) => app.notice = Some("interrupt sent".to_string()),
+        app.agent_path.clone()
+    };
+    let result = if let Some(turn) = pending {
+        super::file_surface::write_machine_ctl(
+            shell,
+            &agent_path,
+            &format!("queue-v1 interrupt {}", turn.submission_id),
+        )
+        .await
+    } else {
+        super::file_surface::write_interrupt(shell, &agent_path).await
+    };
+    match result {
+        Ok(()) => app.notice = Some("interrupt requested".to_string()),
         Err(err) => app.push_error(format!("interrupt failed: {err:#}")),
     }
 }
@@ -108,71 +98,35 @@ pub(super) async fn send_interrupt(shell: &alan_shell::Shell, app: &mut FileBack
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn root_agent_interrupt_waits_until_the_submitted_turn_is_accepted() {
-        let mut pending = Some(PendingRootAgentTurn {
-            input: "current task".to_string(),
-            submission_id: "input-one".into(),
-            submitted_process: Some(1),
-            observed_active: false,
-            interrupt_requested: false,
+    #[tokio::test]
+    async fn pending_input_interrupt_is_targeted_before_activity_is_observed() {
+        let (shell, root, _, pid) = super::super::stdio_tests::live_root_agent().await;
+        let mut app = FileBackedApp::new("/agent/root".into());
+        let pending = PendingRootAgentTurn {
+            input: "queued task".into(),
+            submission_id: "00000000-0000-4000-8000-000000000001".into(),
+            submitted_process: Some(pid.parse().unwrap()),
             submitted_at_ms: 20,
-        });
-
-        assert!(!request_pending_root_interrupt(&mut pending));
-        assert!(!observe_root_agent_activity(
-            &mut pending,
-            UiActivityState::Idle
-        ));
-        assert!(pending.as_ref().unwrap().interrupt_requested);
-
-        assert!(observe_root_agent_activity(
-            &mut pending,
-            UiActivityState::Running
-        ));
-        assert!(!pending.as_ref().unwrap().interrupt_requested);
-        assert!(!observe_root_agent_activity(
-            &mut pending,
-            UiActivityState::Idle
-        ));
-        assert!(pending.is_some());
+        };
+        root.set_root_process("99999").await;
+        for refreshed_pid in [Some(99999), None] {
+            app.notice = None;
+            send_interrupt(&shell, &mut app, Some(&pending), refreshed_pid).await;
+            assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
+        }
+        let events =
+            String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
+        assert!(events.contains(&format!("ctl:queue-v1 interrupt {}", pending.submission_id)));
+        assert!(!events.contains("ctl:interrupt"));
+        assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
     }
 
-    #[test]
-    fn pending_root_agent_interrupt_is_discarded_if_task_settles_before_activation() {
-        let mut pending = Some(PendingRootAgentTurn {
-            input: "current task".to_string(),
-            submission_id: "input-one".into(),
-            submitted_process: Some(1),
-            observed_active: false,
-            interrupt_requested: false,
-            submitted_at_ms: 20,
-        });
-
-        assert!(!request_pending_root_interrupt(&mut pending));
-        observe_root_agent_completion(
-            &mut pending,
-            &UiEvent::InputCompleted {
-                submission_ids: vec!["input-one".into()],
-                status: alan_agent_protocol::UiInputStatus::Completed,
-                error: None,
-            },
-            &mut FileBackedApp::new("/agent/root".into()),
-        );
-        assert!(!observe_root_agent_activity(
-            &mut pending,
-            UiActivityState::Idle
-        ));
-        assert_eq!(pending, None);
-    }
     #[test]
     fn replacement_that_later_becomes_idle_reports_unknown_and_releases_pending() {
         let mut pending = Some(PendingRootAgentTurn {
             input: "task".into(),
             submission_id: "input-one".into(),
             submitted_process: Some(1),
-            observed_active: true,
-            interrupt_requested: false,
             submitted_at_ms: 20,
         });
         let mut app = FileBackedApp::new("/agent/root".into());
@@ -202,8 +156,6 @@ mod tests {
                 input: "task".into(),
                 submission_id: "mine".into(),
                 submitted_process: Some(1),
-                observed_active: false,
-                interrupt_requested: false,
                 submitted_at_ms: 20,
             });
             let mut app = FileBackedApp::new("/agent/root".into());

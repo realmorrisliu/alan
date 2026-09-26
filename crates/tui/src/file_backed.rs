@@ -33,8 +33,8 @@ mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 use interrupt::{
-    PendingRootAgentTurn, observe_root_agent_activity, observe_root_agent_completion,
-    request_pending_root_interrupt, send_interrupt, settle_unknown_replaced_input,
+    PendingRootAgentTurn, observe_root_agent_completion, send_interrupt,
+    settle_unknown_replaced_input,
 };
 use previous_input::discard_superseded_attachment_events;
 use submission::{prepare_root_agent_submission, require_root_agent_idle};
@@ -246,8 +246,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     input: text.clone(),
                                                     submission_id: record.submission_id.clone(),
                                                     submitted_process: watchers.root_agent_pid,
-                                                    observed_active: false,
-                                                    interrupt_requested: false,
                                                     submitted_at_ms,
                                                 });
                                                 let submitted_task_settled = watchers
@@ -286,11 +284,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
-                                    if request_pending_root_interrupt(&mut pending_root_agent_turn) {
-                                        send_interrupt(&shell, &mut app).await;
-                                    } else {
-                                        app.notice = Some("interrupt queued".to_string());
-                                    }
+                                    send_interrupt(&shell, &mut app, pending_root_agent_turn.as_ref(), watchers.root_agent_pid).await;
                                 }
                                 FileBackedAction::Quit => break,
                             }
@@ -299,12 +293,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 }
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
-                    if observe_root_agent_activity(
-                        &mut pending_root_agent_turn,
-                        app.activity.state,
-                    ) {
-                        send_interrupt(&shell, &mut app).await;
-                    }
                     if pending_root_agent_turn.is_none() {
                         _active_task_lock = None;
                     }
@@ -338,12 +326,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     pending_root_agent_turn = None;
                 }
                 settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
-                if observe_root_agent_activity(
-                    &mut pending_root_agent_turn,
-                    app.activity.state,
-                ) {
-                    send_interrupt(&shell, &mut app).await;
-                }
                 if pending_root_agent_turn.is_none() {
                     _active_task_lock = None;
                 }
