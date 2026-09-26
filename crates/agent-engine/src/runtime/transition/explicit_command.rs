@@ -105,9 +105,12 @@ where
         .await;
         state.machine.set_turn_activity(TurnActivityState::Running);
         let outcome = match standalone_cd {
-            Ok(Some(_directory)) if cancel.is_cancelled() => Err(anyhow::anyhow!(
-                "standalone cd was cancelled before execution"
-            )),
+            Ok(Some(_directory)) if cancel.is_cancelled() => {
+                state.machine.mark_submission_cancelled();
+                Err(anyhow::anyhow!(
+                    "standalone cd was cancelled before execution"
+                ))
+            }
             Ok(Some(directory)) => state.environment.change_process_directory(&directory),
             Err(error) => Err(error),
             Ok(None) => unreachable!("standalone cd match excludes no-op inputs"),

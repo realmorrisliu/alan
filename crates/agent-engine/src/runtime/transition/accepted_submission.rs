@@ -80,7 +80,7 @@ pub(crate) async fn advance_accepted_submission(
         }
         let event = UiEvent::InputCompleted {
             submission_ids,
-            status: if cancel.is_cancelled() {
+            status: if state.machine.submission_was_cancelled() {
                 UiInputStatus::Cancelled
             } else if result.is_err() {
                 UiInputStatus::Failed
