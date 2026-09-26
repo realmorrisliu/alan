@@ -169,6 +169,7 @@ impl NamespaceAgentFiles {
         write_agent_output(&client, &self.agent_path, response).await
     }
 
+    #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_tape_records(&client, &self.agent_path, [("user", input)], None).await
