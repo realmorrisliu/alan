@@ -1,4 +1,20 @@
 pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool {
+    // ProtectedOnly cannot inspect arbitrary programs. Unknown executables must fail closed,
+    // rather than waiting for each new build runner to be added to a denylist. These commands
+    // still pass through the existing argument, interpreter, path and mount-local checks.
+    // ponytail: bounded command support; unrestricted programs require kernel read confinement.
+    const INSPECTED_COMMANDS: &str = concat!(
+        "awk gawk mawk nawk sh bash dash zsh ksh python python3 node perl ruby lua php ",
+        "git npm npx pnpx bunx pnpm yarn bun deno cargo go swift mix pytest rake bundle ",
+        "cmake ctest gradle ninja mvn make gmake bmake ",
+        "cat head tail wc cut sort uniq tr echo printf pwd cd true false test [ [[ ",
+        "ls stat readlink realpath basename dirname mkdir rmdir touch cp mv rm tee strings uname ",
+        "grep egrep fgrep rg sed find xargs tar gtar bsdtar zip unzip cpio pax curl ",
+        "env printenv export unset set eval source . exec command builtin sleep exit"
+    );
+    if !one_of(command, INSPECTED_COMMANDS) {
+        return true;
+    }
     // Build systems load project-controlled scripts except for standalone CLI queries.
     let build_system_queries = match command {
         "cmake" => Some("--help -h --version"),

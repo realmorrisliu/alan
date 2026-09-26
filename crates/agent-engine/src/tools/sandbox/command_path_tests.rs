@@ -650,6 +650,10 @@ async fn seatbelt_rejects_swift_project_runner_with_uninspectable_reads() {
 #[test]
 fn project_code_dispatchers_are_rejected_as_opaque() {
     for command in [
+        "just",
+        "just leak",
+        "env just leak",
+        "a-new-project-runner leak",
         "git config --global --list",
         "git config --system --list",
         "git config --list",

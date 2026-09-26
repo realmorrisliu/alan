@@ -101,6 +101,13 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 - **AND** dispatched project code cannot read outside the active Host Mount
   through a path hidden from the submitted command text
 
+#### Scenario: ProtectedOnly encounters an unknown executable
+- **WHEN** a command names an executable outside the backend's inspected command set
+- **THEN** execution fails closed before launch, including through command wrappers
+- **AND** an unknown runner does not become permitted merely because it is absent
+  from the known project-dispatcher list
+- **AND** this bounded command restriction does not apply to a backend with kernel read confinement
+
 #### Scenario: Native output paths remain shell-usable and private
 - **WHEN** native stdout or stderr contains a path under the active cwd grant
 - **THEN** the Host adapter projects it relative to that submission's shared cwd
