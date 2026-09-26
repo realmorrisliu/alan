@@ -5,7 +5,49 @@ use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
-    project_native_text(adapter, &project_file_urls(adapter, text))
+    project_native_text(
+        adapter,
+        &project_file_urls(adapter, &project_json_strings(adapter, text)),
+    )
+}
+
+// Decode JSON string tokens so Unicode, surrogate pairs and optional solidus escapes
+// share the native path matcher instead of enumerating encoder-specific spellings.
+fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut chars = text.char_indices();
+    while let Some((start, ch)) = chars.next() {
+        if ch != '"' {
+            continue;
+        }
+        let mut escaped = false;
+        for (end, ch) in chars.by_ref() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                let token = &text[start..=end];
+                if token.contains('\\')
+                    && let Ok(decoded) = serde_json::from_str::<String>(token)
+                {
+                    let projected =
+                        project_native_text(adapter, &project_file_urls(adapter, &decoded));
+                    if projected != decoded {
+                        result.push_str(&text[copied..start]);
+                        result.push_str(
+                            &serde_json::to_string(&projected).expect("string serializes"),
+                        );
+                        copied = end + 1;
+                    }
+                }
+                break;
+            }
+        }
+    }
+    result.push_str(&text[copied..]);
+    result
 }
 
 fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
@@ -192,11 +234,13 @@ fn shell_escaped_path(path: &str) -> String {
 fn replace_native_prefix(text: &str, path: &str, replacement: &str) -> String {
     let mut projected = replace_path_prefixes(text, &shell_escaped_path(path), replacement);
     projected = replace_path_prefixes(&projected, path, replacement);
-    let json = serde_json::to_string(path).expect("path string serializes as JSON");
-    let escaped = json[1..json.len() - 1].replace('/', "\\/");
-    projected = replace_path_prefixes(&projected, &escaped, replacement);
-
-    if path.chars().any(char::is_control) {
+    for escape_non_ascii in [false, true] {
+        if !path
+            .chars()
+            .any(|ch| ch.is_control() || (escape_non_ascii && !ch.is_ascii()))
+        {
+            continue;
+        }
         let mut quoted = String::new();
         for ch in path.chars() {
             match ch {
@@ -210,7 +254,7 @@ fn replace_native_prefix(text: &str, path: &str, replacement: &str) -> String {
                 '\x0b' => quoted.push_str("\\v"),
                 '\\' => quoted.push_str("\\\\"),
                 '\'' => quoted.push_str("\\'"),
-                ch if ch.is_control() => {
+                ch if ch.is_control() || (escape_non_ascii && !ch.is_ascii()) => {
                     for byte in ch.encode_utf8(&mut [0; 4]).as_bytes() {
                         quoted.push_str(&format!("\\{byte:03o}"));
                     }
@@ -291,10 +335,8 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let suffix = strip_leading_terminal_sequences(&text[end..]);
         let emphasized = is_emphasized_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
-        let json_separator = prefix.starts_with("\\/") && suffix.starts_with("\\/");
-        let boundary_after = json_separator
-            || quoted_path_end(text, start, suffix)
-                .unwrap_or_else(|| is_path_end(suffix) || emphasized);
+        let boundary_after = quoted_path_end(text, start, suffix)
+            .unwrap_or_else(|| is_path_end(suffix) || emphasized);
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);

@@ -354,7 +354,7 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("/etc/hosts", "./etc/hosts"),
         (
             r#"{"cwd":"\/","path":"\/etc\/hosts"}"#,
-            r#"{"cwd":".","path":"./etc\/hosts"}"#,
+            r#"{"cwd":".","path":"./etc/hosts"}"#,
         ),
         ("file:///etc/hosts", "./etc/hosts"),
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
@@ -446,6 +446,53 @@ async fn projection_uses_physical_cwd_and_bash_control_character_quoting() {
         assert_eq!(
             adapter.project_text(std::str::from_utf8(&output.stdout).unwrap()),
             expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn projection_decodes_json_unicode_and_c_locale_shell_paths() {
+    let project = tempfile::Builder::new()
+        .prefix("prójéct🧪")
+        .tempdir()
+        .unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadOnly,
+        project.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
+    for (path, expected) in [(&root, "."), (&root.join("file.rs"), "./file.rs")] {
+        let json = serde_json::json!({"path":path})
+            .to_string()
+            .replace('ó', "\\u00f3")
+            .replace('é', "\\u00E9")
+            .replace('🧪', "\\ud83e\\uddea");
+        for encoded in [json.clone(), json.replace('/', "\\/")] {
+            let projected: serde_json::Value =
+                serde_json::from_str(&adapter.project_text(&encoded)).unwrap();
+            assert_eq!(projected["path"], expected);
+        }
+        let output = std::process::Command::new("/bin/bash")
+            .env("LC_ALL", "C")
+            .args(["-c", "printf %q \"$1\"", "_"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            adapter.project_text(std::str::from_utf8(&output.stdout).unwrap()),
+            format!("$'{expected}'")
         );
     }
 }
