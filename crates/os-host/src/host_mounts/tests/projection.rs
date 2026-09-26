@@ -525,3 +525,36 @@ async fn projected_json_escapes_public_namespace_components() {
         serde_json::from_str(&projected).expect("projected JSON stays valid");
     assert_eq!(value["path"], "../do\"cs\\files/file.txt");
 }
+
+#[tokio::test]
+async fn command_projection_retains_cwd_when_the_script_retargets_its_symlink() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join("deep/old")).unwrap();
+    std::fs::create_dir(project.path().join("new")).unwrap();
+    std::os::unix::fs::symlink("deep/old", project.path().join("link")).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        project.path(),
+    )
+    .await;
+    let execution = service.reconcile(7, binding("/mnt/project/link")).unwrap();
+    let context = ToolContext::from_binding(execution, Arc::new(Config::default()));
+    let result = alan_tools::BashTool::new()
+        .execute(
+            json!({"command":"rm ../../link; ln -s new ../../link; pwd -P"}),
+            &context,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["exit_code"], 0, "{result}");
+    assert_eq!(
+        std::fs::read_link(project.path().join("link")).unwrap(),
+        PathBuf::from("new")
+    );
+    assert_eq!(result["stdout"], ".\n", "{result}");
+}

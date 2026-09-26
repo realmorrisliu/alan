@@ -164,14 +164,7 @@ fn relative_native_path(adapter: &NativeToolExecutionAdapter, path: &Path) -> Op
 }
 
 fn physical_cwd(adapter: &NativeToolExecutionAdapter) -> (PathBuf, PathBuf) {
-    if let Ok(cwd) = dunce::canonicalize(&adapter.cwd)
-        && let Some(active) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)
-        && let Ok(suffix) = cwd.strip_prefix(&active.host_path)
-    {
-        let logical = active.namespace_path.join(suffix);
-        return (cwd, logical);
-    }
-    (adapter.cwd.clone(), adapter.namespace_cwd.clone())
+    adapter.projection_cwd.clone()
 }
 
 fn relative_path(cwd: &Path, target: &Path) -> PathBuf {

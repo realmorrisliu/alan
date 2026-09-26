@@ -59,6 +59,8 @@ struct NativeToolExecutionAdapter {
     mounts: Vec<NativeToolMount>,
     namespace_cwd: PathBuf,
     cwd: PathBuf,
+    /// Physical and logical cwd captured before a command can mutate symlinks.
+    projection_cwd: (PathBuf, PathBuf),
     sandbox: Sandbox,
     shell_sandbox: Sandbox,
 }
@@ -167,6 +169,13 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                 .strip_prefix(&selected.namespace_path)
                 .expect("selected Host Mount owns Tool cwd"),
         );
+        let projection_cwd = if let Ok(physical) = dunce::canonicalize(&cwd)
+            && let Ok(suffix) = physical.strip_prefix(&selected.host_path)
+        {
+            (physical.clone(), selected.namespace_path.join(suffix))
+        } else {
+            (cwd.clone(), namespace_cwd.clone())
+        };
         let sandbox_mounts = mounts
             .iter()
             .map(|mount| SandboxHostMount {
@@ -195,6 +204,7 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             mounts,
             namespace_cwd,
             cwd,
+            projection_cwd,
             sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&sandbox_mounts)),
             shell_sandbox,
         }))
