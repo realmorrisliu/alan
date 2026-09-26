@@ -86,6 +86,23 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     let uri = url::Url::from_file_path(root.join("notes.txt")).unwrap();
     assert!(uri.as_str().contains("%20"));
     assert_eq!(adapter.project_text(uri.as_str()), "./notes.txt");
+    let directory_uri = url::Url::from_directory_path(root.join("assets")).unwrap();
+    let projected_directory = adapter.project_text(directory_uri.as_str());
+    assert_eq!(projected_directory, "./assets/");
+    let public_cwd = url::Url::parse("file:///public/cwd/").unwrap();
+    assert_eq!(
+        public_cwd
+            .join(&projected_directory)
+            .unwrap()
+            .join("child.js")
+            .unwrap()
+            .path(),
+        "/public/cwd/assets/child.js"
+    );
+    assert_eq!(
+        adapter.project_text(&format!("{directory_uri}?q=1#anchor")),
+        "./assets/?q=1#anchor"
+    );
 
     let spaced_uri = url::Url::from_file_path(root.join("notes with spaces.txt")).unwrap();
     assert_eq!(
@@ -368,8 +385,8 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("/", "."),
         ("/\n", ".\n"),
         ("/\0/etc\0/\0", ".\0./etc\0.\0"),
-        ("file:///\0file:///etc\0", ".\0./etc\0"),
-        ("file:///", "."),
+        ("file:///\0file:///etc\0", "./\0./etc\0"),
+        ("file:///", "./"),
         ("1 / 2", "1 / 2"),
         ("yes / no", "yes / no"),
         ("<div>text</div>", "<div>text</div>"),
@@ -655,7 +672,7 @@ async fn physical_cwd_projection_does_not_require_a_delegated_target() {
     assert_eq!(adapter.project_text(&physical.to_string_lossy()), ".");
     assert_eq!(
         adapter.project_text(url::Url::from_directory_path(&physical).unwrap().as_str()),
-        "."
+        "./"
     );
     assert_eq!(adapter.namespace_cwd(), PathBuf::from("/mnt/project/link"));
     assert_eq!(

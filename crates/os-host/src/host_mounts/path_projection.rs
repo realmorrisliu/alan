@@ -127,6 +127,9 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
             .collect::<Vec<_>>()
             .join("/");
         result.push_str(&relative_uri);
+        if url.path().ends_with('/') {
+            result.push('/');
+        }
         if let Some(query) = url.query() {
             result.push('?');
             result.push_str(query);
