@@ -296,10 +296,13 @@ the body or interpreting a nested prefix.
 
 The submission-aware reader preserves the client identity, scheduling mode, and
 intent in `Submission`. Legacy submissions default to Agent intent. Text-only
-readers reject versioned payloads rather than discard their identity. During this
-admission slice, explicit command records are rejected before Agent execution or
-in-turn steering; client activation awaits governed command execution and ordered
-queue integration. This slice does not complete task 2.1: correlated completion,
+readers reject versioned payloads rather than discard their identity. Command
+records in follow-up mode execute through the governed Tool Process path without
+model generation, including approval replay. Standalone `cd` and shared cwd
+selection remain a separate implementation slice; native shell-local `cd` stays
+local to its script. Command steering and next-turn scheduling remain rejected
+pending ordered queue admission, and ordinary clients have not yet activated
+prefix framing. This slice does not complete task 2.1: multi-client completion,
 queue controls, and durable recovery remain in the following implementation slices.
 
 ### Host-authorized working directory slice

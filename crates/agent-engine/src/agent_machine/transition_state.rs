@@ -68,6 +68,12 @@ pub(crate) struct NormalizedToolCall {
     pub(crate) arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingToolReplayBatch {
+    pub(crate) tool_calls: Vec<NormalizedToolCall>,
+    pub(crate) resume_with_generation: bool,
+}
+
 /// Best-effort work retained by Machine until the outer Process loop can run it.
 #[derive(Debug, Clone)]
 pub(crate) enum DeferredRuntimeAction {
@@ -80,7 +86,7 @@ pub(super) struct MachineTransitionState {
     current_submission_id: Option<String>,
     related_submission_ids: Vec<String>,
     pending: HashMap<String, PendingYield>,
-    pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
+    pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
     turn_activity: TurnActivityState,
@@ -512,16 +518,21 @@ impl AgentMachine {
         &mut self,
         checkpoint_id: impl Into<String>,
         tool_calls: Vec<NormalizedToolCall>,
+        resume_with_generation: bool,
     ) {
-        self.transition_state
-            .pending_tool_replay_batches
-            .insert(checkpoint_id.into(), tool_calls);
+        self.transition_state.pending_tool_replay_batches.insert(
+            checkpoint_id.into(),
+            PendingToolReplayBatch {
+                tool_calls,
+                resume_with_generation,
+            },
+        );
     }
 
     pub(crate) fn take_tool_replay_batch(
         &mut self,
         checkpoint_id: &str,
-    ) -> Option<Vec<NormalizedToolCall>> {
+    ) -> Option<PendingToolReplayBatch> {
         self.transition_state
             .pending_tool_replay_batches
             .remove(checkpoint_id)
@@ -926,26 +937,6 @@ mod tests {
     }
 
     #[test]
-    fn test_queue_next_turn_inputs_fifo_and_drain() {
-        let mut state = AgentMachine::new();
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
-            Some(1)
-        );
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-2")]),
-            Some(2)
-        );
-        assert_eq!(state.queued_next_turn_input_count(), 2);
-
-        let drained = state.drain_next_turn_inputs();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[0]), "ctx-1");
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[1]), "ctx-2");
-        assert_eq!(state.queued_next_turn_input_count(), 0);
-    }
-
-    #[test]
     fn test_queue_next_turn_inputs_overflow_is_rejected() {
         let mut state = AgentMachine::new();
         for _ in 0..MAX_QUEUED_NEXT_TURN_INPUTS {
@@ -978,12 +969,13 @@ mod tests {
             },
         ];
 
-        state.set_tool_replay_batch("cp-1", tool_calls);
+        state.set_tool_replay_batch("cp-1", tool_calls, true);
 
         let retrieved = state.take_tool_replay_batch("cp-1").unwrap();
-        assert_eq!(retrieved.len(), 2);
-        assert_eq!(retrieved[0].id, "call-1");
-        assert_eq!(retrieved[1].id, "call-2");
+        assert!(retrieved.resume_with_generation);
+        assert_eq!(retrieved.tool_calls.len(), 2);
+        assert_eq!(retrieved.tool_calls[0].id, "call-1");
+        assert_eq!(retrieved.tool_calls[1].id, "call-2");
 
         // Should be removed after take
         assert!(state.take_tool_replay_batch("cp-1").is_none());

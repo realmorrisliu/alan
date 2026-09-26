@@ -42,6 +42,20 @@ impl RuntimeSubmissionQueues {
         cancel: Option<&CancellationToken>,
     ) -> bool {
         use alan_agent_protocol::Op;
+        if submission.intent == alan_agent_protocol::InputIntent::Command
+            && !matches!(submission.op, Op::Input { .. })
+        {
+            if let Err(error) = files
+                .write_rejected_command(
+                    &submission.id,
+                    "command intent requires an input operation",
+                )
+                .await
+            {
+                warn!(%error, submission_id=%submission.id, "Failed to publish rejected command evidence");
+            }
+            return true;
+        }
         if matches!(submission.op, Op::Interrupt) {
             if let Some(cancel) = cancel {
                 self.pause();

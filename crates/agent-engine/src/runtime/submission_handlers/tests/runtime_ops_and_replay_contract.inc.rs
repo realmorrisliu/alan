@@ -666,8 +666,7 @@
                 id: "call-1".to_string(),
                 name: "write_file".to_string(),
                 arguments: json!({"path":"notes.txt","payload":"hello"}),
-            }],
-        );
+            }], true);
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -721,8 +720,7 @@
                 id: "call-1".to_string(),
                 name: "write_file".to_string(),
                 arguments: json!({"path":"notes.txt","payload":"hello"}),
-            }],
-        );
+            }], true);
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};

@@ -144,6 +144,30 @@ impl RuntimeSubmissionQueues {
         );
     }
 
+    async fn admit_during_submission(
+        &mut self,
+        mut incoming: Submission,
+        active_intent: alan_agent_protocol::InputIntent,
+        accepts_inband: bool,
+    ) {
+        // Commands have no Agent generation to steer. Preserve the input as
+        // ordinary follow-up work, including while command approval is pending.
+        if active_intent == alan_agent_protocol::InputIntent::Command
+            && incoming.intent != alan_agent_protocol::InputIntent::Command
+            && let alan_agent_protocol::Op::Input { mode, .. } = &mut incoming.op
+            && *mode == alan_agent_protocol::InputMode::Steer
+        {
+            *mode = alan_agent_protocol::InputMode::FollowUp;
+        }
+        if accepts_inband
+            && is_turn_inband_submission(&incoming)
+            && self.active_turn_broker.push(incoming.clone()).await
+        {
+            return;
+        }
+        self.push_outer_submission(incoming);
+    }
+
     fn push_outer_deferred(&mut self, action: crate::agent_machine::DeferredRuntimeAction) {
         self.outer_queue
             .lock()
@@ -587,6 +611,7 @@ fn spawn_with_prepared_runtime_environment(
             match queued_item {
                 QueuedRuntimeItem::Submission(submission) => {
                     if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
+                        && submission.intent != alan_agent_protocol::InputIntent::Command
                         && state.machine.has_pending_interaction()
                     {
                         queues.pause();
@@ -617,6 +642,7 @@ fn spawn_with_prepared_runtime_environment(
                     }
                     debug!(?submission.id, "Received submission");
                     let accepts_inband = accepts_inband_submissions(&submission.op);
+                    let active_intent = submission.intent;
 
                     let cancel = CancellationToken::new();
 
@@ -681,15 +707,7 @@ fn spawn_with_prepared_runtime_environment(
                                         if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
                                             continue;
                                         }
-                                        if accepts_inband
-                                            && is_turn_inband_submission(&incoming)
-                                        {
-                                            if !queues.active_turn_broker.push(incoming.clone()).await {
-                                                queues.push_outer_submission(incoming);
-                                            }
-                                        } else {
-                                            queues.push_outer_submission(incoming);
-                                        }
+                                        queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
                                     }
                                     None => {
                                         submissions_closed = true;
@@ -711,13 +729,7 @@ fn spawn_with_prepared_runtime_environment(
                                             if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
                                                 continue;
                                             }
-                                            if accepts_inband && is_turn_inband_submission(&incoming) {
-                                                if !queues.active_turn_broker.push(incoming.clone()).await {
-                                                    queues.push_outer_submission(incoming);
-                                                }
-                                            } else {
-                                                queues.push_outer_submission(incoming);
-                                            }
+                                            queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
                                         }
                                         Err(err) => {
                                             let error_msg = format!("Failed to read namespace input/control event: {err:#}");
