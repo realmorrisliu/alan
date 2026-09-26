@@ -489,6 +489,8 @@ fn spawn_with_prepared_runtime_environment(
         loop {
             let queued_item = if shutdown_requested {
                 queues.pop_outer_deferred()
+            } else if let Some(input) = queues.admit_api_before_dispatch(&mut sub_rx) {
+                Some(QueuedRuntimeItem::Submission(input))
             } else if let Some(namespace_control) =
                 read_pending_namespace_control_submission(&state.agent_files()).await
             {
