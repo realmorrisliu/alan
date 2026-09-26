@@ -314,3 +314,12 @@ reconcile current authority before changing the Process binding. Structured tool
 This internal boundary does not activate standalone `!cd` or ordered input
 admission. Those require the following explicit command dispatch slice; task 2.5
 remains incomplete.
+
+### Ordinary input admission slice
+
+Ordinary `follow_up` submissions now enter the same outer runtime FIFO for Agent
+and command intent. Only explicit steering and pending-request responses may
+enter an active transition. This prevents a later Agent follow-up from overtaking
+an earlier queued command or explicit turn. Durable Machine-owned queue state,
+queue pause controls, client activation and per-client completion remain pending;
+this admission fix does not complete tasks 2.1 or 2.5.
