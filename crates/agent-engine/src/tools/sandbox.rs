@@ -13,6 +13,7 @@
 
 mod command_interpreters;
 mod command_options;
+mod command_process;
 mod command_wrappers;
 mod path_literals;
 mod path_safety;
@@ -368,22 +369,11 @@ impl Sandbox {
         });
         let mut command = self.build_confined_command(&command, allow_network, backend)?;
         command.current_dir(cwd);
-        let output = if let Some(limit) = timeout {
-            match tokio::time::timeout(limit, command.output()).await {
-                Ok(result) => result.map_err(|e| anyhow!("Failed to execute command: {}", e))?,
-                Err(_) => {
-                    return Err(anyhow!(
-                        "Command execution timed out after {}s",
-                        limit.as_secs()
-                    ));
-                }
-            }
-        } else {
-            command
-                .output()
-                .await
-                .map_err(|e| anyhow!("Failed to execute command: {}", e))?
-        };
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let output = command_process::output(command, timeout).await?;
 
         Ok(ExecResult {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
