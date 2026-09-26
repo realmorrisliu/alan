@@ -815,4 +815,42 @@ fn standalone_cd_updates_process_binding_and_reconciles_host_projection() {
         binding.adapter().unwrap().cwd().unwrap(),
         PathBuf::from("/host/source/src")
     );
+
+    #[derive(Debug, Default)]
+    struct ReplacedGrant(std::sync::atomic::AtomicUsize);
+    impl crate::tools::ToolExecutionAuthority for ReplacedGrant {
+        fn reconcile(
+            &self,
+            pid: u64,
+            binding: ToolExecutionBinding,
+        ) -> Result<ToolExecutionBinding> {
+            let id = if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                "old"
+            } else {
+                "new"
+            };
+            anyhow::ensure!(
+                binding
+                    .cwd_grant_id
+                    .as_deref()
+                    .is_none_or(|selected| selected == id),
+                "selected grant was replaced"
+            );
+            let mut binding = TestHostMountAuthority.reconcile(pid, binding)?;
+            binding.cwd_grant_id = Some(id.into());
+            Ok(binding)
+        }
+    }
+    runner.register_process_authority(7, Arc::new(ReplacedGrant::default()));
+    assert!(
+        runner
+            .change_process_directory(7, std::path::Path::new("/mnt/source/src"))
+            .unwrap_err()
+            .to_string()
+            .contains("selected grant was replaced")
+    );
+    assert_eq!(
+        runner.process_binding(7).unwrap().namespace_cwd,
+        namespace_cwd
+    );
 }

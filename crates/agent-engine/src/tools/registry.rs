@@ -524,6 +524,7 @@ impl ToolProcessRunner {
             .context("Process has no live Host Mount authority")?;
         // An explicit absolute cd may select a replacement grant after revocation.
         if path.is_absolute() {
+            binding.namespace_cwd = path.to_path_buf();
             binding.cwd_grant_id = None;
         }
         let previous_namespace_cwd = binding.namespace_cwd.clone();
@@ -540,7 +541,6 @@ impl ToolProcessRunner {
             .context("Process has no active Host Mount execution adapter")?;
         let namespace_cwd = adapter.resolve_directory(&binding.namespace_cwd, path)?;
         binding.namespace_cwd = namespace_cwd.clone();
-        binding.cwd_grant_id = None;
         binding = authority.reconcile(pid, binding)?;
         anyhow::ensure!(
             binding.namespace_cwd == namespace_cwd,
