@@ -102,54 +102,14 @@ pub(super) fn observe_activity(
     snapshot: &mut StdioTaskSnapshot,
     activity: &alan_agent_protocol::UiActivitySnapshot,
 ) {
-    if snapshot.task_error.is_some() {
-        return;
-    }
-    if activity.version >= 2 {
-        let id = task.record.submission_id.as_str();
-        if activity
-            .pending_submissions
-            .iter()
-            .any(|input| input.submission_id == id)
-        {
-            snapshot.task_started = true;
-            snapshot.activity_state = None;
-        } else if activity
-            .active_submission
-            .as_ref()
-            .is_some_and(|input| input.submission_id == id)
-        {
-            snapshot.task_started = true;
-            // An idle active ID is admission, unless this client already observed execution.
-            if activity.state != UiActivityState::Idle
-                || matches!(
-                    snapshot.activity_state,
-                    Some(UiActivityState::Running | UiActivityState::Paused)
-                )
-            {
-                snapshot.activity_state = Some(activity.state);
-            }
-        } else if activity.active_submission.is_none()
-            && activity.state == UiActivityState::Idle
-            && snapshot.task_started
-        {
-            snapshot.activity_state = Some(UiActivityState::Idle);
-        }
-        return;
-    }
-    // Retained v1 history has no identity; the existing client lease still guards live v1 use.
-    if activity.state == UiActivityState::Running
-        && activity
-            .started_at_ms
-            .is_none_or(|time| time >= task.submitted_at_ms)
-    {
-        snapshot.task_started = true;
-        snapshot.activity_state = Some(UiActivityState::Running);
-    } else if matches!(
-        snapshot.activity_state,
-        Some(UiActivityState::Running | UiActivityState::Paused)
-    ) {
-        snapshot.activity_state = Some(activity.state);
+    if snapshot.task_error.is_none() {
+        super::file_surface::observe_input_activity(
+            &task.record.submission_id,
+            task.submitted_at_ms,
+            &mut snapshot.task_started,
+            &mut snapshot.activity_state,
+            activity,
+        );
     }
 }
 

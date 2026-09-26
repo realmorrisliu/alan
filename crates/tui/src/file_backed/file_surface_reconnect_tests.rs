@@ -478,3 +478,53 @@ async fn create_request(agent_root: &alan_agentfs::AgentRootFs, pid: &str, fid: 
     agent_root.clunk(fid).await.unwrap();
     id
 }
+
+#[tokio::test]
+async fn reconnect_does_not_adopt_another_clients_identical_prompt() {
+    use alan_agent_protocol::{InputIntent, UiActivitySnapshot, UiSubmission};
+    let (shell, _root, _namespace, _pid) = live_root_agent().await;
+    let tape = concat!(
+        "{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat\",\"submission_id\":\"other\"}\n",
+        "{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"foreign answer\",\"submission_id\":\"other\"}\n",
+        "{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat\",\"submission_id\":\"mine\"}\n",
+        "{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"my answer\",\"submission_id\":\"mine\"}\n",
+    );
+    shell
+        .write("/agent/root/machine/tape", tape.as_bytes())
+        .await
+        .unwrap();
+    let mut running = UiActivitySnapshot::running(20);
+    running.active_submission = Some(UiSubmission {
+        submission_id: "mine".into(),
+        intent: InputIntent::Agent,
+    });
+    for snapshot in [running, UiActivitySnapshot::idle()] {
+        let event = format!(
+            "{}\n",
+            serde_json::to_string(&UiEvent::Activity { snapshot }).unwrap()
+        );
+        shell
+            .write("/agent/root/machine/ui/events", event.as_bytes())
+            .await
+            .unwrap();
+    }
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.transcript = vec![HistoryCell::User("repeat".into())];
+    let (tails, settled) = reattach_to_current_agent(
+        &shell,
+        "/agent/root",
+        &mut app,
+        Some(("repeat", 20, 0, "mine")),
+    )
+    .await
+    .unwrap();
+    assert!(settled);
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("repeat".into()),
+            HistoryCell::Assistant("my answer".into())
+        ]
+    );
+    tails.close().await;
+}

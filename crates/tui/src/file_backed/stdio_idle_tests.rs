@@ -16,9 +16,10 @@ async fn one_shot_start_waits_for_root_agent_pid_during_restart() {
     publish_root_agent_pid(&namespace, 0);
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(
+            async move { prepare_stdio_tail_attachment(&attach_shell, "/agent/root").await },
+        );
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup returned before a replacement PID was published"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
@@ -43,9 +44,10 @@ async fn one_shot_start_retries_a_stale_published_root_agent_pid() {
     assert!(agent_root.unbind_process(&old_pid).await);
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(
+            async move { prepare_stdio_tail_attachment(&attach_shell, "/agent/root").await },
+        );
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup failed on the detached but published PID"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
@@ -127,9 +129,10 @@ async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_betw
     );
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(
+            async move { prepare_stdio_tail_attachment(&attach_shell, "/agent/root").await },
+        );
     tokio::time::timeout(std::time::Duration::from_secs(2), read_reached)
         .await
         .unwrap()
@@ -181,7 +184,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         .await
         .unwrap();
 
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+    let mut attachment = prepare_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     close_stdio_tails(previous.tape_tail, previous.ui_tail)
@@ -271,7 +274,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         alan_ap::InProcessTransport::new(tail_closer.clone()),
         alan_kernel::Access::ReadWrite,
     );
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+    let mut attachment = prepare_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();

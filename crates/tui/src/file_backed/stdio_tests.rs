@@ -33,71 +33,6 @@ fn redirected_input_parses_one_prefix_and_keeps_multiline_command_body() {
 }
 
 #[test]
-fn interactive_task_lock_is_shared_and_released_after_the_turn() {
-    let runtime = tempfile::tempdir().unwrap();
-    let path = runtime.path().join("task.lock");
-
-    let interactive = acquire_task_submission_lock(&path).unwrap();
-    let competing = acquire_task_submission_lock(&path).unwrap_err();
-    assert!(
-        competing
-            .to_string()
-            .contains("another Alan task is already running")
-    );
-
-    drop(interactive);
-    assert!(acquire_task_submission_lock(&path).is_ok());
-}
-
-#[test]
-fn root_agent_interrupt_waits_until_the_submitted_turn_is_accepted() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        observed_active: false,
-        interrupt_requested: false,
-        submitted_at_ms: 20,
-        prior_matching_turns: 0,
-    });
-
-    assert!(!request_pending_root_interrupt(&mut pending));
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert!(pending.as_ref().unwrap().interrupt_requested);
-
-    assert!(observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Running
-    ));
-    assert!(!pending.as_ref().unwrap().interrupt_requested);
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert_eq!(pending, None);
-}
-
-#[test]
-fn pending_root_agent_interrupt_is_discarded_if_task_settles_before_activation() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        observed_active: false,
-        interrupt_requested: false,
-        submitted_at_ms: 20,
-        prior_matching_turns: 0,
-    });
-
-    assert!(!request_pending_root_interrupt(&mut pending));
-    pending.as_mut().unwrap().observed_active = true;
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert_eq!(pending, None);
-}
-
-#[test]
 fn only_a_plain_enter_submits_a_new_agent_task() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.composer.set_text("do work");
@@ -315,6 +250,7 @@ fn reattachment_does_not_treat_a_pre_submission_ui_error_as_current() {
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
         20,
+        "current-id",
     )
     .unwrap();
 
@@ -427,7 +363,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, 0)),
+                Some(("current task", 20, 0, "current-id")),
                 &tx,
             )
             .await
@@ -595,7 +531,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("same task", 20, prior_matching_turns)),
+                Some(("same task", 20, prior_matching_turns, "current-id")),
                 &tx,
             )
             .await
@@ -659,7 +595,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, 0)),
+                Some(("current task", 20, 0, "current-id")),
                 &tx,
             )
             .await

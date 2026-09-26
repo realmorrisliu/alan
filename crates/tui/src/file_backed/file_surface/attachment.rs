@@ -184,6 +184,7 @@ async fn hydrate_pinned_agent(
         ui,
         tape,
         ui_history: Vec::new(),
+        tape_history: tape_history.clone(),
     };
 
     let hydrate = async {
@@ -241,7 +242,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-    submitted_task: Option<(&str, u64, usize)>,
+    submitted_task: Option<(&str, u64, usize, &str)>,
 ) -> Result<(WatchTails, bool)> {
     let mut reattached = app.clone();
     let previous_transcript = std::mem::take(&mut reattached.transcript);
@@ -250,8 +251,10 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
     let mut submitted_task_settled = false;
-    if let Some((submitted_input, submitted_at_ms, prior_matching_turns)) = submitted_task {
-        let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms)?;
+    if let Some((submitted_input, submitted_at_ms, prior_matching_turns, submission_id)) =
+        submitted_task
+    {
+        let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms, submission_id)?;
         if reattached.notice.as_ref().is_some_and(|notice| {
             current_transcript
                 .iter()
@@ -262,7 +265,14 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
         }
         let current_transcript =
             remove_error_cells_and_remap_indices(current_transcript, &mut reattached);
+        let exact_prompt =
+            super::super::activity::prompt_position(&tails.tape_history, submission_id);
+        let (submitted_input, prior_matching_turns) = exact_prompt
+            .as_ref()
+            .map(|(body, prior)| (body.as_str(), *prior))
+            .unwrap_or((submitted_input, prior_matching_turns));
         let recovered_current_turn = ui_task.started
+            && (!ui_task.identity_based || exact_prompt.is_some())
             && reattached.merge_reconnected_history(
                 current_transcript,
                 submitted_input,
@@ -275,7 +285,19 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             reattached.notice = Some(message.clone());
             reattached.transcript.push(HistoryCell::Error(message));
             submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
-        } else if !recovered_current_turn && reattached.activity.state == UiActivityState::Idle {
+        } else if !recovered_current_turn
+            && reattached.activity.state == UiActivityState::Idle
+            && !reattached
+                .activity
+                .pending_submissions
+                .iter()
+                .any(|input| input.submission_id == submission_id)
+            && !reattached
+                .activity
+                .active_submission
+                .as_ref()
+                .is_some_and(|input| input.submission_id == submission_id)
+        {
             let message =
                 "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
                     .to_string();

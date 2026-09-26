@@ -2,7 +2,7 @@
 
 use alan_agent_protocol::{
     ContentPart, InputIntent, InputMode, StructuredInputQuestion, ToolResultPresentation,
-    UiActivitySnapshot, UiActivityState, UiEvent, UserInputRecord, YieldKind,
+    UiActivitySnapshot, UiEvent, UserInputRecord, YieldKind,
 };
 use anyhow::{Context, Result, anyhow};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
@@ -52,48 +52,10 @@ pub(super) struct WatchTails {
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
     pub(super) ui_history: Vec<u8>,
+    pub(super) tape_history: Vec<u8>,
 }
 
-#[derive(Default)]
-pub(super) struct CorrelatedUiTask {
-    pub(super) started: bool,
-    pub(super) state: Option<UiActivityState>,
-    pub(super) error: Option<String>,
-}
-
-pub(super) fn correlated_ui_task(
-    ui_history: &[u8],
-    submitted_at_ms: u64,
-) -> Result<CorrelatedUiTask> {
-    let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
-    let mut task = CorrelatedUiTask::default();
-    for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
-        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")?;
-        if !task.started {
-            if let UiEvent::Activity { snapshot } = event
-                && snapshot.state == UiActivityState::Running
-                && snapshot
-                    .started_at_ms
-                    .is_some_and(|started_at| started_at >= submitted_at_ms)
-            {
-                task.started = true;
-                task.state = Some(UiActivityState::Running);
-            }
-            continue;
-        }
-        match event {
-            UiEvent::Activity { snapshot } => {
-                task.state = Some(snapshot.state);
-                if snapshot.state == UiActivityState::Idle {
-                    break;
-                }
-            }
-            UiEvent::Error { message, .. } => task.error = Some(message),
-            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
-        }
-    }
-    Ok(task)
-}
+pub(super) use super::activity::{correlated_ui_task, observe_input_activity};
 
 pub(super) async fn send_event_or_shutdown(
     tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,

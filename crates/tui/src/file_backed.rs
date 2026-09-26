@@ -1,12 +1,4 @@
-use std::path::{Path, PathBuf};
-use std::{
-    collections::VecDeque,
-    fs::OpenOptions,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
-};
+use std::{collections::VecDeque, path::PathBuf};
 
 use alan_agent_protocol::{
     InputIntent, InputMode, UiActivitySnapshot, UiActivityState, UiEvent, UserInputRecord,
@@ -24,6 +16,7 @@ use crossterm::event::KeyEvent;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
 #[cfg(test)]
 use ratatui::style::Color;
+mod activity;
 mod app;
 mod file_surface;
 mod history_merge;
@@ -38,7 +31,7 @@ use interrupt::{
     PendingRootAgentTurn, observe_root_agent_activity, request_pending_root_interrupt,
     send_interrupt,
 };
-use submission::{prepare_root_agent_submission, require_root_agent_idle};
+use submission::{prepare_root_agent_submission, require_input_identity};
 
 #[cfg(test)]
 use file_surface::write_agent_input;
@@ -55,8 +48,8 @@ use file_surface::{
 };
 use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
-    StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
-    open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,
+    StdioTailAttachment, close_stdio_tails, current_root_agent_pid, prepare_stdio_tail_attachment,
+    root_agent_path_for_pid,
 };
 
 use crate::completion::CompletionCandidate;
@@ -85,8 +78,6 @@ pub struct FileBackedRunConfig {
     pub history_path: Option<PathBuf>,
     /// Optional local skill candidates used for `$` completion.
     pub skill_candidates: Vec<CompletionCandidate>,
-    /// Shared lock path for serializing Root Agent submissions across clients.
-    pub task_submission_lock_path: Option<PathBuf>,
 }
 
 impl FileBackedRunConfig {
@@ -99,40 +90,8 @@ impl FileBackedRunConfig {
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
-            task_submission_lock_path: None,
         }
     }
-}
-
-/// Acquire the channel-scoped lock shared by interactive and redirected tasks.
-pub fn acquire_task_submission_lock(path: &Path) -> Result<std::fs::File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .with_context(|| format!("open task submission lock {}", path.display()))?;
-    let metadata = file.metadata()?;
-    // SAFETY: geteuid has no memory-safety preconditions.
-    let current_uid = unsafe { libc::geteuid() };
-    anyhow::ensure!(metadata.file_type().is_file(), "task lock is not a file");
-    anyhow::ensure!(
-        metadata.uid() == current_uid,
-        "task lock has a foreign owner"
-    );
-    anyhow::ensure!(metadata.mode() & 0o077 == 0, "task lock is not private");
-
-    // SAFETY: flock acts on the live descriptor and does not retain the pointer.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            bail!("another Alan task is already running for this channel");
-        }
-        return Err(error).context("acquire task submission lock");
-    }
-    Ok(file)
 }
 
 /// Run the inline renderer for a mounted Agent Process.
@@ -153,7 +112,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
     let follows_root_agent = config.agent_path == "/agent/root";
     let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
-    let mut _active_task_lock = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -194,7 +152,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     other => {
-                        let mut submission_lock = None;
                         let submission_requested = follows_root_agent
                             && matches!(
                                 &other,
@@ -207,14 +164,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             match prepare_root_agent_submission(
                                 &shell,
                                 &config.agent_path,
-                                config.task_submission_lock_path.as_deref(),
                             )
                             .await
                             {
-                                Ok(lock) => {
-                                    submission_lock = lock;
-                                    false
-                                }
+                                Ok(()) => false,
                                 Err(err) => {
                                     app.push_error(format!("submit blocked: {err:#}"));
                                     true
@@ -243,13 +196,13 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Ok(submission_id) => {
                                             app.accept_submission(&input);
                                             if input.intent == InputIntent::Command {
-                                                app.mark_command_submission(submission_id);
+                                                app.mark_command_submission(submission_id.clone());
                                             }
                                             app.notice = None;
                                             if follows_root_agent {
-                                                _active_task_lock = submission_lock.take();
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
+                                                    submission_id: submission_id.clone(),
                                                     observed_active: false,
                                                     interrupt_requested: false,
                                                     submitted_at_ms,
@@ -261,7 +214,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     &config.agent_path,
                                                     &mut app,
                                                     &mut rx,
-                                                    Some((&text, submitted_at_ms, prior_matching_turns)),
+                                                    Some((&text, submitted_at_ms, prior_matching_turns, &submission_id)),
                                                     &tx,
                                                     )
                                                     .await;
@@ -300,7 +253,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 }
                                 FileBackedAction::Interrupt => {
                                     if request_pending_root_interrupt(&mut pending_root_agent_turn) {
-                                        send_interrupt(&shell, &mut app).await;
+                                        send_interrupt(&shell, &mut app, pending_root_agent_turn.as_ref()).await;
                                     } else {
                                         app.notice = Some("interrupt queued".to_string());
                                     }
@@ -310,16 +263,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                 }
-                if follows_root_agent {
-                    if observe_root_agent_activity(
-                        &mut pending_root_agent_turn,
-                        app.activity.state,
-                    ) {
-                        send_interrupt(&shell, &mut app).await;
-                    }
-                    if pending_root_agent_turn.is_none() {
-                        _active_task_lock = None;
-                    }
+                if follows_root_agent
+                    && observe_root_agent_activity(&mut pending_root_agent_turn, &app.activity)
+                {
+                    send_interrupt(&shell, &mut app, pending_root_agent_turn.as_ref()).await;
                 }
                 dirty = true;
             }
@@ -334,6 +281,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             turn.input.as_str(),
                             turn.submitted_at_ms,
                             turn.prior_matching_turns,
+                            turn.submission_id.as_str(),
                         )
                     });
                 let submitted_task_settled = watchers
@@ -353,12 +301,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 }
                 if observe_root_agent_activity(
                     &mut pending_root_agent_turn,
-                    app.activity.state,
+                    &app.activity,
                 ) {
-                    send_interrupt(&shell, &mut app).await;
-                }
-                if pending_root_agent_turn.is_none() {
-                    _active_task_lock = None;
+                    send_interrupt(&shell, &mut app, pending_root_agent_turn.as_ref()).await;
                 }
                 if previous_pid != watchers.root_agent_pid
                     || previous_refresh_failed != watchers.pid_refresh_failed
@@ -477,7 +422,7 @@ impl AgentWatchers {
         agent_path: &str,
         app: &mut FileBackedApp,
         rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-        submitted_task: Option<(&str, u64, usize)>,
+        submitted_task: Option<(&str, u64, usize, &str)>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> bool {
         match current_root_agent_pid(shell).await {
@@ -535,10 +480,8 @@ pub async fn run_stdio_task(
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, &agent_path).await?;
+    let mut attachment = prepare_stdio_tail_attachment(&shell, &agent_path).await?;
 
-    // ponytail: a channel-wide lock serializes client results until queued
-    // outcomes are fully correlated.
     let task = StdioTaskWaitContext::new(input);
     if task.record.body.trim().is_empty() {
         bail!(if task.record.intent == InputIntent::Agent {

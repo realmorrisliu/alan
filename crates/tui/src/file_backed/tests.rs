@@ -105,16 +105,25 @@ fn root_agent_file_paths_pin_to_a_process_id() {
 fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
     let mut pending = Some(PendingRootAgentTurn {
         input: "current task".to_string(),
+        submission_id: "current-id".into(),
         observed_active: false,
         interrupt_requested: false,
         submitted_at_ms: 20,
         prior_matching_turns: 0,
     });
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
+    observe_root_agent_activity(
+        &mut pending,
+        &UiActivitySnapshot {
+            version: 1,
+            state: UiActivityState::Idle,
+            ..UiActivitySnapshot::idle()
+        },
+    );
     assert_eq!(
         pending,
         Some(PendingRootAgentTurn {
             input: "current task".to_string(),
+            submission_id: "current-id".into(),
             observed_active: false,
             interrupt_requested: false,
             submitted_at_ms: 20,
@@ -123,11 +132,19 @@ fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
         "streamed assistant output is not proof that the turn completed"
     );
 
-    observe_root_agent_activity(&mut pending, UiActivityState::Running);
+    observe_root_agent_activity(
+        &mut pending,
+        &UiActivitySnapshot {
+            version: 1,
+            state: UiActivityState::Running,
+            ..UiActivitySnapshot::idle()
+        },
+    );
     assert_eq!(
         pending,
         Some(PendingRootAgentTurn {
             input: "current task".to_string(),
+            submission_id: "current-id".into(),
             observed_active: true,
             interrupt_requested: false,
             submitted_at_ms: 20,
@@ -135,7 +152,14 @@ fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
         })
     );
 
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
+    observe_root_agent_activity(
+        &mut pending,
+        &UiActivitySnapshot {
+            version: 1,
+            state: UiActivityState::Idle,
+            ..UiActivitySnapshot::idle()
+        },
+    );
 
     assert_eq!(pending, None);
 }

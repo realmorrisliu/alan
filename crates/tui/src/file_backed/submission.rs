@@ -1,78 +1,92 @@
-use std::{fs::File, path::Path};
+use alan_agent_protocol::{UI_ACTIVITY_VERSION, UiActivitySnapshot};
+use anyhow::{Result, ensure};
 
-use alan_agent_protocol::UiActivityState;
-use anyhow::{Result, bail};
-
-use super::{acquire_task_submission_lock, file_surface};
+use super::file_surface;
 
 pub(super) async fn prepare_root_agent_submission(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    lock_path: Option<&Path>,
-) -> Result<Option<File>> {
-    let lock = lock_path.map(acquire_task_submission_lock).transpose()?;
+) -> Result<()> {
     let activity = file_surface::read_activity_snapshot(shell, agent_path).await?;
-    require_root_agent_idle(activity.state)?;
-    Ok(lock)
+    require_input_identity(&activity)
 }
 
-pub(super) fn require_root_agent_idle(activity: UiActivityState) -> Result<()> {
-    match activity {
-        UiActivityState::Idle => Ok(()),
-        UiActivityState::Running => bail!("Root Agent is already working; retry after it finishes"),
-        UiActivityState::Paused => {
-            bail!("Root Agent is waiting for interactive input; resume its pending request first")
-        }
-    }
+pub(super) fn require_input_identity(activity: &UiActivitySnapshot) -> Result<()> {
+    ensure!(
+        activity.version == UI_ACTIVITY_VERSION,
+        "Root Agent activity protocol does not support input identity; restart the Host before submitting"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    use alan_ap::InProcessTransport;
-    use alan_kernel::{Access, MountFs, Namespace};
+    use alan_agent_protocol::UiActivityState;
 
     #[test]
-    fn root_agent_submission_requires_idle_activity() {
-        assert!(require_root_agent_idle(UiActivityState::Idle).is_ok());
-        assert!(
-            require_root_agent_idle(UiActivityState::Running)
-                .unwrap_err()
-                .to_string()
-                .contains("already working")
-        );
-        assert!(
-            require_root_agent_idle(UiActivityState::Paused)
-                .unwrap_err()
-                .to_string()
-                .contains("resume its pending request")
-        );
+    fn admission_requires_identity_but_accepts_busy_and_paused_queues() {
+        for state in [
+            UiActivityState::Idle,
+            UiActivityState::Running,
+            UiActivityState::Paused,
+        ] {
+            let mut activity = UiActivitySnapshot::idle();
+            activity.state = state;
+            activity.queue_paused = true;
+            assert!(require_input_identity(&activity).is_ok());
+            activity.version = 1;
+            assert!(
+                require_input_identity(&activity)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("restart the Host")
+            );
+        }
     }
-
     #[tokio::test]
-    async fn active_root_agent_blocks_tty_submission_after_the_old_renderer_exits() {
-        let activity =
-            serde_json::to_vec(&alan_agent_protocol::UiActivitySnapshot::running(1)).unwrap();
-        let mut namespace = Namespace::new();
-        namespace.mount(
-            "/agent/root/machine/ui",
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "activity", activity,
-            ))),
-            Access::ReadOnly,
-        );
-        let shell =
-            alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(namespace))));
-        let runtime = tempfile::tempdir().unwrap();
-        let lock_path = runtime.path().join("task.lock");
-
-        let err = prepare_root_agent_submission(&shell, "/agent/root", Some(&lock_path))
+    async fn interactive_and_redirected_clients_submit_while_another_input_is_running() {
+        use super::super::{StdioTaskWaitContext, submit_stdio_task, tail};
+        use alan_agent_protocol::{InputIntent, UiSubmission};
+        let (shell, _root, _namespace, _pid) = super::super::stdio_tests::live_root_agent().await;
+        let mut activity = UiActivitySnapshot::running(1);
+        activity.active_submission = Some(UiSubmission {
+            submission_id: "foreign-input".into(),
+            intent: InputIntent::Agent,
+        });
+        shell
+            .write(
+                "/agent/root/machine/ui/activity",
+                &serde_json::to_vec(&activity).unwrap(),
+            )
             .await
-            .unwrap_err();
-
-        assert!(err.to_string().contains("Root Agent is already working"));
-        drop(acquire_task_submission_lock(&lock_path).unwrap());
+            .unwrap();
+        let attachment = tail::prepare_stdio_tail_attachment(&shell, "/agent/root")
+            .await
+            .unwrap();
+        let redirected = StdioTaskWaitContext::new("repeat");
+        let tty = async {
+            prepare_root_agent_submission(&shell, "/agent/root")
+                .await
+                .unwrap();
+            file_surface::write_agent_submission(
+                &shell,
+                "/agent/root",
+                InputIntent::Agent,
+                "repeat",
+            )
+            .await
+            .unwrap()
+        };
+        let (interactive_id, redirected_result) =
+            tokio::join!(tty, submit_stdio_task(&shell, &redirected, &attachment));
+        redirected_result.unwrap();
+        assert_ne!(interactive_id, redirected.record.submission_id);
+        let input = String::from_utf8(shell.cat("/agent/root/io/input").await.unwrap()).unwrap();
+        assert_eq!(input.matches(&interactive_id).count(), 1);
+        assert_eq!(input.matches(&redirected.record.submission_id).count(), 1);
+        tail::close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+            .await
+            .unwrap();
     }
 }

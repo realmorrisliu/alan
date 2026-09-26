@@ -242,8 +242,9 @@ The file-native versioned queue controls below are implemented in memory.
 Continue/discard reject while the current input is still settling. Interrupting
 a pending input emits its correlated failure without executing it; interrupting
 the active input cancels its transition and retains later accepted inputs. The
-renderer task-lock removal and targeted interrupts remain unfinished. Internal queue-control tests do not establish
-renderer acceptance.
+clients now admit inputs without a task lock and target interruption by input ID.
+Renderer continuation/discard controls and real terminal acceptance remain
+unfinished; internal queue-control tests do not establish those outcomes.
 
 The Agent Machine owns accepted order and queue state. Its existing
 machine/ui/activity snapshot becomes version 2, retaining activity state and
@@ -269,16 +270,21 @@ Tape position. The append-only machine/tape projection adds submission_id to
 user and assistant message records; a direct command's Action result uses the
 same ID as call_id and carries its exit status, while Action output carries
 stdout/stderr. A pre-Tape failure is reported in a UI error event carrying that
-same ID. The TUI's current shared task lease remains a compatibility guard while
-this aggregate activity surface is used, not the result-matching mechanism.
+same ID. Interactive and redirected admission require the version-2 activity
+protocol and no longer hold a channel task lease or reject a busy/paused Agent.
+An older Host must restart before new submissions; retained version-1 history
+remains readable.
 Readers accept a result only when its ID matches their submission; missing
 evidence is unknown, never successful completion. Redirected clients now match
 version-2 activity by the same ID, distinguish pending admission from execution,
 and ignore other clients' running/paused states. Redirected interruption sends
 `queue-v1 interrupt <submission_id>` once its input is observed as accepted;
 it reports a requested interruption, not an unverified successful cancellation.
-Interactive identity tracking and task-lock removal remain unfinished. Rollout/checkpoint records
-remain the recovery authority; Tape is only a projection.
+Interactive clients also retain their input ID for acceptance, targeted
+interruption and reconnect. Identical prompt text is not recovery evidence:
+the retained Tape record must match the input ID before transcript merging.
+Rollout/checkpoint records remain the recovery authority; Tape is only a
+projection. Durable queue/cwd restoration remains unfinished.
 
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
 continuation/discard through the existing machine control surface. It does not
