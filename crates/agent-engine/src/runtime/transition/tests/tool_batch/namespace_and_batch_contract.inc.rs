@@ -382,14 +382,17 @@
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -429,9 +432,10 @@
             async {}
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
-            &state.environment.agent_files(),
+            &writer,
             &[],
             0,
             Some(&broker),
@@ -439,6 +443,7 @@
         )
         .await
         .unwrap();
+        writer.finish().await.unwrap();
         assert!(!handled);
         assert_eq!(
             state.machine.buffered_inband_user_input_count(),
@@ -479,9 +484,10 @@
         }
         let mut emit = |_event: Event| async {};
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
-            &state.environment.agent_files(),
+            &writer,
             &[],
             0,
             Some(&broker),
@@ -489,6 +495,7 @@
         )
         .await
         .unwrap();
+        writer.finish().await.unwrap();
 
         assert!(handled);
         assert!(!state.machine.plan_snapshot_is_from_active_turn());
@@ -543,14 +550,17 @@
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         let has_update_plan_completion = events.iter().any(|event| {
@@ -605,14 +615,17 @@
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -665,14 +678,17 @@
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -720,14 +736,17 @@
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         // Tool execution may fail due to sandbox restrictions, but orchestration should complete
         assert!(result.is_ok());

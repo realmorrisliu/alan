@@ -13,6 +13,34 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = handle_command_with_writer(
+        state,
+        submission_id,
+        op,
+        emit,
+        cancel,
+        steering_broker,
+        &writer,
+    )
+    .await;
+    let closed = writer.finish().await;
+    result.and(closed)
+}
+
+async fn handle_command_with_writer<E, F>(
+    state: &mut RuntimeLoopState,
+    submission_id: String,
+    op: Op,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+    writer: &NamespaceTapeWriter,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
     let validated: Result<_> = (|| {
         let Op::Input { parts, mode } = op else {
             anyhow::bail!("command intent requires an input operation");
@@ -52,8 +80,8 @@ where
     .await?;
     state.machine.add_user_message_parts(parts);
     let agent_files = state.agent_files();
-    agent_files
-        .write_input_tape_state(Some(&submission_id), &command)
+    writer
+        .append_record("user", &command, Some(&submission_id), &[])
         .await
         .context("write explicit command submission to Agent tape")?;
     crate::runtime::ui_surfaces::turn_started(&agent_files)

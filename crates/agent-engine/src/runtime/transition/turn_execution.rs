@@ -22,8 +22,9 @@ use crate::runtime::turn_support::{
 use crate::runtime::virtual_tools::virtual_tool_definitions;
 
 use super::{
-    NamespaceToolExecution, RuntimeLoopState, TurnExecutionOutcome, TurnRunKind,
-    compaction_runtime, orchestrate_tool_batch, turn_memory_runtime,
+    NamespaceTapeWriter, NamespaceToolExecution, NormalizedToolCall, RuntimeLoopState,
+    TurnExecutionOutcome, TurnRunKind, compaction_runtime, orchestrate_tool_batch_internal,
+    turn_memory_runtime,
 };
 
 mod namespace_generation;
@@ -161,10 +162,38 @@ fn build_domain_prompt_with_skills(
 pub(super) async fn run_turn_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
+    user_input: Option<Vec<crate::tape::ContentPart>>,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+) -> Result<TurnExecutionOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = run_turn_with_writer(
+        state,
+        turn_kind,
+        user_input,
+        emit,
+        cancel,
+        steering_broker,
+        &writer,
+    )
+    .await;
+    let closed = writer.finish().await;
+    result.and_then(|outcome| closed.map(|()| outcome))
+}
+
+async fn run_turn_with_writer<E, F>(
+    state: &mut RuntimeLoopState,
+    turn_kind: TurnRunKind,
     mut user_input: Option<Vec<crate::tape::ContentPart>>,
     emit: &mut E,
     cancel: &CancellationToken,
     steering_broker: Option<&TurnInputBroker>,
+    writer: &super::NamespaceTapeWriter,
 ) -> Result<TurnExecutionOutcome>
 where
     E: FnMut(Event) -> F,
@@ -198,8 +227,8 @@ where
         .map(crate::tape::parts_to_text)
         .filter(|input| !input.trim().is_empty())
     {
-        agent_files
-            .write_input_tape_state(state.machine.current_submission_id(), &input)
+        writer
+            .append_record("user", &input, state.machine.current_submission_id(), &[])
             .await?;
     }
     let turn_recall_bundle = if state.core_config.memory.enabled {
@@ -587,12 +616,12 @@ where
                 .write_assistant_output(&response.content)
                 .await
                 .context("write namespace assistant output")?;
-            agent_files
-                .write_turn_tape_state(
+            writer
+                .append_record(
+                    "assistant",
+                    &response.content,
                     state.machine.current_submission_id(),
                     state.machine.related_submission_ids(),
-                    None,
-                    &response.content,
                 )
                 .await
                 .context("write namespace turn tape state")?;
@@ -608,6 +637,7 @@ where
                     cancel,
                     steering_broker,
                 },
+                writer,
                 emit,
             )
             .await?
@@ -669,12 +699,12 @@ where
                 .write_assistant_output(fallback_text)
                 .await
                 .context("write namespace fallback assistant output")?;
-            agent_files
-                .write_turn_tape_state(
+            writer
+                .append_record(
+                    "assistant",
+                    fallback_text,
                     state.machine.current_submission_id(),
                     state.machine.related_submission_ids(),
-                    None,
-                    fallback_text,
                 )
                 .await
                 .context("write namespace fallback turn tape state")?;
@@ -778,3 +808,27 @@ where
 
 #[cfg(test)]
 mod tests;
+
+pub(super) async fn orchestrate_tool_batch<E, F>(
+    loop_guard: &mut ToolLoopGuard,
+    state: &mut RuntimeLoopState,
+    tool_calls: &[NormalizedToolCall],
+    inputs: ToolOrchestratorInputs<'_>,
+    writer: &NamespaceTapeWriter,
+    emit: &mut E,
+) -> Result<ToolBatchOrchestratorOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    orchestrate_tool_batch_internal(
+        loop_guard,
+        state,
+        tool_calls,
+        inputs,
+        (None, None),
+        writer,
+        emit,
+    )
+    .await
+}

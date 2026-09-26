@@ -8,7 +8,7 @@ use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
     machine: &mut AgentMachine,
-    agent_files: &super::transition::NamespaceAgentFiles,
+    writer: &super::transition::NamespaceTapeWriter,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
     steering_broker: Option<&TurnInputBroker>,
@@ -60,8 +60,8 @@ where
 
     machine.note_resumed_user_input();
     for (id, parts) in steering_inputs {
-        agent_files
-            .write_input_tape_state(Some(&id), &crate::tape::parts_to_text(&parts))
+        writer
+            .append_record("user", &crate::tape::parts_to_text(&parts), Some(&id), &[])
             .await?;
         machine.accept_steering_submission(id);
         machine.add_user_message_parts(parts);

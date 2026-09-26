@@ -177,6 +177,8 @@ impl NamespaceTurnRuntime {
         let agent_files = self.environment.agent_files();
         let message = agent_files.read_next_input().await?;
 
+        let writer = agent_files.begin_tape_generation().await?;
+        writer.append_record("user", &message, None, &[]).await?;
         let request = GenerationRequest::new().with_user_message(message.clone());
         let request = if let Some(system_prompt) = self.config.system_prompt.clone() {
             request.with_system_prompt(system_prompt)
@@ -192,9 +194,10 @@ impl NamespaceTurnRuntime {
         let response = generation_response.content;
 
         agent_files.write_assistant_output(&response).await?;
-        agent_files
-            .write_turn_tape_state(None, &[], Some(&message), &response)
+        writer
+            .append_record("assistant", &response, None, &[])
             .await?;
+        writer.finish().await?;
 
         Ok(NamespaceTurnOutput {
             input: message,

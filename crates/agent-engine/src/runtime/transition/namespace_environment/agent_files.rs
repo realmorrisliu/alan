@@ -6,13 +6,13 @@ use alan_agent_protocol::{
     ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
     UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
-use alan_ap::{Fid, OpenMode};
+use alan_ap::OpenMode;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use super::{
     NamespaceActionRecord, NamespaceAgentFiles, NamespaceRequestRecord,
-    client::{InputFrame, NamespaceClient},
+    client::{InputFrame, NamespaceClient, NamespaceFidGuard},
 };
 use crate::evidence::{
     EvidenceResolutionError, EvidenceResolutionErrorCode, NamespaceEvidenceReference,
@@ -175,36 +175,6 @@ impl NamespaceAgentFiles {
         write_tape_records(&client, &self.agent_path, [("user", input)], None).await
     }
 
-    pub(crate) async fn write_input_tape_state(
-        &self,
-        submission_id: Option<&str>,
-        input: &str,
-    ) -> Result<()> {
-        let client = NamespaceClient::new(self.root.clone());
-        write_tape_records(&client, &self.agent_path, [("user", input)], submission_id).await
-    }
-
-    pub async fn write_turn_tape_state(
-        &self,
-        submission_id: Option<&str>,
-        related_submission_ids: &[String],
-        input: Option<&str>,
-        response: &str,
-    ) -> Result<()> {
-        let client = NamespaceClient::new(self.root.clone());
-        let mut writer = NamespaceTapeWriter::open(client, &self.agent_path).await?;
-        if let Some(input) = input.filter(|value| !value.trim().is_empty()) {
-            writer
-                .append_record("user", input, submission_id, &[])
-                .await?;
-        }
-        writer
-            .append_record("assistant", response, submission_id, related_submission_ids)
-            .await?;
-        writer.finish().await
-    }
-
-    #[cfg(test)]
     pub async fn begin_tape_generation(&self) -> Result<NamespaceTapeWriter> {
         let client = NamespaceClient::new(self.root.clone());
         NamespaceTapeWriter::open(client, &self.agent_path).await
@@ -492,27 +462,22 @@ struct TapeRecordV1<'a> {
 /// A held GENERATING lease for `machine/tape`.
 pub struct NamespaceTapeWriter {
     client: NamespaceClient,
-    fid: Fid,
-    closed: bool,
+    guard: NamespaceFidGuard,
 }
 
 impl NamespaceTapeWriter {
     async fn open(client: NamespaceClient, agent_path: &str) -> Result<Self> {
         let tape_path = format!("{agent_path}/machine/tape");
         let fid = client.walk_to(&tape_path).await?;
-        client
-            .open(fid, OpenMode::Write)
+        let guard = client
+            .open_guarded_fid(fid, OpenMode::Write)
             .await
             .with_context(|| format!("open tape writer for {tape_path}"))?;
-        Ok(Self {
-            client,
-            fid,
-            closed: false,
-        })
+        Ok(Self { client, guard })
     }
 
     pub async fn append_record(
-        &mut self,
+        &self,
         role: &str,
         content: &str,
         submission_id: Option<&str>,
@@ -520,23 +485,14 @@ impl NamespaceTapeWriter {
     ) -> Result<()> {
         let bytes = tape_record_bytes(role, content, submission_id, related_submission_ids)?;
         self.client
-            .write_at(self.fid, 0, &bytes)
+            .write_at(self.guard.fid(), 0, &bytes)
             .await
             .context("append tape record")?;
         Ok(())
     }
 
-    pub async fn finish(mut self) -> Result<()> {
-        self.closed = true;
-        self.client.clunk(self.fid).await
-    }
-}
-
-impl Drop for NamespaceTapeWriter {
-    fn drop(&mut self) {
-        if !self.closed {
-            tracing::warn!("namespace tape writer dropped without clunking machine/tape lease");
-        }
+    pub async fn finish(self) -> Result<()> {
+        self.guard.close().await
     }
 }
 
@@ -552,13 +508,14 @@ pub(super) async fn write_agent_output(
         .with_context(|| format!("write assistant output to {output_path}"))
 }
 
+#[cfg(test)]
 pub(super) async fn write_tape_records<'a>(
     client: &NamespaceClient,
     agent_path: &str,
     records: impl IntoIterator<Item = (&'a str, &'a str)>,
     submission_id: Option<&str>,
 ) -> Result<()> {
-    let mut writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
+    let writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
     for (role, content) in records {
         writer
             .append_record(role, content, submission_id, &[])
