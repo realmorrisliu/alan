@@ -155,9 +155,15 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
             &payload
         };
         assert_eq!(metadata["success"], choice != Some("reject"));
-        assert_eq!(state.agent_files().action_ids().await.unwrap().len(), 1);
         let shell = alan_shell::Shell::new(state.environment.root_transport());
-        let base = format!("{}/actions/a0", state.environment.agent_path());
+        let mut matching = Vec::new();
+        for action in state.agent_files().action_ids().await.unwrap() {
+            let base = format!("{}/actions/{action}", state.environment.agent_path());
+            let result: Value = serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
+            if result["call_id"] == id { matching.push(base); }
+        }
+        assert_eq!(matching.len(), 1, "one terminal Action per command");
+        let base = &matching[0];
         if choice == Some("reject") {
             assert!(
                 shell

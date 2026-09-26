@@ -13,43 +13,47 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let Op::Input { parts, mode } = op else {
-        anyhow::bail!("command intent requires an input operation");
+    let validated: Result<_> = (|| {
+        let Op::Input { parts, mode } = op else {
+            anyhow::bail!("command intent requires an input operation");
+        };
+        let command = alan_agent_protocol::parts_to_text(&parts);
+        anyhow::ensure!(!command.trim().is_empty(), "missing command after ! prefix");
+        anyhow::ensure!(
+            mode == alan_agent_protocol::InputMode::FollowUp,
+            "command steering and next-turn scheduling require ordered queue admission"
+        );
+        anyhow::ensure!(
+            !state.machine.is_turn_active() && !state.machine.has_pending_interaction(),
+            "command follow-up requires an idle Machine until ordered admission is integrated"
+        );
+        Ok((parts, command))
+    })();
+    let (parts, command) = match validated {
+        Ok(input) => input,
+        Err(error) => {
+            let message = error.to_string();
+            state
+                .agent_files()
+                .write_action(
+                    NamespaceActionRecord::new("bash", "failed")
+                        .with_approval("not_required")
+                        .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
+                        .with_result(
+                            serde_json::json!({"call_id":submission_id,"exit_code":1,
+                        "outcome":{"success":false,"error":message}})
+                            .to_string(),
+                        ),
+                )
+                .await?;
+            emit(Event::Error {
+                message,
+                recoverable: true,
+            })
+            .await;
+            return Err(error);
+        }
     };
-    let command = alan_agent_protocol::parts_to_text(&parts);
-    let rejection = if command.trim().is_empty() {
-        Some("missing command after ! prefix")
-    } else if mode != alan_agent_protocol::InputMode::FollowUp {
-        Some("command steering and next-turn scheduling require ordered queue admission")
-    } else {
-        None
-    };
-    if let Some(message) = rejection {
-        state
-            .agent_files()
-            .write_action(
-                NamespaceActionRecord::new("bash", "failed")
-                    .with_approval("not_required")
-                    .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
-                    .with_result(
-                        serde_json::json!({"call_id":submission_id,"exit_code":1,
-                    "outcome":{"success":false,"error":message}})
-                        .to_string(),
-                    ),
-            )
-            .await?;
-        emit(Event::Error {
-            message: message.into(),
-            recoverable: true,
-        })
-        .await;
-        anyhow::bail!("{message}");
-    }
-
-    anyhow::ensure!(
-        !state.machine.is_turn_active() && !state.machine.has_pending_interaction(),
-        "command follow-up requires an idle Machine until ordered admission is integrated"
-    );
     crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
         &mut state.machine,
         &state.environment.host_mount_requests(),
