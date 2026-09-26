@@ -379,3 +379,51 @@ async fn projection_prefers_active_grant_and_matches_escaped_cwd() {
     let uri = url::Url::from_file_path(&target).unwrap();
     assert_eq!(adapter.project_text(uri.as_str()), "../vendor/x");
 }
+
+#[tokio::test]
+async fn projection_uses_physical_cwd_and_bash_control_character_quoting() {
+    let project = tempfile::Builder::new()
+        .prefix("alan\nproject\t")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir_all(project.path().join("deep/real")).unwrap();
+    std::os::unix::fs::symlink("deep/real", project.path().join("link")).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadOnly,
+        project.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project/link"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
+    let cwd = root.join("deep/real");
+    assert_eq!(adapter.project_text(&cwd.to_string_lossy()), ".");
+    assert_eq!(
+        adapter.project_text(url::Url::from_file_path(&cwd).unwrap().as_str()),
+        "."
+    );
+    assert_eq!(
+        adapter.project_text(&root.join("sibling").to_string_lossy()),
+        "../../sibling"
+    );
+    for (native, expected) in [(&cwd, "$'.'"), (&root, "$'../..'")] {
+        let output = std::process::Command::new("/bin/bash")
+            .args(["-c", "printf %q \"$1\"", "_"])
+            .arg(native)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            adapter.project_text(std::str::from_utf8(&output.stdout).unwrap()),
+            expected
+        );
+    }
+}

@@ -97,11 +97,15 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
 
 fn relative_native_path(adapter: &NativeToolExecutionAdapter, path: &Path) -> Option<PathBuf> {
     let active = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)?;
-    if let Ok(suffix) = path.strip_prefix(&adapter.cwd) {
+    let (cwd, namespace_cwd) = physical_cwd(adapter);
+    if let Ok(suffix) = path
+        .strip_prefix(&adapter.cwd)
+        .or_else(|_| path.strip_prefix(&cwd))
+    {
         return Some(Path::new(".").join(suffix));
     }
     if path.starts_with(&active.host_path) {
-        return Some(relative_path(&adapter.cwd, path));
+        return Some(relative_path(&cwd, path));
     }
     let mount = adapter
         .mounts
@@ -110,9 +114,20 @@ fn relative_native_path(adapter: &NativeToolExecutionAdapter, path: &Path) -> Op
         .max_by_key(|mount| mount.host_path.components().count())?;
     let suffix = path.strip_prefix(&mount.host_path).ok()?;
     Some(relative_path(
-        &adapter.namespace_cwd,
+        &namespace_cwd,
         &mount.namespace_path.join(suffix),
     ))
+}
+
+fn physical_cwd(adapter: &NativeToolExecutionAdapter) -> (PathBuf, PathBuf) {
+    if let Ok(cwd) = dunce::canonicalize(&adapter.cwd)
+        && let Some(active) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)
+        && let Ok(suffix) = cwd.strip_prefix(&active.host_path)
+    {
+        let logical = active.namespace_path.join(suffix);
+        return (cwd, logical);
+    }
+    (adapter.cwd.clone(), adapter.namespace_cwd.clone())
 }
 
 fn relative_path(cwd: &Path, target: &Path) -> PathBuf {
@@ -173,18 +188,49 @@ fn shell_escaped_path(path: &str) -> String {
     escaped
 }
 
+fn replace_native_prefix(text: &str, path: &str, replacement: &str) -> String {
+    let mut projected = replace_path_prefixes(text, &shell_escaped_path(path), replacement);
+    projected = replace_path_prefixes(&projected, path, replacement);
+    if path.chars().any(char::is_control) {
+        let mut quoted = String::new();
+        for ch in path.chars() {
+            match ch {
+                '\x07' => quoted.push_str("\\a"),
+                '\x08' => quoted.push_str("\\b"),
+                '\x1b' => quoted.push_str("\\E"),
+                '\x0c' => quoted.push_str("\\f"),
+                '\n' => quoted.push_str("\\n"),
+                '\r' => quoted.push_str("\\r"),
+                '\t' => quoted.push_str("\\t"),
+                '\x0b' => quoted.push_str("\\v"),
+                '\\' => quoted.push_str("\\\\"),
+                '\'' => quoted.push_str("\\'"),
+                ch if ch.is_control() => {
+                    for byte in ch.encode_utf8(&mut [0; 4]).as_bytes() {
+                        quoted.push_str(&format!("\\{byte:03o}"));
+                    }
+                }
+                ch => quoted.push(ch),
+            }
+        }
+        projected = replace_path_prefixes(&projected, &quoted, replacement);
+    }
+    projected
+}
+
 fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
     let Some(active) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd) else {
         return text.to_string();
     };
-    let cwd = adapter.cwd.to_string_lossy();
-    let mut projected = if adapter.cwd == Path::new("/") {
-        replace_rooted_path_starts(text, "./")
-    } else {
-        let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
-        let projected = replace_path_prefixes(text, &shell_escaped_path(cwd), ".");
-        replace_path_prefixes(&projected, cwd, ".")
-    };
+    let (physical, namespace_cwd) = physical_cwd(adapter);
+    let mut projected = text.to_string();
+    for cwd in [&adapter.cwd, &physical] {
+        projected = if cwd == Path::new("/") {
+            replace_rooted_path_starts(&projected, "./")
+        } else {
+            replace_native_prefix(&projected, &cwd.to_string_lossy(), ".")
+        };
+    }
 
     let mut mounts = adapter.mounts.iter().rev().collect::<Vec<_>>();
     mounts.sort_by_key(|mount| {
@@ -194,7 +240,7 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
         )
     });
     for mount in mounts {
-        let mount_from_cwd = relative_path(&adapter.namespace_cwd, &mount.namespace_path);
+        let mount_from_cwd = relative_path(&namespace_cwd, &mount.namespace_path);
         if mount.host_path == Path::new("/") {
             let replacement = mount_from_cwd.to_string_lossy();
             let replacement = if replacement == "." {
@@ -206,15 +252,7 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
         } else {
             let host_path = mount.host_path.to_string_lossy();
             let replacement = mount_from_cwd.to_string_lossy();
-            projected = replace_path_prefixes(&projected, host_path.as_ref(), replacement.as_ref());
-            let shell_escaped_host_path = shell_escaped_path(&host_path);
-            if shell_escaped_host_path != host_path {
-                projected = replace_path_prefixes(
-                    &projected,
-                    &shell_escaped_host_path,
-                    replacement.as_ref(),
-                );
-            }
+            projected = replace_native_prefix(&projected, &host_path, &replacement);
         }
     }
     projected
