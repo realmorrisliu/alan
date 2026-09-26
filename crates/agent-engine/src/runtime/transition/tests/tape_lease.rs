@@ -134,6 +134,17 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
             "busy Tape must preserve approval"
         );
         assert_eq!(state.machine.messages().len(), messages_before);
+        let shell = Shell::new(root.clone());
+        let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+        assert!(
+            !String::from_utf8(events).unwrap().lines().any(|line| {
+                matches!(
+                    serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+                    alan_agent_protocol::UiEvent::InputCompleted { .. }
+                )
+            }),
+            "retryable pending input must not be settled as failed"
+        );
         external.finish().await.unwrap();
         agentfs.writes.store(0, Ordering::SeqCst);
         advance_accepted_submission(
@@ -158,6 +169,28 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
             .find(|record| record["content"] == "resumed answer")
             .unwrap();
         assert_eq!(answer["submission_id"], "originating-input");
+        let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+        let completed: Vec<_> = String::from_utf8(events)
+            .unwrap()
+            .lines()
+            .filter_map(|line| {
+                match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+                    alan_agent_protocol::UiEvent::InputCompleted {
+                        submission_ids,
+                        status,
+                        ..
+                    } => Some((submission_ids, status)),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert_eq!(
+            completed,
+            vec![(
+                vec!["originating-input".to_owned()],
+                alan_agent_protocol::UiInputStatus::Completed
+            )]
+        );
         assert_eq!(
             agentfs.writes.load(Ordering::SeqCst),
             1,

@@ -31,6 +31,7 @@ pub(crate) async fn advance_accepted_submission(
     let completes_input = matches!(
         submission.op,
         Op::Turn { .. }
+            | Op::Resume { .. }
             | Op::Input {
                 mode: InputMode::FollowUp | InputMode::Steer,
                 ..
@@ -55,7 +56,10 @@ pub(crate) async fn advance_accepted_submission(
         }
     });
 
-    if completes_input && !matches!(result, Ok(TransitionCompletion::Paused)) {
+    if completes_input
+        && !state.machine.has_pending_interaction()
+        && state.machine.current_submission_id().is_some()
+    {
         let mut submission_ids = state.machine.related_submission_ids().to_vec();
         if let Some(id) = state.machine.current_submission_id() {
             submission_ids.push(id.to_owned());
