@@ -19,7 +19,7 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
     let mut copied = 0;
     let mut chars = text.char_indices();
     while let Some((start, ch)) = chars.next() {
-        if ch != '"' {
+        if ch != '"' || in_markup_tag(text, start) {
             continue;
         }
         let mut escaped = false;
@@ -53,6 +53,44 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
     result
 }
 
+fn ends_uri_scheme(text: &str) -> bool {
+    text.strip_suffix(':').is_some_and(|prefix| {
+        let scheme = prefix
+            .rsplit(|ch: char| {
+                ch.is_whitespace() || matches!(ch, ':' | '=' | '\'' | '"' | '(' | '[' | '<')
+            })
+            .next()
+            .unwrap_or_default();
+        scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+    })
+}
+
+fn in_markup_tag(text: &str, end: usize) -> bool {
+    let mut in_tag = false;
+    let mut quote = None;
+    for (index, ch) in text[..end].char_indices() {
+        if let Some(delimiter) = quote {
+            if ch == delimiter {
+                quote = None;
+            }
+        } else if in_tag {
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '>' => in_tag = false,
+                _ => {}
+            }
+        } else if ch == '<' {
+            in_tag = text[index + 1..]
+                .trim_start_matches('/')
+                .starts_with(|ch: char| ch.is_ascii_alphabetic());
+        }
+    }
+    in_tag
+}
+
 fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut copied = 0;
@@ -63,6 +101,7 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
         .filter(|(_, bytes)| bytes.eq_ignore_ascii_case(b"file:"))
     {
         if start < copied
+            || ends_uri_scheme(&text[..start])
             || !text[start + 5..].starts_with('/')
             || text[..start]
                 .chars()
@@ -407,7 +446,11 @@ fn replace_path_prefixes(
         let boundary_before = is_path_start(text, start) || emphasized;
         let boundary_after = quoted_path_end(text, start, suffix)
             .unwrap_or_else(|| is_path_end(suffix) || emphasized);
-        if boundary_before && boundary_after {
+        if boundary_before
+            && boundary_after
+            && !ends_uri_scheme(&text[..start])
+            && !in_markup_tag(text, start)
+        {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(&replacement_at(text, start, replacement, shell_quoting));
             copied_through = end;
@@ -506,19 +549,9 @@ fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool
                 is_path_end(suffix) && !suffix.starts_with('/')
             };
         let after = suffix.chars().next();
-        let uri_scheme = text[..start].strip_suffix(':').is_some_and(|prefix| {
-            let scheme = prefix
-                .rsplit(|ch: char| {
-                    ch.is_whitespace() || matches!(ch, '=' | '\'' | '"' | '(' | '[' | '<')
-                })
-                .next()
-                .unwrap_or_default();
-            scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
-                && scheme
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
-        });
+        let uri_scheme = ends_uri_scheme(&text[..start]);
         if (is_path_start(text, start) || emphasized)
+            && !in_markup_tag(text, start)
             && !uri_scheme
             && (bare_root || after.is_some_and(|ch| !is_field_separator(ch) && ch != '/'))
         {

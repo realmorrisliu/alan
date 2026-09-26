@@ -404,6 +404,20 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("file:///etc/hosts", "./etc/hosts"),
         ("web+file:///etc/hosts", "web+file:///etc/hosts"),
         ("web.file:///etc/hosts", "web.file:///etc/hosts"),
+        ("jar:file:/app.jar!/entry", "jar:file:/app.jar!/entry"),
+        ("jar:file:///app.jar!/entry", "jar:file:///app.jar!/entry"),
+        (
+            r#"<a href="/assets/app.js">"#,
+            r#"<a href="/assets/app.js">"#,
+        ),
+        (
+            r#"<img data-x=">" src=/assets/icon.svg>"#,
+            r#"<img data-x=">" src=/assets/icon.svg>"#,
+        ),
+        (
+            r#"<svg><use href='/icons.svg#x'/></svg> /etc"#,
+            r#"<svg><use href='/icons.svg#x'/></svg> ./etc"#,
+        ),
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
         ("https://example.test/path", "https://example.test/path"),
         ("content:/documents/42", "content:/documents/42"),
