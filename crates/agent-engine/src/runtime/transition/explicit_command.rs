@@ -30,6 +30,10 @@ where
         mode == alan_agent_protocol::InputMode::FollowUp,
         "command steering and next-turn scheduling require ordered queue admission"
     );
+    anyhow::ensure!(
+        !state.machine.is_turn_active() && !state.machine.has_pending_interaction(),
+        "command follow-up requires an idle Machine until ordered admission is integrated"
+    );
     state.machine.add_user_message_parts(parts);
     let agent_files = state.agent_files();
     agent_files
@@ -141,6 +145,9 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    crate::runtime::ui_surfaces::resumed(&state.agent_files())
+        .await
+        .context("write resumed command UI state")?;
     state.machine.set_turn_activity(TurnActivityState::Running);
     let result = replay_approved_tool_batch_with_cancel(
         state,
@@ -161,7 +168,10 @@ where
             state.machine.set_turn_activity(TurnActivityState::Idle);
             let error = outcome.as_ref().err().map(ToString::to_string);
             for call in tool_calls {
-                record_missing_command_action(state, call, error.as_deref(), None).await?;
+                let approval = (approved_unknown_effect_call_id == Some(call.id.as_str())
+                    || approved_tool_escalation_call_id == Some(call.id.as_str()))
+                .then_some("approved");
+                record_missing_command_action(state, call, error.as_deref(), approval).await?;
             }
             outcome.map(|_| ())
         }
@@ -203,7 +213,6 @@ async fn record_missing_command_action(
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, outcome.clone());
     }
-    let process_path = state.environment.process_files().process_path()?;
     let mut action = NamespaceActionRecord::new(&tool_call.name, "failed")
         .with_output(serde_json::json!({"stdout": "", "stderr": message}).to_string())
         .with_result(
@@ -213,8 +222,10 @@ async fn record_missing_command_action(
                 "outcome": outcome,
             })
             .to_string(),
-        )
-        .with_process(process_path);
+        );
+    if let Some(process) = outcome.get("process").and_then(serde_json::Value::as_str) {
+        action = action.with_process(process);
+    }
     if let Some(approval) = approval {
         action = action.with_approval(approval);
     }

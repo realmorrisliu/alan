@@ -45,12 +45,16 @@ async fn command(shell: &Shell, body: &str) -> Value {
                 }
                 let base = format!("/agent/root/actions/{action}");
                 let bytes = shell.cat(&format!("{base}/result")).await.unwrap();
-                let Ok(result) = serde_json::from_slice::<Value>(&bytes) else {
+                let Ok(mut result) = serde_json::from_slice::<Value>(&bytes) else {
                     continue;
                 };
                 if result["call_id"] == id {
                     let status = shell.cat(&format!("{base}/status")).await.unwrap();
                     if status == b"completed" || status == b"failed" {
+                        result["process"] = json!(
+                            String::from_utf8(shell.cat(&format!("{base}/process")).await.unwrap())
+                                .unwrap()
+                        );
                         return result;
                     }
                 }
@@ -200,6 +204,14 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
     };
     let (interrupted, ()) = tokio::join!(running, interrupt);
     assert_ne!(interrupted["exit_code"], 0);
+    let process = interrupted["process"]
+        .as_str()
+        .expect("spawned Process evidence");
+    assert!(process.starts_with("/proc/"), "{interrupted}");
+    assert_eq!(
+        shell.cat(&format!("{process}/status")).await.unwrap(),
+        b"exited\n"
+    );
     assert_eq!(
         std::fs::read_to_string(project.path().join("src/before-interrupt.txt")).unwrap(),
         "saved"

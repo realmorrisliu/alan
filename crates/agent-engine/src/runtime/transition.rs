@@ -16,7 +16,8 @@ use turn_execution::run_turn_with_cancel;
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
-    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
+    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles,
+    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
@@ -541,6 +542,13 @@ where
         tool_timeout_secs: resolved_tool.timeout_secs,
         tool_capability: resolved_tool.capability,
         tool_audit,
+        approval: if allow_approved_unknown_effect_execution
+            || allow_approved_tool_escalation_execution
+        {
+            "approved"
+        } else {
+            "not_required"
+        },
         allow_approved_unknown_effect_execution,
         cancel: inputs.cancel,
     };
