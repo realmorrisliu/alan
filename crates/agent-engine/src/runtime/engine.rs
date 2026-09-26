@@ -629,6 +629,17 @@ fn spawn_with_prepared_runtime_environment(
                         .handle_control(&submission, &state.agent_files(), None)
                         .await
                     {
+                        if !state.machine.has_pending_interaction() {
+                            let files = state.agent_files();
+                            let result = if queues.is_paused() {
+                                super::ui_surfaces::paused(&files).await
+                            } else {
+                                super::ui_surfaces::turn_completed(&files, false).await
+                            };
+                            if let Err(error) = result {
+                                warn!(%error, "Failed to publish queue activity");
+                            }
+                        }
                         continue;
                     }
                     if matches!(
