@@ -67,7 +67,7 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
             || text[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '-' | '/'))
+                .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '-' | '/' | '+' | '.'))
         {
             continue;
         }

@@ -402,6 +402,8 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
             r#"{"cwd":".","path":"./etc/hosts"}"#,
         ),
         ("file:///etc/hosts", "./etc/hosts"),
+        ("web+file:///etc/hosts", "web+file:///etc/hosts"),
+        ("web.file:///etc/hosts", "web.file:///etc/hosts"),
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
         ("https://example.test/path", "https://example.test/path"),
         ("content:/documents/42", "content:/documents/42"),
