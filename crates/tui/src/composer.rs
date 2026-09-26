@@ -273,7 +273,7 @@ fn history_records_path(path: &std::path::Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn append_history_line(path: &PathBuf, entry: &str) -> std::io::Result<()> {
+fn append_history_line(path: &std::path::Path, entry: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
