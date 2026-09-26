@@ -54,7 +54,7 @@
         );
         assert_eq!(
             String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
-            r#"{"exit_code":0}"#
+            r#"{"call_id":"call-read","exit_code":0}"#
         );
     }
 
@@ -303,6 +303,7 @@
             let payload = execute_tool_effect(
                 tools.clone(),
                 tool_name,
+                &format!("call-{idx}"),
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,
                 30,
@@ -325,6 +326,11 @@
             assert_eq!(payload["exit_code"], json!(0));
             assert_eq!(payload["process"], json!(format!("/proc/{pid}")));
             assert_eq!(payload["action_id"], json!(action_id));
+            let result: Value = serde_json::from_slice(
+                &shell.cat(&format!("/agent/1/actions/{action_id}/result")).await.unwrap()
+            ).unwrap();
+            assert_eq!(result["call_id"], format!("call-{idx}"));
+
 
             assert_eq!(
                 String::from_utf8(
