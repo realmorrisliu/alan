@@ -53,7 +53,7 @@ where
     state.machine.add_user_message_parts(parts);
     let agent_files = state.agent_files();
     agent_files
-        .write_user_state(&command)
+        .write_input_tape_state(Some(&submission_id), &command)
         .await
         .context("write explicit command submission to Agent tape")?;
     crate::runtime::ui_surfaces::turn_started(&agent_files)
