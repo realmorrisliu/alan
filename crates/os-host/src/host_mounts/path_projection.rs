@@ -8,6 +8,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     project_native_text(
         adapter,
         &project_file_urls(adapter, &project_json_strings(adapter, text)),
+        true,
     )
 }
 
@@ -34,7 +35,7 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
                 if complete_token && let Ok(decoded) = serde_json::from_str::<String>(token) {
                     // Retain the quoted boundary when projecting URI punctuation.
                     let urls = project_file_urls(adapter, &format!("\"{decoded}\""));
-                    let quoted = project_native_text(adapter, &urls);
+                    let quoted = project_native_text(adapter, &urls, false);
                     let projected = &quoted[1..quoted.len() - 1];
                     if projected != decoded {
                         result.push_str(&text[copied..start]);
@@ -226,10 +227,46 @@ fn shell_escaped_path(path: &str) -> String {
     escaped
 }
 
-fn replace_native_prefix(text: &str, native: &Path, replacement: &str) -> String {
+fn ansi_escaped_path(native: &Path, escape_non_ascii: bool) -> String {
+    let mut quoted = String::new();
+    for chunk in native.as_os_str().as_encoded_bytes().utf8_chunks() {
+        for ch in chunk.valid().chars() {
+            match ch {
+                '\x07' => quoted.push_str("\\a"),
+                '\x08' => quoted.push_str("\\b"),
+                '\x1b' => quoted.push_str("\\E"),
+                '\x0c' => quoted.push_str("\\f"),
+                '\n' => quoted.push_str("\\n"),
+                '\r' => quoted.push_str("\\r"),
+                '\t' => quoted.push_str("\\t"),
+                '\x0b' => quoted.push_str("\\v"),
+                '\\' => quoted.push_str("\\\\"),
+                '\'' => quoted.push_str("\\'"),
+                ch if ch.is_control() || (escape_non_ascii && !ch.is_ascii()) => {
+                    for byte in ch.encode_utf8(&mut [0; 4]).as_bytes() {
+                        quoted.push_str(&format!("\\{byte:03o}"));
+                    }
+                }
+                ch => quoted.push(ch),
+            }
+        }
+        for byte in chunk.invalid() {
+            quoted.push_str(&format!("\\{byte:03o}"));
+        }
+    }
+    quoted
+}
+
+fn replace_native_prefix(
+    text: &str,
+    native: &Path,
+    replacement: &str,
+    shell_quoting: bool,
+) -> String {
     let path = native.to_string_lossy();
-    let mut projected = replace_path_prefixes(text, &shell_escaped_path(&path), replacement);
-    projected = replace_path_prefixes(&projected, &path, replacement);
+    let mut projected =
+        replace_path_prefixes(text, &shell_escaped_path(&path), replacement, shell_quoting);
+    projected = replace_path_prefixes(&projected, &path, replacement, shell_quoting);
     for escape_non_ascii in [false, true] {
         if native.to_str().is_some()
             && !path
@@ -238,38 +275,17 @@ fn replace_native_prefix(text: &str, native: &Path, replacement: &str) -> String
         {
             continue;
         }
-        let mut quoted = String::new();
-        for chunk in native.as_os_str().as_encoded_bytes().utf8_chunks() {
-            for ch in chunk.valid().chars() {
-                match ch {
-                    '\x07' => quoted.push_str("\\a"),
-                    '\x08' => quoted.push_str("\\b"),
-                    '\x1b' => quoted.push_str("\\E"),
-                    '\x0c' => quoted.push_str("\\f"),
-                    '\n' => quoted.push_str("\\n"),
-                    '\r' => quoted.push_str("\\r"),
-                    '\t' => quoted.push_str("\\t"),
-                    '\x0b' => quoted.push_str("\\v"),
-                    '\\' => quoted.push_str("\\\\"),
-                    '\'' => quoted.push_str("\\'"),
-                    ch if ch.is_control() || (escape_non_ascii && !ch.is_ascii()) => {
-                        for byte in ch.encode_utf8(&mut [0; 4]).as_bytes() {
-                            quoted.push_str(&format!("\\{byte:03o}"));
-                        }
-                    }
-                    ch => quoted.push(ch),
-                }
-            }
-            for byte in chunk.invalid() {
-                quoted.push_str(&format!("\\{byte:03o}"));
-            }
-        }
-        projected = replace_path_prefixes(&projected, &quoted, replacement);
+        let quoted = ansi_escaped_path(native, escape_non_ascii);
+        projected = replace_path_prefixes(&projected, &quoted, replacement, shell_quoting);
     }
     projected
 }
 
-fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
+fn project_native_text(
+    adapter: &NativeToolExecutionAdapter,
+    text: &str,
+    shell_quoting: bool,
+) -> String {
     let Some(active) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd) else {
         return text.to_string();
     };
@@ -277,9 +293,9 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
     let mut projected = text.to_string();
     for cwd in [&adapter.cwd, &physical] {
         projected = if cwd == Path::new("/") {
-            replace_rooted_path_starts(&projected, "./")
+            replace_rooted_path_starts(&projected, "./", shell_quoting)
         } else {
-            replace_native_prefix(&projected, cwd, ".")
+            replace_native_prefix(&projected, cwd, ".", shell_quoting)
         };
     }
 
@@ -299,10 +315,11 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
             } else {
                 format!("{replacement}/")
             };
-            projected = replace_rooted_path_starts(&projected, &replacement);
+            projected = replace_rooted_path_starts(&projected, &replacement, shell_quoting);
         } else {
             let replacement = mount_from_cwd.to_string_lossy();
-            projected = replace_native_prefix(&projected, &mount.host_path, &replacement);
+            projected =
+                replace_native_prefix(&projected, &mount.host_path, &replacement, shell_quoting);
         }
     }
     projected
@@ -328,7 +345,37 @@ fn is_emphasized_path(text: &str, start: usize, end: usize) -> bool {
     closing_length == opening_length && is_path_end(after_closing)
 }
 
-fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String {
+fn replacement_at(text: &str, start: usize, replacement: &str, shell_quoting: bool) -> String {
+    if !shell_quoting {
+        return replacement.to_owned();
+    }
+    let before = strip_trailing_terminal_sequences(&text[..start]);
+    match before.chars().next_back() {
+        Some('\'') if before.ends_with("$'") => ansi_escaped_path(Path::new(replacement), false),
+        Some('\'') => replacement.replace('\'', "'\\''"),
+        Some('"') => replacement
+            .chars()
+            .flat_map(|ch| {
+                let escape = matches!(ch, '"' | '\\' | '$' | '`');
+                escape
+                    .then_some('\\')
+                    .into_iter()
+                    .chain(std::iter::once(ch))
+            })
+            .collect(),
+        _ if replacement.chars().any(char::is_control) => {
+            format!("$'{}'", ansi_escaped_path(Path::new(replacement), false))
+        }
+        _ => shell_escaped_path(replacement),
+    }
+}
+
+fn replace_path_prefixes(
+    text: &str,
+    prefix: &str,
+    replacement: &str,
+    shell_quoting: bool,
+) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
     for (start, _) in text.match_indices(prefix) {
@@ -340,7 +387,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
             .unwrap_or_else(|| is_path_end(suffix) || emphasized);
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
-            projected.push_str(replacement);
+            projected.push_str(&replacement_at(text, start, replacement, shell_quoting));
             copied_through = end;
         }
     }
@@ -382,7 +429,7 @@ fn is_path_end(suffix: &str) -> bool {
     rest.len() < suffix.len() && (rest.is_empty() || rest.starts_with(is_field_separator))
 }
 
-fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
+fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
     for (slash, _) in text.match_indices('/') {
@@ -424,11 +471,12 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
             && (bare_root || after.is_some_and(|ch| !is_field_separator(ch) && ch != '/'))
         {
             projected.push_str(&text[copied_through..start]);
-            projected.push_str(if bare_root {
+            let replacement = if bare_root {
                 replacement.trim_end_matches('/')
             } else {
                 replacement
-            });
+            };
+            projected.push_str(&replacement_at(text, start, replacement, shell_quoting));
             copied_through = slash + 1;
         }
     }

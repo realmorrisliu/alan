@@ -648,3 +648,46 @@ async fn physical_cwd_projection_does_not_require_a_delegated_target() {
         PathBuf::from("<unmapped-host-path>")
     );
 }
+
+#[tokio::test]
+async fn shell_quoted_projection_preserves_public_mount_name_bytes() {
+    for prefix in ["docs", "docs space", "docs\ncontrol"] {
+        let project = tempfile::tempdir().unwrap();
+        let docs = tempfile::Builder::new().prefix(prefix).tempdir().unwrap();
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        let logical = "/mnt/my docs'\"$name\\line\nnext";
+        for (namespace, native) in [("/mnt/project", project.path()), (logical, docs.path())] {
+            approve(&service, 7, namespace, HostMountAccess::ReadOnly, native).await;
+        }
+        let adapter = service
+            .reconcile(7, binding("/mnt/project"))
+            .unwrap()
+            .adapter()
+            .unwrap();
+        let native = dunce::canonicalize(docs.path()).unwrap().join("file");
+        let quoted = std::process::Command::new("/bin/bash")
+            .args(["-c", "printf %q \"$1\"", "_"])
+            .arg(&native)
+            .output()
+            .unwrap();
+        assert!(quoted.status.success());
+        let projected = adapter.project_text(std::str::from_utf8(&quoted.stdout).unwrap());
+        let decoded = std::process::Command::new("/bin/bash")
+            .args([
+                "-c",
+                "eval \"set -- $1\"; test \"$#\" -eq 1 || exit 2; printf %s \"$1\"",
+                "_",
+            ])
+            .arg(&projected)
+            .output()
+            .unwrap();
+        assert!(decoded.status.success(), "{projected:?}");
+        let expected = format!("../{}/file", logical.strip_prefix("/mnt/").unwrap());
+        assert_eq!(String::from_utf8(decoded.stdout).unwrap(), expected);
+        let json = serde_json::json!({"path": native}).to_string();
+        let projected_json: serde_json::Value =
+            serde_json::from_str(&adapter.project_text(&json)).unwrap();
+        assert_eq!(projected_json["path"], expected);
+    }
+}
