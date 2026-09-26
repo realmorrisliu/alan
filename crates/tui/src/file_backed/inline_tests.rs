@@ -158,10 +158,12 @@ fn completion_candidates_render_before_the_inline_prompt_without_entering_histor
     };
 
     assert!(line(2).contains("/compact"));
-    assert!(line(4).contains("/clear"));
-    assert_eq!(line(7), "alan > /");
+    assert!(line(4).contains("/continue"));
+    assert!(line(5).contains("/discard"));
+    assert!(line(6).contains("/clear"));
+    assert_eq!(line(8), "alan > /");
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
-    assert_eq!(inline_viewport_height(&app, 80, 12), 8);
+    assert_eq!(inline_viewport_height(&app, 80, 12), 9);
 }
 
 #[test]
