@@ -18,6 +18,8 @@ use alan_service_manager::{
 };
 use anyhow::{Context, Result};
 
+mod path_projection;
+
 /// Native Host adapter. This is the only component that turns a raw Host path
 /// into a hostfs tree and native Tool sandbox authority.
 #[derive(Debug, Default)]
@@ -57,6 +59,8 @@ struct NativeToolExecutionAdapter {
     mounts: Vec<NativeToolMount>,
     namespace_cwd: PathBuf,
     cwd: PathBuf,
+    /// Physical and logical cwd captured before a command can mutate symlinks.
+    projection_cwd: (PathBuf, PathBuf),
     sandbox: Sandbox,
     shell_sandbox: Sandbox,
 }
@@ -165,16 +169,7 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn project_text(&self, text: &str) -> String {
-        let mut projected = text.to_string();
-        let mut mounts = self.mounts.iter().collect::<Vec<_>>();
-        mounts.sort_by_key(|mount| std::cmp::Reverse(mount.host_path.as_os_str().len()));
-        for mount in mounts {
-            projected = projected.replace(
-                mount.host_path.to_string_lossy().as_ref(),
-                mount.namespace_path.to_string_lossy().as_ref(),
-            );
-        }
-        projected
+        path_projection::project_text(self, text)
     }
 
     fn sandbox(&self) -> Result<Sandbox> {
@@ -245,6 +240,15 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                 .strip_prefix(&selected.namespace_path)
                 .expect("selected Host Mount owns Tool cwd"),
         );
+        let projection_cwd = if let Ok(physical) = dunce::canonicalize(&cwd) {
+            let logical = physical
+                .strip_prefix(&selected.host_path)
+                .map(|suffix| selected.namespace_path.join(suffix))
+                .unwrap_or_else(|_| namespace_cwd.clone());
+            (physical, logical)
+        } else {
+            (cwd.clone(), namespace_cwd.clone())
+        };
         let sandbox_mounts = mounts
             .iter()
             .map(|mount| SandboxHostMount {
@@ -273,6 +277,7 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             mounts,
             namespace_cwd,
             cwd,
+            projection_cwd,
             sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&sandbox_mounts)),
             shell_sandbox,
         }))
@@ -409,6 +414,8 @@ mod tests {
     use alan_agent_engine::tools::{ToolExecutionAuthority, ToolExecutionBinding};
     use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
     use alan_kernel::{LiveNamespace, MountFs, Namespace, Pid};
+
+    mod projection;
 
     fn service() -> Arc<HostMountService> {
         HostMountService::new(Arc::new(NativeHostMountExportAdapter))
@@ -641,7 +648,7 @@ mod tests {
                 .join("notes.txt")
                 .display()
         ));
-        assert_eq!(projected, "failed at /mnt/project/notes.txt");
+        assert_eq!(projected, "failed at ./notes.txt");
         assert!(adapter.sandbox().unwrap().is_writable(host.path()));
     }
 
