@@ -205,7 +205,7 @@ fn test_prompt_feedback_deserialization() {
 }
 
 #[test]
-fn test_function_declaration() {
+fn function_declaration_serializes_full_json_schema() {
     let declaration = FunctionDeclaration {
         name: "test_function".to_string(),
         description: "A test function".to_string(),
@@ -213,12 +213,20 @@ fn test_function_declaration() {
             "type": "object",
             "properties": {
                 "arg1": {"type": "string"}
-            }
+            },
+            "oneOf": [
+                {"properties": {"arg1": {"const": "submit"}}},
+                {"not": {"required": ["arg1"]}}
+            ],
+            "additionalProperties": false
         }),
     };
 
     assert_eq!(declaration.name, "test_function");
     assert_eq!(declaration.description, "A test function");
+    let wire = serde_json::to_value(&declaration).unwrap();
+    assert_eq!(wire["parametersJsonSchema"], declaration.parameters);
+    assert!(wire.get("parameters").is_none());
 }
 
 #[test]
