@@ -5,6 +5,67 @@ use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
+    project_native_text(adapter, &project_file_urls(adapter, text))
+}
+
+fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut copied = 0;
+    for (start, _) in text
+        .as_bytes()
+        .windows(7)
+        .enumerate()
+        .filter(|(_, bytes)| bytes.eq_ignore_ascii_case(b"file://"))
+    {
+        if start < copied
+            || text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '-' | '/'))
+        {
+            continue;
+        }
+        let end = text[start..]
+            .char_indices()
+            .find_map(|(offset, ch)| {
+                (ch.is_whitespace()
+                    || matches!(
+                        ch,
+                        '\x1b' | '\x07' | '\'' | '"' | '<' | '>' | '`' | ')' | ']' | '}'
+                    ))
+                .then_some(start + offset)
+            })
+            .unwrap_or(text.len());
+        let Ok(url) = url::Url::parse(&text[start..end]) else {
+            continue;
+        };
+        let Ok(path) = url.to_file_path() else {
+            continue;
+        };
+        if !adapter
+            .mounts
+            .iter()
+            .any(|mount| path.starts_with(&mount.host_path))
+        {
+            continue;
+        }
+        result.push_str(&text[copied..start]);
+        result.push_str(&project_native_text(adapter, &path.to_string_lossy()));
+        if let Some(query) = url.query() {
+            result.push('?');
+            result.push_str(query);
+        }
+        if let Some(fragment) = url.fragment() {
+            result.push('#');
+            result.push_str(fragment);
+        }
+        copied = end;
+    }
+    result.push_str(&text[copied..]);
+    result
+}
+
+fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
     if longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd).is_none() {
         return text.to_string();
     }
@@ -57,20 +118,17 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
                     replacement.as_ref(),
                 );
             }
-            if let Ok(file_url) = url::Url::from_file_path(&mount.host_path) {
-                let uri_path = file_url.path();
-                if uri_path != host_path.as_ref() {
-                    projected = replace_path_prefixes(&projected, uri_path, replacement.as_ref());
-                }
-            }
         }
     }
     projected
 }
 
-fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
+fn is_emphasized_path(text: &str, start: usize, end: usize) -> bool {
     let prefix = strip_trailing_terminal_sequences(&text[..start]);
-    let opening_length = prefix.chars().rev().take_while(|ch| *ch == '_').count();
+    let Some(marker @ ('_' | '*')) = prefix.chars().next_back() else {
+        return false;
+    };
+    let opening_length = prefix.chars().rev().take_while(|ch| *ch == marker).count();
     if opening_length == 0 {
         return false;
     }
@@ -80,7 +138,7 @@ fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
     }
 
     let suffix = strip_leading_terminal_sequences(&text[end..]);
-    let closing_length = suffix.chars().take_while(|ch| *ch == '_').count();
+    let closing_length = suffix.chars().take_while(|ch| *ch == marker).count();
     let after_closing = strip_leading_terminal_sequences(&suffix[closing_length..]);
     closing_length == opening_length && is_path_end(after_closing)
 }
@@ -91,7 +149,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     for (start, _) in text.match_indices(prefix) {
         let end = start + prefix.len();
         let suffix = strip_leading_terminal_sequences(&text[end..]);
-        let emphasized = is_underscore_emphasis_path(text, start, end);
+        let emphasized = is_emphasized_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
         let boundary_after = is_path_end(suffix) || emphasized;
         if boundary_before && boundary_after {
@@ -105,23 +163,20 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
 }
 
 fn is_path_end(suffix: &str) -> bool {
-    let after = suffix.chars().next();
-    after.is_none_or(|ch| {
-        ch.is_whitespace()
-            || ch == std::path::MAIN_SEPARATOR
-            || matches!(
-                ch,
-                ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*' | '?' | '#'
-            )
-    }) || is_terminal_sentence_punctuation(suffix, 0)
-}
-
-fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
-    let mut suffix = text[start..].chars();
-    matches!(suffix.next(), Some('.' | '!' | '?'))
-        && suffix.next().is_none_or(|ch| {
-            ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | ')' | ']' | '}' | '\'' | '"')
-        })
+    let Some(first) = suffix.chars().next() else {
+        return true;
+    };
+    if first.is_whitespace() || first == std::path::MAIN_SEPARATOR {
+        return true;
+    }
+    // A diagnostic location or closing prose delimiter may end a path, but a
+    // punctuation-prefixed sibling filename (such as project#backup) does not.
+    if first == ':' {
+        let location = suffix[1..].trim_start_matches(|ch: char| ch.is_ascii_digit() || ch == ':');
+        return location.is_empty() || location.starts_with(char::is_whitespace);
+    }
+    let rest = suffix.trim_start_matches([',', ';', ')', ']', '}', '\'', '"', '>', '`', '.', '!']);
+    rest.len() < suffix.len() && (rest.is_empty() || rest.starts_with(char::is_whitespace))
 }
 
 fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
@@ -147,17 +202,13 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
 fn is_path_start(text: &str, start: usize) -> bool {
     let prefix = strip_trailing_terminal_sequences(&text[..start]);
     let before = prefix.chars().next_back();
-    let file_uri_delimiter = prefix
-        .get(prefix.len().saturating_sub("file://".len())..)
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
-    file_uri_delimiter
-        || before.is_none_or(|ch| {
-            ch.is_whitespace()
-                || matches!(
-                    ch,
-                    '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`' | '*'
-                )
-        })
+    before.is_none_or(|ch| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`' | '*'
+            )
+    })
 }
 
 fn strip_trailing_terminal_sequences(mut prefix: &str) -> &str {

@@ -70,7 +70,34 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     let root = dunce::canonicalize(project.path()).unwrap();
     let uri = url::Url::from_file_path(root.join("notes.txt")).unwrap();
     assert!(uri.as_str().contains("%20"));
-    assert_eq!(adapter.project_text(uri.as_str()), "file://./notes.txt");
+    assert_eq!(adapter.project_text(uri.as_str()), "./notes.txt");
+
+    let spaced_uri = url::Url::from_file_path(root.join("notes with spaces.txt")).unwrap();
+    assert_eq!(
+        adapter.project_text(spaced_uri.as_str()),
+        "./notes with spaces.txt"
+    );
+    assert_eq!(
+        adapter.project_text(&format!("\x1b]8;;{uri}\x1b\\notes\x1b]8;;\x1b\\")),
+        "\x1b]8;;./notes.txt\x1b\\notes\x1b]8;;\x1b\\"
+    );
+    for suffix in [
+        "#backup/file",
+        "?backup/file",
+        "*backup/file",
+        ":backup/file",
+        ",backup/file",
+    ] {
+        let sibling = format!("{}{suffix}", root.display());
+        assert_eq!(adapter.project_text(&sibling), sibling);
+    }
+    assert_eq!(
+        adapter.project_text(&format!("**{}**", root.display())),
+        "**.**"
+    );
+
+    let unrelated_scheme = format!("pro{uri}");
+    assert_eq!(adapter.project_text(&unrelated_scheme), unrelated_scheme);
 
     let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
     let sibling_uri =
