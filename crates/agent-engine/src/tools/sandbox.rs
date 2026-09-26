@@ -136,6 +136,27 @@ impl Sandbox {
             .unwrap_or_else(super::sandbox_backend::detect_backend)
     }
 
+    fn command_scope_for_cwd(&self, cwd: &Path) -> Result<Self> {
+        if self.spec.host_mounts.is_empty() {
+            return Ok(self.clone());
+        }
+
+        let mount = self
+            .spec
+            .host_mounts
+            .iter()
+            .filter(|mount| self.is_path_in_root(cwd, &mount.host_path))
+            .max_by_key(|mount| mount.host_path.components().count())
+            .ok_or_else(|| anyhow!("Working directory is outside delegated Host Mounts"))?;
+        let mut spec = SandboxSpec::from_host_mounts(std::slice::from_ref(mount));
+        spec.network = self.spec.network;
+        spec.read_denylist
+            .extend(self.spec.read_denylist.iter().cloned());
+        let mut scoped = Self::from_spec(spec);
+        scoped.backend_override = self.backend_override;
+        Ok(scoped)
+    }
+
     /// Name of the active sandbox backend.
     pub fn backend_name(&self) -> &'static str {
         Self::backend_name_static()
@@ -157,15 +178,19 @@ impl Sandbox {
     /// Return a stable routing reason when a bash command targets local paths
     /// outside the current host_mount.
     pub fn bash_path_guard_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
-        if !self.is_writable(cwd) {
+        let scoped = match self.command_scope_for_cwd(cwd) {
+            Ok(scoped) => scoped,
+            Err(error) => return Some(error.to_string()),
+        };
+        if !scoped.is_writable(cwd) {
             return Some(format!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
-                self.allowed_roots_label()
+                scoped.allowed_roots_label()
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
+        match scoped.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
@@ -307,67 +332,69 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
+        let scoped = self.command_scope_for_cwd(cwd)?;
+        let sandbox = &scoped;
         let read_only_command =
             matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
         let cwd_is_authorized = if read_only_command {
-            self.is_readable(cwd)
+            sandbox.is_readable(cwd)
         } else {
-            self.is_writable(cwd)
+            sandbox.is_writable(cwd)
         };
         if !cwd_is_authorized {
             return Err(anyhow!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
-                self.allowed_roots_label()
+                sandbox.allowed_roots_label()
             ));
         }
-        self.ensure_path_not_protected(cwd, "process cwd")?;
+        sandbox.ensure_path_not_protected(cwd, "process cwd")?;
 
         // Reject shell expansion ($VAR, $(...), backticks, globs, braces) in EVERY
         // mode. Expansion defeats the static path-containment check — the parser
         // sees a literal, in-host_mount-looking token (`$HOME/.ssh/id_rsa`) but
         // `/bin/sh -c` then expands it to escape the host_mount. Seatbelt permits
         // reads, so an auto-approved read must not be able to exfiltrate this way.
-        self.validate_shell_features(cmd)?;
+        sandbox.validate_shell_features(cmd)?;
 
-        if self.active_backend().permits_autonomous_bash() {
+        if sandbox.active_backend().permits_autonomous_bash() {
             // Seatbelt kernel-confines the host_mount fs + network, so the syntactic
             // *shape* checks are dropped — they would reject commands the sandbox
             // safely contains (`bash -lc ...`, `python -c ...`). Path containment
             // and the protected-subpath check (incl. shell-wrapper-nested) still
             // run in ProtectedOnly mode.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
+            sandbox.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
         } else {
             // No kernel protected-subpath enforcement (Landlock cannot carve a
             // protected subdir out of the writable tree, or the path-guard
             // fallback): keep the full shape parser so opaque writers — which could
             // hide a protected write the kernel won't deny — are rejected.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
+            sandbox.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
         }
 
         // A command only reaches execution after policy/reviewer/human clearance.
         // If it is classified as a network capability, run it with the sandbox's
         // network restriction lifted (still filesystem-confined) so an approved
         // network call actually runs instead of failing under a deny-all profile.
-        let allow_network = self.spec.network.allows_network()
+        let allow_network = sandbox.spec.network.allows_network()
             || matches!(
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
             );
-        let backend = self.active_backend();
+        let backend = sandbox.active_backend();
         if matches!(
             backend,
             super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
         ) {
-            return self
+            return sandbox
                 .exec_reified_namespace(cmd, cwd, timeout, allow_network)
                 .await;
         }
 
         let command = Self::translate_command_path_literals(cmd, |token| {
-            translate_namespace_shell_token(token, &self.spec.host_mounts)
+            translate_namespace_shell_token(token, &sandbox.spec.host_mounts)
         });
-        let mut command = self.build_confined_command(&command, allow_network, backend)?;
+        let mut command = sandbox.build_confined_command(&command, allow_network, backend)?;
         command.current_dir(cwd);
         command
             .stdin(std::process::Stdio::null())
@@ -730,11 +757,12 @@ impl Sandbox {
             return self.normalized_path(&absolute_path);
         }
 
+        let normalized = lexically_normalize_path(&absolute_path);
         let mut current = absolute_path.as_path();
         let mut suffix = Vec::<OsString>::new();
         while !current.exists() {
             let Some(name) = current.file_name() else {
-                return lexically_normalize_path(&absolute_path);
+                return self.resolved_path_with_existing_parents(&normalized);
             };
             suffix.push(name.to_os_string());
             let Some(parent) = current.parent() else {
