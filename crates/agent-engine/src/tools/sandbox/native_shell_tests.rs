@@ -48,6 +48,15 @@ fn nested_shells_reject_startup_files_before_execution() {
     let sandbox = Sandbox::new(temp.path().to_path_buf());
     for script in [
         "bash -lc 'printf selected'",
+        "exec -l bash -c 'printf selected'",
+        "exec -cl bash -c 'printf selected'",
+        "exec -a -bash bash -c 'printf selected'",
+        "exec -a-bash bash -c 'printf selected'",
+        "exec -ca-bash bash -c 'printf selected'",
+        "env --argv0=-bash bash -c 'printf selected'",
+        "env -a -bash bash -c 'printf selected'",
+        "bash -c \"exec -l bash -c 'printf selected'\"",
+        "command exec -l bash -c 'printf selected'",
         "zsh -c 'printf selected'",
         "zsh -f -o rcs -c 'printf selected'",
         "env BASH_ENV=./hook bash -c 'printf selected'",
@@ -104,5 +113,16 @@ fn zsh_requires_disabled_startup_files() {
         sandbox
             .validate_command_paths(script, temp.path(), PathCheckMode::ProtectedOnly, None)
             .unwrap();
+    }
+}
+
+#[test]
+fn environment_help_does_not_start_a_nested_shell() {
+    for flag in ["--help", "--version"] {
+        assert!(
+            shell_wrapper_inline_script(&["env".into(), flag.into()])
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -116,7 +116,7 @@ pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<Str
     };
     if view.opaque_wrapper_display.is_some() {
         return Err(anyhow!(
-            "Shell startup files cannot be validated through opaque environment commands"
+            "Shell startup files cannot be validated through opaque command wrappers"
         ));
     };
     if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
@@ -189,6 +189,19 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     loop {
         let command = command_basename(&words[command_index]);
         let args = &words[command_index + 1..];
+        if command == "exec"
+            && args
+                .iter()
+                .take_while(|arg| arg.starts_with('-') && *arg != "--")
+                .any(|arg| arg.chars().skip(1).any(|ch| matches!(ch, 'l' | 'a')))
+        {
+            return Some(NestedEvaluatorView {
+                display: display.clone(),
+                command,
+                args,
+                opaque_wrapper_display: Some(format!("{display} with custom argv[0]")),
+            });
+        }
         let next_offset = if command == "env" {
             if let Some(flag) = env_split_string_flag(args) {
                 return Some(NestedEvaluatorView {
@@ -214,6 +227,16 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
             });
         };
 
+        if args[next_relative_offset].starts_with('-')
+            && !common_wrapper_query_flag(&args[next_relative_offset])
+        {
+            return Some(NestedEvaluatorView {
+                display: display.clone(),
+                command,
+                args,
+                opaque_wrapper_display: Some(format!("{display} with unsupported options")),
+            });
+        }
         command_index += 1 + next_relative_offset;
         display.push(' ');
         display.push_str(command_basename(&words[command_index]));
