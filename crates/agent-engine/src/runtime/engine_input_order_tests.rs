@@ -377,3 +377,49 @@ async fn ordered_control_boundaries_preserve_later_inputs_and_machine_controls()
         Op::Input { .. }
     ));
 }
+
+#[tokio::test]
+async fn ready_namespace_batch_includes_interrupt_after_input_burst() {
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+    let shell = alan_shell::Shell::new(root.clone());
+    let files = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default").agent_files();
+    for index in 0..128 {
+        shell
+            .write("/agent/1/io/input", format!("input-{index}").as_bytes())
+            .await
+            .unwrap();
+    }
+    shell
+        .write("/agent/1/machine/ctl", b"interrupt")
+        .await
+        .unwrap();
+    let batch = files.read_ready_runtime_submissions().await.unwrap();
+    assert_eq!(batch.len(), 129, "one wake must reach the ready interrupt");
+    for (index, input) in batch.into_iter().enumerate() {
+        match input.unwrap().op {
+            Op::Input { parts, .. } => {
+                assert_eq!(parts, vec![ContentPart::text(format!("input-{index}"))])
+            }
+            Op::Interrupt => assert_eq!(index, 128),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    assert!(
+        files
+            .read_ready_runtime_submissions()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    shell.write("/agent/1/io/input", b"later").await.unwrap();
+    assert_eq!(
+        files.read_ready_runtime_submissions().await.unwrap().len(),
+        1
+    );
+}
