@@ -7,6 +7,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+alan-agent-protocol.workspace = true
 alan-ap = { path = "../ap" }
 alan-agent-engine.workspace = true
 alan-agentfs = { path = "../agentfs" }
@@ -32,6 +33,5 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-alan-agent-protocol.workspace = true
 alan-llm = { workspace = true, features = ["mock"] }
 tempfile.workspace = true
