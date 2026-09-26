@@ -70,6 +70,31 @@ pub fn seatbelt_profile(
     )
 }
 
+/// Deny inactive grant backing while preserving authority inside active roots.
+/// Explicit deny rules also override the shared temporary-directory write allow.
+pub(crate) fn seatbelt_host_mount_exclusions(
+    excluded_roots: &[PathBuf],
+    active_roots: &[PathBuf],
+) -> String {
+    let exceptions = active_roots
+        .iter()
+        .map(|root| {
+            format!(
+                "(require-not (subpath {}))",
+                sbpl_quote(&canonical_string(root))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    excluded_roots
+        .iter()
+        .map(|root| {
+            let root = sbpl_quote(&canonical_string(root));
+            format!("(deny file-read* file-write* (require-all (subpath {root}) {exceptions}))\n")
+        })
+        .collect()
+}
+
 pub(crate) fn read_denylist_excluding_writable_roots(
     read_denylist: &[PathBuf],
     writable_roots: &[PathBuf],

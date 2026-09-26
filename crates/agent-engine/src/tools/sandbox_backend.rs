@@ -26,8 +26,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-pub(crate) use seatbelt::read_denylist_excluding_writable_roots;
 pub use seatbelt::seatbelt_profile;
+pub(crate) use seatbelt::{read_denylist_excluding_writable_roots, seatbelt_host_mount_exclusions};
 
 /// Available sandbox enforcement backends, in order of strength.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

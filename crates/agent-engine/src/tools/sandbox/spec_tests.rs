@@ -462,76 +462,30 @@ async fn sandbox_spec_writable_roots_block_protected_roots_themselves() {
 }
 
 #[tokio::test]
-async fn sandbox_limits_a_shell_action_to_the_grant_containing_cwd() {
+async fn inactive_grants_require_a_read_isolating_backend() {
     let active = TempDir::new().unwrap();
     let other = TempDir::new().unwrap();
-    let active_file = active.path().join("active.txt");
-    let other_file = other.path().join("other.txt");
-    tokio::fs::write(&active_file, "active\n").await.unwrap();
-    tokio::fs::write(&other_file, "other\n").await.unwrap();
-    let sandbox = Sandbox::from_spec_with_backend(
-        SandboxSpec::from_host_mounts(&[
-            SandboxHostMount {
-                namespace_path: PathBuf::from("/mnt/active"),
-                host_path: active.path().to_path_buf(),
-                access: crate::tools::ReifiedMountAccess::ReadWrite,
-            },
-            SandboxHostMount {
-                namespace_path: PathBuf::from("/mnt/other"),
-                host_path: other.path().to_path_buf(),
-                access: crate::tools::ReifiedMountAccess::ReadWrite,
-            },
-        ]),
+    let sandbox = Sandbox::with_backend(
+        active.path().to_path_buf(),
         crate::tools::SandboxBackendKind::HostMountPathGuard,
+    )
+    .with_excluded_host_roots(vec![other.path().to_path_buf()]);
+    let error = sandbox.exec("pwd", active.path()).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot isolate inactive Host Mount reads")
     );
-    let scoped = sandbox.command_scope_for_cwd(active.path()).unwrap();
-    assert_eq!(scoped.spec.host_mounts.len(), 1);
-    assert_eq!(
-        scoped.spec.host_mounts[0].host_path,
-        dunce::canonicalize(active.path()).unwrap()
-    );
+}
 
-    let active_result = sandbox
-        .exec_with_timeout_and_capability(
-            &format!("cat '{}'", active_file.display()),
-            active.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Read),
-        )
-        .await
-        .unwrap();
-    assert_eq!(active_result.stdout, "active\n");
-    assert!(sandbox.is_readable(&other_file));
-
-    let other_result = sandbox
-        .exec_with_timeout_and_capability(
-            &format!("cat '{}'", other_file.display()),
-            active.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Read),
-        )
+#[tokio::test]
+async fn canonical_mount_blocks_missing_parent_protected_path_bypass() {
+    let active = TempDir::new().unwrap();
+    std::fs::create_dir_all(active.path().join(".git")).unwrap();
+    let sandbox = Sandbox::new(dunce::canonicalize(active.path()).unwrap());
+    let error = sandbox
+        .exec("touch .git/missing/../config", active.path())
         .await
         .unwrap_err();
-    assert!(other_result.to_string().contains("outside host_mount"));
-    let switched = sandbox
-        .exec_with_timeout_and_capability(
-            "cat other.txt",
-            other.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Read),
-        )
-        .await
-        .unwrap();
-    assert_eq!(switched.stdout, "other\n");
-    let denied_write = sandbox
-        .exec_with_timeout_and_capability(
-            &format!("touch '{}'", other.path().join("denied.txt").display()),
-            active.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Write),
-        )
-        .await
-        .unwrap_err();
-    assert!(denied_write.to_string().contains("outside host_mount"));
-    assert!(!other.path().join("denied.txt").exists());
+    assert!(error.to_string().contains("protected subpath"));
 }
