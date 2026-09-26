@@ -404,6 +404,9 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("file:///etc/hosts", "./etc/hosts"),
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
         ("https://example.test/path", "https://example.test/path"),
+        ("content:/documents/42", "content:/documents/42"),
+        ("[link](custom+v1:/item)", "[link](custom+v1:/item)"),
+        ("/usr/bin:/etc", "./usr/bin:./etc"),
     ] {
         assert_eq!(adapter.project_text(input), expected, "{input}");
     }

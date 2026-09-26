@@ -470,10 +470,20 @@ fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool
                 is_path_end(suffix) && !suffix.starts_with('/')
             };
         let after = suffix.chars().next();
-        let uri_authority_delimiter = text[..start].ends_with(':')
-            && (text[start..].starts_with("//") || text[start..].starts_with("\\/\\/"));
+        let uri_scheme = text[..start].strip_suffix(':').is_some_and(|prefix| {
+            let scheme = prefix
+                .rsplit(|ch: char| {
+                    ch.is_whitespace() || matches!(ch, '=' | '\'' | '"' | '(' | '[' | '<')
+                })
+                .next()
+                .unwrap_or_default();
+            scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+        });
         if (is_path_start(text, start) || emphasized)
-            && !uri_authority_delimiter
+            && !uri_scheme
             && (bare_root || after.is_some_and(|ch| !is_field_separator(ch) && ch != '/'))
         {
             projected.push_str(&text[copied_through..start]);
