@@ -1,5 +1,5 @@
 //! Task-oriented Agent work commands over the invoking Process's namespace.
-use alan_agent_protocol::{InputIntent, InputMode, UserInputRecord};
+use alan_agent_engine::{InputIntent, InputMode, UserInputRecord};
 use alan_ap::InProcessTransport;
 use alan_kernel::{MountFs, ProcessInvocation, ProcessOutcome, ProcessRunner};
 use alan_shell::Shell;

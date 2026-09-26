@@ -6,8 +6,18 @@ successor. Future-routing discussion below records accepted direction, not deliv
 or a canonical-spec synchronization claim for this explicit-input change.
 
 Planning complete and consolidated design confirmed by the user on 2026-09-24.
-ADR-0058 is accepted direction. No runtime implementation has been performed by
-this change; implementation tasks remain pending.
+ADR-0058 is accepted direction. Runtime delivery is in progress through small PRs:
+versioned input, governed explicit command execution, shared cwd/queue admission,
+correlated completion and cancellation have landed through PR #970. The full
+explicit-input contract and acceptance matrix remain incomplete; unchecked tasks
+are not an assertion that no supporting code exists.
+
+The `/bin/agent_work` facade is implemented in PR #973 with its command/schema
+contract in design.md. Local Service Manager tests, schema validation and the
+full repository quality gate pass after retaining the existing dependency boundary.
+Its current-head review and CI merge gates remain pending. End-to-end Agent discovery,
+commit-failure injection and unknown-outcome acceptance remain part of task 2.13;
+this implementation is not an archive-readiness or canonical-spec sync claim.
 
 This change receives unified-input planning preserved in the
 [archived TUI handoff](../archive/2026-09-24-define-alan-interaction-model/unified-input-exploration.md).
@@ -39,5 +49,6 @@ The user approved keeping aP internal behind task-oriented alan9 commands and
 requested design updates. Normal user workflows do not require protocol clients.
 Agent project tools and native commands share public paths and backing files.
 This refines the KISS revision without introducing a separate command authority,
-new state owner or runtime implementation claim. Host Command Plane compatibility
-is reconciled by an owning delta; command spellings remain delivery tasks.
+new state owner. Host Command Plane compatibility is reconciled by an owning delta;
+the first implemented command spelling and receipt schema are recorded in design.md.
+Remaining acceptance and merge evidence are tracked in tasks.md.
