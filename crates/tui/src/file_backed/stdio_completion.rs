@@ -111,12 +111,26 @@ async fn read_command_output(
             matches!(action.status.as_str(), "completed" | "failed" | "cancelled"),
             "command result is not terminal; outcome is unknown"
         );
-        let mut streams: super::CommandOutput = serde_json::from_str(&action.output)
-            .context("command output is missing or invalid; outcome is unknown")?;
-        streams.exit_code = result["exit_code"]
+        let exit_code = result["exit_code"]
             .as_i64()
             .and_then(|code| i32::try_from(code).ok())
             .context("command exit status is missing or invalid; outcome is unknown")?;
+        let mut streams = match serde_json::from_str::<super::CommandOutput>(&action.output) {
+            Ok(streams) => streams,
+            Err(error) => {
+                let failure: serde_json::Value = serde_json::from_str(&action.output)
+                    .context("command output is invalid; outcome is unknown")?;
+                let Some(message) = failure["error"].as_str().filter(|_| exit_code != 0) else {
+                    return Err(error).context("command streams are missing; outcome is unknown");
+                };
+                super::CommandOutput {
+                    stdout: String::new(),
+                    stderr: format!("{message}\n"),
+                    exit_code,
+                }
+            }
+        };
+        streams.exit_code = exit_code;
         output = Some(streams);
     }
     output.context("input completed without a correlated command result; outcome is unknown")
@@ -313,7 +327,7 @@ mod command_tests {
 
     #[tokio::test]
     async fn command_completion_returns_only_correlated_streams_and_exit_status() {
-        for exit_code in [0, 7] {
+        for exit_code in [0, 7, 2] {
             let (shell, agent_root, _, pid) = stdio_tests::live_root_agent().await;
             let task = StdioTaskWaitContext::new("!printf partial").unwrap();
             let id = task.record.submission_id.clone();
@@ -344,7 +358,11 @@ mod command_tests {
                     String::from_utf8(agent_root.read(fid, 0, 4096).await.unwrap()).unwrap();
                 agent_root.clunk(fid).await.unwrap();
                 let action_path = format!("{path}/actions/{}", action.trim());
-                let output = serde_json::json!({"stdout":if call_id == id {"partial"} else {"other"}, "stderr":"diagnostic\n"});
+                let output = if exit_code == 2 && call_id == id {
+                    serde_json::json!({"success":false,"error":"launch denied"})
+                } else {
+                    serde_json::json!({"stdout":if call_id == id {"partial"} else {"other"}, "stderr":"diagnostic\n"})
+                };
                 let result = serde_json::json!({"call_id":call_id,"exit_code":exit_code});
                 for (name, content) in [
                     ("name", "bash".into()),
@@ -394,8 +412,15 @@ mod command_tests {
             let StdioTaskOutput::Command(output) = result else {
                 panic!("command output")
             };
-            assert_eq!(output.stdout, "partial");
-            assert_eq!(output.stderr, "diagnostic\n");
+            assert_eq!(output.stdout, if exit_code == 2 { "" } else { "partial" });
+            assert_eq!(
+                output.stderr,
+                if exit_code == 2 {
+                    "launch denied\n"
+                } else {
+                    "diagnostic\n"
+                }
+            );
             assert_eq!(output.exit_code, exit_code);
             tail::close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
                 .await
