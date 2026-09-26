@@ -1,7 +1,15 @@
 #[tokio::test]
 async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
     use alan_agent_protocol::{ContentPart, InputIntent};
-    for choice in [None, Some("approve"), Some("reject")] {
+    let large_script = format!("printf '%s' '{}'", "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1));
+    for (choice, script) in [
+        (None, "pwd"),
+        (None, large_script.as_str()),
+        (Some("approve"), "sudo ls"),
+        (Some("reject"), "sudo ls"),
+        (Some("approve"), "rm -rf build"),
+        (Some("reject"), "git reset --hard"),
+    ] {
         let executions = Arc::new(AtomicUsize::new(0));
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
@@ -69,11 +77,7 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
                 id: id.clone(),
                 intent: InputIntent::Command,
                 op: Op::Input {
-                    parts: vec![ContentPart::text(if choice.is_some() {
-                        "sudo ls"
-                    } else {
-                        "pwd"
-                    })],
+                    parts: vec![ContentPart::text(script)],
                     mode: InputMode::FollowUp,
                 },
             },
@@ -144,7 +148,13 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
             .machine
             .tool_payload_by_call_id(&id)
             .expect("correlated result");
-        assert_eq!(payload["success"], choice != Some("reject"));
+        let metadata = if script == large_script {
+            assert_eq!(payload["type"], "evidence_projection");
+            &payload["metadata"]
+        } else {
+            &payload
+        };
+        assert_eq!(metadata["success"], choice != Some("reject"));
         assert_eq!(state.agent_files().action_ids().await.unwrap().len(), 1);
         let shell = alan_shell::Shell::new(state.environment.root_transport());
         let base = format!("{}/actions/a0", state.environment.agent_path());

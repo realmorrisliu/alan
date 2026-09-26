@@ -29,6 +29,7 @@ mod runtime_inputs;
 pub(super) use runtime_inputs::ToolAuthorizationRuntime;
 
 pub(super) struct ToolAuthorizationRequest<'a> {
+    pub(super) explicit_command: bool,
     pub(super) tool_call: &'a NormalizedToolCall,
     pub(super) tool_arguments: &'a Value,
     pub(super) tool_capability: ToolCapability,
@@ -54,6 +55,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     let ToolAuthorizationRequest {
+        explicit_command,
         tool_call,
         tool_arguments,
         tool_capability,
@@ -61,7 +63,7 @@ where
         allow_approved_tool_escalation_execution,
         cancel,
     } = request;
-    let policy_decision = maybe_allow_approved_tool_escalation_replay(
+    let mut policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
             runtime.policy_engine,
             runtime.governance,
@@ -73,6 +75,9 @@ where
         ),
         allow_approved_tool_escalation_execution,
     );
+    if explicit_command && let ToolPolicyDecision::Escalate { route, .. } = &mut policy_decision {
+        *route = EscalationRoute::AlwaysHuman;
+    }
     record_policy_decision(runtime.machine, tool_call, &policy_decision);
 
     match policy_decision {

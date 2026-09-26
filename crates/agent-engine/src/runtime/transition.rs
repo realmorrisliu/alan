@@ -515,6 +515,7 @@ where
 
     let authorization_runtime = tool_authorization_runtime(state);
     let authorization_request = ToolAuthorizationRequest {
+        explicit_command: inputs.explicit_command,
         tool_call,
         tool_arguments: &tool_arguments,
         tool_capability: resolved_tool.capability,
@@ -787,6 +788,7 @@ where
                 approved_unknown_effect_call_id.as_deref(),
                 approved_tool_escalation_call_id.as_deref(),
                 ToolOrchestratorInputs {
+                    explicit_command: false,
                     cancel,
                     steering_broker,
                 },
@@ -864,6 +866,7 @@ where
                     approved_unknown_effect_call_id.as_deref(),
                     approved_tool_escalation_call_id.as_deref(),
                     ToolOrchestratorInputs {
+                        explicit_command: false,
                         cancel,
                         steering_broker,
                     },
@@ -878,6 +881,7 @@ where
                 approved_unknown_effect_call_id.as_deref(),
                 approved_tool_escalation_call_id.as_deref(),
                 ToolOrchestratorInputs {
+                    explicit_command: false,
                     cancel,
                     steering_broker,
                 },
