@@ -6,6 +6,7 @@ use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tracing::debug;
@@ -504,6 +505,51 @@ impl ToolProcessRunner {
             .insert(pid, binding);
     }
 
+    pub(crate) fn change_process_directory(&self, pid: u64, path: &Path) -> Result<PathBuf> {
+        let mut binding = self
+            .inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned")
+            .get(&pid)
+            .cloned()
+            .context("Process has no Tool execution binding")?;
+        let authority = self
+            .inner
+            .process_authorities
+            .lock()
+            .expect("process authority mutex poisoned")
+            .get(&pid)
+            .cloned()
+            .context("Process has no live Host Mount authority")?;
+        // An explicit absolute cd may select a replacement grant after revocation.
+        if path.is_absolute() {
+            binding.namespace_cwd = path.to_path_buf();
+            binding.cwd_grant_id = None;
+        }
+        let previous_namespace_cwd = binding.namespace_cwd.clone();
+        let had_host_adapter = binding.has_adapter();
+        binding = authority.reconcile(pid, binding)?;
+        anyhow::ensure!(
+            !had_host_adapter
+                || binding.namespace_cwd == previous_namespace_cwd
+                || path.is_absolute(),
+            "Process cwd is no longer authorized; choose an explicit directory"
+        );
+        let adapter = binding
+            .adapter()
+            .context("Process has no active Host Mount execution adapter")?;
+        let namespace_cwd = adapter.resolve_directory(&binding.namespace_cwd, path)?;
+        binding.namespace_cwd = namespace_cwd.clone();
+        binding = authority.reconcile(pid, binding)?;
+        anyhow::ensure!(
+            binding.namespace_cwd == namespace_cwd,
+            "Host Mount authority changed the selected cwd during validation"
+        );
+        self.register_process_binding(pid, binding);
+        Ok(namespace_cwd)
+    }
+
     pub(crate) fn process_binding(&self, pid: u64) -> Option<ToolExecutionBinding> {
         self.inner
             .process_bindings
@@ -640,6 +686,7 @@ impl ToolProcessRunner {
                     );
                 }
             };
+            self.register_process_binding(authority_pid, binding.clone());
         }
         let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {

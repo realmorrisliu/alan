@@ -249,6 +249,12 @@ impl NamespaceRuntimeEnvironment {
         self
     }
 
+    pub(crate) fn change_process_directory(&mut self, path: &std::path::Path) -> Result<PathBuf> {
+        let namespace_cwd = self.tool_execution().change_process_directory(path)?;
+        self.namespace_cwd = namespace_cwd.clone();
+        Ok(namespace_cwd)
+    }
+
     pub(crate) fn generation(&self) -> NamespaceGeneration {
         NamespaceGeneration {
             root: self.root.clone(),

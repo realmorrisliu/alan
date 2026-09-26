@@ -46,6 +46,8 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
 pub struct ToolExecutionBinding {
     /// Agent-visible Alan OS working directory.
     pub namespace_cwd: PathBuf,
+    /// Opaque selected Host Mount identity; revalidated by the owning service.
+    pub cwd_grant_id: Option<String>,
     /// Scratch directory for temporary files.
     pub scratch_dir: PathBuf,
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
@@ -76,6 +78,7 @@ impl ToolExecutionBinding {
     pub fn awaiting_host_projection(namespace_cwd: PathBuf, scratch_dir: PathBuf) -> Self {
         Self {
             namespace_cwd,
+            cwd_grant_id: None,
             scratch_dir,
             adapter: None,
         }
@@ -113,6 +116,8 @@ impl ToolExecutionBinding {
 pub struct ToolContext {
     /// Agent-visible Alan OS working directory.
     pub namespace_cwd: PathBuf,
+    /// Opaque selected Host Mount identity; revalidated by the owning service.
+    pub cwd_grant_id: Option<String>,
     /// Scratch directory for temporary files
     pub scratch_dir: PathBuf,
     /// Global configuration
@@ -125,6 +130,7 @@ impl ToolContext {
     pub fn from_binding(binding: ToolExecutionBinding, config: Arc<Config>) -> Self {
         Self {
             namespace_cwd: binding.namespace_cwd,
+            cwd_grant_id: binding.cwd_grant_id,
             scratch_dir: binding.scratch_dir,
             config,
             adapter: binding.adapter,
@@ -135,6 +141,7 @@ impl ToolContext {
     pub fn binding(&self) -> ToolExecutionBinding {
         ToolExecutionBinding {
             namespace_cwd: self.namespace_cwd.clone(),
+            cwd_grant_id: self.cwd_grant_id.clone(),
             scratch_dir: self.scratch_dir.clone(),
             adapter: self.adapter.clone(),
         }
