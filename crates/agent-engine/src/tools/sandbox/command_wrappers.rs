@@ -89,29 +89,46 @@ pub(super) fn validate_direct_command_shapes(
 }
 
 /// Extract the inline script of a shell wrapper command (`sh -c <script>`,
-/// `bash -lc <script>`, …) so it can be recursively inspected. Returns `None`
+/// `bash -c <script>`, …) so it can be recursively inspected. Returns `None`
 /// for non-wrapper commands or wrappers without an inline script argument.
-pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Option<String> {
-    // Peel transparent wrappers (`env VAR=x`, `command`, `timeout 5`, `nice`,
-    // `nohup`, `stdbuf`, `setsid`, ...) so the inline script is found even when the
-    // shell is not the direct head — e.g. `env bash -lc '...'`. Otherwise the
-    // quoted script stays an opaque token and its `.git`/out-of-host_mount paths
-    // escape the ProtectedOnly checks.
-    let view = nested_evaluator_view(words)?;
+pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
+    let Some(view) = nested_evaluator_view(words) else {
+        return Ok(None);
+    };
     if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
-        return None;
+        return Ok(None);
     }
-    // The script follows the first short-flag cluster containing `c` (e.g. `-c`,
-    // `-lc`, `-ic`).
-    let mut index = 0;
-    while index < view.args.len() {
-        let word = &view.args[index];
-        if word.starts_with('-') && !word.starts_with("--") && word.contains('c') {
-            return view.args.get(index + 1).cloned();
+    let mut options = view.args.iter().enumerate();
+    while let Some((index, word)) = options.next() {
+        if word == "--" || !word.starts_with('-') {
+            break;
         }
-        index += 1;
+        let startup_option = matches!(
+            word.split('=').next(),
+            Some("--login" | "--interactive" | "--rcfile" | "--init-file")
+        ) || (!word.starts_with("--")
+            && word.chars().skip(1).any(|ch| matches!(ch, 'l' | 'i')));
+        if startup_option {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated safely: {} {}",
+                view.command,
+                word
+            ));
+        }
+        if !word.starts_with("--") && word.chars().skip(1).any(|ch| matches!(ch, 'o' | 'O')) {
+            if word != "-o" && word != "-O" {
+                return Err(anyhow!(
+                    "Shell startup files cannot be validated with clustered option arguments"
+                ));
+            }
+            options.next();
+            continue;
+        }
+        if !word.starts_with("--") && word.contains('c') {
+            return Ok(view.args.get(index + 1).cloned());
+        }
     }
-    None
+    Ok(None)
 }
 
 fn command_basename(command: &str) -> &str {

@@ -333,7 +333,7 @@ impl Sandbox {
         if self.active_backend().permits_autonomous_bash() {
             // Seatbelt kernel-confines the host_mount fs + network, so the syntactic
             // *shape* checks are dropped — they would reject commands the sandbox
-            // safely contains (`bash -lc ...`, `python -c ...`). Path containment
+            // safely contains (`bash -c ...`, `python -c ...`). Path containment
             // and the protected-subpath check (incl. shell-wrapper-nested) still
             // run in ProtectedOnly mode.
             self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
@@ -587,13 +587,13 @@ impl Sandbox {
             self.validate_nested_command_evaluators(&commands)?;
         }
 
-        // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands
+        // Wrapper forms (`bash -c 'echo x > .git/config'`) hide their operands
         // inside a quoted script the outer tokenizer can't decompose. Under an OS
         // sandbox these are allowed to run, so recurse into the inline script and
         // apply the same protected-subpath checks to the wrapped command.
         if protected_only {
             for words in &commands {
-                if let Some(inner) = shell_wrapper_inline_script(words) {
+                if let Some(inner) = shell_wrapper_inline_script(words)? {
                     self.validate_command_paths(
                         &inner,
                         cwd,

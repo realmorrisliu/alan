@@ -94,9 +94,9 @@ fn namespace_path_translation_preserves_data_and_maps_file_paths() {
         translate("git commit --message='Keep /mnt/project literal'"),
         "git commit --message='Keep /mnt/project literal'"
     );
-    let nested = translate("bash -lc \"printf '%s' /mnt/project > /mnt/project/path.txt\"");
+    let nested = translate("bash -c \"printf '%s' /mnt/project > /mnt/project/path.txt\"");
     assert!(nested.contains("/mnt/project > /Users/alice/project/path.txt"));
-    let nested_git = translate("bash -lc \"git commit -m /mnt/project\"");
+    let nested_git = translate("bash -c \"git commit -m /mnt/project\"");
     assert!(
         nested_git.contains("git commit -m /mnt/project"),
         "nested command changed data: {nested_git}"
@@ -827,7 +827,7 @@ async fn test_os_backend_still_blocks_protected_subpath_redirection() {
         "echo x > .git/config",
         "echo x > .alan/agents/default/policy.yaml",
         // Nested/quoted wrapper form — the inner script is inspected recursively.
-        "bash -lc 'echo x > .git/config'",
+        "bash -c 'echo x > .git/config'",
         "sh -c \"echo x > .alan/agents/default/policy.yaml\"",
     ] {
         let result = sandbox
@@ -899,7 +899,7 @@ async fn test_os_backend_still_blocks_out_of_host_mount_reads() {
     for cmd in [
         "cat ~/.ssh/id_rsa",
         "cat /etc/passwd",
-        "bash -lc 'cat /etc/passwd'",
+        "bash -c 'cat /etc/passwd'",
     ] {
         let result = sandbox
             .exec_with_timeout_and_capability(
@@ -964,7 +964,7 @@ async fn test_os_backend_unwraps_transparent_wrappers_for_protected_and_reads() 
 
     let protected = sandbox
         .exec_with_timeout_and_capability(
-            "env bash -lc 'echo x > .git/config'",
+            "env bash -c 'echo x > .git/config'",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
@@ -981,7 +981,7 @@ async fn test_os_backend_unwraps_transparent_wrappers_for_protected_and_reads() 
 
     let read = sandbox
         .exec_with_timeout_and_capability(
-            "command bash -lc 'cat ~/.ssh/id_rsa'",
+            "command bash -c 'cat ~/.ssh/id_rsa'",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Read),

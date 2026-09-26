@@ -41,3 +41,33 @@ async fn outer_shell_ignores_path_replacements_and_inherited_functions() {
         }
     }
 }
+
+#[test]
+fn nested_shells_reject_startup_files_before_execution() {
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(temp.path().to_path_buf());
+    for script in [
+        "bash -lc 'printf selected'",
+        "bash -o posix -lc 'printf selected'",
+        "env bash --login -c 'printf selected'",
+        "command bash -ic 'printf selected'",
+        "bash --rcfile=profile -c 'printf selected'",
+        "sh -c \"bash -lc 'printf selected'\"",
+    ] {
+        let error = sandbox
+            .validate_command_paths(script, temp.path(), PathCheckMode::ProtectedOnly, None)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("startup files"),
+            "{script}: {error}"
+        );
+    }
+    sandbox
+        .validate_command_paths(
+            "bash -c 'printf selected'",
+            temp.path(),
+            PathCheckMode::ProtectedOnly,
+            None,
+        )
+        .unwrap();
+}
