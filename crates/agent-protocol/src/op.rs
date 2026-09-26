@@ -108,6 +108,11 @@ pub enum Op {
     /// Interrupt current execution.
     Interrupt,
 
+    /// Continue ordinary input retained after interruption.
+    ContinueQueue,
+    /// Discard ordinary input retained after interruption without executing it.
+    DiscardQueue,
+
     /// Compact the current Agent Machine context with optional guidance.
     CompactWithOptions {
         /// Optional focus for the summary handoff, for example "preserve todos".

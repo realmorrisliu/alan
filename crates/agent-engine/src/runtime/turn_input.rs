@@ -88,9 +88,18 @@ pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
     matches!(op, Op::Resume { .. })
 }
 
+// Ordinary follow-ups share the outer FIFO regardless of intent; only explicit
+// steering and request responses may enter an active transition.
 pub(super) fn is_turn_inband_submission(submission: &Submission) -> bool {
     submission.intent != InputIntent::Command
-        && (is_turn_resume_submission(&submission.op) || is_brokered_input(&submission.op))
+        && matches!(
+            submission.op,
+            Op::Resume { .. }
+                | Op::Input {
+                    mode: InputMode::Steer,
+                    ..
+                }
+        )
 }
 
 fn is_brokered_input(op: &Op) -> bool {
@@ -239,7 +248,7 @@ mod tests {
                 serde_json::json!({"choice": "approve"})
             )],
         }));
-        assert!(is_turn_inband_submission(&Submission::new(Op::Input {
+        assert!(!is_turn_inband_submission(&Submission::new(Op::Input {
             parts: vec![alan_agent_protocol::ContentPart::text("follow up")],
             mode: InputMode::FollowUp,
         })));

@@ -394,3 +394,6 @@ impl LlmProvider for ShutdownDrainMemoryPromotionProvider {
 mod runtime;
 #[path = "engine_startup_tests.rs"]
 mod startup;
+
+#[path = "engine_input_order_tests.rs"]
+mod input_order;
