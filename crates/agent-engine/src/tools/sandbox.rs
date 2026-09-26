@@ -1,7 +1,7 @@
 //! Native Tool adapter sandbox derived from explicit Host Mount grants.
 //!
-//! This sandbox only enforces that all operations happen within
-//! the host_mount directory. No OS-level sandboxing (Landlock/Seatbelt).
+//! Filesystem scope comes from explicit Host Mount grants. Native execution uses
+//! the selected kernel backend plus path/command validation.
 //! Shell enforcement is intentionally limited to direct shell syntax, explicit
 //! path-like argv references, redirection targets, and a curated set of common
 //! direct interpreters. It does not infer utility-specific operand roles for
@@ -13,7 +13,7 @@
 
 mod command_interpreters;
 mod command_options;
-mod command_process;
+pub(in crate::tools) mod command_process;
 mod command_project_dispatchers;
 mod command_wrappers;
 mod path_literals;
@@ -397,7 +397,11 @@ impl Sandbox {
         }
 
         let mut command = sandbox.build_confined_command(cmd, allow_network, backend)?;
-        command.current_dir(cwd);
+        command
+            .current_dir(cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
         let output = command_process::output(command, timeout).await?;
 
         Ok(ExecResult {
@@ -487,14 +491,10 @@ impl Sandbox {
         let runner = super::reified_namespace::LinuxReifiedNamespaceRunner::with_fallback_backend(
             super::sandbox_backend::detect_projection_backend(),
         );
-        let run = move || {
-            runner
-                .run_with_timeout(&plan, timeout)
-                .map_err(anyhow::Error::from)
-        };
-        tokio::task::spawn_blocking(run)
+        runner
+            .run_cancellable(&plan, timeout)
             .await
-            .map_err(|err| anyhow!("reified namespace runner task failed: {err}"))?
+            .map_err(anyhow::Error::from)
     }
 
     fn reified_namespace_plan_for_command(

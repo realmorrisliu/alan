@@ -182,3 +182,28 @@
   real Host scenario passed ten consecutive runs after the fixes. Complete
   OS Host, Service Manager and TUI suites also passed. Current-head CI and the
   remaining acceptance cases are still required before merge.
+
+- Linux reified runtime execution now uses the same cancellable native process
+  group owner as other shell backends. Only trusted capability probes and setup
+  preparation use a blocking worker; cancelling the runtime future cannot leave
+  a user command executing on that worker. Synchronous probe APIs retain their
+  existing timeout and error behavior.
+- Real Linux acceptance exposed an older setup failure: anonymous stdout/stderr
+  pipes cannot be bind-mounted at the reified standard-device paths. Runner
+  captures now use files under its private (0700) temporary parent, preserving
+  stdout/stderr and exit status without exposing Host `/proc` in the command view.
+  Native commands also explicitly receive stdin EOF, matching their previous
+  noninteractive capture behavior rather than inheriting the caller terminal.
+- Cross-compiled engine tests with `cargo zigbuild -p alan-agent-engine --tests
+  --target aarch64-unknown-linux-gnu` and ran the resulting executable in the
+  existing Linux arm64 `postgres:18` container, with no network and the container
+  seccomp filter disabled to permit unprivileged namespace syscalls. All ten
+  `linux_runner_` tests passed without smoke-test skips. Evidence includes real
+  mount/read-only/network isolation, timeout, cancellation after command start,
+  no delayed descendant write, captured stdout/stderr and exit code 7. The common
+  native process-group cancellation test also passed with Docker's init reaper.
+- The macOS engine suite passed (1,204 tests plus 20 architecture checks, one
+  ignored), and the real two-client Host integration passed again after the IO
+  changes. `just quality` passed. Task 2.12 still needs its remaining full command
+  corpus and policy/revocation acceptance; these checks do not establish every
+  explicit-slice requirement or ordinary-terminal/Herdr acceptance.

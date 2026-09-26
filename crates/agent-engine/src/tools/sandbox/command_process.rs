@@ -1,9 +1,6 @@
 //! Native command lifetime follows the bounded Tool Process, including descendants.
 use anyhow::{Context, Result};
-use std::{
-    process::{Output, Stdio},
-    time::Duration,
-};
+use std::{process::Output, time::Duration};
 use tokio::process::Command;
 
 #[cfg(unix)]
@@ -22,11 +19,12 @@ impl Drop for ProcessGroup {
     }
 }
 
-pub(super) async fn output(mut command: Command, timeout: Option<Duration>) -> Result<Output> {
-    command
-        .kill_on_drop(true)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+/// Preserve the caller's IO bindings while owning the native process lifetime.
+pub(in crate::tools) async fn output(
+    mut command: Command,
+    timeout: Option<Duration>,
+) -> Result<Output> {
+    command.kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
     let child = command.spawn().context("Failed to execute command")?;

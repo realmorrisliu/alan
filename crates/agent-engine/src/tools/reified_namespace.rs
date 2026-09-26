@@ -4,6 +4,8 @@
 //! surface and owns the opt-in native runner.
 
 mod plan;
+#[cfg(target_os = "linux")]
+mod runner;
 #[cfg(any(target_os = "linux", test))]
 mod toolchain;
 
@@ -73,6 +75,22 @@ impl LinuxReifiedNamespaceRunner {
     /// Create a runner that reports the supplied backend when reification cannot run.
     pub const fn with_fallback_backend(fallback_backend: SandboxBackendKind) -> Self {
         Self { fallback_backend }
+    }
+
+    /// Runtime execution whose native process group is stopped when its future is dropped.
+    pub(crate) async fn run_cancellable(
+        &self,
+        plan: &ReifiedNamespacePlan,
+        timeout: Option<Duration>,
+    ) -> Result<ExecResult, ReifiedNamespaceRunError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.run_async_inner(plan, timeout).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.run_inner(plan, timeout)
+        }
     }
 
     /// Backend that callers should use when this opt-in runner reports unavailable.
@@ -366,88 +384,7 @@ impl LinuxReifiedNamespaceRunner {
     }
 }
 
-#[cfg(target_os = "linux")]
-impl LinuxReifiedNamespaceRunner {
-    fn run_inner(
-        &self,
-        plan: &ReifiedNamespacePlan,
-        timeout: Option<Duration>,
-    ) -> Result<ExecResult, ReifiedNamespaceRunError> {
-        if plan.argv.is_empty() {
-            return Err(self.error("argv must not be empty", Vec::new()));
-        }
-
-        let report = probe_linux_reification();
-        let fallback_backend = preferred_linux_backend_with_reification(
-            &report,
-            matches!(self.fallback_backend, SandboxBackendKind::Landlock),
-        );
-        if !linux_reification_report_supports_plan(&report, plan.network) {
-            return Err(ReifiedNamespaceRunError::new(
-                format!(
-                    "capability probe did not select reification: {}",
-                    linux_reification_unavailable_reasons_for_plan(&report, plan.network)
-                        .join("; ")
-                ),
-                if matches!(fallback_backend, SandboxBackendKind::LinuxReifiedNamespace) {
-                    self.fallback_backend
-                } else {
-                    fallback_backend
-                },
-                report.audit_fields(),
-            ));
-        }
-
-        let temp_root = ReifiedRunnerTemp::create(plan)
-            .map_err(|err| self.error(format!("create reified root failed: {err}"), Vec::new()))?;
-        let command_spec = build_linux_reified_namespace_command(plan, &temp_root)
-            .map_err(|err| self.error(err, Vec::new()))?;
-        let output = run_linux_reified_command(command_spec.command(), timeout).map_err(|err| {
-            let reason = if err.kind() == std::io::ErrorKind::TimedOut {
-                err.to_string()
-            } else {
-                format!("failed to run unshare: {err}")
-            };
-            self.error(reason, command_spec.audit_fields())
-        })?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let exit_code = output.status.code().unwrap_or(-1);
-        if setup_marker_was_written(&temp_root.setup_marker) {
-            return Ok(ExecResult {
-                stdout,
-                stderr,
-                exit_code,
-            });
-        }
-
-        let reason = if stderr.contains(SETUP_FAILURE_PREFIX) {
-            stderr.trim().to_string()
-        } else {
-            format!("namespace setup failed before command execution: exit_code={exit_code}")
-        };
-        Err(self.error(reason, command_spec.audit_fields()))
-    }
-
-    fn error(
-        &self,
-        reason: impl Into<String>,
-        mut audit_fields: Vec<(&'static str, String)>,
-    ) -> ReifiedNamespaceRunError {
-        audit_fields.extend([
-            (
-                "backend",
-                SandboxBackendKind::LinuxReifiedNamespace.name().to_string(),
-            ),
-            ("status", "unavailable".to_string()),
-            ("fallback_backend", self.fallback_backend.name().to_string()),
-        ]);
-        ReifiedNamespaceRunError::new(reason, self.fallback_backend, audit_fields)
-    }
-}
-
-#[cfg(target_os = "linux")]
+#[cfg(all(test, target_os = "linux"))]
 fn run_linux_reified_command(
     mut command: Command,
     timeout: Option<Duration>,
@@ -456,6 +393,7 @@ fn run_linux_reified_command(
         return command.output();
     };
 
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     run_linux_reified_command_with_timeout(command, limit)
 }
 
@@ -464,7 +402,6 @@ fn run_linux_reified_command_with_timeout(
     mut command: Command,
     timeout: Duration,
 ) -> std::io::Result<Output> {
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.process_group(0);
     let mut child = command.spawn()?;
     let stdout_reader = child.stdout.take().map(read_child_pipe);
@@ -692,6 +629,7 @@ impl ReifiedRunnerTemp {
                 let root = parent.join("root");
                 match std::fs::create_dir_all(&root) {
                     Ok(()) => {
+                        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700))?;
                         return Ok(Self {
                             setup_marker: parent.join("setup-ok"),
                             parent,
