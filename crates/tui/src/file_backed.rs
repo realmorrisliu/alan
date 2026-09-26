@@ -519,9 +519,7 @@ pub async fn run_stdio_task(
     let shell = alan_shell::Shell::new(root_transport);
     let mut attachment = open_stdio_tail_attachment_when_idle(&shell, &agent_path).await?;
 
-    // ponytail: the CLI lock excludes concurrent one-shot clients; add IDs if
-    // one-shot and interactive submissions need concurrent task correlation.
-    let task = StdioTaskWaitContext::new(input, std::mem::take(&mut attachment.tape_history));
+    let task = StdioTaskWaitContext::new(input);
 
     let result = wait_for_stdio_answer(&shell, &agent_path, task, &mut attachment, async {
         tokio::signal::ctrl_c().await.map_err(anyhow::Error::from)
@@ -543,7 +541,7 @@ pub async fn run_stdio_task(
 async fn wait_for_stdio_answer(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
-    task: StdioTaskWaitContext<'_>,
+    task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
@@ -553,19 +551,25 @@ async fn wait_for_stdio_answer(
 
 async fn submit_stdio_task(
     shell: &alan_shell::Shell,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     attachment: &StdioTailAttachment,
 ) -> Result<()> {
     if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
         bail!("Root Agent changed before the task could be submitted; retry")
     }
-    write_agent_input(shell, &attachment.agent_process_path, task.input).await
+    shell
+        .write(
+            &format!("{}/io/input", attachment.agent_process_path),
+            &task.record.encode_payload()?,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("write agent input failed: {err:?}"))
 }
 
 async fn wait_for_stdio_answer_after_submit(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
-    task: StdioTaskWaitContext<'_>,
+    task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
@@ -578,6 +582,7 @@ async fn wait_for_stdio_answer_after_submit(
         assistant_answer: None,
         activity_state: None,
         task_error: None,
+        completion: None,
     };
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -617,11 +622,11 @@ async fn wait_for_stdio_answer_after_submit(
                     if record.kind != "message" {
                         continue;
                     }
-                    if !snapshot.task_started {
-                        snapshot.task_started =
-                            record.role == "user" && record.content == task.input;
-                    } else if record.role == "assistant" {
-                        snapshot.assistant_answer = Some(record.content);
+                    if record.belongs_to(&task.record.submission_id) {
+                        snapshot.task_started = true;
+                        if record.role == "assistant" {
+                            snapshot.assistant_answer = Some(record.content);
+                        }
                     }
                 }
                 if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
@@ -666,7 +671,6 @@ async fn wait_for_stdio_answer_after_submit(
                             {
                                 snapshot.task_started = true;
                                 snapshot.activity_state = Some(UiActivityState::Running);
-                                snapshot.task_error = None;
                             } else if activity.state == UiActivityState::Paused
                                 && snapshot.activity_state == Some(UiActivityState::Running)
                             {
@@ -680,16 +684,10 @@ async fn wait_for_stdio_answer_after_submit(
                                 snapshot.activity_state = Some(UiActivityState::Idle);
                             }
                         }
-                        UiEvent::Error { message, .. }
-                            if matches!(
-                                snapshot.activity_state,
-                                Some(UiActivityState::Running | UiActivityState::Paused)
-                            ) =>
-                        {
-                            snapshot.task_error = Some(message)
+                        event @ UiEvent::InputCompleted { .. } => {
+                            stdio_completion::observe_completion(&task.record.submission_id, &mut snapshot, event);
                         }
-                        UiEvent::Error { .. } => {}
-                        UiEvent::InputCompleted { .. } | UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+                        UiEvent::Error { .. } | UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
                 }
                 if interrupt_requested
@@ -697,11 +695,11 @@ async fn wait_for_stdio_answer_after_submit(
                 {
                     bail!("Agent task interrupted");
                 }
-                if snapshot.activity_state == Some(UiActivityState::Paused) {
+                if snapshot.completion.is_none() && snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
                 let refresh_result = {
-                    let refresh = stdio_completion::refresh_answer_after_idle(
+                    let refresh = stdio_completion::refresh_answer_after_completion(
                         shell,
                         &attachment.agent_process_path,
                         &task,
@@ -780,10 +778,12 @@ async fn interrupt_stdio_task_if_active(
     agent_path: &str,
     snapshot: &StdioTaskSnapshot,
 ) -> Result<bool> {
-    if !matches!(
-        snapshot.activity_state,
-        Some(UiActivityState::Running | UiActivityState::Paused)
-    ) {
+    if snapshot.completion.is_some()
+        || !matches!(
+            snapshot.activity_state,
+            Some(UiActivityState::Running | UiActivityState::Paused)
+        )
+    {
         return Ok(false);
     }
     write_machine_ctl(shell, agent_path, "interrupt")
@@ -793,7 +793,7 @@ async fn interrupt_stdio_task_if_active(
 }
 
 fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<String>> {
-    if !snapshot.task_started || snapshot.activity_state != Some(UiActivityState::Idle) {
+    if snapshot.completion.is_none() {
         return Ok(None);
     }
     if let Some(message) = snapshot.task_error.take() {
@@ -810,19 +810,22 @@ struct StdioTaskSnapshot {
     assistant_answer: Option<String>,
     activity_state: Option<UiActivityState>,
     task_error: Option<String>,
+    completion: Option<alan_agent_protocol::UiInputStatus>,
 }
 
-struct StdioTaskWaitContext<'a> {
-    input: &'a str,
-    baseline_tape_history: Vec<u8>,
+struct StdioTaskWaitContext {
+    record: alan_agent_protocol::UserInputRecord,
     submitted_at_ms: u64,
 }
 
-impl<'a> StdioTaskWaitContext<'a> {
-    fn new(input: &'a str, baseline_tape_history: Vec<u8>) -> Self {
+impl StdioTaskWaitContext {
+    fn new(input: &str) -> Self {
         Self {
-            input,
-            baseline_tape_history,
+            record: alan_agent_protocol::UserInputRecord::new(
+                alan_agent_protocol::InputIntent::Agent,
+                alan_agent_protocol::InputMode::FollowUp,
+                input,
+            ),
             submitted_at_ms: unix_time_ms(),
         }
     }
@@ -831,7 +834,7 @@ impl<'a> StdioTaskWaitContext<'a> {
 async fn stdio_task_snapshot(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
@@ -851,28 +854,37 @@ async fn stdio_task_snapshot(
             .is_some_and(|started_at| started_at >= task.submitted_at_ms)
         {
             snapshot.task_started = true;
-            snapshot.task_error = None;
         }
         snapshot.activity_state = Some(activity.state);
     }
-    stdio_completion::refresh_answer_after_idle(shell, agent_path, task, &mut snapshot).await?;
+    stdio_completion::refresh_answer_after_completion(shell, agent_path, task, &mut snapshot)
+        .await?;
     Ok(snapshot)
 }
 
 fn stdio_task_snapshot_from_history(
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
     let (tape_task_started, assistant_answer) =
-        stdio_completion::tape_outcome(task.input, &task.baseline_tape_history, tape_history)?;
+        stdio_completion::tape_outcome(&task.record.submission_id, tape_history)?;
     let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
-    Ok(StdioTaskSnapshot {
-        task_started: tape_task_started || ui_task.started,
+    let mut snapshot = StdioTaskSnapshot {
+        task_started: tape_task_started,
         assistant_answer,
         activity_state: ui_task.state,
-        task_error: ui_task.error,
-    })
+        task_error: None,
+        completion: None,
+    };
+    for line in std::str::from_utf8(ui_history)
+        .context("UI history is not utf8")?
+        .lines()
+    {
+        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI history")?;
+        stdio_completion::observe_completion(&task.record.submission_id, &mut snapshot, event);
+    }
+    Ok(snapshot)
 }
 
 fn unix_time_ms() -> u64 {

@@ -1,3 +1,4 @@
+use super::stdio_tests::{completion, correlated_records, task};
 use super::*;
 
 fn publish_root_agent_pid(namespace: &alan_kernel::LiveNamespace, pid: impl std::fmt::Display) {
@@ -203,7 +204,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("repeat me", attachment.tape_history.clone()),
+            task("repeat me"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -216,7 +217,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         shell
             .write(
                 &format!("{agent_path}/machine/tape"),
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\"}\n",
+                &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\"}\n"),
             )
             .await
             .unwrap();
@@ -236,14 +237,14 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         shell
             .write(
                 &format!("{agent_path}/machine/tape"),
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\"}\n",
+                &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\"}\n"),
             )
             .await
             .unwrap();
         shell
             .write(
                 &format!("{agent_path}/machine/ui/events"),
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+                &completion(alan_agent_protocol::UiInputStatus::Completed, None),
             )
             .await
             .unwrap();
@@ -271,7 +272,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let (answer, new_pid) = {
-        let task = StdioTaskWaitContext::new("restart after idle", attachment.tape_history.clone());
+        let task = task("restart after idle");
         submit_stdio_task(&shell, &task, &attachment).await.unwrap();
         assert!(!input_tail.read(4096).await.unwrap().is_empty());
         input_tail.close().await.unwrap();
@@ -290,7 +291,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
+            &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n"),
         )
         .await
         .unwrap();
@@ -305,7 +306,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
             .write(
                 "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+                &completion(alan_agent_protocol::UiInputStatus::Completed, None),
             )
             .await
             .unwrap();
@@ -339,17 +340,17 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\"}\n",
+            &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\"}\n"),
         )
         .await
         .unwrap();
         shell
-        .write(
-            "/agent/root/machine/ui/events",
-            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
-        )
-        .await
-        .unwrap();
+            .write(
+                "/agent/root/machine/ui/events",
+                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+            )
+            .await
+            .unwrap();
         resume.send(()).unwrap();
 
         let answer = tokio::time::timeout(std::time::Duration::from_secs(10), wait_for_answer)

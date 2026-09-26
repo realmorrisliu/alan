@@ -8,6 +8,17 @@ use alan_kernel::{Access, MountFs, Namespace, ProcFs};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+fn tape_message(role: &str, content: &str) -> TapeRecordV1 {
+    TapeRecordV1 {
+        version: 1,
+        kind: "message".into(),
+        role: role.into(),
+        content: content.into(),
+        submission_id: None,
+        related_submission_ids: Vec::new(),
+    }
+}
+
 fn press(
     app: &mut FileBackedApp,
     code: KeyCode,
@@ -587,12 +598,7 @@ fn pending_yield_cell_updates_in_place_when_fields_arrive() {
 #[test]
 fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "run this".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "run this"));
     app.set_pending_yield(PendingYieldCell {
         request_id: "r1".to_string(),
         kind: YieldKind::Confirmation,
@@ -616,12 +622,7 @@ fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
         },
     );
 
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "next remote turn".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "next remote turn"));
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "run this"));
     assert!(matches!(app.transcript[1], HistoryCell::PendingYield(_)));
@@ -706,12 +707,7 @@ fn app_wiring_streams_then_confirms_via_tape_record() {
     // reconcile module's property test.
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.push_output("hel".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "assistant".to_string(),
-        content: "hello".to_string(),
-    });
+    app.apply_tape_record(tape_message("assistant", "hello"));
     app.push_output("lo".to_string());
     let assistant_cells: Vec<_> = app
         .transcript
@@ -727,18 +723,8 @@ fn app_wiring_streams_then_confirms_via_tape_record() {
 #[test]
 fn raced_turn_preview_cells_move_behind_their_user_boundary() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "first".to_string(),
-    });
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "assistant".to_string(),
-        content: "done".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "first"));
+    app.apply_tape_record(tape_message("assistant", "done"));
 
     // UI/action cells for the next turn can beat that turn's user tape
     // record because they are tailed from independent files.
@@ -764,18 +750,8 @@ fn raced_turn_preview_cells_move_behind_their_user_boundary() {
     );
     app.push_output("wor".to_string());
 
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "second".to_string(),
-    });
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "assistant".to_string(),
-        content: "world".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "second"));
+    app.apply_tape_record(tape_message("assistant", "world"));
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
     assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
@@ -791,18 +767,8 @@ fn remote_first_stream_preview_moves_behind_user_boundary() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
 
     app.push_output("hello".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "remote".to_string(),
-    });
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "assistant".to_string(),
-        content: "hello".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "remote"));
+    app.apply_tape_record(tape_message("assistant", "hello"));
 
     assert_eq!(app.transcript.len(), 2);
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "remote"));
@@ -812,12 +778,7 @@ fn remote_first_stream_preview_moves_behind_user_boundary() {
 #[test]
 fn stream_append_finds_open_preview_before_interposed_cells() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "remote".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "remote"));
 
     app.push_output("hel".to_string());
     app.apply_ui_event(UiEvent::Plan {
@@ -831,12 +792,7 @@ fn stream_append_finds_open_preview_before_interposed_cells() {
         ),
     });
     app.push_output("lo".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "assistant".to_string(),
-        content: "hello".to_string(),
-    });
+    app.apply_tape_record(tape_message("assistant", "hello"));
 
     let assistant_cells: Vec<_> = app
         .transcript
@@ -870,12 +826,7 @@ fn hydrated_assistant_seeds_pending_boundary_state() {
         ),
     });
     app.push_output("wor".to_string());
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "second".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "second"));
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
     assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
@@ -889,12 +840,7 @@ fn pending_remote_turn_start_shifts_with_scrollback_prune() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.transcript
         .push(HistoryCell::Rendered(vec!["old".to_string()]));
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "assistant".to_string(),
-        content: "done".to_string(),
-    });
+    app.apply_tape_record(tape_message("assistant", "done"));
     sync_action_snapshot(
         &mut app,
         ActionSnapshot {
@@ -907,12 +853,7 @@ fn pending_remote_turn_start_shifts_with_scrollback_prune() {
     );
 
     app.prune_rendered_prefix(RenderOpts::new(80, false), 1);
-    app.apply_tape_record(TapeRecordV1 {
-        version: 1,
-        kind: "message".to_string(),
-        role: "user".to_string(),
-        content: "second".to_string(),
-    });
+    app.apply_tape_record(tape_message("user", "second"));
 
     assert!(matches!(app.transcript[0], HistoryCell::Assistant(ref text) if text == "done"));
     assert!(matches!(app.transcript[1], HistoryCell::User(ref text) if text == "second"));
