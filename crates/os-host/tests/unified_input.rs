@@ -104,6 +104,7 @@ async fn action_output(shell: &Shell, call_id: &str) -> Value {
 async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantics() {
     let runtime = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join("src")).unwrap();
     let mut mount = response();
     mount.tool_calls.push(ToolCall {
@@ -121,6 +122,12 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     };
     let provider = MockLlmProvider::new().with_responses(vec![
         mount,
+        response(),
+        file_call(
+            "mount-other",
+            "request_mount",
+            json!({"label":"Other", "namespace_path":"/mnt/other", "access":"read_write", "reason":"cross-grant cwd integration"}),
+        ),
         response(),
         file_call(
             "write-project",
@@ -170,10 +177,18 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     ] {
         std::fs::create_dir_all(dir).unwrap();
     }
-    let process = AgentProcessConfig {
+    let mut process = AgentProcessConfig {
         store_bindings: Some(stores.clone()),
-        ..AgentProcessConfig::default()
+        // This integration checks command dispatch, not automatic Tape compaction.
+        ..AgentProcessConfig::from(alan_agent_engine::Config {
+            context_window_tokens: Some(128_000),
+            ..Default::default()
+        })
     };
+    process
+        .agent_config
+        .runtime_config
+        .compaction_trigger_messages = 1_000;
     let config = HostBootConfig::ephemeral("test", process, LlmClient::new(provider), tools);
     let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
     let host = AlanOsHost::boot(config, paths.clone()).await.unwrap();
@@ -215,9 +230,31 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     .await
     .unwrap();
     HostCommandPlane::new(paths.clone())
-        .approve_host_mount(request, project.path().to_owned())
+        .approve_host_mount(request.clone(), project.path().to_owned())
         .await
         .unwrap();
+    let mount_other = input(&second, "agent", "mount another directory").await;
+    let other_request = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(id) = second
+                .ls("/mnt/host-mount/requests")
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|id| !matches!(id.as_str(), "clone" | "events") && id != &request)
+            {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    HostCommandPlane::new(paths.clone())
+        .approve_host_mount(other_request, other.path().to_owned())
+        .await
+        .unwrap();
+    wait_idle(&second, &mount_other).await;
     let cd = command(&first, "cd /mnt/project/src").await;
     // Separate connections admit both inputs before either client waits for completion.
     let script = command(&second, "printf '%s\\n' 'first value' | tr 'a-z' 'A-Z' > result.txt\nprintf '%s\\n' 'second' >> result.txt").await;
@@ -229,6 +266,31 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     assert!(!project.path().join("result.txt").exists());
     let tape = String::from_utf8(first.cat("/agent/root/machine/tape").await.unwrap()).unwrap();
     assert!(tape.find(&cd).unwrap() < tape.find(&script).unwrap());
+    let switch = command(&first, "cd /mnt/other").await;
+    let write_other = command(&second, "printf other > cross-grant.txt").await;
+    wait_idle(&second, &write_other).await;
+    assert_eq!(
+        std::fs::read_to_string(other.path().join("cross-grant.txt")).unwrap(),
+        "other"
+    );
+    assert!(!project.path().join("src/cross-grant.txt").exists());
+    let switch_back = command(&second, "cd /mnt/project/src").await;
+    let write_project = command(&first, "printf project > cross-grant.txt").await;
+    wait_idle(&first, &write_project).await;
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/cross-grant.txt")).unwrap(),
+        "project"
+    );
+    assert_eq!(
+        std::fs::read_to_string(other.path().join("cross-grant.txt")).unwrap(),
+        "other"
+    );
+    let tape = String::from_utf8(first.cat("/agent/root/machine/tape").await.unwrap()).unwrap();
+    for (cd, write) in [(&switch, &write_other), (&switch_back, &write_project)] {
+        assert!(tape.find(cd).unwrap() < tape.find(write).unwrap());
+        assert_eq!(action_output(&first, cd).await["stderr"], "");
+        assert_eq!(action_output(&first, write).await["success"], true);
+    }
     let local_cd = command(&first, "cd .. && printf root > local.txt").await;
     wait_idle(&first, &local_cd).await;
     assert_eq!(
@@ -236,13 +298,14 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         "root"
     );
     let failed_cd = command(&first, "cd missing-directory").await;
+    let unsupported_cd = command(&second, "cd $HOME").await;
     let after_cd = command(&second, "printf retained > still-here.txt").await;
     wait_idle(&second, &after_cd).await;
     assert_eq!(
         std::fs::read_to_string(project.path().join("src/still-here.txt")).unwrap(),
         "retained"
     );
-    let mut saw_failed_cd = false;
+    let mut failed_cds = Vec::new();
     for action in first.ls("/agent/root/actions").await.unwrap() {
         if !action.starts_with('a') {
             continue;
@@ -254,15 +317,13 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
                 .unwrap(),
         )
         .unwrap();
-        if result["call_id"] == failed_cd {
+        if result["call_id"] == failed_cd || result["call_id"] == unsupported_cd {
             assert_eq!(result["exit_code"], 1);
-            saw_failed_cd = true;
+            failed_cds.push(result["call_id"].as_str().unwrap().to_owned());
         }
     }
-    assert!(
-        saw_failed_cd,
-        "failed cd must retain correlated failure evidence"
-    );
+    assert!(failed_cds.contains(&failed_cd));
+    assert!(failed_cds.contains(&unsupported_cd));
 
     let active = command(
         &first,
@@ -317,7 +378,7 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     );
     assert_eq!(
         probe.recorded_requests().len(),
-        2,
+        4,
         "explicit commands must not invoke generation"
     );
     let edit = input(&first, "agent", "write and edit the project file").await;
@@ -358,9 +419,14 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
             .unwrap()
             .contains("Search text not found")
     );
-    assert_eq!(probe.recorded_requests().len(), 9);
+    assert_eq!(probe.recorded_requests().len(), 11);
     let status_input = input(&first, "agent", "inspect work status").await;
     wait_idle(&first, &status_input).await;
+    assert_eq!(
+        probe.recorded_requests().len(),
+        13,
+        "status turn generation count"
+    );
     let status = action_output(&first, "work-status").await;
     assert_eq!(status["success"], true, "{status}");
     assert!(status["activity"].is_object(), "{status}");
@@ -489,7 +555,7 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         "{failure}"
     );
     assert!(!project.path().join("src/restart-pending.txt").exists());
-    assert_eq!(probe.recorded_requests().len(), 11);
+    assert_eq!(probe.recorded_requests().len(), 13);
     assert!(reboot_probe.recorded_requests().is_empty());
     stop.cancel();
     server.await.unwrap().unwrap();

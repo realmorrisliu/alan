@@ -17,7 +17,7 @@
 - [x] 2.3 Reuse the native shell adapter with unchanged script bodies, selected shell/environment and Host cwd; verify pipelines, redirection, quotes, multiline scripts, PATH lookup and partial failures without command/path rewriting. Define the bounded standalone user `cd` parser and explicit errors for unsupported cd forms.
 - [x] 2.4 Dispatch user and Agent commands through the same governed native Tool Process path; verify model-free explicit execution, no authority amplification, sandbox scope limited to the current cwd grant, switching grants only through explicit `!cd`, descendant cancellation and correlated Action evidence.
 
-- [ ] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
+- [x] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
 - [x] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
 - [ ] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, including Markdown emphasis without matching underscore siblings, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
 - [x] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify reliable pending work restores paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
@@ -376,3 +376,21 @@
   the transition module below its source-size limit without another state owner.
   Current full engine verification passed 1,206 tests plus 20 architecture checks
   (one ignored). Tasks 2.5, 2.7, 2.9–2.12 and 2.14–2.15 retain their separate gates.
+
+### Ordered shared cwd acceptance (2026-09-26)
+
+- Task 2.5 is complete. The real OS Host integration now approves two independent
+  native directory grants and submits `cd` and the following write through different
+  clients without waiting between submissions. Switching in both directions writes
+  only in the selected grant; Tape order and correlated Actions retain each input ID.
+- Missing-directory and unsupported `cd $HOME` both record exit 1 and preserve the
+  prior cwd. Script-local `cd ..` affects its own native shell only; following Actions
+  continue in the Process-owned directory. The existing queued/cancelled command
+  checks also run with both grants present and use no generation calls.
+- Standalone parser tests cover quoted and escaped paths, expansions and unsupported
+  forms; the binding test verifies Process cwd updates and native adapter projection.
+  The integration fixture raises automatic compaction thresholds because this longer
+  script tests dispatch and exact model-call counts, not Tape compaction.
+- Validation: `cargo test -p alan-os-host --test unified_input` and
+  `cargo test -p alan-agent-engine standalone_cd`. This does not close the remaining
+  terminal/Herdr, output projection or platform qualification tasks.
