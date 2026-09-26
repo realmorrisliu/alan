@@ -70,7 +70,15 @@ impl NamespaceAgentFiles {
         }))
     }
 
-    pub async fn read_next_machine_control_submission(&self) -> Result<Option<Submission>> {
+    pub(crate) async fn read_next_runtime_submission(&self) -> Result<Option<Submission>> {
+        self.read_runtime_submissions(1).await?.pop().transpose()
+    }
+
+    pub(crate) async fn read_ready_runtime_submissions(&self) -> Result<Vec<Result<Submission>>> {
+        self.read_runtime_submissions(usize::MAX).await
+    }
+
+    async fn read_runtime_submissions(&self, limit: usize) -> Result<Vec<Result<Submission>>> {
         let events_path = format!("{}/events", self.agent_path);
         let client = self.client();
         let offset = self.control_offset.load(Ordering::Relaxed);
@@ -79,7 +87,7 @@ impl NamespaceAgentFiles {
             .await
             .with_context(|| format!("stat agent events from {events_path}"))?;
         if stat.length <= offset {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         let raw = client
@@ -87,26 +95,37 @@ impl NamespaceAgentFiles {
             .await
             .with_context(|| format!("read agent events from {events_path}"))?;
         let mut consumed = 0_u64;
+        let mut submissions = Vec::new();
 
         for line in raw.split_inclusive(|byte| *byte == b'\n') {
             if !line.ends_with(b"\n") {
                 break;
             }
             consumed += line.len() as u64;
-            let record = String::from_utf8(line[..line.len() - 1].to_vec())
-                .context("agent events record is not utf8")?;
-            if let Some(command) = record.strip_prefix("ctl:") {
-                self.control_offset
-                    .store(offset + consumed, Ordering::Relaxed);
-                if let Some(submission) = machine_control_submission(command) {
-                    return Ok(Some(submission));
+            self.control_offset
+                .store(offset + consumed, Ordering::Relaxed);
+            match std::str::from_utf8(&line[..line.len() - 1]) {
+                Ok(record) if record.starts_with("input:") => {
+                    submissions.push(self.read_next_input_submission(InputMode::FollowUp).await);
                 }
+                Ok(record) => {
+                    if let Some(submission) = record
+                        .strip_prefix("ctl:")
+                        .and_then(machine_control_submission)
+                    {
+                        submissions.push(Ok(submission));
+                    }
+                }
+                Err(error) => submissions.push(Err(error.into())),
+            }
+            if submissions.len() >= limit {
+                break;
             }
         }
 
         self.control_offset
             .store(offset + consumed, Ordering::Relaxed);
-        Ok(None)
+        Ok(submissions)
     }
 
     pub async fn resume_submission_from_answered_request(
@@ -547,6 +566,8 @@ fn request_response_content_part(response: String) -> ContentPart {
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
     match command.trim() {
+        "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
+        "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
         // Turn interrupt is agent-runtime control (stop the current turn,

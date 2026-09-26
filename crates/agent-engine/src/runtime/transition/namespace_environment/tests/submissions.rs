@@ -63,14 +63,14 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .unwrap();
 
     let compact = agent_files
-        .read_next_machine_control_submission()
+        .read_next_runtime_submission()
         .await
         .unwrap()
         .expect("compact command should produce a submission");
     assert!(matches!(compact.op, Op::CompactWithOptions { focus: None }));
 
     let rollback = agent_files
-        .read_next_machine_control_submission()
+        .read_next_runtime_submission()
         .await
         .unwrap()
         .expect("rollback command should produce a submission");
@@ -78,7 +78,7 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
 
     assert!(
         agent_files
-            .read_next_machine_control_submission()
+            .read_next_runtime_submission()
             .await
             .unwrap()
             .is_none()
@@ -91,11 +91,24 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .await
         .unwrap();
     let interrupt = agent_files
-        .read_next_machine_control_submission()
+        .read_next_runtime_submission()
         .await
         .unwrap()
         .expect("interrupt command should produce a submission");
     assert!(matches!(interrupt.op, Op::Interrupt));
+    for (verb, discard) in [("queue-v1 continue", false), ("queue-v1 discard", true)] {
+        shell
+            .write("/agent/1/machine/ctl", verb.as_bytes())
+            .await
+            .unwrap();
+        let control = agent_files
+            .read_next_runtime_submission()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(matches!(control.op, Op::DiscardQueue), discard);
+        assert_eq!(matches!(control.op, Op::ContinueQueue), !discard);
+    }
 }
 
 #[tokio::test]

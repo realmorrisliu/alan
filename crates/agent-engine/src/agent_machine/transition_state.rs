@@ -88,6 +88,8 @@ pub(super) struct MachineTransitionState {
     buffered_inband_submissions: VecDeque<Submission>,
     /// Queued context for `InputMode::NextTurn`.
     queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
+    /// Ordinary queued work and pause state survive reset_turn, like next-turn input.
+    pub(super) input_queue: std::sync::Arc<std::sync::Mutex<super::input_queue::MachineInputQueue>>,
     /// Number of automatic mid-turn compactions already performed in the active turn.
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
