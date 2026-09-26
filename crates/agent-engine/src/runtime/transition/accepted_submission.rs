@@ -98,7 +98,12 @@ pub(crate) fn advance_accepted_submission<'a>(
             }
         });
 
-        if (completes_input || cancelled_before_start)
+        if !state.machine.has_pending_interaction() {
+            state
+                .machine
+                .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        }
+        if (completes_input || cancelled_before_start || state.machine.submission_was_cancelled())
             && !state.machine.has_pending_interaction()
             && state.machine.current_submission_id().is_some()
         {

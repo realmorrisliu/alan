@@ -774,5 +774,27 @@ async fn targeted_queue_cancellation_preserves_other_inputs_and_active_work() {
             !machine.submission_was_cancelled(),
             "settlement consumes the cancellation request"
         );
+        machine.accept_submission("admitting-next-turn");
+        machine.queue_next_turn_input(vec![ContentPart::text("queued payload")]);
+        let overlap_cancel = CancellationToken::new();
+        queues
+            .handle_control(
+                &Submission::new(Op::InterruptSubmission {
+                    submission_id: "admitting-next-turn".into(),
+                }),
+                &files,
+                Some(&overlap_cancel),
+            )
+            .await;
+        assert!(overlap_cancel.is_cancelled());
+        assert_eq!(machine.queued_next_turn_input_count(), 0);
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(
+            !events.contains("admitting-next-turn"),
+            "active admission owns its eventual settlement"
+        );
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(machine.submission_was_cancelled());
     }
 }

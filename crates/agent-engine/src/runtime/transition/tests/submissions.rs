@@ -530,3 +530,36 @@ async fn manual_compaction_identity_is_not_a_cancellable_input() {
     drop(advance);
     assert_eq!(state.machine.current_submission_id(), Some(id.as_str()));
 }
+
+#[tokio::test]
+async fn pre_activity_failure_consumes_accepted_cancellation() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "unused",
+        ))
+        .await,
+    );
+    let shell = Shell::new(state.environment.root_transport());
+    let queue = state.machine.input_queue();
+    let mut input = Submission::new(Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text(" ")],
+        mode: InputMode::FollowUp,
+    });
+    input.intent = alan_agent_protocol::InputIntent::Command;
+    let id = input.id.clone();
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let advance = advance_accepted_submission(&mut state, input, &broker, &cancel);
+    // Keep the token unset to exercise the validation-error exit, not pre-start cancellation.
+    queue.lock().unwrap().active_cancel_requested = true;
+    assert!(advance.await.result.is_err());
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    assert!(events.lines().any(|line| matches!(
+        serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+        alan_agent_protocol::UiEvent::InputCompleted {
+            submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, ..
+        } if submission_ids == [id.clone()]
+    )));
+    assert!(!queue.lock().unwrap().active_cancel_requested);
+}

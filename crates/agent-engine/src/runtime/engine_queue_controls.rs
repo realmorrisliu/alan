@@ -182,12 +182,12 @@ impl RuntimeSubmissionQueues {
             if removed || active {
                 queue.paused = true;
             }
-            if active && !removed {
+            if active {
                 queue.active_cancel_requested = true;
             }
             (removed, active)
         };
-        if removed {
+        if removed && !active {
             if let Err(error) = publish_cancelled_input(
                 files,
                 submission_id,
