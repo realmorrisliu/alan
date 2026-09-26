@@ -148,3 +148,10 @@ fn standalone_cd_does_not_treat_control_whitespace_as_a_shell_separator() {
         );
     }
 }
+
+#[test]
+fn standalone_cd_preserves_carriage_returns_after_backslash() {
+    for command in ["c\\\r\nd /mnt/project", "c\\\rd /mnt/project"] {
+        assert_eq!(parse_standalone_cd(command).unwrap(), None);
+    }
+}

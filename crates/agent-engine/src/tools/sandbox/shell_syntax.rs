@@ -365,13 +365,6 @@ where
             chars.next();
             true
         }
-        Some('\r') => {
-            chars.next();
-            if matches!(chars.peek(), Some('\n')) {
-                chars.next();
-            }
-            true
-        }
         _ => false,
     }
 }
