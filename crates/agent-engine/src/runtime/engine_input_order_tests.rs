@@ -254,7 +254,7 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
 }
 
 #[tokio::test]
-async fn discard_drains_committed_intake_and_preserves_machine_controls() {
+async fn ordered_control_boundaries_preserve_later_inputs_and_machine_controls() {
     let mut namespace = alan_kernel::Namespace::new();
     namespace.mount(
         "/agent/1",
@@ -274,14 +274,25 @@ async fn discard_drains_committed_intake_and_preserves_machine_controls() {
         !queues.is_paused(),
         "idle interruption must not pause later work"
     );
-    // More frames than the intake channel can hold, before its reader is started.
+    // The aggregate event stream orders committed file input before its control.
     for body in ["first", "second", "third"] {
         shell
             .write("/agent/1/io/input", body.as_bytes())
             .await
             .unwrap();
     }
-    let mut intake = NamespaceInputIntake::new(files.clone());
+    shell
+        .write("/agent/1/machine/ctl", b"interrupt")
+        .await
+        .unwrap();
+    while let Some(input) = files.read_next_runtime_submission().await.unwrap() {
+        if matches!(input.op, Op::Interrupt) {
+            queues.handle_control(&input, &files, None).await;
+            break;
+        }
+        queues.push_outer_submission(input);
+    }
+    assert!(queues.is_paused());
     let (sender, mut receiver) = mpsc::channel(4);
     sender
         .send(Submission::new(Op::Turn {
@@ -293,18 +304,25 @@ async fn discard_drains_committed_intake_and_preserves_machine_controls() {
     let compact = Submission::new(Op::CompactWithOptions { focus: None });
     let compact_id = compact.id.clone();
     sender.send(compact).await.unwrap();
-    queues.pause();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        intake.admit_before_discard(&files, &mut receiver, &mut queues),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    sender
+        .send(Submission::new(Op::DiscardQueue))
+        .await
+        .unwrap();
+    let fresh = Submission::new(Op::Turn {
+        parts: vec![ContentPart::text("fresh")],
+        context: None,
+    });
+    let fresh_id = fresh.id.clone();
+    sender.send(fresh).await.unwrap();
+    let discard = queues.admit_api_before_dispatch(&mut receiver).unwrap();
+    assert!(matches!(discard.op, Op::DiscardQueue));
+    assert_eq!(
+        receiver.len(),
+        1,
+        "later API input stays after the discard boundary"
+    );
     assert_eq!(queues.outer_queue.lock().unwrap().pending.len(), 5);
-    queues
-        .handle_control(&Submission::new(Op::DiscardQueue), &files, None)
-        .await;
+    queues.handle_control(&discard, &files, None).await;
     assert!(!queues.is_paused());
     match queues.pop_outer().unwrap() {
         QueuedRuntimeItem::Submission(input) => assert_eq!(input.id, compact_id),
@@ -328,5 +346,34 @@ async fn discard_drains_committed_intake_and_preserves_machine_controls() {
             b"failed"
         );
     }
-    intake.stop().await;
+    assert!(queues.admit_api_before_dispatch(&mut receiver).is_none());
+    assert!(
+        matches!(queues.pop_outer(), Some(QueuedRuntimeItem::Submission(input)) if input.id == fresh_id)
+    );
+    shell
+        .write("/agent/1/machine/ctl", b"queue-v1 discard")
+        .await
+        .unwrap();
+    shell
+        .write("/agent/1/io/input", b"later file input")
+        .await
+        .unwrap();
+    assert!(matches!(
+        files
+            .read_next_runtime_submission()
+            .await
+            .unwrap()
+            .unwrap()
+            .op,
+        Op::DiscardQueue
+    ));
+    assert!(matches!(
+        files
+            .read_next_runtime_submission()
+            .await
+            .unwrap()
+            .unwrap()
+            .op,
+        Op::Input { .. }
+    ));
 }

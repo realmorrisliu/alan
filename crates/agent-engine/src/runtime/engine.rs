@@ -16,7 +16,7 @@ use crate::agent_machine::{
     AgentMachine,
     input_queue::{MachineInputQueue, QueuedRuntimeItem},
 };
-use alan_agent_protocol::{InputMode, Submission};
+use alan_agent_protocol::Submission;
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -26,11 +26,8 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-#[path = "engine_input_intake.rs"]
-mod input_intake;
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
-use input_intake::NamespaceInputIntake;
 
 /// Return unconsumed steering input to the Machine-owned ordinary queue.
 async fn requeue_leftover_inband_submissions(
@@ -99,10 +96,10 @@ async fn read_pending_namespace_resume_submission(
     }
 }
 
-async fn read_pending_namespace_control_submission(
+async fn read_pending_namespace_submission(
     namespace: &NamespaceAgentFiles,
 ) -> Option<Result<Submission>> {
-    match namespace.read_next_machine_control_submission().await {
+    match namespace.read_next_runtime_submission().await {
         Ok(Some(submission)) => Some(Ok(submission)),
         Ok(None) => None,
         Err(err) => Some(Err(err)),
@@ -484,31 +481,32 @@ fn spawn_with_prepared_runtime_environment(
             outer_queue: state.machine.input_queue(),
             ..Default::default()
         };
-        let mut namespace_input = NamespaceInputIntake::new(state.agent_files());
 
         loop {
+            let mut from_queue = false;
             let queued_item = if shutdown_requested {
                 queues.pop_outer_deferred()
-            } else if let Some(input) = queues.admit_api_before_dispatch(&mut sub_rx) {
-                Some(QueuedRuntimeItem::Submission(input))
             } else if let Some(namespace_control) =
-                read_pending_namespace_control_submission(&state.agent_files()).await
+                read_pending_namespace_submission(&state.agent_files()).await
             {
                 match namespace_control {
                     Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
                     Err(err) => {
                         error!(
                             error = %format!("{err:#}"),
-                            "Failed to read namespace machine/ctl command"
+                            "Failed to read namespace input/control event"
                         );
                         None
                     }
                 }
+            } else if let Some(input) = queues.admit_api_before_dispatch(&mut sub_rx) {
+                Some(QueuedRuntimeItem::Submission(input))
             } else if let Some(queued_item) = if state.machine.has_pending_interaction() {
                 None
             } else {
                 queues.pop_outer()
             } {
+                from_queue = true;
                 Some(queued_item)
             } else if let Some(namespace_resume) =
                 read_pending_namespace_resume_submission(&state).await
@@ -530,23 +528,13 @@ fn spawn_with_prepared_runtime_environment(
                 let poll_pending_namespace_response = state.machine.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
-                    namespace_submission = namespace_input.recv() => {
-                        match namespace_submission {
-                            Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
-                            Some(Err(err)) => {
-                                error!(error = %format!("{err:#}"), "Failed to read namespace io/input frame");
-                                None
-                            }
-                            None => None,
-                        }
-                    }
                     _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                        match read_pending_namespace_control_submission(&namespace_control).await {
+                        match read_pending_namespace_submission(&namespace_control).await {
                             Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
                             Some(Err(err)) => {
                                 error!(
                                     error = %format!("{err:#}"),
-                                    "Failed to read namespace machine/ctl command"
+                                    "Failed to read namespace input/control event"
                                 );
                                 None
                             }
@@ -594,26 +582,15 @@ fn spawn_with_prepared_runtime_environment(
                     {
                         queues.pause();
                     }
-                    if matches!(submission.op, alan_agent_protocol::Op::DiscardQueue)
-                        && queues.is_paused()
-                        && let Err(error) = namespace_input
-                            .admit_before_discard(&state.agent_files(), &mut sub_rx, &mut queues)
-                            .await
-                    {
-                        let _ = super::ui_surfaces::warning(
-                            &state.agent_files(),
-                            format!("Queue discard rejected; input remains paused: {error}"),
-                        )
-                        .await;
-                        continue;
-                    }
                     if queues
                         .handle_control(&submission, &state.agent_files(), None)
                         .await
                     {
                         continue;
                     }
-                    if (queues.is_paused() || state.machine.has_pending_interaction())
+                    if (!from_queue
+                        || queues.is_paused()
+                        || state.machine.has_pending_interaction())
                         && matches!(
                             submission.op,
                             alan_agent_protocol::Op::Turn { .. }
@@ -705,33 +682,8 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = namespace_input.recv() => {
-                                match namespace_submission {
-                                    Some(Ok(incoming)) => {
-                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
-                                            continue;
-                                        }
-                                        if accepts_inband && is_turn_inband_submission(&incoming) {
-                                            if !queues.active_turn_broker.push(incoming.clone()).await {
-                                                queues.push_outer_submission(incoming);
-                                            }
-                                        } else {
-                                            queues.push_outer_submission(incoming);
-                                        }
-                                    }
-                                    Some(Err(err)) => {
-                                        let error_msg = format!("Failed to read namespace io/input frame: {err:#}");
-                                        error!(error = %error_msg);
-                                        let _ = super::ui_surfaces::warning(
-                                            &namespace_heartbeat,
-                                            error_msg,
-                                        ).await;
-                                    }
-                                    None => {}
-                                }
-                            }
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                match read_pending_namespace_control_submission(&namespace_control).await {
+                                match read_pending_namespace_submission(&namespace_control).await {
                                     Some(Ok(incoming)) => {
                                         // A machine/ctl interrupt must cancel the
                                         // running generation/tool immediately, like
@@ -748,7 +700,7 @@ fn spawn_with_prepared_runtime_environment(
                                         }
                                     }
                                     Some(Err(err)) => {
-                                        let error_msg = format!("Failed to read namespace machine/ctl command: {err:#}");
+                                        let error_msg = format!("Failed to read namespace input/control event: {err:#}");
                                         error!(error = %error_msg);
                                         let _ = super::ui_surfaces::warning(
                                             &namespace_heartbeat,
@@ -809,24 +761,8 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = namespace_input.recv() => {
-                                match namespace_submission {
-                                    Some(Ok(incoming)) => {
-                                        requeue_if_cancelled = true;
-                                        cancel.cancel();
-                                        queues.push_outer_submission(incoming);
-                                    }
-                                    Some(Err(err)) => {
-                                        error!(
-                                            error = %format!("{err:#}"),
-                                            "Failed to read namespace io/input frame during deferred action"
-                                        );
-                                    }
-                                    None => {}
-                                }
-                            }
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                match read_pending_namespace_control_submission(&namespace_control).await {
+                                match read_pending_namespace_submission(&namespace_control).await {
                                     Some(Ok(incoming)) => {
                                         // Mirror the sub_rx arm: a machine/ctl
                                         // interrupt just cancels the deferred
@@ -843,7 +779,7 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(Err(err)) => {
                                         error!(
                                             error = %format!("{err:#}"),
-                                            "Failed to read namespace machine/ctl command during deferred action"
+                                            "Failed to read namespace input/control event during deferred action"
                                         );
                                     }
                                     None => {}
@@ -859,7 +795,6 @@ fn spawn_with_prepared_runtime_environment(
             }
         }
 
-        namespace_input.stop().await;
         info!(
             process_path = %state.agent_path(),
             "Agent runtime stopped"
