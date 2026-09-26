@@ -36,7 +36,7 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
                 escaped = true;
             } else if ch == '"' {
                 let token = &text[start..=end];
-                let complete_token = quoted_path_end(text, start + 1, &text[end..]) == Some(true)
+                let complete_token = is_complete_quoted_path(&text[end + 1..])
                     || text[end + 1..].trim_start().starts_with(':');
                 if complete_token && let Ok(decoded) = serde_json::from_str::<String>(token) {
                     // Retain the quoted boundary when projecting URI punctuation.
@@ -67,7 +67,7 @@ fn ends_uri_scheme(text: &str) -> bool {
             })
             .next()
             .unwrap_or_default();
-        scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
+        scheme.starts_with(|ch: char| ch.is_ascii_alphabetic() || matches!(ch, '?' | '!'))
             && scheme
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
@@ -95,7 +95,7 @@ fn markup_tag_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
         } else if ch == '<'
             && text[index + 1..]
                 .trim_start_matches('/')
-                .starts_with(|ch: char| ch.is_ascii_alphabetic())
+                .starts_with(|ch: char| ch.is_ascii_alphabetic() || matches!(ch, '?' | '!'))
         {
             tag_start = Some(index);
         }
@@ -487,15 +487,17 @@ fn quoted_path_end(text: &str, start: usize, suffix: &str) -> Option<bool> {
         .next_back()
         .filter(|quote| matches!(quote, '\'' | '"' | '`'))?;
     if let Some(rest) = suffix.strip_prefix(quote) {
-        Some(
-            !rest.starts_with(['\'', '"', '`', '/'])
-                && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}'])),
-        )
+        Some(is_complete_quoted_path(rest))
     } else if suffix.starts_with('/') {
         None // A descendant continues inside the quoted path.
     } else {
         Some(false) // Punctuation inside quotes is part of a sibling filename.
     }
+}
+
+fn is_complete_quoted_path(rest: &str) -> bool {
+    !rest.starts_with(['\'', '"', '`', '/'])
+        && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}']))
 }
 
 fn is_path_end(suffix: &str) -> bool {
