@@ -131,10 +131,8 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
             return self.resolve_namespace_directory(mount, &namespace_path);
         }
 
-        if path.starts_with("/mnt") {
-            let namespace_path = normalize_tool_namespace_path(path.to_path_buf())?;
-            let mount = longest_namespace_mount(&self.mounts, &namespace_path)
-                .context("directory is not backed by a delegated Host Mount")?;
+        let namespace_path = normalize_tool_namespace_path(path.to_path_buf())?;
+        if let Some(mount) = longest_namespace_mount(&self.mounts, &namespace_path) {
             return self.resolve_namespace_directory(mount, &namespace_path);
         }
 
@@ -545,11 +543,11 @@ mod tests {
                 .resolve_directory(Path::new("/mnt/project"), Path::new("../other"))
                 .is_err()
         );
-        assert!(
-            adapter
-                .resolve_directory(Path::new("/mnt/project"), Path::new("/mnt/missing"))
-                .is_err()
-        );
+        let missing_native = PathBuf::from("/mnt").join(uuid::Uuid::new_v4().to_string());
+        let error = adapter
+            .resolve_directory(Path::new("/mnt/project"), &missing_native)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "cannot resolve selected Host directory");
         assert!(
             adapter
                 .resolve_directory(Path::new("/mnt/project"), outside.path())
