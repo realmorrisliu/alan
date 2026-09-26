@@ -337,7 +337,9 @@ Machine controls are admitted in the existing aggregate AgentFS event order.
 Ordinary controls such as compact and rollback stay behind earlier input; only
 interrupt, queue continuation/discard and pending-request responses may bypass
 ordinary dispatch. Active transitions read the finite ready event batch on each
-wake, so an interrupt is not delayed by a timer interval per queued input.
+wake, so an interrupt is not delayed by a timer interval per queued input. Idle
+admission also takes a finite snapshot before checking API controls and dispatching
+queued work; continuous file arrivals cannot keep extending that admission pass.
 The Host connects the existing Process event bridge so redirected Process input
 participates in that same order. API controls retain their receiver position,
 so a discard cannot consume a later API submission. There is no separate input
