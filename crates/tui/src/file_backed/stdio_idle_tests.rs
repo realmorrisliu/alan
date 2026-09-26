@@ -347,7 +347,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
             .write(
                 "/agent/root/machine/ui/events",
-                &completion(alan_agent_protocol::UiInputStatus::Completed, None),
+                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
             )
             .await
             .unwrap();

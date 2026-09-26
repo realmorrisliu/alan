@@ -301,9 +301,6 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 
 #[test]
 fn recovery_rejects_a_reset_tape_with_only_an_old_identical_prompt() {
-    let baseline_tape = br#"{"version":1,"kind":"message","role":"user","content":"earlier task"}
-{"version":1,"kind":"message","role":"assistant","content":"earlier answer"}
-"#;
     let replacement_tape = br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
 "#;

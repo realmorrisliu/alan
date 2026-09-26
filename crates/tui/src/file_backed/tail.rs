@@ -381,7 +381,7 @@ pub(super) async fn recover_stdio_task_after_root_change(
     }
 
     let new_attachment = open_stdio_tail_attachment(shell, root_agent_path).await?;
-    let recovered = match stdio_task_snapshot(
+    let mut recovered = match stdio_task_snapshot(
         shell,
         &new_attachment.agent_process_path,
         task,
@@ -396,6 +396,13 @@ pub(super) async fn recover_stdio_task_after_root_change(
             return Err(error);
         }
     };
+
+    // Completion already observed for this ID remains evidence after a restart,
+    // even when the replacement only restores Tape and not the old UI stream.
+    if recovered.completion.is_none() && snapshot.completion.is_some() {
+        recovered.completion = snapshot.completion;
+        recovered.task_error = snapshot.task_error.clone();
+    }
 
     let old_tape_tail = std::mem::replace(&mut attachment.tape_tail, new_attachment.tape_tail);
     let old_ui_tail = std::mem::replace(&mut attachment.ui_tail, new_attachment.ui_tail);
