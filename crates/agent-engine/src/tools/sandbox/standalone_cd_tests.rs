@@ -107,6 +107,7 @@ fn standalone_cd_preserves_double_quoted_shell_semantics() {
 #[test]
 fn standalone_cd_uses_shell_syntax_for_expansions_and_word_boundaries() {
     for command in [
+        "cd $(cat <<'EOF'\n)\nEOF\ntouch marker\nprintf /mnt/project\n)",
         "cd <(touch marker)",
         "cd >(touch marker)",
         "cd $(case x in x) touch marker; printf /mnt/project;; esac)",
