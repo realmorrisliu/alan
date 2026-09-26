@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ContentPart, ReasoningEffort};
+use crate::{ContentPart, InputIntent, ReasoningEffort};
 
 /// Coarse capability class for tool policy decisions.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +136,9 @@ pub struct TurnContext {
 pub struct Submission {
     /// Unique submission ID
     pub id: String,
+    /// One-shot interpretation, independent of the operation scheduling mode.
+    #[serde(default)]
+    pub intent: InputIntent,
     /// The operation being submitted
     pub op: Op,
 }
@@ -145,6 +148,7 @@ impl Submission {
     pub fn new(op: Op) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            intent: InputIntent::Agent,
             op,
         }
     }
@@ -154,6 +158,7 @@ impl Submission {
     pub fn with_id(id: &str, op: Op) -> Self {
         Self {
             id: id.to_string(),
+            intent: InputIntent::Agent,
             op,
         }
     }

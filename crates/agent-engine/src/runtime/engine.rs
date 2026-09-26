@@ -626,7 +626,7 @@ fn spawn_with_prepared_runtime_environment(
                                         if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
                                             cancel.cancel();
                                         } else if accepts_inband
-                                            && is_turn_inband_submission(&incoming.op)
+                                            && is_turn_inband_submission(&incoming)
                                         {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
                                                 queues.push_outer_submission(incoming);
@@ -644,7 +644,7 @@ fn spawn_with_prepared_runtime_environment(
                             namespace_submission = namespace_input_rx.recv() => {
                                 match namespace_submission {
                                     Some(Ok(incoming)) => {
-                                        if accepts_inband && is_turn_inband_submission(&incoming.op) {
+                                        if accepts_inband && is_turn_inband_submission(&incoming) {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
                                                 queues.push_outer_submission(incoming);
                                             }
@@ -671,7 +671,7 @@ fn spawn_with_prepared_runtime_environment(
                                         // an Op::Interrupt arriving on sub_rx.
                                         if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
                                             cancel.cancel();
-                                        } else if accepts_inband && is_turn_inband_submission(&incoming.op) {
+                                        } else if accepts_inband && is_turn_inband_submission(&incoming) {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
                                                 queues.push_outer_submission(incoming);
                                             }

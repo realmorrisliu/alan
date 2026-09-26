@@ -823,6 +823,7 @@ mod tests {
     fn test_turn_state_buffers_inband_submissions_fifo() {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
@@ -830,6 +831,7 @@ mod tests {
             },
         });
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s2".to_string(),
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
@@ -861,6 +863,7 @@ mod tests {
     fn test_turn_state_drain_buffered_inband_submissions_preserves_order() {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
@@ -868,6 +871,7 @@ mod tests {
             },
         });
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s2".to_string(),
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
@@ -888,6 +892,7 @@ mod tests {
     fn test_clear_buffered_inband_submissions_returns_count() {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
@@ -895,6 +900,7 @@ mod tests {
             },
         });
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s2".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("two")],

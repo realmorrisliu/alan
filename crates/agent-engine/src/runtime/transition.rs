@@ -715,6 +715,11 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    // Command activation follows the governed executor integration. Never feed it to the model.
+    anyhow::ensure!(
+        submission.intent != alan_agent_protocol::InputIntent::Command,
+        "explicit command records require governed command admission"
+    );
     let op = submission.op;
 
     match handle_runtime_op(state, op, emit).await? {
