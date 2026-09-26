@@ -232,8 +232,3 @@ renderer-owned execution path SHALL be introduced.
 - **WHEN** input answers an existing form or confirmation
 - **THEN** `!` and `:` remain response data under the existing request handler
 - **AND** the ordinary composer route-switch behavior does not intercept them
-
-#### Scenario: Automatic command routing is considered for activation
-- **WHEN** a future classifier may route unprefixed text to direct execution
-- **THEN** its qualified presentation contract must visibly distinguish that command route
-- **AND** it must not silently execute a direct command represented as conversation under `alan: `

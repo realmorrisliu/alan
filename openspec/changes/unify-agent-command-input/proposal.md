@@ -8,8 +8,8 @@ users from issuing a predictable command while retaining the same context.
 
 ## What Changes
 
-- **BREAKING**: `!` selects direct governed Host shell execution; `:` selects Agent interpretation; qualified automatic routing
-  handles unprefixed input across terminal and redirected input.
+- **BREAKING**: `!` selects direct governed Host shell execution; `:` selects Agent interpretation; unprefixed input
+  remains Agent-routed across terminal and redirected input.
 - Execute deterministic commands within the same Agent Machine and governance
   boundary, with shared Process-owned cwd, ordered submissions and Action evidence.
 - Reuse a mature Host shell for complete scripts; reserve only standalone user
@@ -67,6 +67,10 @@ Generic typed evaluation and provider capabilities remain dependencies owned by
 `add-cognitive-model-routing`; Jev remains a candidate adapter, not a prerequisite
 for explicit commands. No new Kernel Process type, global router, private renderer
 executor, executable packaging framework or Host data migration is introduced.
+
+Automatic typed routing, qualification and activation now belong to the active
+[qualify-agent-input-routing](../qualify-agent-input-routing/) successor; no future-only
+routing guarantees are included in this delivery's syncable deltas.
 
 ADR-0058 records the accepted direction, with final user confirmation on
 2026-09-24. No runtime behavior is claimed implemented. Canonical specs are synced only after
