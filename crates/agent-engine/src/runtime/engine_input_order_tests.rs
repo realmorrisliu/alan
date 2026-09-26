@@ -274,6 +274,33 @@ async fn ordered_control_boundaries_preserve_later_inputs_and_machine_controls()
         !queues.is_paused(),
         "idle interruption must not pause later work"
     );
+    let cancel = CancellationToken::new();
+    for op in [
+        Op::Interrupt,
+        Op::ContinueQueue,
+        Op::DiscardQueue,
+        Op::Resume {
+            request_id: "pending".into(),
+            content: vec![],
+        },
+    ] {
+        let mut invalid = Submission::new(op);
+        invalid.intent = alan_agent_protocol::InputIntent::Command;
+        assert!(queues.handle_control(&invalid, &files, Some(&cancel)).await);
+        assert!(!cancel.is_cancelled());
+        assert!(!queues.is_paused());
+        let ids = files.action_ids().await.unwrap();
+        let action = ids.last().unwrap();
+        let result: serde_json::Value = serde_json::from_slice(
+            &shell
+                .cat(&format!("/agent/1/actions/{action}/result"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["call_id"], invalid.id);
+        assert_eq!(result["exit_code"], 1);
+    }
     // The aggregate event stream orders committed file input before its control.
     for body in ["first", "second", "third"] {
         shell
@@ -336,7 +363,11 @@ async fn ordered_control_boundaries_preserve_later_inputs_and_machine_controls()
         .into_iter()
         .filter(|id| id.starts_with('a'))
         .collect::<Vec<_>>();
-    assert_eq!(actions.len(), 4, "every discarded input receives a result");
+    assert_eq!(
+        actions.len(),
+        8,
+        "four rejected commands and four discarded inputs receive results"
+    );
     for action in actions {
         assert_eq!(
             shell

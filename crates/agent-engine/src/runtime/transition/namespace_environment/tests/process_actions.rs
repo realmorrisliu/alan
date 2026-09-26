@@ -328,6 +328,10 @@ async fn run_tool_action_cancels_spawned_process_on_cancel() {
     cancel.cancel();
     let err = task.await.unwrap().unwrap_err();
     assert!(err.to_string().contains("cancelled"), "{err:#}");
+    assert_eq!(
+        err.downcast_ref::<NamespaceToolProcessError>().unwrap().pid,
+        "2"
+    );
     tokio::time::timeout(std::time::Duration::from_secs(1), dropped.notified())
         .await
         .expect("tool runner future should be aborted");
@@ -377,6 +381,10 @@ async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
         .expect("tool wait should use the configured timeout")
         .unwrap()
         .unwrap_err();
+    assert_eq!(
+        err.downcast_ref::<NamespaceToolProcessError>().unwrap().pid,
+        "2"
+    );
     let err = format!("{err:#}");
     assert!(err.contains("timed out waiting 1s"), "{err}");
     tokio::time::timeout(std::time::Duration::from_secs(1), dropped.notified())

@@ -576,3 +576,40 @@ async fn ready_api_interrupt_precedes_queued_dispatch() {
         matches!(queue.pending.front(), Some(QueuedRuntimeItem::Submission(input)) if input.id == first_id)
     );
 }
+
+#[tokio::test]
+async fn command_admission_preserves_steering_and_keeps_approval_responses_inband() {
+    use alan_agent_protocol::{ContentPart, InputIntent, InputMode, Op};
+    let mut queues = RuntimeSubmissionQueues::default();
+    let steer = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("explain the result")],
+        mode: InputMode::Steer,
+    });
+    let mut expected = steer.clone();
+    if let Op::Input { mode, .. } = &mut expected.op {
+        *mode = InputMode::FollowUp;
+    }
+    queues
+        .admit_during_submission(steer, InputIntent::Command, true)
+        .await;
+    assert!(queues.active_turn_broker.try_recv().await.is_none());
+    let Some(QueuedRuntimeItem::Submission(queued)) = queues.pop_outer() else {
+        panic!("steering must remain queued after the command");
+    };
+    assert_eq!(
+        serde_json::to_value(queued).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    let resume = Submission::new(Op::Resume {
+        request_id: "command-approval".into(),
+        content: vec![ContentPart::text("approve")],
+    });
+    queues
+        .admit_during_submission(resume.clone(), InputIntent::Command, true)
+        .await;
+    assert_eq!(
+        queues.active_turn_broker.try_recv().await.unwrap().id,
+        resume.id
+    );
+    assert!(queues.pop_outer().is_none());
+}

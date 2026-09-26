@@ -604,6 +604,7 @@ where
                 state,
                 &tool_calls,
                 ToolOrchestratorInputs {
+                    explicit_command: false,
                     cancel,
                     steering_broker,
                 },
