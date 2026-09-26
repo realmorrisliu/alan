@@ -286,6 +286,24 @@ async fn captured_paths_follow_cwd_without_rewriting_project_file_data() {
     ] {
         assert_eq!(adapter.project_text(&input), expected, "{input}");
     }
+    for native in [root.join("src"), root.join("src/file.rs")] {
+        let relative = if native.ends_with("file.rs") {
+            "./file.rs"
+        } else {
+            "."
+        };
+        let uri = url::Url::from_file_path(&native)
+            .unwrap()
+            .to_string()
+            .replacen("file:///", "file:/", 1);
+        assert_eq!(adapter.project_text(&uri), relative);
+        let json = serde_json::json!({"path": native})
+            .to_string()
+            .replace('/', "\\/");
+        let projected = adapter.project_text(&json);
+        let value: serde_json::Value = serde_json::from_str(&projected).unwrap();
+        assert_eq!(value["path"], relative);
+    }
     let context = ToolContext::from_binding(execution, Arc::new(Config::default()));
     let result = alan_tools::BashTool::new()
         .execute(json!({"command":"pwd > cwd.txt; pwd"}), &context)
@@ -334,6 +352,10 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("**/**", "**.**"),
         ("_\x1b[31m/\x1b[0m_", "_\x1b[31m.\x1b[0m_"),
         ("/etc/hosts", "./etc/hosts"),
+        (
+            r#"{"cwd":"\/","path":"\/etc\/hosts"}"#,
+            r#"{"cwd":".","path":"./etc\/hosts"}"#,
+        ),
         ("file:///etc/hosts", "./etc/hosts"),
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
         ("https://example.test/path", "https://example.test/path"),

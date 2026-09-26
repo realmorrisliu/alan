@@ -13,11 +13,12 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
     let mut copied = 0;
     for (start, _) in text
         .as_bytes()
-        .windows(7)
+        .windows(5)
         .enumerate()
-        .filter(|(_, bytes)| bytes.eq_ignore_ascii_case(b"file://"))
+        .filter(|(_, bytes)| bytes.eq_ignore_ascii_case(b"file:"))
     {
         if start < copied
+            || !text[start + 5..].starts_with('/')
             || text[..start]
                 .chars()
                 .next_back()
@@ -191,6 +192,10 @@ fn shell_escaped_path(path: &str) -> String {
 fn replace_native_prefix(text: &str, path: &str, replacement: &str) -> String {
     let mut projected = replace_path_prefixes(text, &shell_escaped_path(path), replacement);
     projected = replace_path_prefixes(&projected, path, replacement);
+    let json = serde_json::to_string(path).expect("path string serializes as JSON");
+    let escaped = json[1..json.len() - 1].replace('/', "\\/");
+    projected = replace_path_prefixes(&projected, &escaped, replacement);
+
     if path.chars().any(char::is_control) {
         let mut quoted = String::new();
         for ch in path.chars() {
@@ -286,18 +291,10 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let suffix = strip_leading_terminal_sequences(&text[end..]);
         let emphasized = is_emphasized_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
-        let quoted_suffix = strip_trailing_terminal_sequences(&text[..start])
-            .chars()
-            .next_back()
-            .filter(|quote| matches!(quote, '\'' | '"' | '`'))
-            .and_then(|quote| suffix.strip_prefix(quote));
-        let boundary_after = quoted_suffix.map_or_else(
-            || is_path_end(suffix) || emphasized,
-            |rest| {
-                !rest.starts_with(['\'', '"', '`', '/'])
-                    && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}']))
-            },
-        );
+        let json_separator = prefix.starts_with("\\/") && suffix.starts_with("\\/");
+        let boundary_after = json_separator
+            || quoted_path_end(text, start, suffix)
+                .unwrap_or_else(|| is_path_end(suffix) || emphasized);
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);
@@ -306,6 +303,18 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     }
     projected.push_str(&text[copied_through..]);
     projected
+}
+
+fn quoted_path_end(text: &str, start: usize, suffix: &str) -> Option<bool> {
+    strip_trailing_terminal_sequences(&text[..start])
+        .chars()
+        .next_back()
+        .filter(|quote| matches!(quote, '\'' | '"' | '`'))
+        .and_then(|quote| suffix.strip_prefix(quote))
+        .map(|rest| {
+            !rest.starts_with(['\'', '"', '`', '/'])
+                && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}']))
+        })
 }
 
 fn is_path_end(suffix: &str) -> bool {
@@ -328,10 +337,16 @@ fn is_path_end(suffix: &str) -> bool {
 fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
-    for (start, _) in text.match_indices('/') {
-        let suffix = strip_leading_terminal_sequences(&text[start + 1..]);
-        let emphasized = is_emphasized_path(text, start, start + 1);
+    for (slash, _) in text.match_indices('/') {
+        let start = if text[..slash].ends_with('\\') {
+            slash - 1
+        } else {
+            slash
+        };
+        let suffix = strip_leading_terminal_sequences(&text[slash + 1..]);
+        let emphasized = is_emphasized_path(text, start, slash + 1);
         let bare_root = emphasized
+            || quoted_path_end(text, start, suffix) == Some(true)
             || if suffix.starts_with(is_field_separator) {
                 suffix
                     .split(['\n', '\r', '\0'])
@@ -343,8 +358,8 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
                 is_path_end(suffix) && !suffix.starts_with('/')
             };
         let after = suffix.chars().next();
-        let uri_authority_delimiter =
-            text[..start].ends_with(':') && text[start..].starts_with("//");
+        let uri_authority_delimiter = text[..start].ends_with(':')
+            && (text[start..].starts_with("//") || text[start..].starts_with("\\/\\/"));
         if (is_path_start(text, start) || emphasized)
             && !uri_authority_delimiter
             && (bare_root || after.is_some_and(|ch| !is_field_separator(ch) && ch != '/'))
@@ -355,7 +370,7 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
             } else {
                 replacement
             });
-            copied_through = start + 1;
+            copied_through = slash + 1;
         }
     }
     projected.push_str(&text[copied_through..]);
