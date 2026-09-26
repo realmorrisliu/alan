@@ -136,8 +136,6 @@ mod tests {
                 input: "task".into(),
                 submission_id: "mine".into(),
                 submitted_process: Some(pid.parse().unwrap()),
-                observed_active: true,
-                interrupt_requested: false,
                 submitted_at_ms: 0,
             });
             super::super::interrupt::observe_root_agent_completion(
