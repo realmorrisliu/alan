@@ -401,6 +401,15 @@ impl AgentMachine {
 
     pub(crate) fn set_turn_activity(&mut self, activity: TurnActivityState) {
         self.transition_state.turn_activity = activity;
+        if matches!(activity, TurnActivityState::Idle) {
+            // The completed work is no longer cancellable while its Tape lease
+            // closes. Keep the original identities for completion publication.
+            self.input_queue()
+                .lock()
+                .expect("input queue poisoned")
+                .active_submission_ids
+                .clear();
+        }
     }
 
     #[cfg_attr(
