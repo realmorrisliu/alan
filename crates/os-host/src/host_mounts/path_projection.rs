@@ -105,10 +105,10 @@ fn markup_tag_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
             let declaration = tail.starts_with("<!");
             let mut brackets = 0usize;
             let mut quote = None;
-            let mut comment_end = 0;
+            let mut nested_end = 0;
             for (offset, ch) in tail[1..].char_indices() {
                 let index = start + 1 + offset;
-                if index < comment_end {
+                if index < nested_end {
                     continue;
                 }
                 if let Some(delimiter) = quote {
@@ -117,11 +117,21 @@ fn markup_tag_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
                     }
                     continue;
                 }
-                if declaration && text[index..].starts_with("<!--") {
-                    comment_end = text[index..]
-                        .find("-->")
-                        .map_or(text.len(), |offset| index + offset + 3);
-                    continue;
+                if declaration {
+                    let tail = &text[index..];
+                    let terminator = if tail.starts_with("<!--") {
+                        Some("-->")
+                    } else if tail.starts_with("<?") {
+                        Some("?>")
+                    } else {
+                        None
+                    };
+                    if let Some(terminator) = terminator {
+                        nested_end = tail
+                            .find(terminator)
+                            .map_or(text.len(), |offset| index + offset + terminator.len());
+                        continue;
+                    }
                 }
                 match ch {
                     '\'' | '"' => quote = Some(ch),

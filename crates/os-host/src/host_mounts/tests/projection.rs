@@ -423,6 +423,10 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
             r#"<!DOCTYPE svg [<!-- ]> --> <!ENTITY b SYSTEM "/b">]> ./etc"#,
         ),
         (
+            r#"<!DOCTYPE r [<?p ] >?> <!ENTITY e SYSTEM "/secret">]> /etc"#,
+            r#"<!DOCTYPE r [<?p ] >?> <!ENTITY e SYSTEM "/secret">]> ./etc"#,
+        ),
+        (
             r#"<?style x > href="/a"?> /etc"#,
             r#"<?style x > href="/a"?> ./etc"#,
         ),
@@ -619,7 +623,7 @@ async fn projected_json_escapes_public_namespace_components() {
     service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
     for (logical, native) in [
         ("/mnt/project", project.path()),
-        ("/mnt/do\"cs\\files", docs.path()),
+        ("/mnt/do\"$cs\\files", docs.path()),
     ] {
         approve(&service, 7, logical, HostMountAccess::ReadOnly, native).await;
     }
@@ -629,12 +633,23 @@ async fn projected_json_escapes_public_namespace_components() {
         .adapter()
         .unwrap();
     let native = dunce::canonicalize(docs.path()).unwrap().join("file.txt");
-    let json = serde_json::json!({"path":native}).to_string();
-    assert!(!json.contains('\\'));
-    let projected = adapter.project_text(&json);
-    let value: serde_json::Value =
-        serde_json::from_str(&projected).expect("projected JSON stays valid");
-    assert_eq!(value["path"], "../do\"cs\\files/file.txt");
+    for json in [
+        serde_json::json!({"path":native}).to_string(),
+        format!(
+            r#"{{"path":{},"next":"x"}}"#,
+            serde_json::to_string(&native).unwrap()
+        ),
+        format!(
+            r#"{{"path":{},"next":{{"nested":true}}}}"#,
+            serde_json::to_string(&native).unwrap()
+        ),
+    ] {
+        assert!(!json.contains('\\'));
+        let projected = adapter.project_text(&json);
+        let value: serde_json::Value =
+            serde_json::from_str(&projected).expect("projected JSON stays valid");
+        assert_eq!(value["path"], "../do\"$cs\\files/file.txt");
+    }
 }
 
 #[tokio::test]
