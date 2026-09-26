@@ -33,5 +33,6 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+jsonschema.workspace = true
 alan-llm = { workspace = true, features = ["mock"] }
 tempfile.workspace = true

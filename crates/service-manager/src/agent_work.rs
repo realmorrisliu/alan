@@ -40,7 +40,12 @@ pub(crate) fn manifest() -> Vec<u8> {
         "parameters":{"type":"object", "required":["action","target"], "additionalProperties":false,
             "properties":{"action":{"type":"string","enum":["status","submit","cancel","continue","discard"]},
                 "target":{"type":"string","description":"root or a visible Agent PID"},
-                "text":{"type":"string"}, "submission_id":{"type":"string"}}},
+                "text":{"type":"string"}, "submission_id":{"type":"string"}},
+            "oneOf":[
+                {"properties":{"action":{"const":"submit"}},"required":["text"],"not":{"required":["submission_id"]}},
+                {"properties":{"action":{"const":"cancel"}},"required":["submission_id"],"not":{"required":["text"]}},
+                {"properties":{"action":{"enum":["status","continue","discard"]}},"not":{"anyOf":[{"required":["text"]},{"required":["submission_id"]}]}}
+            ]},
         "capability":"write", "timeout_secs":10,
         "execution":{"arguments":"json_first_arg","result":"stdout_json"}
     })).expect("static Agent work manifest")
@@ -195,6 +200,33 @@ mod tests {
                 namespace: Default::default(),
                 descriptors: BTreeMap::new(),
             },
+        }
+    }
+
+    #[test]
+    fn tool_schema_matches_action_argument_requirements() {
+        let manifest: Value = serde_json::from_slice(&manifest()).unwrap();
+        let validator = jsonschema::validator_for(&manifest["parameters"]).unwrap();
+        for action in ["status", "continue", "discard", "submit", "cancel"] {
+            let mut value = json!({"action":action,"target":"root"});
+            assert_eq!(
+                validator.is_valid(&value),
+                !matches!(action, "submit" | "cancel")
+            );
+            if action == "submit" {
+                value["text"] = json!("do work");
+            }
+            if action == "cancel" {
+                value["submission_id"] = json!(uuid::Uuid::new_v4());
+            }
+            assert!(validator.is_valid(&value));
+            assert!(serde_json::from_value::<Action>(value.clone()).is_ok());
+            value[if action == "cancel" {
+                "text"
+            } else {
+                "submission_id"
+            }] = json!("unexpected");
+            assert!(!validator.is_valid(&value));
         }
     }
 
