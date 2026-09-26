@@ -333,8 +333,12 @@ completion/help, so interruption leaves an ordinary way to continue working. Con
 reject continuation/discard while active work is still settling. Discarded inputs
 receive failed Actions correlated to their original submission IDs and never run.
 Pending request responses remain ahead of ordinary admission. File input and
-Machine controls are admitted in the existing aggregate AgentFS event order;
-the Host connects the existing Process event bridge so redirected Process input
+Machine controls are admitted in the existing aggregate AgentFS event order.
+Ordinary controls such as compact and rollback stay behind earlier input; only
+interrupt, queue continuation/discard and pending-request responses may bypass
+ordinary dispatch. Active transitions read the finite ready event batch on each
+wake, so an interrupt is not delayed by a timer interval per queued input.
+The Host connects the existing Process event bridge so redirected Process input
 participates in that same order. API controls retain their receiver position,
 so a discard cannot consume a later API submission. There is no separate input
 reader channel whose buffered frames can cross an interrupt/discard boundary.

@@ -423,3 +423,71 @@ async fn ready_namespace_batch_includes_interrupt_after_input_burst() {
         1
     );
 }
+
+#[tokio::test]
+async fn namespace_rollback_stays_between_earlier_and_later_input() {
+    let mock = MockLlmProvider::new();
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection("default", Box::new(mock.clone()));
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    namespace.mount(
+        "/mnt/llm",
+        InProcessTransport::new(llmfs),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+    let shell = alan_shell::Shell::new(root.clone());
+    // Commit the complete ordered sequence before the Process pump starts.
+    shell
+        .write("/agent/1/io/input", b"before rollback")
+        .await
+        .unwrap();
+    shell
+        .write("/agent/1/machine/ctl", b"rollback")
+        .await
+        .unwrap();
+    shell
+        .write("/agent/1/io/input", b"after rollback")
+        .await
+        .unwrap();
+    let mut core_config =
+        crate::Config::for_openai_chat_completions_compatible("sk-test", None, Some("test-model"));
+    core_config.memory.enabled = false;
+    core_config.streaming_mode = crate::config::StreamingMode::Off;
+    let capabilities = crate::provider_capabilities_for_config(&core_config);
+    let mut controller = spawn_with_namespace_environment(
+        AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core_config),
+            ..Default::default()
+        },
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        crate::skills::SkillHostCapabilities::default(),
+        capabilities,
+    )
+    .unwrap();
+    controller.wait_until_ready().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while mock.recorded_requests().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let requests = mock.recorded_requests();
+    controller.shutdown().await.unwrap();
+    let users = |request: &GenerationRequest| {
+        request
+            .messages
+            .iter()
+            .filter(|message| message.role == alan_llm::MessageRole::User)
+            .map(|message| message.content.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(users(&requests[0]), ["before rollback"]);
+    assert_eq!(users(&requests[1]), ["after rollback"]);
+}

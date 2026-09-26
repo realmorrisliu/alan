@@ -365,7 +365,7 @@ async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submissio
     assert_eq!(output, "first namespace response");
 
     shell
-        .write("/agent/1/io/input", b"second input through files")
+        .write("/proc/1/io/input", b"second input through files")
         .await
         .unwrap();
     wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;

@@ -588,14 +588,20 @@ fn spawn_with_prepared_runtime_environment(
                     {
                         continue;
                     }
+                    // Only boundary controls may overtake admitted work. Ordinary
+                    // Machine controls share the same FIFO as Turn/Input records.
                     if (!from_queue
-                        || queues.is_paused()
-                        || state.machine.has_pending_interaction())
-                        && matches!(
+                        && !matches!(
                             submission.op,
-                            alan_agent_protocol::Op::Turn { .. }
-                                | alan_agent_protocol::Op::Input { .. }
-                        )
+                            alan_agent_protocol::Op::Interrupt
+                                | alan_agent_protocol::Op::Resume { .. }
+                        ))
+                        || ((queues.is_paused() || state.machine.has_pending_interaction())
+                            && matches!(
+                                submission.op,
+                                alan_agent_protocol::Op::Turn { .. }
+                                    | alan_agent_protocol::Op::Input { .. }
+                            ))
                     {
                         queues.push_outer_submission(submission);
                         continue;
