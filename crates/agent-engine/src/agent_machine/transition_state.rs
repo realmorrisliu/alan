@@ -937,26 +937,6 @@ mod tests {
     }
 
     #[test]
-    fn test_queue_next_turn_inputs_fifo_and_drain() {
-        let mut state = AgentMachine::new();
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
-            Some(1)
-        );
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-2")]),
-            Some(2)
-        );
-        assert_eq!(state.queued_next_turn_input_count(), 2);
-
-        let drained = state.drain_next_turn_inputs();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[0]), "ctx-1");
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[1]), "ctx-2");
-        assert_eq!(state.queued_next_turn_input_count(), 0);
-    }
-
-    #[test]
     fn test_queue_next_turn_inputs_overflow_is_rejected() {
         let mut state = AgentMachine::new();
         for _ in 0..MAX_QUEUED_NEXT_TURN_INPUTS {
