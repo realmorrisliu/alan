@@ -210,8 +210,8 @@ must be reconciled with ordered acceptance rather than silently bypassed.
 ### Submission records and result correlation
 
 The input envelope and result IDs below are implemented in this slice. The
-version-2 activity projection and durable recovery remain the target contract
-for tasks 2.5–2.8; they are not current runtime guarantees. Runtime failure events
+version-2 activity projection is implemented in this slice. Durable recovery
+and multi-client renderer admission remain unfinished tasks 2.5–2.8. Runtime failure events
 carry the failed submission ID even before Tape admission; redirected clients
 match that ID and never adopt another client's or an uncorrelated legacy error.
 
@@ -234,7 +234,7 @@ active turn finishes first, the already-admitted command runs next. An idle
 `steer` fails rather than creating a new turn. `next_turn` retains the complete
 command submission until an explicit Turn releases it ahead of that Turn's
 generation; its script is never merged into queued Agent context. Queue/cwd
-persistence and version-2 activity projection remain separate tasks below.
+persistence remains a separate task below.
 The Machine now owns the shared in-band, buffered, deferred-input and ordinary
 queues plus active submission identity. Ordinary follow-up inputs stay FIFO in
 the ordinary queue; only steering and responses enter the active transition.
@@ -242,8 +242,7 @@ The file-native versioned queue controls below are implemented in memory.
 Continue/discard reject while the current input is still settling. Interrupting
 a pending input emits its correlated failure without executing it; interrupting
 the active input cancels its transition and retains later accepted inputs. The
-renderer task-lock removal, targeted interrupts and version-2 activity
-projection remain unfinished. Internal queue-control tests do not establish
+renderer task-lock removal and targeted interrupts remain unfinished. Internal queue-control tests do not establish
 renderer acceptance.
 
 The Agent Machine owns accepted order and queue state. Its existing
@@ -251,7 +250,11 @@ machine/ui/activity snapshot becomes version 2, retaining activity state and
 start time and adding `active_submission` (optional `{submission_id, intent}`),
 `pending_submissions` (ordered `{submission_id, intent}` entries), and
 `queue_paused` (boolean). machine/ui/events appends the same snapshots; neither
-surface owns another copy of the queue. The current activity state remains run
+surface owns another copy of executable pending work. The Process input pump is
+the sole activity-file writer; transitions enqueue activity observations for it
+to publish in order. Queue metadata is projected from the Machine, includes
+intent but excludes input bodies, and heartbeat preserves the original start
+time. Version-1 snapshots remain readable with empty queue metadata. The current activity state remains run
 state, not a completion signal. Runtime queue controls continue to use
 machine/ctl, one UTF-8 command per write. The versioned queue-control vocabulary
 is `queue-v1 interrupt <submission_id>`, `queue-v1 continue`, and

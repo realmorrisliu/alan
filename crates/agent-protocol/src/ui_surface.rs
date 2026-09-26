@@ -3,6 +3,22 @@ use serde::{Deserialize, Serialize};
 use crate::PlanItem;
 
 pub const UI_SURFACE_VERSION: u16 = 1;
+pub const UI_ACTIVITY_VERSION: u16 = 2;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiSubmission {
+    pub submission_id: String,
+    pub intent: crate::InputIntent,
+}
+
+impl From<&crate::Submission> for UiSubmission {
+    fn from(input: &crate::Submission) -> Self {
+        Self {
+            submission_id: input.id.clone(),
+            intent: input.intent,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -19,30 +35,37 @@ pub struct UiActivitySnapshot {
     pub state: UiActivityState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_submission: Option<UiSubmission>,
+    #[serde(default)]
+    pub pending_submissions: Vec<UiSubmission>,
+    #[serde(default)]
+    pub queue_paused: bool,
 }
 
 impl UiActivitySnapshot {
     pub fn idle() -> Self {
         Self {
-            version: UI_SURFACE_VERSION,
+            version: UI_ACTIVITY_VERSION,
             state: UiActivityState::Idle,
             started_at_ms: None,
+            active_submission: None,
+            pending_submissions: Vec::new(),
+            queue_paused: false,
         }
     }
-
     pub fn running(started_at_ms: u64) -> Self {
         Self {
-            version: UI_SURFACE_VERSION,
             state: UiActivityState::Running,
             started_at_ms: Some(started_at_ms),
+            ..Self::idle()
         }
     }
-
     pub fn paused(started_at_ms: Option<u64>) -> Self {
         Self {
-            version: UI_SURFACE_VERSION,
             state: UiActivityState::Paused,
             started_at_ms,
+            ..Self::idle()
         }
     }
 }
@@ -212,8 +235,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn snapshots_default_to_version_one() {
-        assert_eq!(UiActivitySnapshot::default().version, UI_SURFACE_VERSION);
+    fn legacy_activity_reads_with_an_empty_queue() {
+        let activity: UiActivitySnapshot =
+            serde_json::from_str(r#"{"version":1,"state":"idle"}"#).unwrap();
+        assert_eq!(activity.version, 1);
+        assert!(activity.active_submission.is_none());
+        assert!(activity.pending_submissions.is_empty());
+        assert!(!activity.queue_paused);
+    }
+
+    #[test]
+    fn activity_uses_version_two_and_other_surfaces_keep_version_one() {
+        assert_eq!(UiActivitySnapshot::default().version, UI_ACTIVITY_VERSION);
         assert_eq!(UiPlanSnapshot::default().version, UI_SURFACE_VERSION);
         assert_eq!(UiThinkingSnapshot::default().version, UI_SURFACE_VERSION);
         assert_eq!(UiNoticeSnapshot::default().version, UI_SURFACE_VERSION);

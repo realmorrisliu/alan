@@ -57,7 +57,7 @@ where
     reset_turn_after_cancelling_host_mounts(machine, host_mount_requests).await?;
     machine.clear_plan_snapshot();
     machine.clear_active_task();
-    super::ui_surfaces::turn_completed(agent_files, true).await?;
+    super::ui_surfaces::turn_completed(agent_files, &machine.input_broker(), true).await?;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),
     })
@@ -67,6 +67,7 @@ where
 
 pub(super) async fn emit_task_completed_success<E, F>(
     agent_files: &NamespaceAgentFiles,
+    queue: &super::turn_input::TurnInputBroker,
     emit: &mut E,
     summary: impl Into<String>,
 ) -> Result<()>
@@ -75,7 +76,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     let summary = summary.into();
-    super::ui_surfaces::turn_completed(agent_files, false).await?;
+    super::ui_surfaces::turn_completed(agent_files, queue, false).await?;
     emit(Event::TurnCompleted {
         summary: Some(summary),
     })

@@ -124,26 +124,38 @@ const GUARDIAN_DENIAL_WINDOW: usize = 50;
 const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 
 impl AgentMachine {
+    #[cfg(test)]
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
-        self.transition_state
-            .input_broker
-            .state()
-            .current_submission_id = Some(submission_id.into());
+        self.accept_submission_identity(alan_agent_protocol::UiSubmission {
+            submission_id: submission_id.into(),
+            intent: alan_agent_protocol::InputIntent::Agent,
+        });
+    }
+
+    pub(crate) fn accept_submission_identity(
+        &mut self,
+        identity: alan_agent_protocol::UiSubmission,
+    ) {
+        self.transition_state.input_broker.state().active_submission = Some(identity);
+        self.transition_state.input_broker.record_activity();
     }
 
     pub(crate) fn finish_submission(&mut self) {
+        self.transition_state.input_broker.state().active_submission = None;
+        self.transition_state.input_broker.record_activity();
+    }
+
+    pub(crate) fn current_submission_identity(&self) -> Option<alan_agent_protocol::UiSubmission> {
         self.transition_state
             .input_broker
             .state()
-            .current_submission_id = None;
+            .active_submission
+            .clone()
     }
 
     pub(crate) fn current_submission_id(&self) -> Option<String> {
-        self.transition_state
-            .input_broker
-            .state()
-            .current_submission_id
-            .clone()
+        self.current_submission_identity()
+            .map(|input| input.submission_id)
     }
 
     /// Record a guardian review outcome (true = denied). Returns true when the

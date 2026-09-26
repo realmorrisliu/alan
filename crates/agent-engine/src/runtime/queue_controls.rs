@@ -48,6 +48,7 @@ pub(super) async fn handle(
         },
         _ => return false,
     };
+    queue.record_activity();
     let notice = match result {
         Ok(()) if queue.is_paused() => {
             "Input queue paused; continue or discard explicitly".to_owned()

@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use alan_agent_protocol::{InputMode, Op, Submission};
+use alan_agent_protocol::{
+    InputMode, Op, Submission, UiActivitySnapshot, UiActivityState, UiSubmission,
+};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +21,7 @@ pub(crate) struct TurnInputBroker {
 struct TurnInputBrokerInner {
     state: Mutex<MachineInputQueues>,
     notify: Notify,
+    activity_notify: Notify,
 }
 
 impl Default for TurnInputBroker {
@@ -27,6 +30,7 @@ impl Default for TurnInputBroker {
             inner: Arc::new(TurnInputBrokerInner {
                 state: Mutex::new(MachineInputQueues::default()),
                 notify: Notify::new(),
+                activity_notify: Notify::new(),
             }),
         }
     }
@@ -34,7 +38,9 @@ impl Default for TurnInputBroker {
 
 #[derive(Debug, Default)]
 pub(super) struct MachineInputQueues {
-    pub(super) current_submission_id: Option<String>,
+    pub(super) active_submission: Option<UiSubmission>,
+    ui_activity: UiActivitySnapshot,
+    activity_events: VecDeque<UiActivitySnapshot>,
     pub(super) inband: VecDeque<Submission>,
     pub(super) buffered: VecDeque<Submission>,
     pub(super) next_turn: VecDeque<Submission>,
@@ -54,6 +60,65 @@ impl TurnInputBroker {
             .state
             .lock()
             .expect("Machine input queue poisoned")
+    }
+
+    pub(crate) fn activity_snapshot(&self) -> UiActivitySnapshot {
+        let state = self.state();
+        Self::project_activity(&state)
+    }
+
+    fn project_activity(state: &MachineInputQueues) -> UiActivitySnapshot {
+        let pending = state
+            .buffered
+            .iter()
+            .chain(&state.inband)
+            .chain(state.outer.iter().filter_map(|item| match item {
+                QueuedRuntimeItem::Submission(s) => Some(s),
+                _ => None,
+            }))
+            .chain(&state.next_turn)
+            .filter(|s| matches!(s.op, Op::Input { .. } | Op::Turn { .. }))
+            .map(UiSubmission::from)
+            .collect();
+        UiActivitySnapshot {
+            active_submission: state.active_submission.clone(),
+            pending_submissions: pending,
+            queue_paused: state.paused,
+            ..state.ui_activity.clone()
+        }
+    }
+
+    pub(crate) fn record_activity(&self) {
+        let mut state = self.state();
+        let snapshot = Self::project_activity(&state);
+        state.activity_events.push_back(snapshot);
+        drop(state);
+        self.inner.activity_notify.notify_one();
+    }
+
+    pub(crate) fn set_ui_activity(&self, activity: UiActivityState) {
+        let mut state = self.state();
+        state.ui_activity.state = activity;
+        if activity == UiActivityState::Idle {
+            state.ui_activity.started_at_ms = None;
+        } else if state.ui_activity.started_at_ms.is_none() {
+            state.ui_activity.started_at_ms = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
+            );
+        }
+        drop(state);
+        self.record_activity();
+    }
+
+    pub(crate) async fn activity_changed(&self) {
+        self.inner.activity_notify.notified().await;
+    }
+
+    pub(crate) fn drain_activity_events(&self) -> VecDeque<UiActivitySnapshot> {
+        std::mem::take(&mut self.state().activity_events)
     }
 
     pub(crate) fn pop_outer(&self) -> Option<QueuedRuntimeItem> {
@@ -104,7 +169,10 @@ impl TurnInputBroker {
     /// Returns whether the target is currently executing. Unknown targets change no state.
     pub(crate) fn interrupt(&self, id: &str) -> anyhow::Result<bool> {
         let mut state = self.state();
-        let active = state.current_submission_id.as_deref() == Some(id);
+        let active = state
+            .active_submission
+            .as_ref()
+            .is_some_and(|input| input.submission_id == id);
         let mut removed = false;
         if !active {
             state.outer.retain(|item| {
@@ -135,7 +203,7 @@ impl TurnInputBroker {
         let mut state = self.state();
         anyhow::ensure!(state.paused, "input queue is not paused");
         anyhow::ensure!(
-            state.current_submission_id.is_none(),
+            state.active_submission.is_none(),
             "active input has not settled yet"
         );
         state.paused = false;
@@ -146,7 +214,7 @@ impl TurnInputBroker {
         let mut state = self.state();
         anyhow::ensure!(state.paused, "input queue is not paused");
         anyhow::ensure!(
-            state.current_submission_id.is_none(),
+            state.active_submission.is_none(),
             "active input has not settled yet"
         );
         let mut discarded = Vec::new();
@@ -311,5 +379,59 @@ mod tests {
         assert!(queue.try_recv().await.is_none());
         assert!(machine.take_next_turn_commands().is_empty());
         assert!(!queue.is_paused());
+    }
+    #[test]
+    fn activity_projection_retains_intent_order_and_paused_queue_without_command_bodies() {
+        let mut machine = super::super::AgentMachine::new();
+        let queue = machine.input_broker();
+        machine.accept_submission_identity(UiSubmission {
+            submission_id: "active".into(),
+            intent: alan_agent_protocol::InputIntent::ForceAgent,
+        });
+        for id in ["first", "second"] {
+            queue.push_outer_submission(Submission::with_id_and_intent(
+                id,
+                Op::Input {
+                    parts: vec![alan_agent_protocol::ContentPart::text(
+                        "private command body",
+                    )],
+                    mode: InputMode::FollowUp,
+                },
+                alan_agent_protocol::InputIntent::Command,
+            ));
+        }
+        queue.set_ui_activity(UiActivityState::Running);
+        let running = queue.activity_snapshot();
+        assert_eq!(running.version, 2);
+        assert_eq!(
+            running.active_submission.as_ref().unwrap().intent,
+            alan_agent_protocol::InputIntent::ForceAgent
+        );
+        assert_eq!(
+            running
+                .pending_submissions
+                .iter()
+                .map(|s| s.submission_id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert!(
+            !serde_json::to_string(&running)
+                .unwrap()
+                .contains("private command body")
+        );
+        queue.interrupt("active").unwrap();
+        machine.finish_submission();
+        queue.set_ui_activity(UiActivityState::Idle);
+        let paused = queue.activity_snapshot();
+        assert!(paused.queue_paused);
+        assert!(paused.active_submission.is_none());
+        assert_eq!(paused.pending_submissions, running.pending_submissions);
+        assert!(
+            queue
+                .drain_activity_events()
+                .iter()
+                .any(|e| e.state == UiActivityState::Running && e.active_submission.is_some())
+        );
     }
 }

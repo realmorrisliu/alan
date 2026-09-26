@@ -123,7 +123,7 @@ where
         runtime
             .machine
             .set_confirmation_for_request(request_id.clone(), pending.clone());
-        super::ui_surfaces::paused(&runtime.agent_files).await?;
+        super::ui_surfaces::paused(&runtime.agent_files, &runtime.machine.input_broker()).await?;
         emit(Event::Yield {
             request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,

@@ -460,6 +460,12 @@ fn spawn_with_prepared_runtime_environment(
         });
 
         loop {
+            if let Err(error) =
+                super::ui_surfaces::flush_activity(&state.agent_files(), &queues.active_turn_broker)
+                    .await
+            {
+                warn!(%error, "Failed to publish input queue activity");
+            }
             let queued_item = if shutdown_requested {
                 queues.pop_outer_deferred()
             } else if let Some(namespace_control) =
@@ -597,23 +603,35 @@ fn spawn_with_prepared_runtime_environment(
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     loop {
+                        if let Err(error) = super::ui_surfaces::flush_activity(
+                            &namespace_control,
+                            &queues.active_turn_broker,
+                        )
+                        .await
+                        {
+                            warn!(%error, "Failed to publish input queue activity");
+                        }
                         tokio::select! {
+                            _ = queues.active_turn_broker.activity_changed() => {},
                             outcome = &mut submission_fut => {
                                 drop(submission_fut);
                                 let terminal_ui_result = match &outcome.result {
                                     Ok(TransitionCompletion::Paused) => Ok(()),
                                     Ok(TransitionCompletion::Completed) if cancel.is_cancelled() && queues.active_turn_broker.is_paused() => super::ui_surfaces::turn_failed(
                                         &namespace_heartbeat,
+                                        &queues.active_turn_broker,
                                         "Input interrupted; later queued inputs remain paused",
                                         Some(&outcome.submission_id),
                                     ).await,
                                     Ok(TransitionCompletion::Completed) => super::ui_surfaces::turn_completed(
                                         &namespace_heartbeat,
+                                        &queues.active_turn_broker,
                                         false,
                                     )
                                     .await,
                                     Err(err) => super::ui_surfaces::turn_failed(
                                         &namespace_heartbeat,
+                                        &queues.active_turn_broker,
                                         &format!("Error handling submission: {err}"),
                                         Some(&outcome.submission_id),
                                     )
@@ -716,7 +734,7 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                             _ = heartbeat_interval.tick() => {
-                                if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat).await {
+                                if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat, &queues.active_turn_broker).await {
                                     warn!(error = %err, "Failed to write runtime activity heartbeat");
                                 }
                             }
@@ -742,7 +760,16 @@ fn spawn_with_prepared_runtime_environment(
                     ));
 
                     loop {
+                        if let Err(error) = super::ui_surfaces::flush_activity(
+                            &namespace_control,
+                            &queues.active_turn_broker,
+                        )
+                        .await
+                        {
+                            warn!(%error, "Failed to publish input queue activity");
+                        }
                         tokio::select! {
+                            _ = queues.active_turn_broker.activity_changed() => {},
                             exit = &mut action_fut => {
                                 drop(action_fut);
                                 if should_requeue_deferred_action(requeue_if_cancelled, exit) {

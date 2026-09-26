@@ -89,6 +89,7 @@
         assert_eq!(user_record["content"], "git status");
         assert_eq!(user_record["submission_id"], submission_id);
 
+        crate::runtime::ui_surfaces::flush_activity(&state.agent_files(), &state.machine.input_broker()).await.unwrap();
         let activity: alan_agent_protocol::UiActivitySnapshot = serde_json::from_slice(
             &shell
                 .cat("/agent/1/machine/ui/activity")

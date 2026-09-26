@@ -79,7 +79,8 @@ evidence_retention_expired    structured output record after storing-server rete
 ";
 
 const TAPE_ROOT_NAME: &str = "machine/tape";
-const DEFAULT_UI_ACTIVITY: &str = r#"{"version":1,"state":"idle"}"#;
+const DEFAULT_UI_ACTIVITY: &str =
+    r#"{"version":2,"state":"idle","pending_submissions":[],"queue_paused":false}"#;
 const DEFAULT_UI_PLAN: &str = r#"{"version":1,"items":[]}"#;
 const DEFAULT_UI_THINKING: &str = r#"{"version":1,"state":"idle","text":""}"#;
 const DEFAULT_UI_NOTICE: &str = r#"{"version":1,"kind":"none","message":""}"#;

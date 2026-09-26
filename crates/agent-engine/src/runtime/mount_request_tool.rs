@@ -307,7 +307,7 @@ where
         serde_json::to_value(&pending).unwrap_or_else(|_| json!({})),
     );
     runtime.machine.set_host_mount_request(pending.clone());
-    super::ui_surfaces::paused(&runtime.agent_files).await?;
+    super::ui_surfaces::paused(&runtime.agent_files, &runtime.machine.input_broker()).await?;
     emit(Event::Yield {
         request_id,
         kind: YieldKind::Custom("authorization_wait".to_string()),

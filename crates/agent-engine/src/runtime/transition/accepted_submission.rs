@@ -139,7 +139,7 @@ fn track_active_task_submission(
     submission: &Submission,
 ) {
     if accepts_inband_submissions(&submission.op) {
-        machine.accept_submission(submission.id.clone());
+        machine.accept_submission_identity(submission.into());
     }
 }
 

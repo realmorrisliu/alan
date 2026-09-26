@@ -57,7 +57,7 @@
 - Local `cargo test -p alan-agent-engine -p alan-tools`: 1,191 engine unit tests,
   20 architecture checks and 137 Tool tests passed; one engine test remains ignored.
 - These checks do not establish tasks 2.5–2.10 as complete: multi-client admission,
-  version-2 activity, renderer integration of queue pause/continue/discard,
+  client consumption of version-2 activity, renderer integration of queue controls,
   durable queue/cwd recovery and real terminal acceptance still require
   implementation and evidence. Task-oriented
   alan9 controls and project-file parity also remain open. No automatic routing
@@ -66,8 +66,8 @@
 - Runtime UI errors now retain the failing submission ID across accepted in-band
   work and generation failure. Redirected clients match only that ID, including
   failure before Tape admission; unrelated and legacy uncorrelated errors are
-  not attributed to the task. Aggregate activity and the interactive task lease
-  still need the version-2 queue projection before multi-client admission opens.
+  not attributed to the task. Clients still need to consume version-2 queue
+  identity and remove the interactive task lease before multi-client admission opens.
 
 - Machine input queues now share one Machine-owned state; the Process pump uses
   a handle, with no second copy of accepted inputs or active submission identity.
@@ -76,7 +76,18 @@
   `discard` are handled through `machine/ctl`; paused work is retained through
   turn reset and is not dequeued until explicitly resumed or discarded. Unknown
   targets leave the queue unchanged. These controls are currently in-memory;
-  persistence, activity-v2 projection and renderer wiring remain incomplete.
+  persistence and renderer wiring remain incomplete.
 - Queue-owner/control verification: 1,194 engine unit tests and 20 architecture
   checks passed (one engine test remains ignored), including real AgentFS control
   writes and correlated discard errors. This is not terminal or restart acceptance.
+
+- Activity v2 now publishes active submission identity/intent, ordered pending
+  identities and queue-paused state from the Machine. The Process input pump
+  serializes activity snapshots/events so transition writes cannot overwrite
+  newer queue observations. Heartbeat retains the start timestamp. Client lock
+  removal, ID-based activity consumption, targeted terminal interruption and
+  durable recovery are still pending; the schema/projection alone does not
+  establish multi-client terminal acceptance.
+- Activity projection verification: 1,495 tests passed across engine, protocol,
+  AgentFS and TUI (one engine test remains ignored), including v1 decoding,
+  identity/intent projection, pause retention and serialized activity publication.

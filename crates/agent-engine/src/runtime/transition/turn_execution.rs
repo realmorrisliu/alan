@@ -172,12 +172,15 @@ where
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state.machine.reset_auto_mid_turn_compaction_state();
-        crate::runtime::ui_surfaces::turn_started(&state.agent_files())
-            .await
-            .context("write turn-start UI state")?;
+        crate::runtime::ui_surfaces::turn_started(
+            &state.agent_files(),
+            &state.machine.input_broker(),
+        )
+        .await
+        .context("write turn-start UI state")?;
         emit(Event::TurnStarted {}).await;
     } else {
-        crate::runtime::ui_surfaces::resumed(&state.agent_files())
+        crate::runtime::ui_surfaces::resumed(&state.agent_files(), &state.machine.input_broker())
             .await
             .context("write resumed turn UI state")?;
     }
@@ -697,9 +700,13 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
-            crate::runtime::ui_surfaces::turn_completed(&state.agent_files(), false)
-                .await
-                .context("write fallback turn completion UI state")?;
+            crate::runtime::ui_surfaces::turn_completed(
+                &state.agent_files(),
+                &state.machine.input_broker(),
+                false,
+            )
+            .await
+            .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
@@ -713,7 +720,13 @@ where
             },
         )
         .await;
-        emit_task_completed_success(&agent_files, emit, "Task completed").await?;
+        emit_task_completed_success(
+            &agent_files,
+            &state.machine.input_broker(),
+            emit,
+            "Task completed",
+        )
+        .await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
 }

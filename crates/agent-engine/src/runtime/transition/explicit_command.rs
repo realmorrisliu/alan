@@ -53,7 +53,7 @@ where
         .write_submission_start(&submission_id, &command)
         .await
         .context("write explicit command submission to Agent tape")?;
-    crate::runtime::ui_surfaces::turn_started(&agent_files)
+    crate::runtime::ui_surfaces::turn_started(&agent_files, &state.machine.input_broker())
         .await
         .context("write explicit command start UI state")?;
 
@@ -189,13 +189,15 @@ where
         let Some(submission) = state.machine.take_steering_command() else {
             break;
         };
-        let parent_id = state.machine.current_submission_id();
+        let parent_id = state.machine.current_submission_identity();
         let parent_activity = state.machine.turn_activity();
-        state.machine.accept_submission(&submission.id);
+        state
+            .machine
+            .accept_submission_identity((&submission).into());
         let result =
             handle_explicit_command(state, submission.id, submission.op, emit, cancel, None).await;
         if let Some(parent_id) = parent_id {
-            state.machine.accept_submission(parent_id);
+            state.machine.accept_submission_identity(parent_id);
         } else {
             state.machine.finish_submission();
         }

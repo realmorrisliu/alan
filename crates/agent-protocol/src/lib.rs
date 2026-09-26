@@ -49,6 +49,7 @@ pub use spawn::{
     SpawnSpecValidationError, SpawnTarget, SpawnToolProfileOverride,
 };
 pub use ui_surface::{
-    UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind,
-    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState,
+    UI_ACTIVITY_VERSION, UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent,
+    UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiSubmission, UiThinkingSnapshot,
+    UiThinkingState,
 };
