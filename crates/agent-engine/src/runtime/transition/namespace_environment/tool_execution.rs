@@ -5,7 +5,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     NamespaceActionRecord, NamespaceToolActionEvidence, NamespaceToolActionOutput,
-    NamespaceToolExecution, client::NamespaceClient, process_files::NamespaceProcessResult,
+    NamespaceToolExecution, NamespaceToolProcessError, client::NamespaceClient,
+    process_files::NamespaceProcessResult,
 };
 use crate::{evidence::redact_durable_evidence_text, runtime::ToolPackageManifest};
 
@@ -119,7 +120,10 @@ impl NamespaceToolExecution {
         let result = tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;
-                bail!("tool process {pid} cancelled");
+                return Err(NamespaceToolProcessError {
+                    source: anyhow::anyhow!("tool process {pid} cancelled"),
+                    pid,
+                }.into());
             }
             result = self.process_files.read_process_result(&pid, timeout_secs) => {
                 match result {
@@ -129,9 +133,10 @@ impl NamespaceToolExecution {
                             .process_files
                             .write_process_control_for_pid(&pid, "cancel")
                             .await;
-                        return Err(err).with_context(|| {
-                            format!("read tool process {pid} result")
-                        });
+                        return Err(NamespaceToolProcessError {
+                            source: err.context(format!("read tool process {pid} result")),
+                            pid,
+                        }.into());
                     }
                 }
             }

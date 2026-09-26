@@ -125,6 +125,9 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    crate::runtime::ui_surfaces::resumed(&state.agent_files())
+        .await
+        .context("write resumed command UI state")?;
     state.machine.set_turn_activity(TurnActivityState::Running);
     let result = replay_approved_tool_batch_with_cancel(
         state,
@@ -200,6 +203,9 @@ async fn record_missing_command_action(
             })
             .to_string(),
         );
+    if let Some(process) = outcome.get("process").and_then(serde_json::Value::as_str) {
+        action = action.with_process(process);
+    }
     if let Some(approval) = approval {
         action = action.with_approval(approval);
     }

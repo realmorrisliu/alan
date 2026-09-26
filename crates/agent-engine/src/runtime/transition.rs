@@ -17,7 +17,7 @@ pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles,
-    NamespaceToolActionEvidence, NamespaceToolExecution,
+    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,

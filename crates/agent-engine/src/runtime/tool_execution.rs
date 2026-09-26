@@ -21,7 +21,7 @@ use super::{
     tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan},
     transition::{
         NamespaceAgentFiles, NamespaceToolActionEvidence, NamespaceToolActionOutput,
-        NamespaceToolExecution,
+        NamespaceToolExecution, NamespaceToolProcessError,
     },
     turn_support::{check_turn_cancelled, tool_result_preview},
 };
@@ -227,6 +227,21 @@ where
         tool_timeout_secs,
     )
     .await;
+    // Preserve the spawned Process before cancellation resets transition state.
+    if cancel.is_cancelled() {
+        let payload = match &tool_result {
+            Ok(value) => Some(tool_payload_for_tape(&runtime.agent_files, value).await),
+            Err(error) if error.downcast_ref::<NamespaceToolProcessError>().is_some() => {
+                Some(tool_error_payload(error))
+            }
+            Err(_) => None,
+        };
+        if let Some(payload) = payload {
+            runtime
+                .machine
+                .add_tool_message(&tool_call.id, &tool_call.name, payload);
+        }
+    }
     if cancel.is_cancelled()
         && check_turn_cancelled(
             runtime.machine,
@@ -291,7 +306,7 @@ where
             Ok(ToolExecutionOutcome::Completed)
         }
         Err(err) => {
-            let error_payload = json!({"error": err.to_string()});
+            let error_payload = tool_error_payload(&err);
             if let (Some(effect), Some(effect_start)) =
                 (effect_lifecycle.as_ref(), effect_start.as_ref())
             {
@@ -332,6 +347,14 @@ where
             Ok(ToolExecutionOutcome::Completed)
         }
     }
+}
+
+fn tool_error_payload(error: &anyhow::Error) -> Value {
+    let mut payload = json!({"success": false, "error": error.to_string()});
+    if let Some(process_error) = error.downcast_ref::<NamespaceToolProcessError>() {
+        payload["process"] = json!(format!("/proc/{}", process_error.pid));
+    }
+    payload
 }
 
 pub(super) fn namespace_tool_payload(tool: NamespaceToolActionOutput) -> Result<Value> {

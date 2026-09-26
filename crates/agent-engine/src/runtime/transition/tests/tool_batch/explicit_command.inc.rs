@@ -20,7 +20,19 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
                 .await;
         let id = uuid::Uuid::new_v4().to_string();
         state.machine.accept_submission(id.clone());
-        let mut emit = |_event: Event| async {};
+        let files = state.agent_files();
+        let mut emit = |event: Event| {
+            let files = files.clone();
+            async move {
+                if matches!(event, Event::ToolCallStarted { .. }) {
+                    assert_eq!(
+                        files.read_ui_activity_snapshot().await.unwrap().state,
+                        alan_agent_protocol::UiActivityState::Running,
+                        "approved commands must publish running before Tool execution"
+                    );
+                }
+            }
+        };
         let cancel = CancellationToken::new();
         handle_submission_with_cancel(
             &mut state,
