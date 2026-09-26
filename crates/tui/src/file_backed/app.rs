@@ -390,8 +390,8 @@ impl FileBackedApp {
         let text = self.composer.take_submit()?;
         self.completion = None;
         self.composer.remember(&text);
-        if text.starts_with('/') {
-            return self.handle_command(&text);
+        if text.trim().starts_with('/') {
+            return self.handle_command(text.trim());
         }
         self.transcript.push(HistoryCell::User(text.clone()));
         self.reconciler.on_local_submit(&text);
