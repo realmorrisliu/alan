@@ -119,39 +119,8 @@ fn root_agent_completion_requires_its_own_input_id() {
         input: "current task".to_string(),
         submission_id: "input-one".into(),
         submitted_process: Some(1),
-        observed_active: false,
-        interrupt_requested: false,
         submitted_at_ms: 20,
     });
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
-    assert_eq!(
-        pending,
-        Some(PendingRootAgentTurn {
-            input: "current task".to_string(),
-            submission_id: "input-one".into(),
-            submitted_process: Some(1),
-            observed_active: false,
-            interrupt_requested: false,
-            submitted_at_ms: 20,
-        }),
-        "streamed assistant output is not proof that the turn completed"
-    );
-
-    observe_root_agent_activity(&mut pending, UiActivityState::Running);
-    assert_eq!(
-        pending,
-        Some(PendingRootAgentTurn {
-            input: "current task".to_string(),
-            submission_id: "input-one".into(),
-            submitted_process: Some(1),
-            observed_active: true,
-            interrupt_requested: false,
-            submitted_at_ms: 20,
-        })
-    );
-
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
-    assert!(pending.is_some(), "global idle does not settle an input");
     observe_root_agent_completion(
         &mut pending,
         &UiEvent::InputCompleted {
