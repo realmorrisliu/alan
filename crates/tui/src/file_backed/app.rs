@@ -15,9 +15,7 @@ use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
 use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler};
-use crate::transcript_ui::{
-    INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
-};
+use crate::transcript_ui::INLINE_WAITING_PROMPT_PREFIX;
 
 use super::file_surface::{TapeRecordV1, response_text_from_content};
 fn default_commands() -> Vec<CompletionCandidate> {
@@ -943,8 +941,10 @@ impl FileBackedApp {
         for (idx, segment) in segments.iter().enumerate() {
             let prompt = if idx == 0 {
                 self.input_prompt_prefix()
+            } else if self.pending_yield.is_some() {
+                "       "
             } else {
-                INLINE_PROMPT_CONTINUATION
+                "      "
             };
             lines.push(Line::from(vec![
                 Span::styled(prompt, Style::default().fg(Color::Green)),
@@ -963,8 +963,10 @@ impl FileBackedApp {
     pub(super) fn input_prompt_prefix(&self) -> &'static str {
         if self.pending_yield.is_some() {
             INLINE_WAITING_PROMPT_PREFIX
+        } else if self.input_intent == InputIntent::Command {
+            "alan! "
         } else {
-            INLINE_PROMPT_PREFIX
+            "alan: "
         }
     }
 }
