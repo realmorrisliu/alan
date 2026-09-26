@@ -1,6 +1,26 @@
 use super::*;
 
 impl RuntimeSubmissionQueues {
+    pub(super) fn admit_api_before_dispatch(
+        &mut self,
+        receiver: &mut mpsc::Receiver<Submission>,
+    ) -> Option<Submission> {
+        use alan_agent_protocol::Op;
+        for _ in 0..receiver.len() {
+            let Ok(input) = receiver.try_recv() else {
+                break;
+            };
+            if matches!(
+                input.op,
+                Op::Interrupt | Op::ContinueQueue | Op::DiscardQueue | Op::Resume { .. }
+            ) {
+                return Some(input);
+            }
+            self.push_outer_submission(input);
+        }
+        None
+    }
+
     pub(super) fn pause(&self) {
         self.outer_queue
             .lock()
@@ -27,6 +47,11 @@ impl RuntimeSubmissionQueues {
                 self.pause();
                 cancel.cancel();
             } else {
+                let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+                if queue.pending.iter().any(|item| matches!(item,
+                    QueuedRuntimeItem::Submission(input) if matches!(input.op, Op::Turn { .. } | Op::Input { .. }))) {
+                    queue.paused = true;
+                }
                 return false; // The idle transition still clears any pending request.
             }
             let _ = crate::runtime::ui_surfaces::warning(
