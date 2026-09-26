@@ -437,25 +437,45 @@ fn host_mount_cannot_overlap_execution_substrate_namespace_path() {
 }
 
 #[test]
-fn host_mount_cannot_overlap_scratch_tmp_namespace_path() {
-    let input = ReifiedNamespacePlanInput::new(
-        vec![ReifiedMountDeclaration::host(
-            "/tmp/project",
+fn only_host_mounts_strictly_below_scratch_are_allowed() {
+    let input = |mount| {
+        ReifiedNamespacePlanInput::new(
+            vec![mount],
             "/host/project",
-            ReifiedMountAccess::ReadWrite,
-        )],
-        "/host/project",
-        shell_argv(),
-        NetworkPosture::Deny,
-    );
-
-    assert_eq!(
-        ReifiedNamespacePlan::derive(input),
-        Err(ReifiedNamespacePlanError::NamespaceMountOverlap {
-            parent: PathBuf::from("/tmp"),
-            child: PathBuf::from("/tmp/project"),
-        })
-    );
+            shell_argv(),
+            NetworkPosture::Deny,
+        )
+    };
+    let host =
+        |path| ReifiedMountDeclaration::host(path, "/host/project", ReifiedMountAccess::ReadWrite);
+    let plan = ReifiedNamespacePlan::derive(input(host("/tmp/project"))).unwrap();
+    assert_eq!(plan.cwd, PathBuf::from("/tmp/project"));
+    for (path, scratch) in [("/tmp", "/tmp"), ("/run", "/run/alan-tmp")] {
+        assert!(matches!(
+            ReifiedNamespacePlan::derive(
+                input(host(path)).with_scratch_tmp_namespace_path(scratch)
+            ),
+            Err(ReifiedNamespacePlanError::NamespaceMountOverlap { .. })
+        ));
+    }
+    let virtual_input = input(host("/mnt/project"));
+    let mut with_virtual = virtual_input.clone();
+    with_virtual
+        .declarations
+        .push(ReifiedMountDeclaration::virtual_mount("/tmp/virtual"));
+    assert!(matches!(
+        ReifiedNamespacePlan::derive(with_virtual),
+        Err(ReifiedNamespacePlanError::NamespaceMountOverlap { .. })
+    ));
+    let with_substrate =
+        virtual_input.with_execution_substrate(vec![ReifiedExecutionSubstrateMount::new(
+            "/tmp/bin",
+            "/host/bin",
+        )]);
+    assert!(matches!(
+        ReifiedNamespacePlan::derive(with_substrate),
+        Err(ReifiedNamespacePlanError::NamespaceMountOverlap { .. })
+    ));
 }
 
 #[test]

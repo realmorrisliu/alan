@@ -542,3 +542,60 @@ async fn linux_runner_cancellation_stops_user_command_after_setup() {
         "cancelled descendant produced a later effect"
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_runner_preserves_native_mounts_below_private_tmp() {
+    if !linux_reified_runner_ready_for_smoke() {
+        return;
+    }
+    let host = tempfile::tempdir_in("/tmp").unwrap();
+    let project = host.path().join("project");
+    let readonly = host.path().join("readonly.txt");
+    let hidden = host.path().join("hidden.txt");
+    let scratch = host.path().join("scratch.txt");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("input.txt"), "input").unwrap();
+    std::fs::write(&readonly, "readonly").unwrap();
+    std::fs::write(&hidden, "secret").unwrap();
+    let script = r#"
+set -eu
+test "$(pwd)" = "$1"
+test "$(cat input.txt)" = input
+test "$(cat "$2")" = readonly
+test ! -e "$3"
+test ! -e "$4"
+printf changed > output.txt
+printf temporary > "$4"
+if printf blocked > "$2"; then exit 42; fi
+"#;
+    let plan = ReifiedNamespacePlan::derive(ReifiedNamespacePlanInput::new(
+        vec![
+            ReifiedMountDeclaration::host(&project, &project, ReifiedMountAccess::ReadWrite),
+            ReifiedMountDeclaration::host(&readonly, &readonly, ReifiedMountAccess::ReadOnly),
+        ],
+        &project,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            script.into(),
+            "native-tmp-test".into(),
+            project.display().to_string(),
+            readonly.display().to_string(),
+            hidden.display().to_string(),
+            scratch.display().to_string(),
+        ],
+        NetworkPosture::Deny,
+    ))
+    .unwrap();
+    for _ in 0..2 {
+        let result = run_linux_reified_smoke(&plan);
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert_eq!(
+            std::fs::read_to_string(project.join("output.txt")).unwrap(),
+            "changed"
+        );
+        assert_eq!(std::fs::read_to_string(&readonly).unwrap(), "readonly");
+        assert!(!scratch.exists());
+    }
+}
