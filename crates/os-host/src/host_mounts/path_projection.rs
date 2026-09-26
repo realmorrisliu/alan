@@ -43,7 +43,7 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
                     brackets.pop();
                     return None;
                 }
-                (ch.is_whitespace()
+                (is_field_separator(ch)
                     || matches!(
                         ch,
                         '\x1b' | '\x07' | '\'' | '"' | '<' | '>' | '`' | ')' | ']' | '}'
@@ -53,7 +53,7 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
             .unwrap_or(text.len());
         // ponytail: unwrapped URLs use prose punctuation; quote/encode literal endings.
         if !text[start..end].contains(['?', '#'])
-            && text[end..].chars().next().is_none_or(char::is_whitespace)
+            && text[end..].chars().next().is_none_or(is_field_separator)
         {
             end = start
                 + text[start..end]
@@ -132,6 +132,10 @@ fn relative_path(cwd: &Path, target: &Path) -> PathBuf {
         relative.push(".");
     }
     relative
+}
+
+fn is_field_separator(ch: char) -> bool {
+    ch.is_whitespace() || ch == '\0'
 }
 
 fn shell_escaped_path(path: &str) -> String {
@@ -270,17 +274,17 @@ fn is_path_end(suffix: &str) -> bool {
     let Some(first) = suffix.chars().next() else {
         return true;
     };
-    if first.is_whitespace() || first == std::path::MAIN_SEPARATOR {
+    if is_field_separator(first) || first == std::path::MAIN_SEPARATOR {
         return true;
     }
     // A diagnostic location or closing prose delimiter may end a path, but a
     // punctuation-prefixed sibling filename (such as project#backup) does not.
     if first == ':' {
         let location = suffix[1..].trim_start_matches(|ch: char| ch.is_ascii_digit() || ch == ':');
-        return location.is_empty() || location.starts_with(char::is_whitespace);
+        return location.is_empty() || location.starts_with(is_field_separator);
     }
     let rest = suffix.trim_start_matches([',', ';', ')', ']', '}', '\'', '"', '>', '`', '.', '!']);
-    rest.len() < suffix.len() && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+    rest.len() < suffix.len() && (rest.is_empty() || rest.starts_with(is_field_separator))
 }
 
 fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
@@ -290,9 +294,9 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
         let suffix = strip_leading_terminal_sequences(&text[start + 1..]);
         let emphasized = is_emphasized_path(text, start, start + 1);
         let bare_root = emphasized
-            || if suffix.starts_with(char::is_whitespace) {
+            || if suffix.starts_with(is_field_separator) {
                 suffix
-                    .split(['\n', '\r'])
+                    .split(['\n', '\r', '\0'])
                     .next()
                     .unwrap_or_default()
                     .trim()
@@ -305,7 +309,7 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
             text[..start].ends_with(':') && text[start..].starts_with("//");
         if (is_path_start(text, start) || emphasized)
             && !uri_authority_delimiter
-            && (bare_root || after.is_some_and(|ch| !ch.is_whitespace() && ch != '/'))
+            && (bare_root || after.is_some_and(|ch| !is_field_separator(ch) && ch != '/'))
         {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(if bare_root {
@@ -324,7 +328,7 @@ fn is_path_start(text: &str, start: usize) -> bool {
     let prefix = strip_trailing_terminal_sequences(&text[..start]);
     let before = prefix.chars().next_back();
     before.is_none_or(|ch| {
-        ch.is_whitespace()
+        is_field_separator(ch)
             || matches!(
                 ch,
                 '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`' | '*'

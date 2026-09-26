@@ -267,6 +267,15 @@ async fn captured_paths_follow_cwd_without_rewriting_project_file_data() {
         ),
         (format!("({}/src).", root.display()), "(.).".to_string()),
         (
+            format!(
+                "{}/src\0{}\0{}/src/file\0",
+                root.display(),
+                root.display(),
+                root.display()
+            ),
+            ".\0..\0./file\0".to_string(),
+        ),
+        (
             format!("{}-backup/src", root.display()),
             format!("{}-backup/src", root.display()),
         ),
@@ -315,6 +324,8 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
     for (input, expected) in [
         ("/", "."),
         ("/\n", ".\n"),
+        ("/\0/etc\0/\0", ".\0./etc\0.\0"),
+        ("file:///\0file:///etc\0", ".\0./etc\0"),
         ("file:///", "."),
         ("1 / 2", "1 / 2"),
         ("yes / no", "yes / no"),
