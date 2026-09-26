@@ -67,10 +67,6 @@ impl TurnInputBroker {
         }
     }
 
-    pub(super) async fn clear(&self) {
-        self.inner.queue.lock().await.clear();
-    }
-
     pub(super) async fn drain(&self) -> VecDeque<Submission> {
         std::mem::take(&mut *self.inner.queue.lock().await)
     }
@@ -290,7 +286,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_turn_input_broker_roundtrip_and_clear() {
+    async fn test_turn_input_broker_roundtrip_and_drain() {
         let broker = TurnInputBroker::default();
         assert!(
             broker
@@ -340,7 +336,9 @@ mod tests {
                 })
                 .await
         );
-        broker.clear().await;
+        let drained = broker.drain().await;
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, "sub-3");
         cancel.cancel();
         assert!(broker.recv(&cancel).await.is_none());
     }

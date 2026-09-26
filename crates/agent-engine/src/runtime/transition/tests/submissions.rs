@@ -373,3 +373,45 @@ async fn late_steering_settles_separately_after_completion_or_cancellation() {
         );
     }
 }
+
+#[tokio::test]
+async fn steering_admitted_before_first_poll_is_settled() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "finished answer",
+        ))
+        .await,
+    );
+    state.core_config.memory.enabled = false;
+    let shell = Shell::new(state.environment.root_transport());
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let origin = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("original task")],
+        context: None,
+    });
+    let steering = Submission::new(Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("early steering")],
+        mode: InputMode::Steer,
+    });
+    let steering_id = steering.id.clone();
+    let advance = advance_accepted_submission(&mut state, origin, &broker, &cancel);
+    assert!(broker.push(steering).await);
+    advance.await.result.unwrap();
+
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    let settlements = events
+        .lines()
+        .filter_map(|line| match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => {
+                Some(submission_ids)
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter(|id| id == &steering_id)
+        .count();
+    assert_eq!(settlements, 1, "every admitted input must settle exactly once");
+    assert!(broker.try_recv().await.is_none());
+}

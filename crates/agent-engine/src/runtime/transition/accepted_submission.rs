@@ -115,7 +115,8 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    broker.clear().await;
+    // The Process may admit steering before this future is first polled.
+    // Its completion path already requeues leftovers from the preceding turn.
     let _ = state.machine.clear_buffered_inband_submissions();
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
