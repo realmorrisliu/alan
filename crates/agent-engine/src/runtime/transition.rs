@@ -589,6 +589,7 @@ where
                 refresh_context |= call_refresh;
                 if handle_queued_steering_inputs(
                     &mut state.machine,
+                    &state.environment.agent_files(),
                     tool_calls,
                     idx + 1,
                     inputs.steering_broker,

@@ -430,6 +430,7 @@
 
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
+            &state.environment.agent_files(),
             &[],
             0,
             Some(&broker),
@@ -451,7 +452,10 @@
 
     #[tokio::test]
     async fn queued_steering_input_invalidates_earlier_active_plan() {
-        let mut state = create_test_state();
+        let mut state = create_test_state_with_machine_tools_and_provider(
+            AgentMachine::new(), ToolRegistry::new(), alan_llm::MockLlmProvider::new(),
+        ).await;
+        state.machine.accept_submission("original");
         state
             .machine
             .begin_turn(state.machine.messages().len());
@@ -464,20 +468,19 @@
         assert!(state.machine.plan_snapshot_is_from_active_turn());
 
         let broker = TurnInputBroker::default();
-        assert!(
-            broker
-                .push(alan_agent_protocol::Submission::new(Op::Input {
-                    parts: vec![alan_agent_protocol::ContentPart::text(
-                        "Steer to the new task"
-                    )],
-                    mode: InputMode::Steer,
-                }))
-                .await
-        );
+        for id in ["steer-a", "steer-b"] {
+            let mut submission = alan_agent_protocol::Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("Steer to the new task")],
+                mode: InputMode::Steer,
+            });
+            submission.id = id.into();
+            assert!(broker.push(submission).await);
+        }
         let mut emit = |_event: Event| async {};
 
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
+            &state.environment.agent_files(),
             &[],
             0,
             Some(&broker),
@@ -492,6 +495,22 @@
             state.machine.messages().last().unwrap().text_content(),
             "Steer to the new task"
         );
+        assert_eq!(state.machine.current_submission_id(), Some("steer-b"));
+        assert_eq!(state.machine.related_submission_ids(), &["original", "steer-a"]);
+        run_turn_with_cancel(&mut state, TurnRunKind::ResumeTurn, None, &mut emit,
+            &CancellationToken::new(), None).await.unwrap();
+        let shell = Shell::new(state.environment.root_transport());
+        let tape = shell.cat(&format!("{}/machine/tape", state.environment.agent_path())).await.unwrap();
+        let records: Vec<Value> = std::str::from_utf8(&tape).unwrap().lines()
+            .map(|line| serde_json::from_str(line).unwrap()).collect();
+        for id in ["steer-a", "steer-b"] {
+            assert!(records.iter().any(|record| record["role"] == "user" && record["submission_id"] == id));
+        }
+        let answer = records.iter().rev().find(|record| record["role"] == "assistant").unwrap();
+        assert_eq!(answer["submission_id"], "steer-b");
+        assert_eq!(answer["related_submission_ids"], json!(["original", "steer-a"]));
+        state.machine.finish_submission();
+        assert!(state.machine.related_submission_ids().is_empty());
     }
 
     #[tokio::test]

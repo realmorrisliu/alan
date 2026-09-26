@@ -8,6 +8,7 @@ use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
     machine: &mut AgentMachine,
+    agent_files: &super::transition::NamespaceAgentFiles,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
     steering_broker: Option<&TurnInputBroker>,
@@ -21,14 +22,14 @@ where
         return Ok(false);
     };
 
-    let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
+    let mut steering_inputs = Vec::new();
     while let Some(submission) = broker.try_recv().await {
         if let Op::Input {
             parts,
             mode: InputMode::Steer,
         } = &submission.op
         {
-            steering_inputs.push(parts.clone());
+            steering_inputs.push((submission.id.clone(), parts.clone()));
             continue;
         }
 
@@ -58,7 +59,11 @@ where
     }
 
     machine.note_resumed_user_input();
-    for parts in steering_inputs {
+    for (id, parts) in steering_inputs {
+        agent_files
+            .write_input_tape_state(Some(&id), &crate::tape::parts_to_text(&parts))
+            .await?;
+        machine.accept_steering_submission(id);
         machine.add_user_message_parts(parts);
     }
 

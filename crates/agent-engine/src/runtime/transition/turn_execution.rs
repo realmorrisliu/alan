@@ -193,10 +193,15 @@ where
     }
 
     let user_input_for_skills = user_input.clone();
-    let mut namespace_user_input_for_tape = user_input_for_skills
+    if let Some(input) = user_input_for_skills
         .as_deref()
         .map(crate::tape::parts_to_text)
-        .filter(|input| !input.trim().is_empty());
+        .filter(|input| !input.trim().is_empty())
+    {
+        agent_files
+            .write_input_tape_state(state.machine.current_submission_id(), &input)
+            .await?;
+    }
     let turn_recall_bundle = if state.core_config.memory.enabled {
         crate::runtime::memory_recall::build_turn_recall_bundle(
             state.core_config.memory.store_dir.as_deref(),
@@ -578,7 +583,6 @@ where
         };
 
         if assistant_message_persisted && !response.content.is_empty() {
-            let namespace_input_text = namespace_user_input_for_tape.take();
             agent_files
                 .write_assistant_output(&response.content)
                 .await
@@ -586,7 +590,8 @@ where
             agent_files
                 .write_turn_tape_state(
                     state.machine.current_submission_id(),
-                    namespace_input_text.as_deref(),
+                    state.machine.related_submission_ids(),
+                    None,
                     &response.content,
                 )
                 .await
@@ -659,7 +664,6 @@ where
                 response.thinking_signature.as_deref(),
                 &response.redacted_thinking,
             );
-            let namespace_input_text = namespace_user_input_for_tape.take();
             agent_files
                 .write_assistant_output(fallback_text)
                 .await
@@ -667,7 +671,8 @@ where
             agent_files
                 .write_turn_tape_state(
                     state.machine.current_submission_id(),
-                    namespace_input_text.as_deref(),
+                    state.machine.related_submission_ids(),
+                    None,
                     fallback_text,
                 )
                 .await

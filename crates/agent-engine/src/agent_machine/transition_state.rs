@@ -78,6 +78,7 @@ pub(crate) enum DeferredRuntimeAction {
 pub(super) struct MachineTransitionState {
     /// Identifier of the submission currently accepted by this Machine.
     current_submission_id: Option<String>,
+    related_submission_ids: Vec<String>,
     pending: HashMap<String, PendingYield>,
     pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
     /// Insertion order tracking for all pending items
@@ -122,14 +123,35 @@ const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 impl AgentMachine {
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
         self.transition_state.current_submission_id = Some(submission_id.into());
+        self.transition_state.related_submission_ids.clear();
     }
 
     pub(crate) fn finish_submission(&mut self) {
         self.transition_state.current_submission_id = None;
+        self.transition_state.related_submission_ids.clear();
     }
 
     pub(crate) fn current_submission_id(&self) -> Option<&str> {
         self.transition_state.current_submission_id.as_deref()
+    }
+
+    /// Steering joins the active work; the eventual answer belongs to every participant.
+    pub(crate) fn accept_steering_submission(&mut self, submission_id: String) {
+        if let Some(previous) = self
+            .transition_state
+            .current_submission_id
+            .replace(submission_id)
+            && !self
+                .transition_state
+                .related_submission_ids
+                .contains(&previous)
+        {
+            self.transition_state.related_submission_ids.push(previous);
+        }
+    }
+
+    pub(crate) fn related_submission_ids(&self) -> &[String] {
+        &self.transition_state.related_submission_ids
     }
 
     /// Record a guardian review outcome (true = denied). Returns true when the

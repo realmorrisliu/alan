@@ -345,3 +345,16 @@ reader channel whose buffered frames can cross an interrupt/discard boundary.
 This is in-memory ordinary-queue control only. Rollout/checkpoint recovery,
 next-turn queue integration, client prefix/control activation and complete
 per-client result delivery remain pending; tasks 2.1, 2.5, 2.6 and 2.8 stay open.
+
+### Tape input correlation
+
+Agent Tape user records carry their accepted `submission_id` before generation.
+Assistant records retain that identity across pending-request responses. When
+steering joins active work, each steering input receives its own user record;
+the answer identifies the latest steering input with `submission_id` and the
+other participating inputs with `related_submission_ids`. This represents a
+shared answer to steered work, not independent executions. These fields do not
+prove completion by themselves: clients still need correlated terminal state.
+Legacy records without identity remain readable but cannot prove a particular
+client input completed. Client completion and concurrent admission are separate
+remaining delivery work.

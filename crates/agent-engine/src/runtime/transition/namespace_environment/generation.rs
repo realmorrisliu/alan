@@ -193,7 +193,7 @@ impl NamespaceTurnRuntime {
 
         agent_files.write_assistant_output(&response).await?;
         agent_files
-            .write_turn_tape_state(None, Some(&message), &response)
+            .write_turn_tape_state(None, &[], Some(&message), &response)
             .await?;
 
         Ok(NamespaceTurnOutput {

@@ -102,8 +102,15 @@ where
         };
         // A request response continues the accepted input; its control ID is
         // not the identity of the Agent answer produced after approval.
-        if !matches!(next_submission.op, Op::Resume { .. }) {
-            state.machine.accept_submission(next_submission.id.clone());
+        match next_submission.op {
+            Op::Input {
+                mode: InputMode::Steer,
+                ..
+            } => state
+                .machine
+                .accept_steering_submission(next_submission.id.clone()),
+            Op::Resume { .. } => {}
+            _ => state.machine.accept_submission(next_submission.id.clone()),
         }
         handle_submission_with_cancel_and_steering(
             state,
