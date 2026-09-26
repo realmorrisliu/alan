@@ -29,7 +29,23 @@ pub(crate) async fn advance_accepted_submission(
     cancel: &CancellationToken,
 ) -> AcceptedSubmissionOutcome {
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    state.machine.accept_submission(submission.id.clone());
+    if matches!(submission.op, Op::CompactWithOptions { .. })
+        && state.machine.has_pending_interaction()
+    {
+        return AcceptedSubmissionOutcome {
+            result: Err(anyhow::anyhow!(
+                "Manual compaction must wait for the pending interaction to finish"
+            )),
+            requeue_inband_submissions,
+            deferred_actions: Default::default(),
+        };
+    }
+    if matches!(
+        submission.op,
+        Op::Turn { .. } | Op::Input { .. } | Op::CompactWithOptions { .. }
+    ) {
+        state.machine.accept_submission(submission.id.clone());
+    }
     let mut emit = |_event: Event| async {};
 
     let result = if requeue_inband_submissions {
@@ -125,7 +141,18 @@ where
             }
             break;
         };
-        state.machine.accept_submission(next_submission.id.clone());
+        // A request response continues the accepted input; its control ID is
+        // not the identity of the Agent answer produced after approval.
+        match next_submission.op {
+            Op::Input {
+                mode: InputMode::Steer,
+                ..
+            } => state
+                .machine
+                .accept_steering_submission(next_submission.id.clone()),
+            Op::Resume { .. } => {}
+            _ => state.machine.accept_submission(next_submission.id.clone()),
+        }
         handle_submission_with_cancel_and_steering(
             state,
             next_submission,

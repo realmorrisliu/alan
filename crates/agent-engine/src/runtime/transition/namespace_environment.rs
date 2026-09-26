@@ -6,6 +6,7 @@
 //! spawned through `/proc/clone`, and state is written back to `/agent/<pid>`.
 
 mod agent_files;
+pub(crate) use agent_files::NamespaceTapeWriter;
 mod child_launch;
 mod client;
 mod generation;

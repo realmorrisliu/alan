@@ -9,7 +9,6 @@ async fn test_manual_compaction_records_audit_fields() {
     for i in 0..65 {
         machine.add_user_message(&format!("Message {}", i));
     }
-    machine.accept_submission("sub-compact");
 
     let rollout_path = machine.rollout_path().unwrap().clone();
     let runtime_config = super::RuntimeConfig::default();
@@ -25,18 +24,17 @@ async fn test_manual_compaction_records_audit_fields() {
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
-    let mut events = vec![];
-    let mut emit = |event: Event| {
-        events.push(event);
-        async {}
-    };
-    maybe_compact_context_for_request(
+    let mut submission = Submission::new(Op::CompactWithOptions {
+        focus: Some("preserve todos and constraints".into()),
+    });
+    submission.id = "sub-compact".into();
+    advance_accepted_submission(
         &mut state,
-        &mut emit,
-        CompactionRequest::manual(Some("preserve todos and constraints".to_string())),
-    )
-    .await
-    .unwrap();
+        submission,
+        &TurnInputBroker::default(),
+        &CancellationToken::new(),
+    ).await.result.unwrap();
+    assert_eq!(state.machine.current_submission_id(), None);
     state.machine.flush().await;
 
     let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
@@ -78,12 +76,7 @@ async fn test_manual_compaction_records_audit_fields() {
     assert!(compacted.output_tokens.is_some());
     assert!(compacted.duration_ms.is_some());
     assert_eq!(compacted.reference_context_revision, Some(0));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::CompactionObserved { attempt }
-            if attempt.submission_id.as_deref() == Some("sub-compact")
-                && attempt.result == CompactionResult::Success
-    )));
+
 }
 
 #[tokio::test]

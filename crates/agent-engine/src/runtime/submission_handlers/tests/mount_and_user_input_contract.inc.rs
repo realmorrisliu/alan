@@ -30,6 +30,7 @@
     #[tokio::test]
     async fn agent_resume_cannot_approve_pending_host_mount() {
         let (mut state, _host_mount, request_id) = pending_host_mount_state().await;
+        let writer = state.environment.agent_files().begin_tape_generation().await.unwrap();
         let cancel = CancellationToken::new();
         let mut events = Vec::new();
         let mut emit = |event: Event| {
@@ -49,6 +50,7 @@
         .await
         .unwrap();
 
+        writer.finish().await.unwrap();
         assert!(matches!(action, RuntimeOpAction::NoTurn));
         assert!(state.machine.pending_host_mount(&request_id).is_some());
         assert!(events.iter().any(|event| matches!(

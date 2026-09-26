@@ -45,6 +45,35 @@ where
             return Err(error);
         }
     };
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = handle_command_with_writer(
+        state,
+        submission_id,
+        (parts, command),
+        emit,
+        cancel,
+        steering_broker,
+        &writer,
+    )
+    .await;
+    let closed = writer.finish().await;
+    result.and(closed)
+}
+
+async fn handle_command_with_writer<E, F>(
+    state: &mut RuntimeLoopState,
+    submission_id: String,
+    input: (Vec<alan_agent_protocol::ContentPart>, String),
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+    writer: &NamespaceTapeWriter,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let (parts, command) = input;
     crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
         &mut state.machine,
         &state.environment.host_mount_requests(),
@@ -52,8 +81,8 @@ where
     .await?;
     state.machine.add_user_message_parts(parts);
     let agent_files = state.agent_files();
-    agent_files
-        .write_user_state(&command)
+    writer
+        .append_record("user", &command, Some(&submission_id), &[])
         .await
         .context("write explicit command submission to Agent tape")?;
     crate::runtime::ui_surfaces::turn_started(&agent_files)
@@ -156,6 +185,7 @@ pub(super) async fn replay_command<E, F>(
     approved_unknown_effect_call_id: Option<&str>,
     approved_tool_escalation_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
+    writer: &NamespaceTapeWriter,
     emit: &mut E,
 ) -> Result<()>
 where
@@ -166,7 +196,7 @@ where
         .await
         .context("write resumed command UI state")?;
     state.machine.set_turn_activity(TurnActivityState::Running);
-    let result = replay_approved_tool_batch_with_cancel(
+    let result = replay_approved_tool_batch_with_writer(
         state,
         tool_calls,
         approved_unknown_effect_call_id,
@@ -175,6 +205,7 @@ where
             explicit_command: true,
             ..inputs
         },
+        writer,
         emit,
     )
     .await;
