@@ -119,6 +119,12 @@ pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<Str
             "Shell startup files cannot be validated through opaque command wrappers"
         ));
     };
+    if is_shell_eval_builtin(view.command) {
+        return Err(anyhow!(
+            "Shell startup files cannot be validated through {}",
+            view.command
+        ));
+    }
     if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
         return Ok(None);
     }
@@ -130,6 +136,11 @@ pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<Str
     }
     let mut options = view.args.iter().enumerate();
     while let Some((index, word)) = options.next() {
+        if word.starts_with('+') {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated with + invocation options"
+            ));
+        }
         if word == "--" || !word.starts_with('-') {
             break;
         }

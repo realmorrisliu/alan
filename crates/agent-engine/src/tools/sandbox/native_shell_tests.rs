@@ -48,6 +48,15 @@ fn nested_shells_reject_startup_files_before_execution() {
     let sandbox = Sandbox::new(temp.path().to_path_buf());
     for script in [
         "bash -lc 'printf selected'",
+        "eval 'BASH_ENV=./hook; export BASH_ENV'; bash -c 'printf selected'",
+        "command eval 'BASH_ENV=./hook; export BASH_ENV'; bash -c 'printf selected'",
+        "builtin source ./hook; bash -c 'printf selected'",
+        ". ./hook; bash -c 'printf selected'",
+        "bash -c \"eval 'BASH_ENV=./hook; export BASH_ENV'; bash -c 'printf selected'\"",
+        "bash +H -c 'echo x > .git/config'",
+        "env bash +H -c 'echo x > .git/config'",
+        "bash +o history -c 'echo x > .git/config'",
+        "sh -c \"bash +H -c 'echo x > .git/config'\"",
         "exec -l bash -c 'printf selected'",
         "exec -cl bash -c 'printf selected'",
         "exec -a -bash bash -c 'printf selected'",
