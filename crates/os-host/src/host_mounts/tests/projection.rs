@@ -75,7 +75,7 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     let spaced_uri = url::Url::from_file_path(root.join("notes with spaces.txt")).unwrap();
     assert_eq!(
         adapter.project_text(spaced_uri.as_str()),
-        "./notes with spaces.txt"
+        "./notes%20with%20spaces.txt"
     );
     assert_eq!(
         adapter.project_text(&format!("\x1b]8;;{uri}\x1b\\notes\x1b]8;;\x1b\\")),
@@ -98,6 +98,42 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
 
     let unrelated_scheme = format!("pro{uri}");
     assert_eq!(adapter.project_text(&unrelated_scheme), unrelated_scheme);
+
+    for name in ["notes here.txt", "notes#?.txt", "notes).txt"] {
+        let encoded = url::Url::from_file_path(root.join(name))
+            .unwrap()
+            .to_string()
+            .replace(')', "%29");
+        let projected = adapter.project_text(&encoded);
+        assert!(!projected.contains([' ', '#', '?', ')']), "{projected}");
+        let target = url::Url::parse("file:///public/cwd/")
+            .unwrap()
+            .join(&projected)
+            .unwrap();
+        assert_eq!(
+            target.to_file_path().unwrap(),
+            PathBuf::from("/public/cwd").join(name)
+        );
+        for wrapped in [
+            format!("[notes]({encoded})"),
+            format!("\x1b]8;;{encoded}\x1b\\notes\x1b]8;;\x1b\\"),
+        ] {
+            let expected = wrapped.replace(&encoded, &projected);
+            assert_eq!(adapter.project_text(&wrapped), expected);
+        }
+    }
+    for (input, expected) in [
+        (
+            format!(r#"{{"cwd":"{}","ok":true}}"#, root.display()),
+            r#"{"cwd":".","ok":true}"#.to_string(),
+        ),
+        (
+            format!(r#""{}",true"#, root.display()),
+            r#"".",true"#.to_string(),
+        ),
+    ] {
+        assert_eq!(adapter.project_text(&input), expected);
+    }
 
     let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
     let sibling_uri =

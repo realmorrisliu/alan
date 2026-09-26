@@ -50,7 +50,18 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
             continue;
         }
         result.push_str(&text[copied..start]);
-        result.push_str(&project_native_text(adapter, &path.to_string_lossy()));
+        let relative = project_native_text(adapter, &path.to_string_lossy());
+        // Encode each URI path component; preserve relative ../ and / separators.
+        let relative_uri = relative
+            .split('/')
+            .map(|component| {
+                url::form_urlencoded::byte_serialize(component.as_bytes())
+                    .collect::<String>()
+                    .replace('+', "%20")
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        result.push_str(&relative_uri);
         if let Some(query) = url.query() {
             result.push('?');
             result.push_str(query);
@@ -151,7 +162,11 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let suffix = strip_leading_terminal_sequences(&text[end..]);
         let emphasized = is_emphasized_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
-        let boundary_after = is_path_end(suffix) || emphasized;
+        let quoted = strip_trailing_terminal_sequences(&text[..start])
+            .chars()
+            .next_back()
+            .is_some_and(|quote| matches!(quote, '\'' | '"' | '`') && suffix.starts_with(quote));
+        let boundary_after = is_path_end(suffix) || emphasized || quoted;
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);
