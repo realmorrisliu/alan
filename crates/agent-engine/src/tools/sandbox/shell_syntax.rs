@@ -636,7 +636,7 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 }
                 word_started = false;
             }
-            ' ' | '\t' | '\n' => {
+            ' ' | '\t' => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
                 }
