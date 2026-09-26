@@ -108,6 +108,28 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                 .set_tool_replay_batch("approval", vec![call], true);
         }
         let mut emit = |_| async {};
+        let external = state.agent_files().begin_tape_generation().await.unwrap();
+        let messages_before = state.machine.messages().len();
+        let blocked = handle_submission_with_cancel(
+            &mut state,
+            Submission::new(Op::Resume {
+                request_id: "approval".into(),
+                content: vec![alan_agent_protocol::ContentPart::structured(
+                    json!({"choice":"approve"}),
+                )],
+            }),
+            &mut emit,
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(blocked.is_err());
+        assert!(
+            state.machine.pending_confirmation().is_some(),
+            "busy Tape must preserve approval"
+        );
+        assert_eq!(state.machine.messages().len(), messages_before);
+        external.finish().await.unwrap();
+        agentfs.writes.store(0, Ordering::SeqCst);
         handle_submission_with_cancel(
             &mut state,
             Submission::new(Op::Resume {
@@ -137,4 +159,45 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
             .await
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn busy_tape_does_not_drain_queued_next_turn_inputs() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "answer",
+        ))
+        .await,
+    );
+    state.core_config.memory.enabled = false;
+    state
+        .machine
+        .queue_next_turn_input(vec![alan_agent_protocol::ContentPart::text("queued")]);
+    let external = state.agent_files().begin_tape_generation().await.unwrap();
+    let submission = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("now")],
+        context: None,
+    });
+    let mut emit = |_| async {};
+    let cancel = CancellationToken::new();
+    assert!(
+        handle_submission_with_cancel(&mut state, submission.clone(), &mut emit, &cancel)
+            .await
+            .is_err()
+    );
+    assert_eq!(state.machine.queued_next_turn_input_count(), 1);
+    external.finish().await.unwrap();
+    handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(state.machine.queued_next_turn_input_count(), 0);
+    assert!(
+        state
+            .machine
+            .messages()
+            .iter()
+            .any(|message| message.text_content().contains("queued")
+                && message.text_content().contains("now"))
+    );
 }
