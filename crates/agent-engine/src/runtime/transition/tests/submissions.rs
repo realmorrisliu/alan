@@ -510,3 +510,23 @@ async fn resumed_tool_finalization_observes_cancellation_before_idle() {
         assert!(!state.machine.is_turn_active());
     }
 }
+
+#[tokio::test]
+async fn manual_compaction_identity_is_not_a_cancellable_input() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "unused",
+        ))
+        .await,
+    );
+    let queue = state.machine.input_queue();
+    let submission = Submission::new(Op::CompactWithOptions { focus: None });
+    let id = submission.id.clone();
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let advance = advance_accepted_submission(&mut state, submission, &broker, &cancel);
+    assert!(queue.lock().unwrap().active_submission_ids.is_empty());
+    drop(advance);
+    assert_eq!(state.machine.current_submission_id(), Some(id.as_str()));
+}

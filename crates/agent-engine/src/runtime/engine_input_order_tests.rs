@@ -746,5 +746,33 @@ async fn targeted_queue_cancellation_preserves_other_inputs_and_active_work() {
             String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
         assert_eq!(events.lines().filter(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
             alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, .. } if submission_ids == [input.id.clone()])).count(), 1);
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(
+            !machine.submission_was_cancelled(),
+            "queued cancellation leaves active work intact"
+        );
+        machine.accept_submission("finishing-command");
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Running);
+        queues
+            .handle_control(
+                &Submission::new(Op::InterruptSubmission {
+                    submission_id: "finishing-command".into(),
+                }),
+                &files,
+                Some(&cancel),
+            )
+            .await;
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(
+            machine.submission_was_cancelled(),
+            "accepted cancellation survives asynchronous command finalization"
+        );
+        assert_eq!(machine.current_submission_id(), Some("finishing-command"));
+        machine.accept_submission("later-input");
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(
+            !machine.submission_was_cancelled(),
+            "settlement consumes the cancellation request"
+        );
     }
 }

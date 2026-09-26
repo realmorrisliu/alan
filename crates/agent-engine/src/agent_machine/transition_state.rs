@@ -127,6 +127,10 @@ impl AgentMachine {
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
         self.transition_state.current_submission_id = Some(submission_id.into());
         self.transition_state.submission_cancelled = false;
+        self.input_queue()
+            .lock()
+            .expect("input queue poisoned")
+            .active_cancel_requested = false;
         self.transition_state.related_submission_ids.clear();
         self.sync_active_submission_ids();
     }
@@ -137,6 +141,10 @@ impl AgentMachine {
         }
         self.transition_state.current_submission_id = None;
         self.transition_state.submission_cancelled = false;
+        self.input_queue()
+            .lock()
+            .expect("input queue poisoned")
+            .active_cancel_requested = false;
         self.transition_state.related_submission_ids.clear();
         self.sync_active_submission_ids();
     }
@@ -404,11 +412,11 @@ impl AgentMachine {
         if matches!(activity, TurnActivityState::Idle) {
             // The completed work is no longer cancellable while its Tape lease
             // closes. Keep the original identities for completion publication.
-            self.input_queue()
-                .lock()
-                .expect("input queue poisoned")
-                .active_submission_ids
-                .clear();
+            let queue = self.input_queue();
+            let mut queue = queue.lock().expect("input queue poisoned");
+            self.transition_state.submission_cancelled |=
+                std::mem::take(&mut queue.active_cancel_requested);
+            queue.active_submission_ids.clear();
         }
     }
 

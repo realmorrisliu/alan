@@ -182,6 +182,9 @@ impl RuntimeSubmissionQueues {
             if removed || active {
                 queue.paused = true;
             }
+            if active && !removed {
+                queue.active_cancel_requested = true;
+            }
             (removed, active)
         };
         if removed {

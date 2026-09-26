@@ -50,6 +50,16 @@ pub(crate) fn advance_accepted_submission<'a>(
         // Publish identity synchronously, before the Process can select a control
         // ahead of the returned future's first poll. Transition ownership stays here.
         state.machine.accept_submission(submission.id.clone());
+        if matches!(submission.op, Op::CompactWithOptions { .. }) {
+            // Manual compaction has a Tape identity but no cancellation contract.
+            state
+                .machine
+                .input_queue()
+                .lock()
+                .expect("input queue poisoned")
+                .active_submission_ids
+                .clear();
+        }
     }
     async move {
         if reject_compaction {
