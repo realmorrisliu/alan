@@ -265,20 +265,13 @@
         };
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-
-        match result.unwrap() {
-            RuntimeOpAction::NoTurn => {
-                let has_error = events.iter().any(|e| {
-                    matches!(e, Event::Error { message, .. } if message.contains("Use Op::Turn"))
-                });
-                assert!(
-                    has_error,
-                    "Expected guidance error for Input without active turn"
-                );
-            }
-            _ => panic!("Expected NoTurn"),
-        }
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "steering input requires an active or pending turn"
+        );
+        assert!(events.iter().any(|event| {
+            matches!(event, Event::Error { message, .. } if message.contains("Use Op::Turn"))
+        }));
     }
 
     #[tokio::test]

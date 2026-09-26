@@ -97,7 +97,10 @@ pub(super) fn correlated_ui_task(
                 }
             }
             UiEvent::Error { message, .. } => task.error = Some(message),
-            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+            UiEvent::InputCompleted { .. }
+            | UiEvent::Plan { .. }
+            | UiEvent::Thinking { .. }
+            | UiEvent::Notice { .. } => {}
         }
     }
     Ok(task)

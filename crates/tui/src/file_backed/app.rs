@@ -631,6 +631,7 @@ impl FileBackedApp {
 
     pub(super) fn apply_ui_event(&mut self, event: UiEvent) {
         match event {
+            UiEvent::InputCompleted { .. } => {}
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),

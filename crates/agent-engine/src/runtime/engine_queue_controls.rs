@@ -95,6 +95,14 @@ impl RuntimeSubmissionQueues {
                         unpublished += 1;
                         warn!(%error, submission_id=%input.id, "Failed to publish discarded input evidence");
                     }
+                    let event = alan_agent_protocol::UiEvent::InputCompleted {
+                        submission_ids: vec![input.id.clone()],
+                        status: alan_agent_protocol::UiInputStatus::Cancelled,
+                        error: Some(message.into()),
+                    };
+                    if let Err(error) = files.append_ui_event(&event).await {
+                        warn!(%error, submission_id=%input.id, "Failed to publish discarded input completion");
+                    }
                 }
                 let _ = crate::runtime::ui_surfaces::turn_completed(files, false).await;
                 if unpublished > 0 {

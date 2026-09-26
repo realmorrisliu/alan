@@ -144,7 +144,7 @@ where
                             recoverable: true,
                         })
                         .await;
-                        return Ok(RuntimeOpAction::NoTurn);
+                        anyhow::bail!("steering input requires an active or pending turn");
                     }
 
                     return Ok(RuntimeOpAction::RunTurn {

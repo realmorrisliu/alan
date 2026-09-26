@@ -528,6 +528,18 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
         b"pending\n"
     );
 
+    let pending_events = shell.cat("/agent/root/machine/ui/events").await.unwrap();
+    assert!(
+        !std::str::from_utf8(&pending_events)
+            .unwrap()
+            .lines()
+            .any(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["type"]
+                    == "input_completed"
+            }),
+        "waiting for approval is not input completion"
+    );
+
     HostCommandPlane::new(paths)
         .approve_host_mount(request_id.clone(), host_dir.path().to_path_buf())
         .await
@@ -553,7 +565,17 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
                 .into_iter()
                 .find(|record| record["role"] == "assistant")
             {
-                break answer;
+                let events = shell.cat("/agent/root/machine/ui/events").await.unwrap();
+                let complete = std::str::from_utf8(&events).unwrap().lines().any(|line| {
+                    let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                    event["type"] == "input_completed"
+                        && event["status"] == "completed"
+                        && event["submission_ids"]
+                            == serde_json::json!(["46e4ba7c-87e8-41a9-8e88-d0dc49ac99d1"])
+                });
+                if complete {
+                    break answer;
+                }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

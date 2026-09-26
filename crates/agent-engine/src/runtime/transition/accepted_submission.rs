@@ -1,6 +1,6 @@
 //! Entry orchestration for one submission already accepted by the Process loop.
 
-use alan_agent_protocol::{Event, InputMode, Op, Submission};
+use alan_agent_protocol::{Event, InputMode, Op, Submission, UiEvent, UiInputStatus};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -28,11 +28,19 @@ pub(crate) async fn advance_accepted_submission(
     broker: &TurnInputBroker,
     cancel: &CancellationToken,
 ) -> AcceptedSubmissionOutcome {
+    let completes_input = matches!(
+        submission.op,
+        Op::Turn { .. }
+            | Op::Input {
+                mode: InputMode::FollowUp | InputMode::Steer,
+                ..
+            }
+    );
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
     state.machine.accept_submission(submission.id.clone());
     let mut emit = |_event: Event| async {};
 
-    let result = if requeue_inband_submissions {
+    let mut result = if requeue_inband_submissions {
         drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
     } else {
         handle_submission_with_cancel(state, submission, &mut emit, cancel).await
@@ -44,6 +52,27 @@ pub(crate) async fn advance_accepted_submission(
             TransitionCompletion::Completed
         }
     });
+
+    if completes_input && !matches!(result, Ok(TransitionCompletion::Paused)) {
+        let mut submission_ids = state.machine.related_submission_ids().to_vec();
+        if let Some(id) = state.machine.current_submission_id() {
+            submission_ids.push(id.to_owned());
+        }
+        let event = UiEvent::InputCompleted {
+            submission_ids,
+            status: if cancel.is_cancelled() {
+                UiInputStatus::Cancelled
+            } else if result.is_err() {
+                UiInputStatus::Failed
+            } else {
+                UiInputStatus::Completed
+            },
+            error: result.as_ref().err().map(ToString::to_string),
+        };
+        if let Err(error) = state.agent_files().append_ui_event(&event).await {
+            result = Err(error.context("publish input completion"));
+        }
+    }
 
     let deferred_actions = state.machine.drain_deferred_runtime_actions();
     state.machine.finish_submission();
