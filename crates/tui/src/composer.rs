@@ -54,11 +54,10 @@ impl Composer {
     }
 
     pub fn take_submit(&mut self) -> Option<String> {
-        let text = self.buffer.trim().to_string();
-        if text.is_empty() {
+        if self.buffer.trim().is_empty() {
             return None;
         }
-        self.buffer.clear();
+        let text = std::mem::take(&mut self.buffer);
         self.cursor = 0;
         self.reset_recall();
         Some(text)
@@ -66,8 +65,7 @@ impl Composer {
 
     /// Record a submitted entry into history (adjacent-deduplicated) and persist it.
     pub fn remember(&mut self, entry: &str) {
-        let entry = entry.trim();
-        if entry.is_empty() {
+        if entry.trim().is_empty() {
             return;
         }
         if self.history.last().map(String::as_str) == Some(entry) {
@@ -269,12 +267,15 @@ impl Composer {
     }
 }
 
+const HISTORY_RECORD_PREFIX: &str = "alan-history-v1\t";
+
 fn append_history_line(path: &PathBuf, entry: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{}", entry.replace('\n', " "))
+    let encoded = serde_json::to_string(entry).map_err(std::io::Error::other)?;
+    writeln!(file, "{HISTORY_RECORD_PREFIX}{encoded}")
 }
 
 /// Load history entries from a file, oldest first. Missing file yields empty history.
@@ -284,9 +285,11 @@ pub fn load_history(path: &PathBuf, limit: usize) -> Vec<String> {
     };
     let mut entries: Vec<String> = contents
         .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
+        .filter_map(|line| match line.strip_prefix(HISTORY_RECORD_PREFIX) {
+            Some(encoded) => serde_json::from_str::<String>(encoded).ok(),
+            None => Some(line.trim().to_owned()),
+        })
+        .filter(|entry| !entry.trim().is_empty())
         .collect();
     if entries.len() > limit {
         entries.drain(..entries.len() - limit);
@@ -325,6 +328,28 @@ mod tests {
         );
         assert_eq!(composer.take_submit(), Some("hi".into()));
         assert_eq!(composer.text(), "");
+    }
+
+    #[test]
+    fn submitted_and_recalled_input_preserves_whitespace_and_newlines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        std::fs::write(&path, "legacy command\n\"quoted legacy\"\n").unwrap();
+        let text = "!printf '%s\\n' 'a b'\n  printf done  \n";
+        let mut composer = Composer::with_history(load_history(&path, 100), Some(path.clone()));
+        composer.set_text(text);
+        assert_eq!(composer.take_submit().as_deref(), Some(text));
+        composer.remember(text);
+        composer.handle_key(key(KeyCode::Up));
+        assert_eq!(composer.text(), text);
+        let loaded = load_history(&path, 100);
+        assert_eq!(loaded, ["legacy command", "\"quoted legacy\"", text]);
+        let mut restarted = Composer::with_history(loaded, Some(path));
+        restarted.handle_key(key(KeyCode::Up));
+        assert_eq!(restarted.text(), text);
+        restarted.set_text(" \n ");
+        assert!(restarted.take_submit().is_none());
+        assert_eq!(restarted.text(), " \n ");
     }
 
     #[test]
