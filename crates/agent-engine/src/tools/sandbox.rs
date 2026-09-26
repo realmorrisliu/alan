@@ -13,7 +13,7 @@
 
 mod command_interpreters;
 mod command_options;
-mod command_process;
+pub(in crate::tools) mod command_process;
 mod command_wrappers;
 mod path_literals;
 mod path_safety;
@@ -455,14 +455,10 @@ impl Sandbox {
         let runner = super::reified_namespace::LinuxReifiedNamespaceRunner::with_fallback_backend(
             super::sandbox_backend::detect_projection_backend(),
         );
-        let run = move || {
-            runner
-                .run_with_timeout(&plan, timeout)
-                .map_err(anyhow::Error::from)
-        };
-        tokio::task::spawn_blocking(run)
+        runner
+            .run_cancellable(&plan, timeout)
             .await
-            .map_err(|err| anyhow!("reified namespace runner task failed: {err}"))?
+            .map_err(anyhow::Error::from)
     }
 
     fn reified_namespace_plan_for_command(
