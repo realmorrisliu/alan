@@ -166,8 +166,12 @@ where
     match outcome {
         Ok(ToolOrchestratorOutcome::ContinueToolBatch { .. })
         | Ok(ToolOrchestratorOutcome::EndTurn) => {
-            record_missing_command_action(state, &tool_call, command_error.as_deref(), None)
-                .await?;
+            let error = command_error.as_deref().or_else(|| {
+                cancel
+                    .is_cancelled()
+                    .then_some("Command interrupted; completed changes are preserved")
+            });
+            record_missing_command_action(state, &tool_call, error, None).await?;
             state.machine.set_turn_activity(TurnActivityState::Idle);
             Ok(())
         }

@@ -302,6 +302,10 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     assert!(project.path().join("src/started.txt").exists());
     assert!(!project.path().join("src/late.txt").exists());
     assert!(!project.path().join("src/queued.txt").exists());
+    assert_eq!(
+        action_output(&first, &active).await["stderr"],
+        "Command interrupted; completed changes are preserved"
+    );
     second
         .write("/agent/root/machine/ctl", b"queue-v1 continue")
         .await

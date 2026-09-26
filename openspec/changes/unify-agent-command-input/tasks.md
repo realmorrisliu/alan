@@ -293,3 +293,12 @@
   validation and the real PTY replay. The temporary Host exited after evidence
   capture; no acceptance Process remains running. Current-head CI and the remaining
   terminal/Herdr, native restart and full closure audit are still required.
+- Cancelled explicit commands without a Tool result now retain a correlated Action
+  with a user-facing interruption message and preserve completed effects. The real
+  two-client Host regression checks this message alongside paused pending input,
+  preserved early writes and absence of late writes.
+- Root restart audit found that Service Manager currently discards runtime startup
+  rollout metadata and relaunches the unchanged Root template without a recovery
+  source. Engine recovery tests therefore do not establish Root or Host restart
+  recovery. Task 2.8 remains open for wiring that source through the existing durable
+  owner and verifying native-command restart end to end.
