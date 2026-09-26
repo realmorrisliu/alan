@@ -276,7 +276,7 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
     // Steering received during a native command must run after it completes.
     let running = submit_command(&shell, "printf started > steering-started; sleep 1").await;
     tokio::time::timeout(Duration::from_secs(5), async {
-        while !project.path().join("steering-started").exists() {
+        while !project.path().join("src/steering-started").exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
