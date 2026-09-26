@@ -239,9 +239,37 @@ impl NamespaceAgentFiles {
         Ok(())
     }
 
-    pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
+    pub async fn write_action(&self, mut record: NamespaceActionRecord) -> Result<String> {
+        if let Some(output) = record.output.as_mut() {
+            *output = crate::evidence::redact_durable_evidence_text(output).text;
+        }
+        if let Some(result) = record.result.as_mut() {
+            *result = crate::evidence::redact_durable_evidence_text(result).text;
+        }
+        if let Some(recorder) = &self.action_recorder {
+            recorder
+                .record_event("agent_action_v1", serde_json::to_value(&record)?)
+                .await
+                .context("persist Action evidence before publishing completion")?;
+        }
         let client = NamespaceClient::new(self.root.clone());
         write_action_record(&client, &self.agent_path, record).await
+    }
+
+    pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
+        // ponytail: startup scans the rollout once more; index evidence if large histories warrant it.
+        let client = NamespaceClient::new(self.root.clone());
+        for item in crate::rollout::RolloutRecorder::load_history(path).await? {
+            if let crate::rollout::RolloutItem::Event(event) = item
+                && event.event_type == "agent_action_v1"
+            {
+                let record: NamespaceActionRecord = serde_json::from_value(event.payload)
+                    .context("decode recovered Action evidence")?;
+                // This is an IO projection into a fresh Process, never a Tool replay.
+                write_action_record(&client, &self.agent_path, record).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn read_ui_activity_snapshot(&self) -> Result<UiActivitySnapshot> {

@@ -253,3 +253,90 @@ async fn engine_writes_requests_and_actions_as_agent_files() {
         .await
         .assert_ok();
 }
+
+#[tokio::test]
+async fn action_evidence_survives_rollout_recovery_without_tool_replay() {
+    let temp = tempfile::tempdir().unwrap();
+    let recorder = crate::rollout::RolloutRecorder::new_in_dir("/proc/1", "mock", temp.path())
+        .await
+        .unwrap();
+    let mut previous = recorder.path().clone();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(AgentFs::new())),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+    let original = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+        .with_action_recorder(Some(recorder));
+    let input_id = uuid::Uuid::new_v4().to_string();
+    original
+        .agent_files()
+        .write_action(
+            NamespaceActionRecord::new("bash", "failed")
+                .with_output(r#"{"stdout":"partial\n","stderr":"diagnostic\n","exit_code":7}"#)
+                .with_result(serde_json::json!({"call_id":input_id,"exit_code":7}).to_string())
+                .with_process("/proc/9"),
+        )
+        .await
+        .unwrap();
+    drop(original);
+    for pid in [2, 3] {
+        let machine = crate::agent_machine::AgentMachine::load_from_rollout_in_dir(
+            &previous,
+            &format!("/proc/{pid}"),
+            "mock",
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        let mut namespace = Namespace::new();
+        let path = format!("/agent/{pid}");
+        namespace.mount(
+            &path,
+            InProcessTransport::new(Arc::new(AgentFs::new())),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
+        let shell = Shell::new(root.clone());
+        let environment = NamespaceRuntimeEnvironment::new(root, &path, "default")
+            .with_action_recorder(machine.recorder());
+        previous = machine.rollout_path().unwrap().clone();
+        environment
+            .agent_files()
+            .restore_actions(&previous)
+            .await
+            .unwrap();
+        // No /proc mount or Tool runner exists: recovery can only project evidence.
+        let result: serde_json::Value = serde_json::from_slice(
+            &shell
+                .cat(&format!("{path}/actions/a0/result"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["call_id"], input_id);
+        assert_eq!(result["exit_code"], 7);
+        assert_eq!(
+            shell
+                .cat(&format!("{path}/actions/a0/output"))
+                .await
+                .unwrap(),
+            br#"{"stdout":"partial\n","stderr":"diagnostic\n","exit_code":7}"#
+        );
+        assert_eq!(
+            shell
+                .cat(&format!("{path}/actions/a0/process"))
+                .await
+                .unwrap(),
+            b"/proc/9"
+        );
+        let items = crate::rollout::RolloutRecorder::load_history(&previous)
+            .await
+            .unwrap();
+        assert_eq!(items.iter().filter(|item| matches!(item,
+            crate::rollout::RolloutItem::Event(event) if event.event_type == "agent_action_v1"
+        )).count(), 1, "reprojection must not append duplicate durable evidence");
+    }
+}
