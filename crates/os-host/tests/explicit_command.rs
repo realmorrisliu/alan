@@ -229,7 +229,7 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
-        !project.path().join("queued.txt").exists(),
+        !project.path().join("src/queued.txt").exists(),
         "interrupt must hold the next native command"
     );
     let activity: Value =
@@ -242,7 +242,7 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
         .unwrap();
     assert_eq!(command_result(&shell, &queued).await["exit_code"], 0);
     assert_eq!(
-        std::fs::read_to_string(project.path().join("queued.txt")).unwrap(),
+        std::fs::read_to_string(project.path().join("src/queued.txt")).unwrap(),
         "queued"
     );
     assert_eq!(
