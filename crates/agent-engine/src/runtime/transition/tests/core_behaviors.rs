@@ -270,8 +270,7 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_bat
             id: "call-1".to_string(),
             name: "request_confirmation".to_string(),
             arguments: json!({}),
-        }],
-    );
+        }], true);
 
     let mut state = create_replay_memory_test_state(memory_dir.clone(), machine);
     let cancel = CancellationToken::new();

@@ -139,7 +139,7 @@ async fn test_handle_submission_rollback() {
 }
 
 #[tokio::test]
-async fn command_intent_cannot_enter_agent_transition_or_inband_steering() {
+async fn command_steering_requires_ordered_admission() {
     use alan_agent_protocol::{ContentPart, InputIntent};
     use crate::runtime::turn_input::is_turn_inband_submission;
     let mut state = runtime_state_with_environment(
@@ -151,16 +151,31 @@ async fn command_intent_cannot_enter_agent_transition_or_inband_steering() {
     );
     let mut emit = |_event| async {};
     let cancel = CancellationToken::new();
-    for mode in [InputMode::Steer, InputMode::FollowUp, InputMode::NextTurn] {
+    let mut cases = [
+        (InputMode::Steer, "pwd", "ordered queue admission"),
+        (InputMode::NextTurn, "pwd", "ordered queue admission"),
+        (InputMode::FollowUp, "", "missing command"),
+    ].into_iter().map(|(mode, body, error)| (
+        Op::Input { parts: vec![ContentPart::text(body)], mode }, error,
+    )).collect::<Vec<_>>();
+    cases.push((Op::Turn { parts: vec![ContentPart::text("pwd")], context: None }, "input operation"));
+    for (op, error_text) in cases {
         let submission = Submission {
-            id: uuid::Uuid::new_v4().to_string(),
-            intent: InputIntent::Command,
-            op: Op::Input { parts: vec![ContentPart::text("pwd")], mode },
+            id: uuid::Uuid::new_v4().to_string(), intent: InputIntent::Command, op,
         };
+        let id = submission.id.clone();
         assert!(!is_turn_inband_submission(&submission));
         let error = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
             .await.unwrap_err();
-        assert!(error.to_string().contains("governed command admission"));
+        assert!(error.to_string().contains(error_text));
         assert!(state.machine.messages().is_empty());
+        let shell = Shell::new(state.environment.root_transport());
+        let actions = state.agent_files().action_ids().await.unwrap();
+        let base = format!("{}/actions/{}", state.environment.agent_path(), actions.last().unwrap());
+        let result: serde_json::Value = serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
+        assert_eq!(result["call_id"], id);
+        assert_eq!(result["exit_code"], 1);
+        assert_eq!(shell.cat(&format!("{base}/approval")).await.unwrap(), b"not_required");
+        assert!(shell.cat(&format!("{base}/process")).await.unwrap().is_empty());
     }
 }

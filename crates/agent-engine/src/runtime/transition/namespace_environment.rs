@@ -57,6 +57,22 @@ pub struct NamespaceTurnOutput {
     pub generation_id: String,
 }
 
+/// A failed wait after a Tool Process was spawned.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub(crate) struct NamespaceToolProcessError {
+    pub(crate) pid: String,
+    #[source]
+    pub(crate) source: anyhow::Error,
+}
+
+/// Correlation and human-approval evidence for one Tool Action.
+#[derive(Clone, Copy)]
+pub(crate) struct NamespaceToolActionEvidence<'a> {
+    pub(crate) call_id: &'a str,
+    pub(crate) approval: &'a str,
+}
+
 /// A yield/request record written by the engine under `requests/<id>/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceRequestRecord {

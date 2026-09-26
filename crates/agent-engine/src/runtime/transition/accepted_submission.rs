@@ -70,6 +70,18 @@ where
     let _ = state.machine.clear_buffered_inband_submissions();
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
+    let command = match &initial_submission.op {
+        Op::Input { parts, .. }
+            if initial_submission.intent == alan_agent_protocol::InputIntent::Command =>
+        {
+            Some(super::NormalizedToolCall {
+                id: initial_submission.id.clone(),
+                name: "bash".into(),
+                arguments: serde_json::json!({"command": alan_agent_protocol::parts_to_text(parts)}),
+            })
+        }
+        _ => None,
+    };
     handle_submission_with_cancel_and_steering(
         state,
         initial_submission,
@@ -78,6 +90,7 @@ where
         Some(broker),
     )
     .await?;
+    let mut pending_command = command.filter(|_| state.machine.has_pending_interaction());
 
     loop {
         let next_submission = if state.machine.has_pending_interaction() {
@@ -98,6 +111,18 @@ where
         };
 
         let Some(next_submission) = next_submission else {
+            if cancel.is_cancelled()
+                && let Some(command) = pending_command.as_ref()
+            {
+                super::explicit_command::finish_failed_explicit_command(
+                    state,
+                    command,
+                    "command cancelled while awaiting approval",
+                    Some("cancelled"),
+                    emit,
+                )
+                .await?;
+            }
             break;
         };
         state.machine.accept_submission(next_submission.id.clone());
@@ -109,6 +134,9 @@ where
             Some(broker),
         )
         .await?;
+        if !state.machine.has_pending_interaction() {
+            pending_command = None;
+        }
     }
 
     Ok(())

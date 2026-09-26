@@ -3,8 +3,8 @@
 use std::sync::atomic::Ordering;
 
 use alan_agent_protocol::{
-    ContentPart, InputIntent, InputMode, Op, Submission, UiActivitySnapshot, UiEvent,
-    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
+    ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
+    UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
 use alan_ap::{Fid, OpenMode};
 use anyhow::{Context, Result, bail};
@@ -50,11 +50,6 @@ impl NamespaceAgentFiles {
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
         let message = self.read_next_input_payload().await?;
         if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
-            // Client activation follows the governed command/queue integration.
-            // Until then, never reinterpret explicit command records as Agent prose.
-            if record.intent == InputIntent::Command {
-                bail!("explicit command records require governed command admission");
-            }
             return Ok(Submission {
                 id: record.submission_id,
                 intent: record.intent,
@@ -174,7 +169,6 @@ impl NamespaceAgentFiles {
         write_agent_output(&client, &self.agent_path, response).await
     }
 
-    #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_tape_records(&client, &self.agent_path, [("user", input)]).await
@@ -238,6 +232,21 @@ impl NamespaceAgentFiles {
                 .with_options(options),
         )
         .await
+    }
+
+    pub(crate) async fn write_rejected_command(&self, id: &str, message: &str) -> Result<()> {
+        self.write_action(
+            NamespaceActionRecord::new("bash", "failed")
+                .with_approval("not_required")
+                .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
+                .with_result(
+                    serde_json::json!({"call_id":id,"exit_code":1,
+                    "outcome":{"success":false,"error":message}})
+                    .to_string(),
+                ),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
