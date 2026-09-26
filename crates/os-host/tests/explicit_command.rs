@@ -273,6 +273,39 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
         2,
         "commands must not generate Agent responses"
     );
+    // Steering received during a native command must run after it completes.
+    let running = submit_command(&shell, "printf started > steering-started; sleep 1").await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !project.path().join("steering-started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let steer = json!({"version":1,"submission_id":uuid::Uuid::new_v4().to_string(),
+        "intent":"agent","mode":"steer","body":"explain the completed command"});
+    shell
+        .write(
+            "/agent/root/io/input",
+            format!("alan-input-v1\n{steer}").as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(command_result(&shell, &running).await["exit_code"], 0);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let requests = probe.recorded_requests();
+            if requests.len() == 3 {
+                assert!(
+                    format!("{:?}", requests[2].messages).contains("explain the completed command")
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("command steering must receive an Agent response");
     stop.cancel();
     server.await.unwrap().unwrap();
 }

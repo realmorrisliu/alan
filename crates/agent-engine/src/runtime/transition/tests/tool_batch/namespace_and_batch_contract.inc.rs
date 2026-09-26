@@ -377,6 +377,7 @@
 
         let tool_calls: Vec<NormalizedToolCall> = vec![];
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -518,6 +519,7 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -579,6 +581,7 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -638,6 +641,7 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -692,6 +696,7 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -730,6 +735,7 @@
         };
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };

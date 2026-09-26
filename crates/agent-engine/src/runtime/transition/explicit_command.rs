@@ -103,6 +103,7 @@ where
             state,
             &tool_call,
             ToolOrchestratorInputs {
+                explicit_command: true,
                 cancel,
                 steering_broker,
             },
@@ -159,7 +160,10 @@ where
         tool_calls,
         approved_unknown_effect_call_id,
         approved_tool_escalation_call_id,
-        inputs,
+        ToolOrchestratorInputs {
+            explicit_command: true,
+            ..inputs
+        },
         emit,
     )
     .await;
@@ -192,7 +196,11 @@ async fn record_missing_command_action(
     let payload = state.machine.tool_payload_by_call_id(&tool_call.id);
     if payload
         .as_ref()
-        .and_then(|payload| payload.get("action_id"))
+        .and_then(|payload| {
+            payload
+                .get("action_id")
+                .or_else(|| payload.pointer("/metadata/action_id"))
+        })
         .and_then(serde_json::Value::as_str)
         .is_some()
     {
