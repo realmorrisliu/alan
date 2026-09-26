@@ -415,6 +415,18 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("web.file:///etc/hosts", "web.file:///etc/hosts"),
         ("jar:file:/app.jar!/entry", "jar:file:/app.jar!/entry"),
         (
+            r#"<!DOCTYPE svg [<!ENTITY a SYSTEM "/a"><!ENTITY b SYSTEM "/b">]> /etc"#,
+            r#"<!DOCTYPE svg [<!ENTITY a SYSTEM "/a"><!ENTITY b SYSTEM "/b">]> ./etc"#,
+        ),
+        (
+            r#"<!DOCTYPE svg [<!-- ]> --> <!ENTITY b SYSTEM "/b">]> /etc"#,
+            r#"<!DOCTYPE svg [<!-- ]> --> <!ENTITY b SYSTEM "/b">]> ./etc"#,
+        ),
+        (
+            r#"<?style x > href="/a"?> /etc"#,
+            r#"<?style x > href="/a"?> ./etc"#,
+        ),
+        (
             r#"<?xml-stylesheet href="/styles/site.css"?>"#,
             r#"<?xml-stylesheet href="/styles/site.css"?>"#,
         ),

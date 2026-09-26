@@ -76,32 +76,67 @@ fn ends_uri_scheme(text: &str) -> bool {
 
 fn markup_tag_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     let mut ranges = Vec::new();
-    let mut tag_start = None;
-    let mut quote = None;
-    for (index, ch) in text.char_indices() {
-        if let Some(delimiter) = quote {
-            if ch == delimiter {
-                quote = None;
-            }
-        } else if let Some(start) = tag_start {
-            match ch {
-                '\'' | '"' => quote = Some(ch),
-                '>' => {
-                    ranges.push(start..index + 1);
-                    tag_start = None;
-                }
-                _ => {}
-            }
-        } else if ch == '<'
-            && text[index + 1..]
-                .trim_start_matches('/')
-                .starts_with(|ch: char| ch.is_ascii_alphabetic() || matches!(ch, '?' | '!'))
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find('<') {
+        let start = cursor + relative;
+        cursor = start + 1;
+        let tail = &text[start..];
+        if !tail[1..]
+            .trim_start_matches('/')
+            .starts_with(|ch: char| ch.is_ascii_alphabetic() || matches!(ch, '?' | '!'))
         {
-            tag_start = Some(index);
+            continue;
         }
-    }
-    if let Some(start) = tag_start {
-        ranges.push(start..text.len());
+        let terminator = if tail.starts_with("<!--") {
+            Some("-->")
+        } else if tail.starts_with("<![CDATA[") {
+            Some("]]>")
+        } else if tail.starts_with("<?") {
+            Some("?>")
+        } else {
+            None
+        };
+        let mut end = text.len();
+        if let Some(terminator) = terminator {
+            end = tail
+                .find(terminator)
+                .map_or(text.len(), |offset| start + offset + terminator.len());
+        } else {
+            let declaration = tail.starts_with("<!");
+            let mut brackets = 0usize;
+            let mut quote = None;
+            let mut comment_end = 0;
+            for (offset, ch) in tail[1..].char_indices() {
+                let index = start + 1 + offset;
+                if index < comment_end {
+                    continue;
+                }
+                if let Some(delimiter) = quote {
+                    if ch == delimiter {
+                        quote = None;
+                    }
+                    continue;
+                }
+                if declaration && text[index..].starts_with("<!--") {
+                    comment_end = text[index..]
+                        .find("-->")
+                        .map_or(text.len(), |offset| index + offset + 3);
+                    continue;
+                }
+                match ch {
+                    '\'' | '"' => quote = Some(ch),
+                    '[' if declaration => brackets += 1,
+                    ']' if declaration => brackets = brackets.saturating_sub(1),
+                    '>' if brackets == 0 => {
+                        end = index + 1;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        ranges.push(start..end);
+        cursor = end;
     }
     ranges
 }
