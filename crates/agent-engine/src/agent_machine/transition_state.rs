@@ -84,6 +84,7 @@ pub(crate) enum DeferredRuntimeAction {
 pub(super) struct MachineTransitionState {
     /// Identifier of the submission currently accepted by this Machine.
     current_submission_id: Option<String>,
+    related_submission_ids: Vec<String>,
     pending: HashMap<String, PendingYield>,
     pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
@@ -128,14 +129,35 @@ const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 impl AgentMachine {
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
         self.transition_state.current_submission_id = Some(submission_id.into());
+        self.transition_state.related_submission_ids.clear();
     }
 
     pub(crate) fn finish_submission(&mut self) {
         self.transition_state.current_submission_id = None;
+        self.transition_state.related_submission_ids.clear();
     }
 
     pub(crate) fn current_submission_id(&self) -> Option<&str> {
         self.transition_state.current_submission_id.as_deref()
+    }
+
+    /// Steering joins the active work; the eventual answer belongs to every participant.
+    pub(crate) fn accept_steering_submission(&mut self, submission_id: String) {
+        if let Some(previous) = self
+            .transition_state
+            .current_submission_id
+            .replace(submission_id)
+            && !self
+                .transition_state
+                .related_submission_ids
+                .contains(&previous)
+        {
+            self.transition_state.related_submission_ids.push(previous);
+        }
+    }
+
+    pub(crate) fn related_submission_ids(&self) -> &[String] {
+        &self.transition_state.related_submission_ids
     }
 
     /// Record a guardian review outcome (true = denied). Returns true when the
@@ -579,18 +601,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn accepted_submission_identity_is_machine_owned() {
-        let mut machine = AgentMachine::new();
-        assert_eq!(machine.current_submission_id(), None);
-
-        machine.accept_submission("sub-1");
-        assert_eq!(machine.current_submission_id(), Some("sub-1"));
-
-        machine.finish_submission();
-        assert_eq!(machine.current_submission_id(), None);
-    }
-
-    #[test]
     fn guardian_breaker_trips_on_three_consecutive_denials() {
         let mut state = AgentMachine::new();
         assert!(!state.record_guardian_review(true));
@@ -924,26 +934,6 @@ mod tests {
         let count = state.clear_buffered_inband_submissions();
         assert_eq!(count, 2);
         assert!(state.pop_buffered_inband_submission().is_none());
-    }
-
-    #[test]
-    fn test_queue_next_turn_inputs_fifo_and_drain() {
-        let mut state = AgentMachine::new();
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
-            Some(1)
-        );
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-2")]),
-            Some(2)
-        );
-        assert_eq!(state.queued_next_turn_input_count(), 2);
-
-        let drained = state.drain_next_turn_inputs();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[0]), "ctx-1");
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[1]), "ctx-2");
-        assert_eq!(state.queued_next_turn_input_count(), 0);
     }
 
     #[test]

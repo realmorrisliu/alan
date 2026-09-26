@@ -15,7 +15,7 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
     let agent_files = environment.agent_files();
 
-    let mut writer = agent_files.begin_tape_generation().await.unwrap();
+    let writer = agent_files.begin_tape_generation().await.unwrap();
 
     let second_writer = agent_files.begin_tape_generation().await;
     assert!(
@@ -24,18 +24,24 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
     );
 
     let mut tape_tail = shell.tail("/agent/1/machine/tape").await.unwrap();
-    writer.append_record("user", "hello").await.unwrap();
+    writer
+        .append_record("user", "hello", None, &[])
+        .await
+        .unwrap();
     let streamed = String::from_utf8(tape_tail.read(64 * 1024).await.unwrap()).unwrap();
     assert!(streamed.contains(r#""role":"user""#), "{streamed}");
     assert!(streamed.contains(r#""content":"hello""#), "{streamed}");
     tape_tail.close().await.unwrap();
 
-    writer.append_record("assistant", "hi").await.unwrap();
+    writer
+        .append_record("assistant", "hi", None, &[])
+        .await
+        .unwrap();
     writer.finish().await.unwrap();
 
-    let mut next_writer = agent_files.begin_tape_generation().await.unwrap();
+    let next_writer = agent_files.begin_tape_generation().await.unwrap();
     next_writer
-        .append_record("assistant", "after lease")
+        .append_record("assistant", "after lease", None, &[])
         .await
         .unwrap();
     next_writer.finish().await.unwrap();
@@ -47,11 +53,31 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
 
 #[test]
 fn tape_record_shape_is_content_addressable_ready() {
-    let record = tape_record_bytes("assistant", "stable text").unwrap();
+    let record = tape_record_bytes("assistant", "stable text", None, &[]).unwrap();
     assert_eq!(
         String::from_utf8(record).unwrap(),
         r#"{"version":1,"kind":"message","role":"assistant","content":"stable text"}"#.to_string()
             + "\n",
         "tape records must stay canonical, self-contained newline-delimited units"
     );
+}
+
+#[tokio::test]
+async fn failed_turn_runtime_closes_writer_before_returning() {
+    let mut ns = Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(AgentFs::new())),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+    let shell = Shell::new(root.clone());
+    shell.write("/agent/1/io/input", b"hello").await.unwrap();
+    let mut runtime = NamespaceTurnRuntime::new(
+        root.clone(),
+        NamespaceTurnRuntimeConfig::new("/agent/1", "missing"),
+    );
+    assert!(runtime.run_next_turn().await.is_err());
+    // No yield: an asynchronously scheduled Drop clunk would still hold the lease.
+    shell.write("/agent/1/machine/tape", b"").await.unwrap();
 }

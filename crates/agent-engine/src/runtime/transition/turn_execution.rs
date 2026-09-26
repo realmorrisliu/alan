@@ -22,8 +22,9 @@ use crate::runtime::turn_support::{
 use crate::runtime::virtual_tools::virtual_tool_definitions;
 
 use super::{
-    NamespaceToolExecution, RuntimeLoopState, TurnExecutionOutcome, TurnRunKind,
-    compaction_runtime, orchestrate_tool_batch, turn_memory_runtime,
+    NamespaceTapeWriter, NamespaceToolExecution, NormalizedToolCall, RuntimeLoopState,
+    TurnExecutionOutcome, TurnRunKind, compaction_runtime, orchestrate_tool_batch_internal,
+    turn_memory_runtime,
 };
 
 mod namespace_generation;
@@ -158,13 +159,42 @@ fn build_domain_prompt_with_skills(
 }
 
 /// Run a single agent turn
+#[cfg(test)]
 pub(super) async fn run_turn_with_cancel<E, F>(
+    state: &mut RuntimeLoopState,
+    turn_kind: TurnRunKind,
+    user_input: Option<Vec<crate::tape::ContentPart>>,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+) -> Result<TurnExecutionOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = run_turn_with_writer(
+        state,
+        turn_kind,
+        user_input,
+        emit,
+        cancel,
+        steering_broker,
+        &writer,
+    )
+    .await;
+    let closed = writer.finish().await;
+    result.and_then(|outcome| closed.map(|()| outcome))
+}
+
+pub(super) async fn run_turn_with_writer<E, F>(
     state: &mut RuntimeLoopState,
     turn_kind: TurnRunKind,
     mut user_input: Option<Vec<crate::tape::ContentPart>>,
     emit: &mut E,
     cancel: &CancellationToken,
     steering_broker: Option<&TurnInputBroker>,
+    writer: &super::NamespaceTapeWriter,
 ) -> Result<TurnExecutionOutcome>
 where
     E: FnMut(Event) -> F,
@@ -193,10 +223,15 @@ where
     }
 
     let user_input_for_skills = user_input.clone();
-    let mut namespace_user_input_for_tape = user_input_for_skills
+    if let Some(input) = user_input_for_skills
         .as_deref()
         .map(crate::tape::parts_to_text)
-        .filter(|input| !input.trim().is_empty());
+        .filter(|input| !input.trim().is_empty())
+    {
+        writer
+            .append_record("user", &input, state.machine.current_submission_id(), &[])
+            .await?;
+    }
     let turn_recall_bundle = if state.core_config.memory.enabled {
         crate::runtime::memory_recall::build_turn_recall_bundle(
             state.core_config.memory.store_dir.as_deref(),
@@ -578,13 +613,17 @@ where
         };
 
         if assistant_message_persisted && !response.content.is_empty() {
-            let namespace_input_text = namespace_user_input_for_tape.take();
             agent_files
                 .write_assistant_output(&response.content)
                 .await
                 .context("write namespace assistant output")?;
-            agent_files
-                .write_turn_tape_state(namespace_input_text.as_deref(), &response.content)
+            writer
+                .append_record(
+                    "assistant",
+                    &response.content,
+                    state.machine.current_submission_id(),
+                    state.machine.related_submission_ids(),
+                )
                 .await
                 .context("write namespace turn tape state")?;
         }
@@ -599,6 +638,7 @@ where
                     cancel,
                     steering_broker,
                 },
+                writer,
                 emit,
             )
             .await?
@@ -656,13 +696,17 @@ where
                 response.thinking_signature.as_deref(),
                 &response.redacted_thinking,
             );
-            let namespace_input_text = namespace_user_input_for_tape.take();
             agent_files
                 .write_assistant_output(fallback_text)
                 .await
                 .context("write namespace fallback assistant output")?;
-            agent_files
-                .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
+            writer
+                .append_record(
+                    "assistant",
+                    fallback_text,
+                    state.machine.current_submission_id(),
+                    state.machine.related_submission_ids(),
+                )
                 .await
                 .context("write namespace fallback turn tape state")?;
             let memory_runtime = turn_memory_runtime(state);
@@ -765,3 +809,27 @@ where
 
 #[cfg(test)]
 mod tests;
+
+pub(super) async fn orchestrate_tool_batch<E, F>(
+    loop_guard: &mut ToolLoopGuard,
+    state: &mut RuntimeLoopState,
+    tool_calls: &[NormalizedToolCall],
+    inputs: ToolOrchestratorInputs<'_>,
+    writer: &NamespaceTapeWriter,
+    emit: &mut E,
+) -> Result<ToolBatchOrchestratorOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    orchestrate_tool_batch_internal(
+        loop_guard,
+        state,
+        tool_calls,
+        inputs,
+        (None, None),
+        writer,
+        emit,
+    )
+    .await
+}

@@ -86,6 +86,13 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         )
         .await
         .unwrap();
+        let shell = alan_shell::Shell::new(state.environment.root_transport());
+        let tape = shell.cat(&format!("{}/machine/tape", state.environment.agent_path())).await.unwrap();
+        let users: Vec<serde_json::Value> = std::str::from_utf8(&tape).unwrap().lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|record: &serde_json::Value| record["role"] == "user").collect();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0]["submission_id"], id);
         assert!(state.machine.active_skills().is_empty());
         assert!(!state.machine.record_guardian_review(true), "prior-turn denials must be cleared");
         if let Some(choice) = choice {

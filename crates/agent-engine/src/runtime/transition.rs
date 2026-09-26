@@ -10,13 +10,17 @@ mod namespace_environment;
 mod turn_execution;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
+#[cfg(test)]
+use turn_execution::orchestrate_tool_batch;
+#[cfg(test)]
 use turn_execution::run_turn_with_cancel;
+use turn_execution::run_turn_with_writer;
 
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
-    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles,
+    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceTapeWriter,
     NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
 };
 pub use namespace_environment::{
@@ -383,20 +387,7 @@ pub(super) fn turn_memory_runtime(
     )
 }
 
-pub(super) async fn orchestrate_tool_batch<E, F>(
-    loop_guard: &mut ToolLoopGuard,
-    state: &mut RuntimeLoopState,
-    tool_calls: &[NormalizedToolCall],
-    inputs: ToolOrchestratorInputs<'_>,
-    emit: &mut E,
-) -> Result<ToolBatchOrchestratorOutcome>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    orchestrate_tool_batch_internal(loop_guard, state, tool_calls, inputs, None, None, emit).await
-}
-
+#[cfg(test)]
 pub(super) async fn replay_approved_tool_call_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
@@ -420,12 +411,41 @@ where
     .await
 }
 
+#[cfg(test)]
 pub(super) async fn replay_approved_tool_batch_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
     approved_unknown_effect_call_id: Option<&str>,
     approved_tool_escalation_call_id: Option<&str>,
     inputs: ToolOrchestratorInputs<'_>,
+    emit: &mut E,
+) -> Result<ToolBatchOrchestratorOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = replay_approved_tool_batch_with_writer(
+        state,
+        tool_calls,
+        approved_unknown_effect_call_id,
+        approved_tool_escalation_call_id,
+        inputs,
+        &writer,
+        emit,
+    )
+    .await;
+    let closed = writer.finish().await;
+    result.and_then(|outcome| closed.map(|()| outcome))
+}
+
+async fn replay_approved_tool_batch_with_writer<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_calls: &[NormalizedToolCall],
+    approved_unknown_effect_call_id: Option<&str>,
+    approved_tool_escalation_call_id: Option<&str>,
+    inputs: ToolOrchestratorInputs<'_>,
+    writer: &NamespaceTapeWriter,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
@@ -444,8 +464,11 @@ where
         state,
         tool_calls,
         inputs,
-        approved_unknown_effect_call_index,
-        approved_tool_escalation_call_index,
+        (
+            approved_unknown_effect_call_index,
+            approved_tool_escalation_call_index,
+        ),
+        writer,
         emit,
     )
     .await
@@ -567,14 +590,16 @@ async fn orchestrate_tool_batch_internal<E, F>(
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
-    approved_unknown_effect_call_index: Option<usize>,
-    approved_tool_escalation_call_index: Option<usize>,
+    approved_call_indices: (Option<usize>, Option<usize>),
+    writer: &NamespaceTapeWriter,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let (approved_unknown_effect_call_index, approved_tool_escalation_call_index) =
+        approved_call_indices;
     let mut refresh_context = false;
 
     for (idx, tool_call) in tool_calls.iter().enumerate() {
@@ -599,6 +624,7 @@ where
                 refresh_context |= call_refresh;
                 if handle_queued_steering_inputs(
                     &mut state.machine,
+                    writer,
                     tool_calls,
                     idx + 1,
                     inputs.steering_broker,
@@ -740,127 +766,96 @@ where
     }
     let op = submission.op;
 
-    match handle_runtime_op(state, op, emit).await? {
-        RuntimeOpAction::NoTurn => Ok(()),
-        RuntimeOpAction::RunTurn {
-            turn_kind,
-            user_input,
-            activate_task,
-        } => {
-            state.machine.set_turn_activity(TurnActivityState::Running);
-            let turn_outcome = match run_turn_with_cancel(
-                state,
-                turn_kind,
-                user_input,
-                emit,
-                cancel,
-                steering_broker,
-            )
-            .await
-            {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    state.machine.set_turn_activity(TurnActivityState::Idle);
-                    return Err(err);
-                }
-            };
-            state.machine.set_turn_activity(
-                if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                    TurnActivityState::Paused
-                } else {
-                    TurnActivityState::Idle
-                },
-            );
-            if activate_task {
-                state.machine.activate_task();
-            }
-            Ok(())
-        }
+    let action = match handle_runtime_op(state, op, emit).await? {
+        RuntimeOpAction::NoTurn => return Ok(()),
         RuntimeOpAction::ReplayApprovedToolCall {
             tool_call,
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
-        } => {
-            state.machine.set_turn_activity(TurnActivityState::Running);
-            match replay_approved_tool_call_with_cancel(
-                state,
-                &tool_call,
-                approved_unknown_effect_call_id.as_deref(),
-                approved_tool_escalation_call_id.as_deref(),
-                ToolOrchestratorInputs {
-                    explicit_command: false,
-                    cancel,
-                    steering_broker,
-                },
-                emit,
-            )
-            .await
-            {
-                Ok(outcome) => match outcome {
-                    ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                        let turn_outcome = match run_turn_with_cancel(
-                            state,
-                            TurnRunKind::ResumeTurn,
-                            None,
-                            emit,
-                            cancel,
-                            steering_broker,
-                        )
-                        .await
-                        {
-                            Ok(outcome) => outcome,
-                            Err(err) => {
-                                state.machine.set_turn_activity(TurnActivityState::Idle);
-                                return Err(err);
-                            }
-                        };
-                        state.machine.set_turn_activity(
-                            if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                                TurnActivityState::Paused
-                            } else {
-                                TurnActivityState::Idle
-                            },
-                        );
-                    }
-                    ToolBatchOrchestratorOutcome::PauseTurn => {
-                        state.machine.set_turn_activity(TurnActivityState::Paused);
-                    }
-                    ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
-                        finalize_replayed_tool_end_turn_best_effort(
-                            state,
-                            cancel,
-                            surfaces_refreshed,
-                            "approved-tool-replay-ended-turn",
-                            "after approved tool replay call",
-                        )
-                        .await;
-                    }
-                },
-                Err(err) => {
-                    state.machine.set_turn_activity(TurnActivityState::Idle);
-                    return Err(err);
-                }
-            };
-            Ok(())
-        }
-        RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
-            explicit_command::finish_failed_explicit_command(
-                state,
-                &tool_call,
-                "command was not approved",
-                Some("rejected"),
-                emit,
-            )
-            .await
-        }
-        RuntimeOpAction::ReplayApprovedToolBatch {
-            tool_calls,
-            resume_with_generation,
+        } => RuntimeOpAction::ReplayApprovedToolBatch {
+            tool_calls: vec![tool_call],
+            resume_with_generation: true,
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
-        } => {
-            if !resume_with_generation {
-                return explicit_command::replay_command(
+        },
+        action => action,
+    };
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = async {
+        match action {
+            RuntimeOpAction::NoTurn => Ok(()),
+            RuntimeOpAction::RunTurn {
+                turn_kind,
+                user_input,
+                activate_task,
+            } => {
+                state.machine.set_turn_activity(TurnActivityState::Running);
+                let turn_outcome = match run_turn_with_writer(
+                    state,
+                    turn_kind,
+                    user_input,
+                    emit,
+                    cancel,
+                    steering_broker,
+                    &writer,
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(err) => {
+                        state.machine.set_turn_activity(TurnActivityState::Idle);
+                        return Err(err);
+                    }
+                };
+                state.machine.set_turn_activity(
+                    if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
+                        TurnActivityState::Paused
+                    } else {
+                        TurnActivityState::Idle
+                    },
+                );
+                if activate_task {
+                    state.machine.activate_task();
+                }
+                Ok(())
+            }
+            RuntimeOpAction::ReplayApprovedToolCall { .. } => {
+                unreachable!("single replay normalized to batch")
+            }
+            RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
+                explicit_command::finish_failed_explicit_command(
+                    state,
+                    &tool_call,
+                    "command was not approved",
+                    Some("rejected"),
+                    emit,
+                )
+                .await
+            }
+            RuntimeOpAction::ReplayApprovedToolBatch {
+                tool_calls,
+                resume_with_generation,
+                approved_unknown_effect_call_id,
+                approved_tool_escalation_call_id,
+            } => {
+                if !resume_with_generation {
+                    return explicit_command::replay_command(
+                        state,
+                        &tool_calls,
+                        approved_unknown_effect_call_id.as_deref(),
+                        approved_tool_escalation_call_id.as_deref(),
+                        ToolOrchestratorInputs {
+                            explicit_command: false,
+                            cancel,
+                            steering_broker,
+                        },
+                        &writer,
+                        emit,
+                    )
+                    .await;
+                }
+                state.machine.set_turn_activity(TurnActivityState::Running);
+                match replay_approved_tool_batch_with_writer(
                     state,
                     &tool_calls,
                     approved_unknown_effect_call_id.as_deref(),
@@ -870,73 +865,64 @@ where
                         cancel,
                         steering_broker,
                     },
+                    &writer,
                     emit,
                 )
-                .await;
+                .await
+                {
+                    Ok(outcome) => match outcome {
+                        ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
+                            let turn_outcome = match run_turn_with_writer(
+                                state,
+                                TurnRunKind::ResumeTurn,
+                                None,
+                                emit,
+                                cancel,
+                                steering_broker,
+                                &writer,
+                            )
+                            .await
+                            {
+                                Ok(outcome) => outcome,
+                                Err(err) => {
+                                    state.machine.set_turn_activity(TurnActivityState::Idle);
+                                    return Err(err);
+                                }
+                            };
+                            state.machine.set_turn_activity(
+                                if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
+                                    TurnActivityState::Paused
+                                } else {
+                                    TurnActivityState::Idle
+                                },
+                            );
+                        }
+                        ToolBatchOrchestratorOutcome::PauseTurn => {
+                            state.machine.set_turn_activity(TurnActivityState::Paused);
+                        }
+                        ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
+                            finalize_replayed_tool_end_turn_best_effort(
+                                state,
+                                cancel,
+                                surfaces_refreshed,
+                                "approved-tool-replay-ended-turn",
+                                "after approved tool replay batch",
+                            )
+                            .await;
+                        }
+                    },
+                    Err(err) => {
+                        state.machine.set_turn_activity(TurnActivityState::Idle);
+                        return Err(err);
+                    }
+                };
+                Ok(())
             }
-            state.machine.set_turn_activity(TurnActivityState::Running);
-            match replay_approved_tool_batch_with_cancel(
-                state,
-                &tool_calls,
-                approved_unknown_effect_call_id.as_deref(),
-                approved_tool_escalation_call_id.as_deref(),
-                ToolOrchestratorInputs {
-                    explicit_command: false,
-                    cancel,
-                    steering_broker,
-                },
-                emit,
-            )
-            .await
-            {
-                Ok(outcome) => match outcome {
-                    ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                        let turn_outcome = match run_turn_with_cancel(
-                            state,
-                            TurnRunKind::ResumeTurn,
-                            None,
-                            emit,
-                            cancel,
-                            steering_broker,
-                        )
-                        .await
-                        {
-                            Ok(outcome) => outcome,
-                            Err(err) => {
-                                state.machine.set_turn_activity(TurnActivityState::Idle);
-                                return Err(err);
-                            }
-                        };
-                        state.machine.set_turn_activity(
-                            if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                                TurnActivityState::Paused
-                            } else {
-                                TurnActivityState::Idle
-                            },
-                        );
-                    }
-                    ToolBatchOrchestratorOutcome::PauseTurn => {
-                        state.machine.set_turn_activity(TurnActivityState::Paused);
-                    }
-                    ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
-                        finalize_replayed_tool_end_turn_best_effort(
-                            state,
-                            cancel,
-                            surfaces_refreshed,
-                            "approved-tool-replay-ended-turn",
-                            "after approved tool replay batch",
-                        )
-                        .await;
-                    }
-                },
-                Err(err) => {
-                    state.machine.set_turn_activity(TurnActivityState::Idle);
-                    return Err(err);
-                }
-            };
-            Ok(())
         }
     }
+    .await;
+    let closed = writer.finish().await;
+    result.and(closed)
 }
 
 async fn finalize_replayed_tool_end_turn_best_effort(
