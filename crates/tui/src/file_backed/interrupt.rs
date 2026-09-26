@@ -71,7 +71,7 @@ pub(super) async fn send_interrupt(
     root_pid: Option<u64>,
 ) {
     let agent_path = if app.agent_path == "/agent/root" {
-        let Some(pid) = root_pid else {
+        let Some(pid) = pending.map_or(root_pid, |turn| turn.submitted_process) else {
             app.push_error("Root Agent is not attached; retry interrupt".into());
             return;
         };
@@ -109,7 +109,11 @@ mod tests {
             submitted_at_ms: 20,
         };
         root.set_root_process("99999").await;
-        send_interrupt(&shell, &mut app, Some(&pending), Some(pid.parse().unwrap())).await;
+        for refreshed_pid in [Some(99999), None] {
+            app.notice = None;
+            send_interrupt(&shell, &mut app, Some(&pending), refreshed_pid).await;
+            assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
+        }
         let events =
             String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
         assert!(events.contains(&format!("ctl:queue-v1 interrupt {}", pending.submission_id)));
