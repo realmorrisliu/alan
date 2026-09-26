@@ -32,12 +32,24 @@ pub(super) fn observe_root_agent_activity(
 pub(super) fn observe_root_agent_completion(
     pending_turn: &mut Option<PendingRootAgentTurn>,
     event: &UiEvent,
+    app: &mut FileBackedApp,
 ) {
-    if let UiEvent::InputCompleted { submission_ids, .. } = event
+    if let UiEvent::InputCompleted {
+        submission_ids,
+        status,
+        error,
+    } = event
         && pending_turn
             .as_ref()
             .is_some_and(|turn| submission_ids.contains(&turn.submission_id))
     {
+        if *status != alan_agent_protocol::UiInputStatus::Completed {
+            app.push_error(
+                error
+                    .clone()
+                    .unwrap_or_else(|| format!("Input ended: {status:?}")),
+            );
+        }
         *pending_turn = None;
     }
 }
@@ -134,6 +146,7 @@ mod tests {
                 status: alan_agent_protocol::UiInputStatus::Completed,
                 error: None,
             },
+            &mut FileBackedApp::new("/agent/root".into()),
         );
         assert!(!observe_root_agent_activity(
             &mut pending,
@@ -167,5 +180,38 @@ mod tests {
             matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message))
             if message.contains("outcome is unknown"))
         );
+    }
+    #[test]
+    fn matching_non_success_completion_is_visible_before_pending_is_released() {
+        for status in [
+            alan_agent_protocol::UiInputStatus::Failed,
+            alan_agent_protocol::UiInputStatus::Cancelled,
+        ] {
+            let mut pending = Some(PendingRootAgentTurn {
+                input: "task".into(),
+                submission_id: "mine".into(),
+                submitted_process: Some(1),
+                observed_active: false,
+                interrupt_requested: false,
+                submitted_at_ms: 20,
+            });
+            let mut app = FileBackedApp::new("/agent/root".into());
+            let mut event = UiEvent::InputCompleted {
+                submission_ids: vec!["other".into()],
+                status,
+                error: Some("reason".into()),
+            };
+            observe_root_agent_completion(&mut pending, &event, &mut app);
+            assert!(pending.is_some());
+            assert!(app.transcript.is_empty());
+            if let UiEvent::InputCompleted { submission_ids, .. } = &mut event {
+                *submission_ids = vec!["mine".into()];
+            }
+            observe_root_agent_completion(&mut pending, &event, &mut app);
+            assert!(pending.is_none());
+            assert!(
+                matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message)) if message == "reason")
+            );
+        }
     }
 }

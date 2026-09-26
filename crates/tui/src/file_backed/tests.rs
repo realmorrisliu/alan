@@ -158,6 +158,7 @@ fn root_agent_completion_requires_its_own_input_id() {
             status: alan_agent_protocol::UiInputStatus::Completed,
             error: None,
         },
+        &mut FileBackedApp::new("/agent/root".into()),
     );
     assert!(pending.is_some());
     observe_root_agent_completion(
@@ -167,6 +168,7 @@ fn root_agent_completion_requires_its_own_input_id() {
             status: alan_agent_protocol::UiInputStatus::Completed,
             error: None,
         },
+        &mut FileBackedApp::new("/agent/root".into()),
     );
     assert_eq!(pending, None);
 }

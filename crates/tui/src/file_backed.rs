@@ -171,7 +171,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     break;
                 };
                 if let FileBackedEvent::Ui(ref event) = event {
-                    observe_root_agent_completion(&mut pending_root_agent_turn, event);
+                    observe_root_agent_completion(&mut pending_root_agent_turn, event, &mut app);
                 }
                 match event {
                     FileBackedEvent::RequestsChanged => {
