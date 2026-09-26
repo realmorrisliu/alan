@@ -720,6 +720,7 @@ where
 {
     match op {
         Op::CompactWithOptions { focus } => {
+            *tape_writer = Some(state.agent_files().begin_tape_generation().await?);
             let runtime = compaction_runtime(state);
             super::compaction::maybe_compact_context_for_request(
                 runtime,

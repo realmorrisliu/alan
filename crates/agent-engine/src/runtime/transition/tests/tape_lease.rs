@@ -300,3 +300,41 @@ async fn non_generating_resume_does_not_require_the_tape_lease() {
     ));
     assert!(events.iter().any(|event| matches!(event, Event::ToolCallCompleted { id, success: Some(false), .. } if id == "command-input")));
 }
+
+#[tokio::test(start_paused = true)]
+async fn manual_compaction_retains_the_tape_lease_until_generation_finishes() {
+    let mut state = runtime_state_with_environment(namespace_environment_with_provider(
+        DelayedMockProvider::new(tokio::time::Duration::from_secs(1), "summary"),
+    ));
+    state.core_config.memory.enabled = false;
+    for index in 0..65 {
+        state.machine.add_user_message(&format!("Message {index}"));
+    }
+    let files = state.agent_files();
+    let cancel = CancellationToken::new();
+    let mut emit = |_| async {};
+    let compact = handle_submission_with_cancel(
+        &mut state,
+        Submission::new(Op::CompactWithOptions { focus: None }),
+        &mut emit,
+        &cancel,
+    );
+    tokio::pin!(compact);
+    assert!(
+        tokio::time::timeout(tokio::time::Duration::from_millis(1), &mut compact)
+            .await
+            .is_err()
+    );
+    assert!(
+        files.begin_tape_generation().await.is_err(),
+        "compaction excludes external amendments"
+    );
+    compact.await.unwrap();
+    files
+        .begin_tape_generation()
+        .await
+        .unwrap()
+        .finish()
+        .await
+        .unwrap();
+}
