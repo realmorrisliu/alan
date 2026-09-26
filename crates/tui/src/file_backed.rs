@@ -395,7 +395,6 @@ async fn receive_file_backed_event(
 
 struct AgentWatchers {
     recovery: Option<(alan_shell::Tail, alan_shell::Tail)>,
-    hydrated_tape_bytes: usize,
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     root_agent_pid: Option<u64>,
@@ -435,7 +434,6 @@ impl AgentWatchers {
             tokio::spawn(spawn_tape_watch(tails.tape, tx, shutdown_rx)),
         ];
         Self {
-            hydrated_tape_bytes: tails.tape_history.len(),
             recovery: Some((tails.recovery_ui, tails.recovery_tape)),
             shutdown,
             tasks,
@@ -458,7 +456,7 @@ impl AgentWatchers {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
                 // Tape history outlives the local pending-input lock.
                 if let Some((_, tape)) = &self.recovery {
-                    previous_input::restore_tape_history(app, tape, self.hydrated_tape_bytes).await;
+                    previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await;
                 }
                 let retained = self.stop_for_input(submitted_task).await;
                 app.expected_terminal_error = None;

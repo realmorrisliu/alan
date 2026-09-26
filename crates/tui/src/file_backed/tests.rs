@@ -10,6 +10,7 @@ use ratatui::backend::TestBackend;
 
 fn tape_message(role: &str, content: &str) -> TapeRecordV1 {
     TapeRecordV1 {
+        end_offset: 0,
         version: 1,
         kind: "message".into(),
         role: role.into(),

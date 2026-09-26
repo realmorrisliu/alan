@@ -66,6 +66,7 @@ pub(super) enum FileBackedAction {
 
 #[derive(Clone)]
 pub(super) struct FileBackedApp {
+    pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
     pub(super) composer: Composer,
     pub(super) transcript: Vec<HistoryCell>,
@@ -98,6 +99,7 @@ pub(super) struct FileBackedApp {
 impl FileBackedApp {
     pub(super) fn new(agent_path: String) -> Self {
         Self {
+            tape_consumed_offset: 0,
             notice: None,
             expected_terminal_error: None,
             agent_path,
@@ -582,6 +584,7 @@ impl FileBackedApp {
     /// matching/suppression/echo logic lives in [`StreamReconciler`]; this
     /// only locates the current-turn cell and applies the returned decision.
     pub(super) fn apply_tape_record(&mut self, record: TapeRecordV1) {
+        self.tape_consumed_offset = self.tape_consumed_offset.max(record.end_offset);
         if record.kind != "message" {
             return;
         }
@@ -828,6 +831,7 @@ impl FileBackedApp {
     }
 
     pub(super) fn reset_for_root_process_change(&mut self) {
+        self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();

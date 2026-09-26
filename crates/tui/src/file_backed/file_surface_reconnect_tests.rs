@@ -41,6 +41,7 @@ async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() 
         .unwrap();
     tx.send(FileBackedEvent::Tape(
         crate::file_backed::file_surface::TapeRecordV1 {
+            end_offset: 0,
             version: 1,
             kind: "message".into(),
             role: "assistant".into(),

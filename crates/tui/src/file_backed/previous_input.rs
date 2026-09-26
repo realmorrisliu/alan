@@ -173,6 +173,16 @@ mod tests {
                 matches!(&app.transcript[1], HistoryCell::Assistant(text) if text == "final answer")
             );
         }
+        // Consuming the final record advances recovery even after /clear.
+        let mut app = FileBackedApp::new("/agent/root".into());
+        let mut final_record: TapeRecordV1 =
+            serde_json::from_str(tape.lines().last().unwrap()).unwrap();
+        final_record.end_offset = tape.len();
+        app.apply_tape_record(final_record);
+        app.transcript.clear();
+        let consumed = app.tape_consumed_offset;
+        restore_tape_history(&mut app, &tail, consumed).await;
+        assert!(app.transcript.is_empty());
         tail.close().await.unwrap();
     }
 

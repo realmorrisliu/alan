@@ -367,9 +367,10 @@ pub(super) async fn spawn_tape_watch(
                             }
                             // Non-message records (tool calls, checkpoints…)
                             // are not rendered; skip quietly like hydration.
-                            let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
+                            let Ok(mut record) = serde_json::from_slice::<TapeRecordV1>(line) else {
                                 continue;
                             };
+                            record.end_offset = tail.offset() as usize - pending.len();
                             if !send_event_or_shutdown(
                                 &tx,
                                 &mut shutdown_rx,
@@ -894,6 +895,8 @@ pub(super) struct ActionSnapshot {
 
 #[derive(Deserialize)]
 pub(super) struct TapeRecordV1 {
+    #[serde(skip)]
+    pub(super) end_offset: usize,
     #[allow(
         dead_code,
         reason = "version is part of the persisted tape schema even though deserialization validates it elsewhere"

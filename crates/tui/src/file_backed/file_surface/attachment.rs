@@ -125,6 +125,7 @@ async fn hydrate_pinned_agent(
         let tape_history =
             std::str::from_utf8(&tape_history).context("machine/tape is not utf8")?;
         app.transcript = parse_tape_history(tape_history);
+        app.tape_consumed_offset = tape_history.len();
         app.seed_reconciler_from_tape_history(tape_history);
 
         let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
