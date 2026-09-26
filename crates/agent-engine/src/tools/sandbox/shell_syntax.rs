@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ShellToken {
@@ -146,7 +147,7 @@ fn contains_shell_globbing(command: &str) -> bool {
 fn is_test_bracket_token(chars: &[char], index: usize) -> bool {
     let mut end = index;
     while let Some(ch) = chars.get(end) {
-        if ch.is_whitespace() || is_shell_separator(*ch) {
+        if matches!(ch, ' ' | '\t' | '\n') || is_shell_separator(*ch) {
             break;
         }
         end += 1;
@@ -166,7 +167,7 @@ fn is_brace_expansion_position(chars: &[char], index: usize) -> bool {
 }
 
 fn brace_neighbor_requires_expansion(ch: Option<char>) -> bool {
-    matches!(ch, Some(value) if !value.is_whitespace() && !is_shell_separator(value))
+    matches!(ch, Some(value) if !matches!(value, ' ' | '\t' | '\n') && !is_shell_separator(value))
 }
 
 fn is_shell_separator(ch: char) -> bool {
@@ -174,19 +175,34 @@ fn is_shell_separator(ch: char) -> bool {
 }
 
 fn is_shell_word_boundary(ch: char) -> bool {
-    ch.is_whitespace() || is_shell_separator(ch) || matches!(ch, '{' | '}')
+    matches!(ch, ' ' | '\t' | '\n') || is_shell_separator(ch) || matches!(ch, '{' | '}')
 }
 
 pub(super) fn normalize_shell_line_continuations(command: &str) -> String {
+    normalize_continuations_outside_ranges(command, &[])
+}
+
+fn normalize_continuations_outside_ranges(
+    command: &str,
+    preserved: &[std::ops::Range<usize>],
+) -> String {
+    let mut ranges = preserved.iter().peekable();
     let mut normalized = String::with_capacity(command.len());
-    let mut chars = command.chars().peekable();
+    let mut chars = command.char_indices().peekable();
     let mut in_single = false;
     let mut in_double = false;
     let mut in_comment = false;
     let mut escaped = false;
     let mut word_started = false;
 
-    while let Some(ch) = chars.next() {
+    while let Some((offset, ch)) = chars.next() {
+        while ranges.peek().is_some_and(|range| range.end <= offset) {
+            ranges.next();
+        }
+        if ranges.peek().is_some_and(|range| range.contains(&offset)) {
+            normalized.push(ch);
+            continue;
+        }
         if in_comment {
             normalized.push(ch);
             if matches!(ch, '\n' | '\r') {
@@ -357,22 +373,25 @@ fn strip_shell_comments(command: &str) -> String {
 
 fn consume_shell_line_continuation<I>(chars: &mut std::iter::Peekable<I>) -> bool
 where
-    I: Iterator<Item = char>,
+    I: Iterator<Item = (usize, char)>,
 {
-    match chars.peek().copied() {
+    match chars.peek().map(|(_, ch)| *ch) {
         Some('\n') => {
             chars.next();
             true
         }
-        Some('\r') => {
-            chars.next();
-            if matches!(chars.peek(), Some('\n')) {
-                chars.next();
-            }
-            true
-        }
         _ => false,
     }
+}
+
+fn push_double_quoted_escape(word: &mut String, next: char) {
+    if next == '\n' {
+        return;
+    }
+    if !matches!(next, '$' | '`' | '"' | '\\') {
+        word.push('\\');
+    }
+    word.push(next);
 }
 
 pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> {
@@ -416,7 +435,7 @@ pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> 
             match ch {
                 '\\' => {
                     if let Some((_, next)) = chars.next() {
-                        current.push(next);
+                        push_double_quoted_escape(&mut current, next);
                         word_started = true;
                     } else {
                         return Err(anyhow!("Command ends with an incomplete escape sequence"));
@@ -455,7 +474,7 @@ pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> 
                 word_started = true;
             }
             '#' if !word_started => in_comment = true,
-            c if c.is_whitespace() => {
+            ' ' | '\t' | '\n' => {
                 push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
                 word_started = false;
             }
@@ -580,7 +599,7 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
             match ch {
                 '\\' => {
                     if let Some(next) = chars.next() {
-                        current_word.push(next);
+                        push_double_quoted_escape(&mut current_word, next);
                         word_started = true;
                     } else {
                         return Err(anyhow!("Command ends with an incomplete escape sequence"));
@@ -625,7 +644,7 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 }
                 word_started = false;
             }
-            c if c.is_whitespace() => {
+            ' ' | '\t' => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
                 }
@@ -666,9 +685,114 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
     Ok(commands)
 }
 
+pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
+    // Parse syntax only: this never invokes a shell or evaluates substitutions.
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
+    let original = parser
+        .parse(command, None)
+        .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
+    let mut pending = vec![original.root_node()];
+    let mut heredocs = Vec::new();
+    while let Some(node) = pending.pop() {
+        if node.kind() == "heredoc_body" {
+            heredocs.push(node.byte_range());
+        } else {
+            pending.extend(node.named_children(&mut node.walk()));
+        }
+    }
+    heredocs.sort_by_key(|range| range.start);
+    let normalized = normalize_continuations_outside_ranges(command, &heredocs);
+    let tree = parser
+        .parse(&normalized, None)
+        .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
+    let root = tree.root_node();
+    if root.has_error() {
+        return Ok(None); // Native execution reports malformed shell syntax.
+    }
+    let mut cursor = root.walk();
+    let statements = root
+        .children(&mut cursor)
+        .filter(|node| node.kind() != "comment")
+        .collect::<Vec<_>>();
+    let [statement] = statements.as_slice() else {
+        return Ok(None);
+    };
+    if statement.kind() != "command" {
+        return Ok(None);
+    }
+    let Some(name) = statement.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let name = shell_tokens_with_spans(&normalized[name.byte_range()])?;
+    if name.len() != 1 || name[0].decoded != "cd" {
+        return Ok(None);
+    }
+    let mut cursor = statement.walk();
+    if statement
+        .named_children(&mut cursor)
+        .any(|node| node.kind() == "variable_assignment")
+    {
+        return Ok(None);
+    }
+    // Expansions are rejected before decoding words; nested syntax cannot turn
+    // a standalone cd into an ordinary native script with hidden side effects.
+    let comment_free = strip_shell_comments(&normalized);
+    if contains_shell_expansion(&comment_free)
+        || contains_shell_brace_expansion(&comment_free)
+        || contains_shell_globbing(&comment_free)
+        || statement
+            .named_children(&mut statement.walk())
+            .any(|node| node.kind() == "process_substitution")
+    {
+        return Err(anyhow!(
+            "standalone cd accepts a literal path; variables, substitutions, and globs are unsupported"
+        ));
+    }
+    let words = shell_tokens_with_spans(&normalized)?;
+    if words.first().is_none_or(|word| word.decoded != "cd") {
+        return Ok(None);
+    }
+    if words.len() != 2 {
+        return Err(anyhow!(
+            "standalone cd requires exactly one directory argument"
+        ));
+    }
+    let directory = &words[1].decoded;
+    if directory.is_empty() {
+        return Err(anyhow!(
+            "standalone cd requires a non-empty directory argument"
+        ));
+    }
+    if directory.starts_with('-') {
+        return Err(anyhow!("standalone cd does not support options or `-`"));
+    }
+    if normalized[words[1].raw_start..words[1].raw_end].starts_with('~') {
+        return Err(anyhow!(
+            "standalone cd does not support home-directory expansion"
+        ));
+    }
+    Ok(Some(PathBuf::from(directory)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn both_shell_readers_preserve_double_quoted_backslashes() {
+        let script = r#"printf "foo\bar" "foo\\bar" "foo\$bar""#;
+        let expected = vec!["printf", r"foo\bar", r"foo\bar", "foo$bar"];
+        assert_eq!(shell_commands(script).unwrap()[0], expected);
+        assert_eq!(
+            shell_tokens_with_spans(script)
+                .unwrap()
+                .iter()
+                .map(|token| token.decoded.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
 
     #[test]
     fn redirection_dash_belongs_to_the_target_except_for_stripped_heredocs() {

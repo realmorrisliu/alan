@@ -44,6 +44,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub(crate) use shell_syntax::parse_standalone_cd;
+
 const SANDBOX_BACKEND_PATH_GUARD: &str = "host_mount_path_guard";
 
 /// How thoroughly to validate command paths. Under an OS sandbox the kernel

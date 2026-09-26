@@ -38,6 +38,8 @@ rand.workspace = true
 eventsource-stream.workspace = true
 futures-core.workspace = true
 pin-utils.workspace = true
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"

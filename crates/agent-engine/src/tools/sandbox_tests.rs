@@ -925,3 +925,6 @@ async fn test_os_backend_unwraps_transparent_wrappers_for_protected_and_reads() 
         "wrong rejection for wrapper-hidden read"
     );
 }
+
+#[path = "sandbox/standalone_cd_tests.rs"]
+mod standalone_cd_tests;

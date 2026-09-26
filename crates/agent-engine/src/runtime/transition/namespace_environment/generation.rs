@@ -178,32 +178,38 @@ impl NamespaceTurnRuntime {
         let message = agent_files.read_next_input().await?;
 
         let writer = agent_files.begin_tape_generation().await?;
-        writer.append_record("user", &message, None, &[]).await?;
-        let request = GenerationRequest::new().with_user_message(message.clone());
-        let request = if let Some(system_prompt) = self.config.system_prompt.clone() {
-            request.with_system_prompt(system_prompt)
-        } else {
-            request
-        };
-        let request_doc = LlmRequestDoc::from_generation_request(&request)?;
-        let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
-        let generation_id =
-            start_generation(&client, &generation.llm_connection, &request_bytes).await?;
-        let generation_response =
-            read_generation_response(&client, &generation.llm_connection, &generation_id).await?;
-        let response = generation_response.content;
+        let result = async {
+            writer.append_record("user", &message, None, &[]).await?;
+            let request = GenerationRequest::new().with_user_message(message.clone());
+            let request = if let Some(system_prompt) = self.config.system_prompt.clone() {
+                request.with_system_prompt(system_prompt)
+            } else {
+                request
+            };
+            let request_doc = LlmRequestDoc::from_generation_request(&request)?;
+            let request_bytes =
+                serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
+            let generation_id =
+                start_generation(&client, &generation.llm_connection, &request_bytes).await?;
+            let generation_response =
+                read_generation_response(&client, &generation.llm_connection, &generation_id)
+                    .await?;
+            let response = generation_response.content;
 
-        agent_files.write_assistant_output(&response).await?;
-        writer
-            .append_record("assistant", &response, None, &[])
-            .await?;
-        writer.finish().await?;
+            agent_files.write_assistant_output(&response).await?;
+            writer
+                .append_record("assistant", &response, None, &[])
+                .await?;
 
-        Ok(NamespaceTurnOutput {
-            input: message,
-            response,
-            generation_id,
-        })
+            Ok(NamespaceTurnOutput {
+                input: message,
+                response,
+                generation_id,
+            })
+        }
+        .await;
+        let closed = writer.finish().await;
+        result.and_then(|output| closed.map(|()| output))
     }
 }
 
