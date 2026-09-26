@@ -212,3 +212,35 @@ async fn identical_inputs_publish_distinct_submission_ids_on_tape() {
         assert_eq!(matching[1]["content"], "answer");
     }
 }
+
+#[tokio::test]
+async fn next_turn_inputs_keep_their_ids_in_the_shared_answer() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO, "combined answer",
+        )).await,
+    );
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    for id in ["queued-one", "queued-two"] {
+        let mut input = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text(id)], mode: InputMode::NextTurn,
+        });
+        input.id = id.into();
+        advance_accepted_submission(&mut state, input, &broker, &cancel).await.result.unwrap();
+    }
+    let mut input = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("start")], context: None,
+    });
+    input.id = "trigger".into();
+    advance_accepted_submission(&mut state, input, &broker, &cancel).await.result.unwrap();
+    let shell = Shell::new(state.environment.root_transport());
+    let tape = shell.cat("/agent/1/machine/tape").await.unwrap();
+    let records: Vec<serde_json::Value> = std::str::from_utf8(&tape).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(records.len(), 2);
+    for record in records {
+        assert_eq!(record["submission_id"], "trigger");
+        assert_eq!(record["related_submission_ids"], json!(["queued-one", "queued-two"]));
+    }
+}

@@ -94,7 +94,7 @@ pub(super) struct MachineTransitionState {
     /// after the turn completes (e.g., user input during tool execution).
     buffered_inband_submissions: VecDeque<Submission>,
     /// Queued context for `InputMode::NextTurn`.
-    queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
+    queued_next_turn_inputs: VecDeque<(Option<String>, Vec<ContentPart>)>,
     /// Ordinary queued work and pause state survive reset_turn, like next-turn input.
     pub(super) input_queue: std::sync::Arc<std::sync::Mutex<super::input_queue::MachineInputQueue>>,
     /// Number of automatic mid-turn compactions already performed in the active turn.
@@ -133,6 +133,9 @@ impl AgentMachine {
     }
 
     pub(crate) fn finish_submission(&mut self) {
+        if self.has_pending_interaction() {
+            return;
+        }
         self.transition_state.current_submission_id = None;
         self.transition_state.related_submission_ids.clear();
     }
@@ -247,13 +250,25 @@ impl AgentMachine {
         }
         self.transition_state
             .queued_next_turn_inputs
-            .push_back(parts);
+            .push_back((self.transition_state.current_submission_id.clone(), parts));
         Some(self.transition_state.queued_next_turn_inputs.len())
     }
 
     /// Drain queued `next_turn` input parts in FIFO order.
     pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
-        std::mem::take(&mut self.transition_state.queued_next_turn_inputs)
+        let inputs = std::mem::take(&mut self.transition_state.queued_next_turn_inputs);
+        inputs
+            .into_iter()
+            .map(|(id, parts)| {
+                if let Some(id) = id
+                    && self.current_submission_id() != Some(id.as_str())
+                    && !self.transition_state.related_submission_ids.contains(&id)
+                {
+                    self.transition_state.related_submission_ids.push(id);
+                }
+                parts
+            })
+            .collect()
     }
 
     /// Number of queued `next_turn` payloads.

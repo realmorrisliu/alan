@@ -229,7 +229,12 @@ where
         .filter(|input| !input.trim().is_empty())
     {
         writer
-            .append_record("user", &input, state.machine.current_submission_id(), &[])
+            .append_record(
+                "user",
+                &input,
+                state.machine.current_submission_id(),
+                state.machine.related_submission_ids(),
+            )
             .await?;
     }
     let turn_recall_bundle = if state.core_config.memory.enabled {

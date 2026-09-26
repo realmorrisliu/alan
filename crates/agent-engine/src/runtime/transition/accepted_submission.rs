@@ -29,7 +29,9 @@ pub(crate) async fn advance_accepted_submission(
     cancel: &CancellationToken,
 ) -> AcceptedSubmissionOutcome {
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    state.machine.accept_submission(submission.id.clone());
+    if matches!(submission.op, Op::Turn { .. } | Op::Input { .. }) {
+        state.machine.accept_submission(submission.id.clone());
+    }
     let mut emit = |_event: Event| async {};
 
     let result = if requeue_inband_submissions {

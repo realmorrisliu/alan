@@ -107,10 +107,11 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                 .machine
                 .set_tool_replay_batch("approval", vec![call], true);
         }
-        let mut emit = |_| async {};
+        state.machine.accept_submission("originating-input");
+        let broker = crate::runtime::turn_input::TurnInputBroker::default();
         let external = state.agent_files().begin_tape_generation().await.unwrap();
         let messages_before = state.machine.messages().len();
-        let blocked = handle_submission_with_cancel(
+        let blocked = advance_accepted_submission(
             &mut state,
             Submission::new(Op::Resume {
                 request_id: "approval".into(),
@@ -118,11 +119,16 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                     json!({"choice":"approve"}),
                 )],
             }),
-            &mut emit,
+            &broker,
             &CancellationToken::new(),
         )
-        .await;
+        .await
+        .result;
         assert!(blocked.is_err());
+        assert_eq!(
+            state.machine.current_submission_id(),
+            Some("originating-input")
+        );
         assert!(
             state.machine.pending_confirmation().is_some(),
             "busy Tape must preserve approval"
@@ -130,7 +136,7 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
         assert_eq!(state.machine.messages().len(), messages_before);
         external.finish().await.unwrap();
         agentfs.writes.store(0, Ordering::SeqCst);
-        handle_submission_with_cancel(
+        advance_accepted_submission(
             &mut state,
             Submission::new(Op::Resume {
                 request_id: "approval".into(),
@@ -138,13 +144,20 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                     json!({"choice":"approve"}),
                 )],
             }),
-            &mut emit,
+            &broker,
             &CancellationToken::new(),
         )
         .await
+        .result
         .unwrap();
         let tape = Shell::new(root).cat("/agent/1/machine/tape").await.unwrap();
-        assert!(String::from_utf8(tape).unwrap().contains("resumed answer"));
+        let tape = String::from_utf8(tape).unwrap();
+        let answer: serde_json::Value = tape
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|record| record["content"] == "resumed answer")
+            .unwrap();
+        assert_eq!(answer["submission_id"], "originating-input");
         assert_eq!(
             agentfs.writes.load(Ordering::SeqCst),
             1,
