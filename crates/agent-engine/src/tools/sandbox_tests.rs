@@ -3,6 +3,9 @@ use crate::tools::reified_namespace::ReifiedMountAccess;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
+#[path = "sandbox/native_shell_tests.rs"]
+mod native_shell_tests;
+
 #[path = "sandbox/reified_tests.rs"]
 mod reified_tests;
 

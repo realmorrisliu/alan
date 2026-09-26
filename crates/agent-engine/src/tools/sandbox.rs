@@ -392,7 +392,8 @@ impl Sandbox {
         allow_network: bool,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Result<tokio::process::Command> {
-        // Defense in depth: start the shell with pathname expansion disabled.
+        // Pin the system shell; -p ignores inherited shell functions/startup hooks,
+        // and -f disables pathname expansion after preflight has validated the script.
         let command = match backend {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
                 let profile = super::sandbox_backend::seatbelt_profile(
@@ -404,7 +405,8 @@ impl Sandbox {
                 command
                     .arg("-p")
                     .arg(profile)
-                    .arg("sh")
+                    .arg("/bin/sh")
+                    .arg("-p")
                     .arg("-f")
                     .arg("-c")
                     .arg(cmd);
@@ -420,8 +422,8 @@ impl Sandbox {
                 use std::os::unix::process::CommandExt;
                 let writable_roots = self.spec.writable_roots.clone();
                 let read_denylist = self.spec.read_denylist.clone();
-                let mut command = std::process::Command::new("sh");
-                command.arg("-f").arg("-c").arg(cmd);
+                let mut command = std::process::Command::new("/bin/sh");
+                command.arg("-p").arg("-f").arg("-c").arg(cmd);
                 // SAFETY: pre_exec runs in the forked child before exec; it only
                 // applies a Landlock ruleset (no shared-state mutation).
                 unsafe {
@@ -436,8 +438,8 @@ impl Sandbox {
                 tokio::process::Command::from(command)
             }
             _ => {
-                let mut command = tokio::process::Command::new("sh");
-                command.arg("-f").arg("-c").arg(cmd);
+                let mut command = tokio::process::Command::new("/bin/sh");
+                command.arg("-p").arg("-f").arg("-c").arg(cmd);
                 command
             }
         };
@@ -482,7 +484,8 @@ impl Sandbox {
                 self.reified_mount_declarations(),
                 cwd,
                 vec![
-                    "sh".to_string(),
+                    "/bin/sh".to_string(),
+                    "-p".to_string(),
                     "-f".to_string(),
                     "-c".to_string(),
                     cmd.to_string(),
@@ -492,7 +495,8 @@ impl Sandbox {
         )
         .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
         plan.argv = vec![
-            "sh".to_string(),
+            "/bin/sh".to_string(),
+            "-p".to_string(),
             "-f".to_string(),
             "-c".to_string(),
             Self::translate_reified_command_host_paths(cmd, &plan),
