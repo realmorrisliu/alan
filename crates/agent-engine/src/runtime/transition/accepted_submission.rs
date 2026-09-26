@@ -172,15 +172,27 @@ where
         ) && !state.machine.is_turn_active()
             && !state.machine.has_pending_interaction()
         {
-            let message = "Steering input arrived after the turn completed; submit a new turn";
+            let (status, message) = if cancel.is_cancelled() {
+                (
+                    UiInputStatus::Cancelled,
+                    "Steering input cancelled with the active turn",
+                )
+            } else {
+                (
+                    UiInputStatus::Failed,
+                    "Steering input arrived after the turn completed; submit a new turn",
+                )
+            };
             agent_files
                 .append_ui_event(&UiEvent::InputCompleted {
                     submission_ids: vec![next_submission.id],
-                    status: UiInputStatus::Failed,
+                    status,
                     error: Some(message.into()),
                 })
                 .await?;
-            crate::runtime::ui_surfaces::error_notice(&agent_files, message).await?;
+            if status == UiInputStatus::Failed {
+                crate::runtime::ui_surfaces::error_notice(&agent_files, message).await?;
+            }
             continue;
         }
         // A request response continues the accepted input; its control ID is
