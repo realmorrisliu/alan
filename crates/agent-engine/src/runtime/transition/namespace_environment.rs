@@ -57,6 +57,13 @@ pub struct NamespaceTurnOutput {
     pub generation_id: String,
 }
 
+/// Correlation and human-approval evidence for one Tool Action.
+#[derive(Clone, Copy)]
+pub(crate) struct NamespaceToolActionEvidence<'a> {
+    pub(crate) call_id: &'a str,
+    pub(crate) approval: &'a str,
+}
+
 /// A yield/request record written by the engine under `requests/<id>/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceRequestRecord {

@@ -19,7 +19,10 @@ use crate::{
 
 use super::{
     tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan},
-    transition::{NamespaceAgentFiles, NamespaceToolActionOutput, NamespaceToolExecution},
+    transition::{
+        NamespaceAgentFiles, NamespaceToolActionEvidence, NamespaceToolActionOutput,
+        NamespaceToolExecution,
+    },
     turn_support::{check_turn_cancelled, tool_result_preview},
 };
 
@@ -33,6 +36,7 @@ pub(super) struct ToolExecutionRequest<'a> {
     pub(super) tool_timeout_secs: usize,
     pub(super) tool_capability: ToolCapability,
     pub(super) tool_audit: Option<ToolDecisionAudit>,
+    pub(super) approval: &'static str,
     pub(super) allow_approved_unknown_effect_execution: bool,
     pub(super) cancel: &'a CancellationToken,
 }
@@ -59,6 +63,7 @@ where
         tool_timeout_secs,
         tool_capability,
         tool_audit,
+        approval,
         allow_approved_unknown_effect_execution,
         cancel,
     } = request;
@@ -213,7 +218,10 @@ where
     let tool_result = execute_tool_effect(
         runtime.tool_execution,
         &tool_call.name,
-        &tool_call.id,
+        NamespaceToolActionEvidence {
+            call_id: &tool_call.id,
+            approval,
+        },
         tool_arguments.clone(),
         cancel,
         tool_timeout_secs,
@@ -403,7 +411,7 @@ pub(super) async fn tool_payload_for_tape(
 pub(super) async fn execute_tool_effect(
     tools: NamespaceToolExecution,
     tool_name: &str,
-    call_id: &str,
+    evidence: NamespaceToolActionEvidence<'_>,
     tool_arguments: Value,
     cancel: &CancellationToken,
     timeout_secs: usize,
@@ -414,7 +422,7 @@ pub(super) async fn execute_tool_effect(
     let tool = tools
         .run_action_with_cancel_and_timeout(
             tool_name,
-            Some(call_id),
+            Some(evidence),
             &executable,
             [arguments_doc],
             cancel,
