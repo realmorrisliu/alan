@@ -21,6 +21,11 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
     /// Resolve an Agent-visible absolute path or cwd-relative path.
     fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf>;
 
+    /// Resolve an explicit user directory change to its public namespace path.
+    fn resolve_directory(&self, _namespace_cwd: &Path, _path: &Path) -> Result<PathBuf> {
+        anyhow::bail!("Host adapter does not support standalone cd")
+    }
+
     /// Translate one native adapter path back into the Process namespace.
     fn visible_path(&self, host_path: &Path) -> PathBuf;
 

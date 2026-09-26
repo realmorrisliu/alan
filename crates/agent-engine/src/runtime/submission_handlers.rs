@@ -96,6 +96,9 @@ where
             })
             .await;
         }
+        Op::ContinueQueue | Op::DiscardQueue => {
+            anyhow::bail!("queue controls require Process-loop admission");
+        }
         Op::Interrupt => {
             runtime.cancel_current_task(emit).await?;
         }

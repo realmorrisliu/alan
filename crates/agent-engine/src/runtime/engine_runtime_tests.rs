@@ -15,12 +15,15 @@ fn test_push_outer_submission_inserts_before_existing_deferred_actions() {
     queues.push_outer_submission(second_submission);
 
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&queues.outer_queue.lock().unwrap().pending),
         vec!["submission", "submission", "deferred", "deferred"]
     );
 
     let queued_submission_ids = queues
         .outer_queue
+        .lock()
+        .unwrap()
+        .pending
         .iter()
         .filter_map(|item| match item {
             QueuedRuntimeItem::Submission(submission) => Some(submission.id.clone()),
@@ -50,11 +53,11 @@ async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_act
 
     assert_eq!(requeued, 1);
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&queues.outer_queue.lock().unwrap().pending),
         vec!["submission", "deferred"]
     );
 
-    match queues.outer_queue.front() {
+    match queues.outer_queue.lock().unwrap().pending.front() {
         Some(QueuedRuntimeItem::Submission(submission)) => {
             assert_eq!(submission.id, buffered_submission_id);
         }

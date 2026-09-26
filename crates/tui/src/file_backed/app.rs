@@ -27,6 +27,8 @@ fn default_commands() -> Vec<CompletionCandidate> {
     [
         ("compact", "summarize context"),
         ("rollback", "undo the last turn"),
+        ("continue", "continue paused input"),
+        ("discard", "discard paused input"),
         ("clear", "clear the transcript"),
         ("help", "show key bindings"),
         ("quit", "exit alan"),
@@ -423,6 +425,12 @@ impl FileBackedApp {
                 command: "rollback".to_string(),
                 success_notice: "rollback requested".to_string(),
             }),
+            "continue" | "discard" if command.trim() == name => {
+                Some(FileBackedAction::MachineCtl {
+                    command: format!("queue-v1 {name}"),
+                    success_notice: format!("queue {name} requested"),
+                })
+            }
             "clear" => {
                 self.transcript.clear();
                 self.action_cells.clear();
@@ -432,7 +440,7 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
+                    "/compact /rollback /continue /discard /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
                         .to_string(),
                 );
                 None

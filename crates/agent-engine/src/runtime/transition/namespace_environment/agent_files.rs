@@ -541,6 +541,8 @@ fn request_response_content_part(response: String) -> ContentPart {
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
     match command.trim() {
+        "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
+        "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
         // Turn interrupt is agent-runtime control (stop the current turn,

@@ -13,6 +13,7 @@ use crate::rollout::{
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
+pub(crate) mod input_queue;
 mod recovery;
 mod runtime_control;
 mod transition_state;
@@ -45,7 +46,7 @@ pub(crate) struct AgentMachine {
     memory_record_id: String,
     /// Whether a sourcing task has been started in this machine
     has_active_task: bool,
-    /// All in-memory state local to an accepted submission and logical turn.
+    /// In-memory transition and input admission state.
     transition_state: MachineTransitionState,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
     effect_index: HashMap<String, EffectRecord>,

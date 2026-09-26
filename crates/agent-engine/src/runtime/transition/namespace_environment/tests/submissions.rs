@@ -96,6 +96,19 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .unwrap()
         .expect("interrupt command should produce a submission");
     assert!(matches!(interrupt.op, Op::Interrupt));
+    for (verb, discard) in [("queue-v1 continue", false), ("queue-v1 discard", true)] {
+        shell
+            .write("/agent/1/machine/ctl", verb.as_bytes())
+            .await
+            .unwrap();
+        let control = agent_files
+            .read_next_machine_control_submission()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(matches!(control.op, Op::DiscardQueue), discard);
+        assert_eq!(matches!(control.op, Op::ContinueQueue), !discard);
+    }
 }
 
 #[tokio::test]
