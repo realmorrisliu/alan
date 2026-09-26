@@ -29,11 +29,12 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
                 escaped = true;
             } else if ch == '"' {
                 let token = &text[start..=end];
-                if token.contains('\\')
-                    && let Ok(decoded) = serde_json::from_str::<String>(token)
-                {
-                    let projected =
-                        project_native_text(adapter, &project_file_urls(adapter, &decoded));
+                let complete_token = quoted_path_end(text, start + 1, &text[end..]) == Some(true)
+                    || text[end + 1..].trim_start().starts_with(':');
+                if complete_token && let Ok(decoded) = serde_json::from_str::<String>(token) {
+                    // Retain the quoted boundary when projecting URI punctuation.
+                    let urls = project_file_urls(adapter, &format!("\"{decoded}\""));
+                    let projected = project_native_text(adapter, &urls[1..urls.len() - 1]);
                     if projected != decoded {
                         result.push_str(&text[copied..start]);
                         result.push_str(
@@ -386,6 +387,17 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
             slash
         };
         let suffix = strip_leading_terminal_sequences(&text[slash + 1..]);
+        // A closing markup tag is not a path, even for a root-backed grant.
+        if text[..start].ends_with('<')
+            && suffix.find('>').is_some_and(|end| {
+                suffix[..end]
+                    .trim_end()
+                    .chars()
+                    .all(|ch| ch.is_alphanumeric() || matches!(ch, ':' | '_' | '-' | '.'))
+            })
+        {
+            continue;
+        }
         let emphasized = is_emphasized_path(text, start, slash + 1);
         let bare_root = emphasized
             || quoted_path_end(text, start, suffix) == Some(true)

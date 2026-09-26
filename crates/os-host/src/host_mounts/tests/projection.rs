@@ -347,6 +347,9 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("file:///", "."),
         ("1 / 2", "1 / 2"),
         ("yes / no", "yes / no"),
+        ("<div>text</div>", "<div>text</div>"),
+        ("</svg:path >", "</svg:path >"),
+        ("< /etc/hosts >", "< ./etc/hosts >"),
         ("/  \nnext", ".  \nnext"),
         ("__/__", "__.__"),
         ("**/**", "**.**"),
@@ -495,4 +498,30 @@ async fn projection_decodes_json_unicode_and_c_locale_shell_paths() {
             format!("$'{expected}'")
         );
     }
+}
+
+#[tokio::test]
+async fn projected_json_escapes_public_namespace_components() {
+    let project = tempfile::tempdir().unwrap();
+    let docs = tempfile::tempdir().unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    for (logical, native) in [
+        ("/mnt/project", project.path()),
+        ("/mnt/do\"cs\\files", docs.path()),
+    ] {
+        approve(&service, 7, logical, HostMountAccess::ReadOnly, native).await;
+    }
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let native = dunce::canonicalize(docs.path()).unwrap().join("file.txt");
+    let json = serde_json::json!({"path":native}).to_string();
+    assert!(!json.contains('\\'));
+    let projected = adapter.project_text(&json);
+    let value: serde_json::Value =
+        serde_json::from_str(&projected).expect("projected JSON stays valid");
+    assert_eq!(value["path"], "../do\"cs\\files/file.txt");
 }
