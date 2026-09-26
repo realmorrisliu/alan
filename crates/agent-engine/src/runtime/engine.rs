@@ -611,6 +611,7 @@ fn spawn_with_prepared_runtime_environment(
             match queued_item {
                 QueuedRuntimeItem::Submission(submission) => {
                     if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
+                        && submission.intent != alan_agent_protocol::InputIntent::Command
                         && state.machine.has_pending_interaction()
                     {
                         queues.pause();

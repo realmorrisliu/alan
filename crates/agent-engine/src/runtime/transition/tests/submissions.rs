@@ -151,15 +151,17 @@ async fn command_steering_requires_ordered_admission() {
     );
     let mut emit = |_event| async {};
     let cancel = CancellationToken::new();
-    for (mode, body, error_text) in [
+    let mut cases = [
         (InputMode::Steer, "pwd", "ordered queue admission"),
         (InputMode::NextTurn, "pwd", "ordered queue admission"),
         (InputMode::FollowUp, "", "missing command"),
-    ] {
+    ].into_iter().map(|(mode, body, error)| (
+        Op::Input { parts: vec![ContentPart::text(body)], mode }, error,
+    )).collect::<Vec<_>>();
+    cases.push((Op::Turn { parts: vec![ContentPart::text("pwd")], context: None }, "input operation"));
+    for (op, error_text) in cases {
         let submission = Submission {
-            id: uuid::Uuid::new_v4().to_string(),
-            intent: InputIntent::Command,
-            op: Op::Input { parts: vec![ContentPart::text(body)], mode },
+            id: uuid::Uuid::new_v4().to_string(), intent: InputIntent::Command, op,
         };
         let id = submission.id.clone();
         assert!(!is_turn_inband_submission(&submission));
