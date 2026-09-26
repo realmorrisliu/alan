@@ -38,6 +38,17 @@ pub(crate) async fn advance_accepted_submission(
             }
     );
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
+    if matches!(submission.op, Op::CompactWithOptions { .. })
+        && state.machine.has_pending_interaction()
+    {
+        return AcceptedSubmissionOutcome {
+            result: Err(anyhow::anyhow!(
+                "Manual compaction must wait for the pending interaction to finish"
+            )),
+            requeue_inband_submissions,
+            deferred_actions: Default::default(),
+        };
+    }
     if matches!(
         submission.op,
         Op::Turn { .. } | Op::Input { .. } | Op::CompactWithOptions { .. }
@@ -69,7 +80,7 @@ pub(crate) async fn advance_accepted_submission(
         }
         let event = UiEvent::InputCompleted {
             submission_ids,
-            status: if cancel.is_cancelled() {
+            status: if state.machine.submission_was_cancelled() {
                 UiInputStatus::Cancelled
             } else if result.is_err() {
                 UiInputStatus::Failed
@@ -104,7 +115,8 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    broker.clear().await;
+    // The Process may admit steering before this future is first polled.
+    // Its completion path already requeues leftovers from the preceding turn.
     let _ = state.machine.clear_buffered_inband_submissions();
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
@@ -172,15 +184,27 @@ where
         ) && !state.machine.is_turn_active()
             && !state.machine.has_pending_interaction()
         {
-            let message = "Steering input arrived after the turn completed; submit a new turn";
+            let (status, message) = if cancel.is_cancelled() {
+                (
+                    UiInputStatus::Cancelled,
+                    "Steering input cancelled with the active turn",
+                )
+            } else {
+                (
+                    UiInputStatus::Failed,
+                    "Steering input arrived after the turn completed; submit a new turn",
+                )
+            };
             agent_files
                 .append_ui_event(&UiEvent::InputCompleted {
                     submission_ids: vec![next_submission.id],
-                    status: UiInputStatus::Failed,
+                    status,
                     error: Some(message.into()),
                 })
                 .await?;
-            crate::runtime::ui_surfaces::error_notice(&agent_files, message).await?;
+            if status == UiInputStatus::Failed {
+                crate::runtime::ui_surfaces::error_notice(&agent_files, message).await?;
+            }
             continue;
         }
         // A request response continues the accepted input; its control ID is

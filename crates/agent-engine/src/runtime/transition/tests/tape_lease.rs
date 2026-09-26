@@ -6,6 +6,8 @@ struct CountTapeOpens {
     inner: alan_agentfs::AgentFs,
     tape_path: u64,
     writes: AtomicUsize,
+    cancel_on_tape_close: Option<CancellationToken>,
+    writer_fid: std::sync::Mutex<Option<Fid>>,
 }
 
 #[async_trait::async_trait]
@@ -17,6 +19,7 @@ impl FileServer for CountTapeOpens {
         let qid = self.inner.open(fid, mode).await?;
         if qid.path == self.tape_path && mode == OpenMode::Write {
             self.writes.fetch_add(1, Ordering::SeqCst);
+            *self.writer_fid.lock().unwrap() = Some(fid);
         }
         Ok(qid)
     }
@@ -42,7 +45,13 @@ impl FileServer for CountTapeOpens {
         self.inner.remove(fid).await
     }
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        self.inner.clunk(fid).await
+        self.inner.clunk(fid).await?;
+        if *self.writer_fid.lock().unwrap() == Some(fid)
+            && let Some(cancel) = &self.cancel_on_tape_close
+        {
+            cancel.cancel();
+        }
+        Ok(())
     }
 }
 
@@ -60,6 +69,8 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
             inner,
             tape_path,
             writes: AtomicUsize::new(0),
+            cancel_on_tape_close: None,
+            writer_fid: Default::default(),
         });
         let procfs = Arc::new(alan_kernel::ProcFs::new());
         spawn_test_process(&procfs).await;
@@ -109,6 +120,20 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
         }
         state.machine.accept_submission("originating-input");
         let broker = crate::runtime::turn_input::TurnInputBroker::default();
+        let compact = advance_accepted_submission(
+            &mut state,
+            Submission::new(Op::CompactWithOptions { focus: None }),
+            &broker,
+            &CancellationToken::new(),
+        )
+        .await
+        .result
+        .unwrap_err();
+        assert!(compact.to_string().contains("pending interaction"));
+        assert_eq!(
+            state.machine.current_submission_id(),
+            Some("originating-input")
+        );
         let external = state.agent_files().begin_tape_generation().await.unwrap();
         let messages_before = state.machine.messages().len();
         let blocked = advance_accepted_submission(
@@ -337,4 +362,82 @@ async fn manual_compaction_retains_the_tape_lease_until_generation_finishes() {
         .finish()
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
+    let cancel = CancellationToken::new();
+    let inner = alan_agentfs::AgentFs::new();
+    let tape_path = inner
+        .walk(Fid::ROOT, Fid(9), &["machine".into(), "tape".into()])
+        .await
+        .unwrap()
+        .path;
+    inner.clunk(Fid(9)).await.unwrap();
+    let agentfs = Arc::new(CountTapeOpens {
+        inner,
+        tape_path,
+        writes: AtomicUsize::new(0),
+        cancel_on_tape_close: Some(cancel.clone()),
+        writer_fid: Default::default(),
+    });
+    let procfs = Arc::new(alan_kernel::ProcFs::new());
+    spawn_test_process(&procfs).await;
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection(
+        "default",
+        Box::new(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "finished answer",
+        )),
+    );
+    let mut ns = alan_kernel::Namespace::new();
+    for (path, server) in [
+        ("/agent/1", InProcessTransport::new(agentfs)),
+        ("/proc", InProcessTransport::new(procfs)),
+        ("/mnt/llm", InProcessTransport::new(llmfs)),
+    ] {
+        ns.mount(path, server, alan_kernel::Access::ReadWrite);
+    }
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+    let mut state = runtime_state_with_environment(NamespaceRuntimeEnvironment::new(
+        root.clone(),
+        "/agent/1",
+        "default",
+    ));
+    state.core_config.memory.enabled = false;
+    let submission = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("task")],
+        context: None,
+    });
+    let id = submission.id.clone();
+    advance_accepted_submission(&mut state, submission, &TurnInputBroker::default(), &cancel)
+        .await
+        .result
+        .unwrap();
+    assert!(
+        cancel.is_cancelled(),
+        "the close must deliver the late cancellation"
+    );
+    let shell = Shell::new(root);
+    let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+    assert!(tape.lines().any(|line| {
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        record["role"] == "assistant" && record["submission_id"] == id
+    }));
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    let statuses: Vec<_> = events
+        .lines()
+        .filter_map(|line| {
+            match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+                alan_agent_protocol::UiEvent::InputCompleted {
+                    submission_ids,
+                    status,
+                    ..
+                } if submission_ids == [id.clone()] => Some(status),
+                _ => None,
+            }
+        })
+        .collect();
+    assert_eq!(statuses, [alan_agent_protocol::UiInputStatus::Completed]);
 }
