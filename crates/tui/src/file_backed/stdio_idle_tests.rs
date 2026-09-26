@@ -18,7 +18,7 @@ async fn one_shot_start_waits_for_root_agent_pid_during_restart() {
 
     let attach_shell = shell.clone();
     let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
+        open_stdio_tail_attachment_for_submit(&attach_shell, "/agent/root").await
     });
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup returned before a replacement PID was published"),
@@ -45,7 +45,7 @@ async fn one_shot_start_retries_a_stale_published_root_agent_pid() {
 
     let attach_shell = shell.clone();
     let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
+        open_stdio_tail_attachment_for_submit(&attach_shell, "/agent/root").await
     });
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup failed on the detached but published PID"),
@@ -129,7 +129,7 @@ async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_betw
 
     let attach_shell = shell.clone();
     let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
+        open_stdio_tail_attachment_for_submit(&attach_shell, "/agent/root").await
     });
     tokio::time::timeout(std::time::Duration::from_secs(2), read_reached)
         .await
@@ -182,7 +182,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         .await
         .unwrap();
 
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
         .await
         .unwrap();
     close_stdio_tails(previous.tape_tail, previous.ui_tail)
@@ -267,7 +267,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         alan_ap::InProcessTransport::new(tail_closer.clone()),
         alan_kernel::Access::ReadWrite,
     );
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
@@ -434,4 +434,127 @@ async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
     );
 
     watchers.stop().await;
+}
+
+#[tokio::test]
+async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
+    let (shell, _, _, pid) = stdio_tests::live_root_agent().await;
+    shell
+        .write(
+            &format!("/agent/{pid}/machine/ui/activity"),
+            &serde_json::to_vec(&UiActivitySnapshot::running(1)).unwrap(),
+        )
+        .await
+        .unwrap();
+    let a = StdioTaskWaitContext::new("client a");
+    let b = StdioTaskWaitContext::new("client b");
+    let a_id = a.record.submission_id.clone();
+    let b_id = b.record.submission_id.clone();
+    assert_ne!(a_id, b_id);
+    let mut a_tail = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+        .await
+        .unwrap();
+    let mut paused = UiActivitySnapshot::paused(None);
+    paused.waiting_submission_ids = vec!["unrelated-input".into()];
+    shell
+        .write(
+            &format!("/agent/{pid}/machine/ui/activity"),
+            &serde_json::to_vec(&paused).unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut b_tail = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+        .await
+        .unwrap();
+    submit_stdio_task(&shell, &a, &a_tail).await.unwrap();
+    submit_stdio_task(&shell, &b, &b_tail).await.unwrap();
+    let input =
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap()).unwrap();
+    assert!(input.contains(&a_id) && input.contains(&b_id));
+    let a_shell = shell.clone();
+    let mut a_wait = tokio::spawn(async move {
+        let result = wait_for_stdio_answer_after_submit(
+            &a_shell,
+            "/agent/root",
+            a,
+            &mut a_tail,
+            std::future::pending(),
+        )
+        .await;
+        close_stdio_tails(a_tail.tape_tail, a_tail.ui_tail)
+            .await
+            .unwrap();
+        result
+    });
+    let b_shell = shell.clone();
+    let mut b_wait = tokio::spawn(async move {
+        let result = wait_for_stdio_answer_after_submit(
+            &b_shell,
+            "/agent/root",
+            b,
+            &mut b_tail,
+            std::future::pending(),
+        )
+        .await;
+        close_stdio_tails(b_tail.tape_tail, b_tail.ui_tail)
+            .await
+            .unwrap();
+        result
+    });
+    shell
+        .write(
+            &format!("/agent/{pid}/machine/ui/events"),
+            format!(
+                "{}\n",
+                serde_json::to_string(&UiEvent::Activity { snapshot: paused }).unwrap()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    for (id, answer) in [(&a_id, "answer a"), (&b_id, "answer b")] {
+        let tape = serde_json::json!({"version":1,"kind":"message","role":"assistant","content":answer,"submission_id":id});
+        shell
+            .write(
+                &format!("/agent/{pid}/machine/tape"),
+                format!("{tape}\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let completion = UiEvent::InputCompleted {
+            submission_ids: vec![id.clone()],
+            status: alan_agent_protocol::UiInputStatus::Completed,
+            error: None,
+        };
+        shell
+            .write(
+                &format!("/agent/{pid}/machine/ui/events"),
+                format!("{}\n", serde_json::to_string(&completion).unwrap()).as_bytes(),
+            )
+            .await
+            .unwrap();
+        if id == &a_id {
+            assert_eq!(
+                tokio::time::timeout(std::time::Duration::from_secs(2), &mut a_wait)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap(),
+                answer
+            );
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), &mut b_wait)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), &mut b_wait)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        "answer b"
+    );
 }

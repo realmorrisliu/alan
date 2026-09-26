@@ -47,23 +47,6 @@ pub(super) fn completion(
 }
 
 #[test]
-fn interactive_task_lock_is_shared_and_released_after_the_turn() {
-    let runtime = tempfile::tempdir().unwrap();
-    let path = runtime.path().join("task.lock");
-
-    let interactive = acquire_task_submission_lock(&path).unwrap();
-    let competing = acquire_task_submission_lock(&path).unwrap_err();
-    assert!(
-        competing
-            .to_string()
-            .contains("another Alan task is already running")
-    );
-
-    drop(interactive);
-    assert!(acquire_task_submission_lock(&path).is_ok());
-}
-
-#[test]
 fn only_a_plain_enter_submits_a_new_agent_task() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.composer.set_text("do work");
