@@ -678,11 +678,12 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
 }
 
 pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
+    let normalized = normalize_shell_line_continuations(command);
     // Parse syntax only: this never invokes a shell or evaluates substitutions.
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
     let tree = parser
-        .parse(command, None)
+        .parse(&normalized, None)
         .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
     let root = tree.root_node();
     if root.has_error() {
@@ -702,7 +703,7 @@ pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
     let Some(name) = statement.child_by_field_name("name") else {
         return Ok(None);
     };
-    let name = shell_tokens_with_spans(&command[name.byte_range()])?;
+    let name = shell_tokens_with_spans(&normalized[name.byte_range()])?;
     if name.len() != 1 || name[0].decoded != "cd" {
         return Ok(None);
     }
@@ -715,7 +716,6 @@ pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
     }
     // Expansions are rejected before decoding words; nested syntax cannot turn
     // a standalone cd into an ordinary native script with hidden side effects.
-    let normalized = normalize_shell_line_continuations(command);
     let comment_free = strip_shell_comments(&normalized);
     if contains_shell_expansion(&comment_free)
         || contains_shell_brace_expansion(&comment_free)

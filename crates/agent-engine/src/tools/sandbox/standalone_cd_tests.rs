@@ -128,3 +128,13 @@ fn standalone_cd_uses_shell_syntax_for_expansions_and_word_boundaries() {
     assert_eq!(parse_standalone_cd("VAR=value cd src").unwrap(), None);
     assert_eq!(parse_standalone_cd("cd src;").unwrap(), None);
 }
+
+#[test]
+fn standalone_cd_normalizes_command_name_continuations() {
+    assert_eq!(
+        parse_standalone_cd("c\\\nd src").unwrap(),
+        Some(PathBuf::from("src"))
+    );
+    assert!(parse_standalone_cd("c\\\nd $(touch marker; printf src)").is_err());
+    assert_eq!(parse_standalone_cd("c\\\nd src && pwd").unwrap(), None);
+}
