@@ -615,3 +615,36 @@ fn projection_preserves_shell_quoted_non_utf8_mount_bytes() {
     }
     assert_eq!(adapter.project_text("$'/tmp/próject-\\377/src'"), "$'.'");
 }
+
+#[tokio::test]
+async fn physical_cwd_projection_does_not_require_a_delegated_target() {
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), project.path().join("link")).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadOnly,
+        project.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project/link"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let physical = dunce::canonicalize(outside.path()).unwrap();
+    assert_eq!(adapter.project_text(&physical.to_string_lossy()), ".");
+    assert_eq!(
+        adapter.project_text(url::Url::from_directory_path(&physical).unwrap().as_str()),
+        "."
+    );
+    assert_eq!(adapter.namespace_cwd(), PathBuf::from("/mnt/project/link"));
+    assert_eq!(
+        adapter.visible_path(&physical),
+        PathBuf::from("<unmapped-host-path>")
+    );
+}

@@ -169,10 +169,12 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                 .strip_prefix(&selected.namespace_path)
                 .expect("selected Host Mount owns Tool cwd"),
         );
-        let projection_cwd = if let Ok(physical) = dunce::canonicalize(&cwd)
-            && let Ok(suffix) = physical.strip_prefix(&selected.host_path)
-        {
-            (physical.clone(), selected.namespace_path.join(suffix))
+        let projection_cwd = if let Ok(physical) = dunce::canonicalize(&cwd) {
+            let logical = physical
+                .strip_prefix(&selected.host_path)
+                .map(|suffix| selected.namespace_path.join(suffix))
+                .unwrap_or_else(|_| namespace_cwd.clone());
+            (physical, logical)
         } else {
             (cwd.clone(), namespace_cwd.clone())
         };
