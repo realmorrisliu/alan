@@ -103,3 +103,27 @@ fn standalone_cd_preserves_double_quoted_shell_semantics() {
         );
     }
 }
+
+#[test]
+fn standalone_cd_uses_shell_syntax_for_expansions_and_word_boundaries() {
+    for command in [
+        "cd <(touch marker)",
+        "cd >(touch marker)",
+        "cd $(case x in x) touch marker; printf /mnt/project;; esac)",
+        "cd $(case x in (x) printf src;; esac)",
+        "cd $(printf '%s' \"$(case x in x) printf src;; esac)\")",
+    ] {
+        assert!(parse_standalone_cd(command).is_err(), "{command}");
+        assert_eq!(
+            parse_standalone_cd(&format!("{command} && pwd")).unwrap(),
+            None
+        );
+    }
+    assert_eq!(parse_standalone_cd("cd\u{a0}/mnt/project").unwrap(), None);
+    assert_eq!(
+        parse_standalone_cd("cd foo\u{a0}bar").unwrap(),
+        Some(PathBuf::from("foo\u{a0}bar"))
+    );
+    assert_eq!(parse_standalone_cd("VAR=value cd src").unwrap(), None);
+    assert_eq!(parse_standalone_cd("cd src;").unwrap(), None);
+}

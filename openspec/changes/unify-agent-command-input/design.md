@@ -191,7 +191,10 @@ The initial form accepts one literal relative or Host-absolute directory with
 quotes/escapes, or a public `/mnt/<grant>` path for an already-delegated
 Host-backed mount; no arguments, `-`, tilde, variables, substitutions or globs
 fail with an explicit diagnostic. This deliberately bounded builtin is not a
-shell interpreter. Resolve it through delegated Host Mounts, validate access and
+shell interpreter. Tree-sitter Bash identifies a single command without evaluating
+its syntax; existing literal decoding handles the one operand. Nested substitutions
+and case patterns therefore cannot masquerade as outer command separators.
+Resolve it through delegated Host Mounts, validate access and
 update only on success. It cannot change cwd into a purely virtual aP directory.
 
 A composed script such as `cd subdir && make` executes unchanged in the shell;

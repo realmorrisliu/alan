@@ -147,7 +147,7 @@ fn contains_shell_globbing(command: &str) -> bool {
 fn is_test_bracket_token(chars: &[char], index: usize) -> bool {
     let mut end = index;
     while let Some(ch) = chars.get(end) {
-        if ch.is_whitespace() || is_shell_separator(*ch) {
+        if matches!(ch, ' ' | '\t' | '\n') || is_shell_separator(*ch) {
             break;
         }
         end += 1;
@@ -167,7 +167,7 @@ fn is_brace_expansion_position(chars: &[char], index: usize) -> bool {
 }
 
 fn brace_neighbor_requires_expansion(ch: Option<char>) -> bool {
-    matches!(ch, Some(value) if !value.is_whitespace() && !is_shell_separator(value))
+    matches!(ch, Some(value) if !matches!(value, ' ' | '\t' | '\n') && !is_shell_separator(value))
 }
 
 fn is_shell_separator(ch: char) -> bool {
@@ -175,7 +175,7 @@ fn is_shell_separator(ch: char) -> bool {
 }
 
 fn is_shell_word_boundary(ch: char) -> bool {
-    ch.is_whitespace() || is_shell_separator(ch) || matches!(ch, '{' | '}')
+    matches!(ch, ' ' | '\t' | '\n') || is_shell_separator(ch) || matches!(ch, '{' | '}')
 }
 
 pub(super) fn normalize_shell_line_continuations(command: &str) -> String {
@@ -466,7 +466,7 @@ pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> 
                 word_started = true;
             }
             '#' if !word_started => in_comment = true,
-            c if c.is_whitespace() => {
+            ' ' | '\t' | '\n' => {
                 push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
                 word_started = false;
             }
@@ -636,7 +636,7 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 }
                 word_started = false;
             }
-            c if c.is_whitespace() => {
+            ' ' | '\t' | '\n' => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
                 }
@@ -678,32 +678,62 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
 }
 
 pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
-    let normalized = normalize_shell_line_continuations(command);
-    // Malformed shell scripts remain native commands, not failed cwd changes.
-    let Ok(words) = shell_tokens_with_spans(&normalized) else {
+    // Parse syntax only: this never invokes a shell or evaluates substitutions.
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
+    let tree = parser
+        .parse(command, None)
+        .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
+    let root = tree.root_node();
+    if root.has_error() {
+        return Ok(None); // Native execution reports malformed shell syntax.
+    }
+    let mut cursor = root.walk();
+    let statements = root
+        .children(&mut cursor)
+        .filter(|node| node.kind() != "comment")
+        .collect::<Vec<_>>();
+    let [statement] = statements.as_slice() else {
         return Ok(None);
     };
-    if words.first().map(|word| word.decoded.as_str()) != Some("cd") {
+    if statement.kind() != "command" {
         return Ok(None);
     }
-    if contains_shell_control_operator(&normalized) {
+    let Some(name) = statement.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let name = shell_tokens_with_spans(&command[name.byte_range()])?;
+    if name.len() != 1 || name[0].decoded != "cd" {
         return Ok(None);
     }
+    let mut cursor = statement.walk();
+    if statement
+        .named_children(&mut cursor)
+        .any(|node| node.kind() == "variable_assignment")
+    {
+        return Ok(None);
+    }
+    // Expansions are rejected before decoding words; nested syntax cannot turn
+    // a standalone cd into an ordinary native script with hidden side effects.
+    let normalized = normalize_shell_line_continuations(command);
     let comment_free = strip_shell_comments(&normalized);
     if contains_shell_expansion(&comment_free)
         || contains_shell_brace_expansion(&comment_free)
         || contains_shell_globbing(&comment_free)
+        || statement
+            .named_children(&mut statement.walk())
+            .any(|node| node.kind() == "process_substitution")
     {
         return Err(anyhow!(
             "standalone cd accepts a literal path; variables, substitutions, and globs are unsupported"
         ));
     }
+    let words = shell_tokens_with_spans(&normalized)?;
     if words.len() != 2 {
         return Err(anyhow!(
             "standalone cd requires exactly one directory argument"
         ));
     }
-
     let directory = &words[1].decoded;
     if directory.is_empty() {
         return Err(anyhow!(
@@ -718,155 +748,7 @@ pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
             "standalone cd does not support home-directory expansion"
         ));
     }
-
     Ok(Some(PathBuf::from(directory)))
-}
-
-pub(super) fn contains_shell_control_operator(command: &str) -> bool {
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_comment = false;
-    let mut escaped = false;
-    let mut word_started = false;
-    let mut command_started = false;
-    let mut line_break_seen = false;
-    let mut expansion_closers = Vec::new();
-    let mut chars = command.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if in_comment {
-            if matches!(ch, '\n' | '\r') {
-                in_comment = false;
-                word_started = false;
-                line_break_seen |= command_started && expansion_closers.is_empty();
-            }
-            continue;
-        }
-        if escaped {
-            escaped = false;
-            word_started = true;
-            continue;
-        }
-        if in_single {
-            if ch == '\'' {
-                in_single = false;
-            }
-            word_started = true;
-            continue;
-        }
-        if in_double && (ch == '`' || (ch == '$' && matches!(chars.peek(), Some('(' | '{')))) {
-            let closer = if ch == '`' {
-                '`'
-            } else if chars.next() == Some('(') {
-                ')'
-            } else {
-                '}'
-            };
-            expansion_closers.push((closer, true));
-            in_double = false;
-            word_started = false;
-            continue;
-        }
-        if in_double {
-            match ch {
-                '\\' => escaped = true,
-                '"' => in_double = false,
-                _ => {}
-            }
-            word_started = true;
-            continue;
-        }
-
-        if let Some((closer, outer_double)) = expansion_closers.last().copied() {
-            match ch {
-                '`' if closer == '`' => {
-                    expansion_closers.pop();
-                    in_double = outer_double;
-                    word_started = true;
-                }
-                '`' => {
-                    expansion_closers.push(('`', false));
-                    word_started = true;
-                }
-                '$' if matches!(chars.peek(), Some('(' | '{')) => {
-                    let opener = chars.next().expect("peeked shell expansion opener");
-                    expansion_closers.push((if opener == '(' { ')' } else { '}' }, false));
-                    word_started = true;
-                }
-                '(' if closer == ')' => expansion_closers.push((')', false)),
-                ')' if closer == ')' => {
-                    expansion_closers.pop();
-                    in_double = outer_double;
-                    word_started = true;
-                }
-                '{' if closer == '}' => expansion_closers.push(('}', false)),
-                '}' if closer == '}' => {
-                    expansion_closers.pop();
-                    in_double = outer_double;
-                    word_started = true;
-                }
-                '\\' => escaped = true,
-                '\'' => in_single = true,
-                '"' => in_double = true,
-                '#' if !word_started => in_comment = true,
-                c if c.is_whitespace() => word_started = false,
-                _ => word_started = true,
-            }
-            command_started = true;
-            continue;
-        }
-
-        if line_break_seen && !ch.is_whitespace() && !(ch == '#' && !word_started) {
-            return true;
-        }
-
-        match ch {
-            '\\' => {
-                escaped = true;
-                command_started = true;
-            }
-            '\'' => {
-                in_single = true;
-                word_started = true;
-            }
-            '"' => {
-                in_double = true;
-                word_started = true;
-            }
-            '`' => {
-                expansion_closers.push(('`', false));
-                word_started = true;
-                command_started = true;
-            }
-            '$' if matches!(chars.peek(), Some('(' | '{')) => {
-                let opener = chars.next().expect("peeked shell expansion opener");
-                expansion_closers.push((if opener == '(' { ')' } else { '}' }, false));
-                word_started = true;
-                command_started = true;
-            }
-            '#' if !word_started => in_comment = true,
-            '\n' | '\r' => {
-                word_started = false;
-                line_break_seen |= command_started;
-            }
-            ch if ch.is_whitespace() => word_started = false,
-            '{' if chars
-                .peek()
-                .is_some_and(|next| brace_neighbor_requires_expansion(Some(*next))) =>
-            {
-                expansion_closers.push(('}', false));
-                word_started = true;
-                command_started = true;
-            }
-            ';' | '|' | '&' | '(' | ')' | '{' | '}' | '<' | '>' => return true,
-            _ => {
-                word_started = true;
-                command_started = true;
-            }
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]
