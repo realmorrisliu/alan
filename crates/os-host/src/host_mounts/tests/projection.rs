@@ -558,3 +558,50 @@ async fn command_projection_retains_cwd_when_the_script_retargets_its_symlink() 
     );
     assert_eq!(result["stdout"], ".\n", "{result}");
 }
+
+#[cfg(unix)]
+#[test]
+fn projection_preserves_shell_quoted_non_utf8_mount_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+    // macOS filesystems reject these names; projection must still handle Unix byte paths.
+    let root = PathBuf::from(std::ffi::OsString::from_vec(
+        b"/tmp/pr\xc3\xb3ject-\xff".to_vec(),
+    ));
+    let namespace_cwd = PathBuf::from("/mnt/project/src");
+    let cwd = root.join("src");
+    let sandbox_spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: root.clone(),
+        access: ReifiedMountAccess::ReadOnly,
+    }]);
+    let adapter = NativeToolExecutionAdapter {
+        mounts: vec![NativeToolMount {
+            namespace_path: PathBuf::from("/mnt/project"),
+            host_path: root.clone(),
+            access: HostMountAccess::ReadOnly,
+        }],
+        projection_cwd: (cwd.clone(), namespace_cwd.clone()),
+        namespace_cwd,
+        cwd,
+        sandbox: Sandbox::from_spec(sandbox_spec.clone()),
+        shell_sandbox: Sandbox::from_spec(sandbox_spec),
+    };
+    for (path, expected) in [
+        (&root, "$'..'"),
+        (&root.join("src"), "$'.'"),
+        (&root.join("src/file"), "$'./file'"),
+    ] {
+        let output = std::process::Command::new("/bin/bash")
+            .env("LC_ALL", "C")
+            .args(["-c", "printf %q \"$1\"", "_"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            adapter.project_text(std::str::from_utf8(&output.stdout).unwrap()),
+            expected
+        );
+    }
+    assert_eq!(adapter.project_text("$'/tmp/próject-\\377/src'"), "$'.'");
+}
