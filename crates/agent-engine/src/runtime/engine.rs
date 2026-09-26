@@ -106,7 +106,6 @@ async fn read_pending_namespace_submission(
     }
 }
 
-#[derive(Default)]
 struct RuntimeSubmissionQueues {
     /// Shared handle to the Agent Machine's ordinary queue.
     outer_queue: Arc<Mutex<MachineInputQueue>>,
@@ -114,7 +113,20 @@ struct RuntimeSubmissionQueues {
     active_turn_broker: TurnInputBroker,
 }
 
+impl Default for RuntimeSubmissionQueues {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
 impl RuntimeSubmissionQueues {
+    fn new(outer_queue: Arc<Mutex<MachineInputQueue>>) -> Self {
+        Self {
+            active_turn_broker: TurnInputBroker::from_queue(outer_queue.clone()),
+            outer_queue,
+        }
+    }
+
     fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
         let mut queue = self.outer_queue.lock().expect("input queue poisoned");
         if queue.paused {
@@ -501,10 +513,7 @@ fn spawn_with_prepared_runtime_environment(
         let mut submissions_closed = false;
         let mut shutdown_requested = false;
 
-        let mut queues = RuntimeSubmissionQueues {
-            outer_queue: state.machine.input_queue(),
-            ..Default::default()
-        };
+        let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
 
         let mut namespace_ready = VecDeque::new();
         let mut namespace_batch_admitted = false;

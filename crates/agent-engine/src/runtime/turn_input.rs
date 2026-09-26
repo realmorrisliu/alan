@@ -1,15 +1,19 @@
 //! In-turn input brokering and file-native resume selection.
 
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alan_agent_protocol::{Event, InputIntent, InputMode, Op, Submission};
 use anyhow::Result;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests};
 use super::turn_support::cancel_current_task;
-use crate::agent_machine::AgentMachine;
+use crate::agent_machine::{AgentMachine, input_queue::MachineInputQueue};
 
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
 pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
@@ -17,28 +21,25 @@ pub(super) const NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL: Duration = Duration::
 
 #[derive(Clone)]
 pub(super) struct TurnInputBroker {
-    inner: Arc<TurnInputBrokerInner>,
-}
-
-struct TurnInputBrokerInner {
-    queue: Mutex<VecDeque<Submission>>,
-    notify: Notify,
+    queue: Arc<Mutex<MachineInputQueue>>,
+    notify: Arc<Notify>,
 }
 
 impl Default for TurnInputBroker {
     fn default() -> Self {
-        Self {
-            inner: Arc::new(TurnInputBrokerInner {
-                queue: Mutex::new(VecDeque::new()),
-                notify: Notify::new(),
-            }),
-        }
+        Self::from_queue(Default::default())
     }
 }
 
 impl TurnInputBroker {
+    pub(super) fn from_queue(queue: Arc<Mutex<MachineInputQueue>>) -> Self {
+        let notify = queue.lock().expect("input queue poisoned").notify.clone();
+        Self { queue, notify }
+    }
+
     pub(super) async fn push(&self, submission: Submission) -> bool {
-        let mut guard = self.inner.queue.lock().await;
+        let mut state = self.queue.lock().expect("input queue poisoned");
+        let guard = &mut state.inband;
         if is_brokered_input(&submission.op)
             && guard
                 .iter()
@@ -49,8 +50,8 @@ impl TurnInputBroker {
             return false;
         }
         guard.push_back(submission);
-        drop(guard);
-        self.inner.notify.notify_one();
+        drop(state);
+        self.notify.notify_one();
         true
     }
 
@@ -62,13 +63,13 @@ impl TurnInputBroker {
 
             tokio::select! {
                 _ = cancel.cancelled() => return None,
-                _ = self.inner.notify.notified() => {}
+                _ = self.notify.notified() => {}
             }
         }
     }
 
     pub(super) async fn drain(&self) -> VecDeque<Submission> {
-        std::mem::take(&mut *self.inner.queue.lock().await)
+        std::mem::take(&mut self.queue.lock().expect("input queue poisoned").inband)
     }
 
     pub(super) async fn try_recv(&self) -> Option<Submission> {
@@ -76,7 +77,11 @@ impl TurnInputBroker {
     }
 
     async fn try_pop(&self) -> Option<Submission> {
-        self.inner.queue.lock().await.pop_front()
+        self.queue
+            .lock()
+            .expect("input queue poisoned")
+            .inband
+            .pop_front()
     }
 }
 
@@ -283,6 +288,40 @@ mod tests {
                 serde_json::json!({"success": true})
             )],
         }));
+    }
+
+    #[tokio::test]
+    async fn machine_broker_handles_share_wakeups_and_capacity() {
+        let machine = AgentMachine::new();
+        let receiver = TurnInputBroker::from_queue(machine.input_queue());
+        let sender = TurnInputBroker::from_queue(machine.input_queue());
+        let cancel = CancellationToken::new();
+        let waiting = receiver.recv(&cancel);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), &mut waiting)
+                .await
+                .is_err()
+        );
+        let input = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("steering")],
+            mode: InputMode::Steer,
+        });
+        assert!(sender.push(input.clone()).await);
+        let received = tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received.id, input.id);
+        for _ in 0..MAX_BROKERED_INBAND_USER_INPUTS {
+            assert!(sender.push(input.clone()).await);
+        }
+        assert!(!receiver.push(input).await);
+        assert_eq!(
+            receiver.drain().await.len(),
+            MAX_BROKERED_INBAND_USER_INPUTS
+        );
+        assert!(sender.try_recv().await.is_none());
     }
 
     #[tokio::test]
