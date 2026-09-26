@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent_machine::DeferredRuntimeAction;
 use crate::runtime::{RuntimeConfig, memory_promotion};
-use alan_agent_protocol::{ContentPart, Op};
+use alan_agent_protocol::{ContentPart, InputMode, Op};
 use alan_ap::InProcessTransport;
 use alan_llm::{
     GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk, TokenUsage,

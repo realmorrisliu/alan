@@ -404,7 +404,10 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     // they must not be fed to an executable runner merely because `/bin/q`
     // exists. Process-specific `/proc` views add the Quartermaster runner below.
     let procfs = alan_kernel::ProcFs::new();
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new_with_process_events(
+        Arc::new(procfs.clone()),
+        Arc::new(procfs.clone()),
+    ));
     let state = Arc::new(tokio::sync::Mutex::new(ManagerState::new(manifest.clone())));
     let manager_fs = Arc::new(ServiceManagerFs::new(state.clone()));
     let host_mount_service = HostMountService::new(host_mount_adapter);

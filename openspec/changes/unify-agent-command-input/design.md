@@ -332,7 +332,12 @@ exposes `/continue` and `/discard` through its existing Machine control path and
 completion/help, so interruption leaves an ordinary way to continue working. Controls
 reject continuation/discard while active work is still settling. Discarded inputs
 receive failed Actions correlated to their original submission IDs and never run.
-Pending request responses remain ahead of ordinary admission.
+Pending request responses remain ahead of ordinary admission. File input and
+Machine controls are admitted in the existing aggregate AgentFS event order;
+the Host connects the existing Process event bridge so redirected Process input
+participates in that same order. API controls retain their receiver position,
+so a discard cannot consume a later API submission. There is no separate input
+reader channel whose buffered frames can cross an interrupt/discard boundary.
 
 This is in-memory ordinary-queue control only. Rollout/checkpoint recovery,
 next-turn queue integration, client prefix/control activation and complete

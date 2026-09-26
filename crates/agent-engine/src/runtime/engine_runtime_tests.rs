@@ -238,7 +238,10 @@ async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submissio
     llmfs.register_connection("default", Box::new(mock));
 
     let procfs = Arc::new(alan_kernel::ProcFs::new());
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(procfs.clone()));
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new_with_process_events(
+        procfs.clone(),
+        procfs.clone(),
+    ));
     let mut ns = alan_kernel::Namespace::new();
     ns.mount(
         "/proc",
