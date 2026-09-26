@@ -149,6 +149,7 @@ async fn command_steering_requires_ordered_admission() {
         ))
         .await,
     );
+    let external_writer = state.agent_files().begin_tape_generation().await.unwrap();
     let mut emit = |_event| async {};
     let cancel = CancellationToken::new();
     let mut cases = [
@@ -178,6 +179,7 @@ async fn command_steering_requires_ordered_admission() {
         assert_eq!(shell.cat(&format!("{base}/approval")).await.unwrap(), b"not_required");
         assert!(shell.cat(&format!("{base}/process")).await.unwrap().is_empty());
     }
+    external_writer.finish().await.unwrap();
 }
 
 #[tokio::test]

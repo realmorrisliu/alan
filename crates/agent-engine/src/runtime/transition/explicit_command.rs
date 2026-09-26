@@ -13,34 +13,6 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let writer = state.agent_files().begin_tape_generation().await?;
-    let result = handle_command_with_writer(
-        state,
-        submission_id,
-        op,
-        emit,
-        cancel,
-        steering_broker,
-        &writer,
-    )
-    .await;
-    let closed = writer.finish().await;
-    result.and(closed)
-}
-
-async fn handle_command_with_writer<E, F>(
-    state: &mut RuntimeLoopState,
-    submission_id: String,
-    op: Op,
-    emit: &mut E,
-    cancel: &CancellationToken,
-    steering_broker: Option<&TurnInputBroker>,
-    writer: &NamespaceTapeWriter,
-) -> Result<()>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
     let validated: Result<_> = (|| {
         let Op::Input { parts, mode } = op else {
             anyhow::bail!("command intent requires an input operation");
@@ -73,6 +45,35 @@ where
             return Err(error);
         }
     };
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = handle_command_with_writer(
+        state,
+        submission_id,
+        (parts, command),
+        emit,
+        cancel,
+        steering_broker,
+        &writer,
+    )
+    .await;
+    let closed = writer.finish().await;
+    result.and(closed)
+}
+
+async fn handle_command_with_writer<E, F>(
+    state: &mut RuntimeLoopState,
+    submission_id: String,
+    input: (Vec<alan_agent_protocol::ContentPart>, String),
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+    writer: &NamespaceTapeWriter,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let (parts, command) = input;
     crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
         &mut state.machine,
         &state.environment.host_mount_requests(),
