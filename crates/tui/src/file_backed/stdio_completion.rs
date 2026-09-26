@@ -109,15 +109,31 @@ mod tests {
 
     #[tokio::test]
     async fn stdio_submission_writes_the_same_id_used_for_completion() {
-        let (shell, _, _, _) = super::super::stdio_tests::live_root_agent().await;
+        let (shell, agent_root, _, pid) = super::super::stdio_tests::live_root_agent().await;
         let attachment = super::super::tail::open_stdio_tail_attachment(&shell, "/agent/root")
             .await
             .unwrap();
         let task = StdioTaskWaitContext::new("same text");
+        for expected in [None, Some(attachment.root_agent_pid + 1)] {
+            assert!(
+                super::super::write_agent_input(&shell, "/agent/root", expected, &task.record)
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            shell
+                .cat(&format!("/agent/{pid}/io/input"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Move only the alias: a submission must still use the observed Process.
+        agent_root.set_root_process("99999").await;
         super::super::submit_stdio_task(&shell, &task, &attachment)
             .await
             .unwrap();
-        let frame = shell.cat("/agent/root/io/input").await.unwrap();
+        let frame = shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap();
         let header = frame.iter().position(|byte| *byte == b'\n').unwrap();
         let record = alan_agent_protocol::UserInputRecord::decode_payload(&frame[header + 1..])
             .unwrap()

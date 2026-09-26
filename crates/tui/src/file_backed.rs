@@ -235,7 +235,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         alan_agent_protocol::InputMode::FollowUp,
                                         &text,
                                     );
-                                    match write_agent_input(&shell, &app.agent_path, &record).await {
+                                    match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
                                         Ok(()) => {
                                             app.notice = None;
                                             if follows_root_agent {
@@ -561,16 +561,13 @@ async fn submit_stdio_task(
     task: &StdioTaskWaitContext,
     attachment: &StdioTailAttachment,
 ) -> Result<()> {
-    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-        bail!("Root Agent changed before the task could be submitted; retry")
-    }
-    shell
-        .write(
-            &format!("{}/io/input", attachment.agent_process_path),
-            &task.record.encode_payload()?,
-        )
-        .await
-        .map_err(|err| anyhow::anyhow!("write agent input failed: {err:?}"))
+    write_agent_input(
+        shell,
+        "/agent/root",
+        Some(attachment.root_agent_pid),
+        &task.record,
+    )
+    .await
 }
 
 async fn wait_for_stdio_answer_after_submit(

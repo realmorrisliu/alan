@@ -555,7 +555,7 @@ async fn write_agent_input_targets_agent_surface() {
         alan_agent_protocol::InputMode::FollowUp,
         "hello through files",
     );
-    write_agent_input(&shell, &agent_path, &record)
+    write_agent_input(&shell, &agent_path, None, &record)
         .await
         .unwrap();
 

@@ -502,8 +502,21 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
 pub(super) async fn write_agent_input(
     shell: &alan_shell::Shell,
     agent_path: &str,
+    expected_root_pid: Option<u64>,
     record: &alan_agent_protocol::UserInputRecord,
 ) -> Result<()> {
+    let pinned_path;
+    let agent_path = if agent_path == "/agent/root" {
+        let pid = expected_root_pid.context("Root Agent is not attached; retry")?;
+        anyhow::ensure!(
+            super::tail::current_root_agent_pid(shell).await? == Some(pid),
+            "Root Agent changed before the task could be submitted; retry"
+        );
+        pinned_path = format!("/agent/{pid}");
+        &pinned_path
+    } else {
+        agent_path
+    };
     shell
         .write(&agent_input_path(agent_path), &record.encode_payload()?)
         .await
