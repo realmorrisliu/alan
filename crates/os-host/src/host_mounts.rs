@@ -208,8 +208,20 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             })
             .collect::<Result<Vec<_>>>()?;
         validate_native_tool_mounts(&mounts)?;
-        let requested_namespace_cwd =
+        let mut requested_namespace_cwd =
             normalize_tool_namespace_path(requested_namespace_cwd.to_path_buf())?;
+        // Explicit cd may name native backing. Select its namespace grant before
+        // the Service Manager pins the grant identity for directory validation.
+        if longest_namespace_mount(&mounts, &requested_namespace_cwd).is_none()
+            && let Ok(host_path) = dunce::canonicalize(&requested_namespace_cwd)
+            && let Some(mount) = longest_host_mount(&mounts, &host_path)
+        {
+            requested_namespace_cwd = mount.namespace_path.join(
+                host_path
+                    .strip_prefix(&mount.host_path)
+                    .expect("selected Host Mount owns native cwd"),
+            );
+        }
         let selected = longest_namespace_mount(&mounts, &requested_namespace_cwd)
             .or_else(|| {
                 mounts
@@ -519,6 +531,20 @@ mod tests {
             other.path(),
         )
         .await;
+        let expected = service.reconcile(7, binding("/mnt/other/nested")).unwrap();
+        let native = service
+            .reconcile(7, binding(nested.to_str().unwrap()))
+            .unwrap();
+        assert_eq!(native.namespace_cwd, PathBuf::from("/mnt/other/nested"));
+        assert_eq!(native.cwd_grant_id, expected.cwd_grant_id);
+        let resolved = native
+            .adapter()
+            .unwrap()
+            .resolve_directory(&native.namespace_cwd, &nested)
+            .unwrap();
+        assert_eq!(resolved, native.namespace_cwd);
+        assert!(service.reconcile(7, native).is_ok());
+
         let binding = service.reconcile(7, binding("/mnt/project")).unwrap();
         let adapter = binding.adapter().unwrap();
 
