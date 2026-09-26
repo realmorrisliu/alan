@@ -33,6 +33,44 @@ pub(super) async fn snapshot(
     (completion, answer)
 }
 
+pub(super) async fn restore_tape_history(
+    app: &mut FileBackedApp,
+    tape: &alan_shell::Tail,
+    hydrated_bytes: usize,
+) {
+    let Ok(bytes) = tape.snapshot().await else {
+        return;
+    };
+    let Ok(raw) = std::str::from_utf8(&bytes) else {
+        return;
+    };
+    let Some(unseen) = raw.get(hydrated_bytes..) else {
+        return;
+    };
+    if unseen.is_empty() {
+        return;
+    }
+    let mut history = super::file_surface::parse_tape_history(unseen);
+    if matches!(
+        history.first(),
+        Some(crate::history::HistoryCell::Assistant(_))
+    ) {
+        // A turn may already be open at attach; keep only its user boundary,
+        // never resurrect earlier answers hidden by clear or scrollback pruning.
+        if let Some(user) = super::file_surface::parse_tape_history(&raw[..hydrated_bytes])
+            .into_iter()
+            .rev()
+            .find(|cell| matches!(cell, crate::history::HistoryCell::User(_)))
+        {
+            history.insert(0, user);
+        }
+    }
+    // These indices belong to the retained transcript, not freshly hydrated actions.
+    let actions = std::mem::take(&mut app.action_cells);
+    app.merge_reconnected_idle_history(history);
+    app.action_cells = actions;
+}
+
 pub(super) fn restore_answer(app: &mut FileBackedApp, input: &str, answer: String) {
     use crate::history::HistoryCell;
     // This synthetic turn has no action indices; retain the existing ones.
@@ -87,6 +125,56 @@ pub(super) fn discard_superseded_attachment_events(
 mod tests {
     use super::*;
     use crate::history::HistoryCell;
+
+    #[tokio::test]
+    async fn completed_input_recovers_tape_after_local_pending_state_is_released() {
+        let (shell, root, _, pid) = super::super::stdio_tests::live_root_agent().await;
+        let tape = [
+            serde_json::json!({"version":1,"kind":"message","role":"user","content":"task","submission_id":"mine"}),
+            serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"final answer","submission_id":"mine"}),
+        ].map(|record| format!("{record}\n")).concat();
+        shell
+            .write(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
+            .await
+            .unwrap();
+        let tail = shell
+            .tail(&format!("/agent/{pid}/machine/tape"))
+            .await
+            .unwrap();
+        assert!(root.unbind_process(&pid).await);
+        for preview in [None, Some("final"), Some("final answer")] {
+            let mut app = FileBackedApp::new("/agent/root".into());
+            app.transcript = vec![HistoryCell::User("task".into())];
+            if let Some(preview) = preview {
+                app.transcript.push(HistoryCell::Assistant(preview.into()));
+            }
+            let mut pending = Some(super::super::interrupt::PendingRootAgentTurn {
+                input: "task".into(),
+                submission_id: "mine".into(),
+                submitted_process: Some(pid.parse().unwrap()),
+                observed_active: true,
+                interrupt_requested: false,
+                submitted_at_ms: 0,
+            });
+            super::super::interrupt::observe_root_agent_completion(
+                &mut pending,
+                &UiEvent::InputCompleted {
+                    submission_ids: vec!["mine".into()],
+                    status: alan_agent_protocol::UiInputStatus::Completed,
+                    error: None,
+                },
+                &mut app,
+            );
+            assert!(pending.is_none());
+            restore_tape_history(&mut app, &tail, 0).await;
+            restore_tape_history(&mut app, &tail, 0).await;
+            assert_eq!(app.transcript.len(), 2);
+            assert!(
+                matches!(&app.transcript[1], HistoryCell::Assistant(text) if text == "final answer")
+            );
+        }
+        tail.close().await.unwrap();
+    }
 
     #[tokio::test]
     async fn durable_old_process_outcome_survives_without_watcher_delivery() {

@@ -106,6 +106,15 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
                 Some((action_id, merged_index))
             })
             .collect();
+        for index in 0..overlap_len {
+            if let (HistoryCell::Assistant(retained), HistoryCell::Assistant(replacement)) = (
+                &mut app.transcript[suffix_start + index],
+                &current[offset + index],
+            ) && replacement.starts_with(retained.as_str())
+            {
+                *retained = replacement.clone();
+            }
+        }
         app.transcript.extend(current.into_iter().skip(append_from));
         return;
     }
@@ -144,6 +153,9 @@ fn retained_history_matches(
             .enumerate()
             .all(|(index, (replacement, retained))| {
                 replacement == retained
+                    || matches!((replacement, retained),
+                        (HistoryCell::Assistant(full), HistoryCell::Assistant(preview))
+                        if !preview.is_empty() && full.starts_with(preview))
                     || (index == 0
                         && allow_partial_front
                         && rendered_history_suffix_matches(replacement, retained))
