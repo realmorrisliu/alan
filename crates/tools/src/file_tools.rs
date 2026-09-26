@@ -221,7 +221,7 @@ impl Tool for EditFileTool {
             if !content.contains(&old_string) {
                 return Err(anyhow!(
                     "Search text not found in file: '{}...'",
-                    &old_string[..old_string.len().min(50)]
+                    old_string.chars().take(50).collect::<String>()
                 ));
             }
 
