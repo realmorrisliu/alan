@@ -691,9 +691,9 @@ async fn wait_for_stdio_answer_after_submit(
                     }
                 }
                 if interrupt_requested
-                    && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await?
+                    && interrupt_stdio_task_if_pending(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await?
                 {
-                    bail!("Agent task interrupted");
+                    bail!("Agent input cancellation requested");
                 }
                 if snapshot.completion.is_none() && snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
@@ -765,30 +765,30 @@ async fn wait_for_stdio_answer_after_submit(
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
                 interrupt_requested = true;
-                if interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await? {
-                    bail!("Agent task interrupted");
+                if interrupt_stdio_task_if_pending(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await? {
+                    bail!("Agent input cancellation requested");
                 }
             }
         }
     }
 }
 
-async fn interrupt_stdio_task_if_active(
+async fn interrupt_stdio_task_if_pending(
     shell: &alan_shell::Shell,
     agent_path: &str,
+    submission_id: &str,
     snapshot: &StdioTaskSnapshot,
 ) -> Result<bool> {
-    if snapshot.completion.is_some()
-        || !matches!(
-            snapshot.activity_state,
-            Some(UiActivityState::Running | UiActivityState::Paused)
-        )
-    {
+    if snapshot.completion.is_some() {
         return Ok(false);
     }
-    write_machine_ctl(shell, agent_path, "interrupt")
-        .await
-        .context("failed to send Agent task interrupt")?;
+    write_machine_ctl(
+        shell,
+        agent_path,
+        &format!("queue-v1 interrupt {submission_id}"),
+    )
+    .await
+    .context("failed to send Agent task interrupt")?;
     Ok(true)
 }
 
