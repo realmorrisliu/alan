@@ -4,7 +4,11 @@ use alan_agent_protocol::{InputIntent, InputMode, Op};
 
 impl AgentMachine {
     pub(crate) fn take_steering_command(&mut self) -> Option<Submission> {
-        let queue = &mut self.transition_state.buffered_inband_submissions;
+        let mut state = self.transition_state.input_broker.state();
+        if state.paused {
+            return None;
+        }
+        let queue = &mut state.buffered;
         let index = queue.iter().position(|submission| {
             submission.intent == InputIntent::Command
                 && matches!(
@@ -24,13 +28,14 @@ impl AgentMachine {
             mode: InputMode::NextTurn,
         });
         if let Some(id) = self.current_submission_id() {
-            submission.id = id.to_owned();
+            submission.id = id;
         }
         self.queue_next_turn_submission(submission)
     }
 
     pub(crate) fn queue_next_turn_submission(&mut self, submission: Submission) -> Option<usize> {
-        let queue = &mut self.transition_state.queued_next_turn_inputs;
+        let mut state = self.transition_state.input_broker.state();
+        let queue = &mut state.next_turn;
         if queue.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
             return None;
         }
@@ -40,21 +45,23 @@ impl AgentMachine {
 
     /// Release command submissions separately from context; never feed scripts to generation.
     pub(crate) fn take_next_turn_commands(&mut self) -> VecDeque<Submission> {
-        let pending = std::mem::take(&mut self.transition_state.queued_next_turn_inputs);
+        let pending = std::mem::take(&mut self.transition_state.input_broker.state().next_turn);
         let (commands, context) = pending
             .into_iter()
             .partition(|submission| submission.intent == InputIntent::Command);
-        self.transition_state.queued_next_turn_inputs = context;
+        self.transition_state.input_broker.state().next_turn = context;
         commands
     }
 
     pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
-        let pending = std::mem::take(&mut self.transition_state.queued_next_turn_inputs);
+        let pending = std::mem::take(&mut self.transition_state.input_broker.state().next_turn);
         let mut context = VecDeque::new();
         for submission in pending {
             if submission.intent == InputIntent::Command {
                 self.transition_state
-                    .queued_next_turn_inputs
+                    .input_broker
+                    .state()
+                    .next_turn
                     .push_back(submission);
             } else if let Op::Input { parts, .. } = submission.op {
                 context.push_back(parts);
@@ -65,7 +72,7 @@ impl AgentMachine {
 
     #[cfg(test)]
     pub(crate) fn queued_next_turn_input_count(&self) -> usize {
-        self.transition_state.queued_next_turn_inputs.len()
+        self.transition_state.input_broker.state().next_turn.len()
     }
 }
 

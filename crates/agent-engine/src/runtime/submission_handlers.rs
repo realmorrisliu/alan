@@ -97,6 +97,9 @@ where
             })
             .await;
         }
+        Op::InterruptSubmission { .. } | Op::ContinueQueue | Op::DiscardQueue => {
+            anyhow::bail!("queue controls must enter through the Process input pump")
+        }
         Op::Interrupt => {
             runtime.cancel_current_task(emit).await?;
         }

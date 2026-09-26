@@ -13,6 +13,7 @@ use crate::rollout::{
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
+pub(crate) mod input_queue;
 mod recovery;
 mod runtime_control;
 mod transition_state;
@@ -243,8 +244,7 @@ impl AgentMachine {
         if count_as_turn {
             self.user_turn_ordinal = self.user_turn_ordinal.saturating_add(1);
         }
-        let message = Message::user_parts(parts)
-            .with_submission_id(self.current_submission_id().map(str::to_owned));
+        let message = Message::user_parts(parts).with_submission_id(self.current_submission_id());
         self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
@@ -298,7 +298,7 @@ impl AgentMachine {
         }
         parts.push(crate::tape::ContentPart::text(content));
         let message = Message::assistant_parts(parts, vec![])
-            .with_submission_id(self.current_submission_id().map(str::to_owned));
+            .with_submission_id(self.current_submission_id());
         self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)
@@ -339,7 +339,7 @@ impl AgentMachine {
             parts.push(crate::tape::ContentPart::text(content));
         }
         let message = Message::assistant_parts(parts, tool_calls)
-            .with_submission_id(self.current_submission_id().map(str::to_owned));
+            .with_submission_id(self.current_submission_id());
         self.tape.push(message.clone());
 
         // Record to persistence if available (enqueue to recorder writer queue)

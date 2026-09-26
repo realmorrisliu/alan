@@ -84,20 +84,16 @@ pub(crate) enum DeferredRuntimeAction {
     TurnMemoryPromotion(crate::runtime::TurnMemoryPromotionJob),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(super) struct MachineTransitionState {
-    /// Identifier of the submission currently accepted by this Machine.
-    current_submission_id: Option<String>,
+    pub(super) input_broker: super::input_queue::TurnInputBroker,
+
     pending: HashMap<String, PendingYield>,
     pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
     turn_activity: TurnActivityState,
-    /// Submissions buffered during turn execution that need to be requeued
-    /// after the turn completes (e.g., user input during tool execution).
-    buffered_inband_submissions: VecDeque<Submission>,
-    /// Queued context for `InputMode::NextTurn`.
-    queued_next_turn_inputs: VecDeque<Submission>,
+
     /// Number of automatic mid-turn compactions already performed in the active turn.
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
@@ -129,15 +125,25 @@ const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 
 impl AgentMachine {
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
-        self.transition_state.current_submission_id = Some(submission_id.into());
+        self.transition_state
+            .input_broker
+            .state()
+            .current_submission_id = Some(submission_id.into());
     }
 
     pub(crate) fn finish_submission(&mut self) {
-        self.transition_state.current_submission_id = None;
+        self.transition_state
+            .input_broker
+            .state()
+            .current_submission_id = None;
     }
 
-    pub(crate) fn current_submission_id(&self) -> Option<&str> {
-        self.transition_state.current_submission_id.as_deref()
+    pub(crate) fn current_submission_id(&self) -> Option<String> {
+        self.transition_state
+            .input_broker
+            .state()
+            .current_submission_id
+            .clone()
     }
 
     /// Record a guardian review outcome (true = denied). Returns true when the
@@ -199,7 +205,9 @@ impl AgentMachine {
         self.transition_state.pending_tool_replay_batches.clear();
         self.transition_state.pending_order.clear();
         self.transition_state.turn_activity = TurnActivityState::Idle;
-        self.transition_state.buffered_inband_submissions.clear();
+        if !self.transition_state.input_broker.is_paused() {
+            self.transition_state.input_broker.state().buffered.clear();
+        }
         self.transition_state.active_turn_message_start = None;
         self.transition_state.active_skills.clear();
         self.transition_state.active_turn_request_control_intent =
@@ -222,27 +230,33 @@ impl AgentMachine {
 
     /// Drain all buffered inband submissions.
     pub(crate) fn drain_buffered_inband_submissions(&mut self) -> VecDeque<Submission> {
-        std::mem::take(&mut self.transition_state.buffered_inband_submissions)
+        std::mem::take(&mut self.transition_state.input_broker.state().buffered)
     }
 
     /// Push a submission to the buffered inband submissions queue.
     pub(crate) fn push_buffered_inband_submission(&mut self, submission: Submission) {
         self.transition_state
-            .buffered_inband_submissions
+            .input_broker
+            .state()
+            .buffered
             .push_back(submission);
     }
 
     /// Pop a submission from the buffered inband submissions queue.
     pub(crate) fn pop_buffered_inband_submission(&mut self) -> Option<Submission> {
         self.transition_state
-            .buffered_inband_submissions
+            .input_broker
+            .state()
+            .buffered
             .pop_front()
     }
 
     /// Count user input submissions in the buffered queue
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
         self.transition_state
-            .buffered_inband_submissions
+            .input_broker
+            .state()
+            .buffered
             .iter()
             .filter(|submission| matches!(submission.op, alan_agent_protocol::Op::Input { .. }))
             .count()
@@ -250,8 +264,8 @@ impl AgentMachine {
 
     /// Clear buffered inband submissions and return the count
     pub(crate) fn clear_buffered_inband_submissions(&mut self) -> usize {
-        let count = self.transition_state.buffered_inband_submissions.len();
-        self.transition_state.buffered_inband_submissions.clear();
+        let count = self.transition_state.input_broker.state().buffered.len();
+        self.transition_state.input_broker.state().buffered.clear();
         count
     }
 
@@ -569,7 +583,7 @@ mod tests {
         assert_eq!(machine.current_submission_id(), None);
 
         machine.accept_submission("sub-1");
-        assert_eq!(machine.current_submission_id(), Some("sub-1"));
+        assert_eq!(machine.current_submission_id().as_deref(), Some("sub-1"));
         machine.add_user_message("request");
         machine.add_assistant_message("response", None);
         assert_eq!(machine.messages()[0].submission_id(), Some("sub-1"));

@@ -599,7 +599,7 @@ where
                 .await?
                 {
                     let resume_with_generation = !tool_calls.iter().any(|call| {
-                        state.machine.current_submission_id() == Some(call.id.as_str())
+                        state.machine.current_submission_id().as_deref() == Some(call.id.as_str())
                     });
                     if explicit_command::run_queued_steering_commands(
                         state,

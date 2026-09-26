@@ -22,6 +22,7 @@ mod memory_recall;
 mod memory_surfaces;
 mod mount_request_tool;
 mod prompt_cache;
+mod queue_controls;
 mod response_guardrails;
 mod steering_queue;
 mod submission_handlers;

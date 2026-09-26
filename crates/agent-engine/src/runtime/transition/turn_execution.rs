@@ -431,7 +431,7 @@ where
                 crate::runtime::ui_surfaces::error_notice(
                     &agent_files,
                     &message,
-                    state.machine.current_submission_id(),
+                    state.machine.current_submission_id().as_deref(),
                 )
                 .await
                 .context("write generation error UI state")?;
@@ -583,7 +583,7 @@ where
 
         if assistant_message_persisted && !response.content.is_empty() {
             let namespace_input_text = namespace_user_input_for_tape.take();
-            let submission_id = state.machine.current_submission_id().map(str::to_owned);
+            let submission_id = state.machine.current_submission_id();
             agent_files
                 .write_assistant_output(&response.content)
                 .await
@@ -665,7 +665,7 @@ where
                 &response.redacted_thinking,
             );
             let namespace_input_text = namespace_user_input_for_tape.take();
-            let submission_id = state.machine.current_submission_id().map(str::to_owned);
+            let submission_id = state.machine.current_submission_id();
             agent_files
                 .write_assistant_output(fallback_text)
                 .await

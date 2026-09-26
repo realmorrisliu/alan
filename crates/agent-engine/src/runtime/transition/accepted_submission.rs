@@ -22,43 +22,41 @@ pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
     )
 }
 
-pub(crate) async fn advance_accepted_submission(
-    state: &mut RuntimeLoopState,
+pub(crate) fn advance_accepted_submission<'a>(
+    state: &'a mut RuntimeLoopState,
     submission: Submission,
-    broker: &TurnInputBroker,
-    cancel: &CancellationToken,
-) -> AcceptedSubmissionOutcome {
+    broker: &'a TurnInputBroker,
+    cancel: &'a CancellationToken,
+) -> impl std::future::Future<Output = AcceptedSubmissionOutcome> + 'a {
     let initial_id = submission.id.clone();
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
     track_active_task_submission(&mut state.machine, &submission);
-    let mut emit = |_event: Event| async {};
+    async move {
+        let mut emit = |_event: Event| async {};
 
-    let result = if requeue_inband_submissions {
-        drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
-    } else {
-        handle_submission_with_cancel(state, submission, &mut emit, cancel).await
-    }
-    .map(|()| {
-        if state.machine.has_pending_interaction() {
-            TransitionCompletion::Paused
+        let result = if requeue_inband_submissions {
+            drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
         } else {
-            TransitionCompletion::Completed
+            handle_submission_with_cancel(state, submission, &mut emit, cancel).await
         }
-    });
+        .map(|()| {
+            if state.machine.has_pending_interaction() {
+                TransitionCompletion::Paused
+            } else {
+                TransitionCompletion::Completed
+            }
+        });
 
-    let deferred_actions = state.machine.drain_deferred_runtime_actions();
-    let submission_id = state
-        .machine
-        .current_submission_id()
-        .map(str::to_owned)
-        .unwrap_or(initial_id);
-    state.machine.finish_submission();
+        let deferred_actions = state.machine.drain_deferred_runtime_actions();
+        let submission_id = state.machine.current_submission_id().unwrap_or(initial_id);
+        state.machine.finish_submission();
 
-    AcceptedSubmissionOutcome {
-        submission_id,
-        result,
-        requeue_inband_submissions,
-        deferred_actions,
+        AcceptedSubmissionOutcome {
+            submission_id,
+            result,
+            requeue_inband_submissions,
+            deferred_actions,
+        }
     }
 }
 
@@ -73,8 +71,6 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    broker.clear().await;
-    let _ = state.machine.clear_buffered_inband_submissions();
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
     handle_submission_with_cancel_and_steering(
@@ -87,6 +83,10 @@ where
     .await?;
 
     loop {
+        if cancel.is_cancelled() || (broker.is_paused() && !state.machine.has_pending_interaction())
+        {
+            break;
+        }
         let next_submission = if state.machine.has_pending_interaction() {
             let RuntimeLoopState { machine, .. } = state;
             next_pending_interaction_submission(

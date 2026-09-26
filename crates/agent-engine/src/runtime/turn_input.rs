@@ -1,105 +1,35 @@
 //! In-turn input brokering and file-native resume selection.
 
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::time::Duration;
 
-use alan_agent_protocol::{Event, InputMode, Op, Submission};
+#[cfg(test)]
+use alan_agent_protocol::InputMode;
+use alan_agent_protocol::{Event, Op, Submission};
 use anyhow::Result;
-use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests};
 use super::turn_support::cancel_current_task;
 use crate::agent_machine::AgentMachine;
 
-const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
+pub(crate) use crate::agent_machine::input_queue::{TurnInputBroker, is_brokered_input};
+
 pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
 pub(super) const NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
-#[derive(Clone)]
-pub(super) struct TurnInputBroker {
-    inner: Arc<TurnInputBrokerInner>,
-}
-
-struct TurnInputBrokerInner {
-    queue: Mutex<VecDeque<Submission>>,
-    notify: Notify,
-}
-
-impl Default for TurnInputBroker {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(TurnInputBrokerInner {
-                queue: Mutex::new(VecDeque::new()),
-                notify: Notify::new(),
-            }),
-        }
-    }
-}
-
-impl TurnInputBroker {
-    pub(super) async fn push(&self, submission: Submission) -> bool {
-        let mut guard = self.inner.queue.lock().await;
-        if is_brokered_input(&submission.op)
-            && guard
-                .iter()
-                .filter(|queued| is_brokered_input(&queued.op))
-                .count()
-                >= MAX_BROKERED_INBAND_USER_INPUTS
-        {
-            return false;
-        }
-        guard.push_back(submission);
-        drop(guard);
-        self.inner.notify.notify_one();
-        true
-    }
-
-    pub(super) async fn recv(&self, cancel: &CancellationToken) -> Option<Submission> {
-        loop {
-            if let Some(submission) = self.try_pop().await {
-                return Some(submission);
-            }
-
-            tokio::select! {
-                _ = cancel.cancelled() => return None,
-                _ = self.inner.notify.notified() => {}
-            }
-        }
-    }
-
-    pub(super) async fn clear(&self) {
-        self.inner.queue.lock().await.clear();
-    }
-
-    pub(super) async fn drain(&self) -> VecDeque<Submission> {
-        std::mem::take(&mut *self.inner.queue.lock().await)
-    }
-
-    pub(super) async fn try_recv(&self) -> Option<Submission> {
-        self.try_pop().await
-    }
-
-    async fn try_pop(&self) -> Option<Submission> {
-        self.inner.queue.lock().await.pop_front()
-    }
-}
 
 pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
     matches!(op, Op::Resume { .. })
 }
 
 pub(super) fn is_turn_inband_submission(op: &Op) -> bool {
-    is_turn_resume_submission(op) || is_brokered_input(op)
-}
-
-fn is_brokered_input(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Input {
-            mode: InputMode::Steer | InputMode::FollowUp,
-            ..
-        }
-    )
+    is_turn_resume_submission(op)
+        || matches!(
+            op,
+            Op::Input {
+                mode: alan_agent_protocol::InputMode::Steer,
+                ..
+            }
+        )
 }
 
 pub(super) async fn next_pending_interaction_submission<E, F>(
@@ -115,6 +45,13 @@ where
     F: std::future::Future<Output = ()>,
 {
     loop {
+        if cancel.is_cancelled() {
+            emit_dropped_in_turn_submissions(emit, machine, broker).await;
+            if machine.has_pending_interaction() {
+                cancel_current_task(machine, agent_files, host_mount_requests, emit).await?;
+            }
+            return Ok(None);
+        }
         if let Some(submission) =
             namespace_pending_resume_submission(machine, agent_files, host_mount_requests).await?
         {
@@ -206,6 +143,9 @@ async fn emit_dropped_in_turn_submissions<E, F>(
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    if broker.is_paused() {
+        return;
+    }
     let dropped_buffered = machine.clear_buffered_inband_submissions();
     let dropped_brokered = broker.drain().await.len();
     let dropped_total = dropped_buffered + dropped_brokered;
@@ -238,7 +178,7 @@ mod tests {
                 serde_json::json!({"choice": "approve"})
             )],
         }));
-        assert!(is_turn_inband_submission(&Op::Input {
+        assert!(!is_turn_inband_submission(&Op::Input {
             parts: vec![alan_agent_protocol::ContentPart::text("follow up")],
             mode: InputMode::FollowUp,
         }));
@@ -329,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn test_turn_input_broker_caps_user_inputs_but_allows_resume_submissions() {
         let broker = TurnInputBroker::default();
-        for idx in 0..MAX_BROKERED_INBAND_USER_INPUTS {
+        for idx in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
             assert!(
                 broker
                     .push(Submission {

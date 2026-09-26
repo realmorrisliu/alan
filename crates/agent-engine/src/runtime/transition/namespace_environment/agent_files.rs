@@ -85,7 +85,7 @@ impl NamespaceAgentFiles {
             if let Some(command) = record.strip_prefix("ctl:") {
                 self.control_offset
                     .store(offset + consumed, Ordering::Relaxed);
-                if let Some(submission) = machine_control_submission(command) {
+                if let Some(submission) = machine_control_submission(command)? {
                     return Ok(Some(submission));
                 }
             }
@@ -573,8 +573,23 @@ fn request_response_content_part(response: String) -> ContentPart {
     }
 }
 
-fn machine_control_submission(command: &str) -> Option<Submission> {
-    match command.trim() {
+fn machine_control_submission(command: &str) -> Result<Option<Submission>> {
+    let command = command.trim();
+    if command.starts_with("queue-v1") {
+        let words = command.split_whitespace().collect::<Vec<_>>();
+        let op = match words.as_slice() {
+            ["queue-v1", "continue"] => Op::ContinueQueue,
+            ["queue-v1", "discard"] => Op::DiscardQueue,
+            ["queue-v1", "interrupt", id] if uuid::Uuid::parse_str(id).is_ok() => {
+                Op::InterruptSubmission {
+                    submission_id: (*id).to_owned(),
+                }
+            }
+            _ => bail!("invalid queue-v1 control"),
+        };
+        return Ok(Some(Submission::new(op)));
+    }
+    Ok(match command {
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
         // Turn interrupt is agent-runtime control (stop the current turn,
@@ -584,7 +599,7 @@ fn machine_control_submission(command: &str) -> Option<Submission> {
         // through machine/ctl.
         "interrupt" => Some(Submission::new(Op::Interrupt)),
         _ => None,
-    }
+    })
 }
 
 async fn write_request_record(

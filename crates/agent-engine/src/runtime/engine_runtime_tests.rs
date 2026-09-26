@@ -14,13 +14,13 @@ fn test_push_outer_submission_inserts_before_existing_deferred_actions() {
     queues.push_outer_deferred(make_deferred_action_for_test());
     queues.push_outer_submission(second_submission);
 
+    let outer_queue = std::iter::from_fn(|| queues.pop_outer()).collect::<VecDeque<_>>();
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&outer_queue),
         vec!["submission", "submission", "deferred", "deferred"]
     );
 
-    let queued_submission_ids = queues
-        .outer_queue
+    let queued_submission_ids = outer_queue
         .iter()
         .filter_map(|item| match item {
             QueuedRuntimeItem::Submission(submission) => Some(submission.id.clone()),
@@ -49,12 +49,13 @@ async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_act
     let requeued = queues.requeue_active_turn_leftovers(&mut machine).await;
 
     assert_eq!(requeued, 1);
+    let outer_queue = std::iter::from_fn(|| queues.pop_outer()).collect::<VecDeque<_>>();
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&outer_queue),
         vec!["submission", "deferred"]
     );
 
-    match queues.outer_queue.front() {
+    match outer_queue.front() {
         Some(QueuedRuntimeItem::Submission(submission)) => {
             assert_eq!(submission.id, buffered_submission_id);
         }

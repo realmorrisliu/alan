@@ -268,7 +268,7 @@
                 &mut |_event: Event| async {},
             ).await.unwrap();
             assert_eq!(executions.load(Ordering::SeqCst), 1);
-            assert_eq!(state.machine.current_submission_id(), Some("parent-turn"));
+            assert_eq!(state.machine.current_submission_id().as_deref(), Some("parent-turn"));
             assert!(provider_probe.recorded_requests().is_empty());
             assert_eq!(state.machine.tool_payload_by_call_id("skipped-tool").unwrap()["status"], "skipped_due_to_steering");
             if needs_approval {

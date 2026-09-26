@@ -189,7 +189,7 @@ where
         let Some(submission) = state.machine.take_steering_command() else {
             break;
         };
-        let parent_id = state.machine.current_submission_id().map(str::to_owned);
+        let parent_id = state.machine.current_submission_id();
         let parent_activity = state.machine.turn_activity();
         state.machine.accept_submission(&submission.id);
         let result =
@@ -382,9 +382,9 @@ pub(super) fn retain_pending_tool_batch(
     if let Some(pending) = state.machine.pending_confirmation()
         && replays_tool_calls(&pending.checkpoint_type)
     {
-        let resume_with_generation = !tool_calls
-            .first()
-            .is_some_and(|call| state.machine.current_submission_id() == Some(call.id.as_str()));
+        let resume_with_generation = !tool_calls.first().is_some_and(|call| {
+            state.machine.current_submission_id().as_deref() == Some(call.id.as_str())
+        });
         state.machine.set_tool_replay_batch(
             pending.checkpoint_id,
             tool_calls.to_vec(),

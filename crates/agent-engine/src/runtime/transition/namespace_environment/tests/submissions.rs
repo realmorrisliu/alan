@@ -96,6 +96,56 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .unwrap()
         .expect("interrupt command should produce a submission");
     assert!(matches!(interrupt.op, Op::Interrupt));
+
+    let id = uuid::Uuid::new_v4().to_string();
+    shell
+        .write(
+            "/agent/1/machine/ctl",
+            format!("queue-v1 interrupt {id}").as_bytes(),
+        )
+        .await
+        .unwrap();
+    let target = agent_files
+        .read_next_machine_control_submission()
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(target.op, Op::InterruptSubmission { submission_id } if submission_id == id));
+    for (verb, discard) in [("continue", false), ("discard", true)] {
+        shell
+            .write(
+                "/agent/1/machine/ctl",
+                format!("queue-v1 {verb}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let control = agent_files
+            .read_next_machine_control_submission()
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(control.op, Op::DiscardQueue) == discard);
+        assert!(matches!(control.op, Op::ContinueQueue) != discard);
+    }
+    for malformed in ["queue-v1 interrupt not-a-uuid", "queue-v1 discard extra"] {
+        shell
+            .write("/agent/1/machine/ctl", malformed.as_bytes())
+            .await
+            .unwrap();
+        assert!(
+            agent_files
+                .read_next_machine_control_submission()
+                .await
+                .is_err()
+        );
+        assert!(
+            agent_files
+                .read_next_machine_control_submission()
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]

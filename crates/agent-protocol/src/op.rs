@@ -139,6 +139,13 @@ pub enum Op {
     /// Interrupt current execution.
     Interrupt,
 
+    /// Interrupt one accepted input and pause later queued work.
+    InterruptSubmission { submission_id: String },
+    /// Resume the explicitly paused input queue.
+    ContinueQueue,
+    /// Discard the explicitly paused input queue without running it.
+    DiscardQueue,
+
     /// Compact the current Agent Machine context with optional guidance.
     CompactWithOptions {
         /// Optional focus for the summary handoff, for example "preserve todos".
