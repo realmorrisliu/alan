@@ -177,9 +177,8 @@ Runtime or select an Agent Definition as Host startup behavior.
 Alan SHALL route complete input submissions inside the attached Agent Runtime.
 The first `!` selects exact command handling; the first `:` selects Agent
 interpretation; either prefix applies once to the whole submission and bypasses
-intent classification. Unprefixed input SHALL remain Agent input until qualified
-automatic routing is enabled, then SHALL use typed command/Agent/ambiguous intent
-classification without command rewriting. This contract SHALL apply to terminal
+intent classification. Unprefixed input SHALL remain governed Agent input; automatic intent
+classification is not enabled in this delivery. This contract SHALL apply to terminal
 and redirected input. Explicit routing MUST NOT grant authority. Pending request
 responses SHALL be consumed by their request before ordinary routing.
 
@@ -212,15 +211,6 @@ responses SHALL be consumed by their request before ordinary routing.
 - **THEN** it follows the existing governed Agent interpretation path
 - **AND** the product does not claim automatic command routing is enabled
 
-#### Scenario: Classification cannot determine intent
-- **WHEN** qualified automatic routing returns ambiguous intent
-- **THEN** Alan requests clarification before dispatching either execution path
-
-#### Scenario: Evaluation fails
-- **WHEN** evaluation is unavailable, times out or returns a malformed result
-- **THEN** Alan uses bounded governed Agent fallback or reports unavailable generation
-- **AND** evaluation failure never selects direct execution or bypasses cancellation
-
 #### Scenario: Direct command fails
 - **WHEN** command parsing, authorization or execution fails
 - **THEN** the failure is reported without automatic rewriting, repair or redispatch
@@ -238,7 +228,6 @@ responses SHALL be consumed by their request before ordinary routing.
 #### Scenario: Shell-looking text is entered in the terminal renderer
 - **WHEN** the user submits unprefixed `ls /mnt/project`
 - **THEN** the explicit-prefix slice treats it as governed Agent input
-- **AND** after qualified automatic routing is enabled it is classified without rewriting
 - **AND** command-like syntax alone never grants execution authority
 
 #### Scenario: User explicitly requests a shell command

@@ -32,12 +32,12 @@
 
 - [ ] 2.16 Implement `alan: ` / `alan! ` as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
 
-## 3. Typed intent routing and qualification
+## 3. Typed intent routing and qualification — transferred
 
-- [ ] 3.1 Consume the delivered generic typed evaluation capability from the cognition owner; verify it reaches mounted Connections, returns typed command/Agent/ambiguous results, preserves original command text and enforces bounded cancellation-aware fallback.
-- [ ] 3.2 Freeze labeled qualification cases and numeric accuracy/latency/cost budgets before candidate measurement; review the recorded budgets and avoid claiming a Jev adapter exists before integration.
-- [ ] 3.3 Run shadow evaluation against deterministic and generation-only baselines; verify classification causes no effects, cover quoted discussion, ambiguity, malformed results, outages and overrides, and report false execution classifications with real timing/cost evidence.
-- [ ] 3.4 Obtain explicit activation approval only after qualification and known discussion-to-execution cases are resolved and visible route presentation prevents commands from appearing as conversation under `alan: `; verify qualified routing behaves identically across interactive and redirected submissions and can be disabled to the Agent baseline.
+- [x] 3.1 Transfer original implementation task 3.1 to active successor [qualify-agent-input-routing, task 2.1](../qualify-agent-input-routing/tasks.md); typed integration is not implemented here.
+- [x] 3.2 Transfer original corpus/budget task 3.2 to successor task 2.2; budgets and measurement remain unfinished.
+- [x] 3.3 Transfer original shadow qualification task 3.3 to successor task 2.3; no provider qualification is claimed.
+- [x] 3.4 Transfer original activation task 3.4 to successor task 2.4; automatic routing remains disabled and still requires explicit activation.
 
 ## 4. Review, merge and archive readiness
 
