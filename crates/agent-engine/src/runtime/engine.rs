@@ -711,7 +711,10 @@ fn spawn_with_prepared_runtime_environment(
                                     queues.pause();
                                 }
                                 if queues.is_paused() {
-                                    let _ = super::ui_surfaces::paused(&namespace_heartbeat, None).await;
+                                    let _ = super::ui_surfaces::paused(
+                                        &namespace_heartbeat,
+                                        state.machine.has_pending_interaction().then_some(&state.machine),
+                                    ).await;
                                 }
                                 queues.outer_queue.lock().expect("input queue poisoned").pending.extend(
                                     outcome
