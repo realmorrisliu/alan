@@ -481,7 +481,7 @@ pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> 
                             operator.push(operator_char);
                             operator_end = operator_index + operator_char.len_utf8();
                         }
-                        if ch == '<'
+                        if operator == "<<"
                             && matches!(chars.peek(), Some((_, '-')))
                             && let Some((operator_index, operator_char)) = chars.next()
                         {
@@ -669,6 +669,22 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirection_dash_belongs_to_the_target_except_for_stripped_heredocs() {
+        for (operator, target) in [("<>", "-/mnt/project/file"), ("<&", "-"), ("<<-", "EOF")] {
+            let script = format!("cat {operator}{target}");
+            let tokens = shell_tokens_with_spans(&script).unwrap();
+            assert_eq!(
+                tokens
+                    .iter()
+                    .map(|token| token.decoded.as_str())
+                    .collect::<Vec<_>>(),
+                ["cat", operator, target]
+            );
+            assert_eq!(&script[tokens[2].raw_start..tokens[2].raw_end], target);
+        }
+    }
 
     #[test]
     fn tokens_keep_empty_words_unicode_and_redirection_spans() {
