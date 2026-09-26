@@ -590,18 +590,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn accepted_submission_identity_is_machine_owned() {
-        let mut machine = AgentMachine::new();
-        assert_eq!(machine.current_submission_id(), None);
-
-        machine.accept_submission("sub-1");
-        assert_eq!(machine.current_submission_id(), Some("sub-1"));
-
-        machine.finish_submission();
-        assert_eq!(machine.current_submission_id(), None);
-    }
-
-    #[test]
     fn guardian_breaker_trips_on_three_consecutive_denials() {
         let mut state = AgentMachine::new();
         assert!(!state.record_guardian_review(true));

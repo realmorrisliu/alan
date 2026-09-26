@@ -112,3 +112,20 @@ mod persistence;
 mod recovery;
 #[path = "agent_machine_tape_tests.rs"]
 mod tape;
+
+#[test]
+fn accepted_submission_identity_is_machine_owned() {
+    let mut machine = AgentMachine::new();
+    assert_eq!(machine.current_submission_id(), None);
+
+    machine.accept_submission("sub-1");
+    assert_eq!(machine.current_submission_id(), Some("sub-1"));
+
+    machine.accept_steering_submission("sub-2".into());
+    assert_eq!(machine.current_submission_id(), Some("sub-2"));
+    assert_eq!(machine.related_submission_ids(), &["sub-1"]);
+    machine.accept_submission("sub-3");
+    assert!(machine.related_submission_ids().is_empty());
+    machine.finish_submission();
+    assert_eq!(machine.current_submission_id(), None);
+}
