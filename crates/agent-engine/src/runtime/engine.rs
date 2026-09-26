@@ -632,7 +632,7 @@ fn spawn_with_prepared_runtime_environment(
                         if !state.machine.has_pending_interaction() {
                             let files = state.agent_files();
                             let result = if queues.is_paused() {
-                                super::ui_surfaces::paused(&files).await
+                                super::ui_surfaces::paused(&files, None).await
                             } else {
                                 super::ui_surfaces::turn_completed(&files, false).await
                             };
@@ -718,7 +718,10 @@ fn spawn_with_prepared_runtime_environment(
                                     queues.pause();
                                 }
                                 if queues.is_paused() {
-                                    let _ = super::ui_surfaces::paused(&namespace_heartbeat).await;
+                                    let _ = super::ui_surfaces::paused(
+                                        &namespace_heartbeat,
+                                        state.machine.has_pending_interaction().then_some(&state.machine),
+                                    ).await;
                                 }
                                 queues.outer_queue.lock().expect("input queue poisoned").pending.extend(
                                     outcome
