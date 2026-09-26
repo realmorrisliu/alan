@@ -1,7 +1,7 @@
 use super::super::reified_namespace::ReifiedNamespacePlan;
 use super::command_wrappers::is_env_assignment;
 use super::path_safety::PROTECTED_SUBPATHS;
-use super::shell_syntax::{ShellWordToken, shell_commands, shell_word_tokens_with_spans};
+use super::shell_syntax::{ShellToken, shell_commands, shell_tokens_with_spans};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
@@ -22,7 +22,7 @@ pub(super) fn translate_namespace_shell_token(
     translate_shell_token(token, &|path| namespace_path_to_host(path, mounts))
 }
 
-pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> bool {
+pub(super) fn token_is_data_argument(command: &str, token: &ShellToken) -> bool {
     let prefix = command[..token.raw_start].trim_end();
     if prefix.ends_with('>') || prefix.ends_with('<') {
         return false;
@@ -115,7 +115,7 @@ fn translate_nested_shell_token(
     token: &str,
     map_path: &dyn Fn(&Path) -> Option<PathBuf>,
 ) -> Option<String> {
-    let tokens = shell_word_tokens_with_spans(token).ok()?;
+    let tokens = shell_tokens_with_spans(token).ok()?;
     if !looks_like_nested_shell_script(&tokens) {
         return None;
     }
@@ -143,7 +143,7 @@ fn translate_nested_shell_token(
     Some(translated)
 }
 
-fn looks_like_nested_shell_script(tokens: &[ShellWordToken]) -> bool {
+fn looks_like_nested_shell_script(tokens: &[ShellToken]) -> bool {
     if tokens.len() < 2 {
         return false;
     }
