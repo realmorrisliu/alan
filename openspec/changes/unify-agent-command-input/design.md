@@ -170,6 +170,18 @@ The executable uses only its invocation namespace, with no ambient Host connecti
 Its conservative manifest capability is write, including status; no argument-based
 policy relaxation is introduced. Native shell name resolution remains unchanged.
 
+Existing operation inventory for this facade (all resolved in the invoking namespace):
+
+| Work operation | Existing owner and surface | Receipt |
+| --- | --- | --- |
+| Status | Machine activity at `/agent/TARGET/machine/ui/activity` | Current projection |
+| Submit | AgentFS `io/input`, versioned input record | Submission UUID, submitted |
+| Cancel | Machine `ctl`, targeted queue interrupt | Requested |
+| Continue / discard | Machine `ctl`, existing paused-queue controls | Requested |
+
+The facade adds no queue, lifecycle or completion store. Memory/service operations
+retain their existing owners and do not gain speculative command wrappers.
+
 ### One project file identity across editing and commands
 
 Project tools expose grant-relative paths for any delegated mount and

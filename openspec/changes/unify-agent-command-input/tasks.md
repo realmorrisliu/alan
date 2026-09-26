@@ -26,11 +26,11 @@
 
 - [ ] 2.11 Keep grant-to-native cwd/path resolution within ephemeral Host-adapter spawn/sandbox context while preserving logical service records; verify grant IDs/path strings cannot authorize access, raw backing-path metadata stays out of Alan-owned path fields and execution-path references in evidence, ordinary content in an explicitly delegated Host file remains user data, undelegated/private backing stays hidden and shell/model context is not rewritten to aP aliases.
 - [ ] 2.12 Reconcile existing Linux reification with native path identity and macOS sandbox projection; verify read-only grants, outside-grant writes, symlink escape, rejection of mount-local executables and opaque project-code dispatchers (Git aliases, package scripts, build/test/run/generation commands) on ProtectedOnly, human escalation on weaker fallback backends, virtual-only mounts, revocation before launch and truthful degraded-backend behavior without bypassing policy.
-- [ ] 2.13 Inventory existing internal control operations and executable packaging; select the smallest task-oriented alan9 commands needed for real Agent workflows, specify exact invocation/help and result schemas, and implement thin aP clients with caller-scoped authority. Verify explicit discovery/invocation, no ambient broader connection, no duplicate state owner, commit errors, asynchronous acceptance versus completion and no replay of unknown effects; native `cat`/`q` lookup must not silently switch meaning.
+- [x] 2.13 Inventory existing internal control operations and executable packaging; select the smallest task-oriented alan9 commands needed for real Agent workflows, specify exact invocation/help and result schemas, and implement thin aP clients with caller-scoped authority. Verify explicit discovery/invocation, no ambient broader connection, no duplicate state owner, commit errors, asynchronous acceptance versus completion and no replay of unknown effects; native `cat`/`q` lookup must not silently switch meaning.
 - [ ] 2.14 Align structured project read/edit/search path parameters with Host shell cwd and paths through existing Host adapters. Verify Agent edit → native read/git diff and native edit → Agent read for the active grant; verify other grants remain available to Agent file tools and become shell-visible only after explicit cwd switching, while one shell action cannot span disjoint grants. Cover grant-relative and shared-cwd-relative Agent paths plus native cwd-relative shell paths, pending-buffer/save failure, stale-content conflict, read-only grants, symlink containment and revocation; no mirror copies or shell-text rewriting.
 - [ ] 2.15 Review normal user flows and Agent command help: ordinary work requires neither aP terminology nor internal mount/descriptor/commit knowledge, while explicit developer inspection remains available.
 
-- [ ] 2.16 Implement `alan: ` / `alan! ` as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
+- [x] 2.16 Implement `alan: ` / `alan! ` as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
 
 ## 3. Typed intent routing and qualification
 
@@ -228,3 +228,31 @@
   command boundary regression and expanded real Host scenario passed separately.
   Strict change validation and `just quality` passed. All remote checks passed for
   preceding commit `ce2d2793`; the new slice still requires current-head CI.
+
+- Completed task 2.13 with an acknowledgment-loss regression: AgentFS commits the
+  actual input, its clunk acknowledgment fails, and `agent_work` returns nonzero
+  with the same submission ID and unknown-delivery diagnostic. Exactly one input
+  reaches the stream; queue controls likewise do not retry the failed acknowledgment.
+  Together with caller-namespace denial, executable discovery and real governed
+  Tool invocation, this covers the chosen minimal work-command facade. Memory and
+  service wrappers are not introduced without a concrete workflow.
+- Recovery audit found that command steering temporarily replaced the parent input
+  identity without including it in the queue checkpoint. The Machine now retains
+  that suspended identity during the command boundary. Restart reports both IDs
+  as unknown, never replays either, and a cancellation targeting the parent still
+  reaches the active turn. Disk-backed recovery and existing steering continuation
+  regressions cover this change; combined native-command restart remains open.
+
+- Completed task 2.16 against the current composer/renderer/redirected-IO contracts:
+  empty-entry keyboard/paste prefixes, literal embedded prefixes and explicit `:`,
+  Backspace reset, accepted reset versus rejected draft/intent preservation,
+  history recall, pending responses, wrapped multiline cursor geometry and resize,
+  and redirected one-shot framing without prompts. All 160 TUI tests passed.
+  This marks the presentation contract only; task 2.10 still owns actual terminal
+  and Herdr acceptance.
+- Current regression: 1,204 engine tests, 20 architecture checks, 95 Service Manager
+  unit tests and its two integration checks passed; one engine test remains ignored.
+  Herdr environment probe returned `NOT_IN_HERDR`; its skill prohibits controlling
+  the focused session from outside Herdr, so that acceptance remains outstanding.
+- `just quality` and strict change validation passed after the recovery/facade
+  changes; the commit hook rechecks the final staged presentation assertions.

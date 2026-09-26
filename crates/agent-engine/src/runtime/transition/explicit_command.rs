@@ -198,18 +198,14 @@ where
         let Some(submission) = state.machine.take_steering_command() else {
             break;
         };
-        let parent_id = state.machine.current_submission_identity();
         let parent_activity = state.machine.turn_activity();
         state
             .machine
-            .accept_submission_identity((&submission).into());
+            .input_broker()
+            .begin_steering_command((&submission).into());
         let result =
             handle_explicit_command(state, submission.id, submission.op, emit, cancel, None).await;
-        if let Some(parent_id) = parent_id {
-            state.machine.accept_submission_identity(parent_id);
-        } else {
-            state.machine.finish_submission();
-        }
+        state.machine.input_broker().end_steering_command();
         result?;
         if let Some(pending) = state.machine.pending_confirmation() {
             state

@@ -11,6 +11,8 @@ const EVENT: &str = "input_queue_checkpoint";
 struct QueueCheckpoint {
     version: u16,
     active: Option<UiSubmission>,
+    #[serde(default)]
+    suspended: Option<UiSubmission>,
     cwd: Option<std::path::PathBuf>,
     pending: Vec<Submission>,
     next_turn: Vec<Submission>,
@@ -47,6 +49,7 @@ impl TurnInputBroker {
                 serde_json::to_value(QueueCheckpoint {
                     version: 1,
                     active: state.active_submission.clone(),
+                    suspended: state.suspended_submission.clone(),
                     cwd: state.checkpoint_cwd.clone(),
                     pending: state
                         .buffered
@@ -121,10 +124,10 @@ impl TurnInputBroker {
                 "recovery record contains a control operation"
             );
         }
-        if let Some(active) = &saved.active {
+        for active in saved.active.iter().chain(&saved.suspended) {
             ensure!(
-                !ids.contains(active.submission_id.as_str()),
-                "active input also appears in the pending queue"
+                !active.submission_id.is_empty() && ids.insert(active.submission_id.as_str()),
+                "duplicate or empty active/recovered input ID"
             );
         }
         let mut state = self.state();
@@ -137,6 +140,7 @@ impl TurnInputBroker {
         state.checkpoint_cwd = saved.cwd;
         state.unknown_inputs = saved.unknown;
         state.unknown_inputs.extend(saved.active);
+        state.unknown_inputs.extend(saved.suspended);
         state.paused = saved.paused
             || !state.outer.is_empty()
             || !state.next_turn.is_empty()
@@ -201,6 +205,10 @@ mod tests {
             submission_id: "active".into(),
             intent: InputIntent::Command,
         });
+        queue.begin_steering_command(UiSubmission {
+            submission_id: "steering".into(),
+            intent: InputIntent::Command,
+        });
         queue.checkpoint_cwd("/mnt/project/subdir".into());
         queue.push_outer_submission(input("first", InputIntent::Command));
         queue.push_outer_submission(input("second", InputIntent::Agent));
@@ -218,7 +226,27 @@ mod tests {
         assert!(restored.is_paused());
         assert!(restored.pop_outer().is_none());
         assert!(restored.activity_snapshot().active_submission.is_none());
-        assert_eq!(restored.unknown_inputs()[0].submission_id, "active");
+        assert_eq!(
+            restored
+                .unknown_inputs()
+                .iter()
+                .map(|i| i.submission_id.clone())
+                .collect::<Vec<_>>(),
+            ["steering", "active"]
+        );
+        assert!(
+            queue.interrupt("active").unwrap(),
+            "parent remains cancellable during command steering"
+        );
+        queue.end_steering_command();
+        assert_eq!(
+            queue
+                .activity_snapshot()
+                .active_submission
+                .unwrap()
+                .submission_id,
+            "active"
+        );
         let pending = restored.activity_snapshot().pending_submissions;
         assert_eq!(
             pending

@@ -278,4 +278,114 @@ mod tests {
             .await;
         assert_eq!(missing.exit_code, 127);
     }
+
+    // Commit really reaches AgentFS; only its acknowledgment is lost.
+    struct LostCommitAck {
+        inner: alan_agentfs::AgentFs,
+        written: std::sync::Mutex<std::collections::HashSet<alan_ap::Fid>>,
+        commits: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl alan_ap::FileServer for LostCommitAck {
+        async fn walk(
+            &self,
+            fid: alan_ap::Fid,
+            newfid: alan_ap::Fid,
+            names: &[String],
+        ) -> Result<alan_ap::Qid, alan_ap::ErrorCode> {
+            self.inner.walk(fid, newfid, names).await
+        }
+        async fn open(
+            &self,
+            fid: alan_ap::Fid,
+            mode: alan_ap::OpenMode,
+        ) -> Result<alan_ap::Qid, alan_ap::ErrorCode> {
+            self.inner.open(fid, mode).await
+        }
+        async fn read(
+            &self,
+            fid: alan_ap::Fid,
+            offset: alan_ap::Offset,
+            count: u32,
+        ) -> Result<Vec<u8>, alan_ap::ErrorCode> {
+            self.inner.read(fid, offset, count).await
+        }
+        async fn write(
+            &self,
+            fid: alan_ap::Fid,
+            offset: alan_ap::Offset,
+            data: &[u8],
+        ) -> Result<u32, alan_ap::ErrorCode> {
+            let count = self.inner.write(fid, offset, data).await?;
+            self.written.lock().unwrap().insert(fid);
+            Ok(count)
+        }
+        async fn stat(&self, fid: alan_ap::Fid) -> Result<alan_ap::Stat, alan_ap::ErrorCode> {
+            self.inner.stat(fid).await
+        }
+        async fn create(
+            &self,
+            fid: alan_ap::Fid,
+            newfid: alan_ap::Fid,
+            name: &str,
+            kind: alan_ap::FileKind,
+        ) -> Result<alan_ap::Qid, alan_ap::ErrorCode> {
+            self.inner.create(fid, newfid, name, kind).await
+        }
+        async fn remove(&self, fid: alan_ap::Fid) -> Result<(), alan_ap::ErrorCode> {
+            self.inner.remove(fid).await
+        }
+        async fn clunk(&self, fid: alan_ap::Fid) -> Result<(), alan_ap::ErrorCode> {
+            self.inner.clunk(fid).await?;
+            if self.written.lock().unwrap().remove(&fid) {
+                self.commits
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return Err(alan_ap::ErrorCode::Io);
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn lost_commit_ack_reports_unknown_delivery_without_replaying_work() {
+        let fs = Arc::new(LostCommitAck {
+            inner: alan_agentfs::AgentFs::new(),
+            written: Default::default(),
+            commits: Default::default(),
+        });
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/agent/7",
+            InProcessTransport::new(fs.clone()),
+            Access::ReadWrite,
+        );
+        let outcome = AgentWorkProcessRunner
+            .run(invocation(namespace.clone(), &["submit", "7", "once"]))
+            .await;
+        assert_eq!(outcome.exit_code, 1);
+        let result: Value = serde_json::from_slice(&outcome.output).unwrap();
+        assert_eq!(result["success"], false);
+        let error = result["error"].as_str().unwrap();
+        assert!(error.contains("delivery may be unknown"));
+        let id = error
+            .strip_prefix("submit ")
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap();
+        uuid::Uuid::parse_str(id).unwrap();
+        let shell = Shell::new(InProcessTransport::new(Arc::new(MountFs::new(
+            namespace.clone(),
+        ))));
+        let input = shell.cat("/agent/7/io/input").await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&input).matches(id).count(), 1);
+        assert_eq!(fs.commits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let outcome = AgentWorkProcessRunner
+            .run(invocation(namespace, &["continue", "7"]))
+            .await;
+        assert_eq!(outcome.exit_code, 1);
+        assert!(String::from_utf8_lossy(&outcome.output).contains("delivery may be unknown"));
+        assert_eq!(fs.commits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
 }

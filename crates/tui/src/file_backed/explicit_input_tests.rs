@@ -258,6 +258,8 @@ fn submitted_command_keeps_its_prompt_intent_in_transcript() {
         vec![HistoryCell::Command("git status".to_string())]
     );
     assert_eq!(app.rendered_history_lines(80), vec!["alan! git status"]);
+    assert_eq!(app.composer.text(), "");
+    assert_eq!(app.composer.intent(), InputIntent::Agent);
 }
 
 #[test]
@@ -266,12 +268,14 @@ fn rejected_submission_does_not_leave_optimistic_history_or_echo_state() {
     app.transcript
         .push(HistoryCell::User("previous task".to_string()));
     app.reconciler.on_local_submit("previous task");
-    app.composer.insert_text("rejected task");
+    app.composer.insert_text("!rejected command");
 
     let Some(FileBackedAction::Submit(input)) = app.handle_submit() else {
         panic!("submission was not dispatched");
     };
     app.restore_rejected_submission(&input);
+    assert_eq!(app.composer.text(), "rejected command");
+    assert_eq!(app.composer.intent(), InputIntent::Command);
 
     assert_eq!(
         app.transcript,

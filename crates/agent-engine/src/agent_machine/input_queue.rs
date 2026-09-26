@@ -45,6 +45,7 @@ impl Default for TurnInputBroker {
 #[derive(Debug, Default)]
 pub(super) struct MachineInputQueues {
     pub(super) active_submission: Option<UiSubmission>,
+    suspended_submission: Option<UiSubmission>,
     ui_activity: UiActivitySnapshot,
     activity_events: VecDeque<UiActivitySnapshot>,
     pub(super) inband: VecDeque<Submission>,
@@ -171,6 +172,21 @@ impl TurnInputBroker {
             .push_back(QueuedRuntimeItem::Deferred(action));
     }
 
+    pub(crate) fn begin_steering_command(&self, identity: UiSubmission) {
+        let mut state = self.state();
+        debug_assert!(state.suspended_submission.is_none());
+        state.suspended_submission = state.active_submission.replace(identity);
+        drop(state);
+        self.record_activity();
+    }
+
+    pub(crate) fn end_steering_command(&self) {
+        let mut state = self.state();
+        state.active_submission = state.suspended_submission.take();
+        drop(state);
+        self.record_activity();
+    }
+
     pub(crate) fn is_paused(&self) -> bool {
         self.state().paused
     }
@@ -180,8 +196,9 @@ impl TurnInputBroker {
         let mut state = self.state();
         let active = state
             .active_submission
-            .as_ref()
-            .is_some_and(|input| input.submission_id == id);
+            .iter()
+            .chain(state.suspended_submission.iter())
+            .any(|input| input.submission_id == id);
         let mut removed = false;
         if !active {
             state.outer.retain(|item| {
