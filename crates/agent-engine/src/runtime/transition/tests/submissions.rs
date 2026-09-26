@@ -149,6 +149,7 @@ async fn command_steering_requires_ordered_admission() {
         ))
         .await,
     );
+    let external_writer = state.agent_files().begin_tape_generation().await.unwrap();
     let mut emit = |_event| async {};
     let cancel = CancellationToken::new();
     let mut cases = [
@@ -178,6 +179,7 @@ async fn command_steering_requires_ordered_admission() {
         assert_eq!(shell.cat(&format!("{base}/approval")).await.unwrap(), b"not_required");
         assert!(shell.cat(&format!("{base}/process")).await.unwrap().is_empty());
     }
+    external_writer.finish().await.unwrap();
 }
 
 #[tokio::test]
@@ -284,4 +286,47 @@ async fn next_turn_inputs_keep_their_ids_in_the_shared_answer() {
         assert_eq!(record["submission_id"], "trigger");
         assert_eq!(record["related_submission_ids"], json!(["queued-one", "queued-two"]));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn late_steering_fails_without_failing_the_completed_origin() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::from_secs(1), "finished answer",
+        )).await,
+    );
+    state.core_config.memory.enabled = false;
+    let shell = Shell::new(state.environment.root_transport());
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let origin = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("original task")], context: None,
+    });
+    let origin_id = origin.id.clone();
+    let steering = Submission::new(Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("late steering")], mode: InputMode::Steer,
+    });
+    let steering_id = steering.id.clone();
+    let advance = advance_accepted_submission(&mut state, origin, &broker, &cancel);
+    tokio::pin!(advance);
+    assert!(tokio::time::timeout(tokio::time::Duration::from_millis(1), &mut advance).await.is_err());
+    assert!(broker.push(steering).await);
+    advance.await.result.unwrap();
+    let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+    let completed: Vec<_> = String::from_utf8(events).unwrap().lines().filter_map(|line| {
+        match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status, .. } => Some((submission_ids, status)),
+            _ => None,
+        }
+    }).collect();
+    assert_eq!(completed, vec![
+        (vec![steering_id.clone()], alan_agent_protocol::UiInputStatus::Failed),
+        (vec![origin_id.clone()], alan_agent_protocol::UiInputStatus::Completed),
+    ]);
+    let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+    assert!(!tape.contains(&steering_id));
+    assert!(tape.lines().any(|line| {
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        record["role"] == "assistant" && record["submission_id"] == origin_id && record["content"] == "finished answer"
+    }));
 }

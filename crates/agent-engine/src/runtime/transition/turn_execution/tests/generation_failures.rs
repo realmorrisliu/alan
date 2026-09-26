@@ -141,7 +141,7 @@ async fn test_run_turn_llm_error() {
     )).count(), 1);
     assert_eq!(events.iter().filter(|event| matches!(event,
         alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, .. }
-        if submission_ids == &[id.clone()]
+        if submission_ids == std::slice::from_ref(&id)
     )).count(), 1);
 }
 
