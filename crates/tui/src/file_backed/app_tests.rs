@@ -100,3 +100,36 @@ fn idle_reconnect_matches_a_partially_pruned_rendered_cell() {
         vec![retained, HistoryCell::Assistant("new turn".to_string())]
     );
 }
+
+#[test]
+fn queued_local_input_does_not_replace_the_active_tape_boundary() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.apply_tape_record(super::super::tests::tape_message("user", "same prompt"));
+    app.push_output("ear".into());
+    app.composer.set_text("same prompt");
+    assert!(matches!(
+        app.handle_submit(),
+        Some(super::FileBackedAction::Submit(_))
+    ));
+    app.push_output("lier".into());
+    app.apply_tape_record(super::super::tests::tape_message("assistant", "earlier"));
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("same prompt".into()),
+            HistoryCell::Assistant("earlier".into()),
+        ]
+    );
+    app.push_output("later".into());
+    app.apply_tape_record(super::super::tests::tape_message("user", "same prompt"));
+    app.apply_tape_record(super::super::tests::tape_message("assistant", "later"));
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("same prompt".into()),
+            HistoryCell::Assistant("earlier".into()),
+            HistoryCell::User("same prompt".into()),
+            HistoryCell::Assistant("later".into()),
+        ]
+    );
+}

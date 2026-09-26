@@ -223,11 +223,8 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
         }
         let current_transcript =
             remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
-        let recovered_current_turn = prompt_ordinal.is_some_and(|ordinal| {
-            reattached.merge_reconnected_history(current_transcript, submitted_input, ordinal)
-        });
-        if !recovered_current_turn {
-            reattached.reconciler.on_local_submit(submitted_input);
+        if let Some(ordinal) = prompt_ordinal {
+            reattached.merge_reconnected_history(current_transcript, submitted_input, ordinal);
         }
         if let Some((status, error)) = completion {
             if status != alan_agent_protocol::UiInputStatus::Completed {

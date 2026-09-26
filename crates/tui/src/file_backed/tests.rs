@@ -8,7 +8,7 @@ use alan_kernel::{Access, MountFs, Namespace, ProcFs};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-fn tape_message(role: &str, content: &str) -> TapeRecordV1 {
+pub(super) fn tape_message(role: &str, content: &str) -> TapeRecordV1 {
     TapeRecordV1 {
         end_offset: 0,
         version: 1,
