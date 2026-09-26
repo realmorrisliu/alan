@@ -36,39 +36,23 @@ pub(super) async fn snapshot(
 pub(super) async fn restore_tape_history(
     app: &mut FileBackedApp,
     tape: &alan_shell::Tail,
-    hydrated_bytes: usize,
-) {
+    consumed_bytes: usize,
+) -> bool {
     let Ok(bytes) = tape.snapshot().await else {
-        return;
+        return false;
     };
     let Ok(raw) = std::str::from_utf8(&bytes) else {
-        return;
+        return false;
     };
-    let Some(unseen) = raw.get(hydrated_bytes..) else {
-        return;
+    let Some(unseen) = raw.get(consumed_bytes..) else {
+        return false;
     };
-    if unseen.is_empty() {
-        return;
-    }
-    let mut history = super::file_surface::parse_tape_history(unseen);
-    if matches!(
-        history.first(),
-        Some(crate::history::HistoryCell::Assistant(_))
-    ) {
-        // A turn may already be open at attach; keep only its user boundary,
-        // never resurrect earlier answers hidden by clear or scrollback pruning.
-        if let Some(user) = super::file_surface::parse_tape_history(&raw[..hydrated_bytes])
-            .into_iter()
-            .rev()
-            .find(|cell| matches!(cell, crate::history::HistoryCell::User(_)))
-        {
-            history.insert(0, user);
-        }
-    }
+    let history = super::file_surface::parse_tape_history(unseen);
     // These indices belong to the retained transcript, not freshly hydrated actions.
     let actions = std::mem::take(&mut app.action_cells);
     app.merge_reconnected_idle_history(history);
     app.action_cells = actions;
+    true
 }
 
 pub(super) fn restore_answer(app: &mut FileBackedApp, input: &str, answer: String) {
@@ -173,6 +157,15 @@ mod tests {
                 matches!(&app.transcript[1], HistoryCell::Assistant(text) if text == "final answer")
             );
         }
+        // Clearing after consuming only the user must not resurrect that boundary.
+        let mut app = FileBackedApp::new("/agent/root".into());
+        let consumed = tape.find('\n').unwrap() + 1;
+        assert!(restore_tape_history(&mut app, &tail, consumed).await);
+        assert_eq!(
+            app.transcript,
+            vec![HistoryCell::Assistant("final answer".into())]
+        );
+
         // Consuming the final record advances recovery even after /clear.
         let mut app = FileBackedApp::new("/agent/root".into());
         let mut final_record: TapeRecordV1 =

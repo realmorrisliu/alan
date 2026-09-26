@@ -455,9 +455,11 @@ impl AgentWatchers {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
                 // Tape history outlives the local pending-input lock.
-                if let Some((_, tape)) = &self.recovery {
-                    previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await;
-                }
+                let history_restored = if let Some((_, tape)) = &self.recovery {
+                    previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
+                } else {
+                    false
+                };
                 let retained = self.stop_for_input(submitted_task).await;
                 app.expected_terminal_error = None;
                 let queued = discard_superseded_attachment_events(
@@ -466,7 +468,8 @@ impl AgentWatchers {
                     submitted_task.map(|(_, _, id)| id),
                 );
                 let completion = retained.0.or(queued.0);
-                if let Some(answer) = retained.1.or(queued.1)
+                if !history_restored
+                    && let Some(answer) = retained.1.or(queued.1)
                     && let Some((input, _, _)) = submitted_task
                 {
                     previous_input::restore_answer(app, input, answer);
