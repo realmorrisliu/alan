@@ -1,6 +1,4 @@
 use super::*;
-use crate::tools::reified_namespace::ReifiedMountAccess;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[path = "sandbox/native_shell_tests.rs"]
@@ -31,81 +29,12 @@ async fn test_sandbox_exec() {
     assert_eq!(result.exit_code, 0);
 }
 
-#[test]
-fn namespace_path_translation_preserves_data_and_maps_file_paths() {
-    let mounts = vec![SandboxHostMount {
-        namespace_path: PathBuf::from("/mnt/project"),
-        host_path: PathBuf::from("/Users/alice/project"),
-        access: ReifiedMountAccess::ReadWrite,
-    }];
-    let translate = |command: &str| {
-        Sandbox::translate_command_path_literals(command, |token| {
-            translate_namespace_shell_token(token, &mounts)
-        })
-    };
-
-    assert_eq!(
-        translate("printf '%s' /mnt/project > /mnt/project/path.txt"),
-        "printf '%s' /mnt/project > /Users/alice/project/path.txt"
-    );
-    assert_eq!(
-        translate("cat /mnt/project/probe.txt"),
-        "cat /Users/alice/project/probe.txt"
-    );
-    assert_eq!(
-        translate("awk -v root=/mnt/project 'BEGIN { print root }' > /mnt/project/out.txt"),
-        "awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
-    );
-    assert_eq!(
-        translate(
-            "env -u HOME awk -v root=/mnt/project 'BEGIN { print root }' > /mnt/project/out.txt"
-        ),
-        "env -u HOME awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
-    );
-    assert_eq!(
-        translate("awk 'BEGIN { print \"/mnt/project\" }' > /mnt/project/out.txt"),
-        "awk 'BEGIN { print \"/mnt/project\" }' > /Users/alice/project/out.txt"
-    );
-    assert_eq!(
-        translate("awk -f /mnt/project/script.awk"),
-        "awk -f /Users/alice/project/script.awk"
-    );
-    assert_eq!(
-        translate("awk -v root=/mnt/project 'BEGIN { print root }' /mnt/project/input.tsv"),
-        "awk -v root=/mnt/project 'BEGIN { print root }' /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("awk 'BEGIN { print \"/mnt/project\" }' -- /mnt/project/input.tsv"),
-        "awk 'BEGIN { print \"/mnt/project\" }' -- /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("awk -- 'BEGIN { print \"/mnt/project\" }' /mnt/project/input.tsv"),
-        "awk -- 'BEGIN { print \"/mnt/project\" }' /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("awk -f /mnt/project/script.awk /mnt/project/input.tsv"),
-        "awk -f /Users/alice/project/script.awk /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("git commit -m /mnt/project"),
-        "git commit -m /mnt/project"
-    );
-    assert_eq!(
-        translate("git commit --message='Keep /mnt/project literal'"),
-        "git commit --message='Keep /mnt/project literal'"
-    );
-    let nested = translate("bash -c \"printf '%s' /mnt/project > /mnt/project/path.txt\"");
-    assert!(nested.contains("/mnt/project > /Users/alice/project/path.txt"));
-    let nested_git = translate("bash -c \"git commit -m /mnt/project\"");
-    assert!(
-        nested_git.contains("git commit -m /mnt/project"),
-        "nested command changed data: {nested_git}"
-    );
-}
-
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn sandbox_preserves_a_namespace_path_written_as_printf_data() {
+    use crate::tools::reified_namespace::ReifiedMountAccess;
+    use std::path::PathBuf;
+
     let mount = TempDir::new().unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
@@ -116,7 +45,7 @@ async fn sandbox_preserves_a_namespace_path_written_as_printf_data() {
 
     sandbox
         .exec_with_timeout_and_capability(
-            "printf '%s' /mnt/project > /mnt/project/path.txt",
+            "printf '%s' /mnt/project > ./path.txt",
             mount.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
