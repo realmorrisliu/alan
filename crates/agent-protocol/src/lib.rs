@@ -14,6 +14,7 @@ mod process;
 mod reasoning;
 mod spawn;
 mod ui_surface;
+mod user_input;
 
 pub use adaptive::{
     AdaptiveForm, AdaptivePresentationHint, ConfirmationYieldPayload, CustomYieldPayload,
@@ -52,3 +53,5 @@ pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind,
     UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState,
 };
+
+pub use user_input::{InputIntent, UserInputRecord, parse_input_prefix};

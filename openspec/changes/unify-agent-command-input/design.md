@@ -280,3 +280,24 @@ are delivered. Sync only implemented deltas after merge; retain later routing
 work as active scope rather than archiving unimplemented guarantees.
 Rollback can disable automatic classification to the Agent baseline; it cannot
 undo effects already executed or bypass command governance.
+
+
+### Input record admission slice
+
+AgentFS retains its existing length-framed `io/input` transport. A versioned payload
+starts with the exact bytes `alan-input-v1\n`, followed by a JSON object containing
+`version: 1`, UUID `submission_id`, `intent` (`agent`, `force_agent`, or `command`),
+`mode` (`steer`, `follow_up`, or `next_turn`), and the exact non-empty `body`.
+Unknown fields, unsupported versions, malformed records, and empty bodies are
+rejected instead of becoming Agent prose. Ordinary text and ordinary JSON remain
+legacy input; payloads starting with `alan-input-` are reserved record framing.
+Prefix interpretation consumes only a leading `!` or `:` once, without trimming
+the body or interpreting a nested prefix.
+
+The submission-aware reader preserves the client identity, scheduling mode, and
+intent in `Submission`. Legacy submissions default to Agent intent. Text-only
+readers reject versioned payloads rather than discard their identity. During this
+admission slice, explicit command records are rejected before Agent execution or
+in-turn steering; client activation awaits governed command execution and ordered
+queue integration. This slice does not complete task 2.1: correlated completion,
+queue controls, and durable recovery remain in the following implementation slices.

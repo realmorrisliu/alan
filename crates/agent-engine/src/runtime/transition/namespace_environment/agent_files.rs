@@ -3,8 +3,8 @@
 use std::sync::atomic::Ordering;
 
 use alan_agent_protocol::{
-    ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
-    UiPlanSnapshot, UiThinkingSnapshot,
+    ContentPart, InputIntent, InputMode, Op, Submission, UiActivitySnapshot, UiEvent,
+    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
 use alan_ap::{Fid, OpenMode};
 use anyhow::{Context, Result, bail};
@@ -24,7 +24,7 @@ impl NamespaceAgentFiles {
         NamespaceClient::new(self.root.clone())
     }
 
-    pub async fn read_next_input(&self) -> Result<String> {
+    async fn read_next_input_payload(&self) -> Result<String> {
         let input_path = format!("{}/io/input", self.agent_path);
         let client = self.client();
         let offset = self.input_offset.load(Ordering::Relaxed);
@@ -38,8 +38,32 @@ impl NamespaceAgentFiles {
         Ok(frame.message)
     }
 
+    /// Legacy text-only reader. Versioned input must retain its submission identity.
+    pub async fn read_next_input(&self) -> Result<String> {
+        let payload = self.read_next_input_payload().await?;
+        if UserInputRecord::decode_payload(payload.as_bytes())?.is_some() {
+            bail!("versioned input requires submission-aware admission");
+        }
+        Ok(payload)
+    }
+
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
-        let message = self.read_next_input().await?;
+        let message = self.read_next_input_payload().await?;
+        if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
+            // Client activation follows the governed command/queue integration.
+            // Until then, never reinterpret explicit command records as Agent prose.
+            if record.intent == InputIntent::Command {
+                bail!("explicit command records require governed command admission");
+            }
+            return Ok(Submission {
+                id: record.submission_id,
+                intent: record.intent,
+                op: Op::Input {
+                    parts: vec![ContentPart::text(record.body)],
+                    mode: record.mode,
+                },
+            });
+        }
         Ok(Submission::new(Op::Input {
             parts: vec![ContentPart::text(message)],
             mode,

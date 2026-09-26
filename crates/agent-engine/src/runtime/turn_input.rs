@@ -2,7 +2,7 @@
 
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
-use alan_agent_protocol::{Event, InputMode, Op, Submission};
+use alan_agent_protocol::{Event, InputIntent, InputMode, Op, Submission};
 use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
@@ -88,8 +88,9 @@ pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
     matches!(op, Op::Resume { .. })
 }
 
-pub(super) fn is_turn_inband_submission(op: &Op) -> bool {
-    is_turn_resume_submission(op) || is_brokered_input(op)
+pub(super) fn is_turn_inband_submission(submission: &Submission) -> bool {
+    submission.intent != InputIntent::Command
+        && (is_turn_resume_submission(&submission.op) || is_brokered_input(&submission.op))
 }
 
 fn is_brokered_input(op: &Op) -> bool {
@@ -177,6 +178,7 @@ pub(super) async fn namespace_pending_resume_submission(
                 .is_some()
             {
                 return Ok(Some(Submission {
+                    intent: Default::default(),
                     id: format!("host-mount:{request_id}"),
                     op: Op::Resume {
                         request_id,
@@ -237,24 +239,24 @@ mod tests {
                 serde_json::json!({"choice": "approve"})
             )],
         }));
-        assert!(is_turn_inband_submission(&Op::Input {
+        assert!(is_turn_inband_submission(&Submission::new(Op::Input {
             parts: vec![alan_agent_protocol::ContentPart::text("follow up")],
             mode: InputMode::FollowUp,
-        }));
-        assert!(is_turn_inband_submission(&Op::Input {
+        })));
+        assert!(is_turn_inband_submission(&Submission::new(Op::Input {
             parts: vec![alan_agent_protocol::ContentPart::text("steer")],
             mode: InputMode::Steer,
-        }));
-        assert!(!is_turn_inband_submission(&Op::Input {
+        })));
+        assert!(!is_turn_inband_submission(&Submission::new(Op::Input {
             parts: vec![alan_agent_protocol::ContentPart::text("next turn")],
             mode: InputMode::NextTurn,
-        }));
-        assert!(is_turn_inband_submission(&Op::Resume {
+        })));
+        assert!(is_turn_inband_submission(&Submission::new(Op::Resume {
             request_id: "latest".to_string(),
             content: vec![alan_agent_protocol::ContentPart::structured(
                 serde_json::json!({"choice": "approve"})
             )],
-        }));
+        })));
         assert!(is_turn_resume_submission(&Op::Resume {
             request_id: "r1".to_string(),
             content: vec![alan_agent_protocol::ContentPart::structured(
@@ -275,6 +277,7 @@ mod tests {
         assert!(
             broker
                 .push(Submission {
+                    intent: Default::default(),
                     id: "sub-1".to_string(),
                     op: Op::Resume {
                         request_id: "latest".to_string(),
@@ -293,6 +296,7 @@ mod tests {
         assert!(
             broker
                 .push(Submission {
+                    intent: Default::default(),
                     id: "sub-2".to_string(),
                     op: Op::Input {
                         parts: vec![alan_agent_protocol::ContentPart::text("follow up")],
@@ -307,6 +311,7 @@ mod tests {
         assert!(
             broker
                 .push(Submission {
+                    intent: Default::default(),
                     id: "sub-3".to_string(),
                     op: Op::Resume {
                         request_id: "r1".to_string(),
@@ -329,6 +334,7 @@ mod tests {
             assert!(
                 broker
                     .push(Submission {
+                        intent: Default::default(),
                         id: format!("u-{idx}"),
                         op: Op::Input {
                             parts: vec![alan_agent_protocol::ContentPart::text(format!(
@@ -344,6 +350,7 @@ mod tests {
         assert!(
             !broker
                 .push(Submission {
+                    intent: Default::default(),
                     id: "u-overflow".to_string(),
                     op: Op::Input {
                         parts: vec![alan_agent_protocol::ContentPart::text("overflow")],
@@ -355,6 +362,7 @@ mod tests {
         assert!(
             broker
                 .push(Submission {
+                    intent: Default::default(),
                     id: "resume-1".to_string(),
                     op: Op::Resume {
                         request_id: "latest".to_string(),
@@ -372,6 +380,7 @@ mod tests {
         let broker = TurnInputBroker::default();
         let mut machine = AgentMachine::new();
         machine.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "u-1".to_string(),
             op: Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("queued")],
@@ -381,6 +390,7 @@ mod tests {
         assert!(
             broker
                 .push(Submission {
+                    intent: Default::default(),
                     id: "c-1".to_string(),
                     op: Op::Resume {
                         request_id: "latest".to_string(),
