@@ -162,8 +162,13 @@ impl ReifiedNamespacePlan {
                 .iter()
                 .map(|mount| mount.namespace_path.as_path()),
         );
-        namespace_paths.push(input.scratch_tmp_namespace_path.as_path());
         validate_no_overlapping_namespace_paths(&namespace_paths)?;
+        validate_scratch_tmp_overlap(
+            &input.scratch_tmp_namespace_path,
+            &declared_host_mounts,
+            &virtual_namespace_paths,
+            &execution_substrate,
+        )?;
         validate_no_mixed_access_host_mount_overlap(&declared_host_mounts)?;
         validate_no_writable_mount_over_execution_substrate(
             &declared_host_mounts,
@@ -365,6 +370,26 @@ fn validate_no_overlapping_namespace_paths(
                 });
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_scratch_tmp_overlap(
+    scratch: &Path,
+    host_mounts: &[ReifiedHostMount],
+    virtual_mounts: &[PathBuf],
+    substrate: &[ReifiedExecutionSubstrateMount],
+) -> Result<(), ReifiedNamespacePlanError> {
+    // Only explicit Host mounts strictly below scratch can be installed after
+    // tmpfs. A grant covering scratch would be shadowed and must remain invalid.
+    let paths = host_mounts
+        .iter()
+        .map(|mount| mount.namespace_path.as_path())
+        .filter(|path| *path == scratch || !path.starts_with(scratch))
+        .chain(virtual_mounts.iter().map(PathBuf::as_path))
+        .chain(substrate.iter().map(|mount| mount.namespace_path.as_path()));
+    for path in paths {
+        validate_no_overlapping_namespace_paths(&[scratch, path])?;
     }
     Ok(())
 }
