@@ -686,7 +686,7 @@ async fn physical_cwd_projection_does_not_require_a_delegated_target() {
 
 #[tokio::test]
 async fn shell_quoted_projection_preserves_public_mount_name_bytes() {
-    for prefix in ["docs", "docs space", "docs\ncontrol"] {
+    for prefix in ["docs", "docs space", "docs\ncontrol", "docs'quote\"double"] {
         let project = tempfile::tempdir().unwrap();
         let docs = tempfile::Builder::new().prefix(prefix).tempdir().unwrap();
         let service = service();
@@ -707,19 +707,25 @@ async fn shell_quoted_projection_preserves_public_mount_name_bytes() {
             .output()
             .unwrap();
         assert!(quoted.status.success());
-        let projected = adapter.project_text(std::str::from_utf8(&quoted.stdout).unwrap());
-        let decoded = std::process::Command::new("/bin/bash")
-            .args([
-                "-c",
-                "eval \"set -- $1\"; test \"$#\" -eq 1 || exit 2; printf %s \"$1\"",
-                "_",
-            ])
-            .arg(&projected)
-            .output()
-            .unwrap();
-        assert!(decoded.status.success(), "{projected:?}");
         let expected = format!("../{}/file", logical.strip_prefix("/mnt/").unwrap());
-        assert_eq!(String::from_utf8(decoded.stdout).unwrap(), expected);
+        for quoted in [
+            String::from_utf8(quoted.stdout).unwrap(),
+            format!("'{}'", native.to_str().unwrap().replace('\'', "'\\''")),
+        ] {
+            let projected = adapter.project_text(&quoted);
+            let decoded = std::process::Command::new("/bin/bash")
+                .args([
+                    "-c",
+                    "eval \"set -- $1\"; test \"$#\" -eq 1 || exit 2; printf %s \"$1\"",
+                    "_",
+                ])
+                .arg(&projected)
+                .output()
+                .unwrap();
+            assert!(decoded.status.success(), "{projected:?}");
+            let expected = format!("../{}/file", logical.strip_prefix("/mnt/").unwrap());
+            assert_eq!(String::from_utf8(decoded.stdout).unwrap(), expected);
+        }
         let json = serde_json::json!({"path": native}).to_string();
         let projected_json: serde_json::Value =
             serde_json::from_str(&adapter.project_text(&json)).unwrap();

@@ -269,6 +269,10 @@ fn replace_native_prefix(
     let path = native.to_string_lossy();
     let mut projected =
         replace_path_prefixes(text, &shell_escaped_path(&path), replacement, shell_quoting);
+    if shell_quoting && path.contains('\'') {
+        projected =
+            replace_path_prefixes(&projected, &path.replace('\'', "'\\''"), replacement, true);
+    }
     projected = replace_path_prefixes(&projected, &path, replacement, shell_quoting);
     for escape_non_ascii in [false, true] {
         if native.to_str().is_some()
