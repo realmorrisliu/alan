@@ -305,13 +305,19 @@ async fn test_edit_file_old_string_not_found() {
 
     let args = json!({
         "path": "file.txt",
-        "old_string": "not present",
+        "old_string": "未匹配的旧文本".repeat(12),
         "new_string": "replacement"
     });
     let result = tool.execute(args, &ctx).await;
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
+    assert_eq!(
+        tokio::fs::read_to_string(mount_root.join("file.txt"))
+            .await
+            .unwrap(),
+        "content here"
+    );
 }
 
 #[tokio::test]
