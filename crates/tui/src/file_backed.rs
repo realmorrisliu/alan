@@ -32,8 +32,8 @@ mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 use interrupt::{
-    PendingRootAgentTurn, observe_root_agent_activity, request_pending_root_interrupt,
-    send_interrupt,
+    PendingRootAgentTurn, observe_root_agent_activity, observe_root_agent_completion,
+    request_pending_root_interrupt, send_interrupt,
 };
 use submission::{prepare_root_agent_submission, require_root_agent_idle};
 
@@ -170,6 +170,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 let Some(event) = event else {
                     break;
                 };
+                if let FileBackedEvent::Ui(ref event) = event {
+                    observe_root_agent_completion(&mut pending_root_agent_turn, event);
+                }
                 match event {
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
@@ -198,7 +201,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         && !key.modifiers.contains(KeyModifiers::SHIFT)
                             )
                             && app.enter_submits_agent_task();
-                        let blocked_submission = if submission_requested {
+                        let blocked_submission = if submission_requested && pending_root_agent_turn.is_some() {
+                            app.push_error("submit blocked: waiting for this input to complete".to_string());
+                            true
+                        } else if submission_requested {
                             match prepare_root_agent_submission(
                                 &shell,
                                 &config.agent_path,
@@ -224,19 +230,22 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             match action {
                                 FileBackedAction::Submit(text) => {
                                     let submitted_at_ms = unix_time_ms();
-                                    let prior_matching_turns =
-                                        app.tape_user_prompt_count(&text);
-                                    match write_agent_input(&shell, &app.agent_path, &text).await {
+                                    let record = alan_agent_protocol::UserInputRecord::new(
+                                        alan_agent_protocol::InputIntent::Agent,
+                                        alan_agent_protocol::InputMode::FollowUp,
+                                        &text,
+                                    );
+                                    match write_agent_input(&shell, &app.agent_path, &record).await {
                                         Ok(()) => {
                                             app.notice = None;
                                             if follows_root_agent {
                                                 _active_task_lock = submission_lock.take();
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
+                                                    submission_id: record.submission_id.clone(),
                                                     observed_active: false,
                                                     interrupt_requested: false,
                                                     submitted_at_ms,
-                                                    prior_matching_turns,
                                                 });
                                                 let submitted_task_settled = watchers
                                                     .refresh_root_agent_attachment(
@@ -244,15 +253,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     &config.agent_path,
                                                     &mut app,
                                                     &mut rx,
-                                                    Some((&text, submitted_at_ms, prior_matching_turns)),
+                                                    Some((&text, submitted_at_ms, &record.submission_id)),
                                                     &tx,
                                                     )
                                                     .await;
-                                                if submitted_task_settled
-                                                    && let Some(turn) =
-                                                        pending_root_agent_turn.as_mut()
-                                                {
-                                                    turn.observed_active = true;
+                                                if submitted_task_settled {
+                                                    pending_root_agent_turn = None;
                                                 }
                                             }
                                         }
@@ -311,7 +317,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         (
                             turn.input.as_str(),
                             turn.submitted_at_ms,
-                            turn.prior_matching_turns,
+                            turn.submission_id.as_str(),
                         )
                     });
                 let submitted_task_settled = watchers
@@ -324,10 +330,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     &tx,
                     )
                     .await;
-                if submitted_task_settled
-                    && let Some(turn) = pending_root_agent_turn.as_mut()
-                {
-                    turn.observed_active = true;
+                if submitted_task_settled {
+                    pending_root_agent_turn = None;
                 }
                 if observe_root_agent_activity(
                     &mut pending_root_agent_turn,
@@ -455,7 +459,7 @@ impl AgentWatchers {
         agent_path: &str,
         app: &mut FileBackedApp,
         rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-        submitted_task: Option<(&str, u64, usize)>,
+        submitted_task: Option<(&str, u64, &str)>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> bool {
         match current_root_agent_pid(shell).await {

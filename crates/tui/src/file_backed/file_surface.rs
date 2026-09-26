@@ -60,6 +60,7 @@ pub(super) struct WatchTails {
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
     pub(super) ui_history: Vec<u8>,
+    pub(super) tape_history: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -501,10 +502,10 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
 pub(super) async fn write_agent_input(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    text: &str,
+    record: &alan_agent_protocol::UserInputRecord,
 ) -> Result<()> {
     shell
-        .write(&agent_input_path(agent_path), text.as_bytes())
+        .write(&agent_input_path(agent_path), &record.encode_payload()?)
         .await
         .map_err(|err| anyhow!("write agent input failed: {err:?}"))
 }

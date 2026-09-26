@@ -114,12 +114,14 @@ async fn hydrate_pinned_agent(
         ui,
         tape,
         ui_history: Vec::new(),
+        tape_history: Vec::new(),
     };
 
     let hydrate = async {
-        let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
-        app.transcript = parse_tape_history(&tape_history);
-        app.seed_reconciler_from_tape_history(&tape_history);
+        let tape_history =
+            std::str::from_utf8(&tape_history).context("machine/tape is not utf8")?;
+        app.transcript = parse_tape_history(tape_history);
+        app.seed_reconciler_from_tape_history(tape_history);
 
         let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
         let ui_events = ui_history_text
@@ -163,6 +165,7 @@ async fn hydrate_pinned_agent(
         return Err(error);
     }
     tails.ui_history = ui_history;
+    tails.tape_history = tape_history;
     Ok(tails)
 }
 
@@ -170,7 +173,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-    submitted_task: Option<(&str, u64, usize)>,
+    submitted_task: Option<(&str, u64, &str)>,
 ) -> Result<(WatchTails, bool)> {
     let mut reattached = app.clone();
     let previous_transcript = std::mem::take(&mut reattached.transcript);
@@ -179,8 +182,32 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
     let mut submitted_task_settled = false;
-    if let Some((submitted_input, submitted_at_ms, prior_matching_turns)) = submitted_task {
+    if let Some((submitted_input, submitted_at_ms, submission_id)) = submitted_task {
         let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms)?;
+        let completion = std::str::from_utf8(&tails.ui_history)?
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str::<UiEvent>)
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .find_map(|event| match event {
+                UiEvent::InputCompleted {
+                    submission_ids,
+                    status,
+                    error,
+                } if submission_ids.iter().any(|id| id == submission_id) => Some((status, error)),
+                _ => None,
+            });
+        let records = std::str::from_utf8(&tails.tape_history)?
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str::<super::TapeRecordV1>)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        // Text is used only to locate the display boundary after identity has matched.
+        let prompt_ordinal = records
+            .iter()
+            .filter(|record| record.role == "user" && record.content == submitted_input)
+            .position(|record| record.belongs_to(submission_id));
         if reattached.notice.as_ref().is_some_and(|notice| {
             current_transcript
                 .iter()
@@ -191,28 +218,26 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
         }
         let current_transcript =
             remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
-        let recovered_current_turn = ui_task.started
-            && reattached.merge_reconnected_history(
-                current_transcript,
-                submitted_input,
-                prior_matching_turns,
-            );
+        let recovered_current_turn = prompt_ordinal.is_some_and(|ordinal| {
+            reattached.merge_reconnected_history(current_transcript, submitted_input, ordinal)
+        });
         if !recovered_current_turn {
             reattached.reconciler.on_local_submit(submitted_input);
         }
-        if let Some(message) = ui_task.started.then_some(ui_task.error).flatten() {
-            reattached.notice = Some(message.clone());
-            reattached.transcript.push(HistoryCell::Error(message));
-            submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
-        } else if !recovered_current_turn && reattached.activity.state == UiActivityState::Idle {
+        if let Some((status, error)) = completion {
+            if status != alan_agent_protocol::UiInputStatus::Completed {
+                let message = error.unwrap_or_else(|| format!("Input ended: {status:?}"));
+                reattached.notice = Some(message.clone());
+                reattached.transcript.push(HistoryCell::Error(message));
+            }
+            submitted_task_settled = true;
+        } else if reattached.activity.state == UiActivityState::Idle {
             let message =
-                "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
+                "Root Agent changed without correlated completion evidence; outcome is unknown"
                     .to_string();
             reattached.notice = Some(message.clone());
             reattached.transcript.push(HistoryCell::Error(message));
             submitted_task_settled = true;
-        } else if recovered_current_turn {
-            submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
         }
     } else {
         reattached.merge_reconnected_idle_history(current_transcript);
