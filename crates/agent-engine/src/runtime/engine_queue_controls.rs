@@ -12,7 +12,11 @@ impl RuntimeSubmissionQueues {
             };
             if matches!(
                 input.op,
-                Op::Interrupt | Op::ContinueQueue | Op::DiscardQueue | Op::Resume { .. }
+                Op::Interrupt
+                    | Op::InterruptSubmission { .. }
+                    | Op::ContinueQueue
+                    | Op::DiscardQueue
+                    | Op::Resume { .. }
             ) {
                 return Some(input);
             }
@@ -55,6 +59,11 @@ impl RuntimeSubmissionQueues {
                 warn!(%error, submission_id=%submission.id, "Failed to publish rejected command evidence");
             }
             return true;
+        }
+        if let Op::InterruptSubmission { submission_id } = &submission.op {
+            return self
+                .interrupt_submission(submission_id, files, cancel)
+                .await;
         }
         if matches!(submission.op, Op::Interrupt) {
             if let Some(cancel) = cancel {
@@ -101,21 +110,15 @@ impl RuntimeSubmissionQueues {
             Ok(discarded) => {
                 let mut unpublished = 0;
                 for input in &discarded {
-                    let message = "Queued input discarded without execution";
-                    let record = crate::runtime::transition::NamespaceActionRecord::new("input", "failed")
-                        .with_output(message)
-                        .with_result(serde_json::json!({"call_id":input.id,"submission_id":input.id,"exit_code":1,"outcome":{"success":false,"error":message}}).to_string());
-                    if let Err(error) = files.write_action(record).await {
+                    if let Err(error) = publish_cancelled_input(
+                        files,
+                        &input.id,
+                        "Queued input discarded without execution",
+                    )
+                    .await
+                    {
                         unpublished += 1;
                         warn!(%error, submission_id=%input.id, "Failed to publish discarded input evidence");
-                    }
-                    let event = alan_agent_protocol::UiEvent::InputCompleted {
-                        submission_ids: vec![input.id.clone()],
-                        status: alan_agent_protocol::UiInputStatus::Cancelled,
-                        error: Some(message.into()),
-                    };
-                    if let Err(error) = files.append_ui_event(&event).await {
-                        warn!(%error, submission_id=%input.id, "Failed to publish discarded input completion");
                     }
                 }
                 if unpublished > 0 {
@@ -139,4 +142,99 @@ impl RuntimeSubmissionQueues {
         }
         true
     }
+    /// Return false only when a suspended Machine must run its idle interrupt transition.
+    async fn interrupt_submission(
+        &mut self,
+        submission_id: &str,
+        files: &NamespaceAgentFiles,
+        cancel: Option<&CancellationToken>,
+    ) -> bool {
+        let (removed, active) = {
+            let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+            let mut removed = false;
+            queue.pending.retain(|item| {
+                let matches = matches!(item, QueuedRuntimeItem::Submission(input)
+                    if input.id == submission_id && matches!(input.op, alan_agent_protocol::Op::Turn { .. } | alan_agent_protocol::Op::Input { .. }));
+                removed |= matches;
+                !matches
+            });
+            let MachineInputQueue {
+                inband,
+                buffered_inband_submissions,
+                ..
+            } = &mut *queue;
+            for inputs in [inband, buffered_inband_submissions] {
+                inputs.retain(|input| {
+                    let matches = input.id == submission_id;
+                    removed |= matches;
+                    !matches
+                });
+            }
+            queue.queued_next_turn_inputs.retain(|(id, _)| {
+                let matches = id.as_deref() == Some(submission_id);
+                removed |= matches;
+                !matches
+            });
+            let active = queue
+                .active_submission_ids
+                .iter()
+                .any(|id| id == submission_id);
+            if removed || active {
+                queue.paused = true;
+            }
+            if active {
+                queue.active_cancel_requested = true;
+            }
+            (removed, active)
+        };
+        if removed && !active {
+            if let Err(error) = publish_cancelled_input(
+                files,
+                submission_id,
+                "Queued input cancelled without execution",
+            )
+            .await
+            {
+                warn!(%error, submission_id, "Failed to publish queued input cancellation");
+            }
+        } else if active {
+            if let Some(cancel) = cancel {
+                cancel.cancel();
+            } else {
+                return false;
+            }
+        } else {
+            let _ = crate::runtime::ui_surfaces::warning(
+                files,
+                format!("Unknown or settled input: {submission_id}"),
+            )
+            .await;
+            return true;
+        }
+        let _ = crate::runtime::ui_surfaces::warning(
+            files,
+            "Input queue paused; use /continue or /discard for queued work",
+        )
+        .await;
+        true
+    }
+}
+
+async fn publish_cancelled_input(
+    files: &NamespaceAgentFiles,
+    id: &str,
+    message: &str,
+) -> Result<()> {
+    let record = crate::runtime::transition::NamespaceActionRecord::new("input", "failed")
+        .with_output(message)
+        .with_result(serde_json::json!({"call_id":id,"submission_id":id,"exit_code":1,"outcome":{"success":false,"error":message}}).to_string());
+    let action_result = files.write_action(record).await;
+    let event_result = files
+        .append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
+            submission_ids: vec![id.to_owned()],
+            status: alan_agent_protocol::UiInputStatus::Cancelled,
+            error: Some(message.into()),
+        })
+        .await;
+    action_result.map(|_| ()).and(event_result)
 }

@@ -22,12 +22,12 @@ pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
     )
 }
 
-pub(crate) async fn advance_accepted_submission(
-    state: &mut RuntimeLoopState,
+pub(crate) fn advance_accepted_submission<'a>(
+    state: &'a mut RuntimeLoopState,
     submission: Submission,
-    broker: &TurnInputBroker,
-    cancel: &CancellationToken,
-) -> AcceptedSubmissionOutcome {
+    broker: &'a TurnInputBroker,
+    cancel: &'a CancellationToken,
+) -> impl std::future::Future<Output = AcceptedSubmissionOutcome> + 'a {
     let completes_input = matches!(
         submission.op,
         Op::Turn { .. }
@@ -36,71 +36,105 @@ pub(crate) async fn advance_accepted_submission(
                 mode: InputMode::FollowUp | InputMode::Steer,
                 ..
             }
-    );
+    ) || (matches!(submission.op, Op::Interrupt)
+        && state.machine.has_pending_interaction());
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    if matches!(submission.op, Op::CompactWithOptions { .. })
-        && state.machine.has_pending_interaction()
+    let reject_compaction = matches!(submission.op, Op::CompactWithOptions { .. })
+        && state.machine.has_pending_interaction();
+    if !reject_compaction
+        && matches!(
+            submission.op,
+            Op::Turn { .. } | Op::Input { .. } | Op::CompactWithOptions { .. }
+        )
     {
-        return AcceptedSubmissionOutcome {
-            result: Err(anyhow::anyhow!(
-                "Manual compaction must wait for the pending interaction to finish"
-            )),
-            requeue_inband_submissions,
-            deferred_actions: Default::default(),
-        };
-    }
-    if matches!(
-        submission.op,
-        Op::Turn { .. } | Op::Input { .. } | Op::CompactWithOptions { .. }
-    ) {
+        // Publish identity synchronously, before the Process can select a control
+        // ahead of the returned future's first poll. Transition ownership stays here.
         state.machine.accept_submission(submission.id.clone());
-    }
-    let mut emit = |_event: Event| async {};
-
-    let mut result = if requeue_inband_submissions {
-        drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
-    } else {
-        handle_submission_with_cancel(state, submission, &mut emit, cancel).await
-    }
-    .map(|()| {
-        if state.machine.has_pending_interaction() {
-            TransitionCompletion::Paused
-        } else {
-            TransitionCompletion::Completed
+        if matches!(submission.op, Op::CompactWithOptions { .. }) {
+            // Manual compaction has a Tape identity but no cancellation contract.
+            state
+                .machine
+                .input_queue()
+                .lock()
+                .expect("input queue poisoned")
+                .active_submission_ids
+                .clear();
         }
-    });
-
-    if completes_input
-        && !state.machine.has_pending_interaction()
-        && state.machine.current_submission_id().is_some()
-    {
-        let mut submission_ids = state.machine.related_submission_ids().to_vec();
-        if let Some(id) = state.machine.current_submission_id() {
-            submission_ids.push(id.to_owned());
+    }
+    async move {
+        if reject_compaction {
+            return AcceptedSubmissionOutcome {
+                result: Err(anyhow::anyhow!(
+                    "Manual compaction must wait for the pending interaction to finish"
+                )),
+                requeue_inband_submissions,
+                deferred_actions: Default::default(),
+            };
         }
-        let event = UiEvent::InputCompleted {
-            submission_ids,
-            status: if state.machine.submission_was_cancelled() {
-                UiInputStatus::Cancelled
-            } else if result.is_err() {
-                UiInputStatus::Failed
+        let mut emit = |_event: Event| async {};
+
+        let cancelled_before_start =
+            cancel.is_cancelled() && matches!(submission.op, Op::Turn { .. } | Op::Input { .. });
+        let mut result = if cancelled_before_start {
+            state.machine.mark_submission_cancelled();
+            if submission.intent == alan_agent_protocol::InputIntent::Command {
+                state
+                    .agent_files()
+                    .write_rejected_command(&submission.id, "command cancelled before execution")
+                    .await
             } else {
-                UiInputStatus::Completed
-            },
-            error: result.as_ref().err().map(ToString::to_string),
-        };
-        if let Err(error) = state.agent_files().append_ui_event(&event).await {
-            result = Err(error.context("publish input completion"));
+                Ok(())
+            }
+        } else if requeue_inband_submissions {
+            drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
+        } else {
+            handle_submission_with_cancel(state, submission, &mut emit, cancel).await
         }
-    }
+        .map(|()| {
+            if state.machine.has_pending_interaction() {
+                TransitionCompletion::Paused
+            } else {
+                TransitionCompletion::Completed
+            }
+        });
 
-    let deferred_actions = state.machine.drain_deferred_runtime_actions();
-    state.machine.finish_submission();
+        if !state.machine.has_pending_interaction() {
+            state
+                .machine
+                .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        }
+        if (completes_input || cancelled_before_start || state.machine.submission_was_cancelled())
+            && !state.machine.has_pending_interaction()
+            && state.machine.current_submission_id().is_some()
+        {
+            let mut submission_ids = state.machine.related_submission_ids().to_vec();
+            if let Some(id) = state.machine.current_submission_id() {
+                submission_ids.push(id.to_owned());
+            }
+            let event = UiEvent::InputCompleted {
+                submission_ids,
+                status: if state.machine.submission_was_cancelled() {
+                    UiInputStatus::Cancelled
+                } else if result.is_err() {
+                    UiInputStatus::Failed
+                } else {
+                    UiInputStatus::Completed
+                },
+                error: result.as_ref().err().map(ToString::to_string),
+            };
+            if let Err(error) = state.agent_files().append_ui_event(&event).await {
+                result = Err(error.context("publish input completion"));
+            }
+        }
 
-    AcceptedSubmissionOutcome {
-        result,
-        requeue_inband_submissions,
-        deferred_actions,
+        let deferred_actions = state.machine.drain_deferred_runtime_actions();
+        state.machine.finish_submission();
+
+        AcceptedSubmissionOutcome {
+            result,
+            requeue_inband_submissions,
+            deferred_actions,
+        }
     }
 }
 

@@ -618,7 +618,7 @@ fn spawn_with_prepared_runtime_environment(
             };
 
             match queued_item {
-                QueuedRuntimeItem::Submission(submission) => {
+                QueuedRuntimeItem::Submission(mut submission) => {
                     if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
                         && submission.intent != alan_agent_protocol::InputIntent::Command
                         && state.machine.has_pending_interaction()
@@ -641,6 +641,13 @@ fn spawn_with_prepared_runtime_environment(
                             }
                         }
                         continue;
+                    }
+                    if matches!(
+                        submission.op,
+                        alan_agent_protocol::Op::InterruptSubmission { .. }
+                    ) {
+                        // A matching suspended input has no live future/token to cancel.
+                        submission.op = alan_agent_protocol::Op::Interrupt;
                     }
                     // Only boundary controls may overtake admitted work. Ordinary
                     // Machine controls share the same FIFO as Turn/Input records.

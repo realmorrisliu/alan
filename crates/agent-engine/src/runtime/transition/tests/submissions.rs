@@ -415,3 +415,151 @@ async fn steering_admitted_before_first_poll_is_settled() {
     assert_eq!(settlements, 1, "every admitted input must settle exactly once");
     assert!(broker.try_recv().await.is_none());
 }
+
+#[tokio::test]
+async fn cancellation_before_first_poll_settles_without_starting_work() {
+    for mode in [InputMode::FollowUp, InputMode::NextTurn] {
+        let mut state = runtime_state_with_environment(
+            namespace_environment_with_live_process(DelayedMockProvider::new(
+                tokio::time::Duration::ZERO,
+                "must not generate",
+            ))
+            .await,
+        );
+        let shell = Shell::new(state.environment.root_transport());
+        let queue = state.machine.input_queue();
+        let broker = TurnInputBroker::from_queue(queue.clone());
+        let cancel = CancellationToken::new();
+        let input = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("must not run")],
+            mode,
+        });
+        let id = input.id.clone();
+        let advance = advance_accepted_submission(&mut state, input, &broker, &cancel);
+        assert_eq!(queue.lock().unwrap().active_submission_ids, std::slice::from_ref(&id));
+        cancel.cancel();
+        advance.await.result.unwrap();
+        assert!(state.machine.messages().is_empty());
+        assert_eq!(state.machine.queued_next_turn_input_count(), 0);
+        assert!(queue.lock().unwrap().active_submission_ids.is_empty());
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(events.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, .. } if submission_ids == [id.clone()])));
+    }
+}
+
+#[tokio::test]
+async fn interrupting_suspended_input_settles_its_original_identity() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "must not generate",
+        ))
+        .await,
+    );
+    let shell = Shell::new(state.environment.root_transport());
+    state.machine.accept_submission("origin");
+    state
+        .machine
+        .set_structured_input(crate::approval::PendingStructuredInputRequest {
+            request_id: "request".into(),
+            title: "question".into(),
+            prompt: "answer".into(),
+            questions: Vec::new(),
+        });
+    advance_accepted_submission(
+        &mut state,
+        Submission::new(Op::Interrupt),
+        &TurnInputBroker::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .result
+    .unwrap();
+    assert!(!state.machine.has_pending_interaction());
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    assert!(events.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+        alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, .. } if submission_ids == ["origin"])));
+}
+
+#[tokio::test]
+async fn resumed_tool_finalization_observes_cancellation_before_idle() {
+    for cancelled in [false, true] {
+        let mut state = runtime_state_with_environment(
+            namespace_environment_with_live_process(DelayedMockProvider::new(
+                tokio::time::Duration::ZERO,
+                "unused",
+            ))
+            .await,
+        );
+        state.core_config.memory.enabled = false;
+        state.machine.accept_submission("resumed-input");
+        state.machine.set_turn_activity(TurnActivityState::Running);
+        let cancel = CancellationToken::new();
+        if cancelled {
+            cancel.cancel();
+        }
+        finalize_replayed_tool_end_turn_best_effort(
+            &mut state, &cancel, true, "test-resume", "test-resume",
+        )
+        .await;
+        assert_eq!(state.machine.submission_was_cancelled(), cancelled);
+        assert_eq!(state.machine.current_submission_id(), Some("resumed-input"));
+        assert!(state.machine.input_queue().lock().unwrap().active_submission_ids.is_empty());
+        assert!(!state.machine.is_turn_active());
+    }
+}
+
+#[tokio::test]
+async fn manual_compaction_identity_is_not_a_cancellable_input() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "unused",
+        ))
+        .await,
+    );
+    let queue = state.machine.input_queue();
+    let submission = Submission::new(Op::CompactWithOptions { focus: None });
+    let id = submission.id.clone();
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let advance = advance_accepted_submission(&mut state, submission, &broker, &cancel);
+    assert!(queue.lock().unwrap().active_submission_ids.is_empty());
+    drop(advance);
+    assert_eq!(state.machine.current_submission_id(), Some(id.as_str()));
+}
+
+#[tokio::test]
+async fn pre_activity_failure_consumes_accepted_cancellation() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "unused",
+        ))
+        .await,
+    );
+    let shell = Shell::new(state.environment.root_transport());
+    let queue = state.machine.input_queue();
+    let mut input = Submission::new(Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text(" ")],
+        mode: InputMode::FollowUp,
+    });
+    input.intent = alan_agent_protocol::InputIntent::Command;
+    let id = input.id.clone();
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let advance = advance_accepted_submission(&mut state, input, &broker, &cancel);
+    // Keep the token unset to exercise the validation-error exit, not pre-start cancellation.
+    queue.lock().unwrap().active_cancel_requested = true;
+    assert!(advance.await.result.is_err());
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    assert!(events.lines().any(|line| matches!(
+        serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+        alan_agent_protocol::UiEvent::InputCompleted {
+            submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, ..
+        } if submission_ids == [id.clone()]
+    )));
+    assert!(!queue.lock().unwrap().active_cancel_requested);
+}

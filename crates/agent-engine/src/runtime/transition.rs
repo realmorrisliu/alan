@@ -960,6 +960,9 @@ async fn finalize_replayed_tool_end_turn_best_effort(
         .await;
     }
 
+    if cancel.is_cancelled() {
+        state.machine.mark_submission_cancelled();
+    }
     state.machine.set_turn_activity(TurnActivityState::Idle);
 }
 

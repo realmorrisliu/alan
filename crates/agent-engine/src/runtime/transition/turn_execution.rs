@@ -682,6 +682,16 @@ where
                         )
                         .await;
                     }
+                    if !state.machine.submission_was_cancelled() {
+                        check_turn_cancelled(
+                            &mut state.machine,
+                            &agent_files,
+                            &host_mount_requests,
+                            emit,
+                            cancel,
+                        )
+                        .await?;
+                    }
                     return Ok(TurnExecutionOutcome::Finished);
                 }
             }
@@ -726,6 +736,17 @@ where
                 is_final: true,
             })
             .await;
+            if check_turn_cancelled(
+                &mut state.machine,
+                &agent_files,
+                &host_mount_requests,
+                emit,
+                cancel,
+            )
+            .await?
+            {
+                return Ok(TurnExecutionOutcome::Finished);
+            }
             emit(Event::TurnCompleted {
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
@@ -743,6 +764,17 @@ where
             },
         )
         .await;
+        if check_turn_cancelled(
+            &mut state.machine,
+            &agent_files,
+            &host_mount_requests,
+            emit,
+            cancel,
+        )
+        .await?
+        {
+            return Ok(TurnExecutionOutcome::Finished);
+        }
         emit_task_completed_success(emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }

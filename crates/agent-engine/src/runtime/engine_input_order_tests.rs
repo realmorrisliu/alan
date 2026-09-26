@@ -36,7 +36,12 @@ impl LlmProvider for GatedFirstGeneration {
 
 #[tokio::test]
 async fn ordinary_input_order_and_interrupt_queue_controls() {
-    for control in [None, Some("continue"), Some("discard")] {
+    for (control, targeted) in [
+        (None, false),
+        (Some("continue"), false),
+        (Some("discard"), false),
+        (Some("continue"), true),
+    ] {
         let mock = MockLlmProvider::new();
         let started = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
@@ -85,12 +90,11 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
         controller.wait_until_ready().await.unwrap();
         let tx = &controller.handle.submission_tx;
         let capacity = tx.capacity();
-        tx.send(Submission::new(Op::Turn {
+        let first = Submission::new(Op::Turn {
             parts: vec![ContentPart::text("first")],
             context: None,
-        }))
-        .await
-        .unwrap();
+        });
+        tx.send(first.clone()).await.unwrap();
         let begun = tokio::time::timeout(Duration::from_secs(5), started.notified()).await;
         assert!(
             begun.is_ok(),
@@ -139,7 +143,15 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
         .await
         .unwrap();
         if let Some(control) = control {
-            if control == "continue" {
+            if targeted {
+                shell
+                    .write(
+                        "/agent/1/machine/ctl",
+                        format!("queue-v1 interrupt {}", first.id).as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            } else if control == "continue" {
                 shell
                     .write("/agent/1/machine/ctl", b"interrupt")
                     .await
@@ -161,6 +173,13 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
             })
             .await
             .unwrap();
+            if targeted {
+                let events =
+                    String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap())
+                        .unwrap();
+                assert!(events.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+                    alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, .. } if submission_ids.contains(&first.id))));
+            }
             release.notify_one();
             assert!(
                 tokio::time::timeout(Duration::from_millis(50), async {
@@ -646,4 +665,136 @@ async fn continuous_file_input_does_not_starve_dispatch() {
         dispatched.is_ok(),
         "continuous file arrivals must not starve queued dispatch"
     );
+}
+
+#[tokio::test]
+async fn targeted_queue_cancellation_preserves_other_inputs_and_active_work() {
+    for storage in ["ordinary", "inband", "buffered", "next_turn"] {
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+        let files = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default").agent_files();
+        let mut machine = AgentMachine::new();
+        let mut queues = RuntimeSubmissionQueues::new(machine.input_queue());
+        let input = Submission::new(Op::Input {
+            parts: vec![ContentPart::text("cancel this")],
+            mode: InputMode::FollowUp,
+        });
+        match storage {
+            "ordinary" => queues.push_outer_submission(input.clone()),
+            "inband" => assert!(queues.active_turn_broker.push(input.clone()).await),
+            "buffered" => machine.push_buffered_inband_submission(input.clone()),
+            "next_turn" => {
+                machine.accept_submission(&input.id);
+                machine.queue_next_turn_input(vec![ContentPart::text("cancel this")]);
+                machine.finish_submission();
+            }
+            _ => unreachable!(),
+        }
+        let survivor = Submission::new(Op::Turn {
+            parts: vec![ContentPart::text("later")],
+            context: None,
+        });
+        queues.push_outer_submission(survivor.clone());
+        machine.accept_submission("active");
+        let cancel = CancellationToken::new();
+        assert!(
+            queues
+                .handle_control(
+                    &Submission::new(Op::InterruptSubmission {
+                        submission_id: "unknown".into(),
+                    }),
+                    &files,
+                    Some(&cancel)
+                )
+                .await
+        );
+        assert!(!cancel.is_cancelled());
+        assert!(!queues.is_paused());
+        assert!(
+            queues
+                .handle_control(
+                    &Submission::new(Op::InterruptSubmission {
+                        submission_id: input.id.clone(),
+                    }),
+                    &files,
+                    Some(&cancel)
+                )
+                .await
+        );
+        assert!(
+            !cancel.is_cancelled(),
+            "a queued cancellation cannot cancel other active work"
+        );
+        assert!(queues.is_paused());
+        assert!(queues.active_turn_broker.try_recv().await.is_none());
+        assert!(machine.drain_buffered_inband_submissions().is_empty());
+        assert_eq!(machine.queued_next_turn_input_count(), 0);
+        {
+            let pending = queues.outer_queue.lock().unwrap();
+            assert_eq!(pending.pending.len(), 1);
+            assert!(
+                matches!(pending.pending.front(), Some(QueuedRuntimeItem::Submission(s)) if s.id == survivor.id)
+            );
+        }
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert_eq!(events.lines().filter(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Cancelled, .. } if submission_ids == [input.id.clone()])).count(), 1);
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(
+            !machine.submission_was_cancelled(),
+            "queued cancellation leaves active work intact"
+        );
+        machine.accept_submission("finishing-command");
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Running);
+        queues
+            .handle_control(
+                &Submission::new(Op::InterruptSubmission {
+                    submission_id: "finishing-command".into(),
+                }),
+                &files,
+                Some(&cancel),
+            )
+            .await;
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(
+            machine.submission_was_cancelled(),
+            "accepted cancellation survives asynchronous command finalization"
+        );
+        assert_eq!(machine.current_submission_id(), Some("finishing-command"));
+        machine.accept_submission("later-input");
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(
+            !machine.submission_was_cancelled(),
+            "settlement consumes the cancellation request"
+        );
+        machine.accept_submission("admitting-next-turn");
+        machine.queue_next_turn_input(vec![ContentPart::text("queued payload")]);
+        let overlap_cancel = CancellationToken::new();
+        queues
+            .handle_control(
+                &Submission::new(Op::InterruptSubmission {
+                    submission_id: "admitting-next-turn".into(),
+                }),
+                &files,
+                Some(&overlap_cancel),
+            )
+            .await;
+        assert!(overlap_cancel.is_cancelled());
+        assert_eq!(machine.queued_next_turn_input_count(), 0);
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(
+            !events.contains("admitting-next-turn"),
+            "active admission owns its eventual settlement"
+        );
+        machine.set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        assert!(machine.submission_was_cancelled());
+    }
 }

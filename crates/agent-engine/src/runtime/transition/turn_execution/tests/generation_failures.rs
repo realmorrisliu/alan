@@ -227,3 +227,35 @@ async fn test_namespace_live_turn_generation_retries_transient_stream_failure() 
         .collect::<String>();
     assert_eq!(emitted_text, "Recovered after retry.");
 }
+
+#[tokio::test]
+async fn cancellation_during_output_prevents_successful_settlement() {
+    for content in ["answer before cancellation", ""] {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new(content));
+        state.core_config.memory.enabled = false;
+        state.machine.accept_submission("cancel-during-output");
+        state.machine.set_turn_activity(TurnActivityState::Running);
+        let cancel = CancellationToken::new();
+        let mut completions = Vec::new();
+        let mut emit = |event: Event| {
+            match event {
+                Event::TextDelta { is_final: true, .. } => cancel.cancel(),
+                Event::TurnCompleted { summary } => completions.push(summary),
+                _ => {}
+            }
+            async {}
+        };
+        run_turn_with_cancel(
+            &mut state,
+            TurnRunKind::NewTurn,
+            Some(vec![ContentPart::text("answer this")]),
+            &mut emit,
+            &cancel,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(state.machine.submission_was_cancelled());
+        assert_eq!(completions, [Some("Task cancelled by user".to_string())]);
+    }
+}

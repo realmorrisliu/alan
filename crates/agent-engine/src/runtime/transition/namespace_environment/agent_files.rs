@@ -571,7 +571,15 @@ fn request_response_content_part(response: String) -> ContentPart {
 }
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
-    match command.trim() {
+    let command = command.trim();
+    if let Some(id) = command.strip_prefix("queue-v1 interrupt ") {
+        return uuid::Uuid::parse_str(id).ok().map(|_| {
+            Submission::new(Op::InterruptSubmission {
+                submission_id: id.to_owned(),
+            })
+        });
+    }
+    match command {
         "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
         "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),

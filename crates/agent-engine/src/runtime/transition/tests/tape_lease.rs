@@ -8,6 +8,9 @@ struct CountTapeOpens {
     writes: AtomicUsize,
     cancel_on_tape_close: Option<CancellationToken>,
     writer_fid: std::sync::Mutex<Option<Fid>>,
+    closing_queue: std::sync::Mutex<
+        Option<Arc<std::sync::Mutex<crate::agent_machine::input_queue::MachineInputQueue>>>,
+    >,
 }
 
 #[async_trait::async_trait]
@@ -49,6 +52,12 @@ impl FileServer for CountTapeOpens {
         if *self.writer_fid.lock().unwrap() == Some(fid)
             && let Some(cancel) = &self.cancel_on_tape_close
         {
+            if let Some(queue) = self.closing_queue.lock().unwrap().as_ref() {
+                assert!(
+                    queue.lock().unwrap().active_submission_ids.is_empty(),
+                    "completed input must leave the cancellation lookup before Tape close"
+                );
+            }
             cancel.cancel();
         }
         Ok(())
@@ -71,6 +80,7 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
             writes: AtomicUsize::new(0),
             cancel_on_tape_close: None,
             writer_fid: Default::default(),
+            closing_queue: Default::default(),
         });
         let procfs = Arc::new(alan_kernel::ProcFs::new());
         spawn_test_process(&procfs).await;
@@ -380,6 +390,7 @@ async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
         writes: AtomicUsize::new(0),
         cancel_on_tape_close: Some(cancel.clone()),
         writer_fid: Default::default(),
+        closing_queue: Default::default(),
     });
     let procfs = Arc::new(alan_kernel::ProcFs::new());
     spawn_test_process(&procfs).await;
@@ -393,7 +404,7 @@ async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
     );
     let mut ns = alan_kernel::Namespace::new();
     for (path, server) in [
-        ("/agent/1", InProcessTransport::new(agentfs)),
+        ("/agent/1", InProcessTransport::new(agentfs.clone())),
         ("/proc", InProcessTransport::new(procfs)),
         ("/mnt/llm", InProcessTransport::new(llmfs)),
     ] {
@@ -406,6 +417,7 @@ async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
         "default",
     ));
     state.core_config.memory.enabled = false;
+    *agentfs.closing_queue.lock().unwrap() = Some(state.machine.input_queue());
     let submission = Submission::new(Op::Turn {
         parts: vec![alan_agent_protocol::ContentPart::text("task")],
         context: None,

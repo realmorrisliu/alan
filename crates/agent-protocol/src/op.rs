@@ -108,6 +108,12 @@ pub enum Op {
     /// Interrupt current execution.
     Interrupt,
 
+    /// Cancel one accepted input and pause subsequent ordinary dispatch.
+    InterruptSubmission {
+        /// Identity of the queued or active input to interrupt.
+        submission_id: String,
+    },
+
     /// Continue ordinary input retained after interruption.
     ContinueQueue,
     /// Discard ordinary input retained after interruption without executing it.

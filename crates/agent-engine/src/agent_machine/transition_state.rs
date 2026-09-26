@@ -127,7 +127,12 @@ impl AgentMachine {
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
         self.transition_state.current_submission_id = Some(submission_id.into());
         self.transition_state.submission_cancelled = false;
+        self.input_queue()
+            .lock()
+            .expect("input queue poisoned")
+            .active_cancel_requested = false;
         self.transition_state.related_submission_ids.clear();
+        self.sync_active_submission_ids();
     }
 
     pub(crate) fn finish_submission(&mut self) {
@@ -136,7 +141,26 @@ impl AgentMachine {
         }
         self.transition_state.current_submission_id = None;
         self.transition_state.submission_cancelled = false;
+        self.input_queue()
+            .lock()
+            .expect("input queue poisoned")
+            .active_cancel_requested = false;
         self.transition_state.related_submission_ids.clear();
+        self.sync_active_submission_ids();
+    }
+
+    fn sync_active_submission_ids(&self) {
+        let mut queue = self
+            .transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned");
+        queue
+            .active_submission_ids
+            .clone_from(&self.transition_state.related_submission_ids);
+        queue
+            .active_submission_ids
+            .extend(self.transition_state.current_submission_id.clone());
     }
 
     pub(crate) fn mark_submission_cancelled(&mut self) {
@@ -164,6 +188,7 @@ impl AgentMachine {
         {
             self.transition_state.related_submission_ids.push(previous);
         }
+        self.sync_active_submission_ids();
     }
 
     pub(crate) fn related_submission_ids(&self) -> &[String] {
@@ -281,7 +306,7 @@ impl AgentMachine {
                 .expect("input queue poisoned")
                 .queued_next_turn_inputs,
         );
-        inputs
+        let parts = inputs
             .into_iter()
             .map(|(id, parts)| {
                 if let Some(id) = id
@@ -292,7 +317,9 @@ impl AgentMachine {
                 }
                 parts
             })
-            .collect()
+            .collect();
+        self.sync_active_submission_ids();
+        parts
     }
 
     /// Number of queued `next_turn` payloads.
@@ -382,6 +409,15 @@ impl AgentMachine {
 
     pub(crate) fn set_turn_activity(&mut self, activity: TurnActivityState) {
         self.transition_state.turn_activity = activity;
+        if matches!(activity, TurnActivityState::Idle) {
+            // The completed work is no longer cancellable while its Tape lease
+            // closes. Keep the original identities for completion publication.
+            let queue = self.input_queue();
+            let mut queue = queue.lock().expect("input queue poisoned");
+            self.transition_state.submission_cancelled |=
+                std::mem::take(&mut queue.active_cancel_requested);
+            queue.active_submission_ids.clear();
+        }
     }
 
     #[cfg_attr(
