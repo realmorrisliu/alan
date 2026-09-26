@@ -23,8 +23,8 @@ impl RuntimeSubmissionQueues {
     ) -> bool {
         use alan_agent_protocol::Op;
         if matches!(submission.op, Op::Interrupt) {
-            self.pause();
             if let Some(cancel) = cancel {
+                self.pause();
                 cancel.cancel();
             } else {
                 return false; // The idle transition still clears any pending request.
@@ -46,11 +46,13 @@ impl RuntimeSubmissionQueues {
             let mut discarded = Vec::new();
             if matches!(submission.op, Op::DiscardQueue) {
                 queue.pending.retain(|item| match item {
-                    QueuedRuntimeItem::Submission(input) => {
+                    QueuedRuntimeItem::Submission(input)
+                        if matches!(input.op, Op::Turn { .. } | Op::Input { .. }) =>
+                    {
                         discarded.push(input.clone());
                         false
                     }
-                    QueuedRuntimeItem::Deferred(_) => true,
+                    _ => true,
                 });
             }
             queue.paused = false;

@@ -26,8 +26,11 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+#[path = "engine_input_intake.rs"]
+mod input_intake;
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
+use input_intake::NamespaceInputIntake;
 
 /// Return unconsumed steering input to the Machine-owned ordinary queue.
 async fn requeue_leftover_inband_submissions(
@@ -481,18 +484,7 @@ fn spawn_with_prepared_runtime_environment(
             outer_queue: state.machine.input_queue(),
             ..Default::default()
         };
-        let input_environment = state.agent_files();
-        let (namespace_input_tx, mut namespace_input_rx) = mpsc::channel(1);
-        let namespace_input_task = tokio::spawn(async move {
-            loop {
-                let submission = input_environment
-                    .read_next_input_submission(InputMode::FollowUp)
-                    .await;
-                if namespace_input_tx.send(submission).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let mut namespace_input = NamespaceInputIntake::new(state.agent_files());
 
         loop {
             let queued_item = if shutdown_requested {
@@ -536,7 +528,7 @@ fn spawn_with_prepared_runtime_environment(
                 let poll_pending_namespace_response = state.machine.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
-                    namespace_submission = namespace_input_rx.recv() => {
+                    namespace_submission = namespace_input.recv() => {
                         match namespace_submission {
                             Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
                             Some(Err(err)) => {
@@ -595,6 +587,24 @@ fn spawn_with_prepared_runtime_environment(
 
             match queued_item {
                 QueuedRuntimeItem::Submission(submission) => {
+                    if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
+                        && state.machine.has_pending_interaction()
+                    {
+                        queues.pause();
+                    }
+                    if matches!(submission.op, alan_agent_protocol::Op::DiscardQueue)
+                        && queues.is_paused()
+                        && let Err(error) = namespace_input
+                            .admit_before_discard(&state.agent_files(), &mut sub_rx, &mut queues)
+                            .await
+                    {
+                        let _ = super::ui_surfaces::warning(
+                            &state.agent_files(),
+                            format!("Queue discard rejected; input remains paused: {error}"),
+                        )
+                        .await;
+                        continue;
+                    }
                     if queues
                         .handle_control(&submission, &state.agent_files(), None)
                         .await
@@ -693,7 +703,7 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = namespace_input_rx.recv() => {
+                            namespace_submission = namespace_input.recv() => {
                                 match namespace_submission {
                                     Some(Ok(incoming)) => {
                                         if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
@@ -797,7 +807,7 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = namespace_input_rx.recv() => {
+                            namespace_submission = namespace_input.recv() => {
                                 match namespace_submission {
                                     Some(Ok(incoming)) => {
                                         requeue_if_cancelled = true;
@@ -847,8 +857,7 @@ fn spawn_with_prepared_runtime_environment(
             }
         }
 
-        namespace_input_task.abort();
-        let _ = namespace_input_task.await;
+        namespace_input.stop().await;
         info!(
             process_path = %state.agent_path(),
             "Agent runtime stopped"

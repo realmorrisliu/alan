@@ -38,6 +38,18 @@ impl NamespaceAgentFiles {
         Ok(frame.message)
     }
 
+    pub(crate) fn input_read_position(&self) -> u64 {
+        self.input_offset.load(Ordering::Relaxed)
+    }
+
+    pub(crate) async fn input_committed_length(&self) -> Result<u64> {
+        Ok(self
+            .client()
+            .stat_path(&format!("{}/io/input", self.agent_path))
+            .await?
+            .length)
+    }
+
     /// Legacy text-only reader. Versioned input must retain its submission identity.
     pub async fn read_next_input(&self) -> Result<String> {
         let payload = self.read_next_input_payload().await?;
