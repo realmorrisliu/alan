@@ -26,6 +26,7 @@ mod file_surface;
 mod history_merge;
 mod interrupt;
 mod layout;
+mod previous_input;
 mod stdio_completion;
 mod submission;
 mod tail;
@@ -35,6 +36,7 @@ use interrupt::{
     PendingRootAgentTurn, observe_root_agent_activity, observe_root_agent_completion,
     request_pending_root_interrupt, send_interrupt, settle_unknown_replaced_input,
 };
+use previous_input::discard_superseded_attachment_events;
 use submission::{prepare_root_agent_submission, require_root_agent_idle};
 
 #[cfg(test)]
@@ -381,35 +383,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
-fn discard_superseded_attachment_events(
-    rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-    pending_terminal_events: &mut VecDeque<FileBackedEvent>,
-    submission_id: Option<&str>,
-) -> Option<UiEvent> {
-    let mut completion = None;
-    for _ in 0..rx.len() {
-        let Ok(event) = rx.try_recv() else {
-            break;
-        };
-        if matches!(
-            event,
-            FileBackedEvent::Terminal(_) | FileBackedEvent::TerminalError(_)
-        ) {
-            pending_terminal_events.push_back(event);
-        } else if let FileBackedEvent::Ui(
-            ref ui @ UiEvent::InputCompleted {
-                ref submission_ids, ..
-            },
-        ) = event
-            && submission_id
-                .is_some_and(|id| submission_ids.iter().any(|candidate| candidate == id))
-        {
-            completion = Some(ui.clone());
-        }
-    }
-    completion
-}
-
 async fn receive_file_backed_event(
     pending_terminal_events: &mut VecDeque<FileBackedEvent>,
     rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
@@ -479,13 +452,23 @@ impl AgentWatchers {
     ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
+                let before =
+                    previous_input::snapshot(shell, self.root_agent_pid, submitted_task).await;
                 self.stop().await;
                 app.expected_terminal_error = None;
-                let completion = discard_superseded_attachment_events(
+                let queued = discard_superseded_attachment_events(
                     rx,
                     &mut self.pending_terminal_events,
                     submitted_task.map(|(_, _, id)| id),
                 );
+                let after =
+                    previous_input::snapshot(shell, self.root_agent_pid, submitted_task).await;
+                let completion = after.0.or(queued.0).or(before.0);
+                if let Some(answer) = after.1.or(queued.1).or(before.1)
+                    && let Some((input, _, _)) = submitted_task
+                {
+                    previous_input::restore_answer(app, input, answer);
+                }
                 let settled = match reattach_to_current_agent(
                     shell,
                     agent_path,

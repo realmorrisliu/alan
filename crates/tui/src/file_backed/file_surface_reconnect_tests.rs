@@ -39,12 +39,25 @@ async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() 
     tx.send(FileBackedEvent::Ui(completion.clone()))
         .await
         .unwrap();
+    tx.send(FileBackedEvent::Tape(
+        crate::file_backed::file_surface::TapeRecordV1 {
+            version: 1,
+            kind: "message".into(),
+            role: "assistant".into(),
+            content: "final answer".into(),
+            submission_id: Some("mine".into()),
+            related_submission_ids: Vec::new(),
+        },
+    ))
+    .await
+    .unwrap();
     let preserved = crate::file_backed::discard_superseded_attachment_events(
         &mut rx,
         &mut pending_terminal_events,
         Some("mine"),
     );
-    assert_eq!(preserved, Some(completion));
+    assert_eq!(preserved.0, Some(completion));
+    assert_eq!(preserved.1.as_deref(), Some("final answer"));
 
     assert!(matches!(
         pending_terminal_events.pop_front(),
