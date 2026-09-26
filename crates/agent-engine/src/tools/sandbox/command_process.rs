@@ -21,15 +21,33 @@ impl Drop for ProcessGroup {
 
 /// Preserve the caller's IO bindings while owning the native process lifetime.
 pub(in crate::tools) async fn output(
+    command: Command,
+    timeout: Option<Duration>,
+) -> Result<Output> {
+    output_with_capture(command, timeout, None).await
+}
+
+/// Capture caller-provided pipe readers when the child must inherit named pipes.
+pub(in crate::tools) async fn output_with_capture(
     mut command: Command,
     timeout: Option<Duration>,
+    capture: Option<(std::fs::File, std::fs::File)>,
 ) -> Result<Output> {
     command.kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
-    let child = command.spawn().context("Failed to execute command")?;
+    let mut child = command.spawn().context("Failed to execute command")?;
     #[cfg(unix)]
     let _group = ProcessGroup(child.id().expect("spawned child has a PID"));
+    if let Some((stdout, stderr)) = capture {
+        child.stdout = Some(tokio::process::ChildStdout::from_std(
+            std::os::fd::OwnedFd::from(stdout).into(),
+        )?);
+        child.stderr = Some(tokio::process::ChildStderr::from_std(
+            std::os::fd::OwnedFd::from(stderr).into(),
+        )?);
+    }
+    drop(command);
     let wait = child.wait_with_output();
     match timeout {
         Some(limit) => tokio::time::timeout(limit, wait)

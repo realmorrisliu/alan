@@ -393,19 +393,32 @@ fn run_linux_reified_command(
     };
 
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    run_linux_reified_command_with_timeout(command, limit)
+    run_linux_reified_command_with_capture(command, Some(limit), None)
 }
 
 #[cfg(target_os = "linux")]
-fn run_linux_reified_command_with_timeout(
+fn run_linux_reified_command_with_capture(
     mut command: Command,
-    timeout: Duration,
+    timeout: Option<Duration>,
+    capture: Option<(std::fs::File, std::fs::File)>,
 ) -> std::io::Result<Output> {
     command.process_group(0);
     let mut child = command.spawn()?;
+    if let Some((stdout, stderr)) = capture {
+        child.stdout = Some(std::os::fd::OwnedFd::from(stdout).into());
+        child.stderr = Some(std::os::fd::OwnedFd::from(stderr).into());
+    }
+    drop(command);
     let stdout_reader = child.stdout.take().map(read_child_pipe);
     let stderr_reader = child.stderr.take().map(read_child_pipe);
 
+    let Some(timeout) = timeout else {
+        return Ok(Output {
+            status: child.wait()?,
+            stdout: join_child_pipe(stdout_reader)?,
+            stderr: join_child_pipe(stderr_reader)?,
+        });
+    };
     let started = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait()? {

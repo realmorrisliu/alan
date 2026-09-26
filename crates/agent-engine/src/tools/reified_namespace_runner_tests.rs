@@ -490,7 +490,7 @@ async fn linux_runner_cancellation_stops_user_command_after_setup() {
         vec![
             "/bin/sh".into(),
             "-c".into(),
-            "printf output; printf diagnostic >&2; exit 7".into(),
+            "printf before; printf after > /dev/stdout; printf tail; printf errbefore >&2; printf errafter > /dev/stderr; exit 7".into(),
         ],
         NetworkPosture::Deny,
     )
@@ -499,9 +499,23 @@ async fn linux_runner_cancellation_stops_user_command_after_setup() {
         .run_cancellable(&capture, Some(Duration::from_secs(5)))
         .await
         .unwrap();
-    assert_eq!(output.stdout, "output");
-    assert_eq!(output.stderr, "diagnostic");
+    assert_eq!(output.stdout, "beforeaftertail");
+    assert_eq!(output.stderr, "errbeforeerrafter");
     assert_eq!(output.exit_code, 7);
+    let synchronous = runner
+        .run_with_timeout(&capture, Some(Duration::from_secs(5)))
+        .unwrap();
+    assert_eq!(synchronous.stdout, output.stdout);
+    assert_eq!(synchronous.stderr, output.stderr);
+    assert_eq!(synchronous.exit_code, 7);
+    let mut large = capture.clone();
+    *large.argv.last_mut().unwrap() = "printf '%0200000d' 0 > /dev/stdout".into();
+    let output = runner
+        .run_cancellable(&large, Some(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    assert_eq!(output.stdout, "0".repeat(200_000));
+    assert_eq!(output.exit_code, 0);
     let plan = ReifiedNamespacePlan::primary_mount(
         mount.path(), mount.path(),
         vec!["/bin/sh".into(), "-c".into(),

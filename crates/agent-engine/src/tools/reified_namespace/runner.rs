@@ -8,12 +8,9 @@ impl LinuxReifiedNamespaceRunner {
         timeout: Option<Duration>,
     ) -> Result<ExecResult, ReifiedNamespaceRunError> {
         let (temp_root, command_spec) = self.prepare(plan)?;
-        let mut command = self.captured_command(&temp_root, &command_spec)?;
-        let output = match timeout {
-            Some(limit) => run_linux_reified_command_with_timeout(command, limit),
-            None => command.output(),
-        }
-        .map_err(|error| self.error(error.to_string(), command_spec.audit_fields()))?;
+        let (command, capture) = self.captured_command(&temp_root, &command_spec)?;
+        let output = run_linux_reified_command_with_capture(command, timeout, Some(capture))
+            .map_err(|error| self.error(error.to_string(), command_spec.audit_fields()))?;
 
         self.finish(&temp_root, &command_spec, output)
     }
@@ -30,9 +27,11 @@ impl LinuxReifiedNamespaceRunner {
         let (temp_root, command_spec) = tokio::task::spawn_blocking(move || runner.prepare(&plan))
             .await
             .map_err(|error| self.error(format!("runner setup failed: {error}"), Vec::new()))??;
-        let output = super::super::sandbox::command_process::output(
-            self.captured_command(&temp_root, &command_spec)?.into(),
+        let (command, capture) = self.captured_command(&temp_root, &command_spec)?;
+        let output = super::super::sandbox::command_process::output_with_capture(
+            command.into(),
             timeout,
+            Some(capture),
         )
         .await
         .map_err(|error| self.error(format!("{error:#}"), command_spec.audit_fields()))?;
@@ -43,22 +42,16 @@ impl LinuxReifiedNamespaceRunner {
         &self,
         temp: &ReifiedRunnerTemp,
         spec: &ReifiedNamespaceCommandSpec,
-    ) -> Result<Command, ReifiedNamespaceRunError> {
-        // Anonymous pipefs handles cannot be bind-mounted as /dev/stdout or
-        // /dev/stderr. Private files preserve capture without mounting Host /proc.
+    ) -> Result<(Command, (std::fs::File, std::fs::File)), ReifiedNamespaceRunError> {
+        // Named FIFOs can be bind-mounted and preserve stream semantics when
+        // commands reopen /dev/stdout or /dev/stderr (including with O_TRUNC).
+        let (stdout, stdout_reader) = capture_pipe(&temp.parent.join("stdout"))
+            .map_err(|error| self.error(error.to_string(), spec.audit_fields()))?;
+        let (stderr, stderr_reader) = capture_pipe(&temp.parent.join("stderr"))
+            .map_err(|error| self.error(error.to_string(), spec.audit_fields()))?;
         let mut command = spec.command();
-        command.stdin(Stdio::null());
-        for (name, stdout) in [("stdout", true), ("stderr", false)] {
-            let file = std::fs::File::create(temp.parent.join(name)).map_err(|error| {
-                self.error(format!("prepare {name}: {error}"), spec.audit_fields())
-            })?;
-            if stdout {
-                command.stdout(file);
-            } else {
-                command.stderr(file);
-            }
-        }
-        Ok(command)
+        command.stdin(Stdio::null()).stdout(stdout).stderr(stderr);
+        Ok((command, (stdout_reader, stderr_reader)))
     }
 
     fn prepare(
@@ -103,13 +96,8 @@ impl LinuxReifiedNamespaceRunner {
         command_spec: &ReifiedNamespaceCommandSpec,
         output: Output,
     ) -> Result<ExecResult, ReifiedNamespaceRunError> {
-        let read = |name| {
-            std::fs::read(temp_root.parent.join(name)).map_err(|error| {
-                self.error(format!("read {name}: {error}"), command_spec.audit_fields())
-            })
-        };
-        let stdout = String::from_utf8_lossy(&read("stdout")?).to_string();
-        let stderr = String::from_utf8_lossy(&read("stderr")?).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
         if setup_marker_was_written(&temp_root.setup_marker) {
             return Ok(ExecResult {
@@ -142,4 +130,25 @@ impl LinuxReifiedNamespaceRunner {
         ]);
         ReifiedNamespaceRunError::new(reason, self.fallback_backend, audit_fields)
     }
+}
+
+fn capture_pipe(path: &Path) -> std::io::Result<(std::fs::File, std::fs::File)> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::{ffi::OsStrExt, fs::OpenOptionsExt};
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: name is a valid NUL-terminated path in our private directory.
+    if unsafe { libc::mkfifo(name.as_ptr(), 0o600) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // Establish both endpoints without blocking on the other endpoint's open.
+    let reader = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    let writer = std::fs::OpenOptions::new().write(true).open(path)?;
+    // SAFETY: reader owns this open descriptor; synchronous readers need blocking IO.
+    if unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_SETFL, 0) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((writer, reader))
 }
