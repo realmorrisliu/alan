@@ -9,6 +9,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
         adapter,
         &project_file_urls(adapter, &project_json_strings(adapter, text)),
         true,
+        true,
     )
 }
 
@@ -18,10 +19,15 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
     let mut result = String::with_capacity(text.len());
     let mut copied = 0;
     let mut chars = text.char_indices();
+    let mut markup = markup_tag_ranges(text).into_iter().peekable();
     while let Some((start, ch)) = chars.next() {
-        if ch != '"' || in_markup_tag(text, start) {
+        if ch != '"' {
             continue;
         }
+        while markup.peek().is_some_and(|range| range.end <= start) {
+            markup.next();
+        }
+        let in_markup = markup.peek().is_some_and(|range| range.contains(&start));
         let mut escaped = false;
         for (end, ch) in chars.by_ref() {
             if escaped {
@@ -35,7 +41,7 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
                 if complete_token && let Ok(decoded) = serde_json::from_str::<String>(token) {
                     // Retain the quoted boundary when projecting URI punctuation.
                     let urls = project_file_urls(adapter, &format!("\"{decoded}\""));
-                    let quoted = project_native_text(adapter, &urls, false);
+                    let quoted = project_native_text(adapter, &urls, false, !in_markup);
                     let projected = &quoted[1..quoted.len() - 1];
                     if projected != decoded {
                         result.push_str(&text[copied..start]);
@@ -68,27 +74,36 @@ fn ends_uri_scheme(text: &str) -> bool {
     })
 }
 
-fn in_markup_tag(text: &str, end: usize) -> bool {
-    let mut in_tag = false;
+fn markup_tag_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut tag_start = None;
     let mut quote = None;
-    for (index, ch) in text[..end].char_indices() {
+    for (index, ch) in text.char_indices() {
         if let Some(delimiter) = quote {
             if ch == delimiter {
                 quote = None;
             }
-        } else if in_tag {
+        } else if let Some(start) = tag_start {
             match ch {
                 '\'' | '"' => quote = Some(ch),
-                '>' => in_tag = false,
+                '>' => {
+                    ranges.push(start..index + 1);
+                    tag_start = None;
+                }
                 _ => {}
             }
-        } else if ch == '<' {
-            in_tag = text[index + 1..]
+        } else if ch == '<'
+            && text[index + 1..]
                 .trim_start_matches('/')
-                .starts_with(|ch: char| ch.is_ascii_alphabetic());
+                .starts_with(|ch: char| ch.is_ascii_alphabetic())
+        {
+            tag_start = Some(index);
         }
     }
-    in_tag
+    if let Some(start) = tag_start {
+        ranges.push(start..text.len());
+    }
+    ranges
 }
 
 fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
@@ -335,6 +350,7 @@ fn project_native_text(
     adapter: &NativeToolExecutionAdapter,
     text: &str,
     shell_quoting: bool,
+    project_root_paths: bool,
 ) -> String {
     let Some(active) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd) else {
         return text.to_string();
@@ -342,6 +358,9 @@ fn project_native_text(
     let (physical, namespace_cwd) = physical_cwd(adapter);
     let mut projected = text.to_string();
     for cwd in [&adapter.cwd, &physical] {
+        if cwd == Path::new("/") && !project_root_paths {
+            continue;
+        }
         projected = if cwd == Path::new("/") {
             replace_rooted_path_starts(&projected, "./", shell_quoting)
         } else {
@@ -357,6 +376,9 @@ fn project_native_text(
         )
     });
     for mount in mounts {
+        if mount.host_path == Path::new("/") && !project_root_paths {
+            continue;
+        }
         let mount_from_cwd = relative_path(&namespace_cwd, &mount.namespace_path);
         if mount.host_path == Path::new("/") {
             let replacement = mount_from_cwd.to_string_lossy();
@@ -374,6 +396,9 @@ fn project_native_text(
     }
     if !physical.starts_with(&active.host_path) {
         for ancestor in physical.ancestors().skip(1) {
+            if ancestor == Path::new("/") && !project_root_paths {
+                continue;
+            }
             let relative = relative_path(&physical, ancestor);
             let replacement = relative.to_string_lossy();
             projected = if ancestor == Path::new("/") {
@@ -446,11 +471,7 @@ fn replace_path_prefixes(
         let boundary_before = is_path_start(text, start) || emphasized;
         let boundary_after = quoted_path_end(text, start, suffix)
             .unwrap_or_else(|| is_path_end(suffix) || emphasized);
-        if boundary_before
-            && boundary_after
-            && !ends_uri_scheme(&text[..start])
-            && !in_markup_tag(text, start)
-        {
+        if boundary_before && boundary_after && !ends_uri_scheme(&text[..start]) {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(&replacement_at(text, start, replacement, shell_quoting));
             copied_through = end;
@@ -500,7 +521,14 @@ fn is_path_end(suffix: &str) -> bool {
 fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
+    let mut markup = markup_tag_ranges(text).into_iter().peekable();
     for (slash, _) in text.match_indices('/') {
+        while markup.peek().is_some_and(|range| range.end <= slash) {
+            markup.next();
+        }
+        if markup.peek().is_some_and(|range| range.contains(&slash)) {
+            continue;
+        }
         let start = if text[..slash].ends_with('\\') {
             slash - 1
         } else {
@@ -551,7 +579,6 @@ fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool
         let after = suffix.chars().next();
         let uri_scheme = ends_uri_scheme(&text[..start]);
         if (is_path_start(text, start) || emphasized)
-            && !in_markup_tag(text, start)
             && !uri_scheme
             && (bare_root || after.is_some_and(|ch| !is_field_separator(ch) && ch != '/'))
         {

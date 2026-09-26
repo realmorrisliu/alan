@@ -51,6 +51,15 @@ async fn project_text_projects_paths_from_every_delegated_mount() {
             format!("PATH=.{separator}../docs:/usr/bin")
         );
     }
+    let markup = format!(r#"<a href="{}/report.html">"#, project_root.display());
+    assert_eq!(adapter.project_text(&markup), r#"<a href="./report.html">"#);
+    let json = serde_json::to_string(&vec![
+        format!("{}/report.html", project_root.display());
+        10_000
+    ])
+    .unwrap();
+    let projected: Vec<String> = serde_json::from_str(&adapter.project_text(&json)).unwrap();
+    assert_eq!(projected, vec!["./report.html"; 10_000]);
     let sibling = format!("{}:backup/file", project_root.display());
     assert_eq!(adapter.project_text(&sibling), sibling);
     let resolved = dunce::canonicalize(project.path().join("notes-link.txt")).unwrap();
