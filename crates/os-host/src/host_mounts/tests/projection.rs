@@ -48,7 +48,7 @@ async fn project_text_projects_paths_from_every_delegated_mount() {
 #[tokio::test]
 async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_siblings() {
     let project = tempfile::Builder::new()
-        .prefix("alan project with spaces ")
+        .prefix("alan project (1) [$x] ")
         .tempdir()
         .unwrap();
 
@@ -160,6 +160,20 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         adapter.project_text(&format!("{uri}?query=value!#fragment,")),
         "./notes.txt?query=value!#fragment,"
     );
+    use std::os::unix::ffi::OsStringExt;
+    let name = std::ffi::OsString::from_vec(b"bytes-\xff.txt".to_vec());
+    let byte_uri = url::Url::from_file_path(root.join(&name)).unwrap();
+    let projected = adapter.project_text(byte_uri.as_str());
+    assert_eq!(projected, "./bytes-%FF.txt");
+    let round_trip = url::Url::parse("file:///public/cwd/")
+        .unwrap()
+        .join(&projected)
+        .unwrap();
+    assert_eq!(
+        round_trip.to_file_path().unwrap(),
+        PathBuf::from("/public/cwd").join(name)
+    );
+
     let comma_uri = url::Url::from_file_path(root.join("notes,")).unwrap();
     assert_eq!(
         adapter.project_text(&format!("\"{comma_uri}\"")),
@@ -192,7 +206,13 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         single_emphasized_sibling
     );
 
-    let shell_escaped_root = root.to_string_lossy().replace(' ', "\\ ");
+    let quoted = std::process::Command::new("/bin/bash")
+        .args(["-c", "printf %q \"$1\"", "_"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(quoted.status.success());
+    let shell_escaped_root = String::from_utf8(quoted.stdout).unwrap();
     assert_eq!(
         adapter.project_text(&format!("working directory: {shell_escaped_root}")),
         "working directory: ."

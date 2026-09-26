@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
@@ -25,9 +25,33 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
         {
             continue;
         }
+        let mut brackets = Vec::new();
         let mut end = text[start..]
             .char_indices()
             .find_map(|(offset, ch)| {
+                let decoded = (ch == '%')
+                    .then(|| text.get(start + offset + 1..start + offset + 3))
+                    .flatten()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                    .map(char::from);
+                let bracket = decoded.unwrap_or(ch);
+                let closing = match bracket {
+                    '(' => Some(')'),
+                    '[' => Some(']'),
+                    '{' => Some('}'),
+                    _ => None,
+                };
+                if let Some(closing) = closing {
+                    brackets.push(closing);
+                    return None;
+                }
+                if brackets.last() == Some(&bracket) {
+                    brackets.pop();
+                    return None;
+                }
+                if decoded.is_some() {
+                    return None;
+                }
                 (ch.is_whitespace()
                     || matches!(
                         ch,
@@ -51,20 +75,15 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
         let Ok(path) = url.to_file_path() else {
             continue;
         };
-        if !adapter
-            .mounts
-            .iter()
-            .any(|mount| path.starts_with(&mount.host_path))
-        {
+        let Some(relative) = relative_native_path(adapter, &path) else {
             continue;
-        }
+        };
         result.push_str(&text[copied..start]);
-        let relative = project_native_text(adapter, &path.to_string_lossy());
         // Encode each URI path component; preserve relative ../ and / separators.
         let relative_uri = relative
-            .split('/')
+            .components()
             .map(|component| {
-                url::form_urlencoded::byte_serialize(component.as_bytes())
+                url::form_urlencoded::byte_serialize(component.as_os_str().as_encoded_bytes())
                     .collect::<String>()
                     .replace('+', "%20")
             })
@@ -85,6 +104,77 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
     result
 }
 
+fn relative_native_path(adapter: &NativeToolExecutionAdapter, path: &Path) -> Option<PathBuf> {
+    longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)?;
+    if let Ok(suffix) = path.strip_prefix(&adapter.cwd) {
+        return Some(Path::new(".").join(suffix));
+    }
+    let mount = adapter
+        .mounts
+        .iter()
+        .filter(|mount| path.starts_with(&mount.host_path))
+        .max_by_key(|mount| mount.host_path.components().count())?;
+    let suffix = path.strip_prefix(&mount.host_path).ok()?;
+    Some(relative_path(
+        &adapter.namespace_cwd,
+        &mount.namespace_path.join(suffix),
+    ))
+}
+
+fn relative_path(cwd: &Path, target: &Path) -> PathBuf {
+    let common = cwd
+        .components()
+        .zip(target.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in common..cwd.components().count() {
+        relative.push("..");
+    }
+    for component in target.components().skip(common) {
+        relative.push(component.as_os_str());
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    relative
+}
+
+fn shell_escaped_path(path: &str) -> String {
+    let mut escaped = String::new();
+    for ch in path.chars() {
+        if ch.is_whitespace()
+            || matches!(
+                ch,
+                '!' | '"'
+                    | '$'
+                    | '&'
+                    | '\''
+                    | '('
+                    | ')'
+                    | '*'
+                    | ','
+                    | ';'
+                    | '<'
+                    | '>'
+                    | '?'
+                    | '['
+                    | '\\'
+                    | ']'
+                    | '^'
+                    | '`'
+                    | '{'
+                    | '|'
+                    | '}'
+            )
+        {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
 fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
     if longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd).is_none() {
         return text.to_string();
@@ -99,24 +189,7 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
     let mut mounts = adapter.mounts.iter().rev().collect::<Vec<_>>();
     mounts.sort_by_key(|mount| Reverse(mount.host_path.components().count()));
     for mount in mounts {
-        let common = adapter
-            .namespace_cwd
-            .components()
-            .zip(mount.namespace_path.components())
-            .take_while(|(left, right)| left == right)
-            .count();
-        let mut mount_from_cwd = PathBuf::new();
-        for _ in common..adapter.namespace_cwd.components().count() {
-            mount_from_cwd.push("..");
-        }
-        for component in mount.namespace_path.components().skip(common) {
-            if let Component::Normal(part) = component {
-                mount_from_cwd.push(part);
-            }
-        }
-        if mount_from_cwd.as_os_str().is_empty() {
-            mount_from_cwd.push(".");
-        }
+        let mount_from_cwd = relative_path(&adapter.namespace_cwd, &mount.namespace_path);
         if mount.host_path == Path::new("/") {
             let replacement = mount_from_cwd.to_string_lossy();
             let replacement = if replacement == "." {
@@ -129,7 +202,7 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
             let host_path = mount.host_path.to_string_lossy();
             let replacement = mount_from_cwd.to_string_lossy();
             projected = replace_path_prefixes(&projected, host_path.as_ref(), replacement.as_ref());
-            let shell_escaped_host_path = host_path.replace(' ', "\\ ");
+            let shell_escaped_host_path = shell_escaped_path(&host_path);
             if shell_escaped_host_path != host_path {
                 projected = replace_path_prefixes(
                     &projected,
