@@ -301,3 +301,16 @@ admission slice, explicit command records are rejected before Agent execution or
 in-turn steering; client activation awaits governed command execution and ordered
 queue integration. This slice does not complete task 2.1: correlated completion,
 queue controls, and durable recovery remain in the following implementation slices.
+
+### Host-authorized working directory slice
+
+The Host execution adapter can validate a candidate working directory for a
+Tool Process binding. The adapter canonicalizes the selection, requires a directory
+inside a delegated Host Mount, and returns its logical namespace path. Relative
+selection stays in the current grant; an explicit absolute selection may switch
+to another delegated grant. The resolver returns a candidate only; the command dispatch slice must
+reconcile current authority before changing the Process binding. Structured tools retain their existing multi-grant authority.
+
+This internal boundary does not activate standalone `!cd` or ordered input
+admission. Those require the following explicit command dispatch slice; task 2.5
+remains incomplete.
