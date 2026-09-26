@@ -29,13 +29,7 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
         let mut end = text[start..]
             .char_indices()
             .find_map(|(offset, ch)| {
-                let decoded = (ch == '%')
-                    .then(|| text.get(start + offset + 1..start + offset + 3))
-                    .flatten()
-                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-                    .map(char::from);
-                let bracket = decoded.unwrap_or(ch);
-                let closing = match bracket {
+                let closing = match ch {
                     '(' => Some(')'),
                     '[' => Some(']'),
                     '{' => Some('}'),
@@ -45,11 +39,8 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
                     brackets.push(closing);
                     return None;
                 }
-                if brackets.last() == Some(&bracket) {
+                if brackets.last() == Some(&ch) {
                     brackets.pop();
-                    return None;
-                }
-                if decoded.is_some() {
                     return None;
                 }
                 (ch.is_whitespace()
@@ -105,9 +96,12 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
 }
 
 fn relative_native_path(adapter: &NativeToolExecutionAdapter, path: &Path) -> Option<PathBuf> {
-    longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)?;
+    let active = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)?;
     if let Ok(suffix) = path.strip_prefix(&adapter.cwd) {
         return Some(Path::new(".").join(suffix));
+    }
+    if path.starts_with(&active.host_path) {
+        return Some(relative_path(&adapter.cwd, path));
     }
     let mount = adapter
         .mounts
@@ -176,18 +170,25 @@ fn shell_escaped_path(path: &str) -> String {
 }
 
 fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
-    if longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd).is_none() {
+    let Some(active) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd) else {
         return text.to_string();
-    }
+    };
     let cwd = adapter.cwd.to_string_lossy();
     let mut projected = if adapter.cwd == Path::new("/") {
         replace_rooted_path_starts(text, "./")
     } else {
-        replace_path_prefixes(text, cwd.trim_end_matches(std::path::MAIN_SEPARATOR), ".")
+        let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
+        let projected = replace_path_prefixes(text, &shell_escaped_path(cwd), ".");
+        replace_path_prefixes(&projected, cwd, ".")
     };
 
     let mut mounts = adapter.mounts.iter().rev().collect::<Vec<_>>();
-    mounts.sort_by_key(|mount| Reverse(mount.host_path.components().count()));
+    mounts.sort_by_key(|mount| {
+        (
+            mount.namespace_path != active.namespace_path,
+            Reverse(mount.host_path.components().count()),
+        )
+    });
     for mount in mounts {
         let mount_from_cwd = relative_path(&adapter.namespace_cwd, &mount.namespace_path);
         if mount.host_path == Path::new("/") {

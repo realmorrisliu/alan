@@ -99,11 +99,23 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     let unrelated_scheme = format!("pro{uri}");
     assert_eq!(adapter.project_text(&unrelated_scheme), unrelated_scheme);
 
-    for name in ["notes here.txt", "notes#?.txt", "notes).txt"] {
+    for name in [
+        "notes here.txt",
+        "notes#?.txt",
+        "notes).txt",
+        "notes(draft.txt",
+        "notes[draft.txt",
+        "notes{draft.txt",
+    ] {
         let encoded = url::Url::from_file_path(root.join(name))
             .unwrap()
             .to_string()
-            .replace(')', "%29");
+            .replace('(', "%28")
+            .replace(')', "%29")
+            .replace('[', "%5B")
+            .replace(']', "%5D")
+            .replace('{', "%7B")
+            .replace('}', "%7D");
         let projected = adapter.project_text(&encoded);
         assert!(!projected.contains([' ', '#', '?', ')']), "{projected}");
         let target = url::Url::parse("file:///public/cwd/")
@@ -317,4 +329,42 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
     ] {
         assert_eq!(adapter.project_text(input), expected, "{input}");
     }
+}
+
+#[tokio::test]
+async fn projection_prefers_active_grant_and_matches_escaped_cwd() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join("sub dir")).unwrap();
+    std::fs::create_dir(project.path().join("vendor")).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    for (logical, native) in [
+        ("/mnt/project", project.path().to_owned()),
+        ("/mnt/vendor", project.path().join("vendor")),
+    ] {
+        approve(&service, 7, logical, HostMountAccess::ReadOnly, &native).await;
+    }
+    let adapter = service
+        .reconcile(7, binding("/mnt/project/sub dir"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
+    let quoted = std::process::Command::new("/bin/bash")
+        .args(["-c", "printf %q \"$1\"", "_"])
+        .arg(root.join("sub dir"))
+        .output()
+        .unwrap();
+    assert!(quoted.status.success());
+    assert_eq!(
+        adapter.project_text(std::str::from_utf8(&quoted.stdout).unwrap()),
+        "."
+    );
+    let target = root.join("vendor/x");
+    assert_eq!(
+        adapter.project_text(&target.to_string_lossy()),
+        "../vendor/x"
+    );
+    let uri = url::Url::from_file_path(&target).unwrap();
+    assert_eq!(adapter.project_text(uri.as_str()), "../vendor/x");
 }
