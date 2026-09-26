@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 pub(super) enum TokenPathRole {
     Check,
     Data,
-    ExecutableData,
+    ExecutableData(usize),
 }
 
 pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRole {
@@ -32,7 +32,9 @@ pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRol
 
     if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk") {
         return match super::command_interpreters::awk_next_argument_role(args, &token.decoded) {
-            super::command_interpreters::AwkArgumentRole::Program => TokenPathRole::ExecutableData,
+            super::command_interpreters::AwkArgumentRole::Program(offset) => {
+                TokenPathRole::ExecutableData(offset)
+            }
             super::command_interpreters::AwkArgumentRole::Data => TokenPathRole::Data,
             super::command_interpreters::AwkArgumentRole::Operand => TokenPathRole::Check,
         };

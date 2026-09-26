@@ -162,3 +162,43 @@ async fn sandbox_allows_inspectable_awk_io_and_regexes() {
         assert_eq!(result.stdout, expected);
     }
 }
+
+#[test]
+fn all_awk_inline_sources_are_inspected_before_execution() {
+    let mount = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(mount.path().to_path_buf(), SandboxBackendKind::Seatbelt);
+    for script in [
+        r#"gawk --source='BEGIN { system("cat \057etc/passwd") }'"#,
+        r#"gawk -e'BEGIN { system("cat \057etc/passwd") }'"#,
+        r#"gawk -e 'BEGIN { print "safe" }' --source 'BEGIN { system("true") }'"#,
+        r#"gawk --source='BEGIN { getline x < "/etc/passwd"; print x }'"#,
+        r#"gawk -e'BEGIN { getline x < "/etc/passwd"; print x }'"#,
+        r#"gawk --sou='BEGIN { system("true") }'"#,
+        r#"gawk -Wsource='BEGIN { system("true") }'"#,
+        r#"gawk --exec=script.awk"#,
+        r#"gawk -l extension 'BEGIN {}'"#,
+        r#"gawk '@include "script.awk"'"#,
+        r#"gawk '@load "extension"'"#,
+        r#"gawk -- '-e/1 { system("true") }'"#,
+    ] {
+        for mode in [PathCheckMode::ProtectedOnly, PathCheckMode::Full] {
+            assert!(
+                sandbox
+                    .validate_command_paths(script, mount.path(), mode, None)
+                    .is_err(),
+                "{script}"
+            );
+        }
+    }
+    for script in [
+        r#"gawk --source='BEGIN { print "/etc/passwd" }'"#,
+        r#"gawk -e'BEGIN { print "/etc/passwd" }'"#,
+        r#"gawk -e 'BEGIN { print "one" }' --source 'BEGIN { print "two" }'"#,
+        r#"gawk --field-separator /etc/passwd --assign p=/etc/hosts -e 'BEGIN { print FS, p }'"#,
+        r#"gawk -- '-e/1 { print $0 }' ./input.tsv"#,
+    ] {
+        sandbox
+            .validate_command_paths(script, mount.path(), PathCheckMode::ProtectedOnly, None)
+            .unwrap_or_else(|error| panic!("{script}: {error}"));
+    }
+}

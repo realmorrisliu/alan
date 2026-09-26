@@ -879,9 +879,9 @@ impl Sandbox {
             if role == TokenPathRole::Data {
                 continue;
             }
-            let path_literals = if role == TokenPathRole::ExecutableData {
+            let path_literals = if let TokenPathRole::ExecutableData(offset) = role {
                 let Some(getline_paths) =
-                    command_interpreters::awk_getline_file_paths(&token.decoded)
+                    command_interpreters::awk_getline_file_paths(&token.decoded[offset..])
                 else {
                     return Err(anyhow!(
                         "Sandbox backend {} rejects AWK getline file paths unless they are simple unescaped string literals; other paths cannot be validated against host_mount",

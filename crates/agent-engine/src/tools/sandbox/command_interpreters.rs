@@ -245,10 +245,17 @@ fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
         if arg == "--" {
             return args.get(index + 1).map(|_| format!("{display} program"));
         }
+        if exact_or_inline_option_with_value(arg, &["-e"], &["--source"]) {
+            return Some(format!("{display} -e"));
+        }
         if exact_or_inline_option_with_value(arg, &["-f"], &["--file"]) {
             return Some(format!("{display} -f"));
         }
-        if exact_or_inline_option_with_value(arg, &["-F", "-v", "-W"], &[]) {
+        if exact_or_inline_option_with_value(
+            arg,
+            &["-F", "-v", "-W"],
+            &["--field-separator", "--assign"],
+        ) {
             index += if has_attached_option_value(arg) { 1 } else { 2 };
             continue;
         }
@@ -263,7 +270,7 @@ fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AwkArgumentRole {
-    Program,
+    Program(usize),
     Data,
     Operand,
 }
@@ -276,6 +283,17 @@ pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArg
         if !options_ended && arg == "--" {
             options_ended = true;
             index += 1;
+            continue;
+        }
+        if !options_ended && exact_or_inline_option_with_value(arg, &["-e"], &["--source"]) {
+            if has_attached_option_value(arg) {
+                index += 1;
+            } else if index + 1 < args.len() {
+                index += 2;
+            } else {
+                return AwkArgumentRole::Program(0);
+            }
+            program_supplied = true;
             continue;
         }
         if !options_ended && exact_or_inline_option_with_value(arg, &["-f"], &["--file"]) {
@@ -300,7 +318,13 @@ pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArg
             }
             continue;
         }
-        if !options_ended && exact_or_inline_option_with_value(arg, &["-F", "-v", "-W"], &[]) {
+        if !options_ended
+            && exact_or_inline_option_with_value(
+                arg,
+                &["-F", "-v", "-W"],
+                &["--field-separator", "--assign"],
+            )
+        {
             if has_attached_option_value(arg) {
                 index += 1;
             } else if index + 1 < args.len() {
@@ -318,8 +342,11 @@ pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArg
         index += 1;
     }
 
-    if exact_or_inline_option_with_value(candidate, &["-F", "-v", "-W"], &[])
-        && has_attached_option_value(candidate)
+    if exact_or_inline_option_with_value(
+        candidate,
+        &["-F", "-v", "-W"],
+        &["--field-separator", "--assign"],
+    ) && has_attached_option_value(candidate)
     {
         return AwkArgumentRole::Data;
     }
@@ -327,6 +354,16 @@ pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArg
         && has_attached_option_value(candidate)
     {
         return AwkArgumentRole::Operand;
+    }
+    if !options_ended
+        && exact_or_inline_option_with_value(candidate, &["-e"], &["--source"])
+        && has_attached_option_value(candidate)
+    {
+        return AwkArgumentRole::Program(if candidate.starts_with("--source=") {
+            9
+        } else {
+            2
+        });
     }
     if !options_ended && candidate.starts_with('-') {
         return AwkArgumentRole::Operand;
@@ -336,8 +373,73 @@ pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArg
     } else if program_supplied {
         AwkArgumentRole::Operand
     } else {
-        AwkArgumentRole::Program
+        AwkArgumentRole::Program(0)
     }
+}
+
+pub(super) fn validate_awk_arguments(args: &[String]) -> Result<(), &'static str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index).map(String::as_str) {
+        if arg == "--" {
+            break;
+        }
+        if awk_query_flag(arg)
+            || matches!(
+                arg,
+                "-b" | "--characters-as-bytes"
+                    | "-c"
+                    | "--traditional"
+                    | "-P"
+                    | "--posix"
+                    | "-S"
+                    | "--sandbox"
+            )
+        {
+            index += 1;
+            continue;
+        }
+        if arg == "-W"
+            && args
+                .get(index + 1)
+                .is_some_and(|arg| matches!(arg.as_str(), "version" | "help"))
+        {
+            index += 2;
+            continue;
+        }
+        if exact_or_inline_option_with_value(
+            arg,
+            &["-f", "-i", "-E", "-l"],
+            &["--file", "--include", "--exec", "--load"],
+        ) {
+            return Err("opaque AWK script files or extensions");
+        }
+        if exact_or_inline_option_with_value(
+            arg,
+            &["-F", "-v", "-e"],
+            &["--field-separator", "--assign", "--source"],
+        ) {
+            if has_attached_option_value(arg) {
+                index += 1;
+            } else if index + 1 < args.len() {
+                index += 2;
+            } else {
+                return Err("missing AWK option value");
+            }
+            continue;
+        }
+        if arg.starts_with('-') {
+            return Err("uninspectable AWK options");
+        }
+        index += 1;
+    }
+    for (index, candidate) in args.iter().enumerate() {
+        if let AwkArgumentRole::Program(offset) = awk_next_argument_role(&args[..index], candidate)
+            && awk_program_has_uninspectable_io(&candidate[offset..])
+        {
+            return Err("AWK programs with uninspectable file or command I/O");
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn awk_program_has_uninspectable_io(program: &str) -> bool {
@@ -346,6 +448,14 @@ pub(super) fn awk_program_has_uninspectable_io(program: &str) -> bool {
     let tokens = awk_tokens(program);
     if tokens.iter().enumerate().any(|(index, token)| match token {
         AwkToken::Identifier("system" | "ARGV" | "ARGC") => true,
+        AwkToken::Identifier("include" | "load")
+            if matches!(
+                tokens.get(index.wrapping_sub(1)),
+                Some(AwkToken::Symbol('@'))
+            ) =>
+        {
+            true
+        }
         AwkToken::Symbol('|') => {
             !matches!(
                 tokens.get(index.wrapping_sub(1)),
