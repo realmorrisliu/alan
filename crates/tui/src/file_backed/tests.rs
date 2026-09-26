@@ -446,6 +446,20 @@ fn compact_command_routes_to_machine_ctl() {
 }
 
 #[test]
+fn paused_queue_commands_use_machine_control_without_submitting_agent_input() {
+    for verb in ["continue", "discard"] {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.composer.set_text(format!("/{verb}"));
+        assert!(!app.enter_submits_agent_task());
+        assert!(
+            matches!(app.handle_submit(), Some(FileBackedAction::MachineCtl { command, .. }) if command == format!("queue-v1 {verb}"))
+        );
+        app.composer.set_text(format!("/{verb} unexpected"));
+        assert!(app.handle_submit().is_none());
+    }
+}
+
+#[test]
 fn confirmation_digit_builds_resume_response() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.set_pending_yield(PendingYieldCell {

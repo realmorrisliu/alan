@@ -318,3 +318,23 @@ Process binding. Structured tools retain their existing multi-grant authority.
 Standalone command dispatch now uses this boundary to select shared cwd. Ordered
 multi-client admission and durable cwd recovery are not yet integrated; task 2.5
 remains incomplete.
+
+### Ordinary input admission slice
+
+Ordinary `follow_up` submissions now enter the same outer runtime FIFO for Agent
+and command intent. Only explicit steering and pending-request responses may
+enter an active transition. This prevents a later Agent follow-up from overtaking
+an earlier queued command or explicit turn. The ordinary FIFO and its pause flag belong to the Agent Machine; the Process
+loop retains a shared handle while a transition is executing. Interrupt pauses
+ordinary dispatch before cancelling active work. New ordinary input remains queued
+until `queue-v1 continue` or `queue-v1 discard` is written to `machine/ctl` (or the
+corresponding `ContinueQueue` / `DiscardQueue` operation is submitted). The TUI
+exposes `/continue` and `/discard` through its existing Machine control path and
+completion/help, so interruption leaves an ordinary way to continue working. Controls
+reject continuation/discard while active work is still settling. Discarded inputs
+receive failed Actions correlated to their original submission IDs and never run.
+Pending request responses remain ahead of ordinary admission.
+
+This is in-memory ordinary-queue control only. Rollout/checkpoint recovery,
+next-turn queue integration, client prefix/control activation and complete
+per-client result delivery remain pending; tasks 2.1, 2.5, 2.6 and 2.8 stay open.

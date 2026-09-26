@@ -26,7 +26,7 @@ fn response() -> GenerationResponse {
     }
 }
 
-async fn command(shell: &Shell, body: &str) -> Value {
+async fn submit_command(shell: &Shell, body: &str) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     let record =
         json!({"version":1,"submission_id":id,"intent":"command","mode":"follow_up","body":body});
@@ -37,6 +37,10 @@ async fn command(shell: &Shell, body: &str) -> Value {
         )
         .await
         .unwrap();
+    id
+}
+
+async fn command_result(shell: &Shell, id: &str) -> Value {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             for action in shell.ls("/agent/root/actions").await.unwrap() {
@@ -64,6 +68,11 @@ async fn command(shell: &Shell, body: &str) -> Value {
     })
     .await
     .expect("correlated command completion")
+}
+
+async fn command(shell: &Shell, body: &str) -> Value {
+    let id = submit_command(shell, body).await;
+    command_result(shell, &id).await
 }
 
 #[tokio::test]
@@ -197,12 +206,14 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
         })
         .await
         .expect("native command started");
+        let queued = submit_command(&shell, "printf queued > queued.txt").await;
         shell
             .write("/agent/root/machine/ctl", b"interrupt")
             .await
             .unwrap();
+        queued
     };
-    let (interrupted, ()) = tokio::join!(running, interrupt);
+    let (interrupted, queued) = tokio::join!(running, interrupt);
     assert_ne!(interrupted["exit_code"], 0);
     let process = interrupted["process"]
         .as_str()
@@ -215,6 +226,24 @@ async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
     assert_eq!(
         std::fs::read_to_string(project.path().join("src/before-interrupt.txt")).unwrap(),
         "saved"
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !project.path().join("queued.txt").exists(),
+        "interrupt must hold the next native command"
+    );
+    let activity: Value =
+        serde_json::from_slice(&shell.cat("/agent/root/machine/ui/activity").await.unwrap())
+            .unwrap();
+    assert_eq!(activity["state"], "paused");
+    shell
+        .write("/agent/root/machine/ctl", b"queue-v1 continue")
+        .await
+        .unwrap();
+    assert_eq!(command_result(&shell, &queued).await["exit_code"], 0);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("queued.txt")).unwrap(),
+        "queued"
     );
     assert_eq!(
         command(&shell, "printf alive > after-interrupt.txt").await["exit_code"],
