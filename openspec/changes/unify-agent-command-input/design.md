@@ -361,3 +361,14 @@ prove completion by themselves: clients still need correlated terminal state.
 Legacy records without identity remain readable but cannot prove a particular
 client input completed. Client completion and concurrent admission are separate
 remaining delivery work.
+
+### Correlated input settlement
+
+The existing Machine UI event stream emits `input_completed` after an ordinary
+accepted input settles, with its participating submission IDs and a completed,
+failed or cancelled advancement status. Waiting for approval is not settlement.
+Queue discard publishes a cancelled event for each removed input after its Action
+record. Command exit status remains in the correlated Action result; completing
+input advancement does not imply a zero shell exit status. TUI event readers
+accept this variant, but client completion selection, next-turn identity and
+restart recovery still require their own delivery slices.

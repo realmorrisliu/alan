@@ -689,7 +689,7 @@ async fn wait_for_stdio_answer_after_submit(
                             snapshot.task_error = Some(message)
                         }
                         UiEvent::Error { .. } => {}
-                        UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+                        UiEvent::InputCompleted { .. } | UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
                 }
                 if interrupt_requested

@@ -49,8 +49,12 @@ async fn test_run_turn_llm_error() {
     )
     .await;
 
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("LLM request failed")
+    );
 
     // Should have error event
     let has_error = events.iter().any(
@@ -61,6 +65,34 @@ async fn test_run_turn_llm_error() {
     let notice = state.agent_files().read_ui_notice_snapshot().await.unwrap();
     assert_eq!(notice.kind, alan_agent_protocol::UiNoticeKind::Error);
     assert!(notice.message.contains("LLM request failed"));
+
+    let mut state = create_test_state_with_provider(ErrorMockProvider);
+    let input = alan_agent_protocol::Submission::new(alan_agent_protocol::Op::Turn {
+        parts: vec![ContentPart::text("failed input")],
+        context: None,
+    });
+    let id = input.id.clone();
+    let outcome = crate::runtime::transition::advance_accepted_submission(
+        &mut state,
+        input,
+        &crate::runtime::turn_input::TurnInputBroker::default(),
+        &cancel,
+    )
+    .await;
+    assert!(outcome.result.is_err());
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    let ui = shell
+        .cat(&format!(
+            "{}/machine/ui/events",
+            state.environment.agent_path()
+        ))
+        .await
+        .unwrap();
+    assert!(std::str::from_utf8(&ui).unwrap().lines().any(|line| {
+        matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, error: Some(error) }
+            if submission_ids == [id.clone()] && error.contains("LLM request failed"))
+    }));
 }
 
 #[tokio::test]

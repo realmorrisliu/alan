@@ -360,9 +360,9 @@ async fn test_namespace_turn_without_mounted_model_does_not_fallback_to_provider
         None,
     )
     .await
-    .unwrap();
+    .unwrap_err();
 
-    assert!(matches!(result, TurnExecutionOutcome::Finished));
+    assert!(result.to_string().contains("Namespace LLM request failed"));
     assert!(
         events.iter().any(|event| matches!(
             event,

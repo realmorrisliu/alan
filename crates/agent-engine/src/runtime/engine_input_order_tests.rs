@@ -395,6 +395,31 @@ async fn ordered_control_boundaries_preserve_later_inputs_and_machine_controls()
         8,
         "four rejected commands and four discarded inputs receive results"
     );
+    let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+    let cancelled = std::str::from_utf8(&events)
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+                alan_agent_protocol::UiEvent::InputCompleted {
+                    submission_ids,
+                    status: alan_agent_protocol::UiInputStatus::Cancelled,
+                    ..
+                } => Some(submission_ids),
+                _ => None,
+            }
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(cancelled.len(), 4);
+    assert!(
+        !cancelled.contains(&fresh_id),
+        "later input is not cancelled"
+    );
+    assert!(
+        !cancelled.contains(&compact_id),
+        "Machine control is not user input"
+    );
     for action in actions {
         assert_eq!(
             shell

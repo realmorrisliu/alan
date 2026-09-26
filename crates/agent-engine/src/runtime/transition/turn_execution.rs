@@ -466,11 +466,11 @@ where
                     .await
                     .context("write generation error UI state")?;
                 emit(Event::Error {
-                    message,
+                    message: message.clone(),
                     recoverable: true,
                 })
                 .await;
-                return Ok(TurnExecutionOutcome::Finished);
+                return Err(anyhow::anyhow!(message));
             }
         };
 

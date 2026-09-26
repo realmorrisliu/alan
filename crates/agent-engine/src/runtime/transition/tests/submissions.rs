@@ -211,4 +211,45 @@ async fn identical_inputs_publish_distinct_submission_ids_on_tape() {
         assert_eq!(matching[1]["role"], "assistant");
         assert_eq!(matching[1]["content"], "answer");
     }
+    let events = shell.cat(&format!("{}/machine/ui/events", state.environment.agent_path())).await.unwrap();
+    let ids: Vec<_> = std::str::from_utf8(&events).unwrap().lines()
+        .map(|line| serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap())
+        .filter_map(|event| match event {
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => Some(submission_ids),
+            _ => None,
+        }).collect();
+    assert_eq!(ids, vec![vec!["client-one"], vec!["client-two"]]);
+}
+
+#[tokio::test]
+async fn input_completion_distinguishes_success_failure_and_cancellation() {
+    use alan_agent_protocol::{UiEvent, UiInputStatus};
+    for (mode, cancelled, expected) in [
+        (InputMode::FollowUp, false, UiInputStatus::Completed),
+        (InputMode::FollowUp, true, UiInputStatus::Cancelled),
+        (InputMode::Steer, false, UiInputStatus::Failed),
+    ] {
+        let mut state = runtime_state_with_environment(
+            namespace_environment_with_live_process(DelayedMockProvider::new(
+                tokio::time::Duration::ZERO, "answer",
+            )).await,
+        );
+        let submission = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("same question")], mode,
+        });
+        let id = submission.id.clone();
+        let cancel = CancellationToken::new();
+        if cancelled { cancel.cancel(); }
+        let _ = advance_accepted_submission(&mut state, submission, &TurnInputBroker::default(), &cancel).await;
+        let shell = Shell::new(state.environment.root_transport());
+        let bytes = shell.cat(&format!("{}/machine/ui/events", state.environment.agent_path())).await.unwrap();
+        let completions: Vec<_> = std::str::from_utf8(&bytes).unwrap().lines()
+            .map(|line| serde_json::from_str::<UiEvent>(line).unwrap())
+            .filter_map(|event| match event {
+                UiEvent::InputCompleted { submission_ids, status, .. } => Some((submission_ids, status)),
+                _ => None,
+            }).collect();
+        assert_eq!(completions, vec![(vec![id], expected)]);
+        assert!(state.machine.current_submission_id().is_none());
+    }
 }
