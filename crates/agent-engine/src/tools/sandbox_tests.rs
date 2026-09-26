@@ -1,6 +1,4 @@
 use super::*;
-use crate::tools::reified_namespace::ReifiedMountAccess;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[path = "sandbox/native_shell_tests.rs"]
@@ -34,6 +32,9 @@ async fn test_sandbox_exec() {
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn sandbox_preserves_a_namespace_path_written_as_printf_data() {
+    use crate::tools::reified_namespace::ReifiedMountAccess;
+    use std::path::PathBuf;
+
     let mount = TempDir::new().unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
