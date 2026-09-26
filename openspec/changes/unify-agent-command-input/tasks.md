@@ -57,8 +57,8 @@
 - Local `cargo test -p alan-agent-engine -p alan-tools`: 1,191 engine unit tests,
   20 architecture checks and 137 Tool tests passed; one engine test remains ignored.
 - These checks do not establish tasks 2.5–2.10 as complete: end-to-end multi-client
-  ordering, renderer queue controls, durable queue/cwd recovery and real terminal
-  acceptance still require implementation and evidence. Task-oriented
+  command/cwd ordering, durable queue/cwd recovery and real terminal acceptance
+  still require implementation and evidence. Task-oriented
   alan9 controls and project-file parity also remain open. No automatic routing
   has been activated or synchronized to canonical specs.
 
@@ -75,7 +75,8 @@
   `discard` are handled through `machine/ctl`; paused work is retained through
   turn reset and is not dequeued until explicitly resumed or discarded. Unknown
   targets leave the queue unchanged. These controls are currently in-memory;
-  persistence and renderer wiring remain incomplete.
+  persistence remains incomplete; later client-control evidence below covers
+  renderer wiring.
 - Queue-owner/control verification: 1,194 engine unit tests and 20 architecture
   checks passed (one engine test remains ignored), including real AgentFS control
   writes and correlated discard errors. This is not terminal or restart acceptance.
@@ -111,3 +112,27 @@
   `just quality` passes. These tests establish client admission and correlation,
   not full multi-client command/cwd ordering, durable recovery or terminal/Herdr
   acceptance; tasks 2.5, 2.6, 2.8–2.10 remain unchecked.
+
+- Interactive `/continue` and `/discard` now write the existing versioned Machine
+  controls. Completion/help and a persistent queue count expose paused work;
+  active-input settling and pending requests take precedence. The renderer does
+  not mutate queue state on successful writes or claim effects were rolled back.
+  Correlated cancellation failures clear the renderer's pending interrupt target.
+- A running Process-loop test submits three inputs through AgentFS, cancels the
+  first during generation, then verifies both remaining IDs stay paused. Continue
+  dispatches them in accepted order; discard emits per-ID errors without extra
+  generation. This supplements the file-control and queue-owner unit tests and
+  does not establish native command/cwd ordering, descendant process cancellation,
+  restart recovery or real terminal/Herdr acceptance.
+- Fixed the macOS CI failure observed on `7df09b62`: the bounded child-result
+  collector now waits for its submitted ID and excludes idle admission snapshots.
+  Delegated supervision waits for the Process result/exit instead of inferring
+  successful completion from UI Idle. This prevents empty premature results in
+  both readers of child completion evidence.
+- Queue-control/child-result verification: 1,473 tests passed across engine,
+  architecture, Service Manager and TUI; one engine test remains ignored.
+  `just quality` and strict validation of this change pass.
+  Regression coverage includes the original child-Process execution/cleanup test,
+  idle admission not being terminal and live delegated Processes not completing
+  merely because UI history contains Idle. Current-head remote CI and real
+  terminal acceptance remain required before merge.

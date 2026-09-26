@@ -532,3 +532,205 @@ async fn test_namespace_machine_ctl_drives_runtime_submission_without_api_submis
 
     controller.shutdown().await.unwrap();
 }
+
+struct QueueGateProvider {
+    calls: Arc<Mutex<usize>>,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl LlmProvider for QueueGateProvider {
+    async fn generate(&mut self, _request: GenerationRequest) -> Result<GenerationResponse> {
+        let first = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls == 1
+        };
+        if first {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        Ok(mock_generation_response("done"))
+    }
+
+    async fn chat(&mut self, _system: Option<&str>, _user: &str) -> Result<String> {
+        anyhow::bail!("unused chat path")
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<mpsc::Receiver<StreamChunk>> {
+        Ok(response_stream(self.generate(request).await?))
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "mock"
+    }
+}
+
+async fn wait_for_queue_activity(
+    shell: &alan_shell::Shell,
+    predicate: impl Fn(&alan_agent_protocol::UiActivitySnapshot) -> bool,
+) -> alan_agent_protocol::UiActivitySnapshot {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let bytes = shell.cat("/agent/1/machine/ui/activity").await.unwrap();
+            let activity = serde_json::from_slice(&bytes).unwrap();
+            if predicate(&activity) {
+                return activity;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("runtime did not publish the expected queue state")
+}
+
+#[tokio::test]
+async fn runtime_file_controls_keep_accepted_inputs_paused_until_continue_or_discard() {
+    use alan_agent_protocol::{InputIntent, UiActivityState, UiEvent, UserInputRecord};
+    for verb in ["continue", "discard"] {
+        let calls = Arc::new(Mutex::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(QueueGateProvider {
+                calls: calls.clone(),
+                entered: entered.clone(),
+                release: release.clone(),
+            }),
+        );
+        let mut ns = alan_kernel::Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/llm",
+            InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+        let shell = alan_shell::Shell::new(root.clone());
+        let mut core = crate::Config::default();
+        core.memory.enabled = false;
+        core.streaming_mode = crate::config::StreamingMode::Off;
+        let capabilities = crate::provider_capabilities_for_config(&core);
+        let config = AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core),
+            ..AgentProcessConfig::default()
+        };
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let mut controller = spawn_with_namespace_environment(
+            config,
+            environment,
+            crate::skills::SkillHostCapabilities::default(),
+            capabilities,
+        )
+        .unwrap();
+        controller.wait_until_ready().await.unwrap();
+        let inputs = ["active", "second", "third"]
+            .map(|text| UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, text));
+        shell
+            .write("/agent/1/io/input", &inputs[0].encode_payload().unwrap())
+            .await
+            .unwrap();
+        if tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .is_err()
+        {
+            panic!(
+                "active generation never started: {}",
+                String::from_utf8_lossy(&shell.cat("/agent/1/machine/ui/events").await.unwrap())
+            );
+        }
+        for input in &inputs[1..] {
+            shell
+                .write("/agent/1/io/input", &input.encode_payload().unwrap())
+                .await
+                .unwrap();
+        }
+        let queued = wait_for_queue_activity(&shell, |a| a.pending_submissions.len() == 2).await;
+        assert_eq!(
+            queued
+                .pending_submissions
+                .iter()
+                .map(|s| s.submission_id.as_str())
+                .collect::<Vec<_>>(),
+            inputs[1..]
+                .iter()
+                .map(|s| s.submission_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        shell
+            .write(
+                "/agent/1/machine/ctl",
+                format!("queue-v1 interrupt {}", inputs[0].submission_id).as_bytes(),
+            )
+            .await
+            .unwrap();
+        wait_for_queue_activity(&shell, |a| {
+            a.queue_paused && a.active_submission.is_none() && a.state == UiActivityState::Idle
+        })
+        .await;
+        release.notify_one();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            1,
+            "paused inputs must not reach generation"
+        );
+        let before = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        assert!(!before.contains(&inputs[1].submission_id));
+        assert!(!before.contains(&inputs[2].submission_id));
+        shell
+            .write(
+                "/agent/1/machine/ctl",
+                format!("queue-v1 {verb}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        wait_for_queue_activity(&shell, |a| {
+            !a.queue_paused
+                && a.active_submission.is_none()
+                && a.pending_submissions.is_empty()
+                && a.state == UiActivityState::Idle
+        })
+        .await;
+        let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(events.lines().any(|line| matches!(serde_json::from_str::<UiEvent>(line).unwrap(), UiEvent::Error { submission_id: Some(id), .. } if id == inputs[0].submission_id)));
+        if verb == "continue" {
+            assert_eq!(*calls.lock().unwrap(), 3);
+            let ids = tape
+                .lines()
+                .filter_map(|line| {
+                    let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                    (record["role"] == "user")
+                        .then(|| record["submission_id"].as_str().unwrap().to_owned())
+                })
+                .collect::<Vec<_>>();
+            // A cancelled generation has no assistant response/Tape projection; its UI error
+            // above owns the result. Both later turns must project in accepted order.
+            assert_eq!(
+                ids,
+                inputs[1..]
+                    .iter()
+                    .map(|s| s.submission_id.clone())
+                    .collect::<Vec<_>>()
+            );
+        } else {
+            assert_eq!(*calls.lock().unwrap(), 1);
+            for input in &inputs[1..] {
+                assert!(!tape.contains(&input.submission_id));
+                assert!(events.lines().any(|line| matches!(serde_json::from_str::<UiEvent>(line).unwrap(), UiEvent::Error { submission_id: Some(id), .. } if id == input.submission_id)));
+            }
+        }
+        controller.shutdown().await.unwrap();
+    }
+}

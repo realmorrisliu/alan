@@ -22,21 +22,10 @@ use crate::transcript_ui::{
     INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
 };
 
+use super::commands::default_commands;
 use super::file_surface::{
     ActionSnapshot, TapeRecordV1, response_text_from_content, sync_action_snapshot,
 };
-fn default_commands() -> Vec<CompletionCandidate> {
-    [
-        ("compact", "summarize context"),
-        ("rollback", "undo the last turn"),
-        ("clear", "clear the transcript"),
-        ("help", "show key bindings"),
-        ("quit", "exit alan"),
-    ]
-    .into_iter()
-    .map(|(value, detail)| CompletionCandidate::new(value, Some(detail.to_string())))
-    .collect()
-}
 
 pub(super) enum FileBackedEvent {
     Terminal(TerminalEvent),
@@ -448,45 +437,6 @@ impl FileBackedApp {
         let text = self.composer.text();
         !text.trim().is_empty()
             && (self.composer.intent() != InputIntent::Agent || !text.starts_with('/'))
-    }
-
-    pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {
-        let command = text.strip_prefix('/')?;
-        let name = command.split_whitespace().next().unwrap_or("");
-        match name {
-            "quit" => {
-                self.should_quit = true;
-                Some(FileBackedAction::Quit)
-            }
-            "compact" => Some(FileBackedAction::MachineCtl {
-                command: "compact".to_string(),
-                success_notice: "compact requested".to_string(),
-            }),
-            "rollback" => Some(FileBackedAction::MachineCtl {
-                command: "rollback".to_string(),
-                success_notice: "rollback requested".to_string(),
-            }),
-            "clear" => {
-                self.transcript.clear();
-                self.action_cells.clear();
-                self.tape_user_cells.clear();
-                self.pending_command_actions.clear();
-                self.pending_remote_turn_start = None;
-                self.scrollback_front_is_partial = false;
-                None
-            }
-            "help" => {
-                self.notice = Some(
-                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
-                        .to_string(),
-                );
-                None
-            }
-            _ => {
-                self.notice = Some(format!("unknown command: /{name}"));
-                None
-            }
-        }
     }
 
     pub(super) fn set_pending_yield(&mut self, pending: PendingYieldCell) {

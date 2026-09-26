@@ -32,6 +32,8 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod child_result;
+
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 
@@ -446,16 +448,20 @@ impl AgentRuntimeService {
         }
 
         let outcome = if let Some(request) = launch.request.as_ref() {
+            let submission = Submission::new(Op::Turn {
+                parts: vec![ContentPart::text(request.initial_task.clone())],
+                context: None,
+            });
+            let submission_id = submission.id.clone();
             controller
                 .handle
                 .submission_tx
-                .send(Submission::new(Op::Turn {
-                    parts: vec![ContentPart::text(request.initial_task.clone())],
-                    context: None,
-                }))
+                .send(submission)
                 .await
                 .context("submit initial child Agent Process turn")?;
-            let result = wait_for_child_terminal(&root, pid, &controller).await?;
+            let result =
+                child_result::wait_for_child_terminal(&root, pid, &controller, &submission_id)
+                    .await?;
             let exit_code = match result.status {
                 AgentExecutableStatus::Completed => 0,
                 AgentExecutableStatus::Paused | AgentExecutableStatus::Failed => 1,
@@ -755,82 +761,6 @@ async fn wait_for_root_stop(
             }
         }
     }
-}
-
-async fn wait_for_child_terminal(
-    root: &InProcessTransport,
-    pid: Pid,
-    controller: &RuntimeController,
-) -> Result<AgentExecutableResult> {
-    let shell = alan_shell::Shell::new(root.clone());
-    let activity_path = format!("/agent/{}/machine/ui/activity", pid.0);
-    let events_path = format!("/agent/{}/machine/ui/events", pid.0);
-    let notice_path = format!("/agent/{}/machine/ui/notice", pid.0);
-    loop {
-        if controller.is_finished() {
-            anyhow::bail!("child Agent Machine stopped before publishing a terminal result");
-        }
-        let events_started = shell.stat(&events_path).await.map(|stat| stat.length > 0)?;
-        if events_started {
-            let activity: UiActivitySnapshot =
-                serde_json::from_slice(&shell.cat(&activity_path).await?)?;
-            if matches!(
-                activity.state,
-                UiActivityState::Idle | UiActivityState::Paused
-            ) {
-                let notice: UiNoticeSnapshot =
-                    serde_json::from_slice(&shell.cat(&notice_path).await?)?;
-                let output_text =
-                    String::from_utf8(shell.cat(&format!("/agent/{}/io/output", pid.0)).await?)
-                        .context("child Agent output is utf8")?;
-                let warnings = (notice.kind == UiNoticeKind::Warning)
-                    .then(|| notice.message.clone())
-                    .into_iter()
-                    .collect();
-                if notice.kind == UiNoticeKind::Error {
-                    return Ok(AgentExecutableResult::failed_with_output(
-                        output_text,
-                        warnings,
-                        notice.message,
-                    ));
-                }
-                if activity.state == UiActivityState::Paused {
-                    let Some(pause) = read_child_pause(&shell, pid).await? else {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        continue;
-                    };
-                    return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
-                }
-                return Ok(AgentExecutableResult::completed(output_text, warnings));
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
-async fn read_child_pause(
-    shell: &alan_shell::Shell,
-    pid: Pid,
-) -> Result<Option<AgentExecutablePause>> {
-    let requests_path = format!("/agent/{}/requests", pid.0);
-    for request_id in shell.ls(&requests_path).await? {
-        if matches!(request_id.as_str(), "clone" | "events") {
-            continue;
-        }
-        let request_path = format!("{requests_path}/{request_id}");
-        if shell.cat(&format!("{request_path}/status")).await? != b"pending" {
-            continue;
-        }
-        let kind = String::from_utf8(shell.cat(&format!("{request_path}/kind")).await?)
-            .context("child Agent request kind is utf8")?;
-        let kind = match kind.as_str() {
-            "confirmation" => YieldKind::Confirmation,
-            "structured_input" => YieldKind::StructuredInput,
-            other => YieldKind::Custom(other.to_string()),
-        };
-        return Ok(Some(AgentExecutablePause { request_id, kind }));
-    }
-    Ok(None)
 }
 
 async fn wait_for_process_exit(

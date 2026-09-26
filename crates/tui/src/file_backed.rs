@@ -18,6 +18,7 @@ use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
 use ratatui::style::Color;
 mod activity;
 mod app;
+mod commands;
 mod file_surface;
 mod history_merge;
 mod interrupt;
@@ -133,6 +134,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 let Some(event) = event else {
                     break;
                 };
+                if let FileBackedEvent::Ui(UiEvent::Error { submission_id: Some(id), .. }) = &event {
+                    interrupt::settle_failed_input(&mut pending_root_agent_turn, id);
+                }
                 match event {
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
@@ -218,11 +222,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     &tx,
                                                     )
                                                     .await;
-                                                if submitted_task_settled
-                                                    && let Some(turn) =
-                                                        pending_root_agent_turn.as_mut()
-                                                {
-                                                    turn.observed_active = true;
+                                                if submitted_task_settled {
+                                                    pending_root_agent_turn = None;
                                                 }
                                             }
                                         }
@@ -294,10 +295,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     &tx,
                     )
                     .await;
-                if submitted_task_settled
-                    && let Some(turn) = pending_root_agent_turn.as_mut()
-                {
-                    turn.observed_active = true;
+                if submitted_task_settled {
+                    pending_root_agent_turn = None;
                 }
                 if observe_root_agent_activity(
                     &mut pending_root_agent_turn,

@@ -204,15 +204,15 @@ All attachments see it and each command resolves it at execution time. Agent
 per-action cwd does not mutate this shared value. Ordinary submissions queue
 behind active work; responses and controls do not become queued ordinary work.
 Process-local submission identity correlates output and cancellation, without
-introducing a global Conversation/Session object. Existing client task leases
-must be reconciled with ordered acceptance rather than silently bypassed.
+introducing a global Conversation/Session object. Client task leases have been
+removed after identity-based acceptance and result correlation were wired.
 
 ### Submission records and result correlation
 
 The input envelope and result IDs below are implemented in this slice. The
-version-2 activity projection is implemented in this slice. Durable recovery
-and multi-client renderer admission remain unfinished tasks 2.5–2.8. Runtime failure events
-carry the failed submission ID even before Tape admission; redirected clients
+version-2 activity projection and multi-client renderer admission are implemented
+in this slice. Durable recovery and end-to-end command/cwd ordering remain
+unfinished tasks 2.5–2.8. Runtime failure events carry the failed submission ID even before Tape admission; redirected clients
 match that ID and never adopt another client's or an uncorrelated legacy error.
 
 The canonical write to /agent/<pid>/io/input is AgentFS's existing outer
@@ -243,8 +243,11 @@ Continue/discard reject while the current input is still settling. Interrupting
 a pending input emits its correlated failure without executing it; interrupting
 the active input cancels its transition and retains later accepted inputs. The
 clients now admit inputs without a task lock and target interruption by input ID.
-Renderer continuation/discard controls and real terminal acceptance remain
-unfinished; internal queue-control tests do not establish those outcomes.
+The renderer exposes `/continue` and `/discard` in command completion and help.
+A paused-queue line shows the pending count and these controls once the active
+input settles; pending request responses keep precedence. Control writes report
+only that the operation was requested; runtime snapshots/notices establish its
+outcome. Real terminal acceptance remains unfinished.
 
 The Agent Machine owns accepted order and queue state. Its existing
 machine/ui/activity snapshot becomes version 2, retaining activity state and

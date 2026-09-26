@@ -40,8 +40,8 @@ pub use alan_agent_protocol::{
     AGENT_DEFINITION_DESCRIPTOR_NAME as AGENT_DEFINITION_DESCRIPTOR, AgentExecutablePause,
     AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus, ContentPart,
     MEMORY_STORE_DESCRIPTOR as MEMORY_STORE_FD, Op, SpawnHandle, SpawnHostMount, SpawnMountAccess,
-    SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind, UiNoticeSnapshot,
-    YieldKind,
+    SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind,
+    UiNoticeSnapshot, YieldKind,
 };
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,

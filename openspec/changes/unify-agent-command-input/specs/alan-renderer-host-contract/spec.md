@@ -138,6 +138,14 @@ for explicit continuation or discard; no next action SHALL start automatically.
 - **AND** it does not wait for generation-specific Running evidence or interrupt an unrelated submission
 - **AND** if that submission already settled the control does not cancel later work
 
+#### Scenario: A paused queue is continued or discarded explicitly
+- **WHEN** runtime state reports a paused ordinary-input queue
+- **THEN** the renderer persistently shows the pending count and offers `/continue` and `/discard` after active work settles
+- **AND** these slash commands write `queue-v1 continue` or `queue-v1 discard` through the existing Machine control file without creating ordinary input
+- **AND** the renderer reports a requested control until runtime evidence establishes the outcome, without changing queue state locally
+- **AND** pending confirmation or structured-input responses retain precedence over slash command interpretation
+- **AND** unknown arguments are rejected rather than silently changing a different scope
+
 #### Scenario: Renderer exits
 - **WHEN** the user quits or closes the local renderer
 - **THEN** it closes its own file streams and restores the terminal

@@ -61,7 +61,6 @@ struct ChildFileObservation {
     action_ids: Vec<String>,
     action_events_offset: u64,
     ui_events_offset: u64,
-    terminal_error: Option<String>,
     process_result: Option<AgentExecutableResult>,
     activity: alan_agent_protocol::UiActivitySnapshot,
     notice: alan_agent_protocol::UiNoticeSnapshot,
@@ -145,11 +144,6 @@ impl DelegatedChildRunSupervisor {
                 action_ids,
                 action_events_offset,
                 ui_events_offset,
-                terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
-                    Some(notice.message.clone())
-                } else {
-                    None
-                },
                 process_result: None,
                 activity,
                 notice,
@@ -200,9 +194,6 @@ impl DelegatedChildRunSupervisor {
             .and_then(|result| result.pause.as_ref())
             .map(|pause| pause.request_id.clone());
         let request_ids = pending_request_id.iter().cloned().collect();
-        let terminal_error = process_result
-            .as_ref()
-            .and_then(|result| result.error_message.clone());
         Ok(ChildFileObservation {
             process_exited: true,
             process_exit_code: Some(exit_code),
@@ -215,7 +206,6 @@ impl DelegatedChildRunSupervisor {
             action_ids: Vec::new(),
             action_events_offset: 0,
             ui_events_offset: 0,
-            terminal_error,
             process_result,
             activity,
             notice,
@@ -425,24 +415,6 @@ impl DelegatedChildRunSupervisor {
                             request_id: request_id.clone(),
                             kind,
                         }),
-                    ),
-                ));
-            }
-            if observation.activity.state == alan_agent_protocol::UiActivityState::Idle
-                && observation.ui_events_offset > 0
-            {
-                let status = if observation.terminal_error.is_some() {
-                    ChildRuntimeStatus::Failed
-                } else {
-                    ChildRuntimeStatus::Completed
-                };
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    file_terminal_observation(
-                        observation.output_text,
-                        warnings,
-                        status,
-                        observation.terminal_error,
-                        None,
                     ),
                 ));
             }
@@ -816,27 +788,5 @@ fn parse_last_json_fenced_block(text: &str) -> Option<serde_json::Value> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn process_exit_requires_a_matching_agent_executable_result() {
-        let completed = AgentExecutableResult::completed("done", Vec::new());
-        assert!(agent_result_matches_exit_code(Some(0), &completed));
-        assert!(!agent_result_matches_exit_code(Some(1), &completed));
-
-        let failed = AgentExecutableResult::failed("failed");
-        assert!(agent_result_matches_exit_code(Some(1), &failed));
-        assert!(!agent_result_matches_exit_code(Some(0), &failed));
-
-        let invalid = invalid_agent_result_observation(0, "raw".to_string(), Vec::new());
-        assert_eq!(invalid.status, ChildRuntimeStatus::Failed);
-        assert_eq!(invalid.output_text, "raw");
-        assert!(
-            invalid
-                .error_message
-                .unwrap()
-                .contains("without a valid terminal result")
-        );
-    }
-}
+#[path = "supervisor_tests.rs"]
+mod tests;

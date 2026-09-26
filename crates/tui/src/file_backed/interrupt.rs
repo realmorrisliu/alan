@@ -54,6 +54,15 @@ pub(super) fn observe_root_agent_activity(
     }
 }
 
+pub(super) fn settle_failed_input(pending: &mut Option<PendingRootAgentTurn>, id: &str) {
+    if pending
+        .as_ref()
+        .is_some_and(|turn| turn.submission_id == id)
+    {
+        *pending = None;
+    }
+}
+
 pub(super) fn request_pending_root_interrupt(
     pending_turn: &mut Option<PendingRootAgentTurn>,
 ) -> bool {
@@ -209,6 +218,22 @@ mod tests {
         );
         app.activity.pending_submissions.clear();
         assert!(!observe_root_agent_activity(&mut pending, &app.activity));
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn a_correlated_failure_clears_the_pending_interrupt_target_without_adopting_other_errors() {
+        let mut pending = Some(PendingRootAgentTurn {
+            input: "task".into(),
+            submission_id: "mine".into(),
+            observed_active: true,
+            interrupt_requested: true,
+            submitted_at_ms: 1,
+            prior_matching_turns: 0,
+        });
+        settle_failed_input(&mut pending, "other");
+        assert!(pending.is_some());
+        settle_failed_input(&mut pending, "mine");
         assert!(pending.is_none());
     }
 }
