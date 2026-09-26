@@ -214,3 +214,56 @@ async fn busy_tape_does_not_drain_queued_next_turn_inputs() {
                 && message.text_content().contains("now"))
     );
 }
+
+#[tokio::test]
+async fn non_generating_resume_does_not_require_the_tape_lease() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "must not generate",
+        ))
+        .await,
+    );
+    let call = NormalizedToolCall {
+        id: "command-input".into(),
+        name: "bash".into(),
+        arguments: json!({"command":"echo test"}),
+    };
+    state.machine.set_confirmation(PendingConfirmation {
+        checkpoint_id: "approval".into(),
+        checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.into(),
+        summary: "approve command".into(),
+        details: json!({}),
+        options: vec!["approve".into(), "reject".into()],
+    });
+    state
+        .machine
+        .set_tool_replay_batch("approval", vec![call], false);
+    let writer = state.agent_files().begin_tape_generation().await.unwrap();
+    let mut events = Vec::new();
+    let mut emit = |event| {
+        events.push(event);
+        async {}
+    };
+    for request_id in ["unknown", "approval"] {
+        handle_submission_with_cancel(
+            &mut state,
+            Submission::new(Op::Resume {
+                request_id: request_id.into(),
+                content: vec![alan_agent_protocol::ContentPart::structured(
+                    json!({"choice":"reject"}),
+                )],
+            }),
+            &mut emit,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    }
+    writer.finish().await.unwrap();
+    assert!(!state.machine.has_pending_interaction());
+    assert!(events.iter().any(
+        |event| matches!(event, Event::Error { message, .. } if message.contains("does not match"))
+    ));
+    assert!(events.iter().any(|event| matches!(event, Event::ToolCallCompleted { id, success: Some(false), .. } if id == "command-input")));
+}

@@ -464,7 +464,7 @@
     }
 
     #[tokio::test]
-    async fn test_runtime_confirmation_resume_persists_checkpoint_without_knowledge_root_on_read_failure()
+    async fn test_runtime_confirmation_persists_checkpoint_without_knowledge_root_on_read_failure()
      {
         let temp = TempDir::new().unwrap();
         let mut state = create_test_state();
@@ -486,15 +486,13 @@
                 details: json!({}),
                 options: vec!["approve".to_string(), "reject".to_string()],
             });
-        let cancel = CancellationToken::new();
-
-        let mut emit = |_event: Event| async {};
-        let op = Op::Resume {
-            request_id: "tool_escalation_call_456".to_string(),
-            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
+        // Exercise checkpoint fallback directly: a missing AgentFS cannot acquire
+        // the generation lease required by the enclosing Resume transition.
+        let pending = state.machine.pending_confirmation().unwrap();
+        let files = state.environment.agent_files();
+        let mounts = state.environment.host_mount_requests();
+        let mut runtime = SubmissionRuntime::new(&mut state.machine, files, mounts);
+        let result = handle_confirmation_resolution(&mut runtime, pending, "reject", None).await;
         assert!(result.is_ok());
         assert!(matches!(
             result.unwrap(),

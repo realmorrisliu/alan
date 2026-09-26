@@ -600,3 +600,20 @@ include!("tests/compaction_recovery.rs");
 include!("tests/compaction_thresholds.rs");
 include!("tests/core_behaviors.rs");
 include!("tests/submissions.rs");
+
+pub(crate) async fn handle_runtime_op<E, F>(
+    state: &mut RuntimeLoopState,
+    op: Op,
+    emit: &mut E,
+) -> Result<RuntimeOpAction>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let mut writer = None;
+    let result = handle_runtime_op_with_writer(state, op, &mut writer, emit).await;
+    if let Some(writer) = writer {
+        writer.finish().await?;
+    }
+    result
+}
