@@ -338,7 +338,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
     app.transcript
         .push(HistoryCell::User("current task".to_string()));
-    app.reconciler.on_local_submit("current task");
+    app.reconciler.on_user_record();
 
     let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
     agent_root
@@ -515,7 +515,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
     app.transcript.clear();
     app.transcript
         .push(HistoryCell::User("same task".to_string()));
-    app.reconciler.on_local_submit("same task");
+    app.reconciler.on_user_record();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
