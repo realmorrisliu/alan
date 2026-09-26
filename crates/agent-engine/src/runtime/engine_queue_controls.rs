@@ -118,7 +118,6 @@ impl RuntimeSubmissionQueues {
                         warn!(%error, submission_id=%input.id, "Failed to publish discarded input completion");
                     }
                 }
-                let _ = crate::runtime::ui_surfaces::turn_completed(files, false).await;
                 if unpublished > 0 {
                     format!(
                         "Discarded {} queued inputs; could not publish {unpublished} result records",
