@@ -18,6 +18,35 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         let mut state =
             create_test_state_with_machine_tools_and_provider(AgentMachine::new(), tools, provider)
                 .await;
+        state.machine.set_active_skills(vec![crate::skills::ActiveSkillEnvelope::available(
+            crate::skills::SkillMetadata {
+                id: "deploy".to_string(),
+                package_id: Some("skill:deploy".to_string()),
+                name: "Deploy".to_string(),
+                description: "Deploy service".to_string(),
+                short_description: None,
+                path: std::path::PathBuf::from("/tmp/deploy/SKILL.md"),
+                package_root: None,
+                resource_root: None,
+                scope: crate::skills::SkillScope::Descriptor,
+                tags: vec![],
+                capabilities: None,
+                compatibility: Default::default(),
+                source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
+                    "/tmp/deploy/SKILL.md",
+                )),
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: Default::default(),
+            },
+            crate::skills::SkillActivationReason::ExplicitMention {
+                mention: "deploy".to_string(),
+            },
+        )]);
+        assert!(!state.machine.record_guardian_review(true));
+        assert!(!state.machine.record_guardian_review(true));
         let id = uuid::Uuid::new_v4().to_string();
         state.machine.accept_submission(id.clone());
         let files = state.agent_files();
@@ -53,6 +82,8 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         )
         .await
         .unwrap();
+        assert!(state.machine.active_skills().is_empty());
+        assert!(!state.machine.record_guardian_review(true), "prior-turn denials must be cleared");
         if let Some(choice) = choice {
             assert_eq!(executions.load(Ordering::SeqCst), 0);
             let request_id = state
