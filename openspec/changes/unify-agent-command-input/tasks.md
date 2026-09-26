@@ -207,3 +207,24 @@
   changes. `just quality` passed. Task 2.12 still needs its remaining full command
   corpus and policy/revocation acceptance; these checks do not establish every
   explicit-slice requirement or ordinary-terminal/Herdr acceptance.
+
+- Project-file acceptance now exercises real structured write/edit followed by native
+  cat and Git diff, native overwrite followed by structured read, and rejection of
+  a stale structured edit without losing native changes. Both paths use the same
+  shared cwd backing. Git diff explicitly disables external diff/textconv helpers,
+  preserving the ProtectedOnly gate on opaque configured executables.
+- Added the minimal `agent_work` executable and existing Tool-package metadata:
+  status, submit, cancel, continue and discard delegate to caller-visible AgentFS.
+  Boundary checks cover versioned submission receipts, read-only denial, invalid
+  targets/IDs, unavailable targets and the mounted-executable dispatch gate.
+  The real Host test discovers and invokes status through the governed model Tool
+  Process path and verifies its correlated Action result. Host client attachments
+  do not gain an additional Process launch surface.
+- Tasks 2.13 and 2.14 remain open for uncertain-commit acceptance and remaining
+  cross-grant, buffer/save, revocation and containment cases. These checks do not
+  establish ordinary-terminal or Herdr acceptance.
+- Verification for this slice: the Service Manager suite passed (93 unit tests and
+  two integration checks before adding the new boundary regression); the added
+  command boundary regression and expanded real Host scenario passed separately.
+  Strict change validation and `just quality` passed. All remote checks passed for
+  preceding commit `ce2d2793`; the new slice still requires current-head CI.

@@ -26,11 +26,15 @@ fn response() -> GenerationResponse {
 }
 
 async fn command(shell: &Shell, body: &str) -> String {
+    input(shell, "command", body).await
+}
+
+async fn input(shell: &Shell, intent: &str, body: &str) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     let mut bytes = b"alan-input-v1\n".to_vec();
     bytes.extend(
         serde_json::to_vec(&json!({
-            "version":1, "submission_id":id, "intent":"command", "mode":"follow_up", "body":body,
+            "version":1, "submission_id":id, "intent":intent, "mode":"follow_up", "body":body,
         }))
         .unwrap(),
     );
@@ -71,6 +75,31 @@ async fn wait_idle(shell: &Shell, id: &str) {
     );
 }
 
+async fn action_output(shell: &Shell, call_id: &str) -> Value {
+    for action in shell.ls("/agent/root/actions").await.unwrap() {
+        if !action.starts_with('a') {
+            continue;
+        }
+        let result: Value = serde_json::from_slice(
+            &shell
+                .cat(&format!("/agent/root/actions/{action}/result"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        if result["call_id"] == call_id {
+            return serde_json::from_slice(
+                &shell
+                    .cat(&format!("/agent/root/actions/{action}/output"))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    panic!("no Action for {call_id}")
+}
+
 #[tokio::test]
 async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantics() {
     let runtime = tempfile::tempdir().unwrap();
@@ -81,10 +110,50 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         id: Some("mount-project".into()), name: "request_mount".into(),
         arguments: json!({"label":"Project", "namespace_path":"/mnt/project", "access":"read_write", "reason":"native command integration"}),
     });
-    let provider = MockLlmProvider::new().with_responses(vec![mount, response()]);
+    let file_call = |id: &str, name: &str, arguments| {
+        let mut reply = response();
+        reply.tool_calls.push(ToolCall {
+            id: Some(id.into()),
+            name: name.into(),
+            arguments,
+        });
+        reply
+    };
+    let provider = MockLlmProvider::new().with_responses(vec![
+        mount,
+        response(),
+        file_call(
+            "write-project",
+            "write_file",
+            json!({"path":"agent.txt", "content":"original"}),
+        ),
+        file_call(
+            "edit-project",
+            "edit_file",
+            json!({"path":"agent.txt", "old_string":"original", "new_string":"edited"}),
+        ),
+        response(),
+        file_call("read-native", "read_file", json!({"path":"agent.txt"})),
+        response(),
+        file_call(
+            "stale-edit",
+            "edit_file",
+            json!({"path":"agent.txt", "old_string":"edited", "new_string":"must not overwrite"}),
+        ),
+        response(),
+        file_call(
+            "work-status",
+            "agent_work",
+            json!({"action":"status", "target":"root"}),
+        ),
+        response(),
+    ]);
     let probe = provider.clone();
     let mut tools = ToolRegistry::new();
     tools.register(alan_tools::BashTool::new());
+    tools.register(alan_tools::ReadFileTool::new());
+    tools.register(alan_tools::WriteFileTool::new());
+    tools.register(alan_tools::EditFileTool::new());
     let stores = alan_agent_engine::AgentRuntimeStoreBindings {
         rollouts: runtime.path().join("rollouts"),
         checkpoints: runtime.path().join("checkpoints"),
@@ -246,6 +315,56 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         probe.recorded_requests().len(),
         2,
         "explicit commands must not invoke generation"
+    );
+    let edit = input(&first, "agent", "write and edit the project file").await;
+    wait_idle(&first, &edit).await;
+    let native = command(&second, "cat agent.txt > observed.txt; git diff --no-index --no-ext-diff --no-textconv -- /dev/null agent.txt > diff.txt; printf native > agent.txt").await;
+    wait_idle(&second, &native).await;
+    assert_eq!(
+        action_output(&second, &native).await["success"],
+        true,
+        "{:?}",
+        action_output(&second, &native).await
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/observed.txt")).unwrap(),
+        "edited"
+    );
+    assert!(
+        std::fs::read_to_string(project.path().join("src/diff.txt"))
+            .unwrap()
+            .contains("+edited")
+    );
+    assert!(!project.path().join("agent.txt").exists());
+    let read = input(&first, "agent", "read the native edit").await;
+    wait_idle(&first, &read).await;
+    assert_eq!(
+        action_output(&first, "read-native").await["content"],
+        "native"
+    );
+    let stale = input(&first, "agent", "try an edit against stale content").await;
+    wait_idle(&first, &stale).await;
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/agent.txt")).unwrap(),
+        "native"
+    );
+    assert!(
+        action_output(&first, "stale-edit").await["error"]
+            .as_str()
+            .unwrap()
+            .contains("Search text not found")
+    );
+    assert_eq!(probe.recorded_requests().len(), 9);
+    let status_input = input(&first, "agent", "inspect work status").await;
+    wait_idle(&first, &status_input).await;
+    let status = action_output(&first, "work-status").await;
+    assert_eq!(status["success"], true, "{status}");
+    assert!(status["activity"].is_object(), "{status}");
+    assert!(
+        probe.recorded_requests()[0]
+            .tools
+            .iter()
+            .any(|tool| tool.name == "agent_work")
     );
     stop.cancel();
     server.await.unwrap().unwrap();

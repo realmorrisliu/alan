@@ -157,6 +157,19 @@ unknown commit outcomes must not trigger automatic duplicate submission.
 The same Process/Tool launch boundary records their effects. Host lifecycle,
 credential and native authorization commands keep their existing owner.
 
+The first implemented facade is `/bin/agent_work`, discovered through the existing
+`/lib/exec/agent_work/manifest`. It supports `status TARGET`, `submit TARGET TEXT`,
+`cancel TARGET INPUT_ID`, `continue TARGET` and `discard TARGET`; TARGET is `root`
+or a visible positive Agent PID. The model calls the same executable using one JSON
+argument with `action`, `target`, and (where required) `text` or `submission_id`.
+All results are version-1 JSON. Submit returns a submission ID and `submitted`;
+queue controls return `requested`. Neither receipt means execution completed.
+Status returns the current activity projection, not Process exit/result truth.
+Errors use nonzero exit status; uncertain writes are reported without retries.
+The executable uses only its invocation namespace, with no ambient Host connection.
+Its conservative manifest capability is write, including status; no argument-based
+policy relaxation is introduced. Native shell name resolution remains unchanged.
+
 ### One project file identity across editing and commands
 
 Project tools expose grant-relative paths for any delegated mount and
