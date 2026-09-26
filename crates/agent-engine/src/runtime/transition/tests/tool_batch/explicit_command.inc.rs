@@ -220,6 +220,8 @@ async fn cancelled_explicit_command_has_failed_action_without_execution_or_gener
         false
     );
     assert_eq!(state.agent_files().action_ids().await.unwrap().len(), 1);
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    assert_eq!(shell.cat(&format!("{}/actions/a0/approval", state.environment.agent_path())).await.unwrap(), b"not_required");
 }
 
 #[tokio::test]
