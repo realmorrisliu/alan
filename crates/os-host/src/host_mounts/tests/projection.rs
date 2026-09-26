@@ -135,6 +135,11 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         assert_eq!(adapter.project_text(&input), expected);
     }
 
+    for escaped_quote in ["\"\"backup/file", "\"\"", "\"/file"] {
+        let input = format!("\"{}{escaped_quote}\"", root.display());
+        assert_eq!(adapter.project_text(&input), input);
+    }
+
     let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
     let sibling_uri =
         url::Url::from_file_path(root.with_file_name(sibling_name).join("notes.txt")).unwrap();
@@ -230,4 +235,34 @@ async fn captured_paths_follow_cwd_without_rewriting_project_file_data() {
         .await
         .unwrap();
     assert_eq!(read["content"], native_cwd.trim_end());
+}
+
+#[tokio::test]
+async fn root_backed_mount_projects_bare_cwd_and_descendants() {
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadOnly,
+        Path::new("/"),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    for (input, expected) in [
+        ("/", "."),
+        ("/\n", ".\n"),
+        ("file:///", "."),
+        ("/etc/hosts", "./etc/hosts"),
+        ("file:///etc/hosts", "./etc/hosts"),
+        ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
+        ("https://example.test/path", "https://example.test/path"),
+    ] {
+        assert_eq!(adapter.project_text(input), expected, "{input}");
+    }
 }

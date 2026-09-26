@@ -81,11 +81,10 @@ fn project_native_text(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
         return text.to_string();
     }
     let cwd = adapter.cwd.to_string_lossy();
-    let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
-    let mut projected = if cwd.is_empty() {
-        text.to_string()
+    let mut projected = if adapter.cwd == Path::new("/") {
+        replace_rooted_path_starts(text, "./")
     } else {
-        replace_path_prefixes(text, cwd, ".")
+        replace_path_prefixes(text, cwd.trim_end_matches(std::path::MAIN_SEPARATOR), ".")
     };
 
     let mut mounts = adapter.mounts.iter().rev().collect::<Vec<_>>();
@@ -162,11 +161,19 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let suffix = strip_leading_terminal_sequences(&text[end..]);
         let emphasized = is_emphasized_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
-        let quoted = strip_trailing_terminal_sequences(&text[..start])
+        let quoted_suffix = strip_trailing_terminal_sequences(&text[..start])
             .chars()
             .next_back()
-            .is_some_and(|quote| matches!(quote, '\'' | '"' | '`') && suffix.starts_with(quote));
-        let boundary_after = is_path_end(suffix) || emphasized || quoted;
+            .filter(|quote| matches!(quote, '\'' | '"' | '`'))
+            .and_then(|quote| suffix.strip_prefix(quote));
+        let boundary_after = quoted_suffix.map_or_else(
+            || is_path_end(suffix) || emphasized,
+            |rest| {
+                rest.is_empty()
+                    || rest.starts_with(char::is_whitespace)
+                    || rest.starts_with([',', ';', ']', '}'])
+            },
+        );
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);
@@ -198,15 +205,21 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
     for (start, _) in text.match_indices('/') {
-        let after = text[start + 1..].chars().next();
+        let suffix = strip_leading_terminal_sequences(&text[start + 1..]);
+        let bare_root = is_path_end(suffix) && !suffix.starts_with('/');
+        let after = suffix.chars().next();
         let uri_authority_delimiter =
             text[..start].ends_with(':') && text[start..].starts_with("//");
         if is_path_start(text, start)
             && !uri_authority_delimiter
-            && after.is_some_and(|ch| !ch.is_whitespace() && ch != '/')
+            && (bare_root || after.is_some_and(|ch| !ch.is_whitespace() && ch != '/'))
         {
             projected.push_str(&text[copied_through..start]);
-            projected.push_str(replacement);
+            projected.push_str(if bare_root {
+                replacement.trim_end_matches('/')
+            } else {
+                replacement
+            });
             copied_through = start + 1;
         }
     }
