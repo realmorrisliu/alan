@@ -34,6 +34,11 @@ where
         !state.machine.is_turn_active() && !state.machine.has_pending_interaction(),
         "command follow-up requires an idle Machine until ordered admission is integrated"
     );
+    crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+        &mut state.machine,
+        &state.environment.host_mount_requests(),
+    )
+    .await?;
     state.machine.add_user_message_parts(parts);
     let agent_files = state.agent_files();
     agent_files
