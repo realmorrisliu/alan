@@ -60,6 +60,22 @@ pub(super) async fn refresh_answer_after_completion(
     task: &StdioTaskWaitContext,
     snapshot: &mut StdioTaskSnapshot,
 ) -> Result<()> {
+    if task.record.intent == alan_agent_protocol::InputIntent::Command {
+        if snapshot.completion.is_some() {
+            snapshot.command_output =
+                Some(read_command_output(shell, agent_path, &task.record.submission_id).await?);
+            if snapshot.completion != Some(UiInputStatus::Completed)
+                && let Some(output) = snapshot.command_output.as_mut()
+                && output.exit_code == 0
+            {
+                output.exit_code = 1;
+                if let Some(error) = &snapshot.task_error {
+                    output.stderr.push_str(&format!("\n{error}\n"));
+                }
+            }
+        }
+        return Ok(());
+    }
     if snapshot.completion != Some(UiInputStatus::Completed) {
         return Ok(());
     }
@@ -72,6 +88,38 @@ pub(super) async fn refresh_answer_after_completion(
         anyhow!("Agent task completed without a correlated final answer; outcome is unknown")
     })?);
     Ok(())
+}
+
+async fn read_command_output(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    submission_id: &str,
+) -> Result<super::CommandOutput> {
+    let mut output = None;
+    for action in super::file_surface::read_action_snapshots(shell, agent_path).await? {
+        let Ok(result) = serde_json::from_str::<serde_json::Value>(&action.result) else {
+            continue;
+        };
+        if result["call_id"].as_str() != Some(submission_id) {
+            continue;
+        }
+        anyhow::ensure!(
+            output.is_none(),
+            "multiple command results match this input; outcome is unknown"
+        );
+        anyhow::ensure!(
+            matches!(action.status.as_str(), "completed" | "failed" | "cancelled"),
+            "command result is not terminal; outcome is unknown"
+        );
+        let mut streams: super::CommandOutput = serde_json::from_str(&action.output)
+            .context("command output is missing or invalid; outcome is unknown")?;
+        streams.exit_code = result["exit_code"]
+            .as_i64()
+            .and_then(|code| i32::try_from(code).ok())
+            .context("command exit status is missing or invalid; outcome is unknown")?;
+        output = Some(streams);
+    }
+    output.context("input completed without a correlated command result; outcome is unknown")
 }
 
 #[cfg(test)]
@@ -151,6 +199,7 @@ mod tests {
         assert_eq!(
             super::super::finish_stdio_task_if_ready(&mut snapshot)
                 .unwrap()
+                .map(super::super::StdioTaskOutput::agent_answer)
                 .as_deref(),
             Some("final answer")
         );
@@ -162,7 +211,7 @@ mod tests {
         let attachment = super::super::tail::open_stdio_tail_attachment(&shell, "/agent/root")
             .await
             .unwrap();
-        let task = StdioTaskWaitContext::new("same text");
+        let task = StdioTaskWaitContext::new("same text").unwrap();
         for expected in [None, Some(attachment.root_agent_pid + 1)] {
             assert!(
                 super::super::write_agent_input(&shell, "/agent/root", expected, &task.record)
@@ -195,8 +244,8 @@ mod tests {
 
     #[test]
     fn identical_text_and_other_clients_events_cannot_complete_an_input() {
-        let mine = StdioTaskWaitContext::new("same text");
-        let other = StdioTaskWaitContext::new("same text");
+        let mine = StdioTaskWaitContext::new("same text").unwrap();
+        let other = StdioTaskWaitContext::new("same text").unwrap();
         assert_ne!(mine.record.submission_id, other.record.submission_id);
         let tape = format!(
             "{}\n",
@@ -237,5 +286,120 @@ mod tests {
                 .to_string()
                 .contains("cancelled")
         );
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::super::{StdioTaskOutput, StdioTaskWaitContext, stdio_tests, tail};
+    use super::*;
+
+    #[test]
+    fn redirected_prefixes_preserve_exact_bodies_and_reject_empty_overrides() {
+        use alan_agent_protocol::InputIntent;
+        for (text, intent, body) in [
+            ("!printf x\n ", InputIntent::Command, "printf x\n "),
+            (":!explain", InputIntent::ForceAgent, "!explain"),
+            ("!!literal", InputIntent::Command, "!literal"),
+        ] {
+            let task = StdioTaskWaitContext::new(text).unwrap();
+            assert_eq!(task.record.intent, intent);
+            assert_eq!(task.record.body, body);
+        }
+        for text in ["", "!", ":", "! \n", " \n"] {
+            assert!(StdioTaskWaitContext::new(text).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn command_completion_returns_only_correlated_streams_and_exit_status() {
+        for exit_code in [0, 7] {
+            let (shell, agent_root, _, pid) = stdio_tests::live_root_agent().await;
+            let task = StdioTaskWaitContext::new("!printf partial").unwrap();
+            let id = task.record.submission_id.clone();
+            let path = format!("/agent/{pid}");
+            let mut attachment = tail::open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+                .await
+                .unwrap();
+            super::super::submit_stdio_task(&shell, &task, &attachment)
+                .await
+                .unwrap();
+            assert!(read_command_output(&shell, &path, &id).await.is_err());
+            for call_id in ["another-input", id.as_str()] {
+                use alan_ap::FileServer;
+                let fid = alan_ap::Fid(900_000);
+                agent_root
+                    .walk(
+                        alan_ap::Fid(0),
+                        fid,
+                        &[pid.clone(), "actions".into(), "clone".into()],
+                    )
+                    .await
+                    .unwrap();
+                agent_root
+                    .open(fid, alan_ap::OpenMode::ReadWrite)
+                    .await
+                    .unwrap();
+                let action =
+                    String::from_utf8(agent_root.read(fid, 0, 4096).await.unwrap()).unwrap();
+                agent_root.clunk(fid).await.unwrap();
+                let action_path = format!("{path}/actions/{}", action.trim());
+                let output = serde_json::json!({"stdout":if call_id == id {"partial"} else {"other"}, "stderr":"diagnostic\n"});
+                let result = serde_json::json!({"call_id":call_id,"exit_code":exit_code});
+                for (name, content) in [
+                    ("name", "bash".into()),
+                    ("output", output.to_string()),
+                    ("result", result.to_string()),
+                    (
+                        "status",
+                        if exit_code == 0 {
+                            "completed"
+                        } else {
+                            "failed"
+                        }
+                        .into(),
+                    ),
+                ] {
+                    shell
+                        .write(&format!("{action_path}/{name}"), content.as_bytes())
+                        .await
+                        .unwrap();
+                }
+            }
+            let completed = UiEvent::InputCompleted {
+                submission_ids: vec![id],
+                status: UiInputStatus::Completed,
+                error: None,
+            };
+            shell
+                .write(
+                    &format!("{path}/machine/ui/events"),
+                    format!("{}\n", serde_json::to_string(&completed).unwrap()).as_bytes(),
+                )
+                .await
+                .unwrap();
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                super::super::wait_for_stdio_answer_after_submit(
+                    &shell,
+                    "/agent/root",
+                    task,
+                    &mut attachment,
+                    std::future::pending(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let StdioTaskOutput::Command(output) = result else {
+                panic!("command output")
+            };
+            assert_eq!(output.stdout, "partial");
+            assert_eq!(output.stderr, "diagnostic\n");
+            assert_eq!(output.exit_code, exit_code);
+            tail::close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+                .await
+                .unwrap();
+        }
     }
 }

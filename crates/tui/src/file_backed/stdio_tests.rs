@@ -13,7 +13,7 @@ pub(super) const EXEC_SPEC: &str =
 
 pub(super) const INPUT_ID: &str = "00000000-0000-4000-8000-000000000001";
 pub(super) fn task(input: &str) -> StdioTaskWaitContext {
-    let mut task = StdioTaskWaitContext::new(input);
+    let mut task = StdioTaskWaitContext::new(input).unwrap();
     task.record.submission_id = INPUT_ID.into();
     task
 }
@@ -644,27 +644,32 @@ fn one_shot_result_waits_for_correlated_settlement() {
     let mut task = StdioTaskSnapshot {
         task_started: false,
         waiting_for_response: false,
+        command_output: None,
         assistant_answer: Some("answer".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: None,
         completion: None,
     };
 
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert!(finish_stdio_task_if_ready(&mut task).unwrap().is_none());
     task.task_started = true;
     task.activity_state = Some(UiActivityState::Running);
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert!(finish_stdio_task_if_ready(&mut task).unwrap().is_none());
     task.activity_state = Some(UiActivityState::Idle);
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert!(finish_stdio_task_if_ready(&mut task).unwrap().is_none());
     task.completion = Some(alan_agent_protocol::UiInputStatus::Completed);
     assert_eq!(
-        finish_stdio_task_if_ready(&mut task).unwrap().as_deref(),
+        finish_stdio_task_if_ready(&mut task)
+            .unwrap()
+            .map(StdioTaskOutput::agent_answer)
+            .as_deref(),
         Some("answer")
     );
 
     let mut failed_task = StdioTaskSnapshot {
         task_started: true,
         waiting_for_response: false,
+        command_output: None,
         assistant_answer: Some("intermediate response".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: Some("provider failed".to_string()),

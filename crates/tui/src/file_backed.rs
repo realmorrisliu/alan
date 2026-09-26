@@ -457,23 +457,19 @@ impl AgentWatchers {
     }
 }
 
-/// Run one task from redirected stdin and write its final Agent answer to stdout.
+/// Run one redirected input, write its output streams, and return its exit status.
 pub async fn run_stdio_task(
     root_transport: InProcessTransport,
     agent_path: impl Into<String>,
     input: &str,
-) -> Result<()> {
+) -> Result<i32> {
     use tokio::io::AsyncWriteExt;
 
-    if input.trim().is_empty() {
-        bail!("stdin did not contain an Agent task");
-    }
+    let task = StdioTaskWaitContext::new(input)?;
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
     let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
-
-    let task = StdioTaskWaitContext::new(input);
 
     let result = wait_for_stdio_answer(&shell, task, &mut attachment, async {
         tokio::signal::ctrl_c().await.map_err(anyhow::Error::from)
@@ -483,13 +479,20 @@ pub async fn run_stdio_task(
     let answer = result?;
     close_result?;
 
+    let (out, err, exit_code, add_newline) = match answer {
+        StdioTaskOutput::Agent(answer) => (answer, String::new(), 0, true),
+        StdioTaskOutput::Command(output) => (output.stdout, output.stderr, output.exit_code, false),
+    };
     let mut stdout = tokio::io::stdout();
-    stdout.write_all(answer.as_bytes()).await?;
-    if !answer.ends_with('\n') {
+    stdout.write_all(out.as_bytes()).await?;
+    if add_newline && !out.ends_with('\n') {
         stdout.write_all(b"\n").await?;
     }
     stdout.flush().await?;
-    Ok(())
+    let mut stderr = tokio::io::stderr();
+    stderr.write_all(err.as_bytes()).await?;
+    stderr.flush().await?;
+    Ok(exit_code)
 }
 
 async fn wait_for_stdio_answer(
@@ -497,7 +500,7 @@ async fn wait_for_stdio_answer(
     task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<String> {
+) -> Result<StdioTaskOutput> {
     submit_stdio_task(shell, &task, attachment).await?;
     wait_for_stdio_answer_after_submit(shell, task, attachment, interrupt).await
 }
@@ -521,7 +524,7 @@ async fn wait_for_stdio_answer_after_submit(
     task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<String> {
+) -> Result<StdioTaskOutput> {
     tokio::pin!(interrupt);
     let mut tape_pending = Vec::new();
     let mut ui_pending = Vec::new();
@@ -530,6 +533,7 @@ async fn wait_for_stdio_answer_after_submit(
         task_started: false,
         waiting_for_response: false,
         assistant_answer: None,
+        command_output: None,
         activity_state: None,
         task_error: None,
         completion: None,
@@ -657,23 +661,51 @@ async fn interrupt_stdio_task_if_pending(
     Ok(true)
 }
 
-fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<String>> {
+fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<StdioTaskOutput>> {
     if snapshot.completion.is_none() {
         return Ok(None);
+    }
+    if let Some(output) = snapshot.command_output.take() {
+        return Ok(Some(StdioTaskOutput::Command(output)));
     }
     if let Some(message) = snapshot.task_error.take() {
         bail!("Agent task failed: {message}");
     }
     if let Some(answer) = snapshot.assistant_answer.take() {
-        return Ok(Some(answer));
+        return Ok(Some(StdioTaskOutput::Agent(answer)));
     }
     Ok(None)
+}
+
+#[derive(Debug)]
+enum StdioTaskOutput {
+    Agent(String),
+    Command(CommandOutput),
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CommandOutput {
+    stdout: String,
+    stderr: String,
+    #[serde(default)]
+    exit_code: i32,
+}
+
+#[cfg(test)]
+impl StdioTaskOutput {
+    fn agent_answer(self) -> String {
+        match self {
+            Self::Agent(answer) => answer,
+            Self::Command(_) => panic!("expected Agent answer"),
+        }
+    }
 }
 
 struct StdioTaskSnapshot {
     task_started: bool,
     waiting_for_response: bool,
     assistant_answer: Option<String>,
+    command_output: Option<CommandOutput>,
     activity_state: Option<UiActivityState>,
     task_error: Option<String>,
     completion: Option<alan_agent_protocol::UiInputStatus>,
@@ -686,16 +718,18 @@ struct StdioTaskWaitContext {
 }
 
 impl StdioTaskWaitContext {
-    fn new(input: &str) -> Self {
-        Self {
+    fn new(input: &str) -> Result<Self> {
+        let (intent, body) = alan_agent_protocol::parse_input_prefix(input);
+        anyhow::ensure!(!body.trim().is_empty(), "stdin input body is empty");
+        Ok(Self {
             record: alan_agent_protocol::UserInputRecord::new(
-                alan_agent_protocol::InputIntent::Agent,
+                intent,
                 alan_agent_protocol::InputMode::FollowUp,
-                input,
+                body,
             ),
             #[cfg(test)]
             submitted_at_ms: unix_time_ms(),
-        }
+        })
     }
 }
 
@@ -712,6 +746,7 @@ fn stdio_task_snapshot_from_history(
         task_started: tape_task_started,
         waiting_for_response: false,
         assistant_answer,
+        command_output: None,
         activity_state: ui_task.state,
         task_error: None,
         completion: None,

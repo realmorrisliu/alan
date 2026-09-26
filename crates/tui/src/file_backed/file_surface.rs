@@ -602,7 +602,7 @@ async fn read_request_snapshot(
     })
 }
 
-async fn read_action_snapshots(
+pub(super) async fn read_action_snapshots(
     shell: &alan_shell::Shell,
     agent_path: &str,
 ) -> Result<Vec<ActionSnapshot>> {
