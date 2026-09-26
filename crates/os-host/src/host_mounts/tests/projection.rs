@@ -127,7 +127,7 @@ async fn shell_sandbox_contains_only_the_mount_selected_by_shared_cwd() {
         project.path(),
     )
     .await;
-    approve(
+    let docs_grant = approve(
         &service,
         7,
         "/mnt/docs",
@@ -163,6 +163,62 @@ async fn shell_sandbox_contains_only_the_mount_selected_by_shared_cwd() {
         "shell action reached the inactive Host Mount"
     );
 
+    // File Tools can read another delegated grant without changing shell cwd.
+    let read = alan_tools::ReadFileTool::new()
+        .execute(json!({"path":"/mnt/docs/secret.txt"}), &context)
+        .await
+        .unwrap();
+    assert_eq!(read["content"], "inactive grant marker");
+    assert!(
+        alan_tools::WriteFileTool::new()
+            .execute(
+                json!({"path":"/mnt/docs/secret.txt", "content":"overwrite"}),
+                &context,
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&inactive_secret).unwrap(),
+        "inactive grant marker"
+    );
+
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("private.txt"), "not delegated").unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("private.txt"),
+        project.path().join("escape"),
+    )
+    .unwrap();
+    assert!(
+        alan_tools::ReadFileTool::new()
+            .execute(json!({"path":"escape"}), &context)
+            .await
+            .is_err()
+    );
+    assert!(
+        alan_tools::WriteFileTool::new()
+            .execute(json!({"path":"escape", "content":"overwrite"}), &context,)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.path().join("private.txt")).unwrap(),
+        "not delegated"
+    );
+    // A failed save is an error; there is no buffered project copy to report as saved.
+    std::fs::create_dir(project.path().join("directory")).unwrap();
+    assert!(
+        alan_tools::WriteFileTool::new()
+            .execute(
+                json!({"path":"directory", "content":"cannot save over a directory"}),
+                &context,
+            )
+            .await
+            .is_err()
+    );
+    assert!(project.path().join("directory").is_dir());
+
     let docs_adapter = service
         .reconcile(7, binding("/mnt/docs"))
         .unwrap()
@@ -171,4 +227,59 @@ async fn shell_sandbox_contains_only_the_mount_selected_by_shared_cwd() {
     let docs_shell_sandbox = docs_adapter.shell_sandbox().unwrap();
     assert!(docs_shell_sandbox.is_readable(docs.path()));
     assert!(!docs_shell_sandbox.is_readable(project.path()));
+    let docs_context = ToolContext::from_binding(
+        binding("/mnt/docs").with_adapter(docs_adapter),
+        Arc::new(Config::default()),
+    );
+    let selected_read = alan_tools::BashTool::new()
+        .execute(json!({"command":"cat secret.txt"}), &docs_context)
+        .await
+        .unwrap();
+    assert_eq!(selected_read["stdout"], "inactive grant marker");
+    let denied_write = alan_tools::BashTool::new()
+        .execute(
+            json!({"command":"printf overwrite > secret.txt"}),
+            &docs_context,
+        )
+        .await;
+    assert!(denied_write.is_err() || denied_write.is_ok_and(|result| result["success"] == false));
+    assert_eq!(
+        std::fs::read_to_string(&inactive_secret).unwrap(),
+        "inactive grant marker"
+    );
+
+    let mut registry = alan_agent_engine::ToolRegistry::new();
+    registry.register(alan_tools::BashTool::new());
+    let runner = registry.process_runner();
+    runner.register_process_binding(7, service.reconcile(7, binding("/mnt/docs")).unwrap());
+    runner.register_process_authority(7, service.clone());
+    service.revoke(&docs_grant.id, "test").unwrap();
+    let refreshed = service.reconcile(7, binding("/mnt/project")).unwrap();
+    let refreshed_context = ToolContext::from_binding(refreshed, Arc::new(Config::default()));
+    assert!(
+        alan_tools::ReadFileTool::new()
+            .execute(json!({"path":"/mnt/docs/secret.txt"}), &refreshed_context,)
+            .await
+            .is_err()
+    );
+    // Check the actual Process launch boundary, which preserves the caller's cwd
+    // when the adapter offers a different remaining grant after reconciliation.
+    let outcome = runner
+        .run(alan_agent_engine::tools::ToolProcessInvocation {
+            pid: 8,
+            parent: Some(7),
+            executable: "/bin/bash".into(),
+            args: vec![json!({"command":"printf escaped > wrong-grant.txt"}).to_string()],
+        })
+        .await;
+    assert_eq!(outcome.exit_code, 1);
+    let result: serde_json::Value = serde_json::from_slice(&outcome.output).unwrap();
+    assert_eq!(result["success"], false);
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap()
+            .contains("choose an explicit directory")
+    );
+    assert!(!project.path().join("wrong-grant.txt").exists());
 }

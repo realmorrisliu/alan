@@ -256,3 +256,18 @@
   the focused session from outside Herdr, so that acceptance remains outstanding.
 - `just quality` and strict change validation passed after the recovery/facade
   changes; the commit hook rechecks the final staged presentation assertions.
+- Expanded the real native Host Mount adapter acceptance to prove structured file
+  reads can access a second delegated read-only grant while native shell access is
+  limited to the selected cwd grant. Selecting that grant permits native reads but
+  still rejects writes. Structured writes also reject the read-only target.
+- Undelegated symlink targets reject structured reads/writes and preserve original
+  bytes. Saving over a directory reports failure and preserves the directory.
+  After revocation, refreshed file access fails, and the real Tool Process launch
+  boundary rejects the stale cwd rather than executing in the remaining writable
+  grant. Existing native/structured round-trip and stale-edit tests remain the
+  integration evidence for shared backing files. Task 2.14 still retains its
+  remaining buffer/visibility audit instead of treating this boundary test as proof
+  of a pending project-buffer save feature.
+- All 38 OS Host unit/integration/architecture checks passed with the expanded
+  boundary scenario, including the two-client native command/file round-trip.
+  Strict change validation passed; the commit hook runs the full quality gate.
