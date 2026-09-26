@@ -10,13 +10,15 @@ mod namespace_environment;
 mod turn_execution;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
+#[cfg(test)]
+use turn_execution::orchestrate_tool_batch;
 use turn_execution::run_turn_with_cancel;
 
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
-    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles,
+    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceTapeWriter,
     NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
 };
 pub use namespace_environment::{
@@ -383,20 +385,6 @@ pub(super) fn turn_memory_runtime(
     )
 }
 
-pub(super) async fn orchestrate_tool_batch<E, F>(
-    loop_guard: &mut ToolLoopGuard,
-    state: &mut RuntimeLoopState,
-    tool_calls: &[NormalizedToolCall],
-    inputs: ToolOrchestratorInputs<'_>,
-    emit: &mut E,
-) -> Result<ToolBatchOrchestratorOutcome>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    orchestrate_tool_batch_internal(loop_guard, state, tool_calls, inputs, None, None, emit).await
-}
-
 pub(super) async fn replay_approved_tool_call_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
@@ -439,16 +427,22 @@ where
     let approved_tool_escalation_call_index =
         approved_replay_call_index(tool_calls, approved_tool_escalation_call_id);
     let mut loop_guard = ToolLoopGuard::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
-    orchestrate_tool_batch_internal(
+    let writer = state.agent_files().begin_tape_generation().await?;
+    let result = orchestrate_tool_batch_internal(
         &mut loop_guard,
         state,
         tool_calls,
         inputs,
-        approved_unknown_effect_call_index,
-        approved_tool_escalation_call_index,
+        (
+            approved_unknown_effect_call_index,
+            approved_tool_escalation_call_index,
+        ),
+        &writer,
         emit,
     )
-    .await
+    .await;
+    let closed = writer.finish().await;
+    result.and_then(|outcome| closed.map(|()| outcome))
 }
 
 async fn orchestrate_tool_call<E, F>(
@@ -567,14 +561,16 @@ async fn orchestrate_tool_batch_internal<E, F>(
     state: &mut RuntimeLoopState,
     tool_calls: &[NormalizedToolCall],
     inputs: ToolOrchestratorInputs<'_>,
-    approved_unknown_effect_call_index: Option<usize>,
-    approved_tool_escalation_call_index: Option<usize>,
+    approved_call_indices: (Option<usize>, Option<usize>),
+    writer: &NamespaceTapeWriter,
     emit: &mut E,
 ) -> Result<ToolBatchOrchestratorOutcome>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let (approved_unknown_effect_call_index, approved_tool_escalation_call_index) =
+        approved_call_indices;
     let mut refresh_context = false;
 
     for (idx, tool_call) in tool_calls.iter().enumerate() {
@@ -599,7 +595,7 @@ where
                 refresh_context |= call_refresh;
                 if handle_queued_steering_inputs(
                     &mut state.machine,
-                    &state.environment.agent_files(),
+                    writer,
                     tool_calls,
                     idx + 1,
                     inputs.steering_broker,

@@ -15,7 +15,7 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
     let agent_files = environment.agent_files();
 
-    let mut writer = agent_files.begin_tape_generation().await.unwrap();
+    let writer = agent_files.begin_tape_generation().await.unwrap();
 
     let second_writer = agent_files.begin_tape_generation().await;
     assert!(
@@ -39,7 +39,7 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
         .unwrap();
     writer.finish().await.unwrap();
 
-    let mut next_writer = agent_files.begin_tape_generation().await.unwrap();
+    let next_writer = agent_files.begin_tape_generation().await.unwrap();
     next_writer
         .append_record("assistant", "after lease", None, &[])
         .await

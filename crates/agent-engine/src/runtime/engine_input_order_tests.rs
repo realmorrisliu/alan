@@ -97,6 +97,15 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
             "{:?}",
             String::from_utf8(shell.cat("/agent/1/machine/ui/notice").await.unwrap())
         );
+        assert!(
+            shell.write("/agent/1/machine/tape", b"").await.is_err(),
+            "a second writer must be excluded while the provider is generating"
+        );
+        let tape = shell.cat("/agent/1/machine/tape").await.unwrap();
+        assert!(
+            String::from_utf8(tape).unwrap().contains("first"),
+            "readers can see the accepted input while its write lease is held"
+        );
         tx.send(Submission::new(Op::ContinueQueue)).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -263,6 +272,10 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
             })
             .collect::<Vec<_>>();
         controller.shutdown().await.unwrap();
+        shell
+            .write("/agent/1/machine/tape", b"")
+            .await
+            .expect("settled or interrupted generation releases the tape lease");
         assert_eq!(order, expected);
     }
 }
