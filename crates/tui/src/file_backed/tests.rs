@@ -117,6 +117,7 @@ fn root_agent_completion_requires_its_own_input_id() {
     let mut pending = Some(PendingRootAgentTurn {
         input: "current task".to_string(),
         submission_id: "input-one".into(),
+        submitted_process: Some(1),
         observed_active: false,
         interrupt_requested: false,
         submitted_at_ms: 20,
@@ -127,6 +128,7 @@ fn root_agent_completion_requires_its_own_input_id() {
         Some(PendingRootAgentTurn {
             input: "current task".to_string(),
             submission_id: "input-one".into(),
+            submitted_process: Some(1),
             observed_active: false,
             interrupt_requested: false,
             submitted_at_ms: 20,
@@ -140,6 +142,7 @@ fn root_agent_completion_requires_its_own_input_id() {
         Some(PendingRootAgentTurn {
             input: "current task".to_string(),
             submission_id: "input-one".into(),
+            submitted_process: Some(1),
             observed_active: true,
             interrupt_requested: false,
             submitted_at_ms: 20,

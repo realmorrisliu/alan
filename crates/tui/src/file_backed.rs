@@ -33,7 +33,7 @@ mod tail;
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 use interrupt::{
     PendingRootAgentTurn, observe_root_agent_activity, observe_root_agent_completion,
-    request_pending_root_interrupt, send_interrupt,
+    request_pending_root_interrupt, send_interrupt, settle_unknown_replaced_input,
 };
 use submission::{prepare_root_agent_submission, require_root_agent_idle};
 
@@ -243,6 +243,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
                                                     submission_id: record.submission_id.clone(),
+                                                    submitted_process: watchers.root_agent_pid,
                                                     observed_active: false,
                                                     interrupt_requested: false,
                                                     submitted_at_ms,
@@ -295,6 +296,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     }
                 }
                 if follows_root_agent {
+                    settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
                     if observe_root_agent_activity(
                         &mut pending_root_agent_turn,
                         app.activity.state,
@@ -333,6 +335,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if submitted_task_settled {
                     pending_root_agent_turn = None;
                 }
+                settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
                 if observe_root_agent_activity(
                     &mut pending_root_agent_turn,
                     app.activity.state,

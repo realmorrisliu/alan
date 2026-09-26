@@ -6,6 +6,7 @@ use super::app::FileBackedApp;
 pub(super) struct PendingRootAgentTurn {
     pub(super) input: String,
     pub(super) submission_id: String,
+    pub(super) submitted_process: Option<u64>,
     pub(super) observed_active: bool,
     pub(super) interrupt_requested: bool,
     pub(super) submitted_at_ms: u64,
@@ -41,6 +42,24 @@ pub(super) fn observe_root_agent_completion(
     }
 }
 
+pub(super) fn settle_unknown_replaced_input(
+    pending_turn: &mut Option<PendingRootAgentTurn>,
+    current_process: Option<u64>,
+    app: &mut FileBackedApp,
+) {
+    if app.activity.state == UiActivityState::Idle
+        && pending_turn.as_ref().is_some_and(|turn| {
+            matches!((turn.submitted_process, current_process),
+                (Some(submitted), Some(current)) if submitted != current)
+        })
+    {
+        *pending_turn = None;
+        app.push_error(
+            "Root Agent changed without correlated completion evidence; outcome is unknown".into(),
+        );
+    }
+}
+
 pub(super) fn request_pending_root_interrupt(
     pending_turn: &mut Option<PendingRootAgentTurn>,
 ) -> bool {
@@ -71,6 +90,7 @@ mod tests {
         let mut pending = Some(PendingRootAgentTurn {
             input: "current task".to_string(),
             submission_id: "input-one".into(),
+            submitted_process: Some(1),
             observed_active: false,
             interrupt_requested: false,
             submitted_at_ms: 20,
@@ -100,6 +120,7 @@ mod tests {
         let mut pending = Some(PendingRootAgentTurn {
             input: "current task".to_string(),
             submission_id: "input-one".into(),
+            submitted_process: Some(1),
             observed_active: false,
             interrupt_requested: false,
             submitted_at_ms: 20,
@@ -119,5 +140,32 @@ mod tests {
             UiActivityState::Idle
         ));
         assert_eq!(pending, None);
+    }
+    #[test]
+    fn replacement_that_later_becomes_idle_reports_unknown_and_releases_pending() {
+        let mut pending = Some(PendingRootAgentTurn {
+            input: "task".into(),
+            submission_id: "input-one".into(),
+            submitted_process: Some(1),
+            observed_active: true,
+            interrupt_requested: false,
+            submitted_at_ms: 20,
+        });
+        let mut app = FileBackedApp::new("/agent/root".into());
+        settle_unknown_replaced_input(&mut pending, Some(1), &mut app);
+        assert!(
+            pending.is_some(),
+            "the original Process idle is not settlement"
+        );
+        app.activity.state = UiActivityState::Running;
+        settle_unknown_replaced_input(&mut pending, Some(2), &mut app);
+        assert!(pending.is_some());
+        app.activity.state = UiActivityState::Idle;
+        settle_unknown_replaced_input(&mut pending, Some(2), &mut app);
+        assert!(pending.is_none());
+        assert!(
+            matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message))
+            if message.contains("outcome is unknown"))
+        );
     }
 }
