@@ -38,18 +38,6 @@ impl NamespaceAgentFiles {
         Ok(frame.message)
     }
 
-    pub(crate) fn input_read_position(&self) -> u64 {
-        self.input_offset.load(Ordering::Relaxed)
-    }
-
-    pub(crate) async fn input_committed_length(&self) -> Result<u64> {
-        Ok(self
-            .client()
-            .stat_path(&format!("{}/io/input", self.agent_path))
-            .await?
-            .length)
-    }
-
     /// Legacy text-only reader. Versioned input must retain its submission identity.
     pub async fn read_next_input(&self) -> Result<String> {
         let payload = self.read_next_input_payload().await?;
@@ -77,7 +65,7 @@ impl NamespaceAgentFiles {
         }))
     }
 
-    pub async fn read_next_machine_control_submission(&self) -> Result<Option<Submission>> {
+    pub(crate) async fn read_next_runtime_submission(&self) -> Result<Option<Submission>> {
         let events_path = format!("{}/events", self.agent_path);
         let client = self.client();
         let offset = self.control_offset.load(Ordering::Relaxed);
@@ -102,6 +90,14 @@ impl NamespaceAgentFiles {
             consumed += line.len() as u64;
             let record = String::from_utf8(line[..line.len() - 1].to_vec())
                 .context("agent events record is not utf8")?;
+            if record.starts_with("input:") {
+                self.control_offset
+                    .store(offset + consumed, Ordering::Relaxed);
+                return self
+                    .read_next_input_submission(InputMode::FollowUp)
+                    .await
+                    .map(Some);
+            }
             if let Some(command) = record.strip_prefix("ctl:") {
                 self.control_offset
                     .store(offset + consumed, Ordering::Relaxed);
