@@ -14,7 +14,7 @@
 
 - [x] 2.1 Define the versioned file record details for submission identity, prefix intent, queue controls and completion using existing AgentFS owners; verify protocol scheduling mode stays distinct from intent and two clients cannot consume each other's results.
 - [x] 2.2 Implement shared prefix framing across TUI and redirected input; verify `!`, `:`, nested prefix data, empty payloads, slash controls, pending responses, stdin EOF and multiline boundaries.
-- [ ] 2.3 Reuse the native shell adapter with unchanged script bodies, selected shell/environment and Host cwd; verify pipelines, redirection, quotes, multiline scripts, PATH lookup and partial failures without command/path rewriting. Define the bounded standalone user `cd` parser and explicit errors for unsupported cd forms.
+- [x] 2.3 Reuse the native shell adapter with unchanged script bodies, selected shell/environment and Host cwd; verify pipelines, redirection, quotes, multiline scripts, PATH lookup and partial failures without command/path rewriting. Define the bounded standalone user `cd` parser and explicit errors for unsupported cd forms.
 - [ ] 2.4 Dispatch user and Agent commands through the same governed native Tool Process path; verify model-free explicit execution, no authority amplification, sandbox scope limited to the current cwd grant, switching grants only through explicit `!cd`, descendant cancellation and correlated Action evidence.
 
 - [ ] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
@@ -323,3 +323,30 @@
   fault injector uses a separate Shell Process; processless clients keep read-only
   `/proc` authority. Terminal/Herdr acceptance and current-head PR/CI closure remain
   separate unfinished gates.
+- Task 2.3 audit found that selecting the outer `sh` through PATH allowed a project
+  executable to replace it, and inherited shell functions could override inspected
+  command names. A regression reproduced replacement before the fix. All native
+  backends now select `/bin/sh -p -f -c`; the script body remains unchanged and
+  ordinary command PATH lookup retains the existing backend environment contract.
+  Both path-guard and Seatbelt execution reject the injected shell/function in the
+  regression; Linux `/bin/sh` accepts the same arguments in an isolated container.
+- Shell-contract verification passed 143 sandbox checks, the full engine suite
+  (1,205 tests plus 20 architecture checks, one ignored), and the real two-client
+  Host test including cancellation and Root/Host recovery. Existing standalone-cd
+  cases cover literal quoting/escaping, unsupported expansion/multiple arguments,
+  and script-local cd without rewriting; native script tests cover multiline
+  pipelines, PATH-resolved programs, redirection, preserved early effects and a
+  nonzero final status. Design now records the selected dialect and environment.
+- A nested-shell regression also reproduced inherited-function re-import after
+  the outer shell started with `-p`. The common native Process launcher now strips
+  shell startup/function environment entries before spawn, covering descendants
+  without rewriting scripts or changing ordinary command PATH lookup.
+- CI on `72688214` exposed a recovery-test completion race: an empty pending queue
+  and Idle state did not prove the resumed input had finished. The runtime also
+  registered active identity inside the newly spawned worker, leaving a pre-poll
+  interval where targeted cancellation could not identify the accepted input.
+  Identity registration now precedes worker spawn. The recovery check requires
+  active identity to be absent as well, then asserts exactly one model call.
+  Full regression passed 1,206 engine tests, 20 architecture checks and 100 Service
+  Manager checks; the recovery test passed ten consecutive runs. Fresh current-head
+  CI remains required and the previous Ubuntu failure is not treated as passing.

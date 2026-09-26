@@ -101,6 +101,19 @@ scripts have the selected shell's semantics. Preflight may deny execution, but
 must not rewrite path tokens or scripts. Syntax checking cannot promise atomic
 execution: a later error can occur after earlier script effects.
 
+The explicit slice selects the system `/bin/sh` in noninteractive `-p -f -c`
+mode on the supported macOS/Linux hosts; it does not select a shell through PATH
+or source interactive startup files. Privileged shell mode ignores inherited shell
+functions and startup hooks. The shared native Process launch also removes `ENV`,
+`BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `CDPATH` and exported `BASH_FUNC_*` entries so
+nested shells cannot import them again. Pathname expansion remains disabled alongside the
+backend's existing conservative expansion preflight. Ordinary executable lookup
+still uses the backend's command PATH. Seatbelt/path-guard backends inherit the
+remaining Host environment (with the existing Seatbelt Git fsmonitor override); Linux
+reification keeps its cleared environment and verified substrate PATH. Failure
+to run the selected shell is an execution failure, never a fallback to another
+shell. Scripts are passed unchanged, and preflight rejections remain explicit.
+
 `/mnt` organizes reachable aP resources, not automatic prompt inclusion and not a
 promise of identical native paths. Host Mount Service remains the grant owner.
 Each native shell action uses only the one explicitly delegated local grant

@@ -9,7 +9,9 @@ mod explicit_command;
 mod namespace_environment;
 mod turn_execution;
 
-pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
+pub(crate) use accepted_submission::{
+    accepts_inband_submissions, advance_accepted_submission, track_active_task_submission,
+};
 use turn_execution::run_turn_with_cancel;
 
 #[cfg(test)]

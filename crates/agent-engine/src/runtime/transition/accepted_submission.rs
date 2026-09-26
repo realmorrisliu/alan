@@ -30,7 +30,6 @@ pub(crate) fn advance_accepted_submission<'a>(
 ) -> impl std::future::Future<Output = AcceptedSubmissionOutcome> + 'a {
     let initial_id = submission.id.clone();
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    track_active_task_submission(&mut state.machine, &submission);
     async move {
         let mut emit = |_event: Event| async {};
 
@@ -134,7 +133,7 @@ where
     Ok(())
 }
 
-fn track_active_task_submission(
+pub(crate) fn track_active_task_submission(
     machine: &mut crate::agent_machine::AgentMachine,
     submission: &Submission,
 ) {
@@ -148,6 +147,28 @@ mod tests {
     use super::*;
     use crate::agent_machine::AgentMachine;
     use alan_agent_protocol::{ContentPart, InputIntent};
+
+    #[test]
+    fn accepted_input_can_be_targeted_before_execution_is_polled() {
+        let mut machine = AgentMachine::new();
+        let submission = Submission::new(Op::Turn {
+            parts: vec![ContentPart::text("not executed yet")],
+            context: None,
+        });
+        track_active_task_submission(&mut machine, &submission);
+        let queue = machine.input_broker();
+        assert_eq!(
+            queue
+                .activity_snapshot()
+                .active_submission
+                .unwrap()
+                .submission_id,
+            submission.id
+        );
+        assert!(queue.interrupt(&submission.id).unwrap());
+        assert!(queue.is_paused());
+        assert!(machine.messages().is_empty());
+    }
 
     #[test]
     fn resume_control_keeps_assistant_output_correlated_to_original_turn() {

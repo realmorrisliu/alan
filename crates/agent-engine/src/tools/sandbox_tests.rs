@@ -107,7 +107,7 @@ fn reified_plan_preserves_native_cwd_paths_and_script_body() {
         .unwrap();
 
     assert_eq!(plan.cwd, dunce::canonicalize(mount.path()).unwrap());
-    assert_eq!(plan.argv, ["sh", "-f", "-c", script.as_str()]);
+    assert_eq!(plan.argv, ["/bin/sh", "-p", "-f", "-c", script.as_str()]);
     assert_eq!(
         plan.declared_host_mounts[0].namespace_path,
         plan.declared_host_mounts[0].host_path

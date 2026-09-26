@@ -122,6 +122,7 @@ async fn root_and_host_restart_keep_pending_input_paused() {
             let snapshot = activity(&shell).await;
             if snapshot["queue_paused"] == false
                 && snapshot["state"] == "idle"
+                && snapshot["active_submission"].is_null()
                 && snapshot["pending_submissions"]
                     .as_array()
                     .unwrap()

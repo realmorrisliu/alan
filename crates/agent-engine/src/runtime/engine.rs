@@ -5,7 +5,7 @@ use super::launch_config::AgentProcessConfig;
 use super::transition::{
     DeferredRuntimeActionExit, NamespaceAgentFiles, TransitionCompletion,
     accepts_inband_submissions, advance_accepted_submission,
-    run_deferred_runtime_action_with_cancel,
+    run_deferred_runtime_action_with_cancel, track_active_task_submission,
 };
 use super::turn_input::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, is_turn_inband_submission,
@@ -626,6 +626,7 @@ fn spawn_with_prepared_runtime_environment(
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.agent_files();
                     let namespace_heartbeat = state.agent_files();
+                    track_active_task_submission(&mut state.machine, &submission);
                     // File operations can suspend while holding a service lock also needed
                     // by the input pump. Poll execution independently so publication cannot
                     // prevent the lock holder from making progress. JoinSet aborts on drop.

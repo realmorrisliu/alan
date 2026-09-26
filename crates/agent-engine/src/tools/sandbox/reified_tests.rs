@@ -150,7 +150,7 @@ fn test_reified_backend_preserves_native_paths_and_script_body() {
         .reified_namespace_plan_for_command(&script, temp.path(), false)
         .unwrap();
 
-    assert_eq!(plan.argv, ["sh", "-f", "-c", script.as_str()]);
+    assert_eq!(plan.argv, ["/bin/sh", "-p", "-f", "-c", script.as_str()]);
     assert_eq!(plan.cwd, temp.path());
     assert_eq!(plan.declared_host_mounts[0].namespace_path, plan.cwd);
 }
