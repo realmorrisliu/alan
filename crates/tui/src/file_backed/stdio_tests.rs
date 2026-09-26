@@ -11,6 +11,41 @@ pub(super) const PID_MOUNT: &str = "/mnt/service-manager/units/root-agent";
 pub(super) const EXEC_SPEC: &str =
     r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#;
 
+pub(super) const INPUT_ID: &str = "00000000-0000-4000-8000-000000000001";
+pub(super) fn task(input: &str) -> StdioTaskWaitContext {
+    let mut task = StdioTaskWaitContext::new(input);
+    task.record.submission_id = INPUT_ID.into();
+    task
+}
+
+pub(super) fn correlated_records(records: &[u8]) -> Vec<u8> {
+    let mut output = Vec::new();
+    for line in records
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let mut record: serde_json::Value = serde_json::from_slice(line).unwrap();
+        record["submission_id"] = INPUT_ID.into();
+        serde_json::to_writer(&mut output, &record).unwrap();
+        output.push(b'\n');
+    }
+    output
+}
+
+pub(super) fn completion(
+    status: alan_agent_protocol::UiInputStatus,
+    error: Option<&str>,
+) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec(&UiEvent::InputCompleted {
+        submission_ids: vec![INPUT_ID.into()],
+        status,
+        error: error.map(str::to_owned),
+    })
+    .unwrap();
+    bytes.push(b'\n');
+    bytes
+}
+
 #[test]
 fn interactive_task_lock_is_shared_and_released_after_the_turn() {
     let runtime = tempfile::tempdir().unwrap();
@@ -193,20 +228,17 @@ fn line_drain_keeps_partial_records_until_newline() {
 #[test]
 fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
     let snapshot = stdio_task_snapshot_from_history(
-        &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: Vec::new(),
-            submitted_at_ms: 2,
-        },
+        &StdioTaskWaitContext { submitted_at_ms: 2, ..task("same task") },
         br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
-{"version":1,"kind":"message","role":"user","content":"same task"}
-{"version":1,"kind":"message","role":"assistant","content":"intermediate response"}
-{"version":1,"kind":"message","role":"assistant","content":"current answer"}
+{"submission_id":"00000000-0000-4000-8000-000000000001","version":1,"kind":"message","role":"user","content":"same task"}
+{"submission_id":"00000000-0000-4000-8000-000000000001","version":1,"kind":"message","role":"assistant","content":"intermediate response"}
+{"submission_id":"00000000-0000-4000-8000-000000000001","version":1,"kind":"message","role":"assistant","content":"current answer"}
 "#,
         br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
 {"type":"error","message":"previous provider failure","recoverable":true}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
+{"type":"input_completed","submission_ids":["00000000-0000-4000-8000-000000000001"],"status":"completed"}
 {"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":2}}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
@@ -222,14 +254,10 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 #[test]
 fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
     let mut snapshot = stdio_task_snapshot_from_history(
-        &StdioTaskWaitContext {
-            input: "task with no tape record",
-            baseline_tape_history: Vec::new(),
-            submitted_at_ms: 0,
-        },
+        &StdioTaskWaitContext { submitted_at_ms: 0, ..task("task with no tape record") },
         b"",
         br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
-{"type":"error","message":"provider unavailable","recoverable":true}
+{"type":"input_completed","submission_ids":["00000000-0000-4000-8000-000000000001"],"status":"failed","error":"provider unavailable"}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
     )
@@ -237,7 +265,7 @@ fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
 
     assert!(
         snapshot.task_started,
-        "Running establishes this submitted task"
+        "The correlated failure identifies this submitted task"
     );
     assert_eq!(
         finish_stdio_task_if_ready(&mut snapshot)
@@ -258,9 +286,8 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 "#;
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: baseline_tape.to_vec(),
             submitted_at_ms: 20,
+            ..task("same task")
         },
         baseline_tape,
         baseline_ui,
@@ -274,17 +301,13 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 
 #[test]
 fn recovery_rejects_a_reset_tape_with_only_an_old_identical_prompt() {
-    let baseline_tape = br#"{"version":1,"kind":"message","role":"user","content":"earlier task"}
-{"version":1,"kind":"message","role":"assistant","content":"earlier answer"}
-"#;
     let replacement_tape = br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
 "#;
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: baseline_tape.to_vec(),
             submitted_at_ms: 20,
+            ..task("same task")
         },
         replacement_tape,
         br#"{"type":"activity","snapshot":{"version":1,"state":"idle"}}
@@ -662,12 +685,13 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
 }
 
 #[test]
-fn one_shot_result_waits_for_seen_task_and_idle_activity() {
+fn one_shot_result_waits_for_correlated_settlement() {
     let mut task = StdioTaskSnapshot {
         task_started: false,
         assistant_answer: Some("answer".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: None,
+        completion: None,
     };
 
     assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
@@ -675,6 +699,8 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
     task.activity_state = Some(UiActivityState::Running);
     assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
     task.activity_state = Some(UiActivityState::Idle);
+    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    task.completion = Some(alan_agent_protocol::UiInputStatus::Completed);
     assert_eq!(
         finish_stdio_task_if_ready(&mut task).unwrap().as_deref(),
         Some("answer")
@@ -685,6 +711,7 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
         assistant_answer: Some("intermediate response".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: Some("provider failed".to_string()),
+        completion: Some(alan_agent_protocol::UiInputStatus::Failed),
     };
     let result = finish_stdio_task_if_ready(&mut failed_task);
     assert_eq!(
@@ -755,14 +782,14 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
         controller_shell
             .write(
                 "/agent/root/machine/tape",
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"rebind me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"one answer\"}\n",
+                &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"rebind me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"one answer\"}\n"),
             )
             .await
             .unwrap();
         controller_shell
             .write(
                 "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+                &completion(alan_agent_protocol::UiInputStatus::Completed, None),
             )
             .await
             .unwrap();
@@ -773,7 +800,7 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("rebind me", std::mem::take(&mut attachment.tape_history)),
+            task("rebind me"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -834,10 +861,7 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new(
-                "fail before tape persistence",
-                std::mem::take(&mut attachment.tape_history),
-            ),
+            task("fail before tape persistence"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -850,7 +874,10 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         shell
             .write(
                 "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+                &completion(
+                    alan_agent_protocol::UiInputStatus::Failed,
+                    Some("provider unavailable"),
+                ),
             )
             .await
             .unwrap();
@@ -894,10 +921,7 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new(
-                "cancel this turn",
-                std::mem::take(&mut attachment.tape_history),
-            ),
+            task("cancel this turn"),
             &mut attachment,
             async move { cancel_rx.await.map_err(anyhow::Error::from) },
         );

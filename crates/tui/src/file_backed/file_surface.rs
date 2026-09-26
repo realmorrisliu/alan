@@ -886,4 +886,18 @@ pub(super) struct TapeRecordV1 {
     pub(super) kind: String,
     pub(super) role: String,
     pub(super) content: String,
+    #[serde(default)]
+    pub(super) submission_id: Option<String>,
+    #[serde(default)]
+    pub(super) related_submission_ids: Vec<String>,
+}
+
+impl TapeRecordV1 {
+    pub(super) fn belongs_to(&self, submission_id: &str) -> bool {
+        self.submission_id.as_deref() == Some(submission_id)
+            || self
+                .related_submission_ids
+                .iter()
+                .any(|id| id == submission_id)
+    }
 }
