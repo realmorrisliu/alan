@@ -12,8 +12,8 @@ fn test_linux_setup_helpers() -> LinuxSetupHelpers {
     }
 }
 #[cfg(not(target_os = "linux"))]
-#[test]
-fn linux_runner_reports_non_linux_unavailable_without_ambient_execution() {
+#[tokio::test]
+async fn linux_runner_reports_non_linux_unavailable_without_ambient_execution() {
     let plan = ReifiedNamespacePlan::primary_mount(
         "/host/host_mount",
         "/host/host_mount",
@@ -25,6 +25,10 @@ fn linux_runner_reports_non_linux_unavailable_without_ambient_execution() {
         LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::HostMountPathGuard);
 
     let error = runner.run(&plan).unwrap_err();
+    assert_eq!(
+        runner.run_cancellable(&plan, None).await.unwrap_err(),
+        error
+    );
 
     assert_eq!(
         error.reason,
@@ -470,4 +474,71 @@ fn linux_runner_setup_marker_requires_success_content() {
 
     std::fs::write(&marker, b"ok\n").unwrap();
     assert!(setup_marker_was_written(&marker));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn linux_runner_cancellation_stops_user_command_after_setup() {
+    if !linux_reified_runner_ready_for_smoke() {
+        return;
+    }
+    let mount = tempfile::tempdir().unwrap();
+    let runner = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock);
+    let capture = ReifiedNamespacePlan::primary_mount(
+        mount.path(),
+        mount.path(),
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf before; printf after > /dev/stdout; printf tail; printf errbefore >&2; printf errafter > /dev/stderr; exit 7".into(),
+        ],
+        NetworkPosture::Deny,
+    )
+    .unwrap();
+    let output = runner
+        .run_cancellable(&capture, Some(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    assert_eq!(output.stdout, "beforeaftertail");
+    assert_eq!(output.stderr, "errbeforeerrafter");
+    assert_eq!(output.exit_code, 7);
+    let synchronous = runner
+        .run_with_timeout(&capture, Some(Duration::from_secs(5)))
+        .unwrap();
+    assert_eq!(synchronous.stdout, output.stdout);
+    assert_eq!(synchronous.stderr, output.stderr);
+    assert_eq!(synchronous.exit_code, 7);
+    let mut large = capture.clone();
+    *large.argv.last_mut().unwrap() = "printf '%0200000d' 0 > /dev/stdout".into();
+    let output = runner
+        .run_cancellable(&large, Some(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    assert_eq!(output.stdout, "0".repeat(200_000));
+    assert_eq!(output.exit_code, 0);
+    let plan = ReifiedNamespacePlan::primary_mount(
+        mount.path(), mount.path(),
+        vec!["/bin/sh".into(), "-c".into(),
+             "printf started > /mnt/source/started; (sleep 1; printf leaked > /mnt/source/leaked) & wait".into()],
+        NetworkPosture::Deny,
+    ).unwrap();
+    let execution = tokio::spawn(async move { runner.run_cancellable(&plan, None).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !mount.path().join("started").exists() {
+            assert!(
+                !execution.is_finished(),
+                "runner exited before starting user command"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    execution.abort();
+    assert!(execution.await.unwrap_err().is_cancelled());
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(
+        !mount.path().join("leaked").exists(),
+        "cancelled descendant produced a later effect"
+    );
 }
