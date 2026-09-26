@@ -25,7 +25,7 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
         {
             continue;
         }
-        let end = text[start..]
+        let mut end = text[start..]
             .char_indices()
             .find_map(|(offset, ch)| {
                 (ch.is_whitespace()
@@ -36,6 +36,15 @@ fn project_file_urls(adapter: &NativeToolExecutionAdapter, text: &str) -> String
                 .then_some(start + offset)
             })
             .unwrap_or(text.len());
+        // ponytail: unwrapped URLs use prose punctuation; quote/encode literal endings.
+        if !text[start..end].contains(['?', '#'])
+            && text[end..].chars().next().is_none_or(char::is_whitespace)
+        {
+            end = start
+                + text[start..end]
+                    .trim_end_matches([',', ';', '.', '!'])
+                    .len();
+        }
         let Ok(url) = url::Url::parse(&text[start..end]) else {
             continue;
         };
@@ -169,9 +178,8 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let boundary_after = quoted_suffix.map_or_else(
             || is_path_end(suffix) || emphasized,
             |rest| {
-                rest.is_empty()
-                    || rest.starts_with(char::is_whitespace)
-                    || rest.starts_with([',', ';', ']', '}'])
+                !rest.starts_with(['\'', '"', '`', '/'])
+                    && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}']))
             },
         );
         if boundary_before && boundary_after {
@@ -206,11 +214,22 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
     let mut copied_through = 0;
     for (start, _) in text.match_indices('/') {
         let suffix = strip_leading_terminal_sequences(&text[start + 1..]);
-        let bare_root = is_path_end(suffix) && !suffix.starts_with('/');
+        let emphasized = is_emphasized_path(text, start, start + 1);
+        let bare_root = emphasized
+            || if suffix.starts_with(char::is_whitespace) {
+                suffix
+                    .split(['\n', '\r'])
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .is_empty()
+            } else {
+                is_path_end(suffix) && !suffix.starts_with('/')
+            };
         let after = suffix.chars().next();
         let uri_authority_delimiter =
             text[..start].ends_with(':') && text[start..].starts_with("//");
-        if is_path_start(text, start)
+        if (is_path_start(text, start) || emphasized)
             && !uri_authority_delimiter
             && (bare_root || after.is_some_and(|ch| !ch.is_whitespace() && ch != '/'))
         {

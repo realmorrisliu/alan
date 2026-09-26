@@ -140,6 +140,32 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         assert_eq!(adapter.project_text(&input), input);
     }
 
+    for (open, close) in [("(\"", "\")"), ("<\"", "\">"), ("\"", "\".")] {
+        assert_eq!(
+            adapter.project_text(&format!("{open}{}{close}", root.display())),
+            format!("{open}.{close}")
+        );
+    }
+    for ending in [",", ".", ";", "!"] {
+        for (path, relative) in [(root.clone(), "."), (root.join("notes.txt"), "./notes.txt")] {
+            let uri = url::Url::from_file_path(path).unwrap();
+            let input = format!("see {uri}{ending} next");
+            assert_eq!(
+                adapter.project_text(&input),
+                format!("see {relative}{ending} next")
+            );
+        }
+    }
+    assert_eq!(
+        adapter.project_text(&format!("{uri}?query=value!#fragment,")),
+        "./notes.txt?query=value!#fragment,"
+    );
+    let comma_uri = url::Url::from_file_path(root.join("notes,")).unwrap();
+    assert_eq!(
+        adapter.project_text(&format!("\"{comma_uri}\"")),
+        "\"./notes%2C\""
+    );
+
     let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
     let sibling_uri =
         url::Url::from_file_path(root.with_file_name(sibling_name).join("notes.txt")).unwrap();
@@ -258,6 +284,12 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("/", "."),
         ("/\n", ".\n"),
         ("file:///", "."),
+        ("1 / 2", "1 / 2"),
+        ("yes / no", "yes / no"),
+        ("/  \nnext", ".  \nnext"),
+        ("__/__", "__.__"),
+        ("**/**", "**.**"),
+        ("_\x1b[31m/\x1b[0m_", "_\x1b[31m.\x1b[0m_"),
         ("/etc/hosts", "./etc/hosts"),
         ("file:///etc/hosts", "./etc/hosts"),
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
