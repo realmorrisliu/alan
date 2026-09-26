@@ -764,6 +764,10 @@ async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
 #[tokio::test]
 async fn test_run_turn_resume_turn() {
     let mut state = create_test_state_with_provider(ContentMockProvider::new("Response"));
+    state.machine.add_user_message("Resume the existing task");
+    state
+        .machine
+        .set_turn_activity(crate::agent_machine::TurnActivityState::Running);
     let cancel = CancellationToken::new();
 
     let mut events = vec![];
@@ -798,6 +802,9 @@ async fn test_run_turn_resume_turn() {
 #[tokio::test]
 async fn test_run_turn_with_cancel() {
     let mut state = create_test_state_with_provider(ContentMockProvider::new("Response"));
+    state
+        .machine
+        .set_turn_activity(crate::agent_machine::TurnActivityState::Running);
     let cancel = CancellationToken::new();
     cancel.cancel(); // Cancel immediately
 

@@ -158,10 +158,14 @@ where
                 if is_brokered_input(&incoming.op)
                     && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
+                    let message = format!("Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input.");
+                    agent_files.append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
+                        submission_ids: vec![incoming.id],
+                        status: alan_agent_protocol::UiInputStatus::Failed,
+                        error: Some(message.clone()),
+                    }).await?;
                     emit(Event::Error {
-                        message: format!(
-                            "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                        ),
+                        message,
                         recoverable: true,
                     })
                     .await;
@@ -481,6 +485,18 @@ mod tests {
         });
 
         let broker = TurnInputBroker::default();
+        for _ in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
+            machine.push_buffered_inband_submission(Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("queued")],
+                mode: InputMode::Steer,
+            }));
+        }
+        let overflow = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("overflow")],
+            mode: InputMode::Steer,
+        });
+        let overflow_id = overflow.id.clone();
+        assert!(broker.push(overflow).await);
         let cancel = CancellationToken::new();
         let mut events = Vec::new();
         let mut emit = |event| {
@@ -533,7 +549,18 @@ mod tests {
             }
             other => panic!("expected Op::Resume from namespace response, got {other:?}"),
         }
-        assert!(events.is_empty());
+        assert!(events.iter().any(|event| matches!(event, Event::Error { message, .. } if message.contains("Too many queued"))));
+        let ui = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+        let terminal: alan_agent_protocol::UiEvent = serde_json::from_slice(&ui).unwrap();
+        assert!(
+            matches!(terminal, alan_agent_protocol::UiEvent::InputCompleted {
+            submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, error: Some(_)
+        } if submission_ids == [overflow_id])
+        );
+        assert_eq!(
+            machine.buffered_inband_user_input_count(),
+            MAX_BUFFERED_INBAND_USER_INPUTS
+        );
     }
 
     #[tokio::test]
