@@ -1,9 +1,6 @@
 //! File-backed TUI input handling and application state transitions.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    hash::BuildHasher,
-};
+use std::collections::BTreeMap;
 
 use alan_agent_protocol::{
     UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot,
@@ -69,6 +66,7 @@ pub(super) enum FileBackedAction {
 
 #[derive(Clone)]
 pub(super) struct FileBackedApp {
+    pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
     pub(super) composer: Composer,
     pub(super) transcript: Vec<HistoryCell>,
@@ -83,6 +81,7 @@ pub(super) struct FileBackedApp {
     pub(super) completion_sources: CompletionSources,
     pub(super) expand_thinking: bool,
     pub(super) notice: Option<String>,
+    pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
     /// The pure state machine reconciling the optimistic `io/output` stream
     /// preview against the authoritative `machine/tape` records. All
@@ -95,14 +94,14 @@ pub(super) struct FileBackedApp {
     /// indexes such as `action_cells`.
     pub(super) pending_remote_turn_start: Option<usize>,
     pub(super) scrollback_front_is_partial: bool,
-    /// Keep occurrence counts through `/clear` without retaining prompt text.
-    tape_user_prompt_counts: HashMap<u64, usize>,
 }
 
 impl FileBackedApp {
     pub(super) fn new(agent_path: String) -> Self {
         Self {
+            tape_consumed_offset: 0,
             notice: None,
+            expected_terminal_error: None,
             agent_path,
             composer: Composer::default(),
             transcript: Vec::new(),
@@ -123,7 +122,6 @@ impl FileBackedApp {
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
             scrollback_front_is_partial: false,
-            tape_user_prompt_counts: HashMap::new(),
         }
     }
 
@@ -586,12 +584,12 @@ impl FileBackedApp {
     /// matching/suppression/echo logic lives in [`StreamReconciler`]; this
     /// only locates the current-turn cell and applies the returned decision.
     pub(super) fn apply_tape_record(&mut self, record: TapeRecordV1) {
+        self.tape_consumed_offset = self.tape_consumed_offset.max(record.end_offset);
         if record.kind != "message" {
             return;
         }
         match record.role.as_str() {
             "user" => {
-                self.count_tape_user_prompt(&record.content);
                 match self.reconciler.on_user_record(&record.content) {
                     UserDecision::Drop => {}
                     UserDecision::Push(content) => self.insert_user_boundary(content),
@@ -630,13 +628,25 @@ impl FileBackedApp {
     }
 
     pub(super) fn apply_ui_event(&mut self, event: UiEvent) {
+        let paired_notice = matches!(&event, UiEvent::Notice { snapshot }
+            if snapshot.kind == UiNoticeKind::Error
+                && self.expected_terminal_error.as_deref() == Some(snapshot.message.as_str()));
+        let expected_error = if matches!(event, UiEvent::InputCompleted { .. }) || paired_notice {
+            None
+        } else {
+            self.expected_terminal_error.take()
+        };
         match event {
             UiEvent::InputCompleted { .. } => {}
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
-            UiEvent::Error { message, .. } => self.push_error(message),
+            UiEvent::Error { message, .. } => {
+                if expected_error.as_deref() != Some(message.as_str()) {
+                    self.push_error(message);
+                }
+            }
         }
     }
 
@@ -810,33 +820,18 @@ impl FileBackedApp {
     pub(super) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
-        self.tape_user_prompt_counts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
             };
             if record.kind == "message" {
-                if record.role == "user" {
-                    self.count_tape_user_prompt(&record.content);
-                }
                 self.reconciler.on_hydrated_message_record(&record.role);
             }
         }
     }
 
-    pub(super) fn tape_user_prompt_count(&self, prompt: &str) -> usize {
-        self.tape_user_prompt_counts
-            .get(&self.tape_user_prompt_counts.hasher().hash_one(prompt))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    fn count_tape_user_prompt(&mut self, prompt: &str) {
-        let prompt_hash = self.tape_user_prompt_counts.hasher().hash_one(prompt);
-        *self.tape_user_prompt_counts.entry(prompt_hash).or_default() += 1;
-    }
-
     pub(super) fn reset_for_root_process_change(&mut self) {
+        self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();

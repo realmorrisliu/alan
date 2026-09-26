@@ -59,7 +59,10 @@ pub(super) struct WatchTails {
     pub(super) actions: alan_shell::Tail,
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
+    pub(super) recovery_ui: alan_shell::Tail,
+    pub(super) recovery_tape: alan_shell::Tail,
     pub(super) ui_history: Vec<u8>,
+    pub(super) tape_history: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -364,9 +367,10 @@ pub(super) async fn spawn_tape_watch(
                             }
                             // Non-message records (tool calls, checkpoints…)
                             // are not rendered; skip quietly like hydration.
-                            let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
+                            let Ok(mut record) = serde_json::from_slice::<TapeRecordV1>(line) else {
                                 continue;
                             };
+                            record.end_offset = tail.offset() as usize - pending.len();
                             if !send_event_or_shutdown(
                                 &tx,
                                 &mut shutdown_rx,
@@ -501,10 +505,23 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
 pub(super) async fn write_agent_input(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    text: &str,
+    expected_root_pid: Option<u64>,
+    record: &alan_agent_protocol::UserInputRecord,
 ) -> Result<()> {
+    let pinned_path;
+    let agent_path = if agent_path == "/agent/root" {
+        let pid = expected_root_pid.context("Root Agent is not attached; retry")?;
+        anyhow::ensure!(
+            super::tail::current_root_agent_pid(shell).await? == Some(pid),
+            "Root Agent changed before the task could be submitted; retry"
+        );
+        pinned_path = format!("/agent/{pid}");
+        &pinned_path
+    } else {
+        agent_path
+    };
     shell
-        .write(&agent_input_path(agent_path), text.as_bytes())
+        .write(&agent_input_path(agent_path), &record.encode_payload()?)
         .await
         .map_err(|err| anyhow!("write agent input failed: {err:?}"))
 }
@@ -878,6 +895,8 @@ pub(super) struct ActionSnapshot {
 
 #[derive(Deserialize)]
 pub(super) struct TapeRecordV1 {
+    #[serde(skip)]
+    pub(super) end_offset: usize,
     #[allow(
         dead_code,
         reason = "version is part of the persisted tape schema even though deserialization validates it elsewhere"

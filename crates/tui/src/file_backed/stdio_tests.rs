@@ -64,54 +64,6 @@ fn interactive_task_lock_is_shared_and_released_after_the_turn() {
 }
 
 #[test]
-fn root_agent_interrupt_waits_until_the_submitted_turn_is_accepted() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        observed_active: false,
-        interrupt_requested: false,
-        submitted_at_ms: 20,
-        prior_matching_turns: 0,
-    });
-
-    assert!(!request_pending_root_interrupt(&mut pending));
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert!(pending.as_ref().unwrap().interrupt_requested);
-
-    assert!(observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Running
-    ));
-    assert!(!pending.as_ref().unwrap().interrupt_requested);
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert_eq!(pending, None);
-}
-
-#[test]
-fn pending_root_agent_interrupt_is_discarded_if_task_settles_before_activation() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        observed_active: false,
-        interrupt_requested: false,
-        submitted_at_ms: 20,
-        prior_matching_turns: 0,
-    });
-
-    assert!(!request_pending_root_interrupt(&mut pending));
-    pending.as_mut().unwrap().observed_active = true;
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert_eq!(pending, None);
-}
-
-#[test]
 fn only_a_plain_enter_submits_a_new_agent_task() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.composer.set_text("do work");
@@ -417,10 +369,14 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         ))),
         Access::ReadOnly,
     );
+    shell.write(
+        "/agent/root/machine/tape",
+        b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\",\"submission_id\":\"other-client\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"other client answer\",\"submission_id\":\"other-client\"}\n",
+    ).await.unwrap();
     shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n",
+            &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n"),
         )
         .await
         .unwrap();
@@ -432,6 +388,14 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         .await
         .unwrap();
 
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            &completion(alan_agent_protocol::UiInputStatus::Completed, None),
+        )
+        .await
+        .unwrap();
+
     assert!(
         watchers
             .refresh_root_agent_attachment(
@@ -439,7 +403,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, 0)),
+                Some(("current task", 20, INPUT_ID)),
                 &tx,
             )
             .await
@@ -564,7 +528,6 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
     let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
         .await
         .unwrap();
-    let prior_matching_turns = app.tape_user_prompt_count("same task");
     app.transcript.clear();
     app.transcript
         .push(HistoryCell::User("same task".to_string()));
@@ -607,7 +570,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("same task", 20, prior_matching_turns)),
+                Some(("same task", 20, INPUT_ID)),
                 &tx,
             )
             .await
@@ -617,7 +580,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
         vec![
             HistoryCell::User("same task".to_string()),
             HistoryCell::Error(
-                "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
+                "Root Agent changed without correlated completion evidence; outcome is unknown"
                     .to_string(),
             ),
         ]
@@ -664,6 +627,17 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
         .await
         .unwrap();
 
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            &completion(
+                alan_agent_protocol::UiInputStatus::Failed,
+                Some("provider unavailable"),
+            ),
+        )
+        .await
+        .unwrap();
+
     assert!(
         watchers
             .refresh_root_agent_attachment(
@@ -671,7 +645,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, 0)),
+                Some(("current task", 20, INPUT_ID)),
                 &tx,
             )
             .await

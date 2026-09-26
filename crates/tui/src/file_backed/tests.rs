@@ -10,6 +10,7 @@ use ratatui::backend::TestBackend;
 
 fn tape_message(role: &str, content: &str) -> TapeRecordV1 {
     TapeRecordV1 {
+        end_offset: 0,
         version: 1,
         kind: "message".into(),
         role: role.into(),
@@ -113,23 +114,25 @@ fn root_agent_file_paths_pin_to_a_process_id() {
 }
 
 #[test]
-fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
+fn root_agent_completion_requires_its_own_input_id() {
     let mut pending = Some(PendingRootAgentTurn {
         input: "current task".to_string(),
+        submission_id: "input-one".into(),
+        submitted_process: Some(1),
         observed_active: false,
         interrupt_requested: false,
         submitted_at_ms: 20,
-        prior_matching_turns: 0,
     });
     observe_root_agent_activity(&mut pending, UiActivityState::Idle);
     assert_eq!(
         pending,
         Some(PendingRootAgentTurn {
             input: "current task".to_string(),
+            submission_id: "input-one".into(),
+            submitted_process: Some(1),
             observed_active: false,
             interrupt_requested: false,
             submitted_at_ms: 20,
-            prior_matching_turns: 0,
         }),
         "streamed assistant output is not proof that the turn completed"
     );
@@ -139,15 +142,35 @@ fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
         pending,
         Some(PendingRootAgentTurn {
             input: "current task".to_string(),
+            submission_id: "input-one".into(),
+            submitted_process: Some(1),
             observed_active: true,
             interrupt_requested: false,
             submitted_at_ms: 20,
-            prior_matching_turns: 0,
         })
     );
 
     observe_root_agent_activity(&mut pending, UiActivityState::Idle);
-
+    assert!(pending.is_some(), "global idle does not settle an input");
+    observe_root_agent_completion(
+        &mut pending,
+        &UiEvent::InputCompleted {
+            submission_ids: vec!["another-input".into()],
+            status: alan_agent_protocol::UiInputStatus::Completed,
+            error: None,
+        },
+        &mut FileBackedApp::new("/agent/root".into()),
+    );
+    assert!(pending.is_some());
+    observe_root_agent_completion(
+        &mut pending,
+        &UiEvent::InputCompleted {
+            submission_ids: vec!["another-input".into(), "input-one".into()],
+            status: alan_agent_protocol::UiInputStatus::Completed,
+            error: None,
+        },
+        &mut FileBackedApp::new("/agent/root".into()),
+    );
     assert_eq!(pending, None);
 }
 
@@ -528,13 +551,23 @@ async fn write_agent_input_targets_agent_surface() {
         .await;
     let agent_path = format!("/agent/{pid}");
 
-    write_agent_input(&shell, &agent_path, "hello through files")
+    let record = alan_agent_protocol::UserInputRecord::new(
+        alan_agent_protocol::InputIntent::Agent,
+        alan_agent_protocol::InputMode::FollowUp,
+        "hello through files",
+    );
+    write_agent_input(&shell, &agent_path, None, &record)
         .await
         .unwrap();
 
     let echoed =
         String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
-    assert_eq!(echoed, "19\nhello through files");
+    let (length, payload) = echoed.split_once('\n').unwrap();
+    assert_eq!(length.parse::<usize>().unwrap(), payload.len());
+    assert_eq!(
+        alan_agent_protocol::UserInputRecord::decode_payload(payload.as_bytes()).unwrap(),
+        Some(record)
+    );
 
     // Esc interrupts through the agent-runtime surface (machine/ctl), not
     // kernel process lifecycle: /proc/<pid>/ctl interrupt would terminate
