@@ -1,5 +1,6 @@
 use super::command_interpreters::{
-    leading_eval_flag, opaque_command_dispatcher_display, opaque_script_interpreter_display,
+    AwkArgumentRole, awk_next_argument_role, awk_program_has_uninspectable_io, leading_eval_flag,
+    opaque_command_dispatcher_display, opaque_script_interpreter_display,
 };
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
 use anyhow::{Result, anyhow};
@@ -8,6 +9,21 @@ use std::path::Path;
 pub(super) fn validate_nested_command_evaluators(
     commands: &[Vec<String>],
     backend_name: &str,
+) -> Result<()> {
+    validate_nested_command_evaluators_inner(commands, backend_name, false)
+}
+
+pub(super) fn validate_protected_command_evaluators(
+    commands: &[Vec<String>],
+    backend_name: &str,
+) -> Result<()> {
+    validate_nested_command_evaluators_inner(commands, backend_name, true)
+}
+
+fn validate_nested_command_evaluators_inner(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    allow_inspectable: bool,
 ) -> Result<()> {
     for words in commands {
         let Some(view) = nested_evaluator_view(words) else {
@@ -35,6 +51,30 @@ pub(super) fn validate_nested_command_evaluators(
                 backend_name,
                 dispatcher
             ));
+        }
+        if allow_inspectable && shell_wrapper_inline_script(words)?.is_some() {
+            continue;
+        }
+        if allow_inspectable && matches!(view.command, "awk" | "gawk" | "mawk" | "nawk") {
+            if view.args.iter().any(|arg| {
+                exact_or_inline_option_with_value(arg, &["-f", "-i"], &["--file", "--include"])
+            }) {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects opaque AWK script files",
+                    backend_name
+                ));
+            }
+            if let Some(program) = view.args.iter().enumerate().find_map(|(index, candidate)| {
+                (awk_next_argument_role(&view.args[..index], candidate) == AwkArgumentRole::Program)
+                    .then_some(candidate.as_str())
+            }) && awk_program_has_uninspectable_io(program)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects AWK programs with uninspectable file or command I/O",
+                    backend_name
+                ));
+            }
+            continue;
         }
         if let Some(flag) = leading_eval_flag(view.command, view.args) {
             return Err(anyhow!(
