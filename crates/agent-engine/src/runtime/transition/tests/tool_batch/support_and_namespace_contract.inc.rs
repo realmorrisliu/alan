@@ -704,6 +704,7 @@
             arguments,
         }];
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };

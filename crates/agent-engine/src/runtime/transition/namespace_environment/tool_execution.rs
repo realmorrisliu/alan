@@ -4,8 +4,9 @@ use anyhow::{Context, Result, bail};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    NamespaceActionRecord, NamespaceToolActionOutput, NamespaceToolExecution,
-    client::NamespaceClient, process_files::NamespaceProcessResult,
+    NamespaceActionRecord, NamespaceToolActionEvidence, NamespaceToolActionOutput,
+    NamespaceToolExecution, NamespaceToolProcessError, client::NamespaceClient,
+    process_files::NamespaceProcessResult,
 };
 use crate::{evidence::redact_durable_evidence_text, runtime::ToolPackageManifest};
 
@@ -79,7 +80,7 @@ impl NamespaceToolExecution {
         S: Into<String>,
     {
         let cancel = CancellationToken::new();
-        self.run_action_with_cancel_and_timeout(tool_name, executable, args, &cancel, 30)
+        self.run_action_with_cancel_and_timeout(tool_name, None, executable, args, &cancel, 30)
             .await
     }
 
@@ -95,13 +96,14 @@ impl NamespaceToolExecution {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.run_action_with_cancel_and_timeout(tool_name, executable, args, cancel, 30)
+        self.run_action_with_cancel_and_timeout(tool_name, None, executable, args, cancel, 30)
             .await
     }
 
     pub(crate) async fn run_action_with_cancel_and_timeout<I, S>(
         &self,
         tool_name: &str,
+        evidence: Option<NamespaceToolActionEvidence<'_>>,
         executable: &str,
         args: I,
         cancel: &CancellationToken,
@@ -118,7 +120,10 @@ impl NamespaceToolExecution {
         let result = tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;
-                bail!("tool process {pid} cancelled");
+                return Err(NamespaceToolProcessError {
+                    source: anyhow::anyhow!("tool process {pid} cancelled"),
+                    pid,
+                }.into());
             }
             result = self.process_files.read_process_result(&pid, timeout_secs) => {
                 match result {
@@ -128,9 +133,10 @@ impl NamespaceToolExecution {
                             .process_files
                             .write_process_control_for_pid(&pid, "cancel")
                             .await;
-                        return Err(err).with_context(|| {
-                            format!("read tool process {pid} result")
-                        });
+                        return Err(NamespaceToolProcessError {
+                            source: err.context(format!("read tool process {pid} result")),
+                            pid,
+                        }.into());
                     }
                 }
             }
@@ -144,6 +150,9 @@ impl NamespaceToolExecution {
         let mut result_doc = serde_json::json!({
             "exit_code": action_exit_code,
         });
+        if let Some(evidence) = evidence {
+            result_doc["call_id"] = serde_json::json!(evidence.call_id);
+        }
         if action_exit_code != result.exit_code
             && let Some(object) = result_doc.as_object_mut()
         {
@@ -159,7 +168,7 @@ impl NamespaceToolExecution {
                 NamespaceActionRecord::new(tool_name, action_status)
                     .with_output(durable_output.text)
                     .with_result(result_doc.to_string())
-                    .with_approval("not_required")
+                    .with_approval(evidence.map_or("not_required", |evidence| evidence.approval))
                     .with_process(format!("/proc/{pid}")),
             )
             .await?;

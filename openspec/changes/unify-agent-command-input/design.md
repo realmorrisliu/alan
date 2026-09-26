@@ -280,3 +280,71 @@ are delivered. Sync only implemented deltas after merge; retain later routing
 work as active scope rather than archiving unimplemented guarantees.
 Rollback can disable automatic classification to the Agent baseline; it cannot
 undo effects already executed or bypass command governance.
+
+
+### Input record admission slice
+
+AgentFS retains its existing length-framed `io/input` transport. A versioned payload
+starts with the exact bytes `alan-input-v1\n`, followed by a JSON object containing
+`version: 1`, UUID `submission_id`, `intent` (`agent`, `force_agent`, or `command`),
+`mode` (`steer`, `follow_up`, or `next_turn`), and the exact non-empty `body`.
+Unknown fields, unsupported versions, malformed records, and empty bodies are
+rejected instead of becoming Agent prose. Ordinary text and ordinary JSON remain
+legacy input; payloads starting with `alan-input-` are reserved record framing.
+Prefix interpretation consumes only a leading `!` or `:` once, without trimming
+the body or interpreting a nested prefix.
+
+The submission-aware reader preserves the client identity, scheduling mode, and
+intent in `Submission`. Legacy submissions default to Agent intent. Text-only
+readers reject versioned payloads rather than discard their identity. Command
+records in follow-up mode execute through the governed Tool Process path without
+model generation, including approval replay. Standalone `cd` and shared cwd
+selection remain a separate implementation slice; native shell-local `cd` stays
+local to its script. Command steering and next-turn scheduling remain rejected
+pending ordered queue admission, and ordinary clients have not yet activated
+prefix framing. This slice does not complete task 2.1: multi-client completion,
+queue controls, and durable recovery remain in the following implementation slices.
+
+### Host-authorized working directory slice
+
+The Host execution adapter can validate a candidate working directory for a
+Tool Process binding. The adapter canonicalizes the selection, requires a directory
+inside a delegated Host Mount, and returns its logical namespace path. Relative
+selection stays in the current grant; an explicit absolute selection may switch
+to another delegated grant. The resolver returns a candidate only; the command dispatch slice must
+reconcile current authority before changing the Process binding. Structured tools retain their existing multi-grant authority.
+
+This internal boundary does not activate standalone `!cd` or ordered input
+admission. Those require the following explicit command dispatch slice; task 2.5
+remains incomplete.
+
+### Ordinary input admission slice
+
+Ordinary `follow_up` submissions now enter the same outer runtime FIFO for Agent
+and command intent. Only explicit steering and pending-request responses may
+enter an active transition. This prevents a later Agent follow-up from overtaking
+an earlier queued command or explicit turn. The ordinary FIFO and its pause flag belong to the Agent Machine; the Process
+loop retains a shared handle while a transition is executing. Interrupt pauses
+ordinary dispatch before cancelling active work. New ordinary input remains queued
+until `queue-v1 continue` or `queue-v1 discard` is written to `machine/ctl` (or the
+corresponding `ContinueQueue` / `DiscardQueue` operation is submitted). The TUI
+exposes `/continue` and `/discard` through its existing Machine control path and
+completion/help, so interruption leaves an ordinary way to continue working. Controls
+reject continuation/discard while active work is still settling. Discarded inputs
+receive failed Actions correlated to their original submission IDs and never run.
+Pending request responses remain ahead of ordinary admission. File input and
+Machine controls are admitted in the existing aggregate AgentFS event order.
+Ordinary controls such as compact and rollback stay behind earlier input; only
+interrupt, queue continuation/discard and pending-request responses may bypass
+ordinary dispatch. Active transitions read the finite ready event batch on each
+wake, so an interrupt is not delayed by a timer interval per queued input. Idle
+admission also takes a finite snapshot before checking API controls and dispatching
+queued work; continuous file arrivals cannot keep extending that admission pass.
+The Host connects the existing Process event bridge so redirected Process input
+participates in that same order. API controls retain their receiver position,
+so a discard cannot consume a later API submission. There is no separate input
+reader channel whose buffered frames can cross an interrupt/discard boundary.
+
+This is in-memory ordinary-queue control only. Rollout/checkpoint recovery,
+next-turn queue integration, client prefix/control activation and complete
+per-client result delivery remain pending; tasks 2.1, 2.5, 2.6 and 2.8 stay open.

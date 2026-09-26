@@ -1,5 +1,6 @@
 use super::command_interpreters::{
     leading_eval_flag, opaque_command_dispatcher_display, opaque_script_interpreter_display,
+    validate_awk_arguments,
 };
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
 use anyhow::{Result, anyhow};
@@ -8,6 +9,21 @@ use std::path::Path;
 pub(super) fn validate_nested_command_evaluators(
     commands: &[Vec<String>],
     backend_name: &str,
+) -> Result<()> {
+    validate_nested_command_evaluators_inner(commands, backend_name, false)
+}
+
+pub(super) fn validate_protected_command_evaluators(
+    commands: &[Vec<String>],
+    backend_name: &str,
+) -> Result<()> {
+    validate_nested_command_evaluators_inner(commands, backend_name, true)
+}
+
+fn validate_nested_command_evaluators_inner(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    allow_inspectable: bool,
 ) -> Result<()> {
     for words in commands {
         let Some(view) = nested_evaluator_view(words) else {
@@ -35,6 +51,26 @@ pub(super) fn validate_nested_command_evaluators(
                 backend_name,
                 dispatcher
             ));
+        }
+        if allow_inspectable && shell_wrapper_inline_script(words)?.is_some() {
+            continue;
+        }
+        if matches!(view.command, "awk" | "gawk" | "mawk" | "nawk") {
+            if !allow_inspectable
+                && let Some(interpreter) =
+                    opaque_script_interpreter_display(&view.display, view.command, view.args)
+            {
+                return Err(anyhow!(
+                    "Sandbox backend {} rejects opaque script interpreters like {} because script bodies cannot be validated safely",
+                    backend_name,
+                    interpreter
+                ));
+            }
+            validate_awk_arguments(view.args)
+                .map_err(|reason| anyhow!("Sandbox backend {} rejects {}", backend_name, reason))?;
+            if allow_inspectable {
+                continue;
+            }
         }
         if let Some(flag) = leading_eval_flag(view.command, view.args) {
             return Err(anyhow!(

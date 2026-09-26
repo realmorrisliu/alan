@@ -68,6 +68,12 @@ pub(crate) struct NormalizedToolCall {
     pub(crate) arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingToolReplayBatch {
+    pub(crate) tool_calls: Vec<NormalizedToolCall>,
+    pub(crate) resume_with_generation: bool,
+}
+
 /// Best-effort work retained by Machine until the outer Process loop can run it.
 #[derive(Debug, Clone)]
 pub(crate) enum DeferredRuntimeAction {
@@ -79,7 +85,7 @@ pub(super) struct MachineTransitionState {
     /// Identifier of the submission currently accepted by this Machine.
     current_submission_id: Option<String>,
     pending: HashMap<String, PendingYield>,
-    pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
+    pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
     turn_activity: TurnActivityState,
@@ -88,6 +94,8 @@ pub(super) struct MachineTransitionState {
     buffered_inband_submissions: VecDeque<Submission>,
     /// Queued context for `InputMode::NextTurn`.
     queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
+    /// Ordinary queued work and pause state survive reset_turn, like next-turn input.
+    pub(super) input_queue: std::sync::Arc<std::sync::Mutex<super::input_queue::MachineInputQueue>>,
     /// Number of automatic mid-turn compactions already performed in the active turn.
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
@@ -488,16 +496,21 @@ impl AgentMachine {
         &mut self,
         checkpoint_id: impl Into<String>,
         tool_calls: Vec<NormalizedToolCall>,
+        resume_with_generation: bool,
     ) {
-        self.transition_state
-            .pending_tool_replay_batches
-            .insert(checkpoint_id.into(), tool_calls);
+        self.transition_state.pending_tool_replay_batches.insert(
+            checkpoint_id.into(),
+            PendingToolReplayBatch {
+                tool_calls,
+                resume_with_generation,
+            },
+        );
     }
 
     pub(crate) fn take_tool_replay_batch(
         &mut self,
         checkpoint_id: &str,
-    ) -> Option<Vec<NormalizedToolCall>> {
+    ) -> Option<PendingToolReplayBatch> {
         self.transition_state
             .pending_tool_replay_batches
             .remove(checkpoint_id)
@@ -823,6 +836,7 @@ mod tests {
     fn test_turn_state_buffers_inband_submissions_fifo() {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
@@ -830,6 +844,7 @@ mod tests {
             },
         });
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s2".to_string(),
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
@@ -861,6 +876,7 @@ mod tests {
     fn test_turn_state_drain_buffered_inband_submissions_preserves_order() {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
@@ -868,6 +884,7 @@ mod tests {
             },
         });
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s2".to_string(),
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
@@ -888,6 +905,7 @@ mod tests {
     fn test_clear_buffered_inband_submissions_returns_count() {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
@@ -895,6 +913,7 @@ mod tests {
             },
         });
         state.push_buffered_inband_submission(Submission {
+            intent: Default::default(),
             id: "s2".to_string(),
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("two")],
@@ -960,12 +979,13 @@ mod tests {
             },
         ];
 
-        state.set_tool_replay_batch("cp-1", tool_calls);
+        state.set_tool_replay_batch("cp-1", tool_calls, true);
 
         let retrieved = state.take_tool_replay_batch("cp-1").unwrap();
-        assert_eq!(retrieved.len(), 2);
-        assert_eq!(retrieved[0].id, "call-1");
-        assert_eq!(retrieved[1].id, "call-2");
+        assert!(retrieved.resume_with_generation);
+        assert_eq!(retrieved.tool_calls.len(), 2);
+        assert_eq!(retrieved.tool_calls[0].id, "call-1");
+        assert_eq!(retrieved.tool_calls[1].id, "call-2");
 
         // Should be removed after take
         assert!(state.take_tool_replay_batch("cp-1").is_none());

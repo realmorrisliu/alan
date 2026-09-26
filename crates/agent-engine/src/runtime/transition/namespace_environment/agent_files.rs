@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 
 use alan_agent_protocol::{
     ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
-    UiPlanSnapshot, UiThinkingSnapshot,
+    UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
 use alan_ap::{Fid, OpenMode};
 use anyhow::{Context, Result, bail};
@@ -24,7 +24,7 @@ impl NamespaceAgentFiles {
         NamespaceClient::new(self.root.clone())
     }
 
-    pub async fn read_next_input(&self) -> Result<String> {
+    async fn read_next_input_payload(&self) -> Result<String> {
         let input_path = format!("{}/io/input", self.agent_path);
         let client = self.client();
         let offset = self.input_offset.load(Ordering::Relaxed);
@@ -38,15 +38,42 @@ impl NamespaceAgentFiles {
         Ok(frame.message)
     }
 
+    /// Legacy text-only reader. Versioned input must retain its submission identity.
+    pub async fn read_next_input(&self) -> Result<String> {
+        let payload = self.read_next_input_payload().await?;
+        if UserInputRecord::decode_payload(payload.as_bytes())?.is_some() {
+            bail!("versioned input requires submission-aware admission");
+        }
+        Ok(payload)
+    }
+
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
-        let message = self.read_next_input().await?;
+        let message = self.read_next_input_payload().await?;
+        if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
+            return Ok(Submission {
+                id: record.submission_id,
+                intent: record.intent,
+                op: Op::Input {
+                    parts: vec![ContentPart::text(record.body)],
+                    mode: record.mode,
+                },
+            });
+        }
         Ok(Submission::new(Op::Input {
             parts: vec![ContentPart::text(message)],
             mode,
         }))
     }
 
-    pub async fn read_next_machine_control_submission(&self) -> Result<Option<Submission>> {
+    pub(crate) async fn read_next_runtime_submission(&self) -> Result<Option<Submission>> {
+        self.read_runtime_submissions(1).await?.pop().transpose()
+    }
+
+    pub(crate) async fn read_ready_runtime_submissions(&self) -> Result<Vec<Result<Submission>>> {
+        self.read_runtime_submissions(usize::MAX).await
+    }
+
+    async fn read_runtime_submissions(&self, limit: usize) -> Result<Vec<Result<Submission>>> {
         let events_path = format!("{}/events", self.agent_path);
         let client = self.client();
         let offset = self.control_offset.load(Ordering::Relaxed);
@@ -55,7 +82,7 @@ impl NamespaceAgentFiles {
             .await
             .with_context(|| format!("stat agent events from {events_path}"))?;
         if stat.length <= offset {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         let raw = client
@@ -63,26 +90,37 @@ impl NamespaceAgentFiles {
             .await
             .with_context(|| format!("read agent events from {events_path}"))?;
         let mut consumed = 0_u64;
+        let mut submissions = Vec::new();
 
         for line in raw.split_inclusive(|byte| *byte == b'\n') {
             if !line.ends_with(b"\n") {
                 break;
             }
             consumed += line.len() as u64;
-            let record = String::from_utf8(line[..line.len() - 1].to_vec())
-                .context("agent events record is not utf8")?;
-            if let Some(command) = record.strip_prefix("ctl:") {
-                self.control_offset
-                    .store(offset + consumed, Ordering::Relaxed);
-                if let Some(submission) = machine_control_submission(command) {
-                    return Ok(Some(submission));
+            self.control_offset
+                .store(offset + consumed, Ordering::Relaxed);
+            match std::str::from_utf8(&line[..line.len() - 1]) {
+                Ok(record) if record.starts_with("input:") => {
+                    submissions.push(self.read_next_input_submission(InputMode::FollowUp).await);
                 }
+                Ok(record) => {
+                    if let Some(submission) = record
+                        .strip_prefix("ctl:")
+                        .and_then(machine_control_submission)
+                    {
+                        submissions.push(Ok(submission));
+                    }
+                }
+                Err(error) => submissions.push(Err(error.into())),
+            }
+            if submissions.len() >= limit {
+                break;
             }
         }
 
         self.control_offset
             .store(offset + consumed, Ordering::Relaxed);
-        Ok(None)
+        Ok(submissions)
     }
 
     pub async fn resume_submission_from_answered_request(
@@ -131,7 +169,6 @@ impl NamespaceAgentFiles {
         write_agent_output(&client, &self.agent_path, response).await
     }
 
-    #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_tape_records(&client, &self.agent_path, [("user", input)]).await
@@ -195,6 +232,21 @@ impl NamespaceAgentFiles {
                 .with_options(options),
         )
         .await
+    }
+
+    pub(crate) async fn write_rejected_command(&self, id: &str, message: &str) -> Result<()> {
+        self.write_action(
+            NamespaceActionRecord::new("bash", "failed")
+                .with_approval("not_required")
+                .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
+                .with_result(
+                    serde_json::json!({"call_id":id,"exit_code":1,
+                    "outcome":{"success":false,"error":message}})
+                    .to_string(),
+                ),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
@@ -523,6 +575,8 @@ fn request_response_content_part(response: String) -> ContentPart {
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
     match command.trim() {
+        "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
+        "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
         "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
         // Turn interrupt is agent-runtime control (stop the current turn,
@@ -574,9 +628,6 @@ async fn write_action_record(
     client
         .write_document(&format!("{action_path}/name"), record.name.as_bytes())
         .await?;
-    client
-        .write_document(&format!("{action_path}/status"), record.status.as_bytes())
-        .await?;
     if let Some(output) = record.output {
         client
             .write_document(&format!("{action_path}/output"), output.as_bytes())
@@ -597,6 +648,10 @@ async fn write_action_record(
             .write_document(&format!("{action_path}/process"), process.as_bytes())
             .await?;
     }
+    // The terminal status event publishes a complete Action snapshot to watchers.
+    client
+        .write_document(&format!("{action_path}/status"), record.status.as_bytes())
+        .await?;
     Ok(id)
 }
 

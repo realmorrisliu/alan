@@ -91,3 +91,31 @@ async fn many_readers_each_hold_their_own_offset() {
     assert_eq!(a, b"abcdef");
     assert_eq!(b, b"def");
 }
+
+#[tokio::test]
+async fn buffered_operations_do_not_suspend_with_exhausted_task_budget() {
+    use std::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    let stream = alan_ap::Stream::new();
+    while tokio::task::coop::has_budget_remaining() {
+        tokio::task::consume_budget().await;
+    }
+    let mut append = pin!(stream.append(b"ready"));
+    poll_fn(|cx| {
+        assert!(
+            append.as_mut().poll(cx).is_ready(),
+            "in-memory append must not suspend while a file-server state lock is held"
+        );
+        Poll::Ready(())
+    })
+    .await;
+    let mut length = pin!(stream.len());
+    poll_fn(|cx| {
+        assert_eq!(length.as_mut().poll(cx), Poll::Ready(5));
+        Poll::Ready(())
+    })
+    .await;
+}

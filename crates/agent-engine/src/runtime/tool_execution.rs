@@ -19,7 +19,10 @@ use crate::{
 
 use super::{
     tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan},
-    transition::{NamespaceAgentFiles, NamespaceToolActionOutput, NamespaceToolExecution},
+    transition::{
+        NamespaceAgentFiles, NamespaceToolActionEvidence, NamespaceToolActionOutput,
+        NamespaceToolExecution, NamespaceToolProcessError,
+    },
     turn_support::{check_turn_cancelled, tool_result_preview},
 };
 
@@ -33,6 +36,7 @@ pub(super) struct ToolExecutionRequest<'a> {
     pub(super) tool_timeout_secs: usize,
     pub(super) tool_capability: ToolCapability,
     pub(super) tool_audit: Option<ToolDecisionAudit>,
+    pub(super) approval: &'static str,
     pub(super) allow_approved_unknown_effect_execution: bool,
     pub(super) cancel: &'a CancellationToken,
 }
@@ -59,6 +63,7 @@ where
         tool_timeout_secs,
         tool_capability,
         tool_audit,
+        approval,
         allow_approved_unknown_effect_execution,
         cancel,
     } = request;
@@ -213,11 +218,30 @@ where
     let tool_result = execute_tool_effect(
         runtime.tool_execution,
         &tool_call.name,
+        NamespaceToolActionEvidence {
+            call_id: &tool_call.id,
+            approval,
+        },
         tool_arguments.clone(),
         cancel,
         tool_timeout_secs,
     )
     .await;
+    // Preserve the spawned Process before cancellation resets transition state.
+    if cancel.is_cancelled() {
+        let payload = match &tool_result {
+            Ok(value) => Some(tool_payload_for_tape(&runtime.agent_files, value).await),
+            Err(error) if error.downcast_ref::<NamespaceToolProcessError>().is_some() => {
+                Some(tool_error_payload(error))
+            }
+            Err(_) => None,
+        };
+        if let Some(payload) = payload {
+            runtime
+                .machine
+                .add_tool_message(&tool_call.id, &tool_call.name, payload);
+        }
+    }
     if cancel.is_cancelled()
         && check_turn_cancelled(
             runtime.machine,
@@ -282,7 +306,7 @@ where
             Ok(ToolExecutionOutcome::Completed)
         }
         Err(err) => {
-            let error_payload = json!({"error": err.to_string()});
+            let error_payload = tool_error_payload(&err);
             if let (Some(effect), Some(effect_start)) =
                 (effect_lifecycle.as_ref(), effect_start.as_ref())
             {
@@ -323,6 +347,14 @@ where
             Ok(ToolExecutionOutcome::Completed)
         }
     }
+}
+
+fn tool_error_payload(error: &anyhow::Error) -> Value {
+    let mut payload = json!({"success": false, "error": error.to_string()});
+    if let Some(process_error) = error.downcast_ref::<NamespaceToolProcessError>() {
+        payload["process"] = json!(format!("/proc/{}", process_error.pid));
+    }
+    payload
 }
 
 pub(super) fn namespace_tool_payload(tool: NamespaceToolActionOutput) -> Result<Value> {
@@ -402,6 +434,7 @@ pub(super) async fn tool_payload_for_tape(
 pub(super) async fn execute_tool_effect(
     tools: NamespaceToolExecution,
     tool_name: &str,
+    evidence: NamespaceToolActionEvidence<'_>,
     tool_arguments: Value,
     cancel: &CancellationToken,
     timeout_secs: usize,
@@ -412,6 +445,7 @@ pub(super) async fn execute_tool_effect(
     let tool = tools
         .run_action_with_cancel_and_timeout(
             tool_name,
+            Some(evidence),
             &executable,
             [arguments_doc],
             cancel,

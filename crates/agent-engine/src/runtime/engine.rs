@@ -12,44 +12,54 @@ use super::turn_input::{
     namespace_pending_resume_submission,
 };
 use super::{NamespaceRuntimeEnvironment, transition::RuntimeLoopState};
-use crate::agent_machine::AgentMachine;
-use alan_agent_protocol::{InputMode, Submission};
+use crate::agent_machine::{
+    AgentMachine,
+    input_queue::{MachineInputQueue, QueuedRuntimeItem},
+};
+use alan_agent_protocol::Submission;
 use anyhow::Result;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-/// Queues for managing submissions.
-///
-/// There are two submission queues in the agent runtime:
-/// Requeue leftover inband submissions from turn state and broker to the outer queue.
+#[path = "engine_queue_controls.rs"]
+mod queue_controls;
+
+/// Return unconsumed steering input to the Machine-owned ordinary queue.
 async fn requeue_leftover_inband_submissions(
     broker: &TurnInputBroker,
     machine: &mut AgentMachine,
-    queued_submissions: &mut VecDeque<QueuedRuntimeItem>,
+    queued_submissions: &Arc<Mutex<MachineInputQueue>>,
 ) -> usize {
     let broker_drained = broker.drain().await;
     let turn_drained = machine.drain_buffered_inband_submissions();
     let count = broker_drained.len() + turn_drained.len();
     for submission in turn_drained {
-        push_submission_ahead_of_deferred(queued_submissions, submission);
+        push_submission_ahead_of_deferred(
+            &mut queued_submissions
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
     }
     for submission in broker_drained {
-        push_submission_ahead_of_deferred(queued_submissions, submission);
+        push_submission_ahead_of_deferred(
+            &mut queued_submissions
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
     }
     count
 }
 
-/// 1. The `outer_queue` - cross-turn queue for submissions that are not in the active turn.
-/// 2. The `active_turn_broker` - channel for in-turn submissions during active turn execution.
-enum QueuedRuntimeItem {
-    Submission(Submission),
-    Deferred(crate::agent_machine::DeferredRuntimeAction),
-}
-
+/// Ordinary inputs precede deferred housekeeping without changing FIFO order.
 fn push_submission_ahead_of_deferred(
     outer_queue: &mut VecDeque<QueuedRuntimeItem>,
     submission: Submission,
@@ -86,10 +96,10 @@ async fn read_pending_namespace_resume_submission(
     }
 }
 
-async fn read_pending_namespace_control_submission(
+async fn read_pending_namespace_submission(
     namespace: &NamespaceAgentFiles,
 ) -> Option<Result<Submission>> {
-    match namespace.read_next_machine_control_submission().await {
+    match namespace.read_next_runtime_submission().await {
         Ok(Some(submission)) => Some(Ok(submission)),
         Ok(None) => None,
         Err(err) => Some(Err(err)),
@@ -98,41 +108,77 @@ async fn read_pending_namespace_control_submission(
 
 #[derive(Default)]
 struct RuntimeSubmissionQueues {
-    /// Cross-turn queue for submissions.
-    outer_queue: VecDeque<QueuedRuntimeItem>,
+    /// Shared handle to the Agent Machine's ordinary queue.
+    outer_queue: Arc<Mutex<MachineInputQueue>>,
     /// The broker that queues in-turn submissions.
     active_turn_broker: TurnInputBroker,
 }
 
 impl RuntimeSubmissionQueues {
     fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
-        self.outer_queue.pop_front()
+        let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+        if queue.paused {
+            None
+        } else {
+            queue.pending.pop_front()
+        }
     }
 
     fn pop_outer_deferred(&mut self) -> Option<QueuedRuntimeItem> {
-        let deferred_index = self
-            .outer_queue
+        let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+        let deferred_index = queue
+            .pending
             .iter()
             .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))?;
-        self.outer_queue.remove(deferred_index)
+        queue.pending.remove(deferred_index)
     }
 
     fn push_outer_submission(&mut self, submission: Submission) {
-        push_submission_ahead_of_deferred(&mut self.outer_queue, submission);
+        push_submission_ahead_of_deferred(
+            &mut self
+                .outer_queue
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
+    }
+
+    async fn admit_during_submission(
+        &mut self,
+        mut incoming: Submission,
+        active_intent: alan_agent_protocol::InputIntent,
+        accepts_inband: bool,
+    ) {
+        // Commands have no Agent generation to steer. Preserve the input as
+        // ordinary follow-up work, including while command approval is pending.
+        if active_intent == alan_agent_protocol::InputIntent::Command
+            && incoming.intent != alan_agent_protocol::InputIntent::Command
+            && let alan_agent_protocol::Op::Input { mode, .. } = &mut incoming.op
+            && *mode == alan_agent_protocol::InputMode::Steer
+        {
+            *mode = alan_agent_protocol::InputMode::FollowUp;
+        }
+        if accepts_inband
+            && is_turn_inband_submission(&incoming)
+            && self.active_turn_broker.push(incoming.clone()).await
+        {
+            return;
+        }
+        self.push_outer_submission(incoming);
     }
 
     fn push_outer_deferred(&mut self, action: crate::agent_machine::DeferredRuntimeAction) {
         self.outer_queue
+            .lock()
+            .expect("input queue poisoned")
+            .pending
             .push_back(QueuedRuntimeItem::Deferred(action));
     }
 
     async fn requeue_active_turn_leftovers(&mut self, machine: &mut AgentMachine) -> usize {
-        requeue_leftover_inband_submissions(
-            &self.active_turn_broker,
-            machine,
-            &mut self.outer_queue,
-        )
-        .await
+        requeue_leftover_inband_submissions(&self.active_turn_broker, machine, &self.outer_queue)
+            .await
     }
 }
 
@@ -455,24 +501,44 @@ fn spawn_with_prepared_runtime_environment(
         let mut submissions_closed = false;
         let mut shutdown_requested = false;
 
-        let mut queues = RuntimeSubmissionQueues::default();
-        let input_environment = state.agent_files();
-        let (namespace_input_tx, mut namespace_input_rx) = mpsc::channel(1);
-        let namespace_input_task = tokio::spawn(async move {
-            loop {
-                let submission = input_environment
-                    .read_next_input_submission(InputMode::FollowUp)
-                    .await;
-                if namespace_input_tx.send(submission).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let mut queues = RuntimeSubmissionQueues {
+            outer_queue: state.machine.input_queue(),
+            ..Default::default()
+        };
 
+        let mut namespace_ready = VecDeque::new();
+        let mut namespace_batch_admitted = false;
         loop {
+            if !shutdown_requested && !namespace_batch_admitted {
+                namespace_ready = match state.agent_files().read_ready_runtime_submissions().await {
+                    Ok(ready) => ready.into(),
+                    Err(error) => VecDeque::from([Err(error)]),
+                };
+                namespace_batch_admitted = true;
+            }
+            let mut from_queue = false;
             let queued_item = if shutdown_requested {
                 queues.pop_outer_deferred()
-            } else if let Some(queued_item) = queues.pop_outer() {
+            } else if let Some(namespace_control) = namespace_ready.pop_front() {
+                match namespace_control {
+                    Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
+                    Err(err) => {
+                        error!(
+                            error = %format!("{err:#}"),
+                            "Failed to read namespace input/control event"
+                        );
+                        None
+                    }
+                }
+            } else if let Some(input) = queues.admit_api_before_dispatch(&mut sub_rx) {
+                Some(QueuedRuntimeItem::Submission(input))
+            } else if let Some(queued_item) = if state.machine.has_pending_interaction() {
+                None
+            } else {
+                queues.pop_outer()
+            } {
+                from_queue = true;
+                namespace_batch_admitted = false;
                 Some(queued_item)
             } else if let Some(namespace_resume) =
                 read_pending_namespace_resume_submission(&state).await
@@ -487,43 +553,21 @@ fn spawn_with_prepared_runtime_environment(
                         None
                     }
                 }
-            } else if let Some(namespace_control) =
-                read_pending_namespace_control_submission(&state.agent_files()).await
-            {
-                match namespace_control {
-                    Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
-                    Err(err) => {
-                        error!(
-                            error = %format!("{err:#}"),
-                            "Failed to read namespace machine/ctl command"
-                        );
-                        None
-                    }
-                }
             } else if submissions_closed {
                 None
             } else {
+                namespace_batch_admitted = false;
                 let namespace_control = state.agent_files();
                 let poll_pending_namespace_response = state.machine.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
-                    namespace_submission = namespace_input_rx.recv() => {
-                        match namespace_submission {
-                            Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
-                            Some(Err(err)) => {
-                                error!(error = %format!("{err:#}"), "Failed to read namespace io/input frame");
-                                None
-                            }
-                            None => None,
-                        }
-                    }
                     _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                        match read_pending_namespace_control_submission(&namespace_control).await {
+                        match read_pending_namespace_submission(&namespace_control).await {
                             Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
                             Some(Err(err)) => {
                                 error!(
                                     error = %format!("{err:#}"),
-                                    "Failed to read namespace machine/ctl command"
+                                    "Failed to read namespace input/control event"
                                 );
                                 None
                             }
@@ -566,8 +610,39 @@ fn spawn_with_prepared_runtime_environment(
 
             match queued_item {
                 QueuedRuntimeItem::Submission(submission) => {
+                    if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
+                        && submission.intent != alan_agent_protocol::InputIntent::Command
+                        && state.machine.has_pending_interaction()
+                    {
+                        queues.pause();
+                    }
+                    if queues
+                        .handle_control(&submission, &state.agent_files(), None)
+                        .await
+                    {
+                        continue;
+                    }
+                    // Only boundary controls may overtake admitted work. Ordinary
+                    // Machine controls share the same FIFO as Turn/Input records.
+                    if (!from_queue
+                        && !matches!(
+                            submission.op,
+                            alan_agent_protocol::Op::Interrupt
+                                | alan_agent_protocol::Op::Resume { .. }
+                        ))
+                        || ((queues.is_paused() || state.machine.has_pending_interaction())
+                            && matches!(
+                                submission.op,
+                                alan_agent_protocol::Op::Turn { .. }
+                                    | alan_agent_protocol::Op::Input { .. }
+                            ))
+                    {
+                        queues.push_outer_submission(submission);
+                        continue;
+                    }
                     debug!(?submission.id, "Received submission");
                     let accepts_inband = accepts_inband_submissions(&submission.op);
+                    let active_intent = submission.intent;
 
                     let cancel = CancellationToken::new();
 
@@ -612,7 +687,13 @@ fn spawn_with_prepared_runtime_environment(
                                     let error_msg = format!("Error handling submission: {}", e);
                                     error!(error = %error_msg);
                                 }
-                                queues.outer_queue.extend(
+                                if cancel.is_cancelled() {
+                                    queues.pause();
+                                }
+                                if queues.is_paused() {
+                                    let _ = super::ui_surfaces::paused(&namespace_heartbeat).await;
+                                }
+                                queues.outer_queue.lock().expect("input queue poisoned").pending.extend(
                                     outcome
                                         .deferred_actions
                                         .into_iter()
@@ -623,17 +704,10 @@ fn spawn_with_prepared_runtime_environment(
                             incoming = sub_rx.recv(), if !submissions_closed => {
                                 match incoming {
                                     Some(incoming) => {
-                                        if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
-                                            cancel.cancel();
-                                        } else if accepts_inband
-                                            && is_turn_inband_submission(&incoming.op)
-                                        {
-                                            if !queues.active_turn_broker.push(incoming.clone()).await {
-                                                queues.push_outer_submission(incoming);
-                                            }
-                                        } else {
-                                            queues.push_outer_submission(incoming);
+                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                            continue;
                                         }
+                                        queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
                                     }
                                     None => {
                                         submissions_closed = true;
@@ -641,53 +715,31 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = namespace_input_rx.recv() => {
-                                match namespace_submission {
-                                    Some(Ok(incoming)) => {
-                                        if accepts_inband && is_turn_inband_submission(&incoming.op) {
-                                            if !queues.active_turn_broker.push(incoming.clone()).await {
-                                                queues.push_outer_submission(incoming);
-                                            }
-                                        } else {
-                                            queues.push_outer_submission(incoming);
-                                        }
-                                    }
-                                    Some(Err(err)) => {
-                                        let error_msg = format!("Failed to read namespace io/input frame: {err:#}");
-                                        error!(error = %error_msg);
-                                        let _ = super::ui_surfaces::warning(
-                                            &namespace_heartbeat,
-                                            error_msg,
-                                        ).await;
-                                    }
-                                    None => {}
-                                }
-                            }
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                match read_pending_namespace_control_submission(&namespace_control).await {
-                                    Some(Ok(incoming)) => {
-                                        // A machine/ctl interrupt must cancel the
-                                        // running generation/tool immediately, like
-                                        // an Op::Interrupt arriving on sub_rx.
-                                        if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
-                                            cancel.cancel();
-                                        } else if accepts_inband && is_turn_inband_submission(&incoming.op) {
-                                            if !queues.active_turn_broker.push(incoming.clone()).await {
-                                                queues.push_outer_submission(incoming);
+                                let ready = match namespace_control.read_ready_runtime_submissions().await {
+                                    Ok(ready) => ready,
+                                    Err(error) => vec![Err(error)],
+                                };
+                                for event in ready {
+                                    match event {
+                                        Ok(incoming) => {
+                                            // A machine/ctl interrupt must cancel the
+                                            // running generation/tool immediately, like
+                                            // an Op::Interrupt arriving on sub_rx.
+                                            if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                                continue;
                                             }
-                                        } else {
-                                            queues.push_outer_submission(incoming);
+                                            queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
+                                        }
+                                        Err(err) => {
+                                            let error_msg = format!("Failed to read namespace input/control event: {err:#}");
+                                            error!(error = %error_msg);
+                                            let _ = super::ui_surfaces::warning(
+                                                &namespace_heartbeat,
+                                                error_msg,
+                                            ).await;
                                         }
                                     }
-                                    Some(Err(err)) => {
-                                        let error_msg = format!("Failed to read namespace machine/ctl command: {err:#}");
-                                        error!(error = %error_msg);
-                                        let _ = super::ui_surfaces::warning(
-                                            &namespace_heartbeat,
-                                            error_msg,
-                                        ).await;
-                                    }
-                                    None => {}
                                 }
                             }
                             _ = heartbeat_interval.tick() => {
@@ -728,8 +780,8 @@ fn spawn_with_prepared_runtime_environment(
                             incoming = sub_rx.recv(), if !submissions_closed => {
                                 match incoming {
                                     Some(incoming) => {
-                                        if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
-                                            cancel.cancel();
+                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                            continue;
                                         } else {
                                             requeue_if_cancelled = true;
                                             cancel.cancel();
@@ -741,44 +793,33 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = namespace_input_rx.recv() => {
-                                match namespace_submission {
-                                    Some(Ok(incoming)) => {
-                                        requeue_if_cancelled = true;
-                                        cancel.cancel();
-                                        queues.push_outer_submission(incoming);
-                                    }
-                                    Some(Err(err)) => {
-                                        error!(
-                                            error = %format!("{err:#}"),
-                                            "Failed to read namespace io/input frame during deferred action"
-                                        );
-                                    }
-                                    None => {}
-                                }
-                            }
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                match read_pending_namespace_control_submission(&namespace_control).await {
-                                    Some(Ok(incoming)) => {
-                                        // Mirror the sub_rx arm: a machine/ctl
-                                        // interrupt just cancels the deferred
-                                        // action; other control ops preempt and
-                                        // requeue it.
-                                        if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
-                                            cancel.cancel();
-                                        } else {
-                                            requeue_if_cancelled = true;
-                                            cancel.cancel();
-                                            queues.push_outer_submission(incoming);
+                                let ready = match namespace_control.read_ready_runtime_submissions().await {
+                                    Ok(ready) => ready,
+                                    Err(error) => vec![Err(error)],
+                                };
+                                for event in ready {
+                                    match event {
+                                        Ok(incoming) => {
+                                            // Mirror the sub_rx arm: a machine/ctl
+                                            // interrupt just cancels the deferred
+                                            // action; other control ops preempt and
+                                            // requeue it.
+                                            if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                                continue;
+                                            } else {
+                                                requeue_if_cancelled = true;
+                                                cancel.cancel();
+                                                queues.push_outer_submission(incoming);
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                error = %format!("{err:#}"),
+                                                "Failed to read namespace input/control event during deferred action"
+                                            );
                                         }
                                     }
-                                    Some(Err(err)) => {
-                                        error!(
-                                            error = %format!("{err:#}"),
-                                            "Failed to read namespace machine/ctl command during deferred action"
-                                        );
-                                    }
-                                    None => {}
                                 }
                             }
                             _ = shutdown_rx.recv() => {
@@ -791,8 +832,6 @@ fn spawn_with_prepared_runtime_environment(
             }
         }
 
-        namespace_input_task.abort();
-        let _ = namespace_input_task.await;
         info!(
             process_path = %state.agent_path(),
             "Agent runtime stopped"

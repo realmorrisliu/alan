@@ -5,6 +5,7 @@
 //! loop needs.
 
 mod accepted_submission;
+mod explicit_command;
 mod namespace_environment;
 mod turn_execution;
 
@@ -15,7 +16,8 @@ use turn_execution::run_turn_with_cancel;
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
-    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
+    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles,
+    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
@@ -513,6 +515,7 @@ where
 
     let authorization_runtime = tool_authorization_runtime(state);
     let authorization_request = ToolAuthorizationRequest {
+        explicit_command: inputs.explicit_command,
         tool_call,
         tool_arguments: &tool_arguments,
         tool_capability: resolved_tool.capability,
@@ -540,6 +543,13 @@ where
         tool_timeout_secs: resolved_tool.timeout_secs,
         tool_capability: resolved_tool.capability,
         tool_audit,
+        approval: if allow_approved_unknown_effect_execution
+            || allow_approved_tool_escalation_execution
+        {
+            "approved"
+        } else {
+            "not_required"
+        },
         allow_approved_unknown_effect_execution,
         cancel: inputs.cancel,
     };
@@ -605,9 +615,11 @@ where
                 if let Some(pending) = state.machine.pending_confirmation()
                     && replays_tool_calls(&pending.checkpoint_type)
                 {
-                    state
-                        .machine
-                        .set_tool_replay_batch(pending.checkpoint_id, tool_calls[idx..].to_vec());
+                    state.machine.set_tool_replay_batch(
+                        pending.checkpoint_id,
+                        tool_calls[idx..].to_vec(),
+                        true,
+                    );
                 }
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
@@ -715,6 +727,17 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    if submission.intent == alan_agent_protocol::InputIntent::Command {
+        return explicit_command::handle_explicit_command(
+            state,
+            submission.id,
+            submission.op,
+            emit,
+            cancel,
+            steering_broker,
+        )
+        .await;
+    }
     let op = submission.op;
 
     match handle_runtime_op(state, op, emit).await? {
@@ -765,6 +788,7 @@ where
                 approved_unknown_effect_call_id.as_deref(),
                 approved_tool_escalation_call_id.as_deref(),
                 ToolOrchestratorInputs {
+                    explicit_command: false,
                     cancel,
                     steering_broker,
                 },
@@ -819,11 +843,37 @@ where
             };
             Ok(())
         }
+        RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
+            explicit_command::finish_failed_explicit_command(
+                state,
+                &tool_call,
+                "command was not approved",
+                Some("rejected"),
+                emit,
+            )
+            .await
+        }
         RuntimeOpAction::ReplayApprovedToolBatch {
             tool_calls,
+            resume_with_generation,
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
         } => {
+            if !resume_with_generation {
+                return explicit_command::replay_command(
+                    state,
+                    &tool_calls,
+                    approved_unknown_effect_call_id.as_deref(),
+                    approved_tool_escalation_call_id.as_deref(),
+                    ToolOrchestratorInputs {
+                        explicit_command: false,
+                        cancel,
+                        steering_broker,
+                    },
+                    emit,
+                )
+                .await;
+            }
             state.machine.set_turn_activity(TurnActivityState::Running);
             match replay_approved_tool_batch_with_cancel(
                 state,
@@ -831,6 +881,7 @@ where
                 approved_unknown_effect_call_id.as_deref(),
                 approved_tool_escalation_call_id.as_deref(),
                 ToolOrchestratorInputs {
+                    explicit_command: false,
                     cancel,
                     steering_broker,
                 },
