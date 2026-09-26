@@ -164,8 +164,8 @@ async fn execute(shell: &Shell, action: Action) -> Result<Value> {
                     target,
                     submission_id,
                 } => {
-                    uuid::Uuid::parse_str(&submission_id).context("invalid input ID")?;
-                    (target, format!("queue-v1 interrupt {submission_id}"))
+                    let id = uuid::Uuid::parse_str(&submission_id).context("invalid input ID")?;
+                    (target, format!("queue-v1 interrupt {id}"))
                 }
                 Action::Continue { target } => (target, "queue-v1 continue".into()),
                 Action::Discard { target } => (target, "queue-v1 discard".into()),
@@ -265,8 +265,9 @@ mod tests {
                 && input.contains("do work")
                 && input.contains("\"intent\":\"agent\"")
         );
+        let upper_id = id.to_ascii_uppercase();
         for args in [
-            vec!["cancel", "7", id],
+            vec!["cancel", "7", &upper_id],
             vec!["continue", "7"],
             vec!["discard", "7"],
         ] {
@@ -277,6 +278,8 @@ mod tests {
                 "requested"
             );
         }
+        let events = String::from_utf8(shell.cat("/agent/7/events").await.unwrap()).unwrap();
+        assert!(events.contains(&format!("ctl:queue-v1 interrupt {id}")));
         for args in [
             vec!["status", "root"],
             vec!["submit", "7/../8", "escape"],
