@@ -3,7 +3,8 @@
 Discussion update (2026-09-24):
 [unify-agent-command-input](../unify-agent-command-input/disposition.md) owns
 unified input and deterministic command operations. Its first slice uses explicit
-prefixes; automatic intent evaluation follows qualification. Generic typed
+prefixes. Automatic intent integration and qualification now belong to the active
+[qualify-agent-input-routing](../qualify-agent-input-routing/disposition.md) successor. Generic typed
 capability contracts remain here; Jev support is not claimed implemented.
 
 Direction accepted. Typed evaluation is queued after the first usable-agent

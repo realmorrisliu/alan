@@ -1,5 +1,10 @@
 # Disposition — 2026-09-24
 
+Delivery boundary updated 2026-09-26: automatic typed routing, qualification and
+activation are owned by the active [qualify-agent-input-routing](../qualify-agent-input-routing/)
+successor. Future-routing discussion below records accepted direction, not delivery
+or a canonical-spec synchronization claim for this explicit-input change.
+
 Planning complete and consolidated design confirmed by the user on 2026-09-24.
 ADR-0058 is accepted direction. No runtime implementation has been performed by
 this change; implementation tasks remain pending.

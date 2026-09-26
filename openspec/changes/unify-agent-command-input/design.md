@@ -1,5 +1,10 @@
 # Design
 
+Delivery boundary updated 2026-09-26: automatic typed routing, qualification and
+activation are owned by the active [qualify-agent-input-routing](../qualify-agent-input-routing/)
+successor. Future-routing discussion below records accepted direction, not delivery
+or a canonical-spec synchronization claim for this explicit-input change.
+
 ## Context
 
 See proposal.md for motivation and design-interview.md for confirmed choices.
