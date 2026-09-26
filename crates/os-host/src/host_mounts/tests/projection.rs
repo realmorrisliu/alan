@@ -38,6 +38,21 @@ async fn project_text_projects_paths_from_every_delegated_mount() {
         .unwrap()
         .adapter()
         .unwrap();
+    let project_root = dunce::canonicalize(project.path()).unwrap();
+    let docs_root = dunce::canonicalize(docs.path()).unwrap();
+    for separator in [":", "::"] {
+        let paths = format!(
+            "PATH={}{separator}{}:/usr/bin",
+            project_root.display(),
+            docs_root.display()
+        );
+        assert_eq!(
+            adapter.project_text(&paths),
+            format!("PATH=.{separator}../docs:/usr/bin")
+        );
+    }
+    let sibling = format!("{}:backup/file", project_root.display());
+    assert_eq!(adapter.project_text(&sibling), sibling);
     let resolved = dunce::canonicalize(project.path().join("notes-link.txt")).unwrap();
     assert_eq!(
         adapter.project_text(&format!("realpath {}", resolved.display())),

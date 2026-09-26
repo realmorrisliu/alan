@@ -422,6 +422,9 @@ fn is_path_end(suffix: &str) -> bool {
     // A diagnostic location or closing prose delimiter may end a path, but a
     // punctuation-prefixed sibling filename (such as project#backup) does not.
     if first == ':' {
+        if suffix.trim_start_matches(':').starts_with('/') {
+            return true; // A following absolute entry in a native PATH-style list.
+        }
         let location = suffix[1..].trim_start_matches(|ch: char| ch.is_ascii_digit() || ch == ':');
         return location.is_empty() || location.starts_with(is_field_separator);
     }
