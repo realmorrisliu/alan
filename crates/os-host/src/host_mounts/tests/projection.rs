@@ -405,6 +405,11 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("\x1b[31m/\x1b[0m", "\x1b[31m.\x1b[0m"),
         ("https://example.test/path", "https://example.test/path"),
         ("content:/documents/42", "content:/documents/42"),
+        ("GET /api/items HTTP/1.1", "GET /api/items HTTP/1.1"),
+        (
+            "access: \"POST /api HTTP/2\"",
+            "access: \"POST /api HTTP/2\"",
+        ),
         ("[link](custom+v1:/item)", "[link](custom+v1:/item)"),
         ("/usr/bin:/etc", "./usr/bin:./etc"),
     ] {
@@ -673,6 +678,15 @@ async fn physical_cwd_projection_does_not_require_a_delegated_target() {
         .unwrap();
     let physical = dunce::canonicalize(outside.path()).unwrap();
     assert_eq!(adapter.project_text(&physical.to_string_lossy()), ".");
+    let parent = physical.parent().unwrap();
+    assert_eq!(adapter.project_text(&parent.to_string_lossy()), "..");
+    assert_eq!(
+        adapter.project_text(&parent.join("sibling").to_string_lossy()),
+        "../sibling"
+    );
+    let parent_uri = url::Url::from_directory_path(parent).unwrap();
+    assert_eq!(adapter.project_text(parent_uri.as_str()), "../");
+
     assert_eq!(
         adapter.project_text(url::Url::from_directory_path(&physical).unwrap().as_str()),
         "./"

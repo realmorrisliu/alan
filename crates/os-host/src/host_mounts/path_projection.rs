@@ -156,11 +156,15 @@ fn relative_native_path(adapter: &NativeToolExecutionAdapter, path: &Path) -> Op
     if path.starts_with(&active.host_path) {
         return Some(relative_path(&cwd, path));
     }
-    let mount = adapter
+    let Some(mount) = adapter
         .mounts
         .iter()
         .filter(|mount| path.starts_with(&mount.host_path))
-        .max_by_key(|mount| mount.host_path.components().count())?;
+        .max_by_key(|mount| mount.host_path.components().count())
+    else {
+        return (!cwd.starts_with(&active.host_path) && path.is_absolute())
+            .then(|| relative_path(&cwd, path));
+    };
     let suffix = path.strip_prefix(&mount.host_path).ok()?;
     Some(relative_path(
         &namespace_cwd,
@@ -329,6 +333,17 @@ fn project_native_text(
                 replace_native_prefix(&projected, &mount.host_path, &replacement, shell_quoting);
         }
     }
+    if !physical.starts_with(&active.host_path) {
+        for ancestor in physical.ancestors().skip(1) {
+            let relative = relative_path(&physical, ancestor);
+            let replacement = relative.to_string_lossy();
+            projected = if ancestor == Path::new("/") {
+                replace_rooted_path_starts(&projected, &format!("{replacement}/"), shell_quoting)
+            } else {
+                replace_native_prefix(&projected, ancestor, &replacement, shell_quoting)
+            };
+        }
+    }
     projected
 }
 
@@ -458,6 +473,21 @@ fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool
                     .all(|ch| ch.is_alphanumeric() || matches!(ch, ':' | '_' | '-' | '.'))
             })
         {
+            continue;
+        }
+        let method = text[..start]
+            .split_whitespace()
+            .next_back()
+            .unwrap_or_default()
+            .trim_start_matches(['"', '\'']);
+        let http_target = matches!(
+            method,
+            "GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS" | "TRACE" | "PATCH"
+        ) && suffix
+            .split_whitespace()
+            .nth(1)
+            .is_some_and(|version| version.starts_with("HTTP/"));
+        if http_target {
             continue;
         }
         let emphasized = is_emphasized_path(text, start, slash + 1);
