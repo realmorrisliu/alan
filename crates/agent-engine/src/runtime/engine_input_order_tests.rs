@@ -235,10 +235,18 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
         .await;
         assert!(
             completed.is_ok(),
-            "control={control:?}, generated={}, activity={}, notice={}",
+            "control={control:?}, generated={}, activity={:?}, notice={:?}",
             mock.recorded_requests().len(),
-            String::from_utf8_lossy(&shell.cat("/agent/1/machine/ui/activity").await.unwrap()),
-            String::from_utf8_lossy(&shell.cat("/agent/1/machine/ui/notice").await.unwrap())
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                shell.cat("/agent/1/machine/ui/activity")
+            )
+            .await,
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                shell.cat("/agent/1/machine/ui/notice")
+            )
+            .await
         );
         let order = mock
             .recorded_requests()
