@@ -730,9 +730,6 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
-            crate::runtime::ui_surfaces::turn_completed(&state.agent_files(), false)
-                .await
-                .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
@@ -746,7 +743,7 @@ where
             },
         )
         .await;
-        emit_task_completed_success(&agent_files, emit, "Task completed").await?;
+        emit_task_completed_success(emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
 }

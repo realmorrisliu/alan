@@ -272,6 +272,23 @@ async fn ordinary_input_order_and_interrupt_queue_controls() {
             })
             .collect::<Vec<_>>();
         controller.shutdown().await.unwrap();
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        let mut unsettled = false;
+        for line in events.lines() {
+            match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+                alan_agent_protocol::UiEvent::Activity { snapshot } => match snapshot.state {
+                    alan_agent_protocol::UiActivityState::Running => unsettled = true,
+                    alan_agent_protocol::UiActivityState::Idle => assert!(
+                        !unsettled,
+                        "Idle must follow correlated settlement, including cancellation"
+                    ),
+                    _ => {}
+                },
+                alan_agent_protocol::UiEvent::InputCompleted { .. } => unsettled = false,
+                _ => {}
+            }
+        }
         shell
             .write("/agent/1/machine/tape", b"")
             .await
