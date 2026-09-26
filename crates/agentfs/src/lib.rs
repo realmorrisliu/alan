@@ -150,6 +150,8 @@ struct AgentFid {
     clone_id: Option<String>,
     /// Buffered document for a field write (committed on clunk).
     write_buf: Vec<u8>,
+    /// One finite-file read, refreshed when the reader restarts at offset zero.
+    read_snapshot: Option<Vec<u8>>,
     /// Whether a write was issued on this fid (even a zero-byte one). The commit
     /// trigger is write intent, not a non-empty buffer, so an intentionally empty
     /// answer (`requests/<id>/response`) still settles the request.
@@ -163,6 +165,7 @@ impl AgentFid {
             mode: None,
             clone_id: None,
             write_buf: Vec::new(),
+            read_snapshot: None,
             wrote: false,
         }
     }
@@ -482,11 +485,11 @@ impl FileServer for AgentFs {
         };
         // A clone fid reads back the allocated id.
         if let Some(id) = clone_id {
-            return Ok(slice(id.into_bytes(), offset, count));
+            return Ok(slice(id.as_bytes(), offset, count));
         }
         if let Some(bytes) = tape_snapshot {
             if (offset as usize) < bytes.len() {
-                return Ok(slice(bytes, offset, count));
+                return Ok(slice(&bytes, offset, count));
             }
             if let Some(stream) = stream {
                 return Ok(stream.read(offset, count).await);
@@ -495,8 +498,31 @@ impl FileServer for AgentFs {
         if let Some(stream) = stream {
             return Ok(stream.read(offset, count).await);
         }
-        let state = self.state.lock().await;
-        Ok(slice(state.computed_bytes(&node)?, offset, count))
+        let mut state = self.state.lock().await;
+        if fid == Fid::ROOT {
+            return Ok(slice(&state.computed_bytes(&node)?, offset, count));
+        }
+        let refresh = offset == 0
+            || state
+                .fids
+                .get(&fid)
+                .is_some_and(|f| f.read_snapshot.is_none());
+        if refresh {
+            let bytes = state.computed_bytes(&node)?;
+            state
+                .fids
+                .get_mut(&fid)
+                .ok_or(ErrorCode::NotFound)?
+                .read_snapshot = Some(bytes);
+        }
+        let bytes = state
+            .fids
+            .get(&fid)
+            .ok_or(ErrorCode::NotFound)?
+            .read_snapshot
+            .as_ref()
+            .expect("finite read snapshot initialized");
+        Ok(slice(bytes, offset, count))
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
@@ -884,7 +910,7 @@ fn map_knowledge_error(error: KnowledgeError) -> ErrorCode {
     }
 }
 
-fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
+fn slice(bytes: &[u8], offset: Offset, count: u32) -> Vec<u8> {
     let start = (offset as usize).min(bytes.len());
     let end = bytes.len().min(start + count as usize);
     bytes[start..end].to_vec()
