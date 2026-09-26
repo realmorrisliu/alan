@@ -137,10 +137,17 @@ async fn sandbox_allows_inspectable_awk_io_and_regexes() {
     let mount = TempDir::new().unwrap();
     std::fs::write(mount.path().join("input.tsv"), "payload\n").unwrap();
     let sandbox = Sandbox::with_backend(mount.path().to_path_buf(), SandboxBackendKind::Seatbelt);
-    for command in [
-        "awk 'BEGIN { getline x < \"input.tsv\"; print x }'",
-        "awk '/payload/ { print $0 }' ./input.tsv",
-        "awk '{ if (length($0) > 0) print $0 }' ./input.tsv",
+    for (command, expected) in [
+        (
+            "awk 'BEGIN { getline x < \"input.tsv\"; print x }'",
+            "payload\n",
+        ),
+        ("awk '/payload/ { print $0 }' ./input.tsv", "payload\n"),
+        (
+            "awk '{ if (length($0) > 0) print $0 }' ./input.tsv",
+            "payload\n",
+        ),
+        ("awk 'BEGIN { print \"/etc/passwd\" }'", "/etc/passwd\n"),
     ] {
         let result = sandbox
             .exec_with_timeout_and_capability(
@@ -152,6 +159,6 @@ async fn sandbox_allows_inspectable_awk_io_and_regexes() {
             .await
             .unwrap();
         assert_eq!(result.exit_code, 0, "{command}: {}", result.stderr);
-        assert_eq!(result.stdout, "payload\n");
+        assert_eq!(result.stdout, expected);
     }
 }

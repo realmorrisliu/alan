@@ -141,27 +141,6 @@ pub(super) fn absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> 
     literals
 }
 
-pub(super) fn quoted_absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> {
-    let mut literals = Vec::new();
-    let mut string_start = None;
-    let mut escaped = false;
-    for (index, ch) in token.char_indices() {
-        if let Some(start) = string_start {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                literals.extend(absolute_path_literal_candidates(&token[start..index]));
-                string_start = None;
-            }
-        } else if ch == '"' {
-            string_start = Some(index + ch.len_utf8());
-        }
-    }
-    literals
-}
-
 fn push_absolute_path_literal_candidates(
     token: &str,
     range: Range<usize>,

@@ -31,7 +31,7 @@ use path_literals::{
     TokenPathRole, absolute_path_literal_candidates, is_allowed_absolute_command_path,
     is_file_redirection_operator, lexically_normalize_path,
     looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
-    quoted_absolute_path_literal_candidates, token_path_role,
+    token_path_role,
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
@@ -891,7 +891,7 @@ impl Sandbox {
                 for path in getline_paths {
                     self.validate_command_path_candidate(&path, cwd, capability)?;
                 }
-                quoted_absolute_path_literal_candidates(&token.decoded)
+                Vec::new()
             } else {
                 absolute_path_literal_candidates(&token.decoded)
             };
