@@ -63,9 +63,10 @@ async fn command(shell: &Shell, body: &str) -> Value {
 }
 
 #[tokio::test]
-async fn native_commands_preserve_scripts_and_results_without_generation() {
+async fn native_commands_change_cwd_and_preserve_scripts_without_generation() {
     let runtime = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join("src")).unwrap();
     let mut mount = response();
     mount.tool_calls.push(ToolCall { id: Some("mount-project".into()), name: "request_mount".into(),
         arguments: json!({"label":"Project","namespace_path":"/mnt/project","access":"read_write","reason":"native command test"}) });
@@ -151,23 +152,42 @@ async fn native_commands_preserve_scripts_and_results_without_generation() {
     })
     .await
     .unwrap();
+    assert_eq!(command(&shell, "cd /mnt/project/src").await["exit_code"], 0);
     assert_eq!(command(&shell, "printf '%s\\n' 'first value' | tr 'a-z' 'A-Z' > result.txt\nprintf '%s\\n' second >> result.txt").await["exit_code"], 0);
     assert_eq!(
-        std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
+        std::fs::read_to_string(project.path().join("src/result.txt")).unwrap(),
         "FIRST VALUE\nsecond\n"
+    );
+    assert_eq!(
+        command(&shell, "cd .. && printf root > local.txt").await["exit_code"],
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("local.txt")).unwrap(),
+        "root"
+    );
+    assert_eq!(command(&shell, "cd missing").await["exit_code"], 1);
+    assert_eq!(command(&shell, "cd $HOME").await["exit_code"], 1);
+    assert_eq!(
+        command(&shell, "printf retained > still-here.txt").await["exit_code"],
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/still-here.txt")).unwrap(),
+        "retained"
     );
     assert_eq!(
         command(&shell, "printf partial > partial.txt; exit 7").await["exit_code"],
         7
     );
     assert_eq!(
-        std::fs::read_to_string(project.path().join("partial.txt")).unwrap(),
+        std::fs::read_to_string(project.path().join("src/partial.txt")).unwrap(),
         "partial"
     );
     let running = command(&shell, "printf saved > before-interrupt.txt; sleep 30");
     let interrupt = async {
         tokio::time::timeout(Duration::from_secs(10), async {
-            while !project.path().join("before-interrupt.txt").exists() {
+            while !project.path().join("src/before-interrupt.txt").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -181,7 +201,7 @@ async fn native_commands_preserve_scripts_and_results_without_generation() {
     let (interrupted, ()) = tokio::join!(running, interrupt);
     assert_ne!(interrupted["exit_code"], 0);
     assert_eq!(
-        std::fs::read_to_string(project.path().join("before-interrupt.txt")).unwrap(),
+        std::fs::read_to_string(project.path().join("src/before-interrupt.txt")).unwrap(),
         "saved"
     );
     assert_eq!(
@@ -189,7 +209,7 @@ async fn native_commands_preserve_scripts_and_results_without_generation() {
         0
     );
     assert_eq!(
-        std::fs::read_to_string(project.path().join("after-interrupt.txt")).unwrap(),
+        std::fs::read_to_string(project.path().join("src/after-interrupt.txt")).unwrap(),
         "alive"
     );
     assert_eq!(

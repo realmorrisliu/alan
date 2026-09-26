@@ -24,6 +24,19 @@ impl NamespaceToolExecution {
             .map(|binding| binding.namespace_cwd)
     }
 
+    pub(crate) fn change_process_directory(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<std::path::PathBuf> {
+        let context = self
+            .tool_process_context
+            .as_ref()
+            .context("Process has no Tool execution context")?;
+        context
+            .tool_runner
+            .change_process_directory(context.pid, path)
+    }
+
     pub(crate) fn resolve_capability(
         &self,
         package: &ToolPackageManifest,

@@ -30,6 +30,18 @@ impl crate::tools::ToolExecutionAdapter for TestAdapter {
         })
     }
 
+    fn resolve_directory(
+        &self,
+        namespace_cwd: &std::path::Path,
+        path: &std::path::Path,
+    ) -> Result<PathBuf> {
+        Ok(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            namespace_cwd.join(path)
+        })
+    }
+
     fn visible_path(&self, path: &std::path::Path) -> PathBuf {
         path.to_path_buf()
     }
@@ -49,6 +61,29 @@ fn test_binding(namespace_cwd: &str, cwd: PathBuf, scratch: PathBuf) -> ToolExec
             namespace_cwd: PathBuf::from(namespace_cwd),
             cwd,
         }))
+}
+
+#[derive(Debug)]
+struct TestHostMountAuthority;
+
+impl crate::tools::ToolExecutionAuthority for TestHostMountAuthority {
+    fn reconcile(
+        &self,
+        _pid: u64,
+        mut binding: ToolExecutionBinding,
+    ) -> Result<ToolExecutionBinding> {
+        let namespace_cwd = binding.namespace_cwd.clone();
+        let host_cwd = PathBuf::from("/host/source").join(
+            namespace_cwd
+                .strip_prefix("/mnt/source")
+                .context("cwd left the authorized Host Mount")?,
+        );
+        binding.set_adapter(Arc::new(TestAdapter {
+            namespace_cwd,
+            cwd: host_cwd,
+        }));
+        Ok(binding)
+    }
 }
 
 struct TestTool;
@@ -730,4 +765,37 @@ fn test_tool_registry_re_register() {
 
     assert!(registry.has("test_tool"));
     assert_eq!(registry.list_tools().len(), 1);
+}
+
+#[test]
+fn standalone_cd_updates_process_binding_and_reconciles_host_projection() {
+    let mut registry = ToolRegistry::new();
+    registry.register(TestTool);
+    let runner = ToolProcessRunner::from_registry(&registry);
+    runner.register_process_binding(
+        7,
+        test_binding(
+            "/mnt/source",
+            PathBuf::from("/host/source"),
+            PathBuf::from("/tmp/scratch"),
+        ),
+    );
+    runner.register_process_authority(7, Arc::new(TestHostMountAuthority));
+
+    let namespace_cwd = runner
+        .change_process_directory(7, std::path::Path::new("src"))
+        .unwrap();
+
+    assert_eq!(namespace_cwd, PathBuf::from("/mnt/source/src"));
+    assert!(
+        runner
+            .change_process_directory(7, std::path::Path::new("/outside"))
+            .is_err()
+    );
+    let binding = runner.process_binding(7).unwrap();
+    assert_eq!(binding.namespace_cwd, namespace_cwd);
+    assert_eq!(
+        binding.adapter().unwrap().cwd().unwrap(),
+        PathBuf::from("/host/source/src")
+    );
 }

@@ -298,10 +298,10 @@ The submission-aware reader preserves the client identity, scheduling mode, and
 intent in `Submission`. Legacy submissions default to Agent intent. Text-only
 readers reject versioned payloads rather than discard their identity. Command
 records in follow-up mode execute through the governed Tool Process path without
-model generation, including approval replay. Standalone `cd` and shared cwd
-selection remain a separate implementation slice; native shell-local `cd` stays
-local to its script. Command steering and next-turn scheduling remain rejected
-pending ordered queue admission, and ordinary clients have not yet activated
+model generation, including approval replay. Standalone literal `cd` selects a
+Host-authorized logical Process cwd; failed selection leaves that binding unchanged, and shell-local `cd`
+stays local to its script. Command steering and next-turn scheduling remain
+rejected pending ordered queue admission, and ordinary clients have not yet activated
 prefix framing. This slice does not complete task 2.1: multi-client completion,
 queue controls, and durable recovery remain in the following implementation slices.
 
@@ -311,9 +311,10 @@ The Host execution adapter can validate a candidate working directory for a
 Tool Process binding. The adapter canonicalizes the selection, requires a directory
 inside a delegated Host Mount, and returns its logical namespace path. Relative
 selection stays in the current grant; an explicit absolute selection may switch
-to another delegated grant. The resolver returns a candidate only; the command dispatch slice must
-reconcile current authority before changing the Process binding. Structured tools retain their existing multi-grant authority.
+to another delegated grant. The resolver returns a candidate only; command dispatch
+reconciles current authority before resolution and again before changing the
+Process binding. Structured tools retain their existing multi-grant authority.
 
-This internal boundary does not activate standalone `!cd` or ordered input
-admission. Those require the following explicit command dispatch slice; task 2.5
+Standalone command dispatch now uses this boundary to select shared cwd. Ordered
+multi-client admission and durable cwd recovery are not yet integrated; task 2.5
 remains incomplete.
