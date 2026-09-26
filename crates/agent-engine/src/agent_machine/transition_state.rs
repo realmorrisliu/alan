@@ -92,11 +92,6 @@ pub(super) struct MachineTransitionState {
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
     turn_activity: TurnActivityState,
-    /// Submissions buffered during turn execution that need to be requeued
-    /// after the turn completes (e.g., user input during tool execution).
-    buffered_inband_submissions: VecDeque<Submission>,
-    /// Queued context for `InputMode::NextTurn`.
-    queued_next_turn_inputs: VecDeque<(Option<String>, Vec<ContentPart>)>,
     /// Ordinary queued work and pause state survive reset_turn, like next-turn input.
     pub(super) input_queue: std::sync::Arc<std::sync::Mutex<super::input_queue::MachineInputQueue>>,
     /// Number of automatic mid-turn compactions already performed in the active turn.
@@ -234,7 +229,12 @@ impl AgentMachine {
         self.transition_state.pending_tool_replay_batches.clear();
         self.transition_state.pending_order.clear();
         self.transition_state.turn_activity = TurnActivityState::Idle;
-        self.transition_state.buffered_inband_submissions.clear();
+        self.transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned")
+            .buffered_inband_submissions
+            .clear();
         self.transition_state.active_turn_message_start = None;
         self.transition_state.active_skills.clear();
         self.transition_state.active_turn_request_control_intent =
@@ -257,18 +257,30 @@ impl AgentMachine {
 
     /// Queue `next_turn` input parts. Returns `Some(new_len)` on success, `None` on overflow.
     pub(crate) fn queue_next_turn_input(&mut self, parts: Vec<ContentPart>) -> Option<usize> {
-        if self.transition_state.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
+        let mut queue = self
+            .transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned");
+        if queue.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
             return None;
         }
-        self.transition_state
+        queue
             .queued_next_turn_inputs
             .push_back((self.transition_state.current_submission_id.clone(), parts));
-        Some(self.transition_state.queued_next_turn_inputs.len())
+        Some(queue.queued_next_turn_inputs.len())
     }
 
     /// Drain queued `next_turn` input parts in FIFO order.
     pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
-        let inputs = std::mem::take(&mut self.transition_state.queued_next_turn_inputs);
+        let inputs = std::mem::take(
+            &mut self
+                .transition_state
+                .input_queue
+                .lock()
+                .expect("input queue poisoned")
+                .queued_next_turn_inputs,
+        );
         inputs
             .into_iter()
             .map(|(id, parts)| {
@@ -292,17 +304,32 @@ impl AgentMachine {
         )
     )]
     pub(crate) fn queued_next_turn_input_count(&self) -> usize {
-        self.transition_state.queued_next_turn_inputs.len()
+        self.transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned")
+            .queued_next_turn_inputs
+            .len()
     }
 
     /// Drain all buffered inband submissions.
     pub(crate) fn drain_buffered_inband_submissions(&mut self) -> VecDeque<Submission> {
-        std::mem::take(&mut self.transition_state.buffered_inband_submissions)
+        std::mem::take(
+            &mut self
+                .transition_state
+                .input_queue
+                .lock()
+                .expect("input queue poisoned")
+                .buffered_inband_submissions,
+        )
     }
 
     /// Push a submission to the buffered inband submissions queue.
     pub(crate) fn push_buffered_inband_submission(&mut self, submission: Submission) {
         self.transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned")
             .buffered_inband_submissions
             .push_back(submission);
     }
@@ -310,6 +337,9 @@ impl AgentMachine {
     /// Pop a submission from the buffered inband submissions queue.
     pub(crate) fn pop_buffered_inband_submission(&mut self) -> Option<Submission> {
         self.transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned")
             .buffered_inband_submissions
             .pop_front()
     }
@@ -317,6 +347,9 @@ impl AgentMachine {
     /// Count user input submissions in the buffered queue
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
         self.transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned")
             .buffered_inband_submissions
             .iter()
             .filter(|submission| matches!(submission.op, alan_agent_protocol::Op::Input { .. }))
@@ -325,8 +358,13 @@ impl AgentMachine {
 
     /// Clear buffered inband submissions and return the count
     pub(crate) fn clear_buffered_inband_submissions(&mut self) -> usize {
-        let count = self.transition_state.buffered_inband_submissions.len();
-        self.transition_state.buffered_inband_submissions.clear();
+        let mut queue = self
+            .transition_state
+            .input_queue
+            .lock()
+            .expect("input queue poisoned");
+        let count = queue.buffered_inband_submissions.len();
+        queue.buffered_inband_submissions.clear();
         count
     }
 

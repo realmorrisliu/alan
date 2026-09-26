@@ -328,7 +328,11 @@ Ordinary `follow_up` submissions now enter the same outer runtime FIFO for Agent
 and command intent. Only explicit steering and pending-request responses may
 enter an active transition. This prevents a later Agent follow-up from overtaking
 an earlier queued command or explicit turn. The ordinary FIFO and its pause flag belong to the Agent Machine; the Process
-loop retains a shared handle while a transition is executing. Interrupt pauses
+loop retains a shared handle while a transition is executing. In-turn brokered,
+buffered and next-turn inputs use that same Machine-owned queue storage. Broker
+handles share its notification and capacity boundary; the Process loop does not
+allocate a separate steering queue. Existing FIFO, reset and settlement behavior
+is preserved while targeted input controls are implemented separately. Interrupt pauses
 ordinary dispatch before cancelling active work. New ordinary input remains queued
 until `queue-v1 continue` or `queue-v1 discard` is written to `machine/ctl` (or the
 corresponding `ContinueQueue` / `DiscardQueue` operation is submitted). The TUI
