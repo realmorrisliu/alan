@@ -482,13 +482,20 @@ fn spawn_with_prepared_runtime_environment(
             ..Default::default()
         };
 
+        let mut namespace_ready = VecDeque::new();
+        let mut namespace_batch_admitted = false;
         loop {
+            if !shutdown_requested && !namespace_batch_admitted {
+                namespace_ready = match state.agent_files().read_ready_runtime_submissions().await {
+                    Ok(ready) => ready.into(),
+                    Err(error) => VecDeque::from([Err(error)]),
+                };
+                namespace_batch_admitted = true;
+            }
             let mut from_queue = false;
             let queued_item = if shutdown_requested {
                 queues.pop_outer_deferred()
-            } else if let Some(namespace_control) =
-                read_pending_namespace_submission(&state.agent_files()).await
-            {
+            } else if let Some(namespace_control) = namespace_ready.pop_front() {
                 match namespace_control {
                     Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
                     Err(err) => {
@@ -507,6 +514,7 @@ fn spawn_with_prepared_runtime_environment(
                 queues.pop_outer()
             } {
                 from_queue = true;
+                namespace_batch_admitted = false;
                 Some(queued_item)
             } else if let Some(namespace_resume) =
                 read_pending_namespace_resume_submission(&state).await
@@ -524,6 +532,7 @@ fn spawn_with_prepared_runtime_environment(
             } else if submissions_closed {
                 None
             } else {
+                namespace_batch_admitted = false;
                 let namespace_control = state.agent_files();
                 let poll_pending_namespace_response = state.machine.has_pending_interaction();
                 tokio::select! {

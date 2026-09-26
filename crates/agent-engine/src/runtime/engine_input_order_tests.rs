@@ -491,3 +491,59 @@ async fn namespace_rollback_stays_between_earlier_and_later_input() {
     assert_eq!(users(&requests[0]), ["before rollback"]);
     assert_eq!(users(&requests[1]), ["after rollback"]);
 }
+
+#[tokio::test]
+async fn continuous_file_input_does_not_starve_dispatch() {
+    let mock = MockLlmProvider::new();
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection("default", Box::new(mock.clone()));
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    namespace.mount(
+        "/mnt/llm",
+        InProcessTransport::new(llmfs),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+    let shell = alan_shell::Shell::new(root.clone());
+    shell.write("/agent/1/io/input", b"first").await.unwrap();
+    let writer = tokio::spawn(async move {
+        loop {
+            shell.write("/agent/1/io/input", b"queued").await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    });
+    let mut core_config =
+        crate::Config::for_openai_chat_completions_compatible("sk-test", None, Some("test-model"));
+    core_config.memory.enabled = false;
+    core_config.streaming_mode = crate::config::StreamingMode::Off;
+    let capabilities = crate::provider_capabilities_for_config(&core_config);
+    let mut controller = spawn_with_namespace_environment(
+        AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core_config),
+            ..Default::default()
+        },
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        crate::skills::SkillHostCapabilities::default(),
+        capabilities,
+    )
+    .unwrap();
+    controller.wait_until_ready().await.unwrap();
+    let dispatched = tokio::time::timeout(Duration::from_secs(5), async {
+        while mock.recorded_requests().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    writer.abort();
+    let _ = writer.await;
+    controller.shutdown().await.unwrap();
+    assert!(
+        dispatched.is_ok(),
+        "continuous file arrivals must not starve queued dispatch"
+    );
+}
