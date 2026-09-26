@@ -96,8 +96,12 @@ async fn read_command_output(
     submission_id: &str,
 ) -> Result<super::CommandOutput> {
     let mut output = None;
-    for action in super::file_surface::read_action_snapshots(shell, agent_path).await? {
-        let Ok(result) = serde_json::from_str::<serde_json::Value>(&action.result) else {
+    for id in super::file_surface::read_action_ids(shell, agent_path).await? {
+        let record = shell
+            .cat(&format!("{agent_path}/actions/{id}/result"))
+            .await
+            .context("read command result index")?;
+        let Ok(result) = serde_json::from_slice::<serde_json::Value>(&record) else {
             continue;
         };
         if result["call_id"].as_str() != Some(submission_id) {
@@ -107,6 +111,7 @@ async fn read_command_output(
             output.is_none(),
             "multiple command results match this input; outcome is unknown"
         );
+        let action = super::file_surface::read_action_snapshot(shell, agent_path, &id).await?;
         anyhow::ensure!(
             matches!(action.status.as_str(), "completed" | "failed" | "cancelled"),
             "command result is not terminal; outcome is unknown"
@@ -118,9 +123,17 @@ async fn read_command_output(
         let mut streams = match serde_json::from_str::<super::CommandOutput>(&action.output) {
             Ok(streams) => streams,
             Err(error) => {
-                let failure: serde_json::Value = serde_json::from_str(&action.output)
-                    .context("command output is invalid; outcome is unknown")?;
-                let Some(message) = failure["error"].as_str().filter(|_| exit_code != 0) else {
+                let failure: serde_json::Value =
+                    serde_json::from_str(&action.output).unwrap_or_default();
+                let Some(message) = failure["error"]
+                    .as_str()
+                    .or_else(|| {
+                        result
+                            .pointer("/outcome/error")
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .filter(|_| exit_code != 0)
+                else {
                     return Err(error).context("command streams are missing; outcome is unknown");
                 };
                 super::CommandOutput {
@@ -327,7 +340,7 @@ mod command_tests {
 
     #[tokio::test]
     async fn command_completion_returns_only_correlated_streams_and_exit_status() {
-        for exit_code in [0, 7, 2] {
+        for exit_code in [0, 7, 2, 1] {
             let (shell, agent_root, _, pid) = stdio_tests::live_root_agent().await;
             let task = StdioTaskWaitContext::new("!printf partial").unwrap();
             let id = task.record.submission_id.clone();
@@ -363,10 +376,18 @@ mod command_tests {
                 } else {
                     serde_json::json!({"stdout":if call_id == id {"partial"} else {"other"}, "stderr":"diagnostic\n"})
                 };
-                let result = serde_json::json!({"call_id":call_id,"exit_code":exit_code});
+                let result = serde_json::json!({"call_id":call_id,"exit_code":exit_code,
+                    "outcome": if exit_code == 1 { serde_json::json!({"success":false,"error":"Queued input cancelled without execution"}) } else { serde_json::Value::Null }});
                 for (name, content) in [
                     ("name", "bash".into()),
-                    ("output", output.to_string()),
+                    (
+                        "output",
+                        if exit_code == 1 {
+                            "Queued input cancelled without execution".into()
+                        } else {
+                            output.to_string()
+                        },
+                    ),
                     ("result", result.to_string()),
                     (
                         "status",
@@ -386,7 +407,11 @@ mod command_tests {
             }
             let completed = UiEvent::InputCompleted {
                 submission_ids: vec![id],
-                status: UiInputStatus::Completed,
+                status: if exit_code == 1 {
+                    UiInputStatus::Cancelled
+                } else {
+                    UiInputStatus::Completed
+                },
                 error: None,
             };
             shell
@@ -412,10 +437,19 @@ mod command_tests {
             let StdioTaskOutput::Command(output) = result else {
                 panic!("command output")
             };
-            assert_eq!(output.stdout, if exit_code == 2 { "" } else { "partial" });
+            assert_eq!(
+                output.stdout,
+                if matches!(exit_code, 1 | 2) {
+                    ""
+                } else {
+                    "partial"
+                }
+            );
             assert_eq!(
                 output.stderr,
-                if exit_code == 2 {
+                if exit_code == 1 {
+                    "Queued input cancelled without execution\n"
+                } else if exit_code == 2 {
                     "launch denied\n"
                 } else {
                     "diagnostic\n"

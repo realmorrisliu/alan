@@ -602,10 +602,10 @@ async fn read_request_snapshot(
     })
 }
 
-pub(super) async fn read_action_snapshots(
+pub(super) async fn read_action_ids(
     shell: &alan_shell::Shell,
     agent_path: &str,
-) -> Result<Vec<ActionSnapshot>> {
+) -> Result<Vec<String>> {
     let mut ids = shell
         .ls(&format!("{agent_path}/actions"))
         .await
@@ -615,6 +615,14 @@ pub(super) async fn read_action_snapshots(
         .collect::<Vec<_>>();
     ids.sort_by_key(|id| request_sort_key(id));
 
+    Ok(ids)
+}
+
+async fn read_action_snapshots(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+) -> Result<Vec<ActionSnapshot>> {
+    let ids = read_action_ids(shell, agent_path).await?;
     let mut snapshots = Vec::with_capacity(ids.len());
     for id in ids {
         snapshots.push(read_action_snapshot(shell, agent_path, &id).await?);
@@ -622,7 +630,7 @@ pub(super) async fn read_action_snapshots(
     Ok(snapshots)
 }
 
-async fn read_action_snapshot(
+pub(super) async fn read_action_snapshot(
     shell: &alan_shell::Shell,
     agent_path: &str,
     action_id: &str,
