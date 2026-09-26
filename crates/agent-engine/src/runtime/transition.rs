@@ -705,9 +705,13 @@ fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
     SubmissionRuntime::new(machine, agent_files, host_mount_requests)
 }
 
-pub(super) async fn handle_runtime_op<E, F>(
+#[cfg(test)]
+pub(super) use tests::handle_runtime_op;
+
+async fn handle_runtime_op_with_writer<E, F>(
     state: &mut RuntimeLoopState,
     op: Op,
+    tape_writer: &mut Option<NamespaceTapeWriter>,
     emit: &mut E,
 ) -> Result<RuntimeOpAction>
 where
@@ -725,7 +729,9 @@ where
             .await?;
             Ok(RuntimeOpAction::NoTurn)
         }
-        op => handle_non_compaction_runtime_op(submission_runtime(state), op, emit).await,
+        op => {
+            handle_non_compaction_runtime_op(submission_runtime(state), op, tape_writer, emit).await
+        }
     }
 }
 
@@ -766,22 +772,9 @@ where
     }
     let op = submission.op;
 
-    if !matches!(
-        &op,
-        Op::Turn { .. }
-            | Op::Resume { .. }
-            | Op::Input {
-                mode: alan_agent_protocol::InputMode::FollowUp
-                    | alan_agent_protocol::InputMode::Steer,
-                ..
-            }
-    ) {
-        handle_runtime_op(state, op, emit).await?;
-        return Ok(());
-    }
-    let writer = state.agent_files().begin_tape_generation().await?;
+    let mut tape_writer = None;
     let result = async {
-        let action = match handle_runtime_op(state, op, emit).await? {
+        let action = match handle_runtime_op_with_writer(state, op, &mut tape_writer, emit).await? {
             RuntimeOpAction::NoTurn => return Ok(()),
             RuntimeOpAction::ReplayApprovedToolCall {
                 tool_call,
@@ -802,6 +795,9 @@ where
                 user_input,
                 activate_task,
             } => {
+                let writer = tape_writer
+                    .as_ref()
+                    .expect("generation owns the Tape lease");
                 state.machine.set_turn_activity(TurnActivityState::Running);
                 let turn_outcome = match run_turn_with_writer(
                     state,
@@ -810,7 +806,7 @@ where
                     emit,
                     cancel,
                     steering_broker,
-                    &writer,
+                    writer,
                 )
                 .await
                 {
@@ -851,6 +847,7 @@ where
                 approved_unknown_effect_call_id,
                 approved_tool_escalation_call_id,
             } => {
+                let writer = tape_writer.as_ref().expect("replay owns the Tape lease");
                 if !resume_with_generation {
                     return explicit_command::replay_command(
                         state,
@@ -862,7 +859,7 @@ where
                             cancel,
                             steering_broker,
                         },
-                        &writer,
+                        writer,
                         emit,
                     )
                     .await;
@@ -878,7 +875,7 @@ where
                         cancel,
                         steering_broker,
                     },
-                    &writer,
+                    writer,
                     emit,
                 )
                 .await
@@ -892,7 +889,7 @@ where
                                 emit,
                                 cancel,
                                 steering_broker,
-                                &writer,
+                                writer,
                             )
                             .await
                             {
@@ -934,8 +931,12 @@ where
         }
     }
     .await;
-    let closed = writer.finish().await;
-    result.and(closed)
+    if let Some(writer) = tape_writer {
+        let closed = writer.finish().await;
+        result.and(closed)
+    } else {
+        result
+    }
 }
 
 async fn finalize_replayed_tool_end_turn_best_effort(

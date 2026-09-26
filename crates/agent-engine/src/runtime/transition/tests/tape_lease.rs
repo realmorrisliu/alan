@@ -107,10 +107,11 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                 .machine
                 .set_tool_replay_batch("approval", vec![call], true);
         }
-        let mut emit = |_| async {};
+        state.machine.accept_submission("originating-input");
+        let broker = crate::runtime::turn_input::TurnInputBroker::default();
         let external = state.agent_files().begin_tape_generation().await.unwrap();
         let messages_before = state.machine.messages().len();
-        let blocked = handle_submission_with_cancel(
+        let blocked = advance_accepted_submission(
             &mut state,
             Submission::new(Op::Resume {
                 request_id: "approval".into(),
@@ -118,11 +119,16 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                     json!({"choice":"approve"}),
                 )],
             }),
-            &mut emit,
+            &broker,
             &CancellationToken::new(),
         )
-        .await;
+        .await
+        .result;
         assert!(blocked.is_err());
+        assert_eq!(
+            state.machine.current_submission_id(),
+            Some("originating-input")
+        );
         assert!(
             state.machine.pending_confirmation().is_some(),
             "busy Tape must preserve approval"
@@ -130,7 +136,7 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
         assert_eq!(state.machine.messages().len(), messages_before);
         external.finish().await.unwrap();
         agentfs.writes.store(0, Ordering::SeqCst);
-        handle_submission_with_cancel(
+        advance_accepted_submission(
             &mut state,
             Submission::new(Op::Resume {
                 request_id: "approval".into(),
@@ -138,13 +144,20 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
                     json!({"choice":"approve"}),
                 )],
             }),
-            &mut emit,
+            &broker,
             &CancellationToken::new(),
         )
         .await
+        .result
         .unwrap();
         let tape = Shell::new(root).cat("/agent/1/machine/tape").await.unwrap();
-        assert!(String::from_utf8(tape).unwrap().contains("resumed answer"));
+        let tape = String::from_utf8(tape).unwrap();
+        let answer: serde_json::Value = tape
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|record| record["content"] == "resumed answer")
+            .unwrap();
+        assert_eq!(answer["submission_id"], "originating-input");
         assert_eq!(
             agentfs.writes.load(Ordering::SeqCst),
             1,
@@ -200,4 +213,57 @@ async fn busy_tape_does_not_drain_queued_next_turn_inputs() {
             .any(|message| message.text_content().contains("queued")
                 && message.text_content().contains("now"))
     );
+}
+
+#[tokio::test]
+async fn non_generating_resume_does_not_require_the_tape_lease() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "must not generate",
+        ))
+        .await,
+    );
+    let call = NormalizedToolCall {
+        id: "command-input".into(),
+        name: "bash".into(),
+        arguments: json!({"command":"echo test"}),
+    };
+    state.machine.set_confirmation(PendingConfirmation {
+        checkpoint_id: "approval".into(),
+        checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.into(),
+        summary: "approve command".into(),
+        details: json!({}),
+        options: vec!["approve".into(), "reject".into()],
+    });
+    state
+        .machine
+        .set_tool_replay_batch("approval", vec![call], false);
+    let writer = state.agent_files().begin_tape_generation().await.unwrap();
+    let mut events = Vec::new();
+    let mut emit = |event| {
+        events.push(event);
+        async {}
+    };
+    for request_id in ["unknown", "approval"] {
+        handle_submission_with_cancel(
+            &mut state,
+            Submission::new(Op::Resume {
+                request_id: request_id.into(),
+                content: vec![alan_agent_protocol::ContentPart::structured(
+                    json!({"choice":"reject"}),
+                )],
+            }),
+            &mut emit,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    }
+    writer.finish().await.unwrap();
+    assert!(!state.machine.has_pending_interaction());
+    assert!(events.iter().any(
+        |event| matches!(event, Event::Error { message, .. } if message.contains("does not match"))
+    ));
+    assert!(events.iter().any(|event| matches!(event, Event::ToolCallCompleted { id, success: Some(false), .. } if id == "command-input")));
 }
