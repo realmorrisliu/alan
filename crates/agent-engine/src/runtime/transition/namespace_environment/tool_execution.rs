@@ -79,7 +79,7 @@ impl NamespaceToolExecution {
         S: Into<String>,
     {
         let cancel = CancellationToken::new();
-        self.run_action_with_cancel_and_timeout(tool_name, executable, args, &cancel, 30)
+        self.run_action_with_cancel_and_timeout(tool_name, None, executable, args, &cancel, 30)
             .await
     }
 
@@ -95,13 +95,14 @@ impl NamespaceToolExecution {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.run_action_with_cancel_and_timeout(tool_name, executable, args, cancel, 30)
+        self.run_action_with_cancel_and_timeout(tool_name, None, executable, args, cancel, 30)
             .await
     }
 
     pub(crate) async fn run_action_with_cancel_and_timeout<I, S>(
         &self,
         tool_name: &str,
+        call_id: Option<&str>,
         executable: &str,
         args: I,
         cancel: &CancellationToken,
@@ -144,6 +145,9 @@ impl NamespaceToolExecution {
         let mut result_doc = serde_json::json!({
             "exit_code": action_exit_code,
         });
+        if let Some(call_id) = call_id {
+            result_doc["call_id"] = serde_json::json!(call_id);
+        }
         if action_exit_code != result.exit_code
             && let Some(object) = result_doc.as_object_mut()
         {

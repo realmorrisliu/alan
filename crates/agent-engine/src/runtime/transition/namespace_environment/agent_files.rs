@@ -598,9 +598,6 @@ async fn write_action_record(
     client
         .write_document(&format!("{action_path}/name"), record.name.as_bytes())
         .await?;
-    client
-        .write_document(&format!("{action_path}/status"), record.status.as_bytes())
-        .await?;
     if let Some(output) = record.output {
         client
             .write_document(&format!("{action_path}/output"), output.as_bytes())
@@ -621,6 +618,10 @@ async fn write_action_record(
             .write_document(&format!("{action_path}/process"), process.as_bytes())
             .await?;
     }
+    // The terminal status event publishes a complete Action snapshot to watchers.
+    client
+        .write_document(&format!("{action_path}/status"), record.status.as_bytes())
+        .await?;
     Ok(id)
 }
 

@@ -225,6 +225,29 @@ async fn engine_writes_requests_and_actions_as_agent_files() {
         "/proc/42"
     );
 
+    let client = NamespaceClient::new(root.clone());
+    let events_path = "/agent/1/actions/events";
+    let length = client.stat_path(events_path).await.unwrap().length;
+    let events = String::from_utf8(
+        client
+            .read_file_range(events_path, 0, length)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let fields: Vec<_> = events.lines().collect();
+    let terminal = fields
+        .iter()
+        .position(|event| *event == "a0:status")
+        .unwrap();
+    for field in ["name", "output", "result", "approval", "process"] {
+        let event = format!("a0:{field}");
+        assert!(
+            fields.iter().position(|item| *item == event).unwrap() < terminal,
+            "{field} must be committed before a watcher sees completion: {events}"
+        );
+    }
+
     AgentConformanceChecker::new(root)
         .check_agent_process("/agent/1")
         .await
