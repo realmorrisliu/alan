@@ -89,29 +89,121 @@ pub(super) fn validate_direct_command_shapes(
 }
 
 /// Extract the inline script of a shell wrapper command (`sh -c <script>`,
-/// `bash -lc <script>`, …) so it can be recursively inspected. Returns `None`
+/// `bash -c <script>`, …) so it can be recursively inspected. Returns `None`
 /// for non-wrapper commands or wrappers without an inline script argument.
-pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Option<String> {
-    // Peel transparent wrappers (`env VAR=x`, `command`, `timeout 5`, `nice`,
-    // `nohup`, `stdbuf`, `setsid`, ...) so the inline script is found even when the
-    // shell is not the direct head — e.g. `env bash -lc '...'`. Otherwise the
-    // quoted script stays an opaque token and its `.git`/out-of-host_mount paths
-    // escape the ProtectedOnly checks.
-    let view = nested_evaluator_view(words)?;
-    if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
-        return None;
-    }
-    // The script follows the first short-flag cluster containing `c` (e.g. `-c`,
-    // `-lc`, `-ic`).
-    let mut index = 0;
-    while index < view.args.len() {
-        let word = &view.args[index];
-        if word.starts_with('-') && !word.starts_with("--") && word.contains('c') {
-            return view.args.get(index + 1).cloned();
+pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
+    let view = nested_evaluator_view(words);
+    if let Some(view) = &view {
+        let options = view
+            .args
+            .iter()
+            .take_while(|arg| arg.starts_with('-') && *arg != "--");
+        let indirect_assignment = match view.command {
+            "printf" => options.clone().any(|arg| arg.starts_with("-v")),
+            "declare" | "typeset" | "local" => options.clone().any(|arg| arg[1..].contains('n')),
+            "let" => true,
+            _ => false,
+        };
+        if indirect_assignment {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated through indirect assignment"
+            ));
         }
-        index += 1;
     }
-    None
+    let assignment_operands = view.as_ref().is_some_and(|view| {
+        matches!(
+            view.command,
+            "export" | "readonly" | "declare" | "typeset" | "local" | "read" | "getopts"
+        )
+    });
+    let prefix_end = view.as_ref().map_or(words.len(), |view| {
+        if assignment_operands {
+            words.len()
+        } else {
+            words.len() - view.args.len()
+        }
+    });
+    for word in &words[..prefix_end] {
+        let name = word.split_once('=').map_or(word.as_str(), |(name, _)| name);
+        // Subscript expressions can assign other variables while selecting a target.
+        if name.contains('[') && (assignment_operands || word.contains('=')) {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated through subscript assignment"
+            ));
+        }
+        let name = name.trim_end_matches('+');
+        if is_shell_startup_variable(name) {
+            return Err(anyhow!(
+                "Shell startup files cannot be enabled by command-local variable {name}"
+            ));
+        }
+    }
+    let Some(view) = view else {
+        return Ok(None);
+    };
+    if view.opaque_wrapper_display.is_some() {
+        return Err(anyhow!(
+            "Shell startup files cannot be validated through opaque command wrappers"
+        ));
+    };
+    if is_shell_eval_builtin(view.command) {
+        return Err(anyhow!(
+            "Shell startup files cannot be validated through {}",
+            view.command
+        ));
+    }
+    if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        return Ok(None);
+    }
+    if view.command == "zsh"
+        && !(view.args.first().is_some_and(|arg| arg == "-fc")
+            || view.args.get(..2).is_some_and(|args| args == ["-f", "-c"]))
+    {
+        return Err(anyhow!("Shell startup files require zsh -f -c or zsh -fc"));
+    }
+    let mut options = view.args.iter().enumerate();
+    while let Some((index, word)) = options.next() {
+        if word.starts_with('+') {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated with + invocation options"
+            ));
+        }
+        if word == "--" || !word.starts_with('-') {
+            break;
+        }
+        let startup_option = matches!(
+            word.split('=').next(),
+            Some("--login" | "--interactive" | "--rcfile" | "--init-file")
+        ) || (!word.starts_with("--")
+            && word.chars().skip(1).any(|ch| matches!(ch, 'l' | 'i')));
+        if startup_option {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated safely: {} {}",
+                view.command,
+                word
+            ));
+        }
+        if !word.starts_with("--") && word.chars().skip(1).any(|ch| matches!(ch, 'o' | 'O')) {
+            if word != "-o" && word != "-O" {
+                return Err(anyhow!(
+                    "Shell startup files cannot be validated with clustered option arguments"
+                ));
+            }
+            options.next();
+            continue;
+        }
+        if !word.starts_with("--") && word.contains('c') {
+            return Ok(view.args.get(index + 1).cloned());
+        }
+    }
+    Ok(None)
+}
+
+pub(super) fn is_shell_startup_variable(name: &str) -> bool {
+    matches!(
+        name,
+        "ENV" | "BASH_ENV" | "SHELLOPTS" | "BASHOPTS" | "CDPATH" | "ZDOTDIR"
+    ) || name.starts_with("BASH_FUNC_")
 }
 
 fn command_basename(command: &str) -> &str {
@@ -135,6 +227,19 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     loop {
         let command = command_basename(&words[command_index]);
         let args = &words[command_index + 1..];
+        if command == "exec"
+            && args
+                .iter()
+                .take_while(|arg| arg.starts_with('-') && *arg != "--")
+                .any(|arg| arg.chars().skip(1).any(|ch| matches!(ch, 'l' | 'a')))
+        {
+            return Some(NestedEvaluatorView {
+                display: display.clone(),
+                command,
+                args,
+                opaque_wrapper_display: Some(format!("{display} with custom argv[0]")),
+            });
+        }
         let next_offset = if command == "env" {
             if let Some(flag) = env_split_string_flag(args) {
                 return Some(NestedEvaluatorView {
@@ -160,6 +265,16 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
             });
         };
 
+        if args[next_relative_offset].starts_with('-')
+            && !common_wrapper_query_flag(&args[next_relative_offset])
+        {
+            return Some(NestedEvaluatorView {
+                display: display.clone(),
+                command,
+                args,
+                opaque_wrapper_display: Some(format!("{display} with unsupported options")),
+            });
+        }
         command_index += 1 + next_relative_offset;
         display.push(' ');
         display.push_str(command_basename(&words[command_index]));

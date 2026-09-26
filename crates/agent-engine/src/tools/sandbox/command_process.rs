@@ -33,6 +33,21 @@ pub(in crate::tools) async fn output_with_capture(
     timeout: Option<Duration>,
     capture: Option<(std::fs::File, std::fs::File)>,
 ) -> Result<Output> {
+    // Nested shells must not re-import functions or startup hooks after the outer
+    // shell has been checked. Keep ordinary Host environment/PATH values intact.
+    let shell_hooks: Vec<_> = command
+        .as_std()
+        .get_envs()
+        .map(|(name, _)| name.to_os_string())
+        .chain(std::env::vars_os().map(|(name, _)| name))
+        .filter(|name| {
+            name.to_str()
+                .is_some_and(super::command_wrappers::is_shell_startup_variable)
+        })
+        .collect();
+    for name in shell_hooks {
+        command.env_remove(name);
+    }
     command.kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);

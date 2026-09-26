@@ -139,7 +139,8 @@ fn test_reified_backend_translates_host_host_mount_paths_in_command_argv() {
     assert_eq!(
         plan.argv,
         vec![
-            "sh".to_string(),
+            "/bin/sh".to_string(),
+            "-p".to_string(),
             "-f".to_string(),
             "-c".to_string(),
             "cat /mnt/source/Cargo.toml > /dev/null".to_string()
@@ -173,7 +174,8 @@ fn test_reified_backend_translates_embedded_host_paths_in_wrapper_script() {
     assert_eq!(
         plan.argv,
         vec![
-            "sh".to_string(),
+            "/bin/sh".to_string(),
+            "-p".to_string(),
             "-f".to_string(),
             "-c".to_string(),
             "bash -lc 'cp /mnt/source/Cargo.toml /mnt/source/copy.toml'".to_string()
@@ -208,7 +210,8 @@ fn test_reified_backend_translates_embedded_host_paths_with_intervening_flag() {
     assert_eq!(
         plan.argv,
         vec![
-            "sh".to_string(),
+            "/bin/sh".to_string(),
+            "-p".to_string(),
             "-f".to_string(),
             "-c".to_string(),
             "bash -lc 'cp /mnt/source/Cargo.toml -t /mnt/source/out'".to_string()
@@ -242,7 +245,7 @@ fn test_reified_backend_translates_quoted_spaced_wrapper_operand_before_second_p
         )
         .unwrap();
 
-    let command = &plan.argv[3];
+    let command = &plan.argv[4];
     assert!(
         command.contains("/mnt/source/My Project/Project Notes.txt"),
         "spaced source path was not translated: {command}"
@@ -281,7 +284,7 @@ fn test_reified_backend_preserves_assignment_words_for_quoted_spaced_paths() {
         )
         .unwrap();
 
-    let command = &plan.argv[3];
+    let command = &plan.argv[4];
     assert!(
         command.contains("FOO="),
         "translated assignment no longer has assignment syntax: {command}"
@@ -321,7 +324,7 @@ fn test_reified_backend_translates_colon_separated_assignment_paths() {
         )
         .unwrap();
 
-    let command = &plan.argv[3];
+    let command = &plan.argv[4];
     assert!(
         command.contains("PYTHONPATH=/mnt/source/pkg:/mnt/source/tests"),
         "colon-separated assignment paths were not fully translated: {command}"
@@ -360,7 +363,8 @@ fn test_reified_backend_translates_quoted_host_host_mount_paths_with_spaces() {
     assert_eq!(
         plan.argv,
         vec![
-            "sh".to_string(),
+            "/bin/sh".to_string(),
+            "-p".to_string(),
             "-f".to_string(),
             "-c".to_string(),
             "cat '/mnt/source/docs/Project Notes.txt' > /dev/null".to_string()
