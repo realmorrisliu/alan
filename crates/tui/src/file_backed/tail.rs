@@ -1,6 +1,6 @@
 use super::{
     StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
-    interrupt_stdio_task_if_active, stdio_task_snapshot,
+    interrupt_stdio_task_if_pending, stdio_task_snapshot,
 };
 use alan_agent_protocol::UiActivitySnapshot;
 use anyhow::{Context, Result, anyhow, bail};
@@ -414,9 +414,15 @@ pub(super) async fn recover_stdio_task_after_root_change(
     *snapshot = recovered;
 
     if interrupt_requested
-        && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, snapshot).await?
+        && interrupt_stdio_task_if_pending(
+            shell,
+            &attachment.agent_process_path,
+            &task.record.submission_id,
+            snapshot,
+        )
+        .await?
     {
-        bail!("Agent task interrupted");
+        bail!("Agent input cancellation requested");
     }
     if snapshot.completion.is_none()
         && snapshot.activity_state == Some(super::UiActivityState::Paused)
