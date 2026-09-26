@@ -322,4 +322,6 @@ mod tests {
             .await;
         assert_eq!(installed.exit_code, 0);
     }
+
+    include!("agent_work/commit_tests.rs");
 }
