@@ -138,3 +138,13 @@ fn standalone_cd_normalizes_command_name_continuations() {
     assert!(parse_standalone_cd("c\\\nd $(touch marker; printf src)").is_err());
     assert_eq!(parse_standalone_cd("c\\\nd src && pwd").unwrap(), None);
 }
+
+#[test]
+fn standalone_cd_does_not_treat_control_whitespace_as_a_shell_separator() {
+    for separator in ['\u{000b}', '\u{000c}', '\r'] {
+        assert_eq!(
+            parse_standalone_cd(&format!("cd{separator}ignored gooddir")).unwrap(),
+            None
+        );
+    }
+}

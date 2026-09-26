@@ -729,6 +729,9 @@ pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
         ));
     }
     let words = shell_tokens_with_spans(&normalized)?;
+    if words.first().is_none_or(|word| word.decoded != "cd") {
+        return Ok(None);
+    }
     if words.len() != 2 {
         return Err(anyhow!(
             "standalone cd requires exactly one directory argument"
