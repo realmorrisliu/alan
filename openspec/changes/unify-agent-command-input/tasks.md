@@ -20,7 +20,7 @@
 - [ ] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
 - [ ] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
 - [ ] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, including Markdown emphasis without matching underscore siblings, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
-- [ ] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify reliable pending work restores paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
+- [x] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify reliable pending work restores paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
 - [ ] 2.9 Present route/cwd and truthful outcomes; verify empty-input Ctrl-D detaches only with no pending Agent input and preserves accepted work, pending confirmation/structured input remains attached and available on Ctrl-D, redirected output is clean, and missing response channels fail without hidden terminal input or fabricated rollback.
 - [ ] 2.10 Run focused boundary checks, ordinary-terminal and Herdr acceptance, and `just quality`; record explicit-prefix slice evidence while documenting that unprefixed input remains Agent-routed.
 
@@ -302,3 +302,24 @@
   source. Engine recovery tests therefore do not establish Root or Host restart
   recovery. Task 2.8 remains open for wiring that source through the existing durable
   owner and verifying native-command restart end to end.
+- Root recovery is now wired through a versioned reference in the existing Agent
+  Runtime System Store metadata. Startup reads the prior rollout and atomically
+  publishes the new reference before readiness; queue/cwd/effect evidence stays
+  in the rollout. Invalid, out-of-store and missing-lineage references are reported
+  instead of selecting an arbitrary history file. An empty store boots normally;
+  stores with pre-existing evidence and no reference require an explicit recovery
+  source. Referenced-but-missing evidence uses the existing engine recovery policy.
+- Task 2.8 closure now includes actual Root cancellation during a native shell
+  command, followed by full OS Host shutdown/reboot against the same stores.
+  Early writes survive, the active command is not replayed, pending input remains
+  paused across both replacements, and continuation fails with an explicit-directory
+  message when the former mount authorization is unavailable. An independent
+  Service Manager regression verifies Agent pending-input continuation makes one
+  model call, never replaying the former active input. Existing engine recovery
+  checks cover missing queue/cwd records and explicit directory repair.
+- Current verification: all 38 OS Host checks, 98 Service Manager unit tests and two
+  integration checks passed; 137 Tool tests passed after replacing the internal
+  missing-adapter message with a directory-access instruction. The native restart
+  fault injector uses a separate Shell Process; processless clients keep read-only
+  `/proc` authority. Terminal/Herdr acceptance and current-head PR/CI closure remain
+  separate unfinished gates.

@@ -73,7 +73,7 @@ async fn test_read_file_tool_requires_explicit_sandbox_grant() {
 
     assert!(
         err.to_string()
-            .contains("Tool Process has no explicit Host execution adapter")
+            .contains("No project directory is authorized")
     );
 }
 

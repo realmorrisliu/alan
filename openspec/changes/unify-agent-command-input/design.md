@@ -348,6 +348,17 @@ and after checking current reachability/rights; otherwise require a new explicit
 directory choice before directory-dependent work. Missing recovery records are
 reported, not reconstructed from textual Tape or inferred from a reused PID.
 
+The Agent Runtime System Store metadata retains a versioned Root rollout reference.
+The Agent Runtime Service reads it before launching a replacement Root and atomically
+replaces it with the new runtime's rollout reference before publishing readiness.
+It is only a lineage reference; queue, cwd and unknown-effect records remain in the
+rollout. It survives Host restart and never selects a file by timestamp or PID.
+Malformed references and references outside the runtime rollout directory fail
+startup. If execution evidence exists but the reference is absent, startup reports
+the missing lineage and requires an explicitly selected prior Root rollout; an
+empty store still starts normally. A missing referenced rollout follows the engine's
+existing strict-durability failure or visible paused/unknown recovery behavior.
+
 ### Classification and staged delivery
 
 Slice 1 implements explicit prefixes with the same Machine, cwd, queue, evidence

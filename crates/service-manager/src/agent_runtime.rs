@@ -33,6 +33,7 @@ use crate::{
 };
 
 mod child_result;
+mod root_recovery;
 
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
@@ -379,9 +380,6 @@ impl AgentRuntimeService {
 
         let agent = Arc::new(alan_agentfs::AgentFs::new());
         self.agent_root.bind_process(pid.0.to_string(), agent).await;
-        if launch.root {
-            self.agent_root.set_root_process(pid.0.to_string()).await;
-        }
 
         let runtime_procfs = self.procfs.clone().with_runner(self.process_runner());
         runtime_procfs
@@ -421,16 +419,27 @@ impl AgentRuntimeService {
         )
         .with_namespace_cwd(&launch.template.launch_context.cwd)
         .with_tool_process_context(pid.0, self.tool_runner.clone());
+        let mut process = launch.template.process.clone();
+        if launch.root {
+            root_recovery::restore_source(&mut process)?;
+        }
         let mut controller = spawn_with_namespace_environment(
-            launch.template.process.clone(),
+            process,
             environment,
             launch.template.host_capabilities.clone(),
             launch.template.generation_capabilities,
         )?;
-        controller
+        let startup = controller
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
+        if launch.root {
+            root_recovery::record_source(
+                &launch.template.process,
+                startup.rollout_path.as_deref(),
+            )?;
+            self.agent_root.set_root_process(pid.0.to_string()).await;
+        }
         self.process_templates
             .lock()
             .expect("process templates mutex poisoned")

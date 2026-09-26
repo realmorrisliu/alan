@@ -171,7 +171,7 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         std::fs::create_dir_all(dir).unwrap();
     }
     let process = AgentProcessConfig {
-        store_bindings: Some(stores),
+        store_bindings: Some(stores.clone()),
         ..AgentProcessConfig::default()
     };
     let config = HostBootConfig::ephemeral("test", process, LlmClient::new(provider), tools);
@@ -214,7 +214,7 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
     })
     .await
     .unwrap();
-    HostCommandPlane::new(paths)
+    HostCommandPlane::new(paths.clone())
         .approve_host_mount(request, project.path().to_owned())
         .await
         .unwrap();
@@ -370,6 +370,127 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
             .iter()
             .any(|tool| tool.name == "agent_work")
     );
+    let active = command(
+        &first,
+        "printf started >> restart-started.txt; sleep 30; printf late > restart-late.txt",
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !project.path().join("src/restart-started.txt").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let pending = command(&second, "printf pending > restart-pending.txt").await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let activity: Value = serde_json::from_slice(
+                &first.cat("/agent/root/machine/ui/activity").await.unwrap(),
+            )
+            .unwrap();
+            if activity["pending_submissions"][0]["submission_id"] == pending {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let pid_path = "/mnt/service-manager/units/root-agent/pid";
+    let old_pid = String::from_utf8(first.cat(pid_path).await.unwrap()).unwrap();
+    // Fault injection uses an ordinary Shell Process; processless clients retain
+    // their read-only /proc projection.
+    let control = Shell::new(
+        LocalAttachment::new(paths.clone())
+            .connect_shell_process()
+            .await
+            .unwrap()
+            .root,
+    );
+    control
+        .write(&format!("/proc/{}/ctl", old_pid.trim()), b"cancel")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(pid) = first.cat(pid_path).await
+                && std::str::from_utf8(&pid)
+                    .ok()
+                    .and_then(|pid| pid.trim().parse::<u64>().ok())
+                    .is_some_and(|pid| pid > 0)
+                && pid != old_pid.as_bytes()
+                && first
+                    .cat("/mnt/service-manager/units/root-agent/status")
+                    .await
+                    .is_ok_and(|status| status.starts_with(b"ready"))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let recovered: Value =
+        serde_json::from_slice(&first.cat("/agent/root/machine/ui/activity").await.unwrap())
+            .unwrap();
+    assert_eq!(recovered["queue_paused"], true);
+    assert!(recovered["active_submission"].is_null());
+    assert_eq!(
+        recovered["pending_submissions"][0]["submission_id"],
+        pending
+    );
+    assert!(!recovered.to_string().contains(&active));
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/restart-started.txt")).unwrap(),
+        "started",
+        "active native command must not replay"
+    );
+    assert!(!project.path().join("src/restart-late.txt").exists());
+    assert!(!project.path().join("src/restart-pending.txt").exists());
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    let mut tools = ToolRegistry::new();
+    tools.register(alan_tools::BashTool::new());
+    let provider = MockLlmProvider::new();
+    let reboot_probe = provider.clone();
+    let config = HostBootConfig::ephemeral(
+        "test",
+        AgentProcessConfig {
+            store_bindings: Some(stores),
+            ..AgentProcessConfig::default()
+        },
+        LlmClient::new(provider),
+        tools,
+    );
+    let host = AlanOsHost::boot(config, paths.clone()).await.unwrap();
+    let stop = CancellationToken::new();
+    let stopped = stop.clone();
+    let server = tokio::spawn(async move { host.serve_until(stopped.cancelled_owned()).await });
+    let first = Shell::new(LocalAttachment::new(paths).connect().await.unwrap().root);
+    let recovered: Value =
+        serde_json::from_slice(&first.cat("/agent/root/machine/ui/activity").await.unwrap())
+            .unwrap();
+    assert_eq!(recovered["queue_paused"], true);
+    assert!(recovered["active_submission"].is_null());
+    assert_eq!(
+        recovered["pending_submissions"][0]["submission_id"],
+        pending
+    );
+    first
+        .write("/agent/root/machine/ctl", b"queue-v1 continue")
+        .await
+        .unwrap();
+    wait_idle(&first, &pending).await;
+    let failure = action_output(&first, &pending).await;
+    assert!(
+        failure.to_string().contains("explicit directory"),
+        "{failure}"
+    );
+    assert!(!project.path().join("src/restart-pending.txt").exists());
+    assert_eq!(probe.recorded_requests().len(), 11);
+    assert!(reboot_probe.recorded_requests().is_empty());
     stop.cancel();
     server.await.unwrap().unwrap();
 }

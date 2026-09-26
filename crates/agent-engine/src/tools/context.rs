@@ -163,7 +163,7 @@ impl ToolContext {
     pub fn execution_adapter(&self) -> Result<Arc<dyn ToolExecutionAdapter>> {
         self.adapter
             .clone()
-            .context("Tool Process has no explicit Host execution adapter")
+            .context("No project directory is authorized; request directory access and choose an explicit directory")
     }
 
     /// Resolve a path relative to working directory
