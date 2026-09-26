@@ -152,7 +152,7 @@ where
                             recoverable: true,
                         })
                         .await;
-                        return Ok(RuntimeOpAction::NoTurn);
+                        anyhow::bail!("steering input requires an active or pending turn");
                     }
 
                     *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);

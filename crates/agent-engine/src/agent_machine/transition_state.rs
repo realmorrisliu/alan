@@ -85,6 +85,8 @@ pub(super) struct MachineTransitionState {
     /// Identifier of the submission currently accepted by this Machine.
     current_submission_id: Option<String>,
     related_submission_ids: Vec<String>,
+    /// Cancellation performed by the transition, independent of later control signals.
+    submission_cancelled: bool,
     pending: HashMap<String, PendingYield>,
     pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
@@ -129,6 +131,7 @@ const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 impl AgentMachine {
     pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
         self.transition_state.current_submission_id = Some(submission_id.into());
+        self.transition_state.submission_cancelled = false;
         self.transition_state.related_submission_ids.clear();
     }
 
@@ -137,7 +140,16 @@ impl AgentMachine {
             return;
         }
         self.transition_state.current_submission_id = None;
+        self.transition_state.submission_cancelled = false;
         self.transition_state.related_submission_ids.clear();
+    }
+
+    pub(crate) fn mark_submission_cancelled(&mut self) {
+        self.transition_state.submission_cancelled = true;
+    }
+
+    pub(crate) fn submission_was_cancelled(&self) -> bool {
+        self.transition_state.submission_cancelled
     }
 
     pub(crate) fn current_submission_id(&self) -> Option<&str> {

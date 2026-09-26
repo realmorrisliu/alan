@@ -49,8 +49,12 @@ async fn test_run_turn_llm_error() {
     )
     .await;
 
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("LLM request failed")
+    );
 
     // Should have error event
     let has_error = events.iter().any(
@@ -58,9 +62,87 @@ async fn test_run_turn_llm_error() {
     );
     assert!(has_error, "Expected Error event for LLM failure");
 
-    let notice = state.agent_files().read_ui_notice_snapshot().await.unwrap();
-    assert_eq!(notice.kind, alan_agent_protocol::UiNoticeKind::Error);
-    assert!(notice.message.contains("LLM request failed"));
+    let mut state = create_test_state_with_provider(ErrorMockProvider);
+    let input = alan_agent_protocol::Submission::new(alan_agent_protocol::Op::Turn {
+        parts: vec![ContentPart::text("failed input")],
+        context: None,
+    });
+    let id = input.id.clone();
+    let outcome = crate::runtime::transition::advance_accepted_submission(
+        &mut state,
+        input,
+        &crate::runtime::turn_input::TurnInputBroker::default(),
+        &cancel,
+    )
+    .await;
+    assert!(outcome.result.is_err());
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    let ui = shell
+        .cat(&format!(
+            "{}/machine/ui/events",
+            state.environment.agent_path()
+        ))
+        .await
+        .unwrap();
+    assert!(std::str::from_utf8(&ui).unwrap().lines().any(|line| {
+        matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, error: Some(error) }
+            if submission_ids == [id.clone()] && error.contains("LLM request failed"))
+    }));
+    // The Process loop owns terminal UI publication; one failed generation must
+    // not produce both a transition error cell and another Process error cell.
+    let state = create_test_state_with_provider(ErrorMockProvider);
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    let capabilities = crate::provider_capabilities_for_config(&state.core_config);
+    let config = crate::runtime::AgentProcessConfig {
+        agent_config: crate::AgentConfig::from(state.core_config),
+        ..Default::default()
+    };
+    let mut controller = crate::runtime::spawn_with_namespace_environment(
+        config,
+        state.environment,
+        crate::skills::SkillHostCapabilities::default(),
+        capabilities,
+    )
+    .unwrap();
+    controller.wait_until_ready().await.unwrap();
+    let input = alan_agent_protocol::Submission::new(alan_agent_protocol::Op::Turn {
+        parts: vec![ContentPart::text("provider failure")],
+        context: None,
+    });
+    let id = input.id.clone();
+    controller.handle.submission_tx.send(input).await.unwrap();
+    let mut stream = shell.tail("/agent/1/machine/ui/events").await.unwrap();
+    let events = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut pending = Vec::new();
+        let mut events = Vec::new();
+        loop {
+            pending.extend(stream.read(4096).await.unwrap());
+            while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<_> = pending.drain(..=end).collect();
+                events.push(serde_json::from_slice::<alan_agent_protocol::UiEvent>(&line).unwrap());
+            }
+            if events
+                .iter()
+                .any(|event| matches!(event, alan_agent_protocol::UiEvent::Error { .. }))
+                && matches!(events.last(), Some(alan_agent_protocol::UiEvent::Activity { snapshot })
+                    if snapshot.state == alan_agent_protocol::UiActivityState::Idle)
+            {
+                break events;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    stream.close().await.unwrap();
+    controller.shutdown().await.unwrap();
+    assert_eq!(events.iter().filter(|event| matches!(event,
+        alan_agent_protocol::UiEvent::Error { message, .. } if message.contains("LLM request failed")
+    )).count(), 1);
+    assert_eq!(events.iter().filter(|event| matches!(event,
+        alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, .. }
+        if submission_ids == std::slice::from_ref(&id)
+    )).count(), 1);
 }
 
 #[tokio::test]

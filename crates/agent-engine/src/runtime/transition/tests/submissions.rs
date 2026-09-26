@@ -213,6 +213,47 @@ async fn identical_inputs_publish_distinct_submission_ids_on_tape() {
         assert_eq!(matching[1]["role"], "assistant");
         assert_eq!(matching[1]["content"], "answer");
     }
+    let events = shell.cat(&format!("{}/machine/ui/events", state.environment.agent_path())).await.unwrap();
+    let ids: Vec<_> = std::str::from_utf8(&events).unwrap().lines()
+        .map(|line| serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap())
+        .filter_map(|event| match event {
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => Some(submission_ids),
+            _ => None,
+        }).collect();
+    assert_eq!(ids, vec![vec!["client-one"], vec!["client-two"]]);
+}
+
+#[tokio::test]
+async fn input_completion_distinguishes_success_failure_and_cancellation() {
+    use alan_agent_protocol::{UiEvent, UiInputStatus};
+    for (mode, cancelled, expected) in [
+        (InputMode::FollowUp, false, UiInputStatus::Completed),
+        (InputMode::FollowUp, true, UiInputStatus::Cancelled),
+        (InputMode::Steer, false, UiInputStatus::Failed),
+    ] {
+        let mut state = runtime_state_with_environment(
+            namespace_environment_with_live_process(DelayedMockProvider::new(
+                tokio::time::Duration::ZERO, "answer",
+            )).await,
+        );
+        let submission = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("same question")], mode,
+        });
+        let id = submission.id.clone();
+        let cancel = CancellationToken::new();
+        if cancelled { cancel.cancel(); }
+        let _ = advance_accepted_submission(&mut state, submission, &TurnInputBroker::default(), &cancel).await;
+        let shell = Shell::new(state.environment.root_transport());
+        let bytes = shell.cat(&format!("{}/machine/ui/events", state.environment.agent_path())).await.unwrap();
+        let completions: Vec<_> = std::str::from_utf8(&bytes).unwrap().lines()
+            .map(|line| serde_json::from_str::<UiEvent>(line).unwrap())
+            .filter_map(|event| match event {
+                UiEvent::InputCompleted { submission_ids, status, .. } => Some((submission_ids, status)),
+                _ => None,
+            }).collect();
+        assert_eq!(completions, vec![(vec![id], expected)]);
+        assert!(state.machine.current_submission_id().is_none());
+    }
 }
 
 #[tokio::test]
@@ -245,4 +286,132 @@ async fn next_turn_inputs_keep_their_ids_in_the_shared_answer() {
         assert_eq!(record["submission_id"], "trigger");
         assert_eq!(record["related_submission_ids"], json!(["queued-one", "queued-two"]));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn late_steering_settles_separately_after_completion_or_cancellation() {
+    for cancelled in [false, true] {
+        let mut state = runtime_state_with_environment(
+            namespace_environment_with_live_process(DelayedMockProvider::new(
+                tokio::time::Duration::from_secs(1),
+                "finished answer",
+            ))
+            .await,
+        );
+        state.core_config.memory.enabled = false;
+        let shell = Shell::new(state.environment.root_transport());
+        let broker = TurnInputBroker::default();
+        let cancel = CancellationToken::new();
+        let origin = Submission::new(Op::Turn {
+            parts: vec![alan_agent_protocol::ContentPart::text("original task")],
+            context: None,
+        });
+        let origin_id = origin.id.clone();
+        let steering = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("late steering")],
+            mode: InputMode::Steer,
+        });
+        let steering_id = steering.id.clone();
+        let advance = advance_accepted_submission(&mut state, origin, &broker, &cancel);
+        tokio::pin!(advance);
+        assert!(
+            tokio::time::timeout(tokio::time::Duration::from_millis(1), &mut advance)
+                .await
+                .is_err()
+        );
+        assert!(broker.push(steering).await);
+        if cancelled {
+            cancel.cancel();
+        }
+        advance.await.result.unwrap();
+        let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+        let completed: Vec<_> = String::from_utf8(events)
+            .unwrap()
+            .lines()
+            .filter_map(|line| {
+                match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+                    alan_agent_protocol::UiEvent::InputCompleted {
+                        submission_ids,
+                        status,
+                        ..
+                    } => Some((submission_ids, status)),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert_eq!(
+            completed,
+            vec![
+                (
+                    vec![steering_id.clone()],
+                    if cancelled {
+                        alan_agent_protocol::UiInputStatus::Cancelled
+                    } else {
+                        alan_agent_protocol::UiInputStatus::Failed
+                    }
+                ),
+                (
+                    vec![origin_id.clone()],
+                    if cancelled {
+                        alan_agent_protocol::UiInputStatus::Cancelled
+                    } else {
+                        alan_agent_protocol::UiInputStatus::Completed
+                    }
+                ),
+            ]
+        );
+        let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        assert!(!tape.contains(&steering_id));
+        assert!(
+            cancelled
+                || tape.lines().any(|line| {
+                    let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                    record["role"] == "assistant"
+                        && record["submission_id"] == origin_id
+                        && record["content"] == "finished answer"
+                })
+        );
+    }
+}
+
+#[tokio::test]
+async fn steering_admitted_before_first_poll_is_settled() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "finished answer",
+        ))
+        .await,
+    );
+    state.core_config.memory.enabled = false;
+    let shell = Shell::new(state.environment.root_transport());
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    let origin = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("original task")],
+        context: None,
+    });
+    let steering = Submission::new(Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("early steering")],
+        mode: InputMode::Steer,
+    });
+    let steering_id = steering.id.clone();
+    let advance = advance_accepted_submission(&mut state, origin, &broker, &cancel);
+    assert!(broker.push(steering).await);
+    advance.await.result.unwrap();
+
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    let settlements = events
+        .lines()
+        .filter_map(|line| match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => {
+                Some(submission_ids)
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter(|id| id == &steering_id)
+        .count();
+    assert_eq!(settlements, 1, "every admitted input must settle exactly once");
+    assert!(broker.try_recv().await.is_none());
 }

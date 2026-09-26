@@ -184,14 +184,41 @@ impl Default for UiNoticeSnapshot {
     }
 }
 
+/// Terminal outcome of advancing accepted input, distinct from Process exit.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiInputStatus {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEvent {
-    Activity { snapshot: UiActivitySnapshot },
-    Plan { snapshot: UiPlanSnapshot },
-    Thinking { snapshot: UiThinkingSnapshot },
-    Notice { snapshot: UiNoticeSnapshot },
-    Error { message: String, recoverable: bool },
+    /// Emitted after settlement; Tape/Actions contain the correlated result.
+    InputCompleted {
+        submission_ids: Vec<String>,
+        status: UiInputStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    Activity {
+        snapshot: UiActivitySnapshot,
+    },
+    Plan {
+        snapshot: UiPlanSnapshot,
+    },
+    Thinking {
+        snapshot: UiThinkingSnapshot,
+    },
+    Notice {
+        snapshot: UiNoticeSnapshot,
+    },
+    Error {
+        message: String,
+        recoverable: bool,
+    },
 }
 
 #[cfg(test)]
