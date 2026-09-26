@@ -66,7 +66,7 @@ impl Tool for BashTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.sandbox() {
+        let sandbox = match ctx.shell_sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };

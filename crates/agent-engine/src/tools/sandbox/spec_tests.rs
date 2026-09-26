@@ -460,3 +460,32 @@ async fn sandbox_spec_writable_roots_block_protected_roots_themselves() {
             .contains("protected subpath .git")
     );
 }
+
+#[tokio::test]
+async fn inactive_grants_require_a_read_isolating_backend() {
+    let active = TempDir::new().unwrap();
+    let other = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        active.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    )
+    .with_excluded_host_roots(vec![other.path().to_path_buf()]);
+    let error = sandbox.exec("pwd", active.path()).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot isolate inactive Host Mount reads")
+    );
+}
+
+#[tokio::test]
+async fn canonical_mount_blocks_missing_parent_protected_path_bypass() {
+    let active = TempDir::new().unwrap();
+    std::fs::create_dir_all(active.path().join(".git")).unwrap();
+    let sandbox = Sandbox::new(dunce::canonicalize(active.path()).unwrap());
+    let error = sandbox
+        .exec("touch .git/missing/../config", active.path())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("protected subpath"));
+}

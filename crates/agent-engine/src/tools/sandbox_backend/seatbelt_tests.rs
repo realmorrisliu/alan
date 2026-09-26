@@ -149,3 +149,45 @@ fn pre_refactor_single_host_mount_profile(host_mount_root: &Path, allow_network:
          (allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\") (literal \"/dev/dtracehelper\"))\n"
     )
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn seatbelt_isolates_inactive_grants_even_inside_temporary_storage() {
+    if !super::super::seatbelt_available() {
+        return;
+    }
+    let parent = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let nested = parent.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    for root in [parent.path(), nested.as_path(), other.path()] {
+        std::fs::write(root.join("data"), "private").unwrap();
+    }
+    for active in [parent.path(), nested.as_path()] {
+        let mut profile = seatbelt_profile(&[active.to_path_buf()], &[], false);
+        profile.push_str(&seatbelt_host_mount_exclusions(
+            &[parent.path().to_path_buf(), other.path().to_path_buf()],
+            &[active.to_path_buf()],
+        ));
+        let run = |root: &Path, script: &str| {
+            std::process::Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", &profile, "/bin/sh", "-c", script, "sh"])
+                .arg(root)
+                .output()
+                .unwrap()
+        };
+        // Construct paths at runtime, bypassing any static command path guard.
+        assert!(run(active, "cat \"$1/data\"").status.success());
+        assert!(run(active, "printf ok > \"$1/written\"").status.success());
+        for denied in [other.path(), parent.path()] {
+            if denied.starts_with(active) {
+                continue;
+            }
+            let read = run(denied, "cat \"$1/data\"");
+            assert!(!read.status.success(), "inactive read succeeded");
+            assert!(read.stdout.is_empty());
+            assert!(!run(denied, "printf bad > \"$1/denied\"").status.success());
+            assert!(!denied.join("denied").exists());
+        }
+    }
+}

@@ -58,6 +58,7 @@ struct NativeToolExecutionAdapter {
     namespace_cwd: PathBuf,
     cwd: PathBuf,
     sandbox: Sandbox,
+    shell_sandbox: Sandbox,
 }
 
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
@@ -120,6 +121,10 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     fn sandbox(&self) -> Result<Sandbox> {
         Ok(self.sandbox.clone())
     }
+
+    fn shell_sandbox(&self) -> Result<Sandbox> {
+        Ok(self.shell_sandbox.clone())
+    }
 }
 
 impl HostMountExportAdapter for NativeHostMountExportAdapter {
@@ -180,11 +185,25 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                 },
             })
             .collect::<Vec<_>>();
+        let shell_mount = sandbox_mounts
+            .iter()
+            .find(|mount| mount.namespace_path == selected.namespace_path)
+            .expect("selected grant is in the native projection");
+        let excluded_roots = mounts
+            .iter()
+            .filter(|mount| !mount.host_path.starts_with(&selected.host_path))
+            .map(|mount| mount.host_path.clone())
+            .collect();
+        let shell_sandbox = Sandbox::from_spec(SandboxSpec::from_host_mounts(
+            std::slice::from_ref(shell_mount),
+        ))
+        .with_excluded_host_roots(excluded_roots);
         Ok(Arc::new(NativeToolExecutionAdapter {
             mounts,
             namespace_cwd,
             cwd,
             sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&sandbox_mounts)),
+            shell_sandbox,
         }))
     }
 }
@@ -530,6 +549,43 @@ mod tests {
             execution.adapter().unwrap().cwd().unwrap(),
             std::fs::canonicalize(cwd_host.path()).unwrap().join("work")
         );
+    }
+
+    #[tokio::test]
+    async fn shell_authority_follows_logical_cwd_with_overlapping_native_backing() {
+        let parent = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let nested = parent.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        for (namespace, root) in [
+            ("/mnt/parent", parent.path()),
+            ("/mnt/nested", nested.as_path()),
+            ("/mnt/alias", parent.path()),
+            ("/mnt/other", other.path()),
+        ] {
+            approve(&service, 7, namespace, HostMountAccess::ReadWrite, root).await;
+        }
+        for (cwd, allowed, denied) in [
+            ("/mnt/parent/nested", parent.path(), other.path()),
+            ("/mnt/alias/nested", parent.path(), other.path()),
+            ("/mnt/nested", nested.as_path(), parent.path()),
+            ("/mnt/other", other.path(), parent.path()),
+        ] {
+            let adapter = service
+                .reconcile(7, binding(cwd))
+                .unwrap()
+                .adapter()
+                .unwrap();
+            let shell = adapter.shell_sandbox().unwrap();
+            assert!(shell.is_readable(allowed));
+            assert!(shell.is_writable(allowed));
+            assert!(!shell.is_readable(denied));
+            assert!(!shell.is_writable(denied));
+            assert!(adapter.sandbox().unwrap().is_readable(denied));
+            assert!(adapter.sandbox().unwrap().is_writable(denied));
+        }
     }
 
     #[tokio::test]

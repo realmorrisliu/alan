@@ -67,6 +67,7 @@ pub struct ExecResult {
 #[derive(Debug, Clone)]
 pub struct Sandbox {
     spec: SandboxSpec,
+    excluded_host_roots: Vec<PathBuf>,
     /// Forces a specific backend instead of host detection (tests only).
     backend_override: Option<super::sandbox_backend::SandboxBackendKind>,
 }
@@ -86,6 +87,7 @@ impl Sandbox {
         );
         Self {
             spec,
+            excluded_host_roots: Vec::new(),
             backend_override: None,
         }
     }
@@ -113,8 +115,16 @@ impl Sandbox {
         );
         Self {
             spec,
+            excluded_host_roots: Vec::new(),
             backend_override: Some(backend),
         }
+    }
+
+    /// Exclude other Host grants outside this sandbox's active roots.
+    /// The Host adapter supplies these roots from the current grant projection.
+    pub fn with_excluded_host_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.excluded_host_roots = roots;
+        self
     }
 
     fn primary_host_root(&self) -> &Path {
@@ -355,6 +365,17 @@ impl Sandbox {
                 Some(alan_agent_protocol::ToolCapability::Network)
             );
         let backend = self.active_backend();
+        if !self.excluded_host_roots.is_empty()
+            && !matches!(
+                backend,
+                super::sandbox_backend::SandboxBackendKind::Seatbelt
+                    | super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
+            )
+        {
+            return Err(anyhow!(
+                "This backend cannot isolate inactive Host Mount reads"
+            ));
+        }
         if matches!(
             backend,
             super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
@@ -395,11 +416,15 @@ impl Sandbox {
         // Defense in depth: start the shell with pathname expansion disabled.
         let command = match backend {
             super::sandbox_backend::SandboxBackendKind::Seatbelt => {
-                let profile = super::sandbox_backend::seatbelt_profile(
+                let mut profile = super::sandbox_backend::seatbelt_profile(
                     &self.spec.writable_roots,
                     &self.spec.read_denylist,
                     allow_network,
                 );
+                profile.push_str(&super::sandbox_backend::seatbelt_host_mount_exclusions(
+                    &self.excluded_host_roots,
+                    &self.spec.readable_roots,
+                ));
                 let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
                 command
                     .arg("-p")
@@ -727,11 +752,12 @@ impl Sandbox {
             return self.normalized_path(&absolute_path);
         }
 
+        let normalized = lexically_normalize_path(&absolute_path);
         let mut current = absolute_path.as_path();
         let mut suffix = Vec::<OsString>::new();
         while !current.exists() {
             let Some(name) = current.file_name() else {
-                return lexically_normalize_path(&absolute_path);
+                return self.resolved_path_with_existing_parents(&normalized);
             };
             suffix.push(name.to_os_string());
             let Some(parent) = current.parent() else {

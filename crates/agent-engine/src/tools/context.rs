@@ -29,6 +29,11 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
 
     /// Return the Host-derived native sandbox for this Tool Process.
     fn sandbox(&self) -> Result<Sandbox>;
+
+    /// Return the Host-derived sandbox for a shell action at the shared cwd.
+    fn shell_sandbox(&self) -> Result<Sandbox> {
+        self.sandbox()
+    }
 }
 
 /// Explicit Process binding for Tool execution.
@@ -133,6 +138,11 @@ impl ToolContext {
     /// Create a sandbox from the Host-projected authority for this Process.
     pub fn sandbox(&self) -> Result<Sandbox> {
         self.execution_adapter()?.sandbox()
+    }
+
+    /// Return the Host sandbox for the grant selected by the logical cwd.
+    pub fn shell_sandbox(&self) -> Result<Sandbox> {
+        self.execution_adapter()?.shell_sandbox()
     }
 
     /// Return the Host-selected native cwd without retaining it in engine state.
