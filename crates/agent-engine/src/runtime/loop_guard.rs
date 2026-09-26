@@ -69,7 +69,9 @@ fn fingerprint_tool_call(tool_name: &str, arguments: &Value) -> String {
     let mut hasher = Sha256::new();
     hasher.update(tool_name.as_bytes());
     hasher.update(b"\n");
-    hasher.update(arguments.to_string().as_bytes());
+    let mut canonical = arguments.clone();
+    canonical.sort_all_objects();
+    hasher.update(canonical.to_string().as_bytes());
     hex::encode(hasher.finalize())
 }
 
@@ -84,6 +86,15 @@ mod tests {
         assert!(guard.before_tool_call("web_search", &args).is_none());
         assert!(guard.before_tool_call("web_search", &args).is_none());
         assert!(guard.before_tool_call("web_search", &args).is_some());
+    }
+
+    #[test]
+    fn repeated_call_ignores_nested_object_key_order() {
+        let first: Value = serde_json::from_str(r#"{"a":1,"nested":[{"x":2,"y":3}]}"#).unwrap();
+        let reordered: Value = serde_json::from_str(r#"{"nested":[{"y":3,"x":2}],"a":1}"#).unwrap();
+        let mut guard = ToolLoopGuard::new(None, 1);
+        assert!(guard.before_tool_call("write", &first).is_none());
+        assert!(guard.before_tool_call("write", &reordered).is_some());
     }
 
     #[test]

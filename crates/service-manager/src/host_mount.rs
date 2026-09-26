@@ -800,6 +800,7 @@ impl ToolExecutionAuthority for HostMountService {
         let carried_host_mount_authority = binding.has_adapter();
         let requested_namespace_cwd = binding.namespace_cwd.clone();
         let state = self.state.lock().unwrap();
+        let mut cwd_grants = Vec::new();
         let projections = state
             .grants
             .values()
@@ -811,10 +812,16 @@ impl ToolExecutionAuthority for HostMountService {
                     .projections
                     .iter()
                     .find(|projection| projection.pid == pid)
-                    .map(|projection| HostMountToolProjection {
-                        namespace_path: PathBuf::from(&projection.namespace_path),
-                        access: projection.access,
-                        export: grant.export.clone(),
+                    .map(|projection| {
+                        cwd_grants.push((
+                            PathBuf::from(&projection.namespace_path),
+                            grant.public.id.clone(),
+                        ));
+                        HostMountToolProjection {
+                            namespace_path: PathBuf::from(&projection.namespace_path),
+                            access: projection.access,
+                            export: grant.export.clone(),
+                        }
                     })
             })
             .collect::<Vec<_>>();
@@ -827,6 +834,19 @@ impl ToolExecutionAuthority for HostMountService {
                     .tool_execution_adapter(&projections, &requested_namespace_cwd)?,
             );
         }
+        let selected_grant = cwd_grants
+            .iter()
+            .filter(|(path, _)| binding.namespace_cwd.starts_with(path))
+            .max_by_key(|(path, _)| path.components().count())
+            .map(|(_, id)| id.clone());
+        ensure!(
+            binding
+                .cwd_grant_id
+                .as_ref()
+                .is_none_or(|id| Some(id) == selected_grant.as_ref()),
+            "Process cwd grant was revoked or replaced; choose an explicit directory"
+        );
+        binding.cwd_grant_id = selected_grant;
         // Fail closed only if reconciliation removed cached Host Mount authority.
         ensure!(
             !carried_host_mount_authority || binding.has_adapter(),
