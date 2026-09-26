@@ -94,6 +94,10 @@ impl TurnInputBroker {
             active_submission: state.active_submission.clone(),
             pending_submissions: pending,
             queue_paused: state.paused,
+            cwd: state
+                .checkpoint_cwd
+                .as_ref()
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
             ..state.ui_activity.clone()
         }
     }

@@ -446,3 +446,57 @@ async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
 
     watchers.stop().await;
 }
+
+#[tokio::test]
+async fn redirected_input_reports_pending_response_without_cancelling_work() {
+    let (shell, _root, _namespace, pid) = stdio_tests::live_root_agent().await;
+    let mut attachment = tail::open_stdio_tail_attachment(&shell, "/agent/root")
+        .await
+        .unwrap();
+    let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
+    let task = StdioTaskWaitContext::new("!needs approval");
+    let event = serde_json::json!({
+        "type":"activity", "snapshot":{
+            "version":2, "state":"paused",
+            "active_submission":{"submission_id":task.record.submission_id,"intent":"command"}
+        }
+    });
+    let result = {
+        let wait = wait_for_stdio_answer(
+            &shell,
+            "/agent/root",
+            task,
+            &mut attachment,
+            std::future::pending::<anyhow::Result<()>>(),
+        );
+        tokio::pin!(wait);
+        tokio::select! {
+            result = &mut wait => panic!("returned before admission: {result:?}"),
+            input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
+        }
+        shell
+            .write(
+                "/agent/root/machine/ui/events",
+                format!("{event}\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), wait)
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Agent task needs interactive input; attach with the TTY renderer"
+    );
+    assert_eq!(
+        String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap())
+            .unwrap()
+            .trim(),
+        "running"
+    );
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
+    input_tail.close().await.unwrap();
+}

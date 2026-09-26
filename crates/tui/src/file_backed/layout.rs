@@ -47,6 +47,12 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
 
 fn live_region_lines(app: &FileBackedApp) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
+    if let Some(cwd) = &app.activity.cwd {
+        lines.push(Line::styled(
+            format!("· directory: {cwd}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     if let Some(label) = app.activity_label() {
         lines.push(activity_line(app, label));
     }

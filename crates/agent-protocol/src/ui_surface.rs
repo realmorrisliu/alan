@@ -41,6 +41,9 @@ pub struct UiActivitySnapshot {
     pub pending_submissions: Vec<UiSubmission>,
     #[serde(default)]
     pub queue_paused: bool,
+    /// Last runtime-published logical Process cwd; this string grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 impl UiActivitySnapshot {
@@ -52,6 +55,7 @@ impl UiActivitySnapshot {
             active_submission: None,
             pending_submissions: Vec::new(),
             queue_paused: false,
+            cwd: None,
         }
     }
     pub fn running(started_at_ms: u64) -> Self {

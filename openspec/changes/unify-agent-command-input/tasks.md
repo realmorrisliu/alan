@@ -21,7 +21,7 @@
 - [x] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
 - [x] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, including Markdown emphasis without matching underscore siblings, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
 - [x] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify reliable pending work restores paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
-- [ ] 2.9 Present route/cwd and truthful outcomes; verify empty-input Ctrl-D detaches only with no pending Agent input and preserves accepted work, pending confirmation/structured input remains attached and available on Ctrl-D, redirected output is clean, and missing response channels fail without hidden terminal input or fabricated rollback.
+- [x] 2.9 Present route/cwd and truthful outcomes; verify empty-input Ctrl-D detaches only with no pending Agent input and preserves accepted work, pending confirmation/structured input remains attached and available on Ctrl-D, redirected output is clean, and missing response channels fail without hidden terminal input or fabricated rollback.
 - [ ] 2.10 Run focused boundary checks, ordinary-terminal and Herdr acceptance, and `just quality`; record explicit-prefix slice evidence while documenting that unprefixed input remains Agent-routed.
 
 - [ ] 2.11 Keep grant-to-native cwd/path resolution within ephemeral Host-adapter spawn/sandbox context while preserving logical service records; verify grant IDs/path strings cannot authorize access, raw backing-path metadata stays out of Alan-owned path fields and execution-path references in evidence, ordinary content in an explicitly delegated Host file remains user data, undelegated/private backing stays hidden and shell/model context is not rewritten to aP aliases.
@@ -417,3 +417,23 @@
   (2 tests); engine `long_tool_output` (3 tests) and
   `evidence_resolution_distinguishes_missing_and_retention_expired` (1 test);
   AgentFS `expired_action_output_returns_structured_retention_record` (1 test).
+
+### Shared directory and pending-input presentation (2026-09-26)
+
+- Task 2.9 is complete at the file/renderer boundary. The existing activity
+  snapshot/events now include optional logical `cwd` from the runtime checkpoint
+  of the Process execution binding. The TUI renders it as `directory`; it neither
+  resolves native paths nor owns mutable cwd. Existing snapshots without the field
+  remain readable and show no invented directory. The real Host test confirms both
+  independent clients read the same cwd after switching grants.
+- Renderer tests verify directory replacement, Ctrl-D preserving confirmation and
+  multi-field input, and successful response submission afterward. Existing empty
+  prompt detach tests and the earlier PTY accepted-work test retain their scope.
+- A redirected-input test publishes a correlated paused submission and verifies
+  an explicit attach-to-TTY error while the Process remains running. The path does
+  not read terminal input or issue cancellation/rollback. The stdio completion
+  checks retain correlated stdout/stderr and nonzero exit status; `run_stdio_task`
+  writes those streams directly without the interactive directory/prompt display.
+- Validation: complete terminal UI and protocol suites; real Host `unified_input`;
+  engine suite. Ordinary terminal/Herdr acceptance remains separately tracked by
+  task 2.10 and is not inferred from these renderer tests.

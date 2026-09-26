@@ -274,6 +274,15 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         "other"
     );
     assert!(!project.path().join("src/cross-grant.txt").exists());
+    for client in [&first, &second] {
+        let activity: Value =
+            serde_json::from_slice(&client.cat("/agent/root/machine/ui/activity").await.unwrap())
+                .unwrap();
+        assert_eq!(
+            std::path::Path::new(activity["cwd"].as_str().unwrap()),
+            std::path::Path::new("/mnt/other")
+        );
+    }
     let switch_back = command(&second, "cd /mnt/project/src").await;
     let write_project = command(&first, "printf project > cross-grant.txt").await;
     wait_idle(&first, &write_project).await;

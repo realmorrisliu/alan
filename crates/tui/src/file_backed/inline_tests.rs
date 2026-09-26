@@ -104,6 +104,11 @@ fn ctrl_d_does_not_detach_while_agent_input_is_pending() {
     assert!(action.is_none());
     assert!(!app.should_quit);
     assert!(app.pending_yield.is_some());
+    assert!(matches!(
+        press(&mut app, KeyCode::Char('1'), KeyModifiers::NONE),
+        Some(FileBackedAction::Resume { request_id, response })
+            if request_id == "r1" && response.contains("approve")
+    ));
 }
 
 #[test]
@@ -334,4 +339,96 @@ fn multiline_unicode_paste_stays_inline_and_positions_the_cursor_by_display_widt
         backend.cursor_position(),
         ratatui::layout::Position::new(7, 1)
     );
+}
+
+#[test]
+fn shared_directory_display_follows_runtime_activity() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let mut activity = UiActivitySnapshot::idle();
+    activity.cwd = Some("/mnt/project/src".to_string());
+    app.apply_ui_activity_snapshot(activity.clone());
+    let visible = |app: &FileBackedApp| {
+        let backend = render(app);
+        backend
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    assert!(visible(&app).contains("directory: /mnt/project/src"));
+    activity.cwd = Some("/mnt/other".to_string());
+    app.apply_ui_activity_snapshot(activity);
+    let output = visible(&app);
+    assert!(output.contains("directory: /mnt/other"));
+    assert!(!output.contains("/mnt/project/src"));
+}
+
+#[test]
+fn control_keys_preserve_a_pending_structured_input_form() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.activity = UiActivitySnapshot::paused(Some(1));
+    app.set_pending_yield(PendingYieldCell {
+        request_id: "r1".to_string(),
+        kind: YieldKind::StructuredInput,
+        title: "Answer these questions".to_string(),
+        prompt: None,
+        options: Vec::new(),
+        default_option: None,
+        questions: ["first", "second"]
+            .into_iter()
+            .map(|id| alan_agent_protocol::StructuredInputQuestion {
+                id: id.to_string(),
+                label: id.to_string(),
+                prompt: format!("{id} answer"),
+                kind: alan_agent_protocol::StructuredInputKind::Text,
+                required: false,
+                placeholder: None,
+                help_text: None,
+                default_value: None,
+                default_values: Vec::new(),
+                min_selected: None,
+                max_selected: None,
+                options: Vec::new(),
+                presentation_hints: Vec::new(),
+            })
+            .collect(),
+        capability: None,
+        reason: None,
+        presentation: None,
+    });
+    press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(press(&mut app, KeyCode::Char('d'), KeyModifiers::CONTROL).is_none());
+    assert!(!app.should_quit);
+    assert!(app.pending_yield.is_some());
+    let form = app.form.as_ref().expect("multi-question form");
+    let initial_value = form.fields[form.focus].value.clone();
+
+    let action = press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+    assert!(matches!(action, Some(FileBackedAction::Interrupt)));
+    assert_eq!(
+        app.form.as_ref().unwrap().fields[0].value,
+        initial_value,
+        "Ctrl-C must not be inserted as form text"
+    );
+    assert!(matches!(
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        Some(FileBackedAction::Resume { request_id, response })
+            if request_id == "r1" && response.contains("x")
+    ));
+}
+
+#[tokio::test]
+async fn terminal_reader_exits_after_its_event_receiver_is_dropped() {
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    drop(rx);
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        super::file_surface::spawn_terminal_events(tx),
+    )
+    .await
+    .expect("terminal reader should observe shutdown")
+    .expect("terminal reader task should exit cleanly");
 }
