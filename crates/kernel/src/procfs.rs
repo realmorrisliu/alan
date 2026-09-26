@@ -475,6 +475,8 @@ impl ProcFs {
     }
 
     /// Observe Process lifecycle without waiting on retained IO work.
+    /// Returns `None` when the table is busy or the PID is absent; neither is
+    /// evidence of exit. Only an observed `Status::Exited` proves completion.
     pub fn try_observe_process_lifecycle(&self, pid: Pid) -> Option<(Status, Option<i32>)> {
         let state = self.state.try_lock().ok()?;
         let process = state.table.get(pid)?;

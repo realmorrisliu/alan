@@ -65,7 +65,6 @@ impl RootAgentTemplate {
 pub(crate) struct RootAgentProcess {
     pid: Pid,
     namespace: InProcessTransport,
-    procfs: alan_kernel::ProcFs,
     ready: Option<tokio::sync::oneshot::Receiver<std::result::Result<(), String>>>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -77,12 +76,6 @@ impl RootAgentProcess {
 
     pub(crate) fn namespace(&self) -> InProcessTransport {
         self.namespace.clone()
-    }
-
-    pub(crate) fn is_finished(&self) -> bool {
-        self.procfs
-            .try_observe_process_lifecycle(self.pid)
-            .is_none_or(|(status, _)| status == alan_kernel::Status::Exited)
     }
 
     pub(crate) async fn wait_until_ready(&mut self) -> Result<()> {
@@ -249,7 +242,6 @@ impl AgentRuntimeService {
         Ok(RootAgentProcess {
             pid,
             namespace: root,
-            procfs: self.procfs.clone(),
             ready: Some(ready_rx),
             stop: Some(stop_tx),
         })
@@ -842,7 +834,7 @@ async fn wait_for_process_exit(
         loop {
             if procfs
                 .try_observe_process_lifecycle(pid)
-                .is_none_or(|(status, _)| status == alan_kernel::Status::Exited)
+                .is_some_and(|(status, _)| status == alan_kernel::Status::Exited)
             {
                 return;
             }
