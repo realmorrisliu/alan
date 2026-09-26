@@ -526,6 +526,19 @@ async fn process_server_uses_spawning_agent_execution_binding() {
             PathBuf::from("/tmp/child-scratch"),
         ),
     );
+    #[derive(Debug)]
+    struct SelectedGrant;
+    impl crate::tools::ToolExecutionAuthority for SelectedGrant {
+        fn reconcile(
+            &self,
+            _pid: u64,
+            mut binding: ToolExecutionBinding,
+        ) -> Result<ToolExecutionBinding> {
+            binding.cwd_grant_id = Some("grant-child".into());
+            Ok(binding)
+        }
+    }
+    runner.register_process_authority(7, Arc::new(SelectedGrant));
     let mut namespace = alan_kernel::Namespace::new();
     namespace.mount(
         "/bin/cwd_echo",
@@ -549,6 +562,10 @@ async fn process_server_uses_spawning_agent_execution_binding() {
     assert_eq!(outcome.exit_code, 0);
     let value: Value = serde_json::from_slice(&outcome.output).unwrap();
     assert_eq!(value["cwd"], "/tmp/child-cwd");
+    assert_eq!(
+        runner.process_binding(7).unwrap().cwd_grant_id.as_deref(),
+        Some("grant-child")
+    );
 }
 
 #[tokio::test]

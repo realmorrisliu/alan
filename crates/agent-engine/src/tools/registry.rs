@@ -522,6 +522,10 @@ impl ToolProcessRunner {
             .get(&pid)
             .cloned()
             .context("Process has no live Host Mount authority")?;
+        // An explicit absolute cd may select a replacement grant after revocation.
+        if path.is_absolute() {
+            binding.cwd_grant_id = None;
+        }
         let previous_namespace_cwd = binding.namespace_cwd.clone();
         let had_host_adapter = binding.has_adapter();
         binding = authority.reconcile(pid, binding)?;
@@ -536,6 +540,7 @@ impl ToolProcessRunner {
             .context("Process has no active Host Mount execution adapter")?;
         let namespace_cwd = adapter.resolve_directory(&binding.namespace_cwd, path)?;
         binding.namespace_cwd = namespace_cwd.clone();
+        binding.cwd_grant_id = None;
         binding = authority.reconcile(pid, binding)?;
         anyhow::ensure!(
             binding.namespace_cwd == namespace_cwd,
@@ -681,6 +686,7 @@ impl ToolProcessRunner {
                     );
                 }
             };
+            self.register_process_binding(authority_pid, binding.clone());
         }
         let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {
