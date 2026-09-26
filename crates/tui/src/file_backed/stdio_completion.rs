@@ -96,6 +96,63 @@ pub(super) fn submission_error(submission_id: &str, ui_history: &[u8]) -> Result
     Ok(error)
 }
 
+/// Activity is run state; only matching Tape/Action/error evidence can complete a task.
+pub(super) fn observe_activity(
+    task: &StdioTaskWaitContext,
+    snapshot: &mut StdioTaskSnapshot,
+    activity: &alan_agent_protocol::UiActivitySnapshot,
+) {
+    if snapshot.task_error.is_some() {
+        return;
+    }
+    if activity.version >= 2 {
+        let id = task.record.submission_id.as_str();
+        if activity
+            .pending_submissions
+            .iter()
+            .any(|input| input.submission_id == id)
+        {
+            snapshot.task_started = true;
+            snapshot.activity_state = None;
+        } else if activity
+            .active_submission
+            .as_ref()
+            .is_some_and(|input| input.submission_id == id)
+        {
+            snapshot.task_started = true;
+            // An idle active ID is admission, unless this client already observed execution.
+            if activity.state != UiActivityState::Idle
+                || matches!(
+                    snapshot.activity_state,
+                    Some(UiActivityState::Running | UiActivityState::Paused)
+                )
+            {
+                snapshot.activity_state = Some(activity.state);
+            }
+        } else if activity.active_submission.is_none()
+            && activity.state == UiActivityState::Idle
+            && snapshot.task_started
+        {
+            snapshot.activity_state = Some(UiActivityState::Idle);
+        }
+        return;
+    }
+    // Retained v1 history has no identity; the existing client lease still guards live v1 use.
+    if activity.state == UiActivityState::Running
+        && activity
+            .started_at_ms
+            .is_none_or(|time| time >= task.submitted_at_ms)
+    {
+        snapshot.task_started = true;
+        snapshot.activity_state = Some(UiActivityState::Running);
+    } else if matches!(
+        snapshot.activity_state,
+        Some(UiActivityState::Running | UiActivityState::Paused)
+    ) {
+        snapshot.activity_state = Some(activity.state);
+    }
+}
+
 pub(super) async fn refresh_answer_after_idle(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -340,6 +397,59 @@ mod tests {
             )
             .unwrap()
             .is_none()
+        );
+    }
+    #[test]
+    fn v2_activity_tracks_only_the_submitted_id_and_never_substitutes_for_a_result() {
+        use alan_agent_protocol::{InputIntent, UiActivitySnapshot, UiSubmission};
+        let task = StdioTaskWaitContext::new("my task");
+        let mine = UiSubmission {
+            submission_id: task.record.submission_id.clone(),
+            intent: InputIntent::Agent,
+        };
+        let other = UiSubmission {
+            submission_id: "another-client".into(),
+            intent: InputIntent::Command,
+        };
+        let mut snapshot = super::super::stdio_task_snapshot_from_history(&task, b"", b"").unwrap();
+        let mut activity = UiActivitySnapshot::running(u64::MAX);
+        activity.active_submission = Some(other.clone());
+        observe_activity(&task, &mut snapshot, &activity);
+        assert!(!snapshot.task_started);
+        assert!(snapshot.activity_state.is_none());
+        activity.pending_submissions.push(mine.clone());
+        observe_activity(&task, &mut snapshot, &activity);
+        assert!(snapshot.task_started);
+        assert!(
+            snapshot.activity_state.is_none(),
+            "accepted is not running or completed"
+        );
+        activity.pending_submissions.clear();
+        activity.active_submission = Some(mine);
+        activity.state = UiActivityState::Idle;
+        observe_activity(&task, &mut snapshot, &activity);
+        assert!(
+            snapshot.activity_state.is_none(),
+            "idle admission has no terminal result"
+        );
+        activity.state = UiActivityState::Running;
+        observe_activity(&task, &mut snapshot, &activity);
+        let own_running = activity.clone();
+        activity.active_submission = Some(other.clone());
+        activity.state = UiActivityState::Paused;
+        observe_activity(&task, &mut snapshot, &activity);
+        assert_eq!(snapshot.activity_state, Some(UiActivityState::Running));
+        activity = own_running;
+        activity.state = UiActivityState::Idle;
+        observe_activity(&task, &mut snapshot, &activity);
+        activity.active_submission = Some(other);
+        activity.state = UiActivityState::Running;
+        observe_activity(&task, &mut snapshot, &activity);
+        assert_eq!(snapshot.activity_state, Some(UiActivityState::Idle));
+        assert!(
+            super::super::finish_stdio_task_if_ready(&mut snapshot, InputIntent::Agent)
+                .unwrap()
+                .is_none()
         );
     }
 }

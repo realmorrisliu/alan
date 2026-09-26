@@ -934,14 +934,24 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
     let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
+    let task = StdioTaskWaitContext::new("cancel this queued input");
+    let id = task.record.submission_id.clone();
+    let mut activity = UiActivitySnapshot::idle();
+    activity
+        .pending_submissions
+        .push(alan_agent_protocol::UiSubmission {
+            submission_id: id.clone(),
+            intent: InputIntent::Agent,
+        });
+    let event = format!(
+        "{}\n",
+        serde_json::to_string(&UiEvent::Activity { snapshot: activity }).unwrap()
+    );
     let result = {
-        let wait_for_answer = wait_for_stdio_answer(
-            &shell,
-            "/agent/root",
-            StdioTaskWaitContext::new("cancel this turn"),
-            &mut attachment,
-            async move { cancel_rx.await.map_err(anyhow::Error::from) },
-        );
+        let wait_for_answer =
+            wait_for_stdio_answer(&shell, "/agent/root", task, &mut attachment, async move {
+                cancel_rx.await.map_err(anyhow::Error::from)
+            });
         tokio::pin!(wait_for_answer);
 
         tokio::select! {
@@ -955,24 +965,24 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
             .expect_err("cancellation waits until the task is accepted");
         let events = shell.cat("/agent/root/events").await.unwrap();
         assert!(
-            !String::from_utf8_lossy(&events).contains("ctl:interrupt"),
+            !String::from_utf8_lossy(&events).contains("ctl:queue-v1 interrupt "),
             "do not let an idle Runtime consume the interrupt before input"
         );
 
         shell
-            .write(
-                "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\"}}\n",
-            )
+            .write("/agent/root/machine/ui/events", event.as_bytes())
             .await
             .unwrap();
         wait_for_answer.await
     };
 
-    assert_eq!(result.unwrap_err().to_string(), "Agent task interrupted");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Agent task interruption requested"
+    );
     let events = String::from_utf8(shell.cat("/agent/root/events").await.unwrap()).unwrap();
     assert!(
-        events.contains("ctl:interrupt"),
+        events.contains(&format!("ctl:queue-v1 interrupt {id}")),
         "one-shot cancellation must target the Agent Machine: {events:?}"
     );
     let process_status =

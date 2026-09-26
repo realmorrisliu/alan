@@ -57,7 +57,7 @@
 - Local `cargo test -p alan-agent-engine -p alan-tools`: 1,191 engine unit tests,
   20 architecture checks and 137 Tool tests passed; one engine test remains ignored.
 - These checks do not establish tasks 2.5–2.10 as complete: multi-client admission,
-  client consumption of version-2 activity, renderer integration of queue controls,
+  interactive consumption of version-2 activity and renderer queue controls,
   durable queue/cwd recovery and real terminal acceptance still require
   implementation and evidence. Task-oriented
   alan9 controls and project-file parity also remain open. No automatic routing
@@ -66,8 +66,8 @@
 - Runtime UI errors now retain the failing submission ID across accepted in-band
   work and generation failure. Redirected clients match only that ID, including
   failure before Tape admission; unrelated and legacy uncorrelated errors are
-  not attributed to the task. Clients still need to consume version-2 queue
-  identity and remove the interactive task lease before multi-client admission opens.
+  not attributed to the task. Interactive clients still need to consume version-2
+  queue identity and remove the task lease before multi-client admission opens.
 
 - Machine input queues now share one Machine-owned state; the Process pump uses
   a handle, with no second copy of accepted inputs or active submission identity.
@@ -85,9 +85,16 @@
   identities and queue-paused state from the Machine. The Process input pump
   serializes activity snapshots/events so transition writes cannot overwrite
   newer queue observations. Heartbeat retains the start timestamp. Client lock
-  removal, ID-based activity consumption, targeted terminal interruption and
+  removal, interactive ID-based activity consumption, terminal interruption and
   durable recovery are still pending; the schema/projection alone does not
   establish multi-client terminal acceptance.
 - Activity projection verification: 1,495 tests passed across engine, protocol,
   AgentFS and TUI (one engine test remains ignored), including v1 decoding,
   identity/intent projection, pause retention and serialized activity publication.
+
+- Redirected activity consumers now match v2 active/pending IDs and preserve a
+  task's settled state when a different client begins work. UI state alone never
+  supplies a final result. Cancellation targets the accepted input UUID even
+  before execution and reports request submission rather than claiming stopped
+  effects. All 154 TUI tests pass, including queued cancellation through AgentFS.
+  Interactive identity tracking and removal of client locks are still pending.

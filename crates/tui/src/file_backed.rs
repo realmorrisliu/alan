@@ -709,26 +709,7 @@ async fn wait_for_stdio_answer_after_submit(
                         .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
                     match event {
                         UiEvent::Activity { snapshot: activity } => {
-                            if activity.state == UiActivityState::Running
-                                && activity
-                                    .started_at_ms
-                                    .is_none_or(|started_at| started_at >= task.submitted_at_ms)
-                            {
-                                snapshot.task_started = true;
-                                snapshot.activity_state = Some(UiActivityState::Running);
-                                snapshot.task_error = None;
-                            } else if activity.state == UiActivityState::Paused
-                                && snapshot.activity_state == Some(UiActivityState::Running)
-                            {
-                                snapshot.activity_state = Some(UiActivityState::Paused);
-                            } else if activity.state == UiActivityState::Idle
-                                && matches!(
-                                    snapshot.activity_state,
-                                    Some(UiActivityState::Running | UiActivityState::Paused)
-                                )
-                            {
-                                snapshot.activity_state = Some(UiActivityState::Idle);
-                            }
+                            stdio_completion::observe_activity(&task, &mut snapshot, &activity);
                         }
                         UiEvent::Error { message, submission_id: Some(id), .. }
                             if id == task.record.submission_id =>
@@ -743,9 +724,9 @@ async fn wait_for_stdio_answer_after_submit(
                     }
                 }
                 if interrupt_requested
-                    && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await?
+                    && interrupt_stdio_task_if_accepted(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await?
                 {
-                    bail!("Agent task interrupted");
+                    bail!("Agent task interruption requested");
                 }
                 if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
@@ -817,28 +798,30 @@ async fn wait_for_stdio_answer_after_submit(
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
                 interrupt_requested = true;
-                if interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await? {
-                    bail!("Agent task interrupted");
+                if interrupt_stdio_task_if_accepted(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await? {
+                    bail!("Agent task interruption requested");
                 }
             }
         }
     }
 }
 
-async fn interrupt_stdio_task_if_active(
+async fn interrupt_stdio_task_if_accepted(
     shell: &alan_shell::Shell,
     agent_path: &str,
+    submission_id: &str,
     snapshot: &StdioTaskSnapshot,
 ) -> Result<bool> {
-    if !matches!(
-        snapshot.activity_state,
-        Some(UiActivityState::Running | UiActivityState::Paused)
-    ) {
+    if !snapshot.task_started {
         return Ok(false);
     }
-    write_machine_ctl(shell, agent_path, "interrupt")
-        .await
-        .context("failed to send Agent task interrupt")?;
+    write_machine_ctl(
+        shell,
+        agent_path,
+        &format!("queue-v1 interrupt {submission_id}"),
+    )
+    .await
+    .context("failed to send Agent task interrupt")?;
     Ok(true)
 }
 
@@ -918,17 +901,7 @@ async fn stdio_task_snapshot(
             .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?;
         let activity =
             serde_json::from_slice::<UiActivitySnapshot>(&raw).context("parse Agent activity")?;
-        if matches!(
-            activity.state,
-            UiActivityState::Running | UiActivityState::Paused
-        ) && activity
-            .started_at_ms
-            .is_some_and(|started_at| started_at >= task.submitted_at_ms)
-        {
-            snapshot.task_started = true;
-            snapshot.task_error = None;
-        }
-        snapshot.activity_state = Some(activity.state);
+        stdio_completion::observe_activity(task, &mut snapshot, &activity);
     }
     stdio_completion::refresh_answer_after_idle(shell, agent_path, task, &mut snapshot).await?;
     Ok(snapshot)
@@ -941,20 +914,27 @@ fn stdio_task_snapshot_from_history(
 ) -> Result<StdioTaskSnapshot> {
     let (tape_task_started, assistant_answer) =
         stdio_completion::tape_outcome(&task.record.submission_id, tape_history)?;
-    let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
     let task_error = stdio_completion::submission_error(&task.record.submission_id, ui_history)?;
     let failed = task_error.is_some();
-    Ok(StdioTaskSnapshot {
-        task_started: failed || tape_task_started || ui_task.started,
+    let mut snapshot = StdioTaskSnapshot {
+        task_started: failed || tape_task_started,
         assistant_answer,
         command_result: None,
-        activity_state: if failed {
-            Some(UiActivityState::Idle)
-        } else {
-            ui_task.state
-        },
+        activity_state: failed.then_some(UiActivityState::Idle),
         task_error,
-    })
+    };
+    for line in std::str::from_utf8(ui_history)
+        .context("ui events are not utf8")?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        if let UiEvent::Activity { snapshot: activity } =
+            serde_json::from_str(line).context("parse Agent UI event")?
+        {
+            stdio_completion::observe_activity(task, &mut snapshot, &activity);
+        }
+    }
+    Ok(snapshot)
 }
 
 fn unix_time_ms() -> u64 {

@@ -272,7 +272,12 @@ stdout/stderr. A pre-Tape failure is reported in a UI error event carrying that
 same ID. The TUI's current shared task lease remains a compatibility guard while
 this aggregate activity surface is used, not the result-matching mechanism.
 Readers accept a result only when its ID matches their submission; missing
-evidence is unknown, never successful completion. Rollout/checkpoint records
+evidence is unknown, never successful completion. Redirected clients now match
+version-2 activity by the same ID, distinguish pending admission from execution,
+and ignore other clients' running/paused states. Redirected interruption sends
+`queue-v1 interrupt <submission_id>` once its input is observed as accepted;
+it reports a requested interruption, not an unverified successful cancellation.
+Interactive identity tracking and task-lock removal remain unfinished. Rollout/checkpoint records
 remain the recovery authority; Tape is only a projection.
 
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
