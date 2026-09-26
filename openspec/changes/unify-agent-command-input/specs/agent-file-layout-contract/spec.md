@@ -106,6 +106,13 @@ Process and MUST NOT introduce a global Session or renderer-owned queue.
 - **THEN** it can inspect the paused queue and cwd through AgentFS
 - **AND** it need not recover state from the original renderer
 
+#### Scenario: Waiting for a response is correlated to its inputs
+- **WHEN** an input or its participating steering inputs wait for confirmation, structured input or authorization
+- **THEN** the paused UI activity snapshot and event identify those inputs in `waiting_submission_ids`
+- **AND** unrelated queued inputs are not identified as needing a response
+- **AND** resume clears those identities; a queue-only pause has an empty list
+- **AND** readers treat an absent field in older snapshots as an empty list
+
 ### Requirement: Command evidence feeds bounded shared Agent context
 Direct commands and results SHALL use existing action, Process and durable
 evidence owners and become available to subsequent Agent work. Model-input

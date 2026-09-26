@@ -236,7 +236,7 @@ where
             runtime
                 .machine
                 .set_confirmation_for_request(request_id.clone(), pending.clone());
-            super::ui_surfaces::paused(&runtime.agent_files).await?;
+            super::ui_surfaces::paused(&runtime.agent_files, Some(runtime.machine)).await?;
             emit(Event::Yield {
                 request_id,
                 kind: YieldKind::Confirmation,
