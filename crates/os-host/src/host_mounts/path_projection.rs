@@ -34,7 +34,8 @@ fn project_json_strings(adapter: &NativeToolExecutionAdapter, text: &str) -> Str
                 if complete_token && let Ok(decoded) = serde_json::from_str::<String>(token) {
                     // Retain the quoted boundary when projecting URI punctuation.
                     let urls = project_file_urls(adapter, &format!("\"{decoded}\""));
-                    let projected = project_native_text(adapter, &urls[1..urls.len() - 1]);
+                    let quoted = project_native_text(adapter, &urls);
+                    let projected = &quoted[1..quoted.len() - 1];
                     if projected != decoded {
                         result.push_str(&text[copied..start]);
                         result.push_str(
@@ -348,15 +349,20 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
 }
 
 fn quoted_path_end(text: &str, start: usize, suffix: &str) -> Option<bool> {
-    strip_trailing_terminal_sequences(&text[..start])
+    let quote = strip_trailing_terminal_sequences(&text[..start])
         .chars()
         .next_back()
-        .filter(|quote| matches!(quote, '\'' | '"' | '`'))
-        .and_then(|quote| suffix.strip_prefix(quote))
-        .map(|rest| {
+        .filter(|quote| matches!(quote, '\'' | '"' | '`'))?;
+    if let Some(rest) = suffix.strip_prefix(quote) {
+        Some(
             !rest.starts_with(['\'', '"', '`', '/'])
-                && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}']))
-        })
+                && (is_path_end(rest) || rest.starts_with([',', ';', ']', '}'])),
+        )
+    } else if suffix.starts_with('/') {
+        None // A descendant continues inside the quoted path.
+    } else {
+        Some(false) // Punctuation inside quotes is part of a sibling filename.
+    }
 }
 
 fn is_path_end(suffix: &str) -> bool {

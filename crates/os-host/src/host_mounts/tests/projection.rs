@@ -147,6 +147,16 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         assert_eq!(adapter.project_text(&input), expected);
     }
 
+    for suffix in [",", ";", ".", "!", ")", ":12", " "] {
+        let sibling = format!("{}{suffix}", root.display());
+        let encoded = serde_json::json!({"path": sibling}).to_string();
+        for input in [encoded.clone(), encoded.replace('/', "\\/")] {
+            let projected: serde_json::Value =
+                serde_json::from_str(&adapter.project_text(&input)).unwrap();
+            assert_eq!(projected["path"], sibling);
+        }
+    }
+
     for escaped_quote in ["\"\"backup/file", "\"\"", "\"/file"] {
         let input = format!("\"{}{escaped_quote}\"", root.display());
         assert_eq!(adapter.project_text(&input), input);
