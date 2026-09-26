@@ -407,6 +407,22 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("content:/documents/42", "content:/documents/42"),
         ("GET /api/items HTTP/1.1", "GET /api/items HTTP/1.1"),
         (
+            "PROPFIND /collection HTTP/1.1",
+            "PROPFIND /collection HTTP/1.1",
+        ),
+        (
+            "X-CUSTOM_2 /resource HTTP/1.1",
+            "X-CUSTOM_2 /resource HTTP/1.1",
+        ),
+        (
+            "M!#$%&'*+-.^_`|~ /resource HTTP/1.1",
+            "M!#$%&'*+-.^_`|~ /resource HTTP/1.1",
+        ),
+        (
+            "invalid: /resource HTTP/1.1",
+            "invalid: ./resource HTTP/1.1",
+        ),
+        (
             "access: \"POST /api HTTP/2\"",
             "access: \"POST /api HTTP/2\"",
         ),

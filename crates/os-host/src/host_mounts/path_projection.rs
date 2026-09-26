@@ -480,13 +480,15 @@ fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool
             .next_back()
             .unwrap_or_default()
             .trim_start_matches(['"', '\'']);
-        let http_target = matches!(
-            method,
-            "GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS" | "TRACE" | "PATCH"
-        ) && suffix
-            .split_whitespace()
-            .nth(1)
-            .is_some_and(|version| version.starts_with("HTTP/"));
+        // HTTP method = token (RFC 9110), including extension methods.
+        let http_target = !method.is_empty()
+            && method
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+            && suffix
+                .split_whitespace()
+                .nth(1)
+                .is_some_and(|version| version.starts_with("HTTP/"));
         if http_target {
             continue;
         }
