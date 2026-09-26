@@ -109,6 +109,20 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
         }
         state.machine.accept_submission("originating-input");
         let broker = crate::runtime::turn_input::TurnInputBroker::default();
+        let compact = advance_accepted_submission(
+            &mut state,
+            Submission::new(Op::CompactWithOptions { focus: None }),
+            &broker,
+            &CancellationToken::new(),
+        )
+        .await
+        .result
+        .unwrap_err();
+        assert!(compact.to_string().contains("pending interaction"));
+        assert_eq!(
+            state.machine.current_submission_id(),
+            Some("originating-input")
+        );
         let external = state.agent_files().begin_tape_generation().await.unwrap();
         let messages_before = state.machine.messages().len();
         let blocked = advance_accepted_submission(

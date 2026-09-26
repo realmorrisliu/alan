@@ -29,6 +29,17 @@ pub(crate) async fn advance_accepted_submission(
     cancel: &CancellationToken,
 ) -> AcceptedSubmissionOutcome {
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
+    if matches!(submission.op, Op::CompactWithOptions { .. })
+        && state.machine.has_pending_interaction()
+    {
+        return AcceptedSubmissionOutcome {
+            result: Err(anyhow::anyhow!(
+                "Manual compaction must wait for the pending interaction to finish"
+            )),
+            requeue_inband_submissions,
+            deferred_actions: Default::default(),
+        };
+    }
     if matches!(
         submission.op,
         Op::Turn { .. } | Op::Input { .. } | Op::CompactWithOptions { .. }
