@@ -326,6 +326,8 @@ async fn renderer_hydration_retries_all_streams_after_root_pid_changes() {
     tails.ui.close().await.unwrap();
     tails.tape.close().await.unwrap();
     tails.output.close().await.unwrap();
+    tails.recovery_ui.close().await.unwrap();
+    tails.recovery_tape.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -369,6 +371,8 @@ async fn renderer_hydration_waits_for_a_stale_published_root_pid_to_change() {
     tails.ui.close().await.unwrap();
     tails.tape.close().await.unwrap();
     tails.output.close().await.unwrap();
+    tails.recovery_ui.close().await.unwrap();
+    tails.recovery_tape.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -408,6 +412,8 @@ async fn hydration_does_not_append_a_historical_error_after_later_tape_turns() {
     tails.ui.close().await.unwrap();
     tails.tape.close().await.unwrap();
     tails.output.close().await.unwrap();
+    tails.recovery_ui.close().await.unwrap();
+    tails.recovery_tape.close().await.unwrap();
 }
 
 async fn create_request(agent_root: &alan_agentfs::AgentRootFs, pid: &str, fid: Fid) -> String {

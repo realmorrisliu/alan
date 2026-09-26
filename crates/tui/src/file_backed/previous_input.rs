@@ -4,19 +4,16 @@ use alan_agent_protocol::UiEvent;
 use std::collections::VecDeque;
 
 pub(super) async fn snapshot(
-    shell: &alan_shell::Shell,
-    pid: Option<u64>,
+    ui_tail: &alan_shell::Tail,
+    tape_tail: &alan_shell::Tail,
     submitted: Option<(&str, u64, &str)>,
 ) -> (Option<UiEvent>, Option<String>) {
-    let (Some(pid), Some((_, _, id))) = (pid, submitted) else {
+    let Some((_, _, id)) = submitted else {
         return (None, None);
     };
     // Read completion first: a matching terminal record implies its final Tape
-    // write already happened. Missing old-process files fall back to queued data.
-    let ui = shell
-        .cat(&format!("/agent/{pid}/machine/ui/events"))
-        .await
-        .unwrap_or_default();
+    // write already happened. Descriptor read failures fall back to queued data.
+    let ui = ui_tail.snapshot().await.unwrap_or_default();
     let completion = ui
         .split(|byte| *byte == b'\n')
         .filter_map(|line| serde_json::from_slice::<UiEvent>(line).ok())
@@ -24,10 +21,7 @@ pub(super) async fn snapshot(
             matches!(event, UiEvent::InputCompleted { submission_ids, .. }
             if submission_ids.iter().any(|candidate| candidate == id))
         });
-    let tape = shell
-        .cat(&format!("/agent/{pid}/machine/tape"))
-        .await
-        .unwrap_or_default();
+    let tape = tape_tail.snapshot().await.unwrap_or_default();
     let answer = tape
         .split(|byte| *byte == b'\n')
         .filter_map(|line| serde_json::from_slice::<TapeRecordV1>(line).ok())
@@ -115,13 +109,25 @@ mod tests {
             .write(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
             .await
             .unwrap();
-        root.set_root_process("99999").await;
-        let (observed, answer) = snapshot(
-            &shell,
-            Some(pid.parse().unwrap()),
-            Some(("task", 0, "mine")),
-        )
-        .await;
+        let ui_tail = shell
+            .tail(&format!("/agent/{pid}/machine/ui/events"))
+            .await
+            .unwrap();
+        let tape_tail = shell
+            .tail(&format!("/agent/{pid}/machine/tape"))
+            .await
+            .unwrap();
+        assert!(root.unbind_process(&pid).await);
+        assert!(
+            shell
+                .cat(&format!("/agent/{pid}/machine/ui/events"))
+                .await
+                .is_err()
+        );
+        let (observed, answer) = snapshot(&ui_tail, &tape_tail, Some(("task", 0, "mine"))).await;
+        assert_eq!(ui_tail.offset(), 0);
+        ui_tail.close().await.unwrap();
+        tape_tail.close().await.unwrap();
         assert_eq!(observed, Some(completion));
         assert_eq!(answer.as_deref(), Some("final answer"));
         let mut app = FileBackedApp::new("/agent/root".into());

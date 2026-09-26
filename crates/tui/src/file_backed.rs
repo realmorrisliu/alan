@@ -394,6 +394,7 @@ async fn receive_file_backed_event(
 }
 
 struct AgentWatchers {
+    recovery: Option<(alan_shell::Tail, alan_shell::Tail)>,
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     root_agent_pid: Option<u64>,
@@ -433,6 +434,7 @@ impl AgentWatchers {
             tokio::spawn(spawn_tape_watch(tails.tape, tx, shutdown_rx)),
         ];
         Self {
+            recovery: Some((tails.recovery_ui, tails.recovery_tape)),
             shutdown,
             tasks,
             root_agent_pid,
@@ -452,19 +454,15 @@ impl AgentWatchers {
     ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
-                let before =
-                    previous_input::snapshot(shell, self.root_agent_pid, submitted_task).await;
-                self.stop().await;
+                let retained = self.stop_for_input(submitted_task).await;
                 app.expected_terminal_error = None;
                 let queued = discard_superseded_attachment_events(
                     rx,
                     &mut self.pending_terminal_events,
                     submitted_task.map(|(_, _, id)| id),
                 );
-                let after =
-                    previous_input::snapshot(shell, self.root_agent_pid, submitted_task).await;
-                let completion = after.0.or(queued.0).or(before.0);
-                if let Some(answer) = after.1.or(queued.1).or(before.1)
+                let completion = retained.0.or(queued.0);
+                if let Some(answer) = retained.1.or(queued.1)
                     && let Some((input, _, _)) = submitted_task
                 {
                     previous_input::restore_answer(app, input, answer);
@@ -516,10 +514,24 @@ impl AgentWatchers {
     }
 
     async fn stop(&mut self) {
+        self.stop_for_input(None).await;
+    }
+
+    async fn stop_for_input(
+        &mut self,
+        submitted: Option<(&str, u64, &str)>,
+    ) -> (Option<UiEvent>, Option<String>) {
         let _ = self.shutdown.send(true);
         for task in self.tasks.drain(..) {
             let _ = task.await;
         }
+        let Some((ui, tape)) = self.recovery.take() else {
+            return (None, None);
+        };
+        let outcome = previous_input::snapshot(&ui, &tape, submitted).await;
+        let _ = ui.close().await;
+        let _ = tape.close().await;
+        outcome
     }
 }
 

@@ -59,6 +59,8 @@ pub(super) struct WatchTails {
     pub(super) actions: alan_shell::Tail,
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
+    pub(super) recovery_ui: alan_shell::Tail,
+    pub(super) recovery_tape: alan_shell::Tail,
     pub(super) ui_history: Vec<u8>,
     pub(super) tape_history: Vec<u8>,
 }

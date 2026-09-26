@@ -80,7 +80,7 @@ async fn hydrate_pinned_agent(
     agent_path: &str,
     app: &mut FileBackedApp,
 ) -> Result<WatchTails> {
-    let mut opened = Vec::with_capacity(5);
+    let mut opened = Vec::with_capacity(7);
     let histories = async {
         opened.push(tail_from_live_edge(shell, &request_events_path(agent_path)).await?);
         opened.push(tail_from_live_edge(shell, &action_events_path(agent_path)).await?);
@@ -90,6 +90,8 @@ async fn hydrate_pinned_agent(
             tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
         opened.push(tape);
         opened.push(tail_from_live_edge(shell, &agent_output_path(agent_path)).await?);
+        opened.push(shell.tail(&ui_events_path(agent_path)).await?);
+        opened.push(shell.tail(&format!("{agent_path}/machine/tape")).await?);
         Ok::<_, anyhow::Error>((ui_history, tape_history))
     }
     .await;
@@ -113,6 +115,8 @@ async fn hydrate_pinned_agent(
         actions,
         ui,
         tape,
+        recovery_ui: opened.next().expect("recovery UI was opened"),
+        recovery_tape: opened.next().expect("recovery Tape was opened"),
         ui_history: Vec::new(),
         tape_history: Vec::new(),
     };
@@ -292,6 +296,8 @@ impl WatchTails {
             self.ui,
             self.tape,
             self.output,
+            self.recovery_ui,
+            self.recovery_tape,
         ])
         .await;
     }
