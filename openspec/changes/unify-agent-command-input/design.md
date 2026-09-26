@@ -210,8 +210,10 @@ must be reconciled with ordered acceptance rather than silently bypassed.
 ### Submission records and result correlation
 
 The input envelope and result IDs below are implemented in this slice. The
-activity projection, queue-control verbs, and pre-Tape failure correlation are
-the target contract for tasks 2.5–2.8; they are not current runtime guarantees.
+activity projection and queue-control verbs remain the target contract for
+tasks 2.5–2.8; they are not current runtime guarantees. Runtime failure events
+carry the failed submission ID even before Tape admission; redirected clients
+match that ID and never adopt another client's or an uncorrelated legacy error.
 
 The canonical write to /agent/<pid>/io/input is AgentFS's existing outer
 length-framed document containing the UTF-8 payload `alan-input-v1\n` followed

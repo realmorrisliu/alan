@@ -78,6 +78,24 @@ pub(super) fn tape_outcome(
     Ok((started, answer))
 }
 
+/// Error events can precede Tape admission; only their explicit identity is evidence.
+pub(super) fn submission_error(submission_id: &str, ui_history: &[u8]) -> Result<Option<String>> {
+    let history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
+    let mut error = None;
+    for line in history.lines().filter(|line| !line.trim().is_empty()) {
+        if let alan_agent_protocol::UiEvent::Error {
+            submission_id: Some(id),
+            message,
+            ..
+        } = serde_json::from_str(line).context("parse Agent UI event")?
+            && id == submission_id
+        {
+            error = Some(message);
+        }
+    }
+    Ok(error)
+}
+
 pub(super) async fn refresh_answer_after_idle(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -302,6 +320,26 @@ mod tests {
                 stderr: "command warning\n".to_string(),
                 exit_code: 6,
             }))
+        );
+    }
+    #[test]
+    fn one_shot_ignores_other_client_and_uncorrelated_failures() {
+        let task = StdioTaskWaitContext::new("my input");
+        let history = br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":18446744073709551615}}
+    {"type":"error","message":"other failure","recoverable":true,"submission_id":"other-client"}
+    {"type":"error","message":"legacy failure","recoverable":true}
+    {"type":"activity","snapshot":{"version":1,"state":"idle"}}
+    "#;
+        let mut snapshot =
+            super::super::stdio_task_snapshot_from_history(&task, b"", history).unwrap();
+        assert!(snapshot.task_error.is_none());
+        assert!(
+            super::super::finish_stdio_task_if_ready(
+                &mut snapshot,
+                alan_agent_protocol::InputIntent::Agent
+            )
+            .unwrap()
+            .is_none()
         );
     }
 }

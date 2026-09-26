@@ -418,6 +418,7 @@ fn recoverable_error_is_kept_in_the_transcript() {
 
     app.apply_ui_event(UiEvent::Error {
         message: "provider request failed".to_string(),
+        submission_id: None,
         recoverable: true,
     });
 

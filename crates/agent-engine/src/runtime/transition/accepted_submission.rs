@@ -28,6 +28,7 @@ pub(crate) async fn advance_accepted_submission(
     broker: &TurnInputBroker,
     cancel: &CancellationToken,
 ) -> AcceptedSubmissionOutcome {
+    let initial_id = submission.id.clone();
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
     track_active_task_submission(&mut state.machine, &submission);
     let mut emit = |_event: Event| async {};
@@ -46,9 +47,15 @@ pub(crate) async fn advance_accepted_submission(
     });
 
     let deferred_actions = state.machine.drain_deferred_runtime_actions();
+    let submission_id = state
+        .machine
+        .current_submission_id()
+        .map(str::to_owned)
+        .unwrap_or(initial_id);
     state.machine.finish_submission();
 
     AcceptedSubmissionOutcome {
+        submission_id,
         result,
         requeue_inband_submissions,
         deferred_actions,

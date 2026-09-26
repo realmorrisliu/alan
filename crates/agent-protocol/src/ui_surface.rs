@@ -187,11 +187,24 @@ impl Default for UiNoticeSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEvent {
-    Activity { snapshot: UiActivitySnapshot },
-    Plan { snapshot: UiPlanSnapshot },
-    Thinking { snapshot: UiThinkingSnapshot },
-    Notice { snapshot: UiNoticeSnapshot },
-    Error { message: String, recoverable: bool },
+    Activity {
+        snapshot: UiActivitySnapshot,
+    },
+    Plan {
+        snapshot: UiPlanSnapshot,
+    },
+    Thinking {
+        snapshot: UiThinkingSnapshot,
+    },
+    Notice {
+        snapshot: UiNoticeSnapshot,
+    },
+    Error {
+        message: String,
+        recoverable: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission_id: Option<String>,
+    },
 }
 
 #[cfg(test)]

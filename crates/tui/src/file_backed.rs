@@ -730,13 +730,13 @@ async fn wait_for_stdio_answer_after_submit(
                                 snapshot.activity_state = Some(UiActivityState::Idle);
                             }
                         }
-                        UiEvent::Error { message, .. }
-                            if matches!(
-                                snapshot.activity_state,
-                                Some(UiActivityState::Running | UiActivityState::Paused)
-                            ) =>
+                        UiEvent::Error { message, submission_id: Some(id), .. }
+                            if id == task.record.submission_id =>
                         {
-                            snapshot.task_error = Some(message)
+                            snapshot.task_started = true;
+                            snapshot.activity_state = Some(UiActivityState::Idle);
+                            snapshot.task_error = Some(message);
+                            break;
                         }
                         UiEvent::Error { .. } => {}
                         UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
@@ -942,12 +942,18 @@ fn stdio_task_snapshot_from_history(
     let (tape_task_started, assistant_answer) =
         stdio_completion::tape_outcome(&task.record.submission_id, tape_history)?;
     let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
+    let task_error = stdio_completion::submission_error(&task.record.submission_id, ui_history)?;
+    let failed = task_error.is_some();
     Ok(StdioTaskSnapshot {
-        task_started: tape_task_started || ui_task.started,
+        task_started: failed || tape_task_started || ui_task.started,
         assistant_answer,
         command_result: None,
-        activity_state: ui_task.state,
-        task_error: ui_task.error,
+        activity_state: if failed {
+            Some(UiActivityState::Idle)
+        } else {
+            ui_task.state
+        },
+        task_error,
     })
 }
 

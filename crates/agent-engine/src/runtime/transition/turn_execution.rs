@@ -428,9 +428,13 @@ where
                 }
                 log_generation_failure(request_start, &error);
                 let message = generation_error_message(&error);
-                crate::runtime::ui_surfaces::error_notice(&agent_files, &message)
-                    .await
-                    .context("write generation error UI state")?;
+                crate::runtime::ui_surfaces::error_notice(
+                    &agent_files,
+                    &message,
+                    state.machine.current_submission_id(),
+                )
+                .await
+                .context("write generation error UI state")?;
                 emit(Event::Error {
                     message,
                     recoverable: true,

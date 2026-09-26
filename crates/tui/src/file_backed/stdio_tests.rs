@@ -243,26 +243,17 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 
 #[test]
 fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
-    let mut snapshot = stdio_task_snapshot_from_history(
-        &StdioTaskWaitContext {
-            record: UserInputRecord::new(
-                InputIntent::Agent,
-                InputMode::FollowUp,
-                "task with no tape record",
-            ),
-            submitted_at_ms: 0,
-        },
-        b"",
-        br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
-{"type":"error","message":"provider unavailable","recoverable":true}
-{"type":"activity","snapshot":{"version":1,"state":"idle"}}
-"#,
-    )
+    let task = StdioTaskWaitContext::new("task with no tape record");
+    let history = serde_json::to_vec(&alan_agent_protocol::UiEvent::Error {
+        submission_id: Some(task.record.submission_id.clone()),
+        message: "provider unavailable".into(),
+        recoverable: true,
+    })
     .unwrap();
-
+    let mut snapshot = stdio_task_snapshot_from_history(&task, b"", &history).unwrap();
     assert!(
         snapshot.task_started,
-        "Running establishes this submitted task"
+        "the failure itself identifies the accepted input"
     );
     assert_eq!(
         finish_stdio_task_if_ready(&mut snapshot, InputIntent::Agent)
@@ -881,11 +872,19 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
 
+    let task = StdioTaskWaitContext::new("fail before tape persistence");
+    let failure = serde_json::json!({
+        "type": "error", "message": "provider unavailable", "recoverable": true,
+        "submission_id": task.record.submission_id,
+    });
+    let events = format!(
+        "{failure}\n{{\"type\":\"activity\",\"snapshot\":{{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}}}\n"
+    );
     let result = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("fail before tape persistence"),
+            task,
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -896,10 +895,7 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         }
 
         shell
-            .write(
-                "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
-            )
+            .write("/agent/root/machine/ui/events", events.as_bytes())
             .await
             .unwrap();
 

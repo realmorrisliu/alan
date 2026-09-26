@@ -88,6 +88,7 @@ pub(crate) enum TransitionCompletion {
 }
 
 pub(crate) struct AcceptedSubmissionOutcome {
+    pub(crate) submission_id: String,
     pub(crate) result: Result<TransitionCompletion>,
     pub(crate) requeue_inband_submissions: bool,
     pub(crate) deferred_actions: VecDeque<DeferredRuntimeAction>,

@@ -61,3 +61,9 @@
   real terminal acceptance still require implementation and evidence. Task-oriented
   alan9 controls and project-file parity also remain open. No automatic routing
   has been activated or synchronized to canonical specs.
+
+- Runtime UI errors now retain the failing submission ID across accepted in-band
+  work and generation failure. Redirected clients match only that ID, including
+  failure before Tape admission; unrelated and legacy uncorrelated errors are
+  not attributed to the task. Aggregate activity and the interactive task lease
+  still need the version-2 queue projection before multi-client admission opens.

@@ -59,12 +59,20 @@ pub(crate) async fn turn_completed(namespace: &NamespaceAgentFiles, cancelled: b
         .await
 }
 
-pub(crate) async fn turn_failed(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
-    error_notice(namespace, message).await?;
+pub(crate) async fn turn_failed(
+    namespace: &NamespaceAgentFiles,
+    message: &str,
+    submission_id: Option<&str>,
+) -> Result<()> {
+    error_notice(namespace, message, submission_id).await?;
     turn_completed(namespace, false).await
 }
 
-pub(crate) async fn error_notice(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
+pub(crate) async fn error_notice(
+    namespace: &NamespaceAgentFiles,
+    message: &str,
+    submission_id: Option<&str>,
+) -> Result<()> {
     let notice = UiNoticeSnapshot::new(UiNoticeKind::Error, message);
     namespace.write_ui_notice_snapshot(&notice).await?;
     namespace
@@ -74,6 +82,7 @@ pub(crate) async fn error_notice(namespace: &NamespaceAgentFiles, message: &str)
         .append_ui_event(&UiEvent::Error {
             message: message.to_string(),
             recoverable: true,
+            submission_id: submission_id.map(str::to_owned),
         })
         .await
 }
@@ -331,14 +340,22 @@ mod tests {
 
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
-        let (environment, _) = agent_files();
+        let (environment, shell) = agent_files();
         initialize(&environment).await.unwrap();
         turn_started(&environment).await.unwrap();
-        turn_failed(&environment, "provider failed").await.unwrap();
+        turn_failed(&environment, "provider failed", Some("failed-input"))
+            .await
+            .unwrap();
 
         let notice = environment.read_ui_notice_snapshot().await.unwrap();
         assert_eq!(notice.kind, UiNoticeKind::Error);
         assert_eq!(notice.message, "provider failed");
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(events.lines().any(|line| matches!(
+            serde_json::from_str::<UiEvent>(line).unwrap(),
+            UiEvent::Error { submission_id: Some(id), .. } if id == "failed-input"
+        )));
     }
 
     #[tokio::test]
