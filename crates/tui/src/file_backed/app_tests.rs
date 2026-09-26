@@ -407,3 +407,36 @@ fn forced_agent_slash_submits_exact_body_without_local_completion() {
     app.refresh_completion();
     assert_eq!(app.completion.unwrap().kind, CompletionKind::Skill);
 }
+
+#[test]
+fn command_prompt_edits_only_the_visible_body_and_recalls_intent() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    app.handle_key(key(KeyCode::Char('!')));
+    assert_eq!(app.input_prompt_prefix(), "alan! ");
+    assert_eq!(app.composer.text(), "");
+    assert!(app.handle_submit().is_none());
+    app.handle_key(key(KeyCode::Backspace));
+    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    app.dispatch(super::FileBackedEvent::Terminal(
+        super::TerminalEvent::Paste("!echo x\n你好".into()),
+    ));
+    app.handle_key(key(KeyCode::Home));
+    assert_eq!(app.composer.cursor(), 0);
+    app.handle_key(key(KeyCode::Char('!')));
+    assert_eq!(app.composer.text(), "!echo x\n你好");
+    let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
+        panic!("input")
+    };
+    assert_eq!(record.body, "!echo x\n你好");
+    app.accept_input();
+    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    app.handle_key(key(KeyCode::Up));
+    assert_eq!(app.input_prompt_prefix(), "alan! ");
+    assert_eq!(app.composer.text(), "!echo x\n你好");
+    app.handle_key(key(KeyCode::Down));
+    app.insert_input_text(":!literal");
+    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    assert_eq!(app.composer.text(), "!literal");
+}
