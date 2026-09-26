@@ -223,6 +223,18 @@ unknown fields, unsupported versions, and invalid IDs are rejected. The record's
 mode maps only to protocol scheduling; intent never supplies or changes it.
 Unframed payloads remain the legacy plain-text path.
 
+Explicit command scheduling preserves the submitted command and identity.
+`follow_up` executes in the ordinary queue. A command admitted as `steer` during
+active work executes at the next safe Tool boundary, skips undispatched stale Tool
+calls and returns to the original Agent turn for replanning; required approval
+still pauses execution and rejection records the command's own failure. If the
+active turn finishes first, the already-admitted command runs next. An idle
+`steer` fails rather than creating a new turn. `next_turn` retains the complete
+command submission until an explicit Turn releases it ahead of that Turn's
+generation; its script is never merged into queued Agent context. Queue/cwd
+persistence, pause controls and version-2 activity projection remain separate
+tasks below and are not implied by these scheduling changes.
+
 The Agent Machine owns accepted order and queue state. Its existing
 machine/ui/activity snapshot becomes version 2, retaining activity state and
 start time and adding `active_submission` (optional `{submission_id, intent}`),

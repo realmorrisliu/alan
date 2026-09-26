@@ -26,6 +26,27 @@ where
         return Ok(());
     }
 
+    if mode == InputMode::NextTurn {
+        let submission = Submission::with_id_and_intent(
+            &submission_id,
+            Op::Input { parts, mode },
+            InputIntent::Command,
+        );
+        anyhow::ensure!(
+            state
+                .machine
+                .queue_next_turn_submission(submission)
+                .is_some(),
+            "Too many queued next_turn inputs (limit=16)"
+        );
+        crate::runtime::ui_surfaces::warning(
+            &state.agent_files(),
+            "Command queued until the next explicit turn; it has not executed.",
+        )
+        .await?;
+        return Ok(());
+    }
+
     state.machine.add_user_message_parts(parts);
     let agent_files = state.agent_files();
     agent_files
@@ -41,7 +62,9 @@ where
         name: "bash".to_string(),
         arguments: serde_json::json!({"command": command.clone()}),
     };
-    if mode != InputMode::FollowUp {
+    if mode == InputMode::Steer
+        && !(state.machine.is_turn_active() || state.machine.has_pending_interaction())
+    {
         state
             .machine
             .add_assistant_message_with_tool_calls_and_reasoning(
@@ -66,7 +89,7 @@ where
         return finish_failed_explicit_command(
             state,
             &tool_call,
-            "command intent requires follow_up scheduling",
+            "Input(mode=steer) requires an active or pending turn",
             None,
             emit,
         )
@@ -117,27 +140,30 @@ where
             }
             emit(event)
         };
-        super::orchestrate_tool_batch(
+        super::orchestrate_tool_call(
             &mut loop_guard,
             state,
-            std::slice::from_ref(&tool_call),
+            &tool_call,
             ToolOrchestratorInputs {
                 cancel,
                 steering_broker,
             },
+            false,
+            false,
             &mut command_emit,
         )
         .await
     };
     match outcome {
-        Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. })
-        | Ok(ToolBatchOrchestratorOutcome::EndTurn { .. }) => {
+        Ok(ToolOrchestratorOutcome::ContinueToolBatch { .. })
+        | Ok(ToolOrchestratorOutcome::EndTurn) => {
             record_missing_command_action(state, &tool_call, command_error.as_deref(), None)
                 .await?;
             state.machine.set_turn_activity(TurnActivityState::Idle);
             Ok(())
         }
-        Ok(ToolBatchOrchestratorOutcome::PauseTurn) => {
+        Ok(ToolOrchestratorOutcome::PauseTurn) => {
+            retain_pending_tool_batch(state, std::slice::from_ref(&tool_call));
             state.machine.set_turn_activity(TurnActivityState::Paused);
             Ok(())
         }
@@ -146,6 +172,45 @@ where
             Err(error)
         }
     }
+}
+
+/// Run command steering at the Tool boundary, then return control to the interrupted turn.
+pub(super) async fn run_queued_steering_commands<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    resume_with_generation: bool,
+) -> Result<bool>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    while !cancel.is_cancelled() {
+        let Some(submission) = state.machine.take_steering_command() else {
+            break;
+        };
+        let parent_id = state.machine.current_submission_id().map(str::to_owned);
+        let parent_activity = state.machine.turn_activity();
+        state.machine.accept_submission(&submission.id);
+        let result =
+            handle_explicit_command(state, submission.id, submission.op, emit, cancel, None).await;
+        if let Some(parent_id) = parent_id {
+            state.machine.accept_submission(parent_id);
+        } else {
+            state.machine.finish_submission();
+        }
+        result?;
+        if let Some(pending) = state.machine.pending_confirmation() {
+            state
+                .machine
+                .set_tool_replay_continuation(&pending.checkpoint_id, resume_with_generation);
+        }
+        if state.machine.has_pending_interaction() {
+            return Ok(true);
+        }
+        state.machine.set_turn_activity(parent_activity);
+    }
+    Ok(false)
 }
 
 async fn record_missing_command_action(
@@ -308,6 +373,24 @@ where
     .await;
     state.machine.set_turn_activity(TurnActivityState::Idle);
     Ok(())
+}
+
+pub(super) fn retain_pending_tool_batch(
+    state: &mut RuntimeLoopState,
+    tool_calls: &[NormalizedToolCall],
+) {
+    if let Some(pending) = state.machine.pending_confirmation()
+        && replays_tool_calls(&pending.checkpoint_type)
+    {
+        let resume_with_generation = !tool_calls
+            .first()
+            .is_some_and(|call| state.machine.current_submission_id() == Some(call.id.as_str()));
+        state.machine.set_tool_replay_batch(
+            pending.checkpoint_id,
+            tool_calls.to_vec(),
+            resume_with_generation,
+        );
+    }
 }
 
 #[cfg(test)]

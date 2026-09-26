@@ -40,6 +40,7 @@ pub(super) enum RuntimeOpAction {
     },
     FinishRejectedExplicitCommand {
         tool_call: NormalizedToolCall,
+        resume_with_generation: bool,
     },
 }
 
@@ -419,13 +420,16 @@ async fn handle_confirmation_resolution(
     if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "reject"
         && let Some(replay_batch) = replay_tool_batch.as_ref()
-        && !replay_batch.resume_with_generation
+        && replay_batch.explicit_command
     {
         let tool_call =
             replay_batch.tool_calls.first().cloned().ok_or_else(|| {
                 anyhow::anyhow!("rejected explicit command has no pending Tool call")
             })?;
-        return Ok(RuntimeOpAction::FinishRejectedExplicitCommand { tool_call });
+        return Ok(RuntimeOpAction::FinishRejectedExplicitCommand {
+            tool_call,
+            resume_with_generation: replay_batch.resume_with_generation,
+        });
     }
 
     if replays_tool_calls(&pending.checkpoint_type)

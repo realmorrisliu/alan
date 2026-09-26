@@ -105,6 +105,32 @@ struct RuntimeSubmissionQueues {
 }
 
 impl RuntimeSubmissionQueues {
+    /// A Turn releases deferred commands before its generation, retaining each result identity.
+    fn release_next_turn_commands(
+        &mut self,
+        machine: &mut AgentMachine,
+        trigger: &Submission,
+    ) -> bool {
+        if !matches!(trigger.op, alan_agent_protocol::Op::Turn { .. }) {
+            return false;
+        }
+        let commands = machine.take_next_turn_commands();
+        if commands.is_empty() {
+            return false;
+        }
+        self.outer_queue
+            .push_front(QueuedRuntimeItem::Submission(trigger.clone()));
+        for mut command in commands.into_iter().rev() {
+            // Scheduling is now satisfied; execute through the ordinary command route.
+            if let alan_agent_protocol::Op::Input { mode, .. } = &mut command.op {
+                *mode = InputMode::FollowUp;
+            }
+            self.outer_queue
+                .push_front(QueuedRuntimeItem::Submission(command));
+        }
+        true
+    }
+
     fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
         self.outer_queue.pop_front()
     }
@@ -566,6 +592,9 @@ fn spawn_with_prepared_runtime_environment(
 
             match queued_item {
                 QueuedRuntimeItem::Submission(submission) => {
+                    if queues.release_next_turn_commands(&mut state.machine, &submission) {
+                        continue;
+                    }
                     debug!(?submission.id, "Received submission");
                     let accepts_inband = accepts_inband_submissions(&submission.op);
 

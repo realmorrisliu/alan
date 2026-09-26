@@ -97,9 +97,22 @@ where
             broker.try_recv().await
         };
 
-        let Some(next_submission) = next_submission else {
+        let Some(mut next_submission) = next_submission else {
             break;
         };
+        // A command admitted in-band was already eligible to steer the active turn. If that
+        // turn ends before another Tool boundary, dispatch it now without requiring a new turn.
+        if next_submission.intent == alan_agent_protocol::InputIntent::Command
+            && let Op::Input {
+                mode: InputMode::Steer,
+                parts,
+            } = next_submission.op
+        {
+            next_submission.op = Op::Input {
+                parts,
+                mode: InputMode::FollowUp,
+            };
+        }
         track_active_task_submission(&mut state.machine, &next_submission);
         handle_submission_with_cancel_and_steering(
             state,

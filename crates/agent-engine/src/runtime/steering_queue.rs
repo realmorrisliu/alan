@@ -22,6 +22,7 @@ where
     };
 
     let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
+    let mut command_steering = false;
     while let Some(submission) = broker.try_recv().await {
         if submission.intent != InputIntent::Command
             && let Op::Input {
@@ -33,13 +34,8 @@ where
             continue;
         }
 
-        if matches!(
-            &submission.op,
-            Op::Input {
-                mode: InputMode::FollowUp,
-                ..
-            }
-        ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
+        if matches!(&submission.op, Op::Input { .. })
+            && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
             emit(Event::Error {
                 message: format!(
@@ -51,10 +47,18 @@ where
             continue;
         }
 
+        command_steering |= submission.intent == InputIntent::Command
+            && matches!(
+                submission.op,
+                Op::Input {
+                    mode: InputMode::Steer,
+                    ..
+                }
+            );
         machine.push_buffered_inband_submission(submission);
     }
 
-    if steering_inputs.is_empty() {
+    if steering_inputs.is_empty() && !command_steering {
         return Ok(false);
     }
 

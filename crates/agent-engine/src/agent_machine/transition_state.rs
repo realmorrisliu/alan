@@ -7,6 +7,9 @@ use crate::tape::ContentPart;
 use alan_agent_protocol::{PlanItem, Submission};
 use serde::{Deserialize, Serialize};
 
+#[path = "submission_queue.rs"]
+mod submission_queue;
+
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
 const AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS: usize = 256;
@@ -72,6 +75,7 @@ pub(crate) struct NormalizedToolCall {
 pub(crate) struct PendingToolReplayBatch {
     pub(crate) tool_calls: Vec<NormalizedToolCall>,
     pub(crate) resume_with_generation: bool,
+    pub(crate) explicit_command: bool,
 }
 
 /// Best-effort work retained by Machine until the outer Process loop can run it.
@@ -93,7 +97,7 @@ pub(super) struct MachineTransitionState {
     /// after the turn completes (e.g., user input during tool execution).
     buffered_inband_submissions: VecDeque<Submission>,
     /// Queued context for `InputMode::NextTurn`.
-    queued_next_turn_inputs: VecDeque<Vec<ContentPart>>,
+    queued_next_turn_inputs: VecDeque<Submission>,
     /// Number of automatic mid-turn compactions already performed in the active turn.
     compactions_this_turn: u32,
     /// Prompt token estimate immediately after the most recent mid-turn compaction.
@@ -214,34 +218,6 @@ impl AgentMachine {
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
         self.transition_state.compactions_this_turn = 0;
         self.transition_state.last_compaction_prompt_tokens = None;
-    }
-
-    /// Queue `next_turn` input parts. Returns `Some(new_len)` on success, `None` on overflow.
-    pub(crate) fn queue_next_turn_input(&mut self, parts: Vec<ContentPart>) -> Option<usize> {
-        if self.transition_state.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
-            return None;
-        }
-        self.transition_state
-            .queued_next_turn_inputs
-            .push_back(parts);
-        Some(self.transition_state.queued_next_turn_inputs.len())
-    }
-
-    /// Drain queued `next_turn` input parts in FIFO order.
-    pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
-        std::mem::take(&mut self.transition_state.queued_next_turn_inputs)
-    }
-
-    /// Number of queued `next_turn` payloads.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "queue count is exposed for the adjacent turn-state tests"
-        )
-    )]
-    pub(crate) fn queued_next_turn_input_count(&self) -> usize {
-        self.transition_state.queued_next_turn_inputs.len()
     }
 
     /// Drain all buffered inband submissions.
@@ -501,8 +477,19 @@ impl AgentMachine {
             PendingToolReplayBatch {
                 tool_calls,
                 resume_with_generation,
+                explicit_command: !resume_with_generation,
             },
         );
+    }
+
+    pub(crate) fn set_tool_replay_continuation(&mut self, checkpoint_id: &str, generate: bool) {
+        if let Some(batch) = self
+            .transition_state
+            .pending_tool_replay_batches
+            .get_mut(checkpoint_id)
+        {
+            batch.resume_with_generation = generate;
+        }
     }
 
     pub(crate) fn take_tool_replay_batch(
@@ -930,43 +917,6 @@ mod tests {
         let count = state.clear_buffered_inband_submissions();
         assert_eq!(count, 2);
         assert!(state.pop_buffered_inband_submission().is_none());
-    }
-
-    #[test]
-    fn test_queue_next_turn_inputs_fifo_and_drain() {
-        let mut state = AgentMachine::new();
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
-            Some(1)
-        );
-        assert_eq!(
-            state.queue_next_turn_input(vec![ContentPart::text("ctx-2")]),
-            Some(2)
-        );
-        assert_eq!(state.queued_next_turn_input_count(), 2);
-
-        let drained = state.drain_next_turn_inputs();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[0]), "ctx-1");
-        assert_eq!(alan_agent_protocol::parts_to_text(&drained[1]), "ctx-2");
-        assert_eq!(state.queued_next_turn_input_count(), 0);
-    }
-
-    #[test]
-    fn test_queue_next_turn_inputs_overflow_is_rejected() {
-        let mut state = AgentMachine::new();
-        for _ in 0..MAX_QUEUED_NEXT_TURN_INPUTS {
-            assert!(
-                state
-                    .queue_next_turn_input(vec![ContentPart::text("queued")])
-                    .is_some()
-            );
-        }
-        assert!(
-            state
-                .queue_next_turn_input(vec![ContentPart::text("overflow")])
-                .is_none()
-        );
     }
 
     #[test]

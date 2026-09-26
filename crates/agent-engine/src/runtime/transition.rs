@@ -597,24 +597,26 @@ where
                 )
                 .await?
                 {
+                    let resume_with_generation = !tool_calls.iter().any(|call| {
+                        state.machine.current_submission_id() == Some(call.id.as_str())
+                    });
+                    if explicit_command::run_queued_steering_commands(
+                        state,
+                        emit,
+                        inputs.cancel,
+                        resume_with_generation,
+                    )
+                    .await?
+                    {
+                        return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
+                    }
                     return Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop {
                         refresh_context: true,
                     });
                 }
             }
             ToolOrchestratorOutcome::PauseTurn => {
-                if let Some(pending) = state.machine.pending_confirmation()
-                    && replays_tool_calls(&pending.checkpoint_type)
-                {
-                    let resume_with_generation = !tool_calls.get(idx).is_some_and(|call| {
-                        state.machine.current_submission_id() == Some(&call.id)
-                    });
-                    state.machine.set_tool_replay_batch(
-                        pending.checkpoint_id,
-                        tool_calls[idx..].to_vec(),
-                        resume_with_generation,
-                    );
-                }
+                explicit_command::retain_pending_tool_batch(state, &tool_calls[idx..]);
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
             ToolOrchestratorOutcome::EndTurn => {
@@ -735,7 +737,32 @@ where
         .await;
     }
 
-    match handle_runtime_op(state, op, emit).await? {
+    let action = handle_runtime_op(state, op, emit).await?;
+    let action = if let RuntimeOpAction::FinishRejectedExplicitCommand {
+        tool_call,
+        resume_with_generation,
+    } = action
+    {
+        explicit_command::finish_failed_explicit_command(
+            state,
+            &tool_call,
+            "command was rejected by the user",
+            Some("rejected"),
+            emit,
+        )
+        .await?;
+        if !resume_with_generation {
+            return Ok(());
+        }
+        RuntimeOpAction::RunTurn {
+            turn_kind: TurnRunKind::ResumeTurn,
+            user_input: None,
+            activate_task: false,
+        }
+    } else {
+        action
+    };
+    match action {
         RuntimeOpAction::NoTurn => Ok(()),
         RuntimeOpAction::RunTurn {
             turn_kind,
@@ -908,16 +935,7 @@ where
             };
             Ok(())
         }
-        RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
-            explicit_command::finish_failed_explicit_command(
-                state,
-                &tool_call,
-                "command was rejected by the user",
-                Some("rejected"),
-                emit,
-            )
-            .await
-        }
+        RuntimeOpAction::FinishRejectedExplicitCommand { .. } => unreachable!("resolved above"),
     }
 }
 

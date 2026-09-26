@@ -44,3 +44,20 @@
 - [ ] 4.1 Run strict OpenSpec validation and applicable implementation checks, complete PR review and required current-head CI for each delivery slice; record the exact reviewed and merged commits.
 - [ ] 4.2 Sync only implemented and merged requirements to canonical specs; verify no automatic-routing guarantee is synced merely because the explicit slice shipped.
 - [ ] 4.3 Archive only after remaining work is delivered or explicitly handed to an active successor, with canonical specs synced; verify links, disposition and implementation evidence before archive.
+
+## Incremental implementation evidence — 2026-09-26
+
+- PR #937 remains the unmerged explicit-input delivery slice. ProtectedOnly now
+  rejects uninspected executables rather than extending a default-allow runner
+  denylist; descriptor redirection retains its native shell meaning.
+- Command `next_turn` preserves the full submission in the existing Machine
+  queue and releases it only on explicit Turn. Command `steer` uses the existing
+  Tool boundary, skips undispatched stale calls, and preserves both command-result
+  identity and the parent turn across approval or rejection. Idle steering fails.
+- Local `cargo test -p alan-agent-engine -p alan-tools`: 1,191 engine unit tests,
+  20 architecture checks and 137 Tool tests passed; one engine test remains ignored.
+- These checks do not establish tasks 2.5–2.10 as complete: multi-client admission,
+  version-2 activity, queue pause/continue/discard, durable queue/cwd recovery and
+  real terminal acceptance still require implementation and evidence. Task-oriented
+  alan9 controls and project-file parity also remain open. No automatic routing
+  has been activated or synchronized to canonical specs.

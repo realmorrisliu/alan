@@ -12,6 +12,62 @@ use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+#[test]
+fn explicit_turn_releases_command_ids_in_order_without_consuming_agent_context() {
+    use alan_agent_protocol::InputIntent;
+    let mut machine = AgentMachine::new();
+    machine.queue_next_turn_input(vec![ContentPart::text("context")]);
+    for id in ["first", "second"] {
+        machine.queue_next_turn_submission(Submission::with_id_and_intent(
+            id,
+            Op::Input {
+                parts: vec![ContentPart::text(format!("printf '{id}'"))],
+                mode: InputMode::NextTurn,
+            },
+            InputIntent::Command,
+        ));
+    }
+    let mut queues = RuntimeSubmissionQueues::default();
+    let follow_up = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("ordinary input")],
+        mode: InputMode::FollowUp,
+    });
+    assert!(!queues.release_next_turn_commands(&mut machine, &follow_up));
+    let turn = Submission::with_id_and_intent(
+        "trigger",
+        Op::Turn {
+            parts: vec![ContentPart::text("explain the results")],
+            context: None,
+        },
+        InputIntent::Agent,
+    );
+    assert!(queues.release_next_turn_commands(&mut machine, &turn));
+    for id in ["first", "second"] {
+        let Some(QueuedRuntimeItem::Submission(command)) = queues.pop_outer() else {
+            panic!("missing deferred command");
+        };
+        assert_eq!(command.id, id);
+        assert_eq!(command.intent, InputIntent::Command);
+        let Op::Input { parts, mode } = command.op else {
+            panic!("missing command input")
+        };
+        assert_eq!(mode, InputMode::FollowUp);
+        assert_eq!(
+            alan_agent_protocol::parts_to_text(&parts),
+            format!("printf '{id}'")
+        );
+    }
+    let Some(QueuedRuntimeItem::Submission(trigger)) = queues.pop_outer() else {
+        panic!("missing triggering turn");
+    };
+    assert_eq!(trigger.id, "trigger");
+    assert!(!queues.release_next_turn_commands(&mut machine, &trigger));
+    assert!(queues.pop_outer().is_none());
+    let context = machine.drain_next_turn_inputs();
+    assert_eq!(context.len(), 1);
+    assert_eq!(alan_agent_protocol::parts_to_text(&context[0]), "context");
+}
+
 struct PackageTestTool {
     name: &'static str,
     description: &'static str,

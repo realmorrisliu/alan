@@ -632,6 +632,17 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
                 }
                 word_started = false;
             }
+            '<' | '>' => {
+                current_word.push(ch);
+                if chars.peek() == Some(&'&') {
+                    current_word.push(chars.next().expect("peeked redirection operator"));
+                }
+                word_started = true;
+            }
+            '&' if chars.peek() == Some(&'>') => {
+                current_word.push(ch);
+                word_started = true;
+            }
             ';' | '|' | '&' | '(' | ')' | '{' | '}' => {
                 if !current_word.is_empty() {
                     current_command.push(std::mem::take(&mut current_word));
