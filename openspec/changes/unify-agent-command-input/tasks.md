@@ -271,3 +271,25 @@
 - All 38 OS Host unit/integration/architecture checks passed with the expanded
   boundary scenario, including the two-client native command/file round-trip.
   Strict change validation passed; the commit hook runs the full quality gate.
+- Ordinary PTY acceptance ran the actual file-backed TUI against an isolated real
+  Host/native mount and a mock provider (no existing user Host or credentials).
+  It verified `alan!` command presentation, native write/read, `:!` remaining Agent
+  text, Ctrl-C with a persistent paused queue, and Ctrl-D detachment while a native
+  command continued and wrote its result afterward. Root PID remained unchanged
+  after the fix below; explicit commands added no model calls. This verifies PTY
+  interaction, not Terminal.app or Herdr visual acceptance.
+- PTY acceptance exposed an intermittent real Root replacement. The supervisor
+  interpreted a nonblocking Process-table lookup's `None` (also returned on lock
+  contention) as completion, then could terminate a still-running Root. Removed
+  that redundant inferred-exit path: only observed Process exit drives restart.
+  Root shutdown waiting likewise requires positive exit evidence. A concurrent
+  Process-reader regression failed before the fix (Root PID 8 became 0) and passed
+  afterward; all 96 Service Manager unit tests and two integration checks passed.
+- Terminal.app UI access was rejected by the computer-use tool. Herdr remains
+  unavailable from this non-Herdr task context under its skill's entry requirement.
+  Neither restriction was bypassed. Temporary PTY harness and logging dependency
+  changes were removed from the repository after capturing evidence.
+- Root-contention fix verification completed with `just quality`, strict change
+  validation and the real PTY replay. The temporary Host exited after evidence
+  capture; no acceptance Process remains running. Current-head CI and the remaining
+  terminal/Herdr, native restart and full closure audit are still required.
