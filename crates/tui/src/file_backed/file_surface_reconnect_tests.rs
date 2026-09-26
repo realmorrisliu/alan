@@ -31,7 +31,20 @@ async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() 
     .unwrap();
 
     let mut pending_terminal_events = std::collections::VecDeque::new();
-    crate::file_backed::discard_superseded_attachment_events(&mut rx, &mut pending_terminal_events);
+    let completion = alan_agent_protocol::UiEvent::InputCompleted {
+        submission_ids: vec!["mine".into()],
+        status: alan_agent_protocol::UiInputStatus::Completed,
+        error: None,
+    };
+    tx.send(FileBackedEvent::Ui(completion.clone()))
+        .await
+        .unwrap();
+    let preserved = crate::file_backed::discard_superseded_attachment_events(
+        &mut rx,
+        &mut pending_terminal_events,
+        Some("mine"),
+    );
+    assert_eq!(preserved, Some(completion));
 
     assert!(matches!(
         pending_terminal_events.pop_front(),

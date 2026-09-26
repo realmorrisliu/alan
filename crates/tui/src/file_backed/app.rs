@@ -80,6 +80,7 @@ pub(super) struct FileBackedApp {
     pub(super) completion_sources: CompletionSources,
     pub(super) expand_thinking: bool,
     pub(super) notice: Option<String>,
+    pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
     /// The pure state machine reconciling the optimistic `io/output` stream
     /// preview against the authoritative `machine/tape` records. All
@@ -98,6 +99,7 @@ impl FileBackedApp {
     pub(super) fn new(agent_path: String) -> Self {
         Self {
             notice: None,
+            expected_terminal_error: None,
             agent_path,
             composer: Composer::default(),
             transcript: Vec::new(),
@@ -623,13 +625,25 @@ impl FileBackedApp {
     }
 
     pub(super) fn apply_ui_event(&mut self, event: UiEvent) {
+        let paired_notice = matches!(&event, UiEvent::Notice { snapshot }
+            if snapshot.kind == UiNoticeKind::Error
+                && self.expected_terminal_error.as_deref() == Some(snapshot.message.as_str()));
+        let expected_error = if matches!(event, UiEvent::InputCompleted { .. }) || paired_notice {
+            None
+        } else {
+            self.expected_terminal_error.take()
+        };
         match event {
             UiEvent::InputCompleted { .. } => {}
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
-            UiEvent::Error { message, .. } => self.push_error(message),
+            UiEvent::Error { message, .. } => {
+                if expected_error.as_deref() != Some(message.as_str()) {
+                    self.push_error(message);
+                }
+            }
         }
     }
 

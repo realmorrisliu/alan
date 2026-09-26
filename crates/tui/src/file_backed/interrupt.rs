@@ -34,23 +34,34 @@ pub(super) fn observe_root_agent_completion(
     event: &UiEvent,
     app: &mut FileBackedApp,
 ) {
-    if let UiEvent::InputCompleted {
-        submission_ids,
-        status,
-        error,
-    } = event
+    if let UiEvent::InputCompleted { submission_ids, .. } = event
         && pending_turn
             .as_ref()
             .is_some_and(|turn| submission_ids.contains(&turn.submission_id))
     {
-        if *status != alan_agent_protocol::UiInputStatus::Completed {
-            app.push_error(
-                error
-                    .clone()
-                    .unwrap_or_else(|| format!("Input ended: {status:?}")),
-            );
+        render_input_completion(event, app);
+        if let UiEvent::InputCompleted {
+            status: alan_agent_protocol::UiInputStatus::Failed,
+            error: Some(error),
+            ..
+        } = event
+        {
+            // Process emits this terminal error immediately after failed settlement.
+            app.expected_terminal_error = Some(format!("Error handling submission: {error}"));
         }
         *pending_turn = None;
+    }
+}
+
+pub(super) fn render_input_completion(event: &UiEvent, app: &mut FileBackedApp) {
+    if let UiEvent::InputCompleted { status, error, .. } = event
+        && *status != alan_agent_protocol::UiInputStatus::Completed
+    {
+        app.push_error(
+            error
+                .clone()
+                .unwrap_or_else(|| format!("Input ended: {status:?}")),
+        );
     }
 }
 
@@ -212,6 +223,26 @@ mod tests {
             assert!(
                 matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message)) if message == "reason")
             );
+            app.apply_ui_event(event);
+            if status == alan_agent_protocol::UiInputStatus::Failed {
+                app.apply_ui_event(UiEvent::Notice {
+                    snapshot: alan_agent_protocol::UiNoticeSnapshot::new(
+                        alan_agent_protocol::UiNoticeKind::Error,
+                        "Error handling submission: reason",
+                    ),
+                });
+                app.apply_ui_event(UiEvent::Error {
+                    message: "Error handling submission: reason".into(),
+                    recoverable: true,
+                });
+                assert_eq!(app.transcript.len(), 1);
+                // Only the immediately paired terminal error is suppressed.
+                app.apply_ui_event(UiEvent::Error {
+                    message: "Error handling submission: reason".into(),
+                    recoverable: true,
+                });
+                assert_eq!(app.transcript.len(), 2);
+            }
         }
     }
 }
