@@ -202,6 +202,7 @@
         };
 
         let handled = handle_queued_steering_inputs(
+            &state.agent_files(),
             &mut state.machine,
             &[],
             0,

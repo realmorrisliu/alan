@@ -7,8 +7,9 @@ use tokio_util::sync::CancellationToken;
 use crate::runtime::turn_input::{TurnInputBroker, next_pending_interaction_submission};
 
 use super::{
-    AcceptedSubmissionOutcome, RuntimeLoopState, TransitionCompletion,
-    handle_submission_with_cancel, handle_submission_with_cancel_and_steering,
+    AcceptedSubmissionOutcome, DeferredRuntimeAction, DeferredRuntimeActionExit, RuntimeLoopState,
+    TransitionCompletion, handle_submission_with_cancel,
+    handle_submission_with_cancel_and_steering,
 };
 
 pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
@@ -139,6 +140,36 @@ pub(crate) fn track_active_task_submission(
 ) {
     if accepts_inband_submissions(&submission.op) {
         machine.accept_submission_identity(submission.into());
+    }
+}
+
+pub(crate) async fn run_deferred_runtime_action_with_cancel(
+    state: &mut RuntimeLoopState,
+    action: DeferredRuntimeAction,
+    cancel: &CancellationToken,
+) -> DeferredRuntimeActionExit {
+    match action {
+        DeferredRuntimeAction::TurnMemoryPromotion(job) => {
+            let generation = state.namespace_generation();
+            match super::super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
+                &generation,
+                &job,
+                cancel,
+            )
+            .await
+            {
+                Ok(()) => DeferredRuntimeActionExit::Completed,
+                Err(_) if cancel.is_cancelled() => DeferredRuntimeActionExit::Cancelled,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        context = job.warning_context,
+                        "Failed to capture confirmed turn memory"
+                    );
+                    DeferredRuntimeActionExit::Completed
+                }
+            }
+        }
     }
 }
 

@@ -2,11 +2,12 @@ use alan_agent_protocol::{Event, InputIntent, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
+use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, report_buffer_overflow};
 use super::turn_support::tool_result_preview;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
+    files: &super::transition::NamespaceAgentFiles,
     machine: &mut AgentMachine,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
@@ -37,13 +38,7 @@ where
         if matches!(&submission.op, Op::Input { .. })
             && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            emit(Event::Error {
-                message: format!(
-                    "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                ),
-                recoverable: true,
-            })
-            .await;
+            report_buffer_overflow(files, broker, &submission.id, emit).await?;
             continue;
         }
 

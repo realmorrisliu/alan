@@ -624,10 +624,10 @@
         let broker = TurnInputBroker::default();
         assert!(
             broker
-                .push(alan_agent_protocol::Submission::new(Op::Input {
-                    parts: vec![alan_agent_protocol::ContentPart::text("overflow-follow-up")],
+                .push(Submission::with_id_and_intent("overflow-follow-up", Op::Input {
+                    parts: vec![ContentPart::text("overflow-follow-up")],
                     mode: InputMode::FollowUp,
-                }))
+                }, InputIntent::Agent))
                 .await
         );
 
@@ -638,6 +638,7 @@
         };
 
         let handled = handle_queued_steering_inputs(
+            &state.agent_files(),
             &mut state.machine,
             &[],
             0,
@@ -656,6 +657,14 @@
             Event::Error { message, recoverable }
                 if *recoverable && message.contains("Too many queued in-turn user inputs")
         )));
+        let shell = alan_shell::Shell::new(state.environment.root_transport());
+        let path = format!("{}/machine/ui/events", state.environment.agent_path());
+        let records = String::from_utf8(shell.cat(&path).await.unwrap()).unwrap();
+        assert!(records.lines().any(|line| matches!(
+            serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+            alan_agent_protocol::UiEvent::Error { submission_id: Some(id), .. } if id == "overflow-follow-up"
+        )));
+
     }
 
     #[tokio::test]
@@ -686,6 +695,7 @@
         let mut emit = |_event: Event| async {};
 
         let handled = handle_queued_steering_inputs(
+            &state.agent_files(),
             &mut state.machine,
             &[],
             0,

@@ -15,10 +15,10 @@
 - [x] 2.1 Define the versioned file record details for submission identity, prefix intent, queue controls and completion using existing AgentFS owners; verify protocol scheduling mode stays distinct from intent and two clients cannot consume each other's results.
 - [x] 2.2 Implement shared prefix framing across TUI and redirected input; verify `!`, `:`, nested prefix data, empty payloads, slash controls, pending responses, stdin EOF and multiline boundaries.
 - [x] 2.3 Reuse the native shell adapter with unchanged script bodies, selected shell/environment and Host cwd; verify pipelines, redirection, quotes, multiline scripts, PATH lookup and partial failures without command/path rewriting. Define the bounded standalone user `cd` parser and explicit errors for unsupported cd forms.
-- [ ] 2.4 Dispatch user and Agent commands through the same governed native Tool Process path; verify model-free explicit execution, no authority amplification, sandbox scope limited to the current cwd grant, switching grants only through explicit `!cd`, descendant cancellation and correlated Action evidence.
+- [x] 2.4 Dispatch user and Agent commands through the same governed native Tool Process path; verify model-free explicit execution, no authority amplification, sandbox scope limited to the current cwd grant, switching grants only through explicit `!cd`, descendant cancellation and correlated Action evidence.
 
 - [ ] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
-- [ ] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
+- [x] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
 - [ ] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, including Markdown emphasis without matching underscore siblings, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
 - [x] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify reliable pending work restores paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
 - [ ] 2.9 Present route/cwd and truthful outcomes; verify empty-input Ctrl-D detaches only with no pending Agent input and preserves accepted work, pending confirmation/structured input remains attached and available on Ctrl-D, redirected output is clean, and missing response channels fail without hidden terminal input or fabricated rollback.
@@ -350,3 +350,29 @@
   Full regression passed 1,206 engine tests, 20 architecture checks and 100 Service
   Manager checks; the recovery test passed ten consecutive runs. Fresh current-head
   CI remains required and the previous Ubuntu failure is not treated as passing.
+
+- Task 2.4 closure audit: `namespace_and_batch_contract.inc.rs` verifies explicit
+  commands enter the governed Tool Process path with unchanged bodies and zero
+  generation calls, including approval/resume; `explicit_command_rejection.inc.rs`
+  verifies rejection produces a correlated failed Action without generation.
+  `tools/registry/tests.rs` checks caller Process binding and unmounted/revoked
+  authority; `host_mounts/tests/projection.rs` exercises native rejection of a
+  second grant until selected cwd changes. The real Host test checks command IDs,
+  effects and model-call counts. Native process-group cancellation is covered by
+  `sandbox/command_process.rs`; completed writes remain in the Host restart test.
+- Task 2.6 closure audit: `input_queue.rs` checks targeted pre-start cancellation,
+  unknown/settled IDs, retained buffered/ordinary/next-turn inputs and refusal to
+  continue before active work settles. `engine_runtime_tests.rs` exercises file
+  interrupt plus continue/discard with ordered retained inputs, no generation
+  while paused and correlated terminal errors. The native Host test checks active
+  shell cancellation, preserved early effects, absent late effects and continuation.
+  `accepted_submission.rs` covers cancellation of an identity before worker polling.
+- Pending-response saturation revealed two uncorrelated overflow paths (request
+  wait and Tool-boundary steering). Both now use one reporter that persists queue
+  removal and writes a UI error with the rejected input's original ID. Strengthened
+  existing tests verify that a full buffer retains earlier inputs, still accepts
+  the outstanding request answer, and exposes the overflow result by ID. Deferred
+  submission execution moved into the existing accepted-submission module to keep
+  the transition module below its source-size limit without another state owner.
+  Current full engine verification passed 1,206 tests plus 20 architecture checks
+  (one ignored). Tasks 2.5, 2.7, 2.9–2.12 and 2.14–2.15 retain their separate gates.

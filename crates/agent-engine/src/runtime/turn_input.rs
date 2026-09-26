@@ -85,13 +85,7 @@ where
                 if is_brokered_input(&incoming.op)
                     && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
-                    emit(Event::Error {
-                        message: format!(
-                            "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                        ),
-                        recoverable: true,
-                    })
-                    .await;
+                    report_buffer_overflow(agent_files, broker, &incoming.id, emit).await?;
                     continue;
                 }
                 machine.push_buffered_inband_submission(incoming);
@@ -99,6 +93,29 @@ where
             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {}
         }
     }
+}
+
+pub(super) async fn report_buffer_overflow<E, F>(
+    files: &NamespaceAgentFiles,
+    broker: &TurnInputBroker,
+    submission_id: &str,
+    emit: &mut E,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let message = format!(
+        "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
+    );
+    broker.persist().await?;
+    super::ui_surfaces::error_notice(files, &message, Some(submission_id)).await?;
+    emit(Event::Error {
+        message,
+        recoverable: true,
+    })
+    .await;
+    Ok(())
 }
 
 pub(super) async fn namespace_pending_resume_submission(
@@ -389,7 +406,19 @@ mod tests {
             questions: Vec::new(),
         });
 
+        let input = |body| {
+            Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text(body)],
+                mode: InputMode::FollowUp,
+            })
+        };
+        for _ in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
+            machine.push_buffered_inband_submission(input("retained"));
+        }
         let broker = TurnInputBroker::default();
+        let overflow = input("overflow");
+        let overflow_id = overflow.id.clone();
+        assert!(broker.push(overflow).await);
         let cancel = CancellationToken::new();
         let mut events = Vec::new();
         let mut emit = |event| {
@@ -407,7 +436,13 @@ mod tests {
             &cancel,
         );
         let writer = async {
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            loop {
+                let records = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+                if String::from_utf8_lossy(&records).contains(&overflow_id) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
             shell
                 .write(
                     &response_path,
@@ -416,7 +451,7 @@ mod tests {
                 .await
                 .unwrap();
         };
-        let (submission, _) = tokio::time::timeout(Duration::from_secs(1), async {
+        let (submission, _) = tokio::time::timeout(Duration::from_secs(3), async {
             tokio::join!(waiter, writer)
         })
         .await
@@ -442,7 +477,17 @@ mod tests {
             }
             other => panic!("expected Op::Resume from namespace response, got {other:?}"),
         }
-        assert!(events.is_empty());
+        assert_eq!(
+            machine.buffered_inband_user_input_count(),
+            MAX_BUFFERED_INBAND_USER_INPUTS
+        );
+        assert!(events.iter().any(|event| matches!(event, Event::Error { message, .. } if message.contains("Too many queued"))));
+        let records =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(records.lines().any(|line| matches!(
+            serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+            alan_agent_protocol::UiEvent::Error { submission_id: Some(id), .. } if id == overflow_id
+        )));
     }
 
     #[tokio::test]

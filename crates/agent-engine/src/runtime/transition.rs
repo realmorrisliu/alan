@@ -10,7 +10,8 @@ mod namespace_environment;
 mod turn_execution;
 
 pub(crate) use accepted_submission::{
-    accepts_inband_submissions, advance_accepted_submission, track_active_task_submission,
+    accepts_inband_submissions, advance_accepted_submission,
+    run_deferred_runtime_action_with_cancel, track_active_task_submission,
 };
 use turn_execution::run_turn_with_cancel;
 
@@ -30,7 +31,6 @@ use std::collections::VecDeque;
 use alan_agent_protocol::{Event, InputIntent, InputMode, Op, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 
 use crate::{
     agent_machine::{AgentMachine, DeferredRuntimeAction, NormalizedToolCall, TurnActivityState},
@@ -592,6 +592,7 @@ where
             } => {
                 refresh_context |= call_refresh;
                 if handle_queued_steering_inputs(
+                    &state.agent_files(),
                     &mut state.machine,
                     tool_calls,
                     idx + 1,
@@ -964,36 +965,6 @@ async fn finalize_replayed_tool_end_turn_best_effort(
     }
 
     state.machine.set_turn_activity(TurnActivityState::Idle);
-}
-
-pub(super) async fn run_deferred_runtime_action_with_cancel(
-    state: &mut RuntimeLoopState,
-    action: DeferredRuntimeAction,
-    cancel: &CancellationToken,
-) -> DeferredRuntimeActionExit {
-    match action {
-        DeferredRuntimeAction::TurnMemoryPromotion(job) => {
-            let generation = state.namespace_generation();
-            match super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
-                &generation,
-                &job,
-                cancel,
-            )
-            .await
-            {
-                Ok(()) => DeferredRuntimeActionExit::Completed,
-                Err(_) if cancel.is_cancelled() => DeferredRuntimeActionExit::Cancelled,
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        context = job.warning_context,
-                        "Failed to capture confirmed turn memory"
-                    );
-                    DeferredRuntimeActionExit::Completed
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
