@@ -306,7 +306,7 @@ impl ConnectionService {
     }
 
     async fn apply(&self, command: ConnectionCommand) -> Result<()> {
-        let refresh = {
+        let (refresh, save_result) = {
             let mut committed = self.state.lock().unwrap();
             let mut state = committed.clone();
             let mut persist = false;
@@ -417,19 +417,37 @@ impl ConnectionService {
                     refresh = true;
                 }
             }
-            if persist {
+            let save_result = if persist {
                 state
                     .connections
                     .save_to_path(&self.metadata_path)
-                    .context("persist Connection Service metadata")?;
-            }
-            *committed = state;
-            refresh
+                    .context("persist Connection Service metadata")
+            } else {
+                Ok(())
+            };
+            let published = self.publish_saved_state(&mut committed, state, &save_result);
+            (refresh && published, save_result)
         };
         if refresh {
             self.refresh_callables().await;
         }
-        Ok(())
+        save_result
+    }
+
+    fn publish_saved_state(
+        &self,
+        committed: &mut State,
+        candidate: State,
+        save_result: &Result<()>,
+    ) -> bool {
+        // Directory sync can fail after atomic replacement has published the file.
+        let published = save_result.is_ok()
+            || ConnectionsFile::load_from_path(&self.metadata_path)
+                .is_ok_and(|(on_disk, _)| on_disk == candidate.connections);
+        if published {
+            *committed = candidate;
+        }
+        published
     }
 
     async fn refresh_callables(&self) {

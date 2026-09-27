@@ -453,3 +453,49 @@ async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
         service.metadata()
     );
 }
+
+#[tokio::test]
+async fn post_replace_error_publishes_visible_metadata_and_dependent_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    service.select(7, "main").unwrap();
+    {
+        let mut committed = service.state.lock().unwrap();
+        let mut candidate = committed.clone();
+        candidate.connections.profiles.clear();
+        candidate.selections.clear();
+        candidate.validation.clear();
+        candidate
+            .connections
+            .save_to_path(&bindings.metadata_path)
+            .unwrap();
+        // Inject the error at the directory-sync boundary, after publication.
+        let failed_sync = Err(anyhow::anyhow!("sync parent directory failed"));
+        assert!(service.publish_saved_state(&mut committed, candidate, &failed_sync));
+        assert!(failed_sync.is_err());
+        assert!(committed.connections.profiles.is_empty());
+        assert!(committed.selections.is_empty());
+        assert!(committed.validation.is_empty());
+    }
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "next".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    let disk = ConnectionsFile::load_from_path(&bindings.metadata_path)
+        .unwrap()
+        .0;
+    assert_eq!(disk, service.metadata());
+    assert!(disk.profiles.contains_key("next"));
+    assert!(!disk.profiles.contains_key("main"));
+}
