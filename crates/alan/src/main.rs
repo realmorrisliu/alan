@@ -757,10 +757,20 @@ async fn run_bare_in_foreground_instance(
                         let _ = input_tx.send(input);
                     });
                     let input = tokio::select! {
-                        input = input_rx => input.context("stdin reader stopped")??,
+                        biased;
                         _ = interrupt.recv() => return Ok(130),
+                        input = input_rx => input.context("stdin reader stopped")??,
                     };
-                    let exit_code = alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                    let exit_code = alan_tui::run_stdio_task(
+                        attachment.root,
+                        "/agent/root",
+                        &input,
+                        async {
+                            interrupt.recv().await;
+                            Ok::<(), anyhow::Error>(())
+                        },
+                    )
+                    .await?;
                     Ok(exit_code)
                 }
             }

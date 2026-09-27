@@ -459,6 +459,7 @@ pub async fn run_stdio_task(
     root_transport: InProcessTransport,
     agent_path: impl Into<String>,
     input: &str,
+    interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<i32> {
     use tokio::io::AsyncWriteExt;
 
@@ -468,10 +469,7 @@ pub async fn run_stdio_task(
     let shell = alan_shell::Shell::new(root_transport);
     let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
 
-    let result = wait_for_stdio_answer(&shell, task, &mut attachment, async {
-        tokio::signal::ctrl_c().await.map_err(anyhow::Error::from)
-    })
-    .await;
+    let result = wait_for_stdio_answer(&shell, task, &mut attachment, interrupt).await;
     let close_result = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
     let answer = result?;
     close_result?;
