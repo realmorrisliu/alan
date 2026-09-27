@@ -3,6 +3,58 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 
 #[test]
+fn refresh_recovers_an_interrupted_removal_without_reopening_the_service() {
+    let service = PackageService::ephemeral("test").unwrap();
+    assert!(
+        service
+            .execute(PackageCommand::Install {
+                request_id: "install".into(),
+                package_id: "interrupted".into(),
+                snapshot: native_snapshot("interrupted", "body"),
+            })
+            .unwrap()
+            .success
+    );
+    let before = service.catalog().unwrap();
+    let staged = {
+        let _transaction = service.store.transaction().unwrap();
+        service
+            .store
+            .stage_package_revisions("interrupted")
+            .unwrap()
+            .unwrap()
+    };
+    assert!(!staged.active.exists());
+    assert_eq!(service.catalog().unwrap(), before);
+    assert!(staged.active.is_dir());
+    assert!(!staged.staged.exists());
+    assert!(service.acquire("interrupted").is_ok());
+}
+
+#[test]
+fn catalog_refresh_does_not_read_content_but_acquisition_verifies_it() {
+    let service = PackageService::ephemeral("test").unwrap();
+    for id in ["intact", "tampered"] {
+        assert!(
+            service
+                .execute(PackageCommand::Install {
+                    request_id: id.into(),
+                    package_id: id.into(),
+                    snapshot: native_snapshot(id, "body"),
+                })
+                .unwrap()
+                .success
+        );
+    }
+    let record = service.resolve("tampered").unwrap();
+    let root = service.store.revision_root("tampered", &record.revision);
+    fs::write(root.join("manifest.json"), b"{}").unwrap();
+    assert_eq!(service.catalog().unwrap().packages.len(), 2);
+    assert!(service.acquire("intact").is_ok());
+    assert!(service.acquire("tampered").is_err());
+}
+
+#[test]
 fn independent_services_observe_mutations_and_retain_live_revisions() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");

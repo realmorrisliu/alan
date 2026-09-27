@@ -61,14 +61,7 @@ pub(super) fn active(root: &Path) -> Result<BTreeMap<u64, (String, String)>> {
         ensure!(bytes.len() <= 1024, "package lease is oversized");
         let record: (String, String) = serde_json::from_slice(&bytes)?;
         validate_package_id(&record.0)?;
-        ensure!(
-            record.1.len() == 64
-                && record
-                    .1
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "package lease has invalid revision"
-        );
+        super::validate_revision_id(&record.1)?;
         active.insert(active.len() as u64, record);
     }
     Ok(active)

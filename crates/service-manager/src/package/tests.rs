@@ -521,6 +521,8 @@ fn failed_uninstall_keeps_the_current_catalog_and_revision() {
         .unwrap();
 
     assert!(!failed.success);
+    fs::remove_file(&staging).unwrap();
+    fs::create_dir(&staging).unwrap();
     assert_eq!(service.catalog().unwrap(), before);
     assert!(service.resolve("atomic-uninstall-pack").is_ok());
     assert!(

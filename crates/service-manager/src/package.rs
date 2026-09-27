@@ -419,7 +419,6 @@ impl PackageService {
 
     pub(crate) fn execute(&self, command: PackageCommand) -> Result<PackageCommandResult> {
         let _operation = self.operation.lock().expect("package operation poisoned");
-        let _transaction = self.refresh()?;
         validate_command(&command)?;
         let request_id = command.request_id().to_string();
         {
@@ -431,7 +430,7 @@ impl PackageService {
         }
 
         let action = command.action().to_string();
-        let attempted = match command {
+        let attempted = self.refresh().and_then(|_transaction| match command {
             PackageCommand::Install {
                 request_id,
                 package_id,
@@ -454,7 +453,7 @@ impl PackageService {
                 request_id,
                 package_id,
             } => self.uninstall(request_id, package_id),
-        };
+        });
         let result = attempted.unwrap_or_else(|error| PackageCommandResult {
             request_id: request_id.clone(),
             success: false,

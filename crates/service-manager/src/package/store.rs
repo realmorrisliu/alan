@@ -59,6 +59,7 @@ impl PackageStore {
     pub(super) fn load(&self) -> Result<PackageCatalog> {
         let mut catalog = load_catalog(&self.root)?;
         validate_catalog_structure(&catalog)?;
+        recover_staging(&self.root, &catalog)?;
         let changed = reconcile_references(&mut catalog, &leases::active(&self.root)?);
         let retired = catalog
             .packages
@@ -69,7 +70,6 @@ impl PackageStore {
         for package_id in &retired {
             catalog.packages.remove(package_id);
         }
-        verify_catalog(&self.root, &catalog)?;
         if changed || !retired.is_empty() {
             catalog.generation = catalog.generation.saturating_add(1);
             persist_catalog(&self.root, &catalog)?;
@@ -88,10 +88,8 @@ impl PackageStore {
 
     // Called only while the cross-process transaction lock is held.
     pub(super) fn recover(&self) -> Result<PackageCatalog> {
-        let catalog = load_catalog(&self.root)?;
-        validate_catalog_structure(&catalog)?;
-        recover_staging(&self.root, &catalog)?;
         let catalog = self.load()?;
+        verify_catalog(&self.root, &catalog)?;
         self.gc_unreferenced_revisions(&catalog)?;
         Ok(catalog)
     }
@@ -450,10 +448,6 @@ fn persist_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
 fn verify_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
     validate_catalog_structure(catalog)?;
     for record in catalog.packages.values() {
-        ensure!(
-            record.materializer_version == MATERIALIZER_VERSION,
-            "catalog references an unsupported materializer version"
-        );
         verify_revision(root, record)?;
     }
     Ok(())
@@ -470,19 +464,28 @@ fn validate_catalog_structure(catalog: &PackageCatalog) -> Result<()> {
             "package catalog key does not match its record id"
         );
         validate_package_id(&record.id)?;
+        validate_revision_id(&record.revision)?;
+        ensure!(
+            record.materializer_version == MATERIALIZER_VERSION,
+            "catalog references an unsupported materializer version"
+        );
     }
     Ok(())
 }
 
-fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
+fn validate_revision_id(revision: &str) -> Result<()> {
     ensure!(
-        record.revision.len() == 64
-            && record
-                .revision
+        revision.len() == 64
+            && revision
                 .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "catalog contains an invalid package revision"
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "invalid package revision"
     );
+    Ok(())
+}
+
+fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
+    validate_revision_id(&record.revision)?;
     let revision_root = revision_root(root, &record.id, &record.revision);
     ensure!(
         revision_root.is_dir(),
