@@ -53,8 +53,10 @@ installed applications, or launchd registrations.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL NOT register or start an Alan runtime. Running
-`alan` SHALL own its foreground instance through existing product composition.
+Standalone installation SHALL NOT register or start an Alan runtime. Ordinary
+`alan` execution SHALL own its foreground instance through existing product
+composition. Metadata-only commands such as `--version` and durable connection
+profile or credential operations SHALL NOT require starting that instance.
 An explicitly targeted auxiliary client MAY connect to a live instance, but
 installation or a missing target MUST NOT implicitly create a background Host.
 
