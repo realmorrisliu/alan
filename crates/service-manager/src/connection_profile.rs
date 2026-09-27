@@ -2,6 +2,7 @@ use alan_agent_engine::{Config, LlmProvider};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -117,6 +118,11 @@ pub struct ProviderDescriptor {
 }
 
 impl ConnectionsFile {
+    /// Stable content fingerprint for optimistic metadata replacement.
+    pub fn fingerprint(&self) -> anyhow::Result<String> {
+        Ok(hex::encode(Sha256::digest(serde_json::to_vec(self)?)))
+    }
+
     pub fn load_from_path(path: &Path) -> anyhow::Result<(Self, Option<PathBuf>)> {
         validate_safe_absolute_path("connection metadata path", path)?;
         match std::fs::read_to_string(path) {

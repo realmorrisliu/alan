@@ -424,6 +424,7 @@ async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
         },
         ConnectionCommand::ClearDefault,
         ConnectionCommand::ReplaceMetadata {
+            expected: before.fingerprint().unwrap(),
             connections: ConnectionsFile::default(),
         },
     ] {
@@ -498,4 +499,58 @@ async fn post_replace_error_publishes_visible_metadata_and_dependent_state() {
     assert_eq!(disk, service.metadata());
     assert!(disk.profiles.contains_key("next"));
     assert!(!disk.profiles.contains_key("main"));
+}
+
+#[tokio::test]
+async fn metadata_replacement_rejects_stale_clients_without_losing_the_first_update() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    let first = Shell::new(InProcessTransport::new(service.file_server()));
+    let second = Shell::new(InProcessTransport::new(service.file_server()));
+    let expected: ConnectionsFile =
+        serde_json::from_slice(&first.cat("/metadata").await.unwrap()).unwrap();
+    let stale: ConnectionsFile =
+        serde_json::from_slice(&second.cat("/metadata").await.unwrap()).unwrap();
+    let mut first_update = expected.clone();
+    first_update.profiles.insert("first".into(), profile());
+    // A metadata document above half the write limit must remain editable.
+    first_update.profiles.get_mut("first").unwrap().label = Some("x".repeat(600_000));
+    let replace = |expected: &ConnectionsFile, connections: &ConnectionsFile| {
+        serde_json::to_vec(&serde_json::json!({ "op": "replace_metadata", "expected": expected.fingerprint().unwrap(), "connections": connections })).unwrap()
+    };
+    first
+        .write("/ctl", &replace(&expected, &first_update))
+        .await
+        .unwrap();
+    let mut stale_update = stale.clone();
+    stale_update.profiles.insert("second".into(), profile());
+    assert!(
+        second
+            .write("/ctl", &replace(&stale, &stale_update))
+            .await
+            .is_err()
+    );
+    assert_eq!(service.metadata(), first_update);
+    assert_eq!(
+        ConnectionsFile::load_from_path(&bindings.metadata_path)
+            .unwrap()
+            .0,
+        first_update
+    );
+    let refreshed: ConnectionsFile =
+        serde_json::from_slice(&second.cat("/metadata").await.unwrap()).unwrap();
+    let mut merged = refreshed.clone();
+    merged.profiles.insert("second".into(), profile());
+    second
+        .write("/ctl", &replace(&refreshed, &merged))
+        .await
+        .unwrap();
+    assert_eq!(service.metadata(), merged);
+    let unguarded = serde_json::to_vec(
+        &serde_json::json!({ "op": "replace_metadata", "connections": expected }),
+    )
+    .unwrap();
+    assert!(first.write("/ctl", &unguarded).await.is_err());
+    assert_eq!(service.metadata(), merged);
 }
