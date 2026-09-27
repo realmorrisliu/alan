@@ -692,12 +692,15 @@ async fn write_action_record(
     }
     if let Some(recorder) = recorder {
         recorder
-            .record_event(
-                "agent_action_v1",
-                serde_json::json!({
-                    "agent_path":agent_path, "action_id":id, "record":payload
-                }),
-            )
+            .persist_batch(vec![crate::rollout::RolloutItem::Event(
+                crate::rollout::EventRecord {
+                    event_type: "agent_action_v1".into(),
+                    payload: serde_json::json!({
+                        "agent_path":agent_path, "action_id":id, "record":payload
+                    }),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                },
+            )])
             .await
             .context("persist Action evidence before publishing completion")?;
     }

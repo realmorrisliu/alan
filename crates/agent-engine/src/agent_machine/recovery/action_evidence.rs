@@ -19,6 +19,21 @@ pub(super) fn rebase(items: &mut [RolloutItem], process_path: &str) -> Result<()
         .strip_prefix("/proc/")
         .context("recovery Process path")?;
     let agent_path = format!("/agent/{pid}");
+    let mut expired = HashMap::new();
+    for item in items.iter() {
+        if let RolloutItem::Event(event) = item
+            && event.event_type == "agent_action_retention_v1"
+        {
+            let source = event.payload["agent_path"]
+                .as_str()
+                .context("retention Agent path")?;
+            let id = event.payload["action_id"]
+                .as_str()
+                .context("retention Action ID")?;
+            let cause = event.payload["cause"].as_str().context("retention cause")?;
+            expired.insert(format!("{source}/actions/{id}/output"), cause.to_string());
+        }
+    }
     let mut paths = HashMap::new();
     for item in items.iter_mut() {
         if let RolloutItem::Event(event) = item
@@ -33,6 +48,17 @@ pub(super) fn rebase(items: &mut [RolloutItem], process_path: &str) -> Result<()
             let old_path = format!("{source}/actions/{id}/output");
             let new_id = format!("a{}", paths.len());
             let new_path = format!("{agent_path}/actions/{new_id}/output");
+            if let Some(cause) = expired.get(&old_path) {
+                // Replace the durable payload before the recovered rollout is written.
+                event.payload["record"]["output"] = Value::String(
+                    serde_json::json!({
+                        "type": "evidence_retention_expired",
+                        "reference": format!("/actions/{new_id}/output"),
+                        "cause": cause,
+                    })
+                    .to_string(),
+                );
+            }
             ensure!(
                 paths.insert(old_path, new_path).is_none(),
                 "duplicate durable Action identity"
@@ -43,6 +69,23 @@ pub(super) fn rebase(items: &mut [RolloutItem], process_path: &str) -> Result<()
         }
     }
     for item in items {
+        if let RolloutItem::Event(event) = item
+            && event.event_type == "agent_action_retention_v1"
+        {
+            let old_path = format!(
+                "{}/actions/{}/output",
+                event.payload["agent_path"]
+                    .as_str()
+                    .context("retention Agent path")?,
+                event.payload["action_id"]
+                    .as_str()
+                    .context("retention Action ID")?
+            );
+            if let Some(path) = paths.get(&old_path) {
+                event.payload["agent_path"] = Value::String(agent_path.clone());
+                event.payload["action_id"] = Value::String(path.rsplit('/').nth(1).unwrap().into());
+            }
+        }
         if let RolloutItem::Message(record) = item
             && let Some(Message::Tool { responses }) = record.message.as_mut()
         {
