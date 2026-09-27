@@ -21,20 +21,38 @@ fn runtime_base(root: &Path) -> PathBuf {
     }
 }
 
-fn spawn_blocked_bare_cli(runtime: &Path, runtime_dir: &Path) -> Child {
+fn spawn_blocked_bare_cli(runtime: &Path, runtime_dir: Option<&Path>) -> Child {
     let home = runtime.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_alan"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_alan"));
+    command
         .env("ALAN_INSTALL_CHANNEL", "stable")
-        .env("ALAN_INSTANCE_RUNTIME_DIR", runtime_dir)
         .env("HOME", home)
+        .env("XDG_DATA_HOME", runtime.join("data"))
         .env("TMPDIR", runtime)
-        .env_remove("ALAN_CONFIG_PATH")
+        .env_remove("ALAN_CONFIG_PATH");
+    if let Some(runtime_dir) = runtime_dir {
+        command.env("ALAN_INSTANCE_RUNTIME_DIR", runtime_dir);
+    } else {
+        command.env_remove("ALAN_INSTANCE_RUNTIME_DIR");
+    }
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .unwrap()
+}
+
+struct ForegroundChild(Child);
+
+impl Drop for ForegroundChild {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 }
 
 async fn wait_for_host_ready(paths: &HostEndpointPaths) -> bool {
@@ -186,7 +204,7 @@ async fn host_stop_gracefully_stops_bare_foreground_instance() {
     let runtime_dir = runtime.path().join("foreground");
     let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
     let home = runtime.path().join("home");
-    let mut foreground = spawn_blocked_bare_cli(runtime.path(), &runtime_dir);
+    let mut foreground = spawn_blocked_bare_cli(runtime.path(), Some(&runtime_dir));
     if !wait_for_host_ready(&paths).await {
         let _ = foreground.kill();
         let _ = foreground.wait();
@@ -219,11 +237,99 @@ async fn host_stop_gracefully_stops_bare_foreground_instance() {
 }
 
 #[tokio::test]
+async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown() {
+    let runtime = tempfile::tempdir_in("/tmp").unwrap();
+    let legacy_metadata = runtime.path().join("home/.alan/connections.toml");
+    std::fs::create_dir_all(legacy_metadata.parent().unwrap()).unwrap();
+    std::fs::write(&legacy_metadata, "version = 1\n").unwrap();
+    let mut first = ForegroundChild(spawn_blocked_bare_cli(runtime.path(), None));
+    let mut second = ForegroundChild(spawn_blocked_bare_cli(runtime.path(), None));
+
+    let instances = async {
+        for _ in 0..400 {
+            let ready = std::fs::read_dir(runtime.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("alan-"))
+                .filter_map(|entry| {
+                    let paths =
+                        HostEndpointPaths::from_runtime_dir(&entry.path(), "stable").ok()?;
+                    let status = paths.read_status().ok()?;
+                    (status.readiness == HostReadiness::Ready).then_some((paths, status))
+                })
+                .collect::<Vec<_>>();
+            if ready.len() == 2 {
+                return ready;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        Vec::new()
+    }
+    .await;
+    assert_eq!(
+        instances.len(),
+        2,
+        "both foreground instances must become ready"
+    );
+    assert_ne!(instances[0].1.boot_id, instances[1].1.boot_id);
+    assert_ne!(instances[0].0.socket, instances[1].0.socket);
+    assert!(
+        !legacy_metadata.exists(),
+        "concurrent first boot must finish shared legacy migration"
+    );
+
+    let first_instance = instances
+        .iter()
+        .find(|(_, status)| status.pid == first.0.id())
+        .expect("first CLI must own a distinct Host endpoint");
+    let second_instance = instances
+        .iter()
+        .find(|(_, status)| status.pid == second.0.id())
+        .expect("second CLI must own a distinct Host endpoint");
+    for (paths, _) in &instances {
+        let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+        let shell = alan_shell::Shell::new(attachment.root);
+        assert_eq!(shell.cat("/proc/1/status").await.unwrap(), b"running\n");
+        assert!(shell.ls("/agent/root").await.is_ok());
+    }
+
+    let terminate_first = Command::new("/bin/kill")
+        .args(["-TERM", &first.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(terminate_first.success());
+    let Some(first_exit) = wait_for_child_exit(&mut first.0).await else {
+        panic!("first foreground instance did not stop");
+    };
+    assert_eq!(first_exit.code(), Some(143));
+    assert!(!first_instance.0.status.exists());
+    assert!(!first_instance.0.socket.exists());
+    assert_eq!(
+        second_instance.0.read_status().unwrap().readiness,
+        HostReadiness::Ready,
+        "stopping one instance must leave the other available"
+    );
+    assert!(second.0.try_wait().unwrap().is_none());
+
+    let terminate_second = Command::new("/bin/kill")
+        .args(["-TERM", &second.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(terminate_second.success());
+    let Some(second_exit) = wait_for_child_exit(&mut second.0).await else {
+        panic!("second foreground instance did not stop");
+    };
+    assert_eq!(second_exit.code(), Some(143));
+    assert!(!second_instance.0.status.exists());
+    assert!(!second_instance.0.socket.exists());
+}
+
+#[tokio::test]
 async fn ctrl_c_stops_bare_foreground_instance_while_stdin_is_open() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let runtime_dir = runtime.path().join("foreground");
     let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
-    let mut foreground = spawn_blocked_bare_cli(runtime.path(), &runtime_dir);
+    let mut foreground = spawn_blocked_bare_cli(runtime.path(), Some(&runtime_dir));
     if !wait_for_host_ready(&paths).await {
         let _ = foreground.kill();
         let _ = foreground.wait();
@@ -256,7 +362,7 @@ async fn sigterm_before_one_shot_input_exits_with_signal_status_and_removes_runt
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let runtime_dir = runtime.path().join("foreground");
     let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
-    let mut foreground = spawn_blocked_bare_cli(runtime.path(), &runtime_dir);
+    let mut foreground = spawn_blocked_bare_cli(runtime.path(), Some(&runtime_dir));
     if !wait_for_host_ready(&paths).await {
         let _ = foreground.kill();
         let _ = foreground.wait();
