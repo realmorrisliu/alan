@@ -1,8 +1,10 @@
 //! Runtime readiness, control, and shutdown ownership.
 
+use crate::rollout::{EventRecord, RolloutItem, RolloutRecorder};
 use alan_agent_protocol::Submission;
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -83,6 +85,7 @@ pub struct RuntimeHandle {
     pub submission_tx: mpsc::Sender<Submission>,
     /// Shutdown signal sender for graceful shutdown.
     shutdown_tx: Option<mpsc::Sender<()>>,
+    recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
 }
 
 impl RuntimeHandle {
@@ -90,7 +93,33 @@ impl RuntimeHandle {
         Self {
             submission_tx,
             shutdown_tx,
+            recorder: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Journal an AgentFS output expiry before the storing server removes its bytes.
+    pub async fn record_action_retention(
+        &self,
+        agent_path: &str,
+        action_id: &str,
+        cause: &str,
+    ) -> Result<()> {
+        let recorder = self
+            .recorder
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("Runtime not ready"))?;
+        if let Some(recorder) = recorder {
+            recorder
+                .persist_batch(vec![RolloutItem::Event(EventRecord {
+                    event_type: "agent_action_retention_v1".into(),
+                    payload: serde_json::json!({
+                        "agent_path": agent_path, "action_id": action_id, "cause": cause,
+                    }),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                })])
+                .await?;
+        }
+        Ok(())
     }
 
     /// Request graceful shutdown of the runtime.
@@ -125,9 +154,12 @@ impl RuntimeController {
         shutdown_tx: mpsc::Sender<()>,
         task_handle: JoinHandle<()>,
         ready_rx: oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>,
+        recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
     ) -> Self {
+        let mut handle = RuntimeHandle::new(submission_tx, Some(shutdown_tx));
+        handle.recorder = recorder;
         Self {
-            handle: RuntimeHandle::new(submission_tx, Some(shutdown_tx)),
+            handle,
             task_handle: Some(task_handle),
             ready_rx: Some(ready_rx),
             startup_metadata: None,

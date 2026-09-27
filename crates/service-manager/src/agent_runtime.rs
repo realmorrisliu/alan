@@ -376,7 +376,9 @@ impl AgentRuntimeService {
         }
 
         let agent = Arc::new(alan_agentfs::AgentFs::new());
-        self.agent_root.bind_process(pid.0.to_string(), agent).await;
+        self.agent_root
+            .bind_process(pid.0.to_string(), agent.clone())
+            .await;
         if launch.root {
             self.agent_root.set_root_process(pid.0.to_string()).await;
         }
@@ -429,6 +431,18 @@ impl AgentRuntimeService {
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
+        let runtime_handle = controller.handle.clone();
+        agent
+            .set_retention_recorder(move |id, cause| {
+                let handle = runtime_handle.clone();
+                async move {
+                    handle
+                        .record_action_retention(&format!("/agent/{}", pid.0), &id, &cause)
+                        .await
+                        .map_err(|_| alan_ap::ErrorCode::Io)
+                }
+            })
+            .await;
         self.process_templates
             .lock()
             .expect("process templates mutex poisoned")

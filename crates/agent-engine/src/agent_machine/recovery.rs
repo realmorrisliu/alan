@@ -13,6 +13,10 @@ use crate::rollout::{CompactedItem, EffectRecord, EventRecord, RolloutItem, Roll
 use crate::tape::ContextItem;
 
 impl AgentMachine {
+    pub(crate) fn recorder(&self) -> Option<RolloutRecorder> {
+        self.recorder.clone()
+    }
+
     fn pending_host_mounts_from_event_records(
         event_records: &[EventRecord],
     ) -> Vec<PendingHostMountRequest> {
