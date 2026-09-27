@@ -11,7 +11,7 @@ const MAX_WRITE_BYTES: usize = 1 << 20;
 #[async_trait]
 pub(crate) trait FlatFileService: Send + Sync {
     fn files(&self) -> &'static [(&'static str, bool)];
-    fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode>;
+    async fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode>;
     async fn commit(&self, name: &str, bytes: &[u8]) -> Result<(), ErrorCode>;
 
     fn max_write_bytes(&self) -> usize {
@@ -29,6 +29,7 @@ struct FidState {
     node: Node,
     mode: Option<OpenMode>,
     write_buf: Vec<u8>,
+    read_buf: Vec<u8>,
     write_failed: bool,
 }
 
@@ -69,7 +70,7 @@ impl FlatServiceFs {
             .ok_or(ErrorCode::NotFound)
     }
 
-    fn bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
+    async fn bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         match node {
             Node::Root => Ok(self
                 .service
@@ -79,7 +80,7 @@ impl FlatServiceFs {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .into_bytes()),
-            Node::File(name) => self.service.read(name),
+            Node::File(name) => self.service.read(name).await,
         }
     }
 }
@@ -111,6 +112,7 @@ impl FileServer for FlatServiceFs {
                 node,
                 mode: None,
                 write_buf: Vec::new(),
+                read_buf: Vec::new(),
                 write_failed: false,
             },
         );
@@ -129,6 +131,11 @@ impl FileServer for FlatServiceFs {
         if !allowed {
             return Err(ErrorCode::NoAccess);
         }
+        let read_buf = if mode == OpenMode::Read {
+            self.bytes(&node).await?
+        } else {
+            Vec::new()
+        };
         if fid != Fid::ROOT {
             let mut fids = self.fids.lock().await;
             let state = fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
@@ -136,18 +143,27 @@ impl FileServer for FlatServiceFs {
                 return Err(ErrorCode::BadRequest);
             }
             state.mode = Some(mode);
+            state.read_buf = read_buf;
         }
         Ok(qid(&node))
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        if fid != Fid::ROOT {
-            let fids = self.fids.lock().await;
-            if fids.get(&fid).ok_or(ErrorCode::NotFound)?.mode != Some(OpenMode::Read) {
+        let root_bytes = if fid == Fid::ROOT {
+            Some(self.bytes(&Node::Root).await?)
+        } else {
+            None
+        };
+        let fids = self.fids.lock().await;
+        let bytes = if let Some(bytes) = &root_bytes {
+            bytes.as_slice()
+        } else {
+            let state = fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+            if state.mode != Some(OpenMode::Read) {
                 return Err(ErrorCode::NoAccess);
             }
-        }
-        let bytes = self.bytes(&self.node_of(fid).await?)?;
+            state.read_buf.as_slice()
+        };
         let start = usize::try_from(offset)
             .unwrap_or(usize::MAX)
             .min(bytes.len());
@@ -192,7 +208,17 @@ impl FileServer for FlatServiceFs {
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
         let node = self.node_of(fid).await?;
-        let length = self.bytes(&node)?.len() as u64;
+        let snapshot_length = self
+            .fids
+            .lock()
+            .await
+            .get(&fid)
+            .filter(|state| state.mode == Some(OpenMode::Read))
+            .map(|state| state.read_buf.len());
+        let length = match snapshot_length {
+            Some(length) => length,
+            None => self.bytes(&node).await?.len(),
+        } as u64;
         Ok(Stat {
             name: String::new(),
             qid: qid(&node),

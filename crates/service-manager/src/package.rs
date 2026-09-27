@@ -729,7 +729,7 @@ impl FlatFileService for PackageService {
         FILES
     }
 
-    fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
+    async fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
         if name == "catalog" {
             let catalog = self.catalog().map_err(|_| ErrorCode::Io)?;
             return serde_json::to_vec(&catalog).map_err(|_| ErrorCode::Io);

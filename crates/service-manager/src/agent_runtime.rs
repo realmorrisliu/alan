@@ -370,6 +370,7 @@ impl AgentRuntimeService {
             InProcessTransport::new(self.host_mount.file_server_for_process(pid.0)),
             Access::ReadWrite,
         );
+        self.connection.refresh().await?;
         if self.connection.has_profile(&launch.template.llm_connection) {
             self.connection
                 .select(pid.0, &launch.template.llm_connection)?;

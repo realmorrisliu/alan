@@ -256,6 +256,19 @@ impl ConnectionService {
         Ok(())
     }
 
+    /// Refresh shared metadata and its callable projection at an operation boundary.
+    pub async fn refresh(&self) -> Result<()> {
+        {
+            let mut state = self.state.lock().unwrap();
+            let (connections, _) = ConnectionsFile::load_from_path(&self.metadata_path)?;
+            if connections != state.connections {
+                state.replace_connections(connections);
+            }
+        }
+        self.refresh_callables().await;
+        Ok(())
+    }
+
     pub fn selected_profile(&self, pid: u64) -> Option<String> {
         let state = self.state.lock().unwrap();
         state
@@ -487,6 +500,7 @@ impl ConnectionService {
     }
 
     async fn refresh_callables(&self) {
+        let mut callables = self.callables.lock().await;
         let (connections, pending_profiles, native_status) = {
             let state = self.state.lock().unwrap();
             (
@@ -518,7 +532,6 @@ impl ConnectionService {
             validation.insert(profile_id.clone(), status.to_string());
         }
 
-        let mut callables = self.callables.lock().await;
         let Some(registry) = callables.as_mut() else {
             self.state.lock().unwrap().validation = validation;
             return;
@@ -617,7 +630,6 @@ impl ConnectionService {
                 .register_connection(&name, Box::new(ConnectionLlmProvider { client }));
             registry.published_fallbacks.insert(name);
         }
-        drop(callables);
         self.state.lock().unwrap().validation = validation;
     }
 }
@@ -628,7 +640,8 @@ impl FlatFileService for ConnectionService {
         FILES
     }
 
-    fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
+    async fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
+        self.refresh().await.map_err(|_| ErrorCode::Io)?;
         let state = self.state.lock().unwrap();
         let text = match name {
             "metadata" => serde_json::to_string(&state.connections),

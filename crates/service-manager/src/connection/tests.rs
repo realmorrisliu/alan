@@ -688,3 +688,56 @@ model = "gpt-5.4"
     assert!(!state.requests.contains_key("old"));
     assert!(!state.native_status.contains_key("main"));
 }
+
+#[tokio::test]
+async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
+    use alan_ap::{Fid, OpenMode};
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let writer = ConnectionService::open("test", &bindings).unwrap();
+    let reader = ConnectionService::open("test", &bindings).unwrap();
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    reader
+        .attach_callable_registry(
+            llmfs.clone(),
+            Arc::new(TestLlmClientFactory::default()),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    let callable = Shell::new(InProcessTransport::new(llmfs));
+    let fs = reader.file_server();
+    writer
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    let fid = Fid(42);
+    fs.walk(Fid::ROOT, fid, &["metadata".into()]).await.unwrap();
+    fs.open(fid, OpenMode::Read).await.unwrap();
+    assert_eq!(callable.ls("/connections").await.unwrap(), ["main"]);
+    reader.select(7, "main").unwrap();
+    let expected = serde_json::to_vec(&writer.metadata()).unwrap();
+    let mut bytes = fs.read(fid, 0, 8).await.unwrap();
+    writer
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    let fresh = Shell::new(InProcessTransport::new(fs.clone()));
+    let metadata: ConnectionsFile =
+        serde_json::from_slice(&fresh.cat("/metadata").await.unwrap()).unwrap();
+    assert!(metadata.profiles.is_empty());
+    assert!(callable.ls("/connections").await.unwrap().is_empty());
+    assert!(reader.selected_profile(7).is_none());
+    assert_eq!(fs.stat(fid).await.unwrap().length, expected.len() as u64);
+    bytes.extend(fs.read(fid, 8, u32::MAX).await.unwrap());
+    assert_eq!(bytes, expected);
+    fs.clunk(fid).await.unwrap();
+    std::fs::write(&bindings.metadata_path, "invalid = [").unwrap();
+    assert!(fresh.cat("/metadata").await.is_err());
+}
