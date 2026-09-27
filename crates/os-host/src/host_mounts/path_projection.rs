@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 use std::path::{Component, Path, PathBuf};
 
-use super::{NativeToolExecutionAdapter, longest_namespace_mount};
+use super::{NativeToolExecutionAdapter, NativeToolMount, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
@@ -44,18 +44,21 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
 
     // A shorter root can prefix a sibling whose next character is a space. Resolve longest first.
     candidates.sort_by_key(|(path, _)| Reverse(path.len()));
-    let mut projected = text.to_owned();
+    let mut projected =
+        project_rooted_path_tokens(text, &physical_cwd, has_root_grant, &adapter.mounts);
     for (path, replacement) in candidates {
-        projected = replace_path_prefixes(&projected, &path, &replacement);
-    }
-    if has_root_grant {
-        projected = project_rooted_path_tokens(&projected, &physical_cwd);
+        projected = replace_path_prefixes(&projected, &path, &replacement, &physical_cwd);
     }
     projected
 }
 
 // ponytail: recognize common absolute-path boundaries; extend the formatter grammar if needed.
-fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
+fn project_rooted_path_tokens(
+    text: &str,
+    cwd: &Path,
+    root_grant: bool,
+    mounts: &[NativeToolMount],
+) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut cursor = 0;
     while cursor < text.len() {
@@ -103,7 +106,19 @@ fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
             && file_url.scheme() == "file"
             && let Ok(path) = file_url.to_file_path()
         {
-            let relative = display_relative_path(cwd, &path);
+            let canonical_path = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let delegated = root_grant
+                || mounts.iter().any(|mount| {
+                    mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR)
+                        && canonical_path.starts_with(&mount.host_path)
+                });
+            if !delegated {
+                projected.push_str(token);
+                cursor = token_end;
+                continue;
+            }
+            let path = if root_grant { &path } else { &canonical_path };
+            let relative = display_relative_path(cwd, path);
             projected.push_str(&token[..path_start]);
             projected.push_str(&relative.to_string_lossy());
             if let Some(query) = file_url.query() {
@@ -119,13 +134,13 @@ fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
             continue;
         }
         let path = Path::new(path_text);
-        if path_text.starts_with(std::path::MAIN_SEPARATOR)
+        if root_grant
+            && path_text.starts_with(std::path::MAIN_SEPARATOR)
             && path.is_absolute()
             && !is_root_relative_url(text, cursor + path_start)
         {
             let rooted_start = cursor + path_start;
-            let rooted_end =
-                extend_root_path_through_space(text, rooted_start, rooted_start + path_end);
+            let rooted_end = extend_root_path_through_space(text, rooted_start + path_end, cwd);
             let rooted_path = &text[rooted_start..rooted_end];
             let trimmed_end = rooted_path
                 .trim_end_matches(|ch| {
@@ -159,23 +174,18 @@ fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
     projected
 }
 
-fn extend_root_path_through_space(text: &str, path_start: usize, mut path_end: usize) -> usize {
+fn extend_root_path_through_space(text: &str, mut path_end: usize, cwd: &Path) -> usize {
     while text[path_end..].starts_with(' ') {
-        let Some(next_start) = text[path_end..]
-            .find(|ch: char| !ch.is_whitespace())
-            .map(|offset| path_end + offset)
-        else {
+        if !space_continues_path(&text[path_end..], cwd) {
             break;
-        };
+        }
+        let next_start = path_end
+            + text[path_end..]
+                .find(|ch: char| !ch.is_whitespace())
+                .unwrap_or(text.len() - path_end);
         let next_end = text[next_start..]
             .find(char::is_whitespace)
             .map_or(text.len(), |offset| next_start + offset);
-        // ponytail: join ambiguous final spaces only when the resulting native path exists.
-        if !space_continues_path(&text[path_end..])
-            && !Path::new(&text[path_start..next_end]).exists()
-        {
-            break;
-        }
         path_end = next_end;
     }
     path_end
@@ -236,7 +246,7 @@ fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
         && is_path_end(after_closing)
 }
 
-fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String {
+fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str, cwd: &Path) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
     for (start, _) in text.match_indices(prefix) {
@@ -244,7 +254,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let suffix = strip_leading_terminal_sequences(&text[end..]);
         let emphasized = is_underscore_emphasis_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
-        let boundary_after = is_path_end(suffix) || emphasized;
+        let boundary_after = is_candidate_path_end(suffix, cwd) || emphasized;
         if boundary_before && boundary_after {
             let replacement_start = file_uri_scheme_start(text, start).unwrap_or(start);
             projected.push_str(&text[copied_through..replacement_start]);
@@ -287,7 +297,7 @@ fn file_uri_scheme_start(text: &str, start: usize) -> Option<usize> {
 fn is_path_end(suffix: &str) -> bool {
     let after = suffix.chars().next();
     after.is_none_or(|ch| {
-        ch.is_whitespace() && (ch != ' ' || !space_continues_path(suffix))
+        ch.is_whitespace()
             || ch == std::path::MAIN_SEPARATOR
             || matches!(
                 ch,
@@ -296,20 +306,29 @@ fn is_path_end(suffix: &str) -> bool {
     }) || is_terminal_sentence_punctuation(suffix, 0)
 }
 
-fn space_continues_path(suffix: &str) -> bool {
+fn is_candidate_path_end(suffix: &str, cwd: &Path) -> bool {
+    is_path_end(suffix) && (!suffix.starts_with(' ') || !space_continues_path(suffix, cwd))
+}
+
+fn space_continues_path(suffix: &str, cwd: &Path) -> bool {
     let Some(after_space) = suffix.strip_prefix(' ') else {
         return false;
     };
-    // ponytail: recognize one unquoted component; parse broader text-path syntax when required.
-    let component = after_space
-        .trim_start_matches(' ')
-        .split_whitespace()
-        .next();
-    component.is_some_and(|component| {
-        let component = component.trim_start_matches(['(', '\'', '"', '`']);
-        !component.starts_with(std::path::MAIN_SEPARATOR)
-            && component.contains(std::path::MAIN_SEPARATOR)
-    })
+    let after_space = after_space.trim_start_matches(' ');
+    let Some(component) = after_space.split_whitespace().next() else {
+        return false;
+    };
+    let component = component.trim_start_matches(['(', '\'', '"', '`']);
+    if component.starts_with(std::path::MAIN_SEPARATOR) {
+        return false;
+    }
+    if !component.contains(std::path::MAIN_SEPARATOR) {
+        return after_space
+            .strip_prefix(component)
+            .is_some_and(|tail| tail.trim().is_empty());
+    }
+    // ponytail: favor existing cwd-relative tokens; use structured output if this ambiguity grows.
+    !cwd.join(component).exists()
 }
 
 fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {

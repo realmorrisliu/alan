@@ -38,6 +38,13 @@ async fn project_text_projects_paths_from_the_active_mount() {
         adapter.project_text(&format!("<a href=\"{}/report.html\">", root.display())),
         "<a href=\"./report.html\">"
     );
+    let spaced_target = root.join("notes file.txt");
+    std::fs::write(&spaced_target, "notes").unwrap();
+    let spaced_url = url::Url::from_file_path(&spaced_target).unwrap();
+    assert_eq!(
+        adapter.project_text(spaced_url.as_str()),
+        "./notes file.txt"
+    );
 }
 
 #[tokio::test]
@@ -98,6 +105,8 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
     let cwd = parent.path().join("project");
     let sibling = parent.path().join("project backup");
     std::fs::create_dir(&cwd).unwrap();
+    std::fs::create_dir(cwd.join("src")).unwrap();
+    std::fs::write(cwd.join("src/lib.rs"), "source").unwrap();
     std::fs::create_dir(&sibling).unwrap();
     let path_with_space = sibling.join("file.txt");
     std::fs::write(&path_with_space, "notes").unwrap();
@@ -129,6 +138,16 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         dunce::canonicalize(cwd.join(projected_sibling)).unwrap(),
         dunce::canonicalize(sibling).unwrap(),
         "root-grant paths with a spaced final component remain usable"
+    );
+    assert_eq!(
+        nested.project_text(&format!("open failed: {} missing", cwd.display())),
+        "open failed: ../project missing",
+        "nonexistent path diagnostics preserve spaced final components"
+    );
+    assert_eq!(
+        nested.project_text(&format!("{} src/lib.rs", cwd.display())),
+        ". src/lib.rs",
+        "a relative path token after cwd remains a separate path"
     );
     assert_eq!(
         nested.project_text(&format!("pwd: {} is cwd", cwd.display())),
