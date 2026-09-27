@@ -7,12 +7,10 @@ use serde_json::json;
 use std::sync::Arc;
 
 #[tokio::test]
-async fn project_text_projects_paths_from_every_delegated_mount() {
+async fn project_text_projects_paths_from_the_active_mount() {
     let project = tempfile::tempdir().unwrap();
-    let docs = tempfile::tempdir().unwrap();
-    let target = docs.path().join("notes.txt");
+    let target = project.path().join("notes.txt");
     std::fs::write(&target, "notes").unwrap();
-    std::os::unix::fs::symlink(&target, project.path().join("notes-link.txt")).unwrap();
 
     let service = service();
     service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
@@ -24,24 +22,16 @@ async fn project_text_projects_paths_from_every_delegated_mount() {
         project.path(),
     )
     .await;
-    approve(
-        &service,
-        7,
-        "/mnt/docs",
-        HostMountAccess::ReadOnly,
-        docs.path(),
-    )
-    .await;
 
     let adapter = service
         .reconcile(7, binding("/mnt/project"))
         .unwrap()
         .adapter()
         .unwrap();
-    let resolved = dunce::canonicalize(project.path().join("notes-link.txt")).unwrap();
+    let resolved = dunce::canonicalize(target).unwrap();
     assert_eq!(
         adapter.project_text(&format!("realpath {}", resolved.display())),
-        "realpath ../docs/notes.txt"
+        "realpath ./notes.txt"
     );
 }
 
@@ -72,7 +62,7 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
 }
 
 #[tokio::test]
-async fn project_text_matches_longer_mount_roots_before_space_siblings() {
+async fn project_text_preserves_unmatched_paths_with_space_siblings() {
     let parent = tempfile::tempdir().unwrap();
     let parent = dunce::canonicalize(parent.path()).unwrap();
     let project = parent.join("project");
@@ -90,23 +80,16 @@ async fn project_text_matches_longer_mount_roots_before_space_siblings() {
         &project,
     )
     .await;
-    approve(
-        &service,
-        7,
-        "/mnt/project backup",
-        HostMountAccess::ReadOnly,
-        &project_with_space,
-    )
-    .await;
-
     let adapter = service
         .reconcile(7, binding("/mnt/project"))
         .unwrap()
         .adapter()
         .unwrap();
+    let sibling = format!("{}/file", project_with_space.display());
     assert_eq!(
-        adapter.project_text(&format!("{}/file", project_with_space.display())),
-        "../project backup/file"
+        adapter.project_text(&sibling),
+        sibling,
+        "an unmatched filename may continue a root through a space"
     );
 }
 

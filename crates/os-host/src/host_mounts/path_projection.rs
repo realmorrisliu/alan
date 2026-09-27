@@ -5,9 +5,10 @@ use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
-    if longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd).is_none() {
+    let Some(active_mount) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)
+    else {
         return text.to_string();
-    }
+    };
     let cwd = adapter.cwd.to_string_lossy();
     let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
     let cwd = if cwd.is_empty() {
@@ -17,23 +18,19 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     };
     let mut candidates = vec![(cwd.to_owned(), ".".to_owned())];
 
-    for mount in adapter.mounts.iter().rev() {
-        if mount.host_path == Path::new(std::path::MAIN_SEPARATOR_STR) {
-            // The filesystem root is public; treating every leading slash as a private root path
-            // rewrites root-relative URLs such as Markdown links and CSS `url(/image.png)`.
-            continue;
-        }
+    // The filesystem root is public; projecting every leading slash rewrites root-relative URLs.
+    if active_mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR) {
         let common = adapter
             .namespace_cwd
             .components()
-            .zip(mount.namespace_path.components())
+            .zip(active_mount.namespace_path.components())
             .take_while(|(left, right)| left == right)
             .count();
         let mut mount_from_cwd = PathBuf::new();
         for _ in common..adapter.namespace_cwd.components().count() {
             mount_from_cwd.push("..");
         }
-        for component in mount.namespace_path.components().skip(common) {
+        for component in active_mount.namespace_path.components().skip(common) {
             if let Component::Normal(part) = component {
                 mount_from_cwd.push(part);
             }
@@ -41,7 +38,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
         if mount_from_cwd.as_os_str().is_empty() {
             mount_from_cwd.push(".");
         }
-        let host_path = mount.host_path.to_string_lossy();
+        let host_path = active_mount.host_path.to_string_lossy();
         let replacement = mount_from_cwd.to_string_lossy().into_owned();
         let host_path = host_path.into_owned();
         candidates.push((host_path.clone(), replacement.clone()));
@@ -49,7 +46,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
         if shell_escaped_host_path != host_path {
             candidates.push((shell_escaped_host_path, replacement.clone()));
         }
-        if let Ok(file_url) = url::Url::from_file_path(&mount.host_path)
+        if let Ok(file_url) = url::Url::from_file_path(&active_mount.host_path)
             && file_url.path() != host_path
         {
             candidates.push((file_url.path().to_owned(), replacement));
@@ -104,7 +101,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
 fn is_path_end(suffix: &str) -> bool {
     let after = suffix.chars().next();
     after.is_none_or(|ch| {
-        ch.is_whitespace()
+        (ch.is_whitespace() && ch != ' ')
             || ch == std::path::MAIN_SEPARATOR
             || matches!(
                 ch,
