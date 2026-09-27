@@ -75,8 +75,10 @@ will replace or retire against that channel's ownership manifest.
 ### Requirement: Host lifecycle remains a runtime concern
 
 Standalone installation SHALL NOT register or start an alan9 runtime. Each
-ordinary `alan` invocation SHALL own one foreground alan9 instance and its
-Root Agent Process. A new invocation SHALL start with an independent Root;
+bare or redirected Agent-execution invocation of `alan` SHALL own one
+foreground alan9 instance and its Root Agent Process. Metadata, configuration
+and explicitly targeted management commands SHALL NOT boot an unrelated Root
+Agent. A new Agent-execution invocation SHALL start with an independent Root;
 process exit SHALL end the instance owned by that invocation.
 
 #### Scenario: CLI is installed but no Host is running
@@ -88,10 +90,16 @@ process exit SHALL end the instance owned by that invocation.
 
 #### Scenario: A foreground Alan invocation runs
 
-- **WHEN** a user starts `alan` in a terminal session
+- **WHEN** a user starts bare `alan` or submits redirected input for Agent
+  execution
 - **THEN** that invocation starts and owns its foreground instance
 - **AND** another invocation has an independent Root and runtime endpoint
 - **AND** exiting the invocation ends its instance
+
+#### Scenario: Metadata commands remain processless
+
+- **WHEN** a user runs `alan --version` or a connection-profile operation
+- **THEN** the command completes without starting a foreground Alan instance
 
 ### Requirement: Quality checks cover the standalone boundary
 

@@ -115,10 +115,16 @@ installation or a missing target MUST NOT implicitly create a background Host.
 
 #### Scenario: A foreground Alan invocation runs
 
-- **WHEN** a user starts `alan` in a terminal session
+- **WHEN** a user starts bare `alan` or submits redirected input for Agent
+  execution
 - **THEN** that invocation starts and owns its foreground instance
 - **AND** another invocation has an independent Root and runtime endpoint
 - **AND** exiting the invocation ends its instance
+
+#### Scenario: Metadata commands remain processless
+
+- **WHEN** a user runs `alan --version` or a connection-profile operation
+- **THEN** the command completes without starting a foreground Alan instance
 
 ### Requirement: Quality checks cover the standalone boundary
 
