@@ -424,7 +424,7 @@ async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
         },
         ConnectionCommand::ClearDefault,
         ConnectionCommand::ReplaceMetadata {
-            expected: before.clone(),
+            expected: before.fingerprint().unwrap(),
             connections: ConnectionsFile::default(),
         },
     ] {
@@ -514,8 +514,10 @@ async fn metadata_replacement_rejects_stale_clients_without_losing_the_first_upd
         serde_json::from_slice(&second.cat("/metadata").await.unwrap()).unwrap();
     let mut first_update = expected.clone();
     first_update.profiles.insert("first".into(), profile());
+    // A metadata document above half the write limit must remain editable.
+    first_update.profiles.get_mut("first").unwrap().label = Some("x".repeat(600_000));
     let replace = |expected: &ConnectionsFile, connections: &ConnectionsFile| {
-        serde_json::to_vec(&serde_json::json!({ "op": "replace_metadata", "expected": expected, "connections": connections })).unwrap()
+        serde_json::to_vec(&serde_json::json!({ "op": "replace_metadata", "expected": expected.fingerprint().unwrap(), "connections": connections })).unwrap()
     };
     first
         .write("/ctl", &replace(&expected, &first_update))

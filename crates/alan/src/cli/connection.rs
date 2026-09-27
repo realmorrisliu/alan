@@ -29,7 +29,7 @@ struct ConnectionStores {
     credentials_dir: PathBuf,
     managed_auth: PathBuf,
     shell: Shell,
-    expected_metadata: ConnectionsFile,
+    expected_metadata: String,
 }
 
 async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
@@ -50,7 +50,7 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
         credentials_dir: host.credentials,
         managed_auth: host.managed_auth,
         shell,
-        expected_metadata: connections.clone(),
+        expected_metadata: connections.fingerprint()?,
     };
     Ok((stores, connections))
 }
