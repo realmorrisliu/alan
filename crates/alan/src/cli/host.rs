@@ -5,6 +5,50 @@ use alan_agent_engine::INSTALL_CHANNEL_ENV;
 use alan_agent_engine::InstallChannel;
 use anyhow::{Context, Result};
 
+/// Explicit runtime directory of a live Alan instance selected by its native caller.
+pub const INSTANCE_RUNTIME_DIR_ENV: &str = "ALAN_INSTANCE_RUNTIME_DIR";
+
+pub fn explicit_instance_paths(channel: InstallChannel) -> Result<alan_os_host::HostEndpointPaths> {
+    let runtime = std::env::var_os(INSTANCE_RUNTIME_DIR_ENV)
+        .context("select a live Alan instance with ALAN_INSTANCE_RUNTIME_DIR")?;
+    alan_os_host::HostEndpointPaths::from_runtime_dir(
+        &PathBuf::from(runtime),
+        channel.descriptor().id,
+    )
+}
+
+fn legacy_host_stop_command(paths: &alan_os_host::HostEndpointPaths) -> String {
+    let runtime_dir = paths
+        .root
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new("<runtime-directory>"));
+    format!(
+        "ALAN_INSTANCE_RUNTIME_DIR={} alan host stop",
+        shell_quote(&runtime_dir.to_string_lossy())
+    )
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn actionable_attachment_error(
+    error: anyhow::Error,
+    paths: &alan_os_host::HostEndpointPaths,
+) -> anyhow::Error {
+    if error
+        .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
+        .is_some()
+    {
+        return error.context(format!(
+            "stop the detected legacy Host with `{}` and retry",
+            legacy_host_stop_command(paths)
+        ));
+    }
+    error
+}
+
 pub async fn attach_or_start_host(
     channel: InstallChannel,
 ) -> Result<alan_os_host::AttachedNamespace> {
@@ -17,7 +61,7 @@ pub async fn attach_or_start_host(
                 .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
                 .is_some()
             {
-                return Err(error);
+                return Err(actionable_attachment_error(error, &paths));
             }
             Some(error)
         }
@@ -39,7 +83,7 @@ pub async fn attach_or_start_host(
                         .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
                         .is_some()
                     {
-                        return Err(error);
+                        return Err(actionable_attachment_error(error, &paths));
                     }
                     last_error = Some(error);
                 }
@@ -166,4 +210,23 @@ pub(crate) fn sibling_executable(current: &Path, name: &str) -> Option<PathBuf> 
         .unwrap_or_else(|_| current.to_owned());
     let sibling = current.parent()?.join(name);
     sibling.is_file().then_some(sibling)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_host_stop_command_quotes_the_detected_runtime_directory() {
+        let paths = alan_os_host::HostEndpointPaths::from_runtime_dir(
+            Path::new("/tmp/Alan's runtime"),
+            "stable",
+        )
+        .unwrap();
+
+        assert_eq!(
+            legacy_host_stop_command(&paths),
+            "ALAN_INSTANCE_RUNTIME_DIR='/tmp/Alan'\\''s runtime' alan host stop"
+        );
+    }
 }

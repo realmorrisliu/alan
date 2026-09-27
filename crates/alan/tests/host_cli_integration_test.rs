@@ -139,11 +139,35 @@ fn host_status_reports_stopping_without_attaching() {
     let output = Command::new(env!("CARGO_BIN_EXE_alan"))
         .args(["host", "status", "--json"])
         .env("ALAN_INSTALL_CHANNEL", "stable")
-        .env("TMPDIR", runtime.path())
-        .env("XDG_RUNTIME_DIR", &base)
+        .env("ALAN_INSTANCE_RUNTIME_DIR", &base)
+        .env("TMPDIR", runtime.path().join("unused"))
+        .env("XDG_RUNTIME_DIR", runtime.path().join("unused"))
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let reported: HostStatus = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(reported.readiness, HostReadiness::Stopping);
+}
+
+#[test]
+fn live_host_commands_require_an_explicit_instance() {
+    for args in [
+        vec!["host", "status"],
+        vec!["host", "stop"],
+        vec!["host", "mount", "list"],
+        vec!["host", "mount", "approve", "request", "/tmp"],
+        vec!["host", "mount", "revoke", "grant"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_alan"))
+            .env_remove("ALAN_INSTANCE_RUNTIME_DIR")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("select a live Alan instance with ALAN_INSTANCE_RUNTIME_DIR"),
+            "{output:?}"
+        );
+    }
 }

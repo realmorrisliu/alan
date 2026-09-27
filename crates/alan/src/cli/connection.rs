@@ -25,9 +25,6 @@ use std::{
 /// The value is an opaque request id, never credential material.
 pub const NATIVE_CONNECTION_REQUEST_ENV: &str = "ALAN_NATIVE_CONNECTION_REQUEST_ID";
 
-/// Explicit runtime directory of the instance owning a native Connection request.
-pub const INSTANCE_RUNTIME_DIR_ENV: &str = "ALAN_INSTANCE_RUNTIME_DIR";
-
 struct ConnectionStores {
     credentials_dir: PathBuf,
     managed_auth: PathBuf,
@@ -43,12 +40,7 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
         migrate_legacy_connections(&legacy, &system, &host)?;
     }
     let shell = if std::env::var_os(NATIVE_CONNECTION_REQUEST_ENV).is_some() {
-        let runtime = std::env::var_os(INSTANCE_RUNTIME_DIR_ENV)
-            .context("native Connection requests require ALAN_INSTANCE_RUNTIME_DIR")?;
-        let paths = alan_os_host::HostEndpointPaths::from_runtime_dir(
-            &PathBuf::from(runtime),
-            channel.descriptor().id,
-        )?;
+        let paths = super::host::explicit_instance_paths(channel)?;
         Shell::new(
             alan_os_host::LocalAttachment::new(paths)
                 .connect()

@@ -68,19 +68,19 @@ enum HostAction {
         #[arg(long)]
         json: bool,
     },
-    /// Report the matching Alan OS Host lifecycle state
+    /// Report the instance selected by ALAN_INSTANCE_RUNTIME_DIR
     Status {
         /// Emit structured JSON
         #[arg(long)]
         json: bool,
     },
-    /// Stop the matching dedicated Alan OS Host
+    /// Stop the instance selected by ALAN_INSTANCE_RUNTIME_DIR
     Stop {
         /// Emit structured JSON
         #[arg(long)]
         json: bool,
     },
-    /// Inspect or answer Host Mount Service requests
+    /// Inspect or answer mount requests in the explicitly selected instance
     Mount {
         #[command(subcommand)]
         action: HostMountAction,
@@ -385,22 +385,25 @@ async fn main() -> Result<()> {
             }
             HostAction::Status { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+                let paths = cli::host::explicit_instance_paths(channel)?;
                 let status = paths
                     .read_status()
-                    .context("Alan OS Host status is unavailable; run `alan host start`")?;
+                    .context("selected Alan instance status is unavailable")?;
                 print_host_status(&status, json)?;
             }
             HostAction::Stop { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
-                let status = request_platform_host_stop(channel, &paths).await?;
+                let paths = cli::host::explicit_instance_paths(channel)?;
+                let status = alan_os_host::request_host_stop(&paths).await?;
                 wait_for_host_stop(&paths).await?;
                 print_host_status(&status, json)?;
             }
             HostAction::Mount { action } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let attached = cli::host::attach_or_start_host(channel).await?;
+                let paths = cli::host::explicit_instance_paths(channel)?;
+                let attached = alan_os_host::LocalAttachment::new(paths.clone())
+                    .connect()
+                    .await?;
                 match action {
                     HostMountAction::List => {
                         let shell = alan_shell::Shell::new(attached.root);
@@ -414,15 +417,14 @@ async fn main() -> Result<()> {
                             format!("resolve Host directory {}", host_path.display())
                         })?;
                         anyhow::ensure!(host_path.is_dir(), "Host Mount path is not a directory");
-                        let grant =
-                            alan_os_host::HostCommandPlane::detect(channel.descriptor().id)?
-                                .approve_host_mount(request_id, host_path)
-                                .await?;
+                        let grant = alan_os_host::HostCommandPlane::new(paths)
+                            .approve_host_mount(request_id, host_path)
+                            .await?;
                         println!("grant_id: {}", grant.id);
                         println!("namespace_path: {}", grant.namespace_path);
                     }
                     HostMountAction::Revoke { grant_id } => {
-                        alan_os_host::HostCommandPlane::detect(channel.descriptor().id)?
+                        alan_os_host::HostCommandPlane::new(paths)
                             .revoke_host_mount(&grant_id)
                             .await?;
                         println!("Revoked Host Mount grant {grant_id}.");
@@ -686,34 +688,6 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-async fn request_platform_host_stop(
-    channel: alan_agent_engine::InstallChannel,
-    paths: &alan_os_host::HostEndpointPaths,
-) -> Result<alan_os_host::HostStatus> {
-    let mut status = paths.read_status()?;
-    let label = cli::host::os_host_launch_label(channel);
-    let result = std::process::Command::new("/bin/launchctl")
-        .arg("remove")
-        .arg(&label)
-        .status()
-        .with_context(|| format!("request launchd stop for dedicated Host {label}"))?;
-    anyhow::ensure!(
-        result.success(),
-        "launchd failed to remove Host {label}: {result}"
-    );
-    status.readiness = alan_os_host::HostReadiness::Stopping;
-    Ok(status)
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn request_platform_host_stop(
-    _channel: alan_agent_engine::InstallChannel,
-    paths: &alan_os_host::HostEndpointPaths,
-) -> Result<alan_os_host::HostStatus> {
-    alan_os_host::request_host_stop(paths).await
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
