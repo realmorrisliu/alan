@@ -440,3 +440,34 @@ fn command_prompt_edits_only_the_visible_body_and_recalls_intent() {
     assert_eq!(app.input_prompt_prefix(), "alan: ");
     assert_eq!(app.composer.text(), "!literal");
 }
+
+#[test]
+fn pending_request_history_recall_keeps_body_and_intent_together() {
+    use alan_agent_protocol::{InputIntent, YieldKind};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.composer.remember("explain this code");
+    app.insert_input_text("!");
+    app.set_pending_yield(crate::history::PendingYieldCell {
+        request_id: "request".into(),
+        kind: YieldKind::Custom("text".into()),
+        title: "Answer".into(),
+        prompt: None,
+        options: vec![],
+        default_option: None,
+        questions: vec![],
+        capability: None,
+        reason: None,
+        presentation: None,
+    });
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    app.clear_pending_yield();
+    let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
+        panic!("submission")
+    };
+    assert_eq!(record.intent, InputIntent::Agent);
+    assert_eq!(record.body, "explain this code");
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.input_intent, InputIntent::Command);
+    assert!(app.composer.text().is_empty());
+}

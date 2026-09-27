@@ -240,15 +240,16 @@ impl FileBackedApp {
                 None
             }
             _ => {
-                if self.pending_yield.is_none() {
-                    if matches!(key.code, KeyCode::Up | KeyCode::Down) {
-                        self.recall_input(key);
-                        self.refresh_completion();
-                        return None;
-                    }
-                    if key.code == KeyCode::Backspace && self.composer.text().is_empty() {
-                        self.input_intent = InputIntent::Agent;
-                    }
+                if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                    self.recall_input(key);
+                    self.refresh_completion();
+                    return None;
+                }
+                if self.pending_yield.is_none()
+                    && key.code == KeyCode::Backspace
+                    && self.composer.text().is_empty()
+                {
+                    self.input_intent = InputIntent::Agent;
                 }
                 let outcome = self.composer.handle_key(key);
                 self.refresh_completion();
