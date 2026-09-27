@@ -417,9 +417,10 @@ async fn expired_action_evidence_stays_expired_across_repeated_recovery() {
         .await
         .unwrap();
     let mut namespace = Namespace::new();
+    let agent = Arc::new(AgentFs::new());
     namespace.mount(
         "/agent/1",
-        InProcessTransport::new(Arc::new(AgentFs::new())),
+        InProcessTransport::new(agent.clone()),
         Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
@@ -439,13 +440,21 @@ async fn expired_action_evidence_stays_expired_across_repeated_recovery() {
         )
         .await
         .unwrap();
-    recorder
-        .record_event(
-            "agent_action_retention_v1",
-            serde_json::json!({
-                "agent_path":"/agent/1", "action_id":id, "cause":"age_limit"
-            }),
-        )
+    let journal = recorder.clone();
+    agent.set_retention_recorder(move |id, cause| {
+        let journal = journal.clone();
+        async move {
+            journal.persist_batch(vec![crate::rollout::RolloutItem::Event(
+                crate::rollout::EventRecord {
+                    event_type: "agent_action_retention_v1".into(),
+                    payload: serde_json::json!({"agent_path":"/agent/1", "action_id":id, "cause":cause}),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                }
+            )]).await.map_err(|_| alan_ap::ErrorCode::Io)
+        }
+    }).await;
+    agent
+        .expire_action_output_for_retention(&id, "age_limit")
         .await
         .unwrap();
     let mut previous = recorder.path().clone();

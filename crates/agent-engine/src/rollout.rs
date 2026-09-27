@@ -250,7 +250,9 @@ pub struct RolloutRecorder {
 }
 
 impl RolloutRecorder {
-    fn message_record_from_tape_message(message: &crate::tape::Message) -> MessageRecord {
+    pub(crate) fn message_record_from_tape_message(
+        message: &crate::tape::Message,
+    ) -> MessageRecord {
         let role = match message {
             crate::tape::Message::User { .. } => "user",
             crate::tape::Message::Assistant { .. } => "assistant",
@@ -398,7 +400,6 @@ impl RolloutRecorder {
             rollout_path: rollout_path.clone(),
         };
 
-        // Record machine metadata
         let meta = AgentMachineMeta {
             rollout_id: rollout_id.to_string(),
             process_path: process_path.to_string(),
@@ -409,8 +410,9 @@ impl RolloutRecorder {
             model: model.to_string(),
             reasoning_effort,
         };
-        recorder.record_nowait(RolloutItem::AgentMachineMeta(meta))?;
-        recorder.flush().await?;
+        recorder
+            .persist_batch(vec![RolloutItem::AgentMachineMeta(meta)])
+            .await?;
 
         debug!(?rollout_path, "RolloutRecorder created");
         Ok(recorder)
