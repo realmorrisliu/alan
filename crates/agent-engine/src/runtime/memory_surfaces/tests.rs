@@ -429,6 +429,23 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
 }
 
 #[tokio::test]
+async fn concurrent_latest_handoff_writes_preserve_a_complete_record() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = latest_handoff_path(temp.path());
+    let first = format!("# Latest Handoff\n{}", "first-record\n".repeat(32_768));
+    let second = format!("# Latest Handoff\n{}", "second-record\n".repeat(32_768));
+
+    tokio::try_join!(
+        write_latest_handoff(&path, &first),
+        write_latest_handoff(&path, &second),
+    )
+    .unwrap();
+
+    let contents = tokio::fs::read_to_string(path).await.unwrap();
+    assert!(contents == first || contents == second);
+}
+
+#[tokio::test]
 async fn reused_process_path_gets_distinct_durable_memory_paths() {
     let temp = tempfile::TempDir::new().unwrap();
     let rollouts_dir = temp.path().join("rollouts");

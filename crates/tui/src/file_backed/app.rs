@@ -1,13 +1,10 @@
 //! File-backed TUI input handling and application state transitions.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    hash::BuildHasher,
-};
+use std::collections::BTreeMap;
 
 use alan_agent_protocol::{
-    UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot,
-    UiThinkingSnapshot, UiThinkingState, YieldKind,
+    InputIntent, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot,
+    UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState, YieldKind,
 };
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Style};
@@ -17,9 +14,9 @@ use crate::completion::{self, CompletionCandidate, CompletionSources, Completion
 use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
-use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
+use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler};
 use crate::transcript_ui::{
-    INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
+    INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
 };
 
 use super::file_surface::{TapeRecordV1, response_text_from_content};
@@ -27,6 +24,8 @@ fn default_commands() -> Vec<CompletionCandidate> {
     [
         ("compact", "summarize context"),
         ("rollback", "undo the last turn"),
+        ("continue", "continue paused input"),
+        ("discard", "discard paused input"),
         ("clear", "clear the transcript"),
         ("help", "show key bindings"),
         ("quit", "exit alan"),
@@ -52,7 +51,7 @@ pub(super) enum FileBackedEvent {
 
 #[derive(Debug)]
 pub(super) enum FileBackedAction {
-    Submit(String),
+    Submit(alan_agent_protocol::UserInputRecord),
     Resume {
         request_id: String,
         response: String,
@@ -67,8 +66,11 @@ pub(super) enum FileBackedAction {
 
 #[derive(Clone)]
 pub(super) struct FileBackedApp {
+    pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
     pub(super) composer: Composer,
+    pub(super) input_intent: InputIntent,
+    history_draft_intent: Option<InputIntent>,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
     pub(super) activity: UiActivitySnapshot,
@@ -81,6 +83,7 @@ pub(super) struct FileBackedApp {
     pub(super) completion_sources: CompletionSources,
     pub(super) expand_thinking: bool,
     pub(super) notice: Option<String>,
+    pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
     /// The pure state machine reconciling the optimistic `io/output` stream
     /// preview against the authoritative `machine/tape` records. All
@@ -93,16 +96,18 @@ pub(super) struct FileBackedApp {
     /// indexes such as `action_cells`.
     pub(super) pending_remote_turn_start: Option<usize>,
     pub(super) scrollback_front_is_partial: bool,
-    /// Keep occurrence counts through `/clear` without retaining prompt text.
-    tape_user_prompt_counts: HashMap<u64, usize>,
 }
 
 impl FileBackedApp {
     pub(super) fn new(agent_path: String) -> Self {
         Self {
+            tape_consumed_offset: 0,
             notice: None,
+            expected_terminal_error: None,
             agent_path,
             composer: Composer::default(),
+            input_intent: InputIntent::Agent,
+            history_draft_intent: None,
             transcript: Vec::new(),
             action_cells: BTreeMap::new(),
             activity: UiActivitySnapshot::idle(),
@@ -121,7 +126,6 @@ impl FileBackedApp {
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
             scrollback_front_is_partial: false,
-            tape_user_prompt_counts: HashMap::new(),
         }
     }
 
@@ -142,7 +146,7 @@ impl FileBackedApp {
                         form.insert_char(ch);
                     }
                 } else {
-                    self.composer.insert_text(&text);
+                    self.insert_input_text(&text);
                     self.refresh_completion();
                 }
                 None
@@ -181,7 +185,14 @@ impl FileBackedApp {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Some(FileBackedAction::Interrupt);
         }
-        if pending_input {
+        if pending_input
+            || self.input_intent == InputIntent::Command
+            || (self.input_intent == InputIntent::ForceAgent
+                && self
+                    .completion
+                    .as_ref()
+                    .is_some_and(|state| state.kind == completion::CompletionKind::Command))
+        {
             self.completion = None;
         } else if self.completion.is_some() && self.consume_completion_key(key) {
             return None;
@@ -221,7 +232,27 @@ impl FileBackedApp {
                 self.refresh_completion();
                 None
             }
+            KeyEvent {
+                code: KeyCode::Char(ch),
+                modifiers,
+                ..
+            } if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT => {
+                self.insert_input_text(&ch.to_string());
+                self.refresh_completion();
+                None
+            }
             _ => {
+                if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                    self.recall_input(key);
+                    self.refresh_completion();
+                    return None;
+                }
+                if self.pending_yield.is_none()
+                    && key.code == KeyCode::Backspace
+                    && self.composer.text().is_empty()
+                {
+                    self.input_intent = InputIntent::Agent;
+                }
                 let outcome = self.composer.handle_key(key);
                 self.refresh_completion();
                 match outcome {
@@ -230,6 +261,36 @@ impl FileBackedApp {
                     ComposerKeyOutcome::Changed | ComposerKeyOutcome::Ignored => None,
                 }
             }
+        }
+    }
+
+    pub(super) fn insert_input_text(&mut self, text: &str) {
+        let text = if self.pending_yield.is_none() && self.input_intent == InputIntent::Agent {
+            if self.composer.text().is_empty() {
+                let (intent, body) = alan_agent_protocol::parse_input_prefix(text);
+                self.input_intent = intent;
+                body
+            } else {
+                if self.composer.cursor() == 0 && text.starts_with(['!', ':']) {
+                    self.input_intent = InputIntent::ForceAgent;
+                }
+                text
+            }
+        } else {
+            text
+        };
+        self.composer.insert_text(text);
+    }
+
+    fn recall_input(&mut self, key: KeyEvent) {
+        if !self.composer.is_recalling() {
+            self.history_draft_intent = Some(self.input_intent);
+        }
+        self.composer.handle_key(key);
+        if let Some(intent) = self.composer.recalled_intent() {
+            self.input_intent = intent;
+        } else if let Some(intent) = self.history_draft_intent.take() {
+            self.input_intent = intent;
         }
     }
 
@@ -312,7 +373,7 @@ impl FileBackedApp {
     }
 
     pub(super) fn refresh_completion(&mut self) {
-        if self.pending_yield.is_some() {
+        if self.pending_yield.is_some() || self.input_intent == InputIntent::Command {
             self.completion = None;
             return;
         }
@@ -320,7 +381,11 @@ impl FileBackedApp {
             self.composer.text(),
             self.composer.cursor(),
             &self.completion_sources,
-        );
+        )
+        .filter(|state| {
+            self.input_intent != InputIntent::ForceAgent
+                || state.kind != completion::CompletionKind::Command
+        });
     }
 
     pub(super) fn submit_form(&mut self) -> Option<FileBackedAction> {
@@ -370,33 +435,53 @@ impl FileBackedApp {
     pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
         if let Some(pending) = self.pending_yield.clone() {
             let text = self.composer.text().trim().to_string();
-            self.composer.set_text("");
             self.completion = None;
             match pending.resume_content(&text) {
                 Ok(content) => {
+                    self.composer.set_text("");
+                    self.input_intent = InputIntent::Agent;
+                    self.history_draft_intent = None;
                     return Some(FileBackedAction::Resume {
                         request_id: pending.request_id,
                         response: response_text_from_content(content),
                     });
                 }
                 Err(message) => {
-                    self.composer.set_text(text);
                     self.notice = Some(message);
                     return None;
                 }
             }
         }
 
-        let text = self.composer.take_submit()?;
-        self.completion = None;
-        self.composer.remember(&text);
-        if text.starts_with('/') {
-            return self.handle_command(&text);
+        let text = self.composer.text().to_owned();
+        if text.trim().is_empty() {
+            if self.input_intent != InputIntent::Agent {
+                self.notice = Some("Enter content after the input prefix.".into());
+            }
+            return None;
         }
-        self.transcript.push(HistoryCell::User(text.clone()));
-        self.reconciler.on_local_submit(&text);
-        self.pending_remote_turn_start = None;
-        Some(FileBackedAction::Submit(text))
+        self.notice = None;
+        self.completion = None;
+        if self.input_intent == InputIntent::Agent && text.trim().starts_with('/') {
+            self.composer.set_text("");
+            self.composer.remember(&text);
+            return self.handle_command(text.trim());
+        }
+        let record = alan_agent_protocol::UserInputRecord::new(
+            self.input_intent,
+            alan_agent_protocol::InputMode::FollowUp,
+            text,
+        );
+        Some(FileBackedAction::Submit(record))
+    }
+
+    pub(super) fn accept_input(&mut self) {
+        let body = self.composer.text().to_owned();
+        self.composer.remember_input(&body, self.input_intent);
+        self.composer.set_text("");
+        self.input_intent = InputIntent::Agent;
+        self.history_draft_intent = None;
+        // Submission may be queued behind another client. Tape owns turn boundaries.
     }
 
     pub(super) fn enter_submits_agent_task(&self) -> bool {
@@ -404,7 +489,7 @@ impl FileBackedApp {
             return false;
         }
         let text = self.composer.text().trim();
-        !text.is_empty() && !text.starts_with('/')
+        !text.is_empty() && (self.input_intent != InputIntent::Agent || !text.starts_with('/'))
     }
 
     pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {
@@ -423,6 +508,12 @@ impl FileBackedApp {
                 command: "rollback".to_string(),
                 success_notice: "rollback requested".to_string(),
             }),
+            "continue" | "discard" if command.trim() == name => {
+                Some(FileBackedAction::MachineCtl {
+                    command: format!("queue-v1 {name}"),
+                    success_notice: format!("queue {name} requested"),
+                })
+            }
             "clear" => {
                 self.transcript.clear();
                 self.action_cells.clear();
@@ -432,7 +523,7 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
+                    "/compact /rollback /continue /discard /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
                         .to_string(),
                 );
                 None
@@ -513,13 +604,13 @@ impl FileBackedApp {
         self.transcript.push(cell);
     }
 
-    pub(super) fn insert_user_boundary(&mut self, content: String) {
+    pub(super) fn insert_user_boundary(&mut self, cell: HistoryCell) {
         let index = self
             .pending_remote_turn_start
             .take()
             .unwrap_or(self.transcript.len())
             .min(self.transcript.len());
-        self.transcript.insert(index, HistoryCell::User(content));
+        self.transcript.insert(index, cell);
         self.shift_action_cells_for_insert(index);
     }
 
@@ -552,7 +643,7 @@ impl FileBackedApp {
     pub(super) fn current_turn_has_user_boundary(&self) -> bool {
         for cell in self.transcript.iter().rev() {
             match cell {
-                HistoryCell::User(_) => return true,
+                HistoryCell::User(_) | HistoryCell::Command(_) => return true,
                 HistoryCell::Assistant(_) => return false,
                 _ => {}
             }
@@ -567,7 +658,9 @@ impl FileBackedApp {
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
             match cell {
                 HistoryCell::Assistant(_) => return Some(idx),
-                HistoryCell::User(_) | HistoryCell::PendingYield(_) => return None,
+                HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::PendingYield(_) => {
+                    return None;
+                }
                 _ => {}
             }
         }
@@ -578,16 +671,14 @@ impl FileBackedApp {
     /// matching/suppression/echo logic lives in [`StreamReconciler`]; this
     /// only locates the current-turn cell and applies the returned decision.
     pub(super) fn apply_tape_record(&mut self, record: TapeRecordV1) {
+        self.tape_consumed_offset = self.tape_consumed_offset.max(record.end_offset);
         if record.kind != "message" {
             return;
         }
         match record.role.as_str() {
             "user" => {
-                self.count_tape_user_prompt(&record.content);
-                match self.reconciler.on_user_record(&record.content) {
-                    UserDecision::Drop => {}
-                    UserDecision::Push(content) => self.insert_user_boundary(content),
-                }
+                self.reconciler.on_user_record();
+                self.insert_user_boundary(record.into_user_cell());
                 self.flush_held_stream_after_boundary();
             }
             "assistant" => {
@@ -622,12 +713,25 @@ impl FileBackedApp {
     }
 
     pub(super) fn apply_ui_event(&mut self, event: UiEvent) {
+        let paired_notice = matches!(&event, UiEvent::Notice { snapshot }
+            if snapshot.kind == UiNoticeKind::Error
+                && self.expected_terminal_error.as_deref() == Some(snapshot.message.as_str()));
+        let expected_error = if matches!(event, UiEvent::InputCompleted { .. }) || paired_notice {
+            None
+        } else {
+            self.expected_terminal_error.take()
+        };
         match event {
+            UiEvent::InputCompleted { .. } => {}
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
-            UiEvent::Error { message, .. } => self.push_error(message),
+            UiEvent::Error { message, .. } => {
+                if expected_error.as_deref() != Some(message.as_str()) {
+                    self.push_error(message);
+                }
+            }
         }
     }
 
@@ -801,33 +905,18 @@ impl FileBackedApp {
     pub(super) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
-        self.tape_user_prompt_counts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
             };
             if record.kind == "message" {
-                if record.role == "user" {
-                    self.count_tape_user_prompt(&record.content);
-                }
                 self.reconciler.on_hydrated_message_record(&record.role);
             }
         }
     }
 
-    pub(super) fn tape_user_prompt_count(&self, prompt: &str) -> usize {
-        self.tape_user_prompt_counts
-            .get(&self.tape_user_prompt_counts.hasher().hash_one(prompt))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    fn count_tape_user_prompt(&mut self, prompt: &str) {
-        let prompt_hash = self.tape_user_prompt_counts.hasher().hash_one(prompt);
-        *self.tape_user_prompt_counts.entry(prompt_hash).or_default() += 1;
-    }
-
     pub(super) fn reset_for_root_process_change(&mut self) {
+        self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
@@ -872,8 +961,10 @@ impl FileBackedApp {
         for (idx, segment) in segments.iter().enumerate() {
             let prompt = if idx == 0 {
                 self.input_prompt_prefix()
+            } else if self.pending_yield.is_some() {
+                "       "
             } else {
-                INLINE_PROMPT_CONTINUATION
+                "      "
             };
             lines.push(Line::from(vec![
                 Span::styled(prompt, Style::default().fg(Color::Green)),
@@ -892,6 +983,8 @@ impl FileBackedApp {
     pub(super) fn input_prompt_prefix(&self) -> &'static str {
         if self.pending_yield.is_some() {
             INLINE_WAITING_PROMPT_PREFIX
+        } else if self.input_intent == InputIntent::Command {
+            INLINE_COMMAND_PROMPT_PREFIX
         } else {
             INLINE_PROMPT_PREFIX
         }

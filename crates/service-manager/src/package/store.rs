@@ -9,15 +9,17 @@ use alan_agent_engine::skills::{SkillCompatibility, validate_skill_compatibility
 use anyhow::{Context, Result, bail, ensure};
 
 use super::fs_safety::ensure_owned_directory;
+
+mod leases;
 use super::materializer::verify_materialized_revision;
 use super::{
     MATERIALIZER_VERSION, MAX_PACKAGES, PackageCatalog, PackageRecord, PackageState,
     validate_package_id,
 };
+pub(super) use leases::PackageLease;
 
 pub(super) struct PackageStore {
     root: PathBuf,
-    _lock: PackageStoreLock,
 }
 
 impl PackageStore {
@@ -43,41 +45,52 @@ impl PackageStore {
             &store_root.join("staging"),
             "package staging path is not an owned directory",
         )?;
-        let store_lock = PackageStoreLock::acquire(&store_root)?;
-        let mut catalog = load_catalog(&store_root)?;
+        let _transaction = PackageStoreLock::acquire(&store_root)?;
+        fs::create_dir_all(store_root.join("leases"))?;
+        let store = Self { root: store_root };
+        let catalog = store.recover()?;
+        Ok((store, catalog))
+    }
+
+    pub(super) fn transaction(&self) -> Result<PackageStoreLock> {
+        PackageStoreLock::acquire(&self.root)
+    }
+
+    pub(super) fn load(&self) -> Result<PackageCatalog> {
+        let mut catalog = load_catalog(&self.root)?;
         validate_catalog_structure(&catalog)?;
-        recover_staging(&store_root, &catalog)?;
-        let mut recovered = false;
-        let retiring = catalog
+        recover_staging(&self.root, &catalog)?;
+        let leases = leases::active(&self.root)?;
+        let changed = reconcile_references(&mut catalog, &leases);
+        let retired = catalog
             .packages
             .values()
-            .filter(|record| record.state == PackageState::Retiring)
+            .filter(|record| record.state == PackageState::Retiring && record.reference_count == 0)
             .map(|record| record.id.clone())
             .collect::<Vec<_>>();
-        for package_id in retiring {
-            catalog.packages.remove(&package_id);
-            remove_package_revisions(&store_root, &package_id)?;
-            recovered = true;
+        for package_id in &retired {
+            catalog.packages.remove(package_id);
         }
-        for record in catalog.packages.values_mut() {
-            if record.reference_count != 0 {
-                record.reference_count = 0;
-                recovered = true;
-            }
-        }
-        verify_catalog(&store_root, &catalog)?;
-        gc_unreferenced_store_revisions(&store_root, &catalog, &BTreeMap::new())?;
-        if recovered {
+        if changed || !retired.is_empty() {
             catalog.generation = catalog.generation.saturating_add(1);
-            persist_catalog(&store_root, &catalog)?;
+            persist_catalog(&self.root, &catalog)?;
         }
-        Ok((
-            Self {
-                root: store_root,
-                _lock: store_lock,
-            },
-            catalog,
-        ))
+        if let Err(error) = gc_unreferenced_store_revisions(&self.root, &catalog, &leases) {
+            tracing::warn!(%error, "package revision cleanup deferred during shared refresh");
+        }
+        Ok(catalog)
+    }
+
+    pub(super) fn lease(&self, package_id: &str, revision: &str) -> Result<PackageLease> {
+        PackageLease::create(&self.root, package_id, revision)
+    }
+
+    // Called only while the cross-process transaction lock is held.
+    pub(super) fn recover(&self) -> Result<PackageCatalog> {
+        let catalog = self.load()?;
+        verify_catalog(&self.root, &catalog)?;
+        self.gc_unreferenced_revisions(&catalog)?;
+        Ok(catalog)
     }
 
     pub(super) fn root(&self) -> &Path {
@@ -115,22 +128,37 @@ impl PackageStore {
         discard_staged_package_revisions(staged);
     }
 
-    pub(super) fn gc_unreferenced_revisions(
-        &self,
-        catalog: &PackageCatalog,
-        leases: &BTreeMap<u64, (String, String)>,
-    ) -> Result<()> {
-        gc_unreferenced_store_revisions(&self.root, catalog, leases)
+    pub(super) fn gc_unreferenced_revisions(&self, catalog: &PackageCatalog) -> Result<()> {
+        gc_unreferenced_store_revisions(&self.root, catalog, &leases::active(&self.root)?)
     }
 
     pub(super) fn gc_package_revisions(
         &self,
         package_id: &str,
         catalog: &PackageCatalog,
-        leases: &BTreeMap<u64, (String, String)>,
     ) -> Result<()> {
-        gc_one_package_revisions(&self.root, package_id, catalog, leases)
+        gc_one_package_revisions(
+            &self.root,
+            package_id,
+            catalog,
+            &leases::active(&self.root)?,
+        )
     }
+}
+
+fn reconcile_references(
+    catalog: &mut PackageCatalog,
+    leases: &BTreeMap<u64, (String, String)>,
+) -> bool {
+    let mut changed = false;
+    for record in catalog.packages.values_mut() {
+        let count = leases.values().filter(|(id, _)| id == &record.id).count() as u64;
+        if record.reference_count != count {
+            record.reference_count = count;
+            changed = true;
+        }
+    }
+    changed
 }
 
 #[cfg(test)]
@@ -143,7 +171,7 @@ pub(super) fn revision_root_at(root: &Path, package_id: &str, revision: &str) ->
     revision_root(root, package_id, revision)
 }
 
-struct PackageStoreLock {
+pub(super) struct PackageStoreLock {
     file: File,
 }
 
@@ -164,15 +192,10 @@ impl PackageStoreLock {
         {
             use std::os::fd::AsRawFd;
             // SAFETY: file owns a valid descriptor for the lifetime of the lock.
-            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            // ponytail: serialize store operations; split locks only if contention warrants it.
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
             if result != 0 {
                 let error = std::io::Error::last_os_error();
-                if error
-                    .raw_os_error()
-                    .is_some_and(|code| code == libc::EWOULDBLOCK || code == libc::EAGAIN)
-                {
-                    bail!("Package Store is already owned by another Package Service")
-                }
                 return Err(error).context("acquire Package Store lock");
             }
         }
@@ -244,14 +267,6 @@ fn remove_path_without_following(path: &Path) -> Result<()> {
         fs::remove_dir_all(path)?;
     } else {
         fs::remove_file(path)?;
-    }
-    Ok(())
-}
-
-fn remove_package_revisions(root: &Path, package_id: &str) -> Result<()> {
-    let path = root.join("revisions").join(package_id);
-    if path.exists() {
-        remove_path_without_following(&path)?;
     }
     Ok(())
 }
@@ -330,11 +345,7 @@ fn gc_unreferenced_store_revisions(
             .to_str()
             .context("package revision directory is not UTF-8")?
             .to_string();
-        if catalog.packages.contains_key(&package_id) {
-            gc_one_package_revisions(root, &package_id, catalog, leases)?;
-        } else {
-            remove_path_without_following(&entry.path())?;
-        }
+        gc_one_package_revisions(root, &package_id, catalog, leases)?;
     }
     Ok(())
 }
@@ -345,9 +356,7 @@ fn gc_one_package_revisions(
     catalog: &PackageCatalog,
     leases: &BTreeMap<u64, (String, String)>,
 ) -> Result<()> {
-    let Some(record) = catalog.packages.get(package_id) else {
-        return remove_package_revisions(root, package_id);
-    };
+    let record = catalog.packages.get(package_id);
     let package_root = root.join("revisions").join(package_id);
     if !package_root.exists() {
         return Ok(());
@@ -356,7 +365,7 @@ fn gc_one_package_revisions(
         .values()
         .filter(|(id, _)| id == package_id)
         .map(|(_, revision)| revision.as_str())
-        .chain(std::iter::once(record.revision.as_str()))
+        .chain(record.map(|record| record.revision.as_str()))
         .collect::<BTreeSet<_>>();
     for entry in fs::read_dir(&package_root)? {
         let entry = entry?;
@@ -364,9 +373,17 @@ fn gc_one_package_revisions(
         let revision = revision
             .to_str()
             .context("package revision name is not UTF-8")?;
+        validate_revision_id(revision)?;
+        ensure!(
+            fs::symlink_metadata(entry.path())?.file_type().is_dir(),
+            "package revision is not an owned directory"
+        );
         if !retained.contains(revision) {
             remove_path_without_following(&entry.path())?;
         }
+    }
+    if retained.is_empty() {
+        fs::remove_dir(package_root)?;
     }
     Ok(())
 }
@@ -424,10 +441,6 @@ fn persist_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
 fn verify_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
     validate_catalog_structure(catalog)?;
     for record in catalog.packages.values() {
-        ensure!(
-            record.materializer_version == MATERIALIZER_VERSION,
-            "catalog references an unsupported materializer version"
-        );
         verify_revision(root, record)?;
     }
     Ok(())
@@ -444,19 +457,28 @@ fn validate_catalog_structure(catalog: &PackageCatalog) -> Result<()> {
             "package catalog key does not match its record id"
         );
         validate_package_id(&record.id)?;
+        validate_revision_id(&record.revision)?;
+        ensure!(
+            record.materializer_version == MATERIALIZER_VERSION,
+            "catalog references an unsupported materializer version"
+        );
     }
     Ok(())
 }
 
-fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
+fn validate_revision_id(revision: &str) -> Result<()> {
     ensure!(
-        record.revision.len() == 64
-            && record
-                .revision
+        revision.len() == 64
+            && revision
                 .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "catalog contains an invalid package revision"
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "invalid package revision"
     );
+    Ok(())
+}
+
+fn verify_revision(root: &Path, record: &PackageRecord) -> Result<()> {
+    validate_revision_id(&record.revision)?;
     let revision_root = revision_root(root, &record.id, &record.revision);
     ensure!(
         revision_root.is_dir(),

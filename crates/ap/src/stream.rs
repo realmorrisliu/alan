@@ -8,9 +8,9 @@
 //! notification primitive (ADR-0024). Record typing (e.g. one JSON object per
 //! line) is a consumer convention layered on top, not part of this primitive.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::{Mutex, watch};
+use tokio::sync::watch;
 
 use crate::Offset;
 
@@ -23,6 +23,7 @@ pub struct Stream {
 }
 
 struct Inner {
+    // Buffer access never awaits: callers may hold file-server state locks.
     buf: Mutex<Vec<u8>>,
     /// Carries the current length; bumped on every append. Readers waiting at
     /// the live edge wake on a change. `watch` retains the latest value, so an
@@ -50,7 +51,7 @@ impl Stream {
     /// Append `bytes` to the log and wake any readers parked at the live edge.
     pub async fn append(&self, bytes: &[u8]) {
         let new_len = {
-            let mut buf = self.inner.buf.lock().await;
+            let mut buf = self.inner.buf.lock().expect("stream buffer poisoned");
             buf.extend_from_slice(bytes);
             buf.len() as u64
         };
@@ -60,12 +61,16 @@ impl Stream {
 
     /// The number of bytes retained so far.
     pub async fn len(&self) -> u64 {
-        self.inner.buf.lock().await.len() as u64
+        self.inner.buf.lock().expect("stream buffer poisoned").len() as u64
     }
 
     /// Whether no bytes have been appended yet.
     pub async fn is_empty(&self) -> bool {
-        self.inner.buf.lock().await.is_empty()
+        self.inner
+            .buf
+            .lock()
+            .expect("stream buffer poisoned")
+            .is_empty()
     }
 
     /// Read up to `count` bytes starting at `offset`. If `offset` is at or beyond
@@ -76,7 +81,7 @@ impl Stream {
         let mut len_rx = self.inner.len_tx.subscribe();
         loop {
             {
-                let buf = self.inner.buf.lock().await;
+                let buf = self.inner.buf.lock().expect("stream buffer poisoned");
                 let start = offset as usize;
                 if start < buf.len() {
                     let end = buf.len().min(start + count as usize);

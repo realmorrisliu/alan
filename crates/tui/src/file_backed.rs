@@ -1,19 +1,14 @@
-use std::path::{Path, PathBuf};
-use std::{
-    collections::VecDeque,
-    fs::OpenOptions,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
-};
+use std::collections::VecDeque;
+use std::path::PathBuf;
 
+#[cfg(test)]
+use alan_agent_protocol::UiActivitySnapshot;
 #[cfg(test)]
 use alan_agent_protocol::{
     ToolResultPresentation, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot,
     YieldKind,
 };
-use alan_agent_protocol::{UiActivitySnapshot, UiActivityState, UiEvent};
+use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
@@ -26,16 +21,16 @@ mod file_surface;
 mod history_merge;
 mod interrupt;
 mod layout;
+mod previous_input;
 mod stdio_completion;
-mod submission;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 use interrupt::{
-    PendingRootAgentTurn, observe_root_agent_activity, request_pending_root_interrupt,
-    send_interrupt,
+    PendingRootAgentTurn, observe_root_agent_completion, send_interrupt,
+    settle_unknown_replaced_input,
 };
-use submission::{prepare_root_agent_submission, require_root_agent_idle};
+use previous_input::discard_superseded_attachment_events;
 
 #[cfg(test)]
 use file_surface::{
@@ -50,8 +45,8 @@ use file_surface::{
 };
 use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
-    StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
-    open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,
+    StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
+    root_agent_path_for_pid,
 };
 
 use crate::completion::CompletionCandidate;
@@ -80,8 +75,6 @@ pub struct FileBackedRunConfig {
     pub history_path: Option<PathBuf>,
     /// Optional local skill candidates used for `$` completion.
     pub skill_candidates: Vec<CompletionCandidate>,
-    /// Shared lock path for serializing Root Agent submissions across clients.
-    pub task_submission_lock_path: Option<PathBuf>,
 }
 
 impl FileBackedRunConfig {
@@ -94,40 +87,8 @@ impl FileBackedRunConfig {
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
-            task_submission_lock_path: None,
         }
     }
-}
-
-/// Acquire the channel-scoped lock shared by interactive and redirected tasks.
-pub fn acquire_task_submission_lock(path: &Path) -> Result<std::fs::File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .with_context(|| format!("open task submission lock {}", path.display()))?;
-    let metadata = file.metadata()?;
-    // SAFETY: geteuid has no memory-safety preconditions.
-    let current_uid = unsafe { libc::geteuid() };
-    anyhow::ensure!(metadata.file_type().is_file(), "task lock is not a file");
-    anyhow::ensure!(
-        metadata.uid() == current_uid,
-        "task lock has a foreign owner"
-    );
-    anyhow::ensure!(metadata.mode() & 0o077 == 0, "task lock is not private");
-
-    // SAFETY: flock acts on the live descriptor and does not retain the pointer.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            bail!("another Alan task is already running for this channel");
-        }
-        return Err(error).context("acquire task submission lock");
-    }
-    Ok(file)
 }
 
 /// Run the inline renderer for a mounted Agent Process.
@@ -148,7 +109,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
     let follows_root_agent = config.agent_path == "/agent/root";
     let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
-    let mut _active_task_lock = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -170,6 +130,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 let Some(event) = event else {
                     break;
                 };
+                if let FileBackedEvent::Ui(ref event) = event {
+                    observe_root_agent_completion(&mut pending_root_agent_turn, event, &mut app);
+                }
                 match event {
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
@@ -189,7 +152,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     other => {
-                        let mut submission_lock = None;
                         let submission_requested = follows_root_agent
                             && matches!(
                                 &other,
@@ -198,23 +160,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         && !key.modifiers.contains(KeyModifiers::SHIFT)
                             )
                             && app.enter_submits_agent_task();
-                        let blocked_submission = if submission_requested {
-                            match prepare_root_agent_submission(
-                                &shell,
-                                &config.agent_path,
-                                config.task_submission_lock_path.as_deref(),
-                            )
-                            .await
-                            {
-                                Ok(lock) => {
-                                    submission_lock = lock;
-                                    false
-                                }
-                                Err(err) => {
-                                    app.push_error(format!("submit blocked: {err:#}"));
-                                    true
-                                }
-                            }
+                        let blocked_submission = if submission_requested && pending_root_agent_turn.is_some() {
+                            app.push_error("submit blocked: waiting for this input to complete".to_string());
+                            true
                         } else {
                             false
                         };
@@ -222,21 +170,19 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             && let Some(action) = app.dispatch(other)
                         {
                             match action {
-                                FileBackedAction::Submit(text) => {
+                                FileBackedAction::Submit(record) => {
                                     let submitted_at_ms = unix_time_ms();
-                                    let prior_matching_turns =
-                                        app.tape_user_prompt_count(&text);
-                                    match write_agent_input(&shell, &app.agent_path, &text).await {
+                                    let text = record.body.clone();
+                                    match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
                                         Ok(()) => {
+                                            app.accept_input();
                                             app.notice = None;
                                             if follows_root_agent {
-                                                _active_task_lock = submission_lock.take();
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
-                                                    observed_active: false,
-                                                    interrupt_requested: false,
+                                                    submission_id: record.submission_id.clone(),
+                                                    submitted_process: watchers.root_agent_pid,
                                                     submitted_at_ms,
-                                                    prior_matching_turns,
                                                 });
                                                 let submitted_task_settled = watchers
                                                     .refresh_root_agent_attachment(
@@ -244,15 +190,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     &config.agent_path,
                                                     &mut app,
                                                     &mut rx,
-                                                    Some((&text, submitted_at_ms, prior_matching_turns)),
+                                                    Some((&text, submitted_at_ms, &record.submission_id)),
                                                     &tx,
                                                     )
                                                     .await;
-                                                if submitted_task_settled
-                                                    && let Some(turn) =
-                                                        pending_root_agent_turn.as_mut()
-                                                {
-                                                    turn.observed_active = true;
+                                                if submitted_task_settled {
+                                                    pending_root_agent_turn = None;
                                                 }
                                             }
                                         }
@@ -277,11 +220,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
-                                    if request_pending_root_interrupt(&mut pending_root_agent_turn) {
-                                        send_interrupt(&shell, &mut app).await;
-                                    } else {
-                                        app.notice = Some("interrupt queued".to_string());
-                                    }
+                                    send_interrupt(&shell, &mut app, pending_root_agent_turn.as_ref(), watchers.root_agent_pid).await;
                                 }
                                 FileBackedAction::Quit => break,
                             }
@@ -289,15 +228,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     }
                 }
                 if follows_root_agent {
-                    if observe_root_agent_activity(
-                        &mut pending_root_agent_turn,
-                        app.activity.state,
-                    ) {
-                        send_interrupt(&shell, &mut app).await;
-                    }
-                    if pending_root_agent_turn.is_none() {
-                        _active_task_lock = None;
-                    }
+                    settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
                 }
                 dirty = true;
             }
@@ -311,7 +242,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         (
                             turn.input.as_str(),
                             turn.submitted_at_ms,
-                            turn.prior_matching_turns,
+                            turn.submission_id.as_str(),
                         )
                     });
                 let submitted_task_settled = watchers
@@ -324,20 +255,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     &tx,
                     )
                     .await;
-                if submitted_task_settled
-                    && let Some(turn) = pending_root_agent_turn.as_mut()
-                {
-                    turn.observed_active = true;
+                if submitted_task_settled {
+                    pending_root_agent_turn = None;
                 }
-                if observe_root_agent_activity(
-                    &mut pending_root_agent_turn,
-                    app.activity.state,
-                ) {
-                    send_interrupt(&shell, &mut app).await;
-                }
-                if pending_root_agent_turn.is_none() {
-                    _active_task_lock = None;
-                }
+                settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
                 if previous_pid != watchers.root_agent_pid
                     || previous_refresh_failed != watchers.pid_refresh_failed
                     || previous_turn != pending_root_agent_turn
@@ -374,23 +295,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
-fn discard_superseded_attachment_events(
-    rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-    pending_terminal_events: &mut VecDeque<FileBackedEvent>,
-) {
-    for _ in 0..rx.len() {
-        let Ok(event) = rx.try_recv() else {
-            break;
-        };
-        if matches!(
-            event,
-            FileBackedEvent::Terminal(_) | FileBackedEvent::TerminalError(_)
-        ) {
-            pending_terminal_events.push_back(event);
-        }
-    }
-}
-
 async fn receive_file_backed_event(
     pending_terminal_events: &mut VecDeque<FileBackedEvent>,
     rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
@@ -402,6 +306,7 @@ async fn receive_file_backed_event(
 }
 
 struct AgentWatchers {
+    recovery: Option<(alan_shell::Tail, alan_shell::Tail)>,
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     root_agent_pid: Option<u64>,
@@ -441,6 +346,7 @@ impl AgentWatchers {
             tokio::spawn(spawn_tape_watch(tails.tape, tx, shutdown_rx)),
         ];
         Self {
+            recovery: Some((tails.recovery_ui, tails.recovery_tape)),
             shutdown,
             tasks,
             root_agent_pid,
@@ -455,14 +361,39 @@ impl AgentWatchers {
         agent_path: &str,
         app: &mut FileBackedApp,
         rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-        submitted_task: Option<(&str, u64, usize)>,
+        submitted_task: Option<(&str, u64, &str)>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
-                self.stop().await;
-                discard_superseded_attachment_events(rx, &mut self.pending_terminal_events);
-                match reattach_to_current_agent(shell, agent_path, app, submitted_task).await {
+                // Tape history outlives the local pending-input lock.
+                let history_restored = if let Some((_, tape)) = &self.recovery {
+                    previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
+                } else {
+                    false
+                };
+                let retained = self.stop_for_input(submitted_task).await;
+                app.expected_terminal_error = None;
+                let queued = discard_superseded_attachment_events(
+                    rx,
+                    &mut self.pending_terminal_events,
+                    submitted_task.map(|(_, _, id)| id),
+                );
+                let completion = retained.0.or(queued.0);
+                if !history_restored
+                    && let Some(answer) = retained.1.or(queued.1)
+                    && let Some((input, _, _)) = submitted_task
+                {
+                    previous_input::restore_answer(app, input, answer);
+                }
+                let settled = match reattach_to_current_agent(
+                    shell,
+                    agent_path,
+                    app,
+                    submitted_task.filter(|_| completion.is_none()),
+                )
+                .await
+                {
                     Ok((tails, submitted_task_settled)) => {
                         self.pid_refresh_failed = false;
                         let pending_terminal_events =
@@ -479,6 +410,12 @@ impl AgentWatchers {
                         self.pid_refresh_failed = true;
                         false
                     }
+                };
+                if let Some(event) = completion {
+                    interrupt::render_input_completion(&event, app);
+                    true
+                } else {
+                    settled
                 }
             }
             Ok(pid) => {
@@ -496,93 +433,110 @@ impl AgentWatchers {
     }
 
     async fn stop(&mut self) {
+        self.stop_for_input(None).await;
+    }
+
+    async fn stop_for_input(
+        &mut self,
+        submitted: Option<(&str, u64, &str)>,
+    ) -> (Option<UiEvent>, Option<String>) {
         let _ = self.shutdown.send(true);
         for task in self.tasks.drain(..) {
             let _ = task.await;
         }
+        let Some((ui, tape)) = self.recovery.take() else {
+            return (None, None);
+        };
+        let outcome = previous_input::snapshot(&ui, &tape, submitted).await;
+        let _ = ui.close().await;
+        let _ = tape.close().await;
+        outcome
     }
 }
 
-/// Run one task from redirected stdin and write its final Agent answer to stdout.
+/// Run one redirected input, write its output streams, and return its exit status.
 pub async fn run_stdio_task(
     root_transport: InProcessTransport,
     agent_path: impl Into<String>,
     input: &str,
-) -> Result<()> {
+    interrupt: impl std::future::Future<Output = Result<()>>,
+) -> Result<i32> {
     use tokio::io::AsyncWriteExt;
 
-    if input.trim().is_empty() {
-        bail!("stdin did not contain an Agent task");
-    }
+    let task = StdioTaskWaitContext::new(input)?;
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, &agent_path).await?;
+    let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
 
-    // ponytail: the CLI lock excludes concurrent one-shot clients; add IDs if
-    // one-shot and interactive submissions need concurrent task correlation.
-    let task = StdioTaskWaitContext::new(input, std::mem::take(&mut attachment.tape_history));
-
-    let result = wait_for_stdio_answer(&shell, &agent_path, task, &mut attachment, async {
-        tokio::signal::ctrl_c().await.map_err(anyhow::Error::from)
-    })
-    .await;
+    let result = wait_for_stdio_answer(&shell, task, &mut attachment, interrupt).await;
     let close_result = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
     let answer = result?;
     close_result?;
 
+    let (out, err, exit_code, add_newline) = match answer {
+        StdioTaskOutput::Agent(answer) => (answer, String::new(), 0, true),
+        StdioTaskOutput::Command(output) => (output.stdout, output.stderr, output.exit_code, false),
+    };
     let mut stdout = tokio::io::stdout();
-    stdout.write_all(answer.as_bytes()).await?;
-    if !answer.ends_with('\n') {
+    stdout.write_all(out.as_bytes()).await?;
+    if add_newline && !out.ends_with('\n') {
         stdout.write_all(b"\n").await?;
     }
     stdout.flush().await?;
-    Ok(())
+    let mut stderr = tokio::io::stderr();
+    stderr.write_all(err.as_bytes()).await?;
+    stderr.flush().await?;
+    Ok(exit_code)
 }
 
 async fn wait_for_stdio_answer(
     shell: &alan_shell::Shell,
-    root_agent_path: &str,
-    task: StdioTaskWaitContext<'_>,
+    task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<String> {
+) -> Result<StdioTaskOutput> {
     submit_stdio_task(shell, &task, attachment).await?;
-    wait_for_stdio_answer_after_submit(shell, root_agent_path, task, attachment, interrupt).await
+    wait_for_stdio_answer_after_submit(shell, task, attachment, interrupt).await
 }
 
 async fn submit_stdio_task(
     shell: &alan_shell::Shell,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     attachment: &StdioTailAttachment,
 ) -> Result<()> {
-    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-        bail!("Root Agent changed before the task could be submitted; retry")
-    }
-    write_agent_input(shell, &attachment.agent_process_path, task.input).await
+    write_agent_input(
+        shell,
+        "/agent/root",
+        Some(attachment.root_agent_pid),
+        &task.record,
+    )
+    .await
 }
 
 async fn wait_for_stdio_answer_after_submit(
     shell: &alan_shell::Shell,
-    root_agent_path: &str,
-    task: StdioTaskWaitContext<'_>,
+    task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
-) -> Result<String> {
+) -> Result<StdioTaskOutput> {
     tokio::pin!(interrupt);
     let mut tape_pending = Vec::new();
     let mut ui_pending = Vec::new();
     let mut interrupt_requested = false;
     let mut snapshot = StdioTaskSnapshot {
         task_started: false,
+        waiting_for_response: false,
         assistant_answer: None,
+        command_output: None,
         activity_state: None,
         task_error: None,
+        completion: None,
     };
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    'wait: loop {
+    loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
                 let bytes = match bytes {
@@ -592,21 +546,7 @@ async fn wait_for_stdio_answer_after_submit(
                             Ok(_) => anyhow::anyhow!("Agent tape closed before the task completed"),
                             Err(err) => anyhow::anyhow!("read Agent tape failed: {err:?}"),
                         };
-                        match tail::recover_stdio_task_after_tail_close(
-                            shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
-                        ).await? {
-                            tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                            tail::StdioTaskRecovery::Reattached => {
-                                tape_pending.clear();
-                                ui_pending.clear();
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unavailable => {
-                                root_agent_pid_tick.tick().await;
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unchanged => return Err(error),
-                        }
+                        return Err(error.context("task outcome is unknown"));
                     }
                 };
                 tape_pending.extend_from_slice(&bytes);
@@ -617,11 +557,11 @@ async fn wait_for_stdio_answer_after_submit(
                     if record.kind != "message" {
                         continue;
                     }
-                    if !snapshot.task_started {
-                        snapshot.task_started =
-                            record.role == "user" && record.content == task.input;
-                    } else if record.role == "assistant" {
-                        snapshot.assistant_answer = Some(record.content);
+                    if record.belongs_to(&task.record.submission_id) {
+                        snapshot.task_started = true;
+                        if record.role == "assistant" {
+                            snapshot.assistant_answer = Some(record.content);
+                        }
                     }
                 }
                 if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
@@ -636,21 +576,7 @@ async fn wait_for_stdio_answer_after_submit(
                             Ok(_) => anyhow::anyhow!("Agent UI event stream closed before the task completed"),
                             Err(err) => anyhow::anyhow!("read Agent UI events failed: {err:?}"),
                         };
-                        match tail::recover_stdio_task_after_tail_close(
-                            shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
-                        ).await? {
-                            tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                            tail::StdioTaskRecovery::Reattached => {
-                                tape_pending.clear();
-                                ui_pending.clear();
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unavailable => {
-                                root_agent_pid_tick.tick().await;
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unchanged => return Err(error),
-                        }
+                        return Err(error.context("task outcome is unknown"));
                     }
                 };
                 ui_pending.extend_from_slice(&bytes);
@@ -658,50 +584,25 @@ async fn wait_for_stdio_answer_after_submit(
                     let event = serde_json::from_slice::<UiEvent>(&line)
                         .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
                     match event {
-                        UiEvent::Activity { snapshot: activity } => {
-                            if activity.state == UiActivityState::Running
-                                && activity
-                                    .started_at_ms
-                                    .is_none_or(|started_at| started_at >= task.submitted_at_ms)
-                            {
-                                snapshot.task_started = true;
-                                snapshot.activity_state = Some(UiActivityState::Running);
-                                snapshot.task_error = None;
-                            } else if activity.state == UiActivityState::Paused
-                                && snapshot.activity_state == Some(UiActivityState::Running)
-                            {
-                                snapshot.activity_state = Some(UiActivityState::Paused);
-                            } else if activity.state == UiActivityState::Idle
-                                && matches!(
-                                    snapshot.activity_state,
-                                    Some(UiActivityState::Running | UiActivityState::Paused)
-                                )
-                            {
-                                snapshot.activity_state = Some(UiActivityState::Idle);
-                            }
+                        event @ UiEvent::Activity { .. } => {
+                            stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
                         }
-                        UiEvent::Error { message, .. }
-                            if matches!(
-                                snapshot.activity_state,
-                                Some(UiActivityState::Running | UiActivityState::Paused)
-                            ) =>
-                        {
-                            snapshot.task_error = Some(message)
+                        event @ UiEvent::InputCompleted { .. } => {
+                            stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
                         }
-                        UiEvent::Error { .. } => {}
-                        UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+                        UiEvent::Error { .. } | UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
                 }
                 if interrupt_requested
-                    && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await?
+                    && interrupt_stdio_task_if_pending(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await?
                 {
-                    bail!("Agent task interrupted");
+                    bail!("Agent input cancellation requested");
                 }
-                if snapshot.activity_state == Some(UiActivityState::Paused) {
+                if snapshot.completion.is_none() && snapshot.waiting_for_response {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
                 let refresh_result = {
-                    let refresh = stdio_completion::refresh_answer_after_idle(
+                    let refresh = stdio_completion::refresh_answer_after_completion(
                         shell,
                         &attachment.agent_process_path,
                         &task,
@@ -710,169 +611,149 @@ async fn wait_for_stdio_answer_after_submit(
                     tokio::pin!(refresh);
                     loop {
                         tokio::select! {
-                            result = &mut refresh => break Some(result),
+                            result = &mut refresh => break result,
                             _ = root_agent_pid_tick.tick() => {
-                                if tail::current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-                                    break None;
-                                }
+                                tail::require_stdio_attachment_current(shell, attachment).await?;
                             }
                         }
                     }
                 };
-                let Some(refresh_result) = refresh_result else {
-                    tape_pending.clear();
-                    ui_pending.clear();
-                    continue 'wait;
-                };
-                if let Err(error) = refresh_result {
-                    match tail::recover_stdio_task_after_tail_close(
-                        shell,
-                        root_agent_path,
-                        &task,
-                        attachment,
-                        &mut snapshot,
-                        interrupt_requested,
-                    )
-                    .await?
-                    {
-                        tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                        tail::StdioTaskRecovery::Reattached => {
-                            tape_pending.clear();
-                            ui_pending.clear();
-                            continue;
-                        }
-                        tail::StdioTaskRecovery::Unavailable => {
-                            root_agent_pid_tick.tick().await;
-                            continue;
-                        }
-                        tail::StdioTaskRecovery::Unchanged => return Err(error),
-                    }
-                }
+                refresh_result.context("final task outcome is unknown")?;
                 if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                     return Ok(answer);
                 }
             }
             _ = root_agent_pid_tick.tick() => {
-                match tail::recover_stdio_task_after_root_change(
-                    shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
-                ).await? {
-                    tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                    tail::StdioTaskRecovery::Reattached => {
-                        tape_pending.clear();
-                        ui_pending.clear();
-                    }
-                    tail::StdioTaskRecovery::Unavailable | tail::StdioTaskRecovery::Unchanged => {}
-                }
+                tail::require_stdio_attachment_current(shell, attachment).await?;
             }
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
                 interrupt_requested = true;
-                if interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await? {
-                    bail!("Agent task interrupted");
+                if interrupt_stdio_task_if_pending(shell, &attachment.agent_process_path, &task.record.submission_id, &snapshot).await? {
+                    bail!("Agent input cancellation requested");
                 }
             }
         }
     }
 }
 
-async fn interrupt_stdio_task_if_active(
+async fn interrupt_stdio_task_if_pending(
     shell: &alan_shell::Shell,
     agent_path: &str,
+    submission_id: &str,
     snapshot: &StdioTaskSnapshot,
 ) -> Result<bool> {
-    if !matches!(
-        snapshot.activity_state,
-        Some(UiActivityState::Running | UiActivityState::Paused)
-    ) {
+    if snapshot.completion.is_some() {
         return Ok(false);
     }
-    write_machine_ctl(shell, agent_path, "interrupt")
-        .await
-        .context("failed to send Agent task interrupt")?;
+    write_machine_ctl(
+        shell,
+        agent_path,
+        &format!("queue-v1 interrupt {submission_id}"),
+    )
+    .await
+    .context("failed to send Agent task interrupt")?;
     Ok(true)
 }
 
-fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<String>> {
-    if !snapshot.task_started || snapshot.activity_state != Some(UiActivityState::Idle) {
+fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<StdioTaskOutput>> {
+    if snapshot.completion.is_none() {
         return Ok(None);
+    }
+    if let Some(output) = snapshot.command_output.take() {
+        return Ok(Some(StdioTaskOutput::Command(output)));
     }
     if let Some(message) = snapshot.task_error.take() {
         bail!("Agent task failed: {message}");
     }
     if let Some(answer) = snapshot.assistant_answer.take() {
-        return Ok(Some(answer));
+        return Ok(Some(StdioTaskOutput::Agent(answer)));
     }
     Ok(None)
 }
 
-struct StdioTaskSnapshot {
-    task_started: bool,
-    assistant_answer: Option<String>,
-    activity_state: Option<UiActivityState>,
-    task_error: Option<String>,
+#[derive(Debug)]
+enum StdioTaskOutput {
+    Agent(String),
+    Command(CommandOutput),
 }
 
-struct StdioTaskWaitContext<'a> {
-    input: &'a str,
-    baseline_tape_history: Vec<u8>,
+#[derive(Debug, serde::Deserialize)]
+struct CommandOutput {
+    stdout: String,
+    stderr: String,
+    #[serde(default)]
+    exit_code: i32,
+}
+
+#[cfg(test)]
+impl StdioTaskOutput {
+    fn agent_answer(self) -> String {
+        match self {
+            Self::Agent(answer) => answer,
+            Self::Command(_) => panic!("expected Agent answer"),
+        }
+    }
+}
+
+struct StdioTaskSnapshot {
+    task_started: bool,
+    waiting_for_response: bool,
+    assistant_answer: Option<String>,
+    command_output: Option<CommandOutput>,
+    activity_state: Option<UiActivityState>,
+    task_error: Option<String>,
+    completion: Option<alan_agent_protocol::UiInputStatus>,
+}
+
+struct StdioTaskWaitContext {
+    record: alan_agent_protocol::UserInputRecord,
+    #[cfg(test)]
     submitted_at_ms: u64,
 }
 
-impl<'a> StdioTaskWaitContext<'a> {
-    fn new(input: &'a str, baseline_tape_history: Vec<u8>) -> Self {
-        Self {
-            input,
-            baseline_tape_history,
+impl StdioTaskWaitContext {
+    fn new(input: &str) -> Result<Self> {
+        let (intent, body) = alan_agent_protocol::parse_input_prefix(input);
+        anyhow::ensure!(!body.trim().is_empty(), "stdin input body is empty");
+        Ok(Self {
+            record: alan_agent_protocol::UserInputRecord::new(
+                intent,
+                alan_agent_protocol::InputMode::FollowUp,
+                body,
+            ),
+            #[cfg(test)]
             submitted_at_ms: unix_time_ms(),
-        }
+        })
     }
 }
 
-async fn stdio_task_snapshot(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    task: &StdioTaskWaitContext<'_>,
-    tape_history: &[u8],
-    ui_history: &[u8],
-) -> Result<StdioTaskSnapshot> {
-    let mut snapshot = stdio_task_snapshot_from_history(task, tape_history, ui_history)?;
-    if snapshot.activity_state.is_none() {
-        let raw = shell
-            .cat(&format!("{agent_path}/machine/ui/activity"))
-            .await
-            .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?;
-        let activity =
-            serde_json::from_slice::<UiActivitySnapshot>(&raw).context("parse Agent activity")?;
-        if matches!(
-            activity.state,
-            UiActivityState::Running | UiActivityState::Paused
-        ) && activity
-            .started_at_ms
-            .is_some_and(|started_at| started_at >= task.submitted_at_ms)
-        {
-            snapshot.task_started = true;
-            snapshot.task_error = None;
-        }
-        snapshot.activity_state = Some(activity.state);
-    }
-    stdio_completion::refresh_answer_after_idle(shell, agent_path, task, &mut snapshot).await?;
-    Ok(snapshot)
-}
-
+#[cfg(test)]
 fn stdio_task_snapshot_from_history(
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
     let (tape_task_started, assistant_answer) =
-        stdio_completion::tape_outcome(task.input, &task.baseline_tape_history, tape_history)?;
+        stdio_completion::tape_outcome(&task.record.submission_id, tape_history)?;
     let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
-    Ok(StdioTaskSnapshot {
-        task_started: tape_task_started || ui_task.started,
+    let mut snapshot = StdioTaskSnapshot {
+        task_started: tape_task_started,
+        waiting_for_response: false,
         assistant_answer,
+        command_output: None,
         activity_state: ui_task.state,
-        task_error: ui_task.error,
-    })
+        task_error: None,
+        completion: None,
+    };
+    for line in std::str::from_utf8(ui_history)
+        .context("UI history is not utf8")?
+        .lines()
+    {
+        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI history")?;
+        stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
+    }
+    Ok(snapshot)
 }
 
 fn unix_time_ms() -> u64 {

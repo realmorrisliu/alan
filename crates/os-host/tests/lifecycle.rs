@@ -515,7 +515,8 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
     .unwrap();
     let mut activity = shell.tail("/agent/root/machine/ui/events").await.unwrap();
     shell
-        .write("/agent/root/io/input", b"request documents")
+        .write("/agent/root/io/input", br#"alan-input-v1
+{"version":1,"submission_id":"46e4ba7c-87e8-41a9-8e88-d0dc49ac99d1","intent":"agent","mode":"follow_up","body":"request documents"}"#)
         .await
         .unwrap();
     let request_id = wait_for_host_mount_request(&shell).await;
@@ -525,6 +526,18 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
             .await
             .unwrap(),
         b"pending\n"
+    );
+
+    let pending_events = shell.cat("/agent/root/machine/ui/events").await.unwrap();
+    assert!(
+        !std::str::from_utf8(&pending_events)
+            .unwrap()
+            .lines()
+            .any(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["type"]
+                    == "input_completed"
+            }),
+        "waiting for approval is not input completion"
     );
 
     HostCommandPlane::new(paths)
@@ -540,6 +553,39 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
     .expect("the first approved logical Host Mount should establish Tool execution authority");
     wait_for_turn_idle(&mut activity, "Host Mount approval").await;
     activity.close().await.unwrap();
+    let answer = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let tape = shell.cat("/agent/root/machine/tape").await.unwrap();
+            let records: Vec<serde_json::Value> = std::str::from_utf8(&tape)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            if let Some(answer) = records
+                .into_iter()
+                .find(|record| record["role"] == "assistant")
+            {
+                let events = shell.cat("/agent/root/machine/ui/events").await.unwrap();
+                let complete = std::str::from_utf8(&events).unwrap().lines().any(|line| {
+                    let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                    event["type"] == "input_completed"
+                        && event["status"] == "completed"
+                        && event["submission_ids"]
+                            == serde_json::json!(["46e4ba7c-87e8-41a9-8e88-d0dc49ac99d1"])
+                });
+                if complete {
+                    break answer;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("answer after mount approval");
+    assert_eq!(
+        answer["submission_id"], "46e4ba7c-87e8-41a9-8e88-d0dc49ac99d1",
+        "approval must preserve the original input identity"
+    );
     assert_eq!(
         shell
             .cat(&format!("/mnt/host-mount/requests/{request_id}/status"))

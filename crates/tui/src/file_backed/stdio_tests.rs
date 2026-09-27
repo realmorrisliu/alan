@@ -11,69 +11,39 @@ pub(super) const PID_MOUNT: &str = "/mnt/service-manager/units/root-agent";
 pub(super) const EXEC_SPEC: &str =
     r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#;
 
-#[test]
-fn interactive_task_lock_is_shared_and_released_after_the_turn() {
-    let runtime = tempfile::tempdir().unwrap();
-    let path = runtime.path().join("task.lock");
-
-    let interactive = acquire_task_submission_lock(&path).unwrap();
-    let competing = acquire_task_submission_lock(&path).unwrap_err();
-    assert!(
-        competing
-            .to_string()
-            .contains("another Alan task is already running")
-    );
-
-    drop(interactive);
-    assert!(acquire_task_submission_lock(&path).is_ok());
+pub(super) const INPUT_ID: &str = "00000000-0000-4000-8000-000000000001";
+pub(super) fn task(input: &str) -> StdioTaskWaitContext {
+    let mut task = StdioTaskWaitContext::new(input).unwrap();
+    task.record.submission_id = INPUT_ID.into();
+    task
 }
 
-#[test]
-fn root_agent_interrupt_waits_until_the_submitted_turn_is_accepted() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        observed_active: false,
-        interrupt_requested: false,
-        submitted_at_ms: 20,
-        prior_matching_turns: 0,
-    });
-
-    assert!(!request_pending_root_interrupt(&mut pending));
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert!(pending.as_ref().unwrap().interrupt_requested);
-
-    assert!(observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Running
-    ));
-    assert!(!pending.as_ref().unwrap().interrupt_requested);
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert_eq!(pending, None);
+pub(super) fn correlated_records(records: &[u8]) -> Vec<u8> {
+    let mut output = Vec::new();
+    for line in records
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let mut record: serde_json::Value = serde_json::from_slice(line).unwrap();
+        record["submission_id"] = INPUT_ID.into();
+        serde_json::to_writer(&mut output, &record).unwrap();
+        output.push(b'\n');
+    }
+    output
 }
 
-#[test]
-fn pending_root_agent_interrupt_is_discarded_if_task_settles_before_activation() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        observed_active: false,
-        interrupt_requested: false,
-        submitted_at_ms: 20,
-        prior_matching_turns: 0,
-    });
-
-    assert!(!request_pending_root_interrupt(&mut pending));
-    pending.as_mut().unwrap().observed_active = true;
-    assert!(!observe_root_agent_activity(
-        &mut pending,
-        UiActivityState::Idle
-    ));
-    assert_eq!(pending, None);
+pub(super) fn completion(
+    status: alan_agent_protocol::UiInputStatus,
+    error: Option<&str>,
+) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec(&UiEvent::InputCompleted {
+        submission_ids: vec![INPUT_ID.into()],
+        status,
+        error: error.map(str::to_owned),
+    })
+    .unwrap();
+    bytes.push(b'\n');
+    bytes
 }
 
 #[test]
@@ -159,16 +129,13 @@ pub(super) async fn live_root_agent() -> (alan_shell::Shell, Arc<AgentRootFs>, L
 fn stdio_attachment(
     pid: &str,
     tape_tail: alan_shell::Tail,
-    tape_history: Vec<u8>,
     ui_tail: alan_shell::Tail,
 ) -> StdioTailAttachment {
     StdioTailAttachment {
         root_agent_pid: pid.parse().unwrap(),
         agent_process_path: format!("/agent/{pid}"),
         tape_tail,
-        tape_history,
         ui_tail,
-        ui_history: Vec::new(),
     }
 }
 
@@ -193,20 +160,17 @@ fn line_drain_keeps_partial_records_until_newline() {
 #[test]
 fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
     let snapshot = stdio_task_snapshot_from_history(
-        &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: Vec::new(),
-            submitted_at_ms: 2,
-        },
+        &StdioTaskWaitContext { submitted_at_ms: 2, ..task("same task") },
         br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
-{"version":1,"kind":"message","role":"user","content":"same task"}
-{"version":1,"kind":"message","role":"assistant","content":"intermediate response"}
-{"version":1,"kind":"message","role":"assistant","content":"current answer"}
+{"submission_id":"00000000-0000-4000-8000-000000000001","version":1,"kind":"message","role":"user","content":"same task"}
+{"submission_id":"00000000-0000-4000-8000-000000000001","version":1,"kind":"message","role":"assistant","content":"intermediate response"}
+{"submission_id":"00000000-0000-4000-8000-000000000001","version":1,"kind":"message","role":"assistant","content":"current answer"}
 "#,
         br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
 {"type":"error","message":"previous provider failure","recoverable":true}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
+{"type":"input_completed","submission_ids":["00000000-0000-4000-8000-000000000001"],"status":"completed"}
 {"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":2}}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
@@ -222,14 +186,10 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 #[test]
 fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
     let mut snapshot = stdio_task_snapshot_from_history(
-        &StdioTaskWaitContext {
-            input: "task with no tape record",
-            baseline_tape_history: Vec::new(),
-            submitted_at_ms: 0,
-        },
+        &StdioTaskWaitContext { submitted_at_ms: 0, ..task("task with no tape record") },
         b"",
         br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
-{"type":"error","message":"provider unavailable","recoverable":true}
+{"type":"input_completed","submission_ids":["00000000-0000-4000-8000-000000000001"],"status":"failed","error":"provider unavailable"}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
     )
@@ -237,7 +197,7 @@ fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
 
     assert!(
         snapshot.task_started,
-        "Running establishes this submitted task"
+        "The correlated failure identifies this submitted task"
     );
     assert_eq!(
         finish_stdio_task_if_ready(&mut snapshot)
@@ -258,9 +218,8 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 "#;
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: baseline_tape.to_vec(),
             submitted_at_ms: 20,
+            ..task("same task")
         },
         baseline_tape,
         baseline_ui,
@@ -269,22 +228,19 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 
     assert!(!snapshot.task_started);
     assert!(snapshot.assistant_answer.is_none());
-    assert_eq!(snapshot.activity_state, None);
+    assert_eq!(snapshot.activity_state, Some(UiActivityState::Idle));
+    assert!(!snapshot.waiting_for_response);
 }
 
 #[test]
 fn recovery_rejects_a_reset_tape_with_only_an_old_identical_prompt() {
-    let baseline_tape = br#"{"version":1,"kind":"message","role":"user","content":"earlier task"}
-{"version":1,"kind":"message","role":"assistant","content":"earlier answer"}
-"#;
     let replacement_tape = br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
 "#;
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: baseline_tape.to_vec(),
             submitted_at_ms: 20,
+            ..task("same task")
         },
         replacement_tape,
         br#"{"type":"activity","snapshot":{"version":1,"state":"idle"}}
@@ -379,7 +335,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
     app.transcript
         .push(HistoryCell::User("current task".to_string()));
-    app.reconciler.on_local_submit("current task");
+    app.reconciler.on_user_record();
 
     let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
     agent_root
@@ -394,10 +350,14 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         ))),
         Access::ReadOnly,
     );
+    shell.write(
+        "/agent/root/machine/tape",
+        b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\",\"submission_id\":\"other-client\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"other client answer\",\"submission_id\":\"other-client\"}\n",
+    ).await.unwrap();
     shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n",
+            &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n"),
         )
         .await
         .unwrap();
@@ -409,6 +369,14 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         .await
         .unwrap();
 
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            &completion(alan_agent_protocol::UiInputStatus::Completed, None),
+        )
+        .await
+        .unwrap();
+
     assert!(
         watchers
             .refresh_root_agent_attachment(
@@ -416,7 +384,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, 0)),
+                Some(("current task", 20, INPUT_ID)),
                 &tx,
             )
             .await
@@ -541,11 +509,10 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
     let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
         .await
         .unwrap();
-    let prior_matching_turns = app.tape_user_prompt_count("same task");
     app.transcript.clear();
     app.transcript
         .push(HistoryCell::User("same task".to_string()));
-    app.reconciler.on_local_submit("same task");
+    app.reconciler.on_user_record();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
@@ -584,7 +551,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("same task", 20, prior_matching_turns)),
+                Some(("same task", 20, INPUT_ID)),
                 &tx,
             )
             .await
@@ -594,7 +561,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
         vec![
             HistoryCell::User("same task".to_string()),
             HistoryCell::Error(
-                "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
+                "Root Agent changed without correlated completion evidence; outcome is unknown"
                     .to_string(),
             ),
         ]
@@ -641,6 +608,17 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
         .await
         .unwrap();
 
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            &completion(
+                alan_agent_protocol::UiInputStatus::Failed,
+                Some("provider unavailable"),
+            ),
+        )
+        .await
+        .unwrap();
+
     assert!(
         watchers
             .refresh_root_agent_attachment(
@@ -648,7 +626,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, 0)),
+                Some(("current task", 20, INPUT_ID)),
                 &tx,
             )
             .await
@@ -662,29 +640,40 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
 }
 
 #[test]
-fn one_shot_result_waits_for_seen_task_and_idle_activity() {
+fn one_shot_result_waits_for_correlated_settlement() {
     let mut task = StdioTaskSnapshot {
         task_started: false,
+        waiting_for_response: false,
+        command_output: None,
         assistant_answer: Some("answer".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: None,
+        completion: None,
     };
 
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert!(finish_stdio_task_if_ready(&mut task).unwrap().is_none());
     task.task_started = true;
     task.activity_state = Some(UiActivityState::Running);
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert!(finish_stdio_task_if_ready(&mut task).unwrap().is_none());
     task.activity_state = Some(UiActivityState::Idle);
+    assert!(finish_stdio_task_if_ready(&mut task).unwrap().is_none());
+    task.completion = Some(alan_agent_protocol::UiInputStatus::Completed);
     assert_eq!(
-        finish_stdio_task_if_ready(&mut task).unwrap().as_deref(),
+        finish_stdio_task_if_ready(&mut task)
+            .unwrap()
+            .map(StdioTaskOutput::agent_answer)
+            .as_deref(),
         Some("answer")
     );
 
     let mut failed_task = StdioTaskSnapshot {
         task_started: true,
+        waiting_for_response: false,
+        command_output: None,
         assistant_answer: Some("intermediate response".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: Some("provider failed".to_string()),
+        completion: Some(alan_agent_protocol::UiInputStatus::Failed),
     };
     let result = finish_stdio_task_if_ready(&mut failed_task);
     assert_eq!(
@@ -694,150 +683,108 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pid_poll() {
-    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
-    let tail_closer = Arc::new(FaultingFileServer::new(agent_root.clone()));
-    live_namespace.replace_mount(
+async fn one_shot_waits_without_timeout_but_fails_when_its_tail_closes() {
+    let (shell, agent_root, namespace, pid) = live_root_agent().await;
+    let fault = Arc::new(FaultingFileServer::new(agent_root));
+    namespace.replace_mount(
         "/agent",
-        InProcessTransport::new(tail_closer.clone()),
+        InProcessTransport::new(fault.clone()),
         Access::ReadWrite,
     );
-
-    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+    let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
-    let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
-        .await
-        .unwrap();
-    let mut attachment = stdio_attachment(&old_pid, tape_tail, baseline_tape_history, ui_tail);
-    let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let (input_seen_tx, input_seen_rx) = tokio::sync::oneshot::channel();
-    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
-    let (clear_pid_tx, clear_pid_rx) = tokio::sync::oneshot::channel();
-    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
-    let controller_shell = shell.clone();
-    let controller_agent_root = agent_root.clone();
-    let controller_namespace = live_namespace.clone();
-    let controller_tail_closer = tail_closer.clone();
-    let old_agent_pid = old_pid.parse::<u64>().unwrap();
-    let controller = tokio::spawn(async move {
-        assert!(!input_tail.read(4096).await.unwrap().is_empty());
-        input_seen_tx.send(()).unwrap();
-        release_rx.await.unwrap();
-        controller_tail_closer.close(old_agent_pid);
-        closed_tx.send(()).unwrap();
-        clear_pid_rx.await.unwrap();
-        controller_namespace.replace_mount(
-            PID_MOUNT,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "pid",
-                b"0\n".to_vec(),
-            ))),
-            Access::ReadOnly,
-        );
-        resume_rx.await.unwrap();
-        let new_pid = controller_shell.spawn(EXEC_SPEC).await.unwrap();
-        controller_agent_root
-            .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
-            .await;
-        controller_agent_root
-            .set_root_process(new_pid.clone())
-            .await;
-        controller_namespace.replace_mount(
-            PID_MOUNT,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "pid",
-                format!("{new_pid}\n").into_bytes(),
-            ))),
-            Access::ReadOnly,
-        );
-        controller_shell
-            .write(
-                "/agent/root/machine/tape",
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"rebind me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"one answer\"}\n",
-            )
-            .await
-            .unwrap();
-        controller_shell
-            .write(
-                "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
-            )
-            .await
-            .unwrap();
-        input_tail.close().await.unwrap();
-    });
-
-    let answer = {
-        let wait_for_answer = wait_for_stdio_answer(
+    let mut input = shell.tail("/agent/root/io/input").await.unwrap();
+    let error = {
+        let waiting = wait_for_stdio_answer(
             &shell,
-            "/agent/root",
-            StdioTaskWaitContext::new("rebind me", std::mem::take(&mut attachment.tape_history)),
+            task("long task"),
             &mut attachment,
-            std::future::pending::<anyhow::Result<()>>(),
+            std::future::pending(),
         );
-        tokio::pin!(wait_for_answer);
+        tokio::pin!(waiting);
         tokio::select! {
-            result = &mut wait_for_answer => panic!("one-shot completed before its AgentFS result: {result:?}"),
-            result = input_seen_rx => result.unwrap(),
+            result = &mut waiting => panic!("finished before submission: {result:?}"),
+            bytes = input.read(4096) => assert!(!bytes.unwrap().is_empty()),
         }
-
         tokio::time::advance(std::time::Duration::from_secs(301)).await;
-        let still_waiting =
-            tokio::time::timeout(std::time::Duration::from_millis(1), &mut wait_for_answer).await;
         assert!(
-            still_waiting.is_err(),
-            "a valid one-shot task must not time out after five minutes"
-        );
-
-        release_tx.send(()).unwrap();
-        closed_rx.await.unwrap();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(1), &mut wait_for_answer)
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut waiting)
                 .await
-                .is_err(),
-            "one-shot must wait while the supervised Root Agent is restarting"
+                .is_err()
         );
-        clear_pid_tx.send(()).unwrap();
-        resume_tx.send(()).unwrap();
-        tokio::time::advance(std::time::Duration::from_millis(250)).await;
-        wait_for_answer.await.unwrap()
+        fault.close(pid.parse().unwrap());
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap_err()
     };
-    controller.await.unwrap();
-
-    assert_eq!(answer, "one answer");
-    let current_pid = current_root_agent_pid(&shell).await.unwrap().unwrap();
-    assert_eq!(attachment.root_agent_pid, current_pid);
-    assert_eq!(
-        attachment.agent_process_path,
-        format!("/agent/{current_pid}")
-    );
+    assert!(error.to_string().contains("outcome is unknown"));
+    assert_eq!(attachment.root_agent_pid, pid.parse::<u64>().unwrap());
+    input.close().await.unwrap();
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
 }
 
 #[tokio::test]
+async fn one_shot_fails_on_missing_or_changed_root_without_replacing_tails() {
+    for (published, input) in [
+        (0, "pinned task"),
+        (999, "pinned task"),
+        (0, "!printf x"),
+        (999, "!printf x"),
+    ] {
+        let (shell, _agent_root, namespace, pid) = live_root_agent().await;
+        let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
+            .await
+            .unwrap();
+        let task = task(input);
+        submit_stdio_task(&shell, &task, &attachment).await.unwrap();
+        namespace.replace_mount(
+            PID_MOUNT,
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                "pid",
+                format!("{published}\n").into_bytes(),
+            ))),
+            Access::ReadOnly,
+        );
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            wait_for_stdio_answer_after_submit(
+                &shell,
+                task,
+                &mut attachment,
+                std::future::pending(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error.to_string().contains("outcome is unknown"));
+        assert_eq!(attachment.root_agent_pid, pid.parse::<u64>().unwrap());
+        close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+    let (tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
         .unwrap();
     let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
+    let mut attachment = stdio_attachment(&pid, tape_tail, ui_tail);
 
     let result = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
-            "/agent/root",
-            StdioTaskWaitContext::new(
-                "fail before tape persistence",
-                std::mem::take(&mut attachment.tape_history),
-            ),
+            task("fail before tape persistence"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -850,7 +797,10 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         shell
             .write(
                 "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+                &completion(
+                    alan_agent_protocol::UiInputStatus::Failed,
+                    Some("provider unavailable"),
+                ),
             )
             .await
             .unwrap();
@@ -880,27 +830,22 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
 #[tokio::test]
 async fn one_shot_cancellation_interrupts_before_running_is_observed() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+    let (tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
         .unwrap();
     let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
+    let mut attachment = stdio_attachment(&pid, tape_tail, ui_tail);
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
+    let input = task("cancel this turn");
+    let submission_id = input.record.submission_id.clone();
     let result = {
-        let wait_for_answer = wait_for_stdio_answer(
-            &shell,
-            "/agent/root",
-            StdioTaskWaitContext::new(
-                "cancel this turn",
-                std::mem::take(&mut attachment.tape_history),
-            ),
-            &mut attachment,
-            async move { cancel_rx.await.map_err(anyhow::Error::from) },
-        );
+        let wait_for_answer = wait_for_stdio_answer(&shell, input, &mut attachment, async move {
+            cancel_rx.await.map_err(anyhow::Error::from)
+        });
         tokio::pin!(wait_for_answer);
 
         tokio::select! {
@@ -909,29 +854,16 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
         }
         cancel_tx.send(()).unwrap();
 
-        tokio::time::timeout(std::time::Duration::from_millis(10), &mut wait_for_answer)
-            .await
-            .expect_err("cancellation waits until the task is accepted");
-        let events = shell.cat("/agent/root/events").await.unwrap();
-        assert!(
-            !String::from_utf8_lossy(&events).contains("ctl:interrupt"),
-            "do not let an idle Runtime consume the interrupt before input"
-        );
-
-        shell
-            .write(
-                "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\"}}\n",
-            )
-            .await
-            .unwrap();
         wait_for_answer.await
     };
 
-    assert_eq!(result.unwrap_err().to_string(), "Agent task interrupted");
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Agent input cancellation requested"
+    );
     let events = String::from_utf8(shell.cat("/agent/root/events").await.unwrap()).unwrap();
     assert!(
-        events.contains("ctl:interrupt"),
+        events.contains(&format!("ctl:queue-v1 interrupt {submission_id}")),
         "one-shot cancellation must target the Agent Machine: {events:?}"
     );
     let process_status =

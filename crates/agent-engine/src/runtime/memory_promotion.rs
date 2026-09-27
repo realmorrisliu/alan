@@ -21,6 +21,8 @@ use crate::prompts::{
 use crate::tape::Message;
 
 use super::transition::NamespaceGeneration;
+mod storage;
+use storage::{acquire_promotion_lock, write_text_file};
 
 const DEFAULT_PROMOTED_FACTS_HEADER: &str = "## Promoted Facts";
 const DEFAULT_TOPIC_SUMMARY: &str = "Promoted from inbox entries.";
@@ -152,13 +154,32 @@ pub(crate) async fn promote_inbox_entry(
     memory_dir: &Path,
     inbox_path: &Path,
     now: DateTime<Utc>,
+    cancel: &CancellationToken,
 ) -> Result<PromotionOutcome> {
+    ensure_memory_promotion_not_cancelled(cancel)?;
     ensure_memory_store_layout_at(memory_dir).with_context(|| {
         format!(
             "failed to ensure Memory Store layout before promoting inbox entry at {}",
             memory_dir.display()
         )
     })?;
+    // ponytail: lock the inbox and files this path updates; extend this set with future shared writes.
+    let _inbox_lock = acquire_promotion_lock(inbox_path, cancel).await?;
+    ensure_memory_promotion_not_cancelled(cancel)?;
+
+    let raw = tokio::fs::read_to_string(inbox_path)
+        .await
+        .with_context(|| format!("read inbox entry {}", inbox_path.display()))?;
+    let document = parse_inbox_entry(&raw)
+        .with_context(|| format!("parse inbox entry {}", inbox_path.display()))?;
+    let target_path = resolve_target_path(memory_dir, &document.frontmatter.target)?;
+    let lock_path = if is_topic_target(&document.frontmatter.target) {
+        memory_dir.join(MEMORY_STORE_FILENAME)
+    } else {
+        target_path.clone()
+    };
+    let _target_lock = acquire_promotion_lock(&lock_path, cancel).await?;
+    ensure_memory_promotion_not_cancelled(cancel)?;
 
     let raw = tokio::fs::read_to_string(inbox_path)
         .await
@@ -166,6 +187,14 @@ pub(crate) async fn promote_inbox_entry(
     let mut document = parse_inbox_entry(&raw)
         .with_context(|| format!("parse inbox entry {}", inbox_path.display()))?;
     let target_path = resolve_target_path(memory_dir, &document.frontmatter.target)?;
+    let current_lock_path = if is_topic_target(&document.frontmatter.target) {
+        memory_dir.join(MEMORY_STORE_FILENAME)
+    } else {
+        target_path.clone()
+    };
+    if current_lock_path != lock_path {
+        bail!("inbox target changed while waiting for its promotion lock");
+    }
     let promoted_from = format_relative_memory_path(memory_dir, inbox_path);
     let promoted_stamp = now.format("%F").to_string();
     let promoted_observation = normalize_inline_text(&document.observation);
@@ -350,7 +379,7 @@ async fn apply_memory_promotion_candidates(
         let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
         if candidate.disposition == PromotionDisposition::PromoteNow {
             ensure_memory_promotion_not_cancelled(cancel)?;
-            promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+            promote_inbox_entry(memory_dir, &inbox_path, now, cancel).await?;
         }
     }
 
@@ -398,7 +427,7 @@ async fn capture_confirmed_turn_memory_for_test(
     for candidate in candidates {
         let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
         if candidate.disposition == PromotionDisposition::PromoteNow {
-            promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+            promote_inbox_entry(memory_dir, &inbox_path, now, &cancel).await?;
         }
     }
 
@@ -940,18 +969,6 @@ async fn read_text_file_or_default(path: &Path) -> Result<String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
     }
-}
-
-async fn write_text_file(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("create directory {}", parent.display()))?;
-    }
-    tokio::fs::write(path, content)
-        .await
-        .with_context(|| format!("write {}", path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]

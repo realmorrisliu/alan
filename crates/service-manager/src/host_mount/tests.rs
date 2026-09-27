@@ -500,6 +500,8 @@ fn exact_path_replacement_retires_the_old_projection_identity() {
         HostMountAccess::ReadOnly,
         old_host.path().to_path_buf(),
     );
+    let old_binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+    assert_eq!(old_binding.cwd_grant_id.as_deref(), Some("grant-old"));
     approve(
         &service,
         7,
@@ -511,6 +513,10 @@ fn exact_path_replacement_retires_the_old_projection_identity() {
 
     service.revoke("grant-old", "test").unwrap();
 
+    assert!(
+        service.reconcile(7, old_binding).is_err(),
+        "replacement must not inherit the old cwd selection"
+    );
     assert!(namespace.snapshot().resolve("/mnt/project").is_ok());
     assert_eq!(
         service

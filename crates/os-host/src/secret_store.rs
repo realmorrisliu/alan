@@ -1,6 +1,7 @@
 //! Host credential-store adapter used while materializing callable connections.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use alan_agent_engine::{Config, LlmProvider};
@@ -15,6 +16,9 @@ const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
 struct SecretStoreFile {
     #[serde(default)]
     secrets: BTreeMap<String, String>,
+    // Retain explicit logout across legacy native-store fallback and process restarts.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    revoked: BTreeSet<String>,
 }
 
 /// Explicit Host credential-store binding. Connection Service receives only
@@ -57,32 +61,69 @@ impl SecretStore {
         Ok(store)
     }
 
+    pub(crate) fn has_local_override(&self, credential_id: &str) -> anyhow::Result<bool> {
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let stored = self.read_secret_file()?;
+        Ok(stored.secrets.contains_key(credential_id) || stored.revoked.contains(credential_id))
+    }
+
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
-        if let Some(secret) = self.resolved_secrets.get(credential_id) {
-            return Ok(Some(secret.clone()));
-        }
         let secrets = self.read_secret_file()?;
-        Ok(secrets.secrets.get(credential_id).cloned())
+        if secrets.revoked.contains(credential_id) {
+            return Ok(None);
+        }
+        Ok(secrets
+            .secrets
+            .get(credential_id)
+            .or_else(|| self.resolved_secrets.get(credential_id))
+            .cloned())
     }
 
     pub fn save(&self, credential_id: &str, secret: &str) -> anyhow::Result<()> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let _lock = self.lock()?;
         let mut secrets = self.read_secret_file()?;
         secrets
             .secrets
             .insert(credential_id.to_string(), secret.trim().to_string());
+        secrets.revoked.remove(credential_id);
         self.write_secret_file(&secrets)
     }
 
     pub fn delete(&self, credential_id: &str) -> anyhow::Result<bool> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let _lock = self.lock()?;
         let mut secrets = self.read_secret_file()?;
-        let removed = secrets.secrets.remove(credential_id).is_some();
-        if removed {
+        let removed = secrets.secrets.remove(credential_id).is_some()
+            || (!secrets.revoked.contains(credential_id)
+                && self.resolved_secrets.contains_key(credential_id));
+        let newly_revoked = secrets.revoked.insert(credential_id.to_string());
+        let changed = removed || newly_revoked;
+        if changed {
             self.write_secret_file(&secrets)?;
         }
-        Ok(removed)
+        Ok(changed)
+    }
+
+    fn lock(&self) -> anyhow::Result<std::fs::File> {
+        std::fs::create_dir_all(&self.credentials_dir)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let lock = options.open(self.credentials_dir.join("secrets.toml.lock"))?;
+        anyhow::ensure!(
+            lock.metadata()?.is_file(),
+            "secret store lock is not a regular file"
+        );
+        lock.lock()?;
+        Ok(lock)
     }
 
     fn secret_file_path(&self) -> anyhow::Result<PathBuf> {
@@ -106,47 +147,23 @@ impl SecretStore {
 
     fn write_secret_file(&self, secret_file: &SecretStoreFile) -> anyhow::Result<()> {
         let path = self.secret_file_path()?;
-        if secret_file.secrets.is_empty() {
+        if secret_file.secrets.is_empty() && secret_file.revoked.is_empty() {
             match std::fs::remove_file(&path) {
-                Ok(()) => return Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("failed to remove secret store {}", path.display())
-                    });
-                }
+                Ok(()) => std::fs::File::open(&self.credentials_dir)?.sync_all()?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("failed to remove secret store"),
             }
+            return Ok(());
         }
         let rendered = toml::to_string_pretty(secret_file)
             .context("failed to encode secret store while saving")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create credentials directory {}",
-                    parent.display()
-                )
-            })?;
-        }
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .mode(0o600)
-                .open(&path)
-                .with_context(|| format!("failed to open secret store {}", path.display()))?;
-            file.write_all(rendered.as_bytes())
-                .with_context(|| format!("failed to write secret store {}", path.display()))?;
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&path, rendered)
-                .with_context(|| format!("failed to write secret store {}", path.display()))?;
-        }
+        let mut staged = tempfile::NamedTempFile::new_in(&self.credentials_dir)?;
+        staged.write_all(rendered.as_bytes())?;
+        staged.as_file().sync_all()?;
+        staged
+            .persist(&path)
+            .context("failed to replace secret store")?;
+        std::fs::File::open(&self.credentials_dir)?.sync_all()?;
         Ok(())
     }
 }
@@ -241,6 +258,105 @@ mod tests {
         assert_eq!(store.load("kimi").unwrap().as_deref(), Some("sk-test"));
         assert!(store.delete("kimi").unwrap());
         assert_eq!(store.load("kimi").unwrap(), None);
+    }
+
+    #[test]
+    fn independent_processes_preserve_secret_updates() {
+        const CHILD_ROOT: &str = "ALAN_SECRET_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let store = SecretStore::from_directory(Path::new(&root)).unwrap();
+            let prefix = std::env::var("ALAN_SECRET_TEST_PREFIX").unwrap();
+            for index in 0..16 {
+                store
+                    .save(&format!("{prefix}-{index}"), "test-secret")
+                    .unwrap();
+            }
+            for index in 0..8 {
+                assert!(store.delete(&format!("{prefix}-{index}")).unwrap());
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let children = (0..4)
+            .map(|index| {
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "secret_store::tests::independent_processes_preserve_secret_updates",
+                    ])
+                    .env(CHILD_ROOT, temp.path())
+                    .env("ALAN_SECRET_TEST_PREFIX", format!("writer-{index}"))
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+        let store = SecretStore::from_directory(temp.path()).unwrap();
+        assert_eq!(store.read_secret_file().unwrap().secrets.len(), 32);
+        for writer in 0..4 {
+            for index in 8..16 {
+                assert_eq!(
+                    store
+                        .load(&format!("writer-{writer}-{index}"))
+                        .unwrap()
+                        .as_deref(),
+                    Some("test-secret")
+                );
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(store.secret_file_path().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_updates_and_logout_override_legacy_native_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback =
+            || SecretStore::with_resolved_secret(temp.path(), "native", "legacy".into()).unwrap();
+        let reader = fallback();
+        let writer = SecretStore::from_directory(temp.path()).unwrap();
+        assert_eq!(reader.load("native").unwrap().as_deref(), Some("legacy"));
+        writer.save("native", "replacement").unwrap();
+        assert_eq!(
+            reader.load("native").unwrap().as_deref(),
+            Some("replacement")
+        );
+        assert!(writer.delete("native").unwrap());
+        assert_eq!(reader.load("native").unwrap(), None);
+        assert_eq!(fallback().load("native").unwrap(), None);
+        writer.save("native", "renewed").unwrap();
+        assert_eq!(
+            fallback().load("native").unwrap().as_deref(),
+            Some("renewed")
+        );
+        assert!(reader.delete("native").unwrap());
+        assert!(!reader.delete("native").unwrap());
+    }
+
+    #[test]
+    fn logout_reports_a_new_revocation_of_a_native_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let live =
+            SecretStore::with_resolved_secret(temp.path(), "native", "legacy".into()).unwrap();
+        let logout = SecretStore::from_directory(temp.path()).unwrap();
+
+        assert_eq!(live.load("native").unwrap().as_deref(), Some("legacy"));
+        assert!(logout.delete("native").unwrap());
+        assert_eq!(live.load("native").unwrap(), None);
+        assert!(!logout.delete("native").unwrap());
     }
 
     #[test]

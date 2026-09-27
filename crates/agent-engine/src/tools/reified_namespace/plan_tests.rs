@@ -604,3 +604,44 @@ fn namespace_paths_must_be_absolute_and_non_root() {
         Err(ReifiedNamespacePlanError::RootNamespacePath)
     );
 }
+
+#[test]
+fn native_tmp_grant_uses_an_unoccupied_private_scratch_root() {
+    let input = ReifiedNamespacePlanInput::new(
+        vec![
+            ReifiedMountDeclaration::host("/tmp", "/tmp", ReifiedMountAccess::ReadWrite),
+            ReifiedMountDeclaration::host("/.alan-tmp-0", "/other", ReifiedMountAccess::ReadOnly),
+        ],
+        "/tmp",
+        shell_argv(),
+        NetworkPosture::Deny,
+    );
+    let plan = ReifiedNamespacePlan::derive(input).unwrap();
+    assert_eq!(plan.scratch_tmp.namespace_path, Path::new("/.alan-tmp-1"));
+    assert_eq!(plan.cwd, Path::new("/tmp"));
+}
+
+#[test]
+fn read_only_native_grants_can_share_the_same_execution_substrate() {
+    for path in ["/usr", "/usr/bin", "/usr/bin/subdirectory"] {
+        let input = ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(
+                path,
+                path,
+                ReifiedMountAccess::ReadOnly,
+            )],
+            path,
+            shell_argv(),
+            NetworkPosture::Deny,
+        )
+        .with_execution_substrate(vec![ReifiedExecutionSubstrateMount::new(
+            "/usr/bin", "/usr/bin",
+        )]);
+        let plan = ReifiedNamespacePlan::derive(input).unwrap();
+        assert_eq!(plan.cwd, Path::new(path));
+        assert_eq!(
+            plan.declared_host_mounts[0].access,
+            ReifiedMountAccess::ReadOnly
+        );
+    }
+}

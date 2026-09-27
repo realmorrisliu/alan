@@ -153,23 +153,27 @@ Candidate UI SHALL be temporary and adjacent to the active inline prompt.
 The TUI SHALL NOT capture mouse input and SHALL leave text selection and copy to
 the host terminal. It SHALL restore terminal modes on normal exit, EOF, and
 error, and leave the latest prompt/output in terminal order when it exits.
-Quitting or closing the renderer SHALL NOT stop the Agent Process or Host.
+The TUI SHALL NOT directly issue Process or Host shutdown controls. When bare
+`alan` owns the mounted instance, its CLI SHALL shut that instance down after
+the renderer exits. A terminal-host view detach while retaining the Alan process
+is distinct from actual application exit.
 
 #### Scenario: Mouse capture is disabled
 - **WHEN** the TUI is running
 - **THEN** the terminal's native mouse selection and copy behavior is available
 - **AND** the TUI does not enable mouse capture
 
-#### Scenario: Renderer exits while a task is active
-- **WHEN** the user quits or the terminal input ends during a running task
-- **THEN** only the renderer exits
-- **AND** it does not kill the Host, stop the Agent, or automatically replay the
-  task on a later attach
+#### Scenario: The foreground application exits while a task is active
+- **WHEN** the user quits Alan or terminal input ends during a running task
+- **THEN** the renderer restores terminal modes and returns to its owning CLI
+- **AND** the CLI shuts down its owned instance and active work
+- **AND** completed effects remain completed and uncertain outcomes are not
+  replayed automatically
 
-#### Scenario: Ctrl-D detaches from an empty prompt with no pending input
+#### Scenario: Ctrl-D exits from an empty prompt
 - **WHEN** the user presses Ctrl-D with an empty prompt and no pending Agent input
 - **THEN** the renderer exits and restores terminal modes
-- **AND** the attached Agent Process and Host continue running
+- **AND** the owning foreground application shuts down its Agent and services
 
 #### Scenario: Ctrl-D preserves pending Agent input
 - **WHEN** the user presses Ctrl-D while a confirmation or structured-input request is pending

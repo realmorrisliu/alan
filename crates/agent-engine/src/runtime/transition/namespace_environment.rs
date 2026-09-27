@@ -6,6 +6,7 @@
 //! spawned through `/proc/clone`, and state is written back to `/agent/<pid>`.
 
 mod agent_files;
+pub(crate) use agent_files::NamespaceTapeWriter;
 mod child_launch;
 mod client;
 mod generation;
@@ -57,6 +58,22 @@ pub struct NamespaceTurnOutput {
     pub generation_id: String,
 }
 
+/// A failed wait after a Tool Process was spawned.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub(crate) struct NamespaceToolProcessError {
+    pub(crate) pid: String,
+    #[source]
+    pub(crate) source: anyhow::Error,
+}
+
+/// Correlation and human-approval evidence for one Tool Action.
+#[derive(Clone, Copy)]
+pub(crate) struct NamespaceToolActionEvidence<'a> {
+    pub(crate) call_id: &'a str,
+    pub(crate) approval: &'a str,
+}
+
 /// A yield/request record written by the engine under `requests/<id>/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceRequestRecord {
@@ -81,7 +98,7 @@ impl NamespaceRequestRecord {
 }
 
 /// A tool/action record written by the engine under `actions/<id>/`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NamespaceActionRecord {
     pub name: String,
     pub status: String,
@@ -143,6 +160,7 @@ pub struct NamespaceRuntimeEnvironment {
     tool_process_context: Option<NamespaceToolProcessContext>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
+    action_recorder: Option<crate::rollout::RolloutRecorder>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
 }
 
@@ -160,6 +178,7 @@ pub(crate) struct NamespaceAgentFiles {
     agent_path: String,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
+    action_recorder: Option<crate::rollout::RolloutRecorder>,
 }
 
 /// Narrow handle for lifecycle and stream files owned by the Process table.
@@ -223,6 +242,7 @@ impl NamespaceRuntimeEnvironment {
             tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
+            action_recorder: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
         }
     }
@@ -233,11 +253,25 @@ impl NamespaceRuntimeEnvironment {
         self
     }
 
+    pub(crate) fn change_process_directory(&mut self, path: &std::path::Path) -> Result<PathBuf> {
+        let namespace_cwd = self.tool_execution().change_process_directory(path)?;
+        self.namespace_cwd = namespace_cwd.clone();
+        Ok(namespace_cwd)
+    }
+
     pub(crate) fn generation(&self) -> NamespaceGeneration {
         NamespaceGeneration {
             root: self.root.clone(),
             llm_connection: self.llm_connection.clone(),
         }
+    }
+
+    pub(crate) fn with_action_recorder(
+        mut self,
+        recorder: Option<crate::rollout::RolloutRecorder>,
+    ) -> Self {
+        self.action_recorder = recorder;
+        self
     }
 
     pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
@@ -246,6 +280,7 @@ impl NamespaceRuntimeEnvironment {
             agent_path: self.agent_path.clone(),
             input_offset: Arc::clone(&self.input_offset),
             control_offset: Arc::clone(&self.control_offset),
+            action_recorder: self.action_recorder.clone(),
         }
     }
 

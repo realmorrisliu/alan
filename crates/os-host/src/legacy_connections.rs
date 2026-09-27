@@ -1,7 +1,7 @@
 //! One-shot connection migration from the retired Host-directory model.
 
 use std::{
-    fs,
+    fs::{self, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
 };
@@ -66,11 +66,17 @@ pub fn migrate_legacy_connections(
     system_store: &SystemStorePaths,
     host_store: &HostStorePaths,
 ) -> Result<ConnectionMigrationReport> {
-    ensure_real_legacy_root_or_missing(&paths.alan_root)?;
     ensure!(
         paths.channel.descriptor().id == system_store.channel_id,
         "legacy and System Store channels differ"
     );
+    if !ensure_real_legacy_root_or_missing(&paths.alan_root)? {
+        return Ok(ConnectionMigrationReport::default());
+    }
+    let _migration_lock = LegacyMigrationLock::acquire(&system_store.root)?;
+    if !ensure_real_legacy_root_or_missing(&paths.alan_root)? {
+        return Ok(ConnectionMigrationReport::default());
+    }
 
     let credential_file_migrated = migrate_host_file(
         &paths.credential_file(),
@@ -105,10 +111,10 @@ fn migrate_connection_metadata(source: &Path, target: &Path) -> Result<bool> {
     );
     let legacy = load_legacy_connections(source)?;
     let (current, _) = ConnectionsFile::load_from_path(target)?;
-    let merged = merge_connections(current, legacy)?;
+    let merged = merge_connections(current.clone(), legacy)?;
 
     if !target.is_file() || ConnectionsFile::load_from_path(target)?.0 != merged {
-        save_connections_atomically(&merged, target)?;
+        merged.save_if_unchanged(target, &current)?;
     }
     ensure!(
         ConnectionsFile::load_from_path(target)?.0 == merged,
@@ -198,34 +204,6 @@ fn merge_connections(
     Ok(current)
 }
 
-fn save_connections_atomically(connections: &ConnectionsFile, target: &Path) -> Result<()> {
-    let parent = target
-        .parent()
-        .context("Connection Service metadata path has no parent")?;
-    fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "failed to create Connection Service directory {}",
-            parent.display()
-        )
-    })?;
-    let staging = parent.join(format!(
-        ".connections-migration-{}.tmp",
-        uuid::Uuid::new_v4().simple()
-    ));
-    connections.save_to_path(&staging)?;
-    ensure!(
-        ConnectionsFile::load_from_path(&staging)?.0 == *connections,
-        "staged Connection Service metadata failed verification"
-    );
-    fs::rename(&staging, target).with_context(|| {
-        format!(
-            "failed to atomically install Connection Service metadata {}",
-            target.display()
-        )
-    })?;
-    Ok(())
-}
-
 fn migrate_host_file(source: &Path, target: &Path, label: &str) -> Result<bool> {
     let Some(source_metadata) = optional_symlink_metadata(source)? else {
         return Ok(false);
@@ -298,16 +276,50 @@ fn write_sensitive_file_atomically(target: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn ensure_real_legacy_root_or_missing(root: &Path) -> Result<()> {
+fn ensure_real_legacy_root_or_missing(root: &Path) -> Result<bool> {
     let Some(metadata) = optional_symlink_metadata(root)? else {
-        return Ok(());
+        return Ok(false);
     };
     ensure!(
         metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
         "refusing to traverse non-directory or symlinked legacy root {}",
         root.display()
     );
-    Ok(())
+    Ok(true)
+}
+
+struct LegacyMigrationLock {
+    _file: fs::File,
+}
+
+impl LegacyMigrationLock {
+    fn acquire(system_store_root: &Path) -> Result<Self> {
+        fs::create_dir_all(system_store_root).with_context(|| {
+            format!(
+                "failed to create System Store directory {}",
+                system_store_root.display()
+            )
+        })?;
+        let path = system_store_root.join("legacy-connections-migration.lock");
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = options
+            .open(&path)
+            .with_context(|| format!("open legacy connection migration lock {}", path.display()))?;
+        ensure!(
+            file.metadata()?.is_file(),
+            "migration lock is not a regular file"
+        );
+        file.lock().context("lock legacy connection migration")?;
+        Ok(Self { _file: file })
+    }
 }
 
 fn validate_absolute_path(label: &str, path: &Path) -> Result<()> {
@@ -343,5 +355,26 @@ fn prune_empty_parents(mut path: Option<&Path>, stop_before: Option<&Path>) {
             break;
         }
         path = current.parent();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn migration_lock_serializes_independent_open_files() {
+        let temp = TempDir::new().unwrap();
+        let lock = LegacyMigrationLock::acquire(temp.path()).unwrap();
+        let path = temp.path().join("legacy-connections-migration.lock");
+        let waiter = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        assert!(waiter.try_lock().is_err(), "another caller holds the lock");
+        drop(lock);
+        waiter.try_lock().unwrap();
     }
 }

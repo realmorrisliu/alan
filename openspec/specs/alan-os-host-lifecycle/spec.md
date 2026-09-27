@@ -1,42 +1,93 @@
 # alan-os-host-lifecycle Specification
 
 ## Purpose
-Defines singleton alan9 Host ownership, file-proven readiness, per-boot
-identity, and test-only ephemeral hosting.
+Defines foreground invocation ownership of an alan9 instance, file-proven
+readiness, per-invocation boot identity, and production composition.
 
 ## Requirements
 
-### Requirement: One system Host owns each channel
-Alan SHALL run at most one alan9 Host per user, device, and install channel.
-The dedicated Host SHALL own Kernel and whole-system lifetime; renderer hosts
-MUST attach and MUST NOT boot competing product instances.
+### Requirement: Each foreground invocation owns its alan9 instance
+Each bare or redirected Agent-execution invocation of `alan` SHALL own one
+foreground alan9 instance, including its Kernel, Process table, services, and
+instance-local Root Agent Process. When `ALAN_INSTANCE_RUNTIME_DIR` is unset,
+the CLI SHALL allocate a unique temporary runtime directory. When it is set,
+that exact directory SHALL select the instance endpoint, and only one invocation
+may own it. The install channel SHALL select configuration and persistent store
+boundaries, not a singleton live runtime. Service Manager SHALL retain ownership
+of services and the Root Agent Process within the invocation. Bare `alan` MUST
+NOT launch or attach to a separate background Host. Herdr SHALL NOT be required
+for ordinary terminal operation.
 
-#### Scenario: CLI and macOS use stable
-- **WHEN** both stable clients start for the same user
-- **THEN** both target the same stable alan9 Host
-- **AND** neither creates an app-private Kernel
+#### Scenario: Two terminal sessions start Alan
+- **WHEN** two terminal sessions start `alan` for the same user and install
+  channel without `ALAN_INSTANCE_RUNTIME_DIR`, or with distinct runtime
+  directories
+- **THEN** each owns an independent Root Agent, Process table, input queue, cwd,
+  and runtime endpoint
+- **AND** exiting one invocation does not stop or submit work to the other
+- **AND** concurrent use of package, connection, and credential stores preserves
+  their existing commit and authorization contracts
+
+#### Scenario: Two invocations select the same runtime directory
+- **WHEN** two terminal sessions select the same `ALAN_INSTANCE_RUNTIME_DIR`
+- **THEN** only one invocation owns that endpoint
+- **AND** the other reports that it cannot acquire the instance instead of
+  attaching to or borrowing its Root Agent
 
 ### Requirement: Host readiness is file-proven
-The Host SHALL accept product attachments only after the Standard Namespace,
-required fixed services, and `/agent/root` are readable. Required failure SHALL
-fail boot rather than expose a partial system as ready.
+An invocation SHALL expose its renderer or an explicitly addressed local
+attachment only after the Standard Namespace, required services, and its
+`/agent/root` are readable. Required failure SHALL fail startup, clean up the
+failed instance, and report an error rather than connect to another invocation.
 
 #### Scenario: Root Agent fails to start
 - **WHEN** `/agent/root` cannot be read during boot
-- **THEN** the Host reports boot failure and rejects normal attachments
+- **THEN** the invocation reports startup failure
+- **AND** it does not present a partial system or borrow another terminal's Root
+  Agent
 
 ### Requirement: Host restart creates a new boot identity
-Every Host boot SHALL publish a fresh boot identity and create a new Process
-table and Root Agent Process. It MUST NOT deserialize live Process state.
+Every foreground instance boot SHALL publish a fresh boot identity and create a
+new Process table and Root Agent Process. It MUST NOT deserialize live Process
+state or attach to another invocation's live namespace. Durable recovery is
+outside the shipped startup contract.
 
-#### Scenario: Stored Process Reference predates restart
-- **WHEN** a client presents a reference with the previous boot identity
+#### Scenario: A Process reference belongs to another boot
+- **WHEN** a client presents a reference with a different instance boot identity
 - **THEN** Alan rejects it even if the PID has been reused
 
-### Requirement: Ephemeral Host is test-only
-An in-process or ephemeral Host SHALL require explicit development/test
-selection and MUST NOT be a product fallback when the dedicated Host is absent.
+#### Scenario: A new invocation starts
+- **WHEN** a user starts another bare `alan` invocation
+- **THEN** it creates fresh execution in its own instance
+- **AND** it does not implicitly attach to or resume another invocation's Root
 
-#### Scenario: Product Host fails
-- **WHEN** a normal client cannot start or attach the dedicated Host
-- **THEN** it reports the failure instead of silently booting an embedded system
+### Requirement: Product composition preserves production adapters
+Foreground product composition SHALL use the existing production providers,
+channel stores, and governance. Mock providers and ephemeral test stores SHALL
+require explicit development or test selection; foreground composition MUST NOT
+itself select a test Host or weaken authorization.
+
+#### Scenario: Product composition fails
+- **WHEN** product composition cannot boot its foreground instance
+- **THEN** startup fails with a diagnostic
+- **AND** it does not substitute mock providers, test-only authority, or an
+  ambient background Host
+
+### Requirement: Foreground application exit ends its owned runtime
+Actual Alan process exit SHALL shut down its owned services and active execution
+through existing lifecycle and native descendant-cancellation boundaries.
+Completed effects SHALL remain completed. Forced termination or incomplete
+durable evidence SHALL NOT be reported as successful cancellation or work.
+
+#### Scenario: User exits Alan during work
+- **WHEN** the foreground application exits
+- **THEN** it stops admitting work and shuts down its owned execution
+- **AND** it does not keep a detached Host running or roll back completed effects
+
+#### Scenario: Native process is forcibly terminated
+- **WHEN** Alan cannot complete orderly shutdown or persist a terminal outcome
+- **THEN** the result remains incomplete or unknown from available evidence
+- **AND** absence of completion does not authorize automatic replay
+
+> Explicit durable recovery selection and queue/cwd restoration remain
+> unimplemented; this specification records the shipped foreground lifecycle.

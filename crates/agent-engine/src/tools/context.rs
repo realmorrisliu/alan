@@ -21,6 +21,11 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
     /// Resolve an Agent-visible absolute path or cwd-relative path.
     fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf>;
 
+    /// Resolve an explicit user directory change to its public namespace path.
+    fn resolve_directory(&self, _namespace_cwd: &Path, _path: &Path) -> Result<PathBuf> {
+        anyhow::bail!("Host adapter does not support standalone cd")
+    }
+
     /// Translate one native adapter path back into the Process namespace.
     fn visible_path(&self, host_path: &Path) -> PathBuf;
 
@@ -41,6 +46,8 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
 pub struct ToolExecutionBinding {
     /// Agent-visible Alan OS working directory.
     pub namespace_cwd: PathBuf,
+    /// Opaque selected Host Mount identity; revalidated by the owning service.
+    pub cwd_grant_id: Option<String>,
     /// Scratch directory for temporary files.
     pub scratch_dir: PathBuf,
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
@@ -71,6 +78,7 @@ impl ToolExecutionBinding {
     pub fn awaiting_host_projection(namespace_cwd: PathBuf, scratch_dir: PathBuf) -> Self {
         Self {
             namespace_cwd,
+            cwd_grant_id: None,
             scratch_dir,
             adapter: None,
         }
@@ -108,6 +116,8 @@ impl ToolExecutionBinding {
 pub struct ToolContext {
     /// Agent-visible Alan OS working directory.
     pub namespace_cwd: PathBuf,
+    /// Opaque selected Host Mount identity; revalidated by the owning service.
+    pub cwd_grant_id: Option<String>,
     /// Scratch directory for temporary files
     pub scratch_dir: PathBuf,
     /// Global configuration
@@ -120,6 +130,7 @@ impl ToolContext {
     pub fn from_binding(binding: ToolExecutionBinding, config: Arc<Config>) -> Self {
         Self {
             namespace_cwd: binding.namespace_cwd,
+            cwd_grant_id: binding.cwd_grant_id,
             scratch_dir: binding.scratch_dir,
             config,
             adapter: binding.adapter,
@@ -130,6 +141,7 @@ impl ToolContext {
     pub fn binding(&self) -> ToolExecutionBinding {
         ToolExecutionBinding {
             namespace_cwd: self.namespace_cwd.clone(),
+            cwd_grant_id: self.cwd_grant_id.clone(),
             scratch_dir: self.scratch_dir.clone(),
             adapter: self.adapter.clone(),
         }

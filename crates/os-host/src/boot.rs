@@ -10,7 +10,7 @@ use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use alan_service_manager::{
-    ConnectionsFile, LlmClientFactory, ProcessLaunchContext, ServiceManagerConfig,
+    ConnectionsFile, LlmClientFactory, ProcessLaunchContext, ServiceManager, ServiceManagerConfig,
 };
 use anyhow::{Context, Result, bail};
 
@@ -22,7 +22,7 @@ use crate::{
 /// Host-supplied adapters and durable bindings needed by Service Manager.
 pub struct HostBootConfig(ServiceManagerConfig);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ProductLlmClientFactory {
     credentials_dir: std::path::PathBuf,
     keychain_service: Option<String>,
@@ -93,8 +93,8 @@ impl LlmProvider for UnconfiguredLlmProvider {
     }
 }
 
-impl LlmClientFactory for ProductLlmClientFactory {
-    fn create(
+impl ProductLlmClientFactory {
+    fn resolve(
         &self,
         base_config: &Config,
         selected_profile: Option<&str>,
@@ -105,21 +105,24 @@ impl LlmClientFactory for ProductLlmClientFactory {
         };
         let mut core_config = base_config.clone();
         let resolved = connections.resolve_profile(Some(selected_profile))?;
+        let local_store = SecretStore::from_directory(&self.credentials_dir)?;
         let secret_store = match (
             self.keychain_service.as_deref(),
             resolved.credential_id.as_deref(),
         ) {
-            (Some(service), Some(credential_id)) => {
+            (Some(service), Some(credential_id))
+                if !local_store.has_local_override(credential_id)? =>
+            {
                 match load_macos_keychain_secret(service, credential_id)? {
                     Some(secret) => SecretStore::with_resolved_secret(
                         &self.credentials_dir,
                         credential_id,
                         secret,
                     )?,
-                    None => SecretStore::from_directory(&self.credentials_dir)?,
+                    None => local_store,
                 }
             }
-            _ => SecretStore::from_directory(&self.credentials_dir)?,
+            _ => local_store,
         };
         apply_profile_to_config(
             connections,
@@ -135,9 +138,82 @@ impl LlmClientFactory for ProductLlmClientFactory {
     }
 }
 
+impl LlmClientFactory for ProductLlmClientFactory {
+    fn create(
+        &self,
+        base_config: &Config,
+        selected_profile: Option<&str>,
+        connections: &ConnectionsFile,
+    ) -> Result<LlmClient> {
+        let client = self.resolve(base_config, selected_profile, connections)?;
+        let Some(profile_id) = selected_profile else {
+            return Ok(client);
+        };
+        if connections
+            .resolve_profile(Some(profile_id))?
+            .credential_kind
+            != alan_service_manager::CredentialKind::SecretString
+        {
+            return Ok(client);
+        }
+        Ok(LlmClient::new(LiveSecretProvider {
+            factory: self.clone(),
+            base_config: base_config.clone(),
+            profile_id: profile_id.to_string(),
+            connections: connections.clone(),
+            provider_name: client.provider_name(),
+        }))
+    }
+}
+
+// Keep Process profile settings fixed while resolving the owning Host credential store at
+// each request boundary. In-flight requests retain their original authorization.
+// ponytail: rebuild secret-backed clients per request; add versioned reuse if setup costs matter.
+struct LiveSecretProvider {
+    factory: ProductLlmClientFactory,
+    base_config: Config,
+    profile_id: String,
+    connections: ConnectionsFile,
+    provider_name: &'static str,
+}
+
+impl LiveSecretProvider {
+    fn client(&self) -> Result<LlmClient> {
+        self.factory
+            .resolve(&self.base_config, Some(&self.profile_id), &self.connections)
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for LiveSecretProvider {
+    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
+        self.client()?.generate(request).await
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+        self.client()?.chat(system, user).await
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        self.client()?.generate_stream(request).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        self.provider_name
+    }
+}
+
 impl HostBootConfig {
     /// Build product inputs from the channel stores and native adapters.
     pub fn product(channel_id: &str) -> Result<Self> {
+        Self::product_with_root_resume(channel_id, false)
+    }
+
+    /// Build product inputs and optionally restore the selected Root Agent rollout.
+    pub fn product_with_root_resume(channel_id: &str, resume_root: bool) -> Result<Self> {
         let channel = InstallChannel::from_id(channel_id)
             .with_context(|| format!("unknown Alan OS Host channel `{channel_id}`"))?;
         let system_store = SystemStorePaths::detect(channel_id)?;
@@ -205,6 +281,7 @@ impl HostBootConfig {
         Ok(Self(ServiceManagerConfig {
             channel_id: channel_id.into(),
             process,
+            resume_root,
             launch_context,
             connection_store: Some(connection_store),
             package_store: Some(system_store.packages()?),
@@ -230,6 +307,18 @@ impl HostBootConfig {
         );
         config.host_mount_adapter = Arc::new(crate::host_mounts::NativeHostMountExportAdapter);
         Self(config)
+    }
+
+    /// Explicitly restore the selected Root Agent rollout for this invocation.
+    pub fn with_root_resume(mut self) -> Self {
+        self.0.resume_root = true;
+        self
+    }
+
+    /// Boot an independent in-process instance without a listener or background launcher.
+    /// The caller owns the returned manager and must shut it down before exiting.
+    pub async fn boot_foreground(self) -> Result<ServiceManager> {
+        ServiceManager::boot(self.0).await
     }
 
     pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
@@ -294,6 +383,37 @@ fn snapshot_agent_definition(root: &Path) -> Result<ProcessFileTree> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn foreground_instances_have_independent_lifetimes() {
+        use alan_ap::InProcessTransport;
+        use alan_shell::Shell;
+        let boot = || {
+            super::HostBootConfig::ephemeral(
+                "test",
+                alan_agent_engine::AgentProcessConfig::default(),
+                alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
+                alan_agent_engine::ToolRegistry::new(),
+            )
+            .boot_foreground()
+        };
+        let first = boot().await.unwrap();
+        let second = boot().await.unwrap();
+        assert_ne!(first.boot_id(), second.boot_id());
+        let first_shell = Shell::new(InProcessTransport::new(
+            first.local_entry().namespace_for_local_client(),
+        ));
+        let second_shell = Shell::new(InProcessTransport::new(
+            second.local_entry().namespace_for_local_client(),
+        ));
+        first_shell.ls("/agent/root").await.unwrap();
+        second_shell.ls("/agent/root").await.unwrap();
+        first.shutdown().await.unwrap();
+        assert!(first_shell.ls("/agent/root").await.is_err());
+        second_shell.ls("/agent/root").await.unwrap();
+        second.shutdown().await.unwrap();
+        assert!(second_shell.ls("/agent/root").await.is_err());
+    }
+
     use super::*;
     use std::collections::BTreeSet;
 
@@ -354,3 +474,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "boot/live_credential_tests.rs"]
+mod live_credential_tests;

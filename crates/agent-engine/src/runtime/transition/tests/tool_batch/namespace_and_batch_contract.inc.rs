@@ -54,7 +54,7 @@
         );
         assert_eq!(
             String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
-            r#"{"exit_code":0}"#
+            r#"{"call_id":"call-read","exit_code":0}"#
         );
     }
 
@@ -303,6 +303,7 @@
             let payload = execute_tool_effect(
                 tools.clone(),
                 tool_name,
+                NamespaceToolActionEvidence { call_id: &format!("call-{idx}"), approval: "not_required" },
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,
                 30,
@@ -325,6 +326,11 @@
             assert_eq!(payload["exit_code"], json!(0));
             assert_eq!(payload["process"], json!(format!("/proc/{pid}")));
             assert_eq!(payload["action_id"], json!(action_id));
+            let result: Value = serde_json::from_slice(
+                &shell.cat(&format!("/agent/1/actions/{action_id}/result")).await.unwrap()
+            ).unwrap();
+            assert_eq!(result["call_id"], format!("call-{idx}"));
+
 
             assert_eq!(
                 String::from_utf8(
@@ -371,18 +377,22 @@
 
         let tool_calls: Vec<NormalizedToolCall> = vec![];
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -422,8 +432,10 @@
             async {}
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
+            &writer,
             &[],
             0,
             Some(&broker),
@@ -431,6 +443,7 @@
         )
         .await
         .unwrap();
+        writer.finish().await.unwrap();
         assert!(!handled);
         assert_eq!(
             state.machine.buffered_inband_user_input_count(),
@@ -445,7 +458,10 @@
 
     #[tokio::test]
     async fn queued_steering_input_invalidates_earlier_active_plan() {
-        let mut state = create_test_state();
+        let mut state = create_test_state_with_machine_tools_and_provider(
+            AgentMachine::new(), ToolRegistry::new(), alan_llm::MockLlmProvider::new(),
+        ).await;
+        state.machine.accept_submission("original");
         state
             .machine
             .begin_turn(state.machine.messages().len());
@@ -458,20 +474,20 @@
         assert!(state.machine.plan_snapshot_is_from_active_turn());
 
         let broker = TurnInputBroker::default();
-        assert!(
-            broker
-                .push(alan_agent_protocol::Submission::new(Op::Input {
-                    parts: vec![alan_agent_protocol::ContentPart::text(
-                        "Steer to the new task"
-                    )],
-                    mode: InputMode::Steer,
-                }))
-                .await
-        );
+        for id in ["steer-a", "steer-b"] {
+            let mut submission = alan_agent_protocol::Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("Steer to the new task")],
+                mode: InputMode::Steer,
+            });
+            submission.id = id.into();
+            assert!(broker.push(submission).await);
+        }
         let mut emit = |_event: Event| async {};
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
+            &writer,
             &[],
             0,
             Some(&broker),
@@ -479,6 +495,7 @@
         )
         .await
         .unwrap();
+        writer.finish().await.unwrap();
 
         assert!(handled);
         assert!(!state.machine.plan_snapshot_is_from_active_turn());
@@ -486,6 +503,22 @@
             state.machine.messages().last().unwrap().text_content(),
             "Steer to the new task"
         );
+        assert_eq!(state.machine.current_submission_id(), Some("steer-b"));
+        assert_eq!(state.machine.related_submission_ids(), &["original", "steer-a"]);
+        run_turn_with_cancel(&mut state, TurnRunKind::ResumeTurn, None, &mut emit,
+            &CancellationToken::new(), None).await.unwrap();
+        let shell = Shell::new(state.environment.root_transport());
+        let tape = shell.cat(&format!("{}/machine/tape", state.environment.agent_path())).await.unwrap();
+        let records: Vec<Value> = std::str::from_utf8(&tape).unwrap().lines()
+            .map(|line| serde_json::from_str(line).unwrap()).collect();
+        for id in ["steer-a", "steer-b"] {
+            assert!(records.iter().any(|record| record["role"] == "user" && record["submission_id"] == id));
+        }
+        let answer = records.iter().rev().find(|record| record["role"] == "assistant").unwrap();
+        assert_eq!(answer["submission_id"], "steer-b");
+        assert_eq!(answer["related_submission_ids"], json!(["original", "steer-a"]));
+        state.machine.finish_submission();
+        assert!(state.machine.related_submission_ids().is_empty());
     }
 
     #[tokio::test]
@@ -512,18 +545,22 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         let has_update_plan_completion = events.iter().any(|event| {
@@ -573,18 +610,22 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -632,18 +673,22 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -686,18 +731,22 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         // Tool execution may fail due to sandbox restrictions, but orchestration should complete
         assert!(result.is_ok());
@@ -724,6 +773,7 @@
         };
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };

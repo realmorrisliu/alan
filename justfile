@@ -72,32 +72,31 @@ coverage-html:
 build:
     cargo build --release
 
-# Install standalone release CLI and Alan OS Host binaries locally
+# Install the standalone foreground CLI locally
 install:
     ALAN_INSTALL_CHANNEL=stable ./scripts/install-cli.sh
 
-# Install the local development CLI channel plus Alan OS Host binaries
+# Install the local development CLI channel
 install-dev:
     ALAN_INSTALL_CHANNEL=dev ./scripts/install-cli.sh
 
-# Validate the standalone CLI/Host installer and archive contract
+# Validate the standalone CLI installer and archive contract
 standalone-distribution-test:
     ./scripts/test-standalone-cli-distribution.sh
 
 # Check standalone release inputs without assembling an app bundle
 release-check:
     cargo check --locked -p alan --bin alan
-    cargo check --locked -p alan-os-host --bins
 
-# Build and archive the standalone CLI/Host release
+# Build and archive the standalone CLI release
 release:
     ./scripts/assemble-cli-release.sh
 
-# Uninstall owned standalone CLI/Host binaries without removing stores
+# Uninstall the owned standalone CLI without removing stores
 uninstall:
     ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall-cli.sh
 
-# Uninstall owned development CLI/Host binaries without removing stores
+# Uninstall the owned development CLI without removing stores
 uninstall-dev:
     ALAN_INSTALL_CHANNEL=dev ./scripts/uninstall-cli.sh
 

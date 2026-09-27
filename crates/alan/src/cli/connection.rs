@@ -7,7 +7,7 @@ use alan_os_host::{
     migrate_legacy_connections,
 };
 use alan_service_manager::{
-    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
+    ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
     default_credential_backend, normalize_profile_settings, sanitize_identifier,
     validate_profile_settings,
 };
@@ -29,37 +29,56 @@ struct ConnectionStores {
     credentials_dir: PathBuf,
     managed_auth: PathBuf,
     shell: Shell,
+    expected_metadata: String,
 }
 
-async fn connection_stores() -> Result<ConnectionStores> {
+async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
     let channel = InstallChannel::detect_current();
     let system = SystemStorePaths::detect(channel.descriptor().id)?;
     let host = HostStorePaths::detect(channel.descriptor().id)?;
     if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
         migrate_legacy_connections(&legacy, &system, &host)?;
     }
-    Ok(ConnectionStores {
-        credentials_dir: host.credentials,
-        managed_auth: host.managed_auth,
-        shell: Shell::new(super::host::attach_or_start_host(channel).await?.root),
-    })
-}
-
-async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
-    let stores = connection_stores().await?;
-    let bytes = stores
-        .shell
+    let shell = if std::env::var_os(NATIVE_CONNECTION_REQUEST_ENV).is_some() {
+        let paths = super::host::explicit_instance_paths(channel)?;
+        Shell::new(
+            alan_os_host::LocalAttachment::new(paths)
+                .connect()
+                .await?
+                .root,
+        )
+    } else {
+        let service =
+            ConnectionService::open(channel.descriptor().id, &system.connection_bindings()?)?;
+        let mut namespace = alan_kernel::Namespace::new();
+        namespace.mount(
+            "/mnt/connections",
+            alan_ap::InProcessTransport::new(service.file_server()),
+            alan_kernel::Access::ReadWrite,
+        );
+        Shell::new(alan_ap::InProcessTransport::new(std::sync::Arc::new(
+            alan_kernel::MountFs::new(namespace),
+        )))
+    };
+    let bytes = shell
         .cat("/mnt/connections/metadata")
         .await
         .map_err(|error| anyhow::anyhow!("read Connection Service metadata: {error}"))?;
-    let connections =
+    let connections: ConnectionsFile =
         serde_json::from_slice(&bytes).context("decode Connection Service metadata")?;
+    let stores = ConnectionStores {
+        credentials_dir: host.credentials,
+        managed_auth: host.managed_auth,
+        shell,
+        expected_metadata: connections.fingerprint()?,
+    };
     Ok((stores, connections))
 }
 
 async fn save_connections(stores: &ConnectionStores, connections: &ConnectionsFile) -> Result<()> {
     let command = serde_json::json!({
         "op": "replace_metadata",
+        "expected": &stores.expected_metadata,
         "connections": connections,
     });
     stores

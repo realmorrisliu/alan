@@ -232,7 +232,7 @@ async fn sandbox_exec_read_capability_allows_read_only_mount_paths() {
 }
 
 #[tokio::test]
-async fn sandbox_exec_projects_namespace_paths_for_native_host_mounts() {
+async fn sandbox_exec_uses_native_paths_for_host_mounts() {
     let read_only = TempDir::new().unwrap();
     let document = read_only.path().join("probe.txt");
     tokio::fs::write(&document, "mounted read\n").await.unwrap();
@@ -247,7 +247,7 @@ async fn sandbox_exec_projects_namespace_paths_for_native_host_mounts() {
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "cat /mnt/acceptance/probe.txt",
+            &format!("cat '{}'", document.display()),
             read_only.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Read),
@@ -258,7 +258,7 @@ async fn sandbox_exec_projects_namespace_paths_for_native_host_mounts() {
 
     let write = sandbox
         .exec_with_timeout_and_capability(
-            "touch /mnt/acceptance/denied.txt",
+            &format!("touch '{}'", read_only.path().join("denied.txt").display()),
             read_only.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
@@ -274,7 +274,7 @@ async fn sandbox_exec_projects_namespace_paths_for_native_host_mounts() {
 
     let unmounted = sandbox
         .exec_with_timeout_and_capability(
-            "cat /mnt/unmounted/probe.txt",
+            "cat /mnt/acceptance/probe.txt",
             read_only.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Read),

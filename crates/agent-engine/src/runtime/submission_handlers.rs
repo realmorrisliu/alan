@@ -9,7 +9,9 @@ use crate::approval::{
 };
 use crate::tape::ContentPart;
 
-use super::transition::{HostMountTerminalResult, NamespaceAgentFiles, TurnRunKind};
+use super::transition::{
+    HostMountTerminalResult, NamespaceAgentFiles, NamespaceTapeWriter, TurnRunKind,
+};
 use crate::agent_machine::{
     AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE, NormalizedToolCall,
     PendingHostMountRequest, PendingYield,
@@ -34,14 +36,19 @@ pub(super) enum RuntimeOpAction {
     },
     ReplayApprovedToolBatch {
         tool_calls: Vec<NormalizedToolCall>,
+        resume_with_generation: bool,
         approved_unknown_effect_call_id: Option<String>,
         approved_tool_escalation_call_id: Option<String>,
+    },
+    FinishRejectedExplicitCommand {
+        tool_call: NormalizedToolCall,
     },
 }
 
 pub(super) async fn handle_non_compaction_runtime_op<E, F>(
     mut runtime: SubmissionRuntime<'_>,
     op: Op,
+    tape_writer: &mut Option<NamespaceTapeWriter>,
     emit: &mut E,
 ) -> Result<RuntimeOpAction>
 where
@@ -92,6 +99,9 @@ where
             })
             .await;
         }
+        Op::ContinueQueue | Op::DiscardQueue | Op::InterruptSubmission { .. } => {
+            anyhow::bail!("queue controls require Process-loop admission");
+        }
         Op::Interrupt => {
             runtime.cancel_current_task(emit).await?;
         }
@@ -100,6 +110,7 @@ where
         // New unified operations (Phase 2)
         // ====================================================================
         Op::Turn { parts, context } => {
+            *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
             let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
 
             let queued_next_turn_inputs = runtime.machine.drain_next_turn_inputs();
@@ -141,9 +152,10 @@ where
                             recoverable: true,
                         })
                         .await;
-                        return Ok(RuntimeOpAction::NoTurn);
+                        anyhow::bail!("steering input requires an active or pending turn");
                     }
 
+                    *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::ResumeTurn,
                         user_input: Some(parts),
@@ -168,6 +180,7 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
+                    *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
                     runtime.reset_turn_after_cancelling_host_mounts().await?;
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
@@ -219,13 +232,14 @@ where
                     .await;
                     return Ok(RuntimeOpAction::NoTurn);
                 };
+                *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
                 let taken = runtime.machine.take_pending(&request_id);
                 debug_assert!(matches!(taken, Some(PendingYield::HostMount(_))));
                 runtime.preserve_approved_host_mount(&pending, &terminal)?;
                 return Ok(handle_host_mount_terminal(&mut runtime, pending, terminal));
             }
             let result = resume_content_to_value(&content);
-            match runtime.machine.take_pending(&request_id) {
+            match runtime.machine.pending_yield(&request_id).cloned() {
                 Some(PendingYield::Confirmation(pending)) => {
                     let choice = result
                         .get("choice")
@@ -240,6 +254,16 @@ where
                         .and_then(|v| v.as_str())
                         .map(String::from);
 
+                    let rejects_explicit_command = choice_str != "approve"
+                        && replays_tool_calls(&pending.checkpoint_type)
+                        && runtime
+                            .machine
+                            .pending_tool_replay_batch(&pending.checkpoint_id)
+                            .is_some_and(|batch| !batch.resume_with_generation);
+                    if !rejects_explicit_command {
+                        *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                    }
+                    runtime.machine.take_pending(&request_id);
                     return handle_confirmation_resolution(
                         &mut runtime,
                         pending,
@@ -249,6 +273,8 @@ where
                     .await;
                 }
                 Some(PendingYield::StructuredInput(pending)) => {
+                    *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                    runtime.machine.take_pending(&request_id);
                     runtime.machine.add_tool_message(
                         &pending.request_id,
                         "request_user_input",
@@ -412,22 +438,34 @@ async fn handle_confirmation_resolution(
     let allow_tool_escalation_replay =
         pending.checkpoint_type == crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE;
 
+    if choice_str != "approve"
+        && let Some(batch) = replay_tool_batch.as_ref()
+        && !batch.resume_with_generation
+    {
+        let tool_call = batch
+            .tool_calls
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("explicit command has no pending Tool call"))?;
+        return Ok(RuntimeOpAction::FinishRejectedExplicitCommand { tool_call });
+    }
     if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "approve"
-        && let Some(tool_calls) = replay_tool_batch
+        && let Some(batch) = replay_tool_batch
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
             approved_unknown_effect_call_id: if allow_unknown_effect_replay {
-                tool_calls.first().map(|call| call.id.clone())
+                batch.tool_calls.first().map(|call| call.id.clone())
             } else {
                 None
             },
             approved_tool_escalation_call_id: if allow_tool_escalation_replay {
-                tool_calls.first().map(|call| call.id.clone())
+                batch.tool_calls.first().map(|call| call.id.clone())
             } else {
                 None
             },
-            tool_calls,
+            tool_calls: batch.tool_calls,
+            resume_with_generation: batch.resume_with_generation,
         });
     }
     if replays_tool_calls(&pending.checkpoint_type)

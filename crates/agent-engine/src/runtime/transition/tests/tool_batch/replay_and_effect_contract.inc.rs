@@ -20,6 +20,7 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -63,18 +64,22 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         // Should complete without panic even when cancelled
         assert!(result.is_ok());
@@ -102,18 +107,22 @@
         }];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         // Invalid virtual tool should end turn
@@ -159,18 +168,22 @@
         ];
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         // Should have two update_plan completion events.
@@ -547,6 +560,7 @@
 
         let cancel = CancellationToken::new();
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -613,6 +627,7 @@
 
         let cancel = CancellationToken::new();
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -729,6 +744,7 @@
         ];
         let cancel = CancellationToken::new();
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
@@ -791,18 +807,22 @@
         }
 
         let inputs = ToolOrchestratorInputs {
+                explicit_command: false,
             cancel: &cancel,
             steering_broker: None,
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let result = orchestrate_tool_batch(
             &mut loop_guard,
             &mut state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await;
+        writer.finish().await.unwrap();
 
         assert!(result.is_ok());
         // After max loops, should end turn

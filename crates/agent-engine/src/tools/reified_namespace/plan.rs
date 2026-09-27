@@ -157,12 +157,23 @@ impl ReifiedNamespacePlan {
             .map(|mount| mount.namespace_path.as_path())
             .collect::<Vec<_>>();
         namespace_paths.extend(virtual_namespace_paths.iter().map(|path| path.as_path()));
-        namespace_paths.extend(
-            execution_substrate
-                .iter()
-                .map(|mount| mount.namespace_path.as_path()),
-        );
         validate_no_overlapping_namespace_paths(&namespace_paths)?;
+        let mut substrate_paths = execution_substrate
+            .iter()
+            .map(|mount| mount.namespace_path.as_path())
+            .collect::<Vec<_>>();
+        substrate_paths.extend(virtual_namespace_paths.iter().map(PathBuf::as_path));
+        validate_no_overlapping_namespace_paths(&substrate_paths)?;
+        for mount in &declared_host_mounts {
+            for substrate in &execution_substrate {
+                if !read_only_projection_agrees(mount, substrate) {
+                    validate_no_overlapping_namespace_paths(&[
+                        &mount.namespace_path,
+                        &substrate.namespace_path,
+                    ])?;
+                }
+            }
+        }
         validate_scratch_tmp_overlap(
             &input.scratch_tmp_namespace_path,
             &declared_host_mounts,
@@ -243,13 +254,36 @@ impl ReifiedNamespacePlanInput {
         argv: Vec<String>,
         network: NetworkPosture,
     ) -> Self {
+        let execution_substrate = default_execution_substrate();
+        let mut scratch = PathBuf::from(DEFAULT_SCRATCH_TMP_NAMESPACE_PATH);
+        if declarations
+            .iter()
+            .any(|mount| mount.namespace_path == scratch)
+        {
+            // There are finitely many mount roots; one of these sibling names is free.
+            scratch = (0..=declarations.len() + execution_substrate.len())
+                .map(|index| PathBuf::from(format!("/.alan-tmp-{index}")))
+                .find(|candidate| {
+                    declarations
+                        .iter()
+                        .map(|mount| &mount.namespace_path)
+                        .chain(
+                            execution_substrate
+                                .iter()
+                                .map(|mount| &mount.namespace_path),
+                        )
+                        .filter(|path| path.as_path() != Path::new("/"))
+                        .all(|path| !paths_overlap(path, candidate))
+                })
+                .expect("more scratch candidates than reserved mount roots");
+        }
         Self {
             declarations,
             cwd: cwd.into(),
             argv,
             network,
-            execution_substrate: default_execution_substrate(),
-            scratch_tmp_namespace_path: PathBuf::from(DEFAULT_SCRATCH_TMP_NAMESPACE_PATH),
+            execution_substrate,
+            scratch_tmp_namespace_path: scratch,
         }
     }
 
@@ -372,6 +406,24 @@ fn validate_no_overlapping_namespace_paths(
         }
     }
     Ok(())
+}
+
+fn read_only_projection_agrees(
+    mount: &ReifiedHostMount,
+    substrate: &ReifiedExecutionSubstrateMount,
+) -> bool {
+    if mount.access.is_writable() {
+        return false;
+    }
+    if let Ok(suffix) = mount.namespace_path.strip_prefix(&substrate.namespace_path) {
+        return canonicalize_existing_host_path(&substrate.host_path.join(suffix))
+            == mount.host_path;
+    }
+    if let Ok(suffix) = substrate.namespace_path.strip_prefix(&mount.namespace_path) {
+        return canonicalize_existing_host_path(&mount.host_path.join(suffix))
+            == substrate.host_path;
+    }
+    false
 }
 
 fn validate_scratch_tmp_overlap(

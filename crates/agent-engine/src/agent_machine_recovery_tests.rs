@@ -792,3 +792,71 @@ fn test_load_from_rollout_repersists_memory_flush_attempt_records() {
         assert_eq!(persisted, Some(attempt));
     });
 }
+
+#[tokio::test]
+async fn recovered_context_survives_repeated_restarts_without_new_turns() {
+    use crate::rollout::{ContextItemRecord, TurnContextItem};
+    let temp = TempDir::new().unwrap();
+    for clear_latest in [false, true] {
+        let seed = RolloutRecorder::new_in_dir("/proc/seed", "mock", temp.path())
+            .await
+            .unwrap();
+        let mut context = TurnContextItem {
+            model: "mock".into(),
+            reasoning_effort: None,
+            system_prompt: "reference context".into(),
+            context_items: vec![ContextItemRecord {
+                id: "project".into(),
+                kind: "static".into(),
+                title: "Project".into(),
+                content: "retained project instructions".into(),
+                fingerprint: "project-v1".into(),
+            }],
+            tools: vec![],
+            memory_enabled: false,
+            active_skills: vec![],
+            reference_context: None,
+            timestamp: "2026-09-27T00:00:00Z".into(),
+        };
+        seed.persist_batch(vec![RolloutItem::TurnContext(context.clone())])
+            .await
+            .unwrap();
+        if clear_latest {
+            context.context_items.clear();
+            seed.persist_batch(vec![RolloutItem::TurnContext(context.clone())])
+                .await
+                .unwrap();
+        }
+        let mut source = seed.path().clone();
+        for pid in ["/proc/first", "/proc/second"] {
+            let machine = AgentMachine::load_from_rollout_in_dir(&source, pid, "mock", temp.path())
+                .await
+                .unwrap();
+            assert_eq!(
+                machine.tape.context_items().len(),
+                usize::from(!clear_latest)
+            );
+            if !clear_latest {
+                assert_eq!(
+                    machine.tape.context_items()[0].content,
+                    "retained project instructions"
+                );
+            }
+            source = machine.rollout_path().unwrap().clone();
+            let contexts = RolloutRecorder::load_history(&source)
+                .await
+                .unwrap()
+                .into_iter()
+                .filter_map(|item| match item {
+                    RolloutItem::TurnContext(context) => Some(context),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(contexts.len(), 1);
+            assert_eq!(
+                serde_json::to_value(&contexts[0]).unwrap(),
+                serde_json::to_value(&context).unwrap()
+            );
+        }
+    }
+}

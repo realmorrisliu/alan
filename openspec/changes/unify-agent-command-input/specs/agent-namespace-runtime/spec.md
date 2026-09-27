@@ -222,12 +222,14 @@ NOT silently change it. Each submission SHALL have correlated outcomes.
 - **AND** controls stay responsive and completed effects are not automatically undone
 
 ### Requirement: Restart does not imply input replay or directory substitution
-After Agent or Host restart, recoverable pending work SHALL remain paused until
-explicit continuation. Unknown effects SHALL require reconciliation before any
+Only explicitly selected recovery SHALL restore earlier work into a fresh
+invocation. Recoverable pending work SHALL remain paused until explicit
+continuation; a plain new launch SHALL NOT select prior work automatically. Unknown effects SHALL require reconciliation before any
 retry. Cwd SHALL be restored only from reliable state with valid current access;
 otherwise directory-dependent work SHALL require an explicit directory choice.
 Missing records SHALL be reported rather than reconstructed from textual Tape or
-reused PIDs. Client detach alone SHALL NOT impose this restart behavior.
+reused PIDs. Closing an auxiliary attachment to a still-live instance SHALL NOT
+trigger recovery. Actual application exit ends its owned runtime.
 
 #### Scenario: Pending input is recovered
 - **WHEN** recovery finds a reliable pending submission record

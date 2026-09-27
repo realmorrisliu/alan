@@ -1,0 +1,452 @@
+//! Governed explicit input through the real Host and native shell.
+use alan_agent_engine::{
+    AgentProcessConfig, AgentRuntimeStoreBindings, LlmClient, ToolCall, ToolRegistry,
+};
+use alan_llm::{GenerationResponse, MockLlmProvider};
+use alan_os_host::{
+    AlanOsHost, HostBootConfig, HostCommandPlane, HostEndpointPaths, LocalAttachment,
+};
+use alan_shell::Shell;
+use serde_json::{Value, json};
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+
+fn response() -> GenerationResponse {
+    GenerationResponse {
+        content: "ready".into(),
+        thinking: None,
+        thinking_signature: None,
+        redacted_thinking: vec![],
+        tool_calls: vec![],
+        usage: None,
+        finish_reason: None,
+        provider_response_id: None,
+        provider_response_status: None,
+        warnings: vec![],
+    }
+}
+
+async fn submit_command(shell: &Shell, body: &str) -> String {
+    submit_input(shell, "command", body).await
+}
+
+async fn submit_input(shell: &Shell, intent: &str, body: &str) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    let record =
+        json!({"version":1,"submission_id":id,"intent":intent,"mode":"follow_up","body":body});
+    shell
+        .write(
+            "/agent/root/io/input",
+            format!("alan-input-v1\n{record}").as_bytes(),
+        )
+        .await
+        .unwrap();
+    id
+}
+
+async fn command_result(shell: &Shell, id: &str) -> Value {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            for action in shell.ls("/agent/root/actions").await.unwrap() {
+                if !action.starts_with('a') {
+                    continue;
+                }
+                let base = format!("/agent/root/actions/{action}");
+                let bytes = shell.cat(&format!("{base}/result")).await.unwrap();
+                let Ok(mut result) = serde_json::from_slice::<Value>(&bytes) else {
+                    continue;
+                };
+                if result["call_id"] == id {
+                    let status = shell.cat(&format!("{base}/status")).await.unwrap();
+                    if status == b"completed" || status == b"failed" {
+                        result["process"] = json!(
+                            String::from_utf8(shell.cat(&format!("{base}/process")).await.unwrap())
+                                .unwrap()
+                        );
+                        result["output"] = serde_json::from_slice(
+                            &shell.cat(&format!("{base}/output")).await.unwrap(),
+                        )
+                        .unwrap_or(Value::Null);
+                        return result;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("correlated command completion")
+}
+
+async fn command(shell: &Shell, body: &str) -> Value {
+    let id = submit_command(shell, body).await;
+    command_result(shell, &id).await
+}
+
+#[tokio::test]
+async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
+    let runtime = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join("src")).unwrap();
+    let mut mount = response();
+    mount.tool_calls.push(ToolCall { id: Some("mount-project".into()), name: "request_mount".into(),
+        arguments: json!({"label":"Project","namespace_path":"/mnt/project","access":"read_write","reason":"native command test"}) });
+    let file_call = |id: &str, name: &str, arguments| {
+        let mut reply = response();
+        reply.tool_calls.push(ToolCall {
+            id: Some(id.into()),
+            name: name.into(),
+            arguments,
+        });
+        reply
+    };
+    let provider = MockLlmProvider::new().with_responses(vec![
+        mount,
+        response(),
+        response(),
+        file_call(
+            "write-project",
+            "write_file",
+            json!({"path":"agent.txt","content":"original"}),
+        ),
+        file_call(
+            "edit-project",
+            "edit_file",
+            json!({"path":"agent.txt","old_string":"original","new_string":"edited"}),
+        ),
+        response(),
+        file_call("read-native", "read_file", json!({"path":"agent.txt"})),
+        file_call(
+            "search-native",
+            "grep",
+            json!({"path":"agent.txt","pattern":"native"}),
+        ),
+        response(),
+        file_call(
+            "stale-edit",
+            "edit_file",
+            json!({"path":"agent.txt","old_string":"edited","new_string":"must not overwrite"}),
+        ),
+        response(),
+    ]);
+    let probe = provider.clone();
+    let mut tools = ToolRegistry::new();
+    tools.register(alan_tools::BashTool::new());
+    tools.register(alan_tools::ReadFileTool::new());
+    tools.register(alan_tools::WriteFileTool::new());
+    tools.register(alan_tools::EditFileTool::new());
+    tools.register(alan_tools::GrepTool::new());
+    let stores = AgentRuntimeStoreBindings {
+        rollouts: runtime.path().join("rollouts"),
+        checkpoints: runtime.path().join("checkpoints"),
+        cache: runtime.path().join("cache"),
+        tmp: runtime.path().join("tmp"),
+        metadata: runtime.path().join("metadata"),
+    };
+    for path in [
+        &stores.rollouts,
+        &stores.checkpoints,
+        &stores.cache,
+        &stores.tmp,
+        &stores.metadata,
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let process = AgentProcessConfig {
+        store_bindings: Some(stores),
+        ..AgentProcessConfig::from(alan_agent_engine::Config {
+            context_window_tokens: Some(128_000),
+            ..Default::default()
+        })
+    };
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let host = AlanOsHost::boot(
+        HostBootConfig::ephemeral("test", process.clone(), LlmClient::new(provider), tools),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
+    let stop = CancellationToken::new();
+    let stopped = stop.clone();
+    let server = tokio::spawn(async move { host.serve_until(stopped.cancelled_owned()).await });
+    let shell = Shell::new(
+        LocalAttachment::new(paths.clone())
+            .connect()
+            .await
+            .unwrap()
+            .root,
+    );
+    shell
+        .write("/agent/root/io/input", b"mount project")
+        .await
+        .unwrap();
+    let request = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(id) = shell
+                .ls("/mnt/host-mount/requests")
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|id| !matches!(id.as_str(), "clone" | "events"))
+            {
+                break id;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    HostCommandPlane::new(paths.clone())
+        .approve_host_mount(request, project.path().to_owned())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let activity: Value = serde_json::from_slice(
+                &shell.cat("/agent/root/machine/ui/activity").await.unwrap(),
+            )
+            .unwrap();
+            if probe.recorded_requests().len() == 2 && activity["state"] == "idle" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(command(&shell, "cd /mnt/project/src").await["exit_code"], 0);
+    assert_eq!(command(&shell, "printf '%s\\n' 'first value' | tr 'a-z' 'A-Z' > result.txt\nprintf '%s\\n' second >> result.txt").await["exit_code"], 0);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/result.txt")).unwrap(),
+        "FIRST VALUE\nsecond\n"
+    );
+    assert_eq!(
+        command(&shell, "cd .. && printf root > local.txt").await["exit_code"],
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("local.txt")).unwrap(),
+        "root"
+    );
+    assert_eq!(command(&shell, "cd missing").await["exit_code"], 1);
+    assert_eq!(command(&shell, "cd $HOME").await["exit_code"], 1);
+    assert_eq!(
+        command(&shell, "printf retained > still-here.txt").await["exit_code"],
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/still-here.txt")).unwrap(),
+        "retained"
+    );
+    assert_eq!(
+        command(&shell, "printf partial > partial.txt; exit 7").await["exit_code"],
+        7
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/partial.txt")).unwrap(),
+        "partial"
+    );
+    for control in ["continue", "discard"] {
+        let before = format!("before-{control}.txt");
+        let queued_file = format!("queued-{control}.txt");
+        let script = format!("printf saved > {before}; sleep 30");
+        let running = command(&shell, &script);
+        let interrupt = async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !project.path().join("src").join(&before).exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("native command started");
+            let queued = submit_command(&shell, &format!("printf queued > {queued_file}")).await;
+            shell
+                .write("/agent/root/machine/ctl", b"interrupt")
+                .await
+                .unwrap();
+            queued
+        };
+        let (interrupted, queued) = tokio::join!(running, interrupt);
+        assert_ne!(interrupted["exit_code"], 0);
+        let process = interrupted["process"]
+            .as_str()
+            .expect("spawned Process evidence");
+        assert!(process.starts_with("/proc/"), "{interrupted}");
+        assert_eq!(
+            shell.cat(&format!("{process}/status")).await.unwrap(),
+            b"exited\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("src").join(&before)).unwrap(),
+            "saved"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !project.path().join("src").join(&queued_file).exists(),
+            "interrupt must hold the next native command"
+        );
+        let activity: Value =
+            serde_json::from_slice(&shell.cat("/agent/root/machine/ui/activity").await.unwrap())
+                .unwrap();
+        assert_eq!(activity["state"], "paused");
+        shell
+            .write(
+                "/agent/root/machine/ctl",
+                format!("queue-v1 {control}").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let result = command_result(&shell, &queued).await;
+        if control == "continue" {
+            assert_eq!(result["exit_code"], 0);
+            assert_eq!(
+                std::fs::read_to_string(project.path().join("src").join(&queued_file)).unwrap(),
+                "queued"
+            );
+        } else {
+            assert_eq!(result["exit_code"], 1);
+            assert_eq!(result["process"], "", "discard never spawns a Tool Process");
+            assert!(!project.path().join("src").join(&queued_file).exists());
+        }
+    }
+    assert_eq!(
+        command(&shell, "printf alive > after-interrupt.txt").await["exit_code"],
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/after-interrupt.txt")).unwrap(),
+        "alive"
+    );
+    assert_eq!(
+        probe.recorded_requests().len(),
+        2,
+        "commands must not generate Agent responses"
+    );
+    // Steering received during a native command must run after it completes.
+    let running = submit_command(&shell, "printf started > steering-started; sleep 1").await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !project.path().join("src/steering-started").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let steer = json!({"version":1,"submission_id":uuid::Uuid::new_v4().to_string(),
+        "intent":"agent","mode":"steer","body":"explain the completed command"});
+    shell
+        .write(
+            "/agent/root/io/input",
+            format!("alan-input-v1\n{steer}").as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(command_result(&shell, &running).await["exit_code"], 0);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let requests = probe.recorded_requests();
+            if requests.len() == 3 {
+                assert!(
+                    format!("{:?}", requests[2].messages).contains("explain the completed command")
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("command steering must receive an Agent response");
+    let edit = submit_input(&shell, "agent", "write and edit the project file").await;
+    wait_input(&shell, &edit).await;
+    let native = command(&shell, "cat agent.txt > observed.txt; git diff --no-index --no-ext-diff --no-textconv -- /dev/null agent.txt > diff.txt; printf native > agent.txt").await;
+    assert_eq!(native["exit_code"], 0, "{native}");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/observed.txt")).unwrap(),
+        "edited"
+    );
+    assert!(
+        std::fs::read_to_string(project.path().join("src/diff.txt"))
+            .unwrap()
+            .contains("+edited")
+    );
+    assert!(!project.path().join("agent.txt").exists());
+    let read = submit_input(&shell, "agent", "read and search the native edit").await;
+    wait_input(&shell, &read).await;
+    assert_eq!(
+        command_result(&shell, "read-native").await["output"]["content"],
+        "native"
+    );
+    assert_eq!(
+        command_result(&shell, "search-native").await["output"]["total"],
+        1
+    );
+    let stale = submit_input(&shell, "agent", "try an edit against stale content").await;
+    wait_input(&shell, &stale).await;
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/agent.txt")).unwrap(),
+        "native"
+    );
+    assert!(
+        command_result(&shell, "stale-edit").await["output"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Search text not found")
+    );
+    assert_eq!(probe.recorded_requests().len(), 11);
+    let persisted_id = submit_command(&shell,
+        "printf 'retained stdout\\n'; printf 'retained stderr\\n' >&2; printf x >> restart-marker.txt; exit 7"
+    ).await;
+    let persisted = command_result(&shell, &persisted_id).await;
+    assert_eq!(persisted["exit_code"], 7);
+    assert_eq!(persisted["output"]["stdout"], "retained stdout\n");
+    assert_eq!(persisted["output"]["stderr"], "retained stderr\n");
+    drop(shell);
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    let restarted = AlanOsHost::boot(
+        HostBootConfig::ephemeral(
+            "test",
+            process,
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_root_resume(),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
+    let shutdown = CancellationToken::new();
+    let requested = shutdown.clone();
+    let server =
+        tokio::spawn(async move { restarted.serve_until(requested.cancelled_owned()).await });
+    let shell = Shell::new(LocalAttachment::new(paths).connect().await.unwrap().root);
+    assert_eq!(command_result(&shell, &persisted_id).await, persisted);
+    assert_eq!(
+        std::fs::read(project.path().join("src/restart-marker.txt")).unwrap(),
+        b"x",
+        "completed native command must not be replayed on recovery"
+    );
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+async fn wait_input(shell: &Shell, id: &str) {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let events = shell.cat("/agent/root/machine/ui/events").await.unwrap();
+            if String::from_utf8(events).unwrap().lines().any(|line| {
+                let Ok(event) = serde_json::from_str::<Value>(line) else {
+                    return false;
+                };
+                event["type"] == "input_completed"
+                    && event["submission_ids"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().any(|value| value == id))
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("input completion");
+}

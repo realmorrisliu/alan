@@ -72,4 +72,4 @@ shaping without becoming part of normal CI.
 
 Desktop App and shell-core/FFI tests were removed with their source. Validate
 macOS credentials, Host Mounts and sandboxing through their Rust owner tests.
-Use `just standalone-distribution-test` and `just quality` for CLI/Host delivery.
+Use `just standalone-distribution-test` and `just quality` for CLI delivery.

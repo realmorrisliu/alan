@@ -599,3 +599,46 @@ if printf blocked > "$2"; then exit 42; fi
         assert!(!scratch.exists());
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_runner_supports_native_tmp_and_readonly_substrate_grants() {
+    if !linux_reified_runner_ready_for_smoke() {
+        return;
+    }
+    let fixture = tempfile::tempdir_in("/tmp").unwrap();
+    let output = fixture.path().join("output.txt");
+    for (root, access, script) in [
+        (
+            "/tmp",
+            ReifiedMountAccess::ReadWrite,
+            format!(
+                "set -eu; test \"$PWD\" = /tmp; printf changed > '{}'; pwd",
+                output.display()
+            ),
+        ),
+        (
+            "/usr/bin",
+            ReifiedMountAccess::ReadOnly,
+            "set -eu; test -r /usr/bin/env; test ! -w /usr/bin; pwd".to_string(),
+        ),
+    ] {
+        let plan = ReifiedNamespacePlan::derive(ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(root, root, access)],
+            root,
+            vec![
+                "/bin/sh".into(),
+                "-p".into(),
+                "-f".into(),
+                "-c".into(),
+                script,
+            ],
+            NetworkPosture::Deny,
+        ))
+        .unwrap();
+        let result = run_linux_reified_smoke(&plan);
+        assert_eq!(result.exit_code, 0, "{root}: {}", result.stderr);
+        assert_eq!(result.stdout.trim(), root);
+    }
+    assert_eq!(std::fs::read_to_string(output).unwrap(), "changed");
+}

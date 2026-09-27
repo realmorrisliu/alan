@@ -25,7 +25,7 @@ use crate::{
     BootManifest, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
     ProcessLaunchContext, RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
-    agent_runtime::{AgentRuntimeFileServers, AgentRuntimeService, RootAgentTemplate},
+    agent_runtime::{AgentRuntimeService, RootAgentTemplate},
     process_spawn::{spawn_process, spawn_unit_process},
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
@@ -40,6 +40,8 @@ const SERVICE_MANAGER_EXECUTABLE: &str = "/bin/service-manager";
 pub struct ServiceManagerConfig {
     pub channel_id: String,
     pub process: AgentProcessConfig,
+    /// Restore the previously selected Root Agent rollout for this invocation.
+    pub resume_root: bool,
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
     pub package_store: Option<std::path::PathBuf>,
@@ -108,6 +110,7 @@ impl ServiceManagerConfig {
             connection_store: None,
             package_store: None,
             process,
+            resume_root: false,
             llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
                 llm_client,
             )))),
@@ -141,6 +144,10 @@ impl ServiceManager {
             matches!(config.channel_id.as_str(), "stable" | "dev" | "test"),
             "invalid Alan OS Host channel `{}`",
             config.channel_id
+        );
+        ensure!(
+            !config.resume_root || config.process.store_bindings.is_some(),
+            "Root Agent recovery requires durable store bindings"
         );
         ensure!(
             config.launch_context.package_references.is_empty(),
@@ -245,6 +252,7 @@ impl ServiceManager {
             connection_base_config,
             host_mount_adapter: config.host_mount_adapter.clone(),
             process: config.process,
+            resume_root: config.resume_root,
             launch_context: config.launch_context,
             tools: config.tools,
             host_capabilities,
@@ -362,6 +370,7 @@ struct AssembleInputs {
     connection_base_config: alan_agent_engine::Config,
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     process: AgentProcessConfig,
+    resume_root: bool,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
@@ -380,6 +389,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         connection_base_config,
         host_mount_adapter,
         mut process,
+        resume_root,
         mut launch_context,
         tools,
         host_capabilities,
@@ -400,18 +410,25 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         !tools.list_tools().contains(&"q"),
         "Tool name `q` is reserved for Quartermaster"
     );
+    ensure!(
+        !tools.list_tools().contains(&"agent_work"),
+        "Tool name `agent_work` is reserved for Agent work commands"
+    );
     // System and Shell Processes are lifecycle records supervised by Alan OS;
     // they must not be fed to an executable runner merely because `/bin/q`
     // exists. Process-specific `/proc` views add the Quartermaster runner below.
     let procfs = alan_kernel::ProcFs::new();
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new_with_process_events(
+        Arc::new(procfs.clone()),
+        Arc::new(procfs.clone()),
+    ));
     let state = Arc::new(tokio::sync::Mutex::new(ManagerState::new(manifest.clone())));
     let manager_fs = Arc::new(ServiceManagerFs::new(state.clone()));
     let host_mount_service = HostMountService::new(host_mount_adapter);
     let package_handle = SwitchableFileServer::new();
     let agent_runtime = AgentRuntimeService::new(
         procfs.clone(),
-        AgentRuntimeFileServers::from_refs(&agent_root, &llmfs),
+        agent_root.clone(),
         host_mount_service.clone(),
         connection_service.clone(),
         tools.process_runner(),
@@ -622,13 +639,14 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         host_capabilities,
         generation_capabilities,
         llm_connection,
+        resume_root,
     );
     let root = agent_runtime
         .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
         .await?;
     let root_pid = root.pid();
     if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
-        agent_runtime.detach_root(root, 1).await;
+        agent_runtime.detach_root(root, 1).await?;
         return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
     }
     active_units.insert(
@@ -691,6 +709,7 @@ fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) 
             SERVICE_MANAGER_EXECUTABLE,
             "/bin/alan-shell",
             QUARTERMASTER_EXECUTABLE,
+            crate::agent_work::EXECUTABLE,
         ])
     {
         namespace.mount(
@@ -702,6 +721,14 @@ fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) 
 }
 
 fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Result<()> {
+    namespace.mount(
+        "/lib/exec/agent_work",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            crate::agent_work::manifest(),
+        ))),
+        Access::ReadOnly,
+    );
     for name in tools.list_tools() {
         namespace.mount(
             &format!("/bin/{name}"),

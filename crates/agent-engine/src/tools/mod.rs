@@ -26,6 +26,7 @@ pub use reified_namespace::{
     ReifiedNamespaceRunError, ReifiedNamespaceRunner, ReifiedScratchTmpMount,
     default_execution_substrate,
 };
+pub(crate) use sandbox::parse_standalone_cd;
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxHostMount, SandboxSpec};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,

@@ -6,6 +6,7 @@
 //! Package Service lifecycle.
 
 mod agent_runtime;
+mod agent_work;
 mod boot_unit;
 mod connection;
 mod connection_profile;

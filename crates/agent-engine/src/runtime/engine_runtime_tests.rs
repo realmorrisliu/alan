@@ -15,12 +15,15 @@ fn test_push_outer_submission_inserts_before_existing_deferred_actions() {
     queues.push_outer_submission(second_submission);
 
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&queues.outer_queue.lock().unwrap().pending),
         vec!["submission", "submission", "deferred", "deferred"]
     );
 
     let queued_submission_ids = queues
         .outer_queue
+        .lock()
+        .unwrap()
+        .pending
         .iter()
         .filter_map(|item| match item {
             QueuedRuntimeItem::Submission(submission) => Some(submission.id.clone()),
@@ -50,11 +53,11 @@ async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_act
 
     assert_eq!(requeued, 1);
     assert_eq!(
-        queue_item_kinds(&queues.outer_queue),
+        queue_item_kinds(&queues.outer_queue.lock().unwrap().pending),
         vec!["submission", "deferred"]
     );
 
-    match queues.outer_queue.front() {
+    match queues.outer_queue.lock().unwrap().pending.front() {
         Some(QueuedRuntimeItem::Submission(submission)) => {
             assert_eq!(submission.id, buffered_submission_id);
         }
@@ -235,7 +238,10 @@ async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submissio
     llmfs.register_connection("default", Box::new(mock));
 
     let procfs = Arc::new(alan_kernel::ProcFs::new());
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(procfs.clone()));
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new_with_process_events(
+        procfs.clone(),
+        procfs.clone(),
+    ));
     let mut ns = alan_kernel::Namespace::new();
     ns.mount(
         "/proc",
@@ -359,7 +365,7 @@ async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submissio
     assert_eq!(output, "first namespace response");
 
     shell
-        .write("/agent/1/io/input", b"second input through files")
+        .write("/proc/1/io/input", b"second input through files")
         .await
         .unwrap();
     wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
@@ -530,4 +536,80 @@ async fn test_namespace_machine_ctl_drives_runtime_submission_without_api_submis
     assert_eq!(rollback_notice, "rolled back 1 turns");
 
     controller.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ready_api_interrupt_precedes_queued_dispatch() {
+    let mut queues = RuntimeSubmissionQueues::default();
+    let first = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("older")],
+        mode: InputMode::FollowUp,
+    });
+    let first_id = first.id.clone();
+    queues.push_outer_submission(first);
+    let (sender, mut receiver) = mpsc::channel(4);
+    sender
+        .send(Submission::new(Op::Input {
+            parts: vec![ContentPart::text("newer")],
+            mode: InputMode::FollowUp,
+        }))
+        .await
+        .unwrap();
+    sender.send(Submission::new(Op::Interrupt)).await.unwrap();
+    let control = queues.admit_api_before_dispatch(&mut receiver).unwrap();
+    assert!(matches!(control.op, Op::Interrupt));
+    queues
+        .handle_control(
+            &control,
+            &namespace_environment_for_test().agent_files(),
+            None,
+        )
+        .await;
+    assert!(queues.is_paused());
+    assert!(
+        queues.pop_outer().is_none(),
+        "accepted interrupt must prevent dispatch"
+    );
+    let queue = queues.outer_queue.lock().unwrap();
+    assert_eq!(queue.pending.len(), 2);
+    assert!(
+        matches!(queue.pending.front(), Some(QueuedRuntimeItem::Submission(input)) if input.id == first_id)
+    );
+}
+
+#[tokio::test]
+async fn command_admission_preserves_steering_and_keeps_approval_responses_inband() {
+    use alan_agent_protocol::{ContentPart, InputIntent, InputMode, Op};
+    let mut queues = RuntimeSubmissionQueues::default();
+    let steer = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("explain the result")],
+        mode: InputMode::Steer,
+    });
+    let mut expected = steer.clone();
+    if let Op::Input { mode, .. } = &mut expected.op {
+        *mode = InputMode::FollowUp;
+    }
+    queues
+        .admit_during_submission(steer, InputIntent::Command, true)
+        .await;
+    assert!(queues.active_turn_broker.try_recv().await.is_none());
+    let Some(QueuedRuntimeItem::Submission(queued)) = queues.pop_outer() else {
+        panic!("steering must remain queued after the command");
+    };
+    assert_eq!(
+        serde_json::to_value(queued).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    let resume = Submission::new(Op::Resume {
+        request_id: "command-approval".into(),
+        content: vec![ContentPart::text("approve")],
+    });
+    queues
+        .admit_during_submission(resume.clone(), InputIntent::Command, true)
+        .await;
+    assert_eq!(
+        queues.active_turn_broker.try_recv().await.unwrap().id,
+        resume.id
+    );
+    assert!(queues.pop_outer().is_none());
 }

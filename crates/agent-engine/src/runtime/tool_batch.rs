@@ -33,6 +33,7 @@ pub(super) fn approved_replay_call_index(
 
 #[derive(Clone, Copy)]
 pub(super) struct ToolOrchestratorInputs<'a> {
+    pub explicit_command: bool,
     pub cancel: &'a CancellationToken,
     pub steering_broker: Option<&'a TurnInputBroker>,
 }

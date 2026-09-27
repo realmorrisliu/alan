@@ -38,13 +38,30 @@ semantics.
 
 ## Current startup
 
-Bare `alan` is terminal-first: with terminal stdin and stdout it attaches to the
-system Host and runs the file-backed Agent renderer against the existing
-`/agent/root`. With redirected stdin it submits one Agent task and writes the
-final answer to stdout, diagnostics to stderr, and the result through its exit
-status. Interactive `!` requests a command through the governed `bash` Tool.
-The renderer does not create or own the Root Agent Process or Host lifecycle;
-this entry decision is recorded in [ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md).
+Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
+directory not in use by another invocation starts and owns one foreground
+alan9 instance and its Root Agent Process. With terminal stdin and stdout it
+runs the file-backed Agent renderer against that instance's `/agent/root`;
+with redirected stdin it submits one task to the same instance and writes the
+answer to stdout and diagnostics to stderr without starting the interactive
+renderer. Herdr sessions using separate runtime directories have separate
+Roots and endpoints while using the same channel stores. Reusing one explicit
+runtime directory allows only one owner; another invocation fails to acquire
+it rather than sharing its Root. Actual Alan process exit shuts down its
+instance; a terminal-host view detach is separate from process exit. New
+invocations start fresh by default; explicit durable recovery is the accepted
+direction, but its selection and queue/cwd restoration flow remains active
+work. Interactive `!` requests a command through the governed `bash` Tool,
+while `:` forces Agent routing. The lifecycle revision to
+[ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md) supersedes its
+historical background-Host behavior.
+This describes the shipped CLI behavior. The canonical `alan-os-host-lifecycle`,
+`alan-shell`, renderer and attachment lifecycle specs still contain parts of the
+prior channel-wide contract; their implemented startup and cross-invocation
+isolation subset is synchronized by the active unified-input change. Explicit
+recovery selection and restoration remain separate unimplemented work. Herdr
+view-detach acceptance is also still pending and is not inferred from the
+ordinary-terminal or automated concurrency checks.
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed. Rust Host platform adapters remain. Herdr supplies terminal topology,
@@ -79,11 +96,12 @@ Alan/System Store/<channel>/services/
 └── packages/
 ```
 
-A rollout uses its own record id and records the producing Process path.
-Recovery creates a new Process and a new rollout from an explicitly selected
-source record. Memory Stores are explicit file trees and use Process
-provenance. Live Process tables, PIDs, descriptors, namespaces, and tasks are
-ephemeral.
+A rollout uses its own record id and records the producing Process path. The
+planned recovery flow creates a new Process and rollout from an explicitly
+selected source record; runtime selection, authority validation and recoverable
+queue/cwd state remain under implementation. Memory Stores are explicit file
+trees and use Process provenance. Live Process tables, PIDs, descriptors,
+namespaces, and tasks are ephemeral.
 
 ## Boundary rules
 
@@ -94,4 +112,5 @@ ephemeral.
 - live child state is read from `/proc`; delegation metadata is bounded and
   Process-local.
 - terminal-host integration cannot grant mounts, credentials or action approval;
-  closing a renderer does not own system Host shutdown.
+  the foreground CLI composition owns instance shutdown, while a view detach is
+  distinct from actual Alan process exit.

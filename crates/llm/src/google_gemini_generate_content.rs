@@ -110,7 +110,8 @@ pub struct FunctionDeclaration {
     pub name: String,
     /// Function description
     pub description: String,
-    /// Parameters JSON schema
+    /// Full JSON Schema, distinct from Vertex's restricted OpenAPI Schema field.
+    #[serde(rename = "parametersJsonSchema")]
     pub parameters: serde_json::Value,
 }
 

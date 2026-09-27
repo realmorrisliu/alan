@@ -59,7 +59,10 @@ pub(super) struct WatchTails {
     pub(super) actions: alan_shell::Tail,
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
+    pub(super) recovery_ui: alan_shell::Tail,
+    pub(super) recovery_tape: alan_shell::Tail,
     pub(super) ui_history: Vec<u8>,
+    pub(super) tape_history: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -97,7 +100,10 @@ pub(super) fn correlated_ui_task(
                 }
             }
             UiEvent::Error { message, .. } => task.error = Some(message),
-            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+            UiEvent::InputCompleted { .. }
+            | UiEvent::Plan { .. }
+            | UiEvent::Thinking { .. }
+            | UiEvent::Notice { .. } => {}
         }
     }
     Ok(task)
@@ -361,9 +367,10 @@ pub(super) async fn spawn_tape_watch(
                             }
                             // Non-message records (tool calls, checkpoints…)
                             // are not rendered; skip quietly like hydration.
-                            let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
+                            let Ok(mut record) = serde_json::from_slice::<TapeRecordV1>(line) else {
                                 continue;
                             };
+                            record.end_offset = tail.offset() as usize - pending.len();
                             if !send_event_or_shutdown(
                                 &tx,
                                 &mut shutdown_rx,
@@ -498,10 +505,23 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
 pub(super) async fn write_agent_input(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    text: &str,
+    expected_root_pid: Option<u64>,
+    record: &alan_agent_protocol::UserInputRecord,
 ) -> Result<()> {
+    let pinned_path;
+    let agent_path = if agent_path == "/agent/root" {
+        let pid = expected_root_pid.context("Root Agent is not attached; retry")?;
+        anyhow::ensure!(
+            super::tail::current_root_agent_pid(shell).await? == Some(pid),
+            "Root Agent changed before the task could be submitted; retry"
+        );
+        pinned_path = format!("/agent/{pid}");
+        &pinned_path
+    } else {
+        agent_path
+    };
     shell
-        .write(&agent_input_path(agent_path), text.as_bytes())
+        .write(&agent_input_path(agent_path), &record.encode_payload()?)
         .await
         .map_err(|err| anyhow!("write agent input failed: {err:?}"))
 }
@@ -582,10 +602,10 @@ async fn read_request_snapshot(
     })
 }
 
-async fn read_action_snapshots(
+pub(super) async fn read_action_ids(
     shell: &alan_shell::Shell,
     agent_path: &str,
-) -> Result<Vec<ActionSnapshot>> {
+) -> Result<Vec<String>> {
     let mut ids = shell
         .ls(&format!("{agent_path}/actions"))
         .await
@@ -595,6 +615,14 @@ async fn read_action_snapshots(
         .collect::<Vec<_>>();
     ids.sort_by_key(|id| request_sort_key(id));
 
+    Ok(ids)
+}
+
+async fn read_action_snapshots(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+) -> Result<Vec<ActionSnapshot>> {
+    let ids = read_action_ids(shell, agent_path).await?;
     let mut snapshots = Vec::with_capacity(ids.len());
     for id in ids {
         snapshots.push(read_action_snapshot(shell, agent_path, &id).await?);
@@ -602,7 +630,7 @@ async fn read_action_snapshots(
     Ok(snapshots)
 }
 
-async fn read_action_snapshot(
+pub(super) async fn read_action_snapshot(
     shell: &alan_shell::Shell,
     agent_path: &str,
     action_id: &str,
@@ -656,7 +684,7 @@ pub(super) fn parse_tape_history(raw: &str) -> Vec<HistoryCell> {
             continue;
         }
         match record.role.as_str() {
-            "user" => cells.push(HistoryCell::User(record.content)),
+            "user" => cells.push(record.into_user_cell()),
             "assistant" => match cells.last_mut() {
                 Some(HistoryCell::Assistant(text)) => text.push_str(&record.content),
                 _ => cells.push(HistoryCell::Assistant(record.content)),
@@ -875,6 +903,8 @@ pub(super) struct ActionSnapshot {
 
 #[derive(Deserialize)]
 pub(super) struct TapeRecordV1 {
+    #[serde(skip)]
+    pub(super) end_offset: usize,
     #[allow(
         dead_code,
         reason = "version is part of the persisted tape schema even though deserialization validates it elsewhere"
@@ -883,4 +913,28 @@ pub(super) struct TapeRecordV1 {
     pub(super) kind: String,
     pub(super) role: String,
     pub(super) content: String,
+    #[serde(default)]
+    pub(super) input_intent: Option<alan_agent_protocol::InputIntent>,
+    #[serde(default)]
+    pub(super) submission_id: Option<String>,
+    #[serde(default)]
+    pub(super) related_submission_ids: Vec<String>,
+}
+
+impl TapeRecordV1 {
+    pub(super) fn into_user_cell(self) -> HistoryCell {
+        if self.input_intent == Some(alan_agent_protocol::InputIntent::Command) {
+            HistoryCell::Command(self.content)
+        } else {
+            HistoryCell::User(self.content)
+        }
+    }
+
+    pub(super) fn belongs_to(&self, submission_id: &str) -> bool {
+        self.submission_id.as_deref() == Some(submission_id)
+            || self
+                .related_submission_ids
+                .iter()
+                .any(|id| id == submission_id)
+    }
 }
