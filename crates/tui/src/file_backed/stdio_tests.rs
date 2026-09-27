@@ -129,16 +129,13 @@ pub(super) async fn live_root_agent() -> (alan_shell::Shell, Arc<AgentRootFs>, L
 fn stdio_attachment(
     pid: &str,
     tape_tail: alan_shell::Tail,
-    tape_history: Vec<u8>,
     ui_tail: alan_shell::Tail,
 ) -> StdioTailAttachment {
     StdioTailAttachment {
         root_agent_pid: pid.parse().unwrap(),
         agent_process_path: format!("/agent/{pid}"),
         tape_tail,
-        tape_history,
         ui_tail,
-        ui_history: Vec::new(),
     }
 }
 
@@ -681,146 +678,102 @@ fn one_shot_result_waits_for_correlated_settlement() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pid_poll() {
-    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
-    let tail_closer = Arc::new(FaultingFileServer::new(agent_root.clone()));
-    live_namespace.replace_mount(
+async fn one_shot_waits_without_timeout_but_fails_when_its_tail_closes() {
+    let (shell, agent_root, namespace, pid) = live_root_agent().await;
+    let fault = Arc::new(FaultingFileServer::new(agent_root));
+    namespace.replace_mount(
         "/agent",
-        InProcessTransport::new(tail_closer.clone()),
+        InProcessTransport::new(fault.clone()),
         Access::ReadWrite,
     );
-
-    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
         .await
         .unwrap();
-    let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
-        .await
-        .unwrap();
-    let mut attachment = stdio_attachment(&old_pid, tape_tail, baseline_tape_history, ui_tail);
-    let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let (input_seen_tx, input_seen_rx) = tokio::sync::oneshot::channel();
-    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
-    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
-    let (clear_pid_tx, clear_pid_rx) = tokio::sync::oneshot::channel();
-    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
-    let controller_shell = shell.clone();
-    let controller_agent_root = agent_root.clone();
-    let controller_namespace = live_namespace.clone();
-    let controller_tail_closer = tail_closer.clone();
-    let old_agent_pid = old_pid.parse::<u64>().unwrap();
-    let controller = tokio::spawn(async move {
-        assert!(!input_tail.read(4096).await.unwrap().is_empty());
-        input_seen_tx.send(()).unwrap();
-        release_rx.await.unwrap();
-        controller_tail_closer.close(old_agent_pid);
-        closed_tx.send(()).unwrap();
-        clear_pid_rx.await.unwrap();
-        controller_namespace.replace_mount(
-            PID_MOUNT,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "pid",
-                b"0\n".to_vec(),
-            ))),
-            Access::ReadOnly,
-        );
-        resume_rx.await.unwrap();
-        let new_pid = controller_shell.spawn(EXEC_SPEC).await.unwrap();
-        controller_agent_root
-            .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
-            .await;
-        controller_agent_root
-            .set_root_process(new_pid.clone())
-            .await;
-        controller_namespace.replace_mount(
-            PID_MOUNT,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                "pid",
-                format!("{new_pid}\n").into_bytes(),
-            ))),
-            Access::ReadOnly,
-        );
-        controller_shell
-            .write(
-                "/agent/root/machine/tape",
-                &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"rebind me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"one answer\"}\n"),
-            )
-            .await
-            .unwrap();
-        controller_shell
-            .write(
-                "/agent/root/machine/ui/events",
-                &completion(alan_agent_protocol::UiInputStatus::Completed, None),
-            )
-            .await
-            .unwrap();
-        input_tail.close().await.unwrap();
-    });
-
-    let answer = {
-        let wait_for_answer = wait_for_stdio_answer(
+    let mut input = shell.tail("/agent/root/io/input").await.unwrap();
+    let error = {
+        let waiting = wait_for_stdio_answer(
             &shell,
-            "/agent/root",
-            task("rebind me"),
+            task("long task"),
             &mut attachment,
-            std::future::pending::<anyhow::Result<()>>(),
+            std::future::pending(),
         );
-        tokio::pin!(wait_for_answer);
+        tokio::pin!(waiting);
         tokio::select! {
-            result = &mut wait_for_answer => panic!("one-shot completed before its AgentFS result: {result:?}"),
-            result = input_seen_rx => result.unwrap(),
+            result = &mut waiting => panic!("finished before submission: {result:?}"),
+            bytes = input.read(4096) => assert!(!bytes.unwrap().is_empty()),
         }
-
         tokio::time::advance(std::time::Duration::from_secs(301)).await;
-        let still_waiting =
-            tokio::time::timeout(std::time::Duration::from_millis(1), &mut wait_for_answer).await;
         assert!(
-            still_waiting.is_err(),
-            "a valid one-shot task must not time out after five minutes"
-        );
-
-        release_tx.send(()).unwrap();
-        closed_rx.await.unwrap();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(1), &mut wait_for_answer)
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut waiting)
                 .await
-                .is_err(),
-            "one-shot must wait while the supervised Root Agent is restarting"
+                .is_err()
         );
-        clear_pid_tx.send(()).unwrap();
-        resume_tx.send(()).unwrap();
-        tokio::time::advance(std::time::Duration::from_millis(250)).await;
-        wait_for_answer.await.unwrap()
+        fault.close(pid.parse().unwrap());
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap_err()
     };
-    controller.await.unwrap();
-
-    assert_eq!(answer, "one answer");
-    let current_pid = current_root_agent_pid(&shell).await.unwrap().unwrap();
-    assert_eq!(attachment.root_agent_pid, current_pid);
-    assert_eq!(
-        attachment.agent_process_path,
-        format!("/agent/{current_pid}")
-    );
+    assert!(error.to_string().contains("outcome is unknown"));
+    assert_eq!(attachment.root_agent_pid, pid.parse::<u64>().unwrap());
+    input.close().await.unwrap();
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
 }
 
 #[tokio::test]
+async fn one_shot_fails_on_missing_or_changed_root_without_replacing_tails() {
+    for published in [0, 999] {
+        let (shell, _agent_root, namespace, pid) = live_root_agent().await;
+        let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+            .await
+            .unwrap();
+        let task = task("pinned task");
+        submit_stdio_task(&shell, &task, &attachment).await.unwrap();
+        namespace.replace_mount(
+            PID_MOUNT,
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                "pid",
+                format!("{published}\n").into_bytes(),
+            ))),
+            Access::ReadOnly,
+        );
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            wait_for_stdio_answer_after_submit(
+                &shell,
+                task,
+                &mut attachment,
+                std::future::pending(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error.to_string().contains("outcome is unknown"));
+        assert_eq!(attachment.root_agent_pid, pid.parse::<u64>().unwrap());
+        close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+    let (tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
         .unwrap();
     let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
+    let mut attachment = stdio_attachment(&pid, tape_tail, ui_tail);
 
     let result = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
-            "/agent/root",
             task("fail before tape persistence"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
@@ -867,23 +820,22 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
 #[tokio::test]
 async fn one_shot_cancellation_interrupts_before_running_is_observed() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+    let (tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
         .unwrap();
     let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
+    let mut attachment = stdio_attachment(&pid, tape_tail, ui_tail);
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
     let input = task("cancel this turn");
     let submission_id = input.record.submission_id.clone();
     let result = {
-        let wait_for_answer =
-            wait_for_stdio_answer(&shell, "/agent/root", input, &mut attachment, async move {
-                cancel_rx.await.map_err(anyhow::Error::from)
-            });
+        let wait_for_answer = wait_for_stdio_answer(&shell, input, &mut attachment, async move {
+            cancel_rx.await.map_err(anyhow::Error::from)
+        });
         tokio::pin!(wait_for_answer);
 
         tokio::select! {

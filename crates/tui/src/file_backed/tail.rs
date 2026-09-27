@@ -1,7 +1,3 @@
-use super::{
-    StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
-    interrupt_stdio_task_if_pending, stdio_task_snapshot,
-};
 use alan_agent_protocol::UiActivitySnapshot;
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -166,9 +162,7 @@ pub(super) struct StdioTailAttachment {
     pub(super) root_agent_pid: u64,
     pub(super) agent_process_path: String,
     pub(super) tape_tail: alan_shell::Tail,
-    pub(super) tape_history: Vec<u8>,
     pub(super) ui_tail: alan_shell::Tail,
-    pub(super) ui_history: Vec<u8>,
 }
 
 pub(super) async fn open_stdio_tail_attachment(
@@ -187,7 +181,7 @@ pub(super) async fn open_stdio_tail_attachment(
             .ok_or_else(|| anyhow!("one-shot tasks require the /agent/root path"))?;
         let tape_path = format!("{agent_process_path}/machine/tape");
         let ui_path = format!("{agent_process_path}/machine/ui/events");
-        let (tape_tail, tape_history) = match tail_with_history(shell, &tape_path).await {
+        let (tape_tail, _) = match tail_with_history(shell, &tape_path).await {
             Ok(opened) => opened,
             Err(err) => {
                 if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
@@ -200,7 +194,7 @@ pub(super) async fn open_stdio_tail_attachment(
                 return Err(err);
             }
         };
-        let (ui_tail, ui_history) = match tail_with_history(shell, &ui_path).await {
+        let (ui_tail, _) = match tail_with_history(shell, &ui_path).await {
             Ok(opened) => opened,
             Err(err) => {
                 let _ = tape_tail.close().await;
@@ -226,9 +220,7 @@ pub(super) async fn open_stdio_tail_attachment(
                 root_agent_pid,
                 agent_process_path,
                 tape_tail,
-                tape_history,
                 ui_tail,
-                ui_history,
             });
         }
         let _ = close_stdio_tails(tape_tail, ui_tail).await;
@@ -290,12 +282,12 @@ async fn try_open_stdio_tail_attachment_for_submit(
     Ok(Some(attachment))
 }
 
-async fn require_stdio_attachment_current(
+pub(super) async fn require_stdio_attachment_current(
     shell: &alan_shell::Shell,
     attachment: &StdioTailAttachment,
 ) -> Result<()> {
     if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-        bail!("Root Agent changed before the task could be submitted; retry")
+        bail!("Root Agent changed or disappeared; task outcome is unknown")
     }
     Ok(())
 }
@@ -309,118 +301,4 @@ pub(super) async fn close_stdio_tails(
     tape_result.map_err(|err| anyhow!("close Agent tape tail failed: {err:?}"))?;
     ui_result.map_err(|err| anyhow!("close Agent UI tail failed: {err:?}"))?;
     Ok(())
-}
-
-pub(super) enum StdioTaskRecovery {
-    Unchanged,
-    Unavailable,
-    Reattached,
-    Complete(String),
-}
-
-pub(super) async fn recover_stdio_task_after_tail_close(
-    shell: &alan_shell::Shell,
-    root_agent_path: &str,
-    task: &StdioTaskWaitContext,
-    attachment: &mut StdioTailAttachment,
-    snapshot: &mut StdioTaskSnapshot,
-    interrupt_requested: bool,
-) -> Result<StdioTaskRecovery> {
-    let recovery = recover_stdio_task_after_root_change(
-        shell,
-        root_agent_path,
-        task,
-        attachment,
-        snapshot,
-        interrupt_requested,
-    )
-    .await?;
-    if !matches!(recovery, StdioTaskRecovery::Unchanged) {
-        return Ok(recovery);
-    }
-
-    // The supervisor can close the old AgentFS streams before publishing PID 0.
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    recover_stdio_task_after_root_change(
-        shell,
-        root_agent_path,
-        task,
-        attachment,
-        snapshot,
-        interrupt_requested,
-    )
-    .await
-}
-
-pub(super) async fn recover_stdio_task_after_root_change(
-    shell: &alan_shell::Shell,
-    root_agent_path: &str,
-    task: &StdioTaskWaitContext,
-    attachment: &mut StdioTailAttachment,
-    snapshot: &mut StdioTaskSnapshot,
-    interrupt_requested: bool,
-) -> Result<StdioTaskRecovery> {
-    let Some(pid) = current_root_agent_pid(shell).await? else {
-        return Ok(StdioTaskRecovery::Unavailable);
-    };
-    if pid == attachment.root_agent_pid {
-        return Ok(StdioTaskRecovery::Unchanged);
-    }
-
-    let new_attachment = open_stdio_tail_attachment(shell, root_agent_path).await?;
-    let mut recovered = match stdio_task_snapshot(
-        shell,
-        &new_attachment.agent_process_path,
-        task,
-        &new_attachment.tape_history,
-        &new_attachment.ui_history,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            let _ = close_stdio_tails(new_attachment.tape_tail, new_attachment.ui_tail).await;
-            return Err(error);
-        }
-    };
-
-    // Completion already observed for this ID remains evidence after a restart,
-    // even when the replacement only restores Tape and not the old UI stream.
-    if recovered.completion.is_none() && snapshot.completion.is_some() {
-        recovered.completion = snapshot.completion;
-        recovered.task_error = snapshot.task_error.clone();
-    }
-
-    let old_tape_tail = std::mem::replace(&mut attachment.tape_tail, new_attachment.tape_tail);
-    let old_ui_tail = std::mem::replace(&mut attachment.ui_tail, new_attachment.ui_tail);
-    attachment.root_agent_pid = new_attachment.root_agent_pid;
-    attachment.agent_process_path = new_attachment.agent_process_path;
-    attachment.tape_history = new_attachment.tape_history;
-    attachment.ui_history = new_attachment.ui_history;
-    close_stdio_tails(old_tape_tail, old_ui_tail).await?;
-    *snapshot = recovered;
-
-    if interrupt_requested
-        && interrupt_stdio_task_if_pending(
-            shell,
-            &attachment.agent_process_path,
-            &task.record.submission_id,
-            snapshot,
-        )
-        .await?
-    {
-        bail!("Agent input cancellation requested");
-    }
-    if snapshot.completion.is_none() && snapshot.waiting_for_response {
-        bail!("Agent task needs interactive input; attach with the TTY renderer");
-    }
-    if let Some(answer) = finish_stdio_task_if_ready(snapshot)? {
-        return Ok(StdioTaskRecovery::Complete(answer));
-    }
-    if snapshot.activity_state == Some(super::UiActivityState::Idle) {
-        bail!(
-            "Root Agent changed before the submitted task outcome could be recovered; outcome is unknown"
-        );
-    }
-    Ok(StdioTaskRecovery::Reattached)
 }

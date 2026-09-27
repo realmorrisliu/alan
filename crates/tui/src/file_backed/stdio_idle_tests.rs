@@ -188,22 +188,17 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
     close_stdio_tails(previous.tape_tail, previous.ui_tail)
         .await
         .unwrap();
-    assert!(String::from_utf8_lossy(&attachment.tape_history).contains("previous answer"));
-    assert!(String::from_utf8_lossy(&attachment.ui_history).contains("\"state\":\"idle\""));
-    assert_eq!(
-        attachment.tape_tail.offset(),
-        attachment.tape_history.len() as u64
-    );
-    assert_eq!(
-        attachment.ui_tail.offset(),
-        attachment.ui_history.len() as u64
-    );
+    let tape_history = shell.cat("/agent/root/machine/tape").await.unwrap();
+    let ui_history = shell.cat("/agent/root/machine/ui/events").await.unwrap();
+    assert!(String::from_utf8_lossy(&tape_history).contains("previous answer"));
+    assert!(String::from_utf8_lossy(&ui_history).contains("\"state\":\"idle\""));
+    assert_eq!(attachment.tape_tail.offset(), tape_history.len() as u64);
+    assert_eq!(attachment.ui_tail.offset(), ui_history.len() as u64);
 
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let answer = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
-            "/agent/root",
             task("repeat me"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
@@ -259,7 +254,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
 }
 
 #[tokio::test]
-async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
+async fn one_shot_fails_when_final_tape_read_races_root_agent_replacement() {
     let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
     let tail_closer = std::sync::Arc::new(stdio_tests::FaultingFileServer::new(agent_root.clone()));
     namespace.replace_mount(
@@ -281,7 +276,6 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         // has completed, so it cannot suspend submission between stream appends.
         let wait_for_answer = wait_for_stdio_answer_after_submit(
             &shell,
-            "/agent/root",
             task,
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
@@ -355,12 +349,13 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
 
         let answer = tokio::time::timeout(std::time::Duration::from_secs(10), wait_for_answer)
             .await
-            .expect("one-shot did not recover after the Root Agent restart")
-            .unwrap();
+            .expect("one-shot did not report the Root Agent failure")
+            .unwrap_err();
         (answer, new_pid)
     };
-    assert_eq!(answer, "recovered answer");
-    assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
+    assert!(answer.to_string().contains("outcome is unknown"));
+    assert_ne!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
+    assert_eq!(attachment.root_agent_pid, old_pid.parse::<u64>().unwrap());
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
@@ -473,14 +468,9 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
     assert!(input.contains(&a_id) && input.contains(&b_id));
     let a_shell = shell.clone();
     let mut a_wait = tokio::spawn(async move {
-        let result = wait_for_stdio_answer_after_submit(
-            &a_shell,
-            "/agent/root",
-            a,
-            &mut a_tail,
-            std::future::pending(),
-        )
-        .await;
+        let result =
+            wait_for_stdio_answer_after_submit(&a_shell, a, &mut a_tail, std::future::pending())
+                .await;
         close_stdio_tails(a_tail.tape_tail, a_tail.ui_tail)
             .await
             .unwrap();
@@ -488,14 +478,9 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
     });
     let b_shell = shell.clone();
     let mut b_wait = tokio::spawn(async move {
-        let result = wait_for_stdio_answer_after_submit(
-            &b_shell,
-            "/agent/root",
-            b,
-            &mut b_tail,
-            std::future::pending(),
-        )
-        .await;
+        let result =
+            wait_for_stdio_answer_after_submit(&b_shell, b, &mut b_tail, std::future::pending())
+                .await;
         close_stdio_tails(b_tail.tape_tail, b_tail.ui_tail)
             .await
             .unwrap();
