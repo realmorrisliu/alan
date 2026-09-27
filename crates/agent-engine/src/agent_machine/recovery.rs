@@ -251,14 +251,7 @@ impl AgentMachine {
 
         // Recovery is explicitly scoped to the newly launched Agent Process. The
         // source rollout is evidence, not a globally addressable execution identity.
-        let mut machine = Self::new_with_recorder_options(
-            process_path,
-            model,
-            rollouts_dir,
-            rollout_cwd,
-            reasoning_effort,
-        )
-        .await?;
+        let mut machine = Self::new();
 
         let recovered_latest_compaction_attempt =
             Self::latest_compaction_attempt_from_rollout_items_internal(&items);
@@ -353,6 +346,18 @@ impl AgentMachine {
         {
             machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
+
+        // Semantic replay must succeed before creating replacement durable evidence.
+        let durable = Self::new_with_recorder_options(
+            process_path,
+            model,
+            rollouts_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await?;
+        machine.recorder = durable.recorder;
+        machine.memory_record_id = durable.memory_record_id;
 
         if let Some(recorder) = machine.recorder.as_ref() {
             let mut recovered = machine

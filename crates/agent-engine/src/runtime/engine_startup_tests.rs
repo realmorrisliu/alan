@@ -124,8 +124,17 @@ async fn selected_recovery_failure_never_creates_a_fresh_machine() {
     let corrupt = temp.path().join("corrupt.jsonl");
     std::fs::write(&corrupt, "not a rollout\n").unwrap();
     let missing = temp.path().join("missing.jsonl");
+    let legacy = crate::rollout::RolloutRecorder::new_in_dir("/proc/1", "mock", temp.path())
+        .await
+        .unwrap();
+    legacy
+        .record_message("user", Some("legacy text without rich message"), None)
+        .await
+        .unwrap();
+    let legacy_path = legacy.path().clone();
+    let original = std::fs::read(&legacy_path).unwrap();
     let output = temp.path().join("new-rollouts");
-    for source in [&missing, &corrupt] {
+    for source in [&missing, &corrupt, &legacy_path] {
         for durability_required in [false, true] {
             let result = initialize_agent_machine(
                 AgentMachineLaunchContext {
@@ -150,6 +159,7 @@ async fn selected_recovery_failure_never_creates_a_fresh_machine() {
                 !output.exists(),
                 "failure must not create a replacement rollout"
             );
+            assert_eq!(std::fs::read(&legacy_path).unwrap(), original);
         }
     }
 }
