@@ -5,7 +5,7 @@ use std::fs;
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
 use alan_agent_engine::skills::SkillTypedDependency;
 use alan_ap::{ErrorCode, FileServer};
@@ -170,7 +170,8 @@ pub struct PackageService {
 
 /// An immutable Package Service revision reference retained by a Process context.
 pub struct PackageReferenceLease {
-    service: Weak<PackageService>,
+    service: Arc<PackageService>,
+    lease: Option<store::PackageLease>,
     token: u64,
     record: PackageRecord,
     content_root: PathBuf,
@@ -232,9 +233,7 @@ impl PackageReferenceLease {
 
 impl Drop for PackageReferenceLease {
     fn drop(&mut self) {
-        if let Some(service) = self.service.upgrade()
-            && let Err(error) = service.release(self.token)
-        {
+        if let Err(error) = self.service.release(self.token, &mut self.lease) {
             tracing::error!(token = self.token, %error, "failed to release package reference");
         }
     }
@@ -292,7 +291,20 @@ impl PackageService {
         Arc::new(FlatServiceFs::new(self.clone()))
     }
 
-    pub fn catalog(&self) -> PackageCatalog {
+    /// Read the current shared catalog under its cross-process transaction lock.
+    pub fn catalog(&self) -> Result<PackageCatalog> {
+        let _operation = self.operation.lock().expect("package operation poisoned");
+        let _transaction = self.refresh()?;
+        Ok(self.cached_catalog())
+    }
+
+    fn refresh(&self) -> Result<store::PackageStoreLock> {
+        let transaction = self.store.transaction()?;
+        self.state.lock().expect("package state poisoned").catalog = self.store.load()?;
+        Ok(transaction)
+    }
+
+    fn cached_catalog(&self) -> PackageCatalog {
         self.state
             .lock()
             .expect("package state poisoned")
@@ -306,6 +318,7 @@ impl PackageService {
         snapshot: PackageSnapshot,
     ) -> Result<()> {
         let _operation = self.operation.lock().expect("package operation poisoned");
+        let _transaction = self.refresh()?;
         validate_package_id(package_id)?;
         validate_snapshot(&snapshot)?;
         let revision = fingerprint(&snapshot)?;
@@ -326,7 +339,7 @@ impl PackageService {
         }
         if existing.is_none() {
             ensure!(
-                self.catalog().packages.len() < MAX_PACKAGES,
+                self.cached_catalog().packages.len() < MAX_PACKAGES,
                 "package catalog is full"
             );
         }
@@ -351,6 +364,8 @@ impl PackageService {
     }
 
     pub fn resolve(&self, package_id: &str) -> Result<PackageRecord> {
+        let _operation = self.operation.lock().expect("package operation poisoned");
+        let _transaction = self.refresh()?;
         let state = self.state.lock().expect("package state poisoned");
         let record = state
             .catalog
@@ -365,6 +380,7 @@ impl PackageService {
 
     pub fn acquire(self: &Arc<Self>, package_id: &str) -> Result<Arc<PackageReferenceLease>> {
         let _operation = self.operation.lock().expect("package operation poisoned");
+        let _transaction = self.refresh()?;
         let mut state = self.state.lock().expect("package state poisoned");
         let mut record = state
             .catalog
@@ -374,6 +390,7 @@ impl PackageService {
             .cloned()
             .with_context(|| format!("package `{package_id}` is not installed"))?;
         self.store.verify_revision(&record)?;
+        let lease = self.store.lease(package_id, &record.revision)?;
         let token = state.next_lease_id;
         record.reference_count = record
             .reference_count
@@ -389,7 +406,8 @@ impl PackageService {
             .leases
             .insert(token, (package_id.to_string(), record.revision.clone()));
         Ok(Arc::new(PackageReferenceLease {
-            service: Arc::downgrade(self),
+            service: self.clone(),
+            lease: Some(lease),
             token,
             content_root: self
                 .store
@@ -412,7 +430,7 @@ impl PackageService {
         }
 
         let action = command.action().to_string();
-        let attempted = match command {
+        let attempted = self.refresh().and_then(|_transaction| match command {
             PackageCommand::Install {
                 request_id,
                 package_id,
@@ -424,7 +442,7 @@ impl PackageService {
                 action: "list".to_string(),
                 message: "package catalog".to_string(),
                 package: None,
-                catalog: Some(self.catalog()),
+                catalog: Some(self.cached_catalog()),
             }),
             PackageCommand::Upgrade {
                 request_id,
@@ -435,7 +453,7 @@ impl PackageService {
                 request_id,
                 package_id,
             } => self.uninstall(request_id, package_id),
-        };
+        });
         let result = attempted.unwrap_or_else(|error| PackageCommandResult {
             request_id: request_id.clone(),
             success: false,
@@ -492,7 +510,7 @@ impl PackageService {
             bail!("package id `{package_id}` is already occupied; choose another explicit --name");
         }
         ensure!(
-            self.catalog().packages.len() < MAX_PACKAGES,
+            self.cached_catalog().packages.len() < MAX_PACKAGES,
             "package catalog is full"
         );
         let materialization = PackageMaterializer::new(self.store.root()).materialize(
@@ -584,7 +602,7 @@ impl PackageService {
     }
 
     fn uninstall(&self, request_id: String, package_id: String) -> Result<PackageCommandResult> {
-        let mut next = self.catalog();
+        let mut next = self.cached_catalog();
         let existing = next
             .packages
             .get(&package_id)
@@ -631,8 +649,9 @@ impl PackageService {
         })
     }
 
-    fn release(&self, token: u64) -> Result<()> {
+    fn release(&self, token: u64, lease: &mut Option<store::PackageLease>) -> Result<()> {
         let _operation = self.operation.lock().expect("package operation poisoned");
+        let _transaction = self.refresh()?;
         let mut state = self.state.lock().expect("package state poisoned");
         let Some((package_id, _revision)) = state.leases.get(&token).cloned() else {
             return Ok(());
@@ -660,14 +679,14 @@ impl PackageService {
         }
         state.catalog = next;
         state.leases.remove(&token);
+        lease.take();
         let catalog = state.catalog.clone();
-        let leases = state.leases.clone();
         drop(state);
         if remove_package {
             self.store
                 .discard_staged_package_revisions(staged_revisions);
         } else {
-            self.store.gc_unreferenced_revisions(&catalog, &leases)?;
+            self.store.gc_unreferenced_revisions(&catalog)?;
         }
         Ok(())
     }
@@ -675,10 +694,8 @@ impl PackageService {
     fn gc_package_revisions(&self, package_id: &str) -> Result<()> {
         let state = self.state.lock().expect("package state poisoned");
         let catalog = state.catalog.clone();
-        let leases = state.leases.clone();
         drop(state);
-        self.store
-            .gc_package_revisions(package_id, &catalog, &leases)
+        self.store.gc_package_revisions(package_id, &catalog)
     }
 
     fn gc_package_revisions_after_commit(&self, package_id: &str, action: &str) {
@@ -693,7 +710,7 @@ impl PackageService {
     }
 
     fn publish_record(&self, record: PackageRecord) -> Result<()> {
-        let mut next = self.catalog();
+        let mut next = self.cached_catalog();
         ensure!(
             next.packages.contains_key(&record.id) || next.packages.len() < MAX_PACKAGES,
             "package catalog is full"
@@ -713,9 +730,12 @@ impl FlatFileService for PackageService {
     }
 
     fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
+        if name == "catalog" {
+            let catalog = self.catalog().map_err(|_| ErrorCode::Io)?;
+            return serde_json::to_vec(&catalog).map_err(|_| ErrorCode::Io);
+        }
         let state = self.state.lock().map_err(|_| ErrorCode::Io)?;
         match name {
-            "catalog" => serde_json::to_vec(&state.catalog).map_err(|_| ErrorCode::Io),
             "status" => Ok(format!("{}\n", state.status).into_bytes()),
             "ctl" => Ok(b"write one Package Service command\n".to_vec()),
             "result" => serde_json::to_vec(&state.results).map_err(|_| ErrorCode::Io),
