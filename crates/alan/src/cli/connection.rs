@@ -29,37 +29,36 @@ struct ConnectionStores {
     credentials_dir: PathBuf,
     managed_auth: PathBuf,
     shell: Shell,
+    expected_metadata: ConnectionsFile,
 }
 
-async fn connection_stores() -> Result<ConnectionStores> {
+async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
     let channel = InstallChannel::detect_current();
     let system = SystemStorePaths::detect(channel.descriptor().id)?;
     let host = HostStorePaths::detect(channel.descriptor().id)?;
     if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
         migrate_legacy_connections(&legacy, &system, &host)?;
     }
-    Ok(ConnectionStores {
-        credentials_dir: host.credentials,
-        managed_auth: host.managed_auth,
-        shell: Shell::new(super::host::attach_or_start_host(channel).await?.root),
-    })
-}
-
-async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
-    let stores = connection_stores().await?;
-    let bytes = stores
-        .shell
+    let shell = Shell::new(super::host::attach_or_start_host(channel).await?.root);
+    let bytes = shell
         .cat("/mnt/connections/metadata")
         .await
         .map_err(|error| anyhow::anyhow!("read Connection Service metadata: {error}"))?;
-    let connections =
+    let connections: ConnectionsFile =
         serde_json::from_slice(&bytes).context("decode Connection Service metadata")?;
+    let stores = ConnectionStores {
+        credentials_dir: host.credentials,
+        managed_auth: host.managed_auth,
+        shell,
+        expected_metadata: connections.clone(),
+    };
     Ok((stores, connections))
 }
 
 async fn save_connections(stores: &ConnectionStores, connections: &ConnectionsFile) -> Result<()> {
     let command = serde_json::json!({
         "op": "replace_metadata",
+        "expected": &stores.expected_metadata,
         "connections": connections,
     });
     stores

@@ -58,6 +58,7 @@ pub struct NativeConnectionResponse {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum ConnectionCommand {
     ReplaceMetadata {
+        expected: ConnectionsFile,
         connections: ConnectionsFile,
     },
     AddProfile {
@@ -312,7 +313,14 @@ impl ConnectionService {
             let mut persist = false;
             let mut refresh = false;
             match command {
-                ConnectionCommand::ReplaceMetadata { connections } => {
+                ConnectionCommand::ReplaceMetadata {
+                    expected,
+                    connections,
+                } => {
+                    ensure!(
+                        state.connections == expected,
+                        "connection metadata changed; reload before retrying"
+                    );
                     validate_connections(&connections)?;
                     state.connections = connections;
                     let installed = state
