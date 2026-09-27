@@ -2,11 +2,13 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 #[cfg(test)]
+use alan_agent_protocol::UiActivitySnapshot;
+#[cfg(test)]
 use alan_agent_protocol::{
     ToolResultPresentation, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot,
     YieldKind,
 };
-use alan_agent_protocol::{UiActivitySnapshot, UiActivityState, UiEvent};
+use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
@@ -473,7 +475,7 @@ pub async fn run_stdio_task(
 
     let task = StdioTaskWaitContext::new(input);
 
-    let result = wait_for_stdio_answer(&shell, &agent_path, task, &mut attachment, async {
+    let result = wait_for_stdio_answer(&shell, task, &mut attachment, async {
         tokio::signal::ctrl_c().await.map_err(anyhow::Error::from)
     })
     .await;
@@ -492,13 +494,12 @@ pub async fn run_stdio_task(
 
 async fn wait_for_stdio_answer(
     shell: &alan_shell::Shell,
-    root_agent_path: &str,
     task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
     submit_stdio_task(shell, &task, attachment).await?;
-    wait_for_stdio_answer_after_submit(shell, root_agent_path, task, attachment, interrupt).await
+    wait_for_stdio_answer_after_submit(shell, task, attachment, interrupt).await
 }
 
 async fn submit_stdio_task(
@@ -517,7 +518,6 @@ async fn submit_stdio_task(
 
 async fn wait_for_stdio_answer_after_submit(
     shell: &alan_shell::Shell,
-    root_agent_path: &str,
     task: StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
@@ -537,7 +537,7 @@ async fn wait_for_stdio_answer_after_submit(
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    'wait: loop {
+    loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
                 let bytes = match bytes {
@@ -547,21 +547,7 @@ async fn wait_for_stdio_answer_after_submit(
                             Ok(_) => anyhow::anyhow!("Agent tape closed before the task completed"),
                             Err(err) => anyhow::anyhow!("read Agent tape failed: {err:?}"),
                         };
-                        match tail::recover_stdio_task_after_tail_close(
-                            shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
-                        ).await? {
-                            tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                            tail::StdioTaskRecovery::Reattached => {
-                                tape_pending.clear();
-                                ui_pending.clear();
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unavailable => {
-                                root_agent_pid_tick.tick().await;
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unchanged => return Err(error),
-                        }
+                        return Err(error.context("task outcome is unknown"));
                     }
                 };
                 tape_pending.extend_from_slice(&bytes);
@@ -591,21 +577,7 @@ async fn wait_for_stdio_answer_after_submit(
                             Ok(_) => anyhow::anyhow!("Agent UI event stream closed before the task completed"),
                             Err(err) => anyhow::anyhow!("read Agent UI events failed: {err:?}"),
                         };
-                        match tail::recover_stdio_task_after_tail_close(
-                            shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
-                        ).await? {
-                            tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                            tail::StdioTaskRecovery::Reattached => {
-                                tape_pending.clear();
-                                ui_pending.clear();
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unavailable => {
-                                root_agent_pid_tick.tick().await;
-                                continue;
-                            }
-                            tail::StdioTaskRecovery::Unchanged => return Err(error),
-                        }
+                        return Err(error.context("task outcome is unknown"));
                     }
                 };
                 ui_pending.extend_from_slice(&bytes);
@@ -640,59 +612,20 @@ async fn wait_for_stdio_answer_after_submit(
                     tokio::pin!(refresh);
                     loop {
                         tokio::select! {
-                            result = &mut refresh => break Some(result),
+                            result = &mut refresh => break result,
                             _ = root_agent_pid_tick.tick() => {
-                                if tail::current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-                                    break None;
-                                }
+                                tail::require_stdio_attachment_current(shell, attachment).await?;
                             }
                         }
                     }
                 };
-                let Some(refresh_result) = refresh_result else {
-                    tape_pending.clear();
-                    ui_pending.clear();
-                    continue 'wait;
-                };
-                if let Err(error) = refresh_result {
-                    match tail::recover_stdio_task_after_tail_close(
-                        shell,
-                        root_agent_path,
-                        &task,
-                        attachment,
-                        &mut snapshot,
-                        interrupt_requested,
-                    )
-                    .await?
-                    {
-                        tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                        tail::StdioTaskRecovery::Reattached => {
-                            tape_pending.clear();
-                            ui_pending.clear();
-                            continue;
-                        }
-                        tail::StdioTaskRecovery::Unavailable => {
-                            root_agent_pid_tick.tick().await;
-                            continue;
-                        }
-                        tail::StdioTaskRecovery::Unchanged => return Err(error),
-                    }
-                }
+                refresh_result.context("final task outcome is unknown")?;
                 if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                     return Ok(answer);
                 }
             }
             _ = root_agent_pid_tick.tick() => {
-                match tail::recover_stdio_task_after_root_change(
-                    shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
-                ).await? {
-                    tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
-                    tail::StdioTaskRecovery::Reattached => {
-                        tape_pending.clear();
-                        ui_pending.clear();
-                    }
-                    tail::StdioTaskRecovery::Unavailable | tail::StdioTaskRecovery::Unchanged => {}
-                }
+                tail::require_stdio_attachment_current(shell, attachment).await?;
             }
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
@@ -748,6 +681,7 @@ struct StdioTaskSnapshot {
 
 struct StdioTaskWaitContext {
     record: alan_agent_protocol::UserInputRecord,
+    #[cfg(test)]
     submitted_at_ms: u64,
 }
 
@@ -759,37 +693,13 @@ impl StdioTaskWaitContext {
                 alan_agent_protocol::InputMode::FollowUp,
                 input,
             ),
+            #[cfg(test)]
             submitted_at_ms: unix_time_ms(),
         }
     }
 }
 
-async fn stdio_task_snapshot(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    task: &StdioTaskWaitContext,
-    tape_history: &[u8],
-    ui_history: &[u8],
-) -> Result<StdioTaskSnapshot> {
-    let mut snapshot = stdio_task_snapshot_from_history(task, tape_history, ui_history)?;
-    if snapshot.activity_state.is_none() {
-        let raw = shell
-            .cat(&format!("{agent_path}/machine/ui/activity"))
-            .await
-            .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?;
-        let activity =
-            serde_json::from_slice::<UiActivitySnapshot>(&raw).context("parse Agent activity")?;
-        stdio_completion::observe_event(
-            &task.record.submission_id,
-            &mut snapshot,
-            UiEvent::Activity { snapshot: activity },
-        );
-    }
-    stdio_completion::refresh_answer_after_completion(shell, agent_path, task, &mut snapshot)
-        .await?;
-    Ok(snapshot)
-}
-
+#[cfg(test)]
 fn stdio_task_snapshot_from_history(
     task: &StdioTaskWaitContext,
     tape_history: &[u8],
