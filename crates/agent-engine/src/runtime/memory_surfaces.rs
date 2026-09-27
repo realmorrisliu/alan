@@ -46,7 +46,7 @@ pub(crate) async fn refresh_turn_memory_surfaces(
         &rendered.working_memory,
     )
     .await?;
-    write_text_file(&latest_handoff_path(memory_dir), &rendered.handoff).await?;
+    write_latest_handoff(&latest_handoff_path(memory_dir), &rendered.handoff).await?;
     write_text_file(
         &episodic_record_path(memory_dir, memory_record_id, now),
         &rendered.episodic_record,
@@ -436,6 +436,42 @@ async fn write_text_file(path: &Path, content: &str) -> Result<()> {
     tokio::fs::write(path, content)
         .await
         .with_context(|| format!("failed to write memory surface {}", path.display()))?;
+    Ok(())
+}
+
+async fn write_latest_handoff(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create parent directory {}", parent.display()))?;
+    }
+
+    let path = path.to_path_buf();
+    let content = content.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("failed to open latest handoff {}", path.display()))?;
+        // Foreground instances share this file, so lock its inode before the in-place write.
+        file.lock()
+            .with_context(|| format!("failed to lock latest handoff {}", path.display()))?;
+        file.set_len(0)
+            .with_context(|| format!("failed to truncate latest handoff {}", path.display()))?;
+        file.seek(SeekFrom::Start(0))
+            .with_context(|| format!("failed to seek latest handoff {}", path.display()))?;
+        file.write_all(content.as_bytes())
+            .with_context(|| format!("failed to write latest handoff {}", path.display()))?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("join latest handoff write task")??;
+
     Ok(())
 }
 
