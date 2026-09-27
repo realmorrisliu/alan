@@ -116,7 +116,7 @@ fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
         ("plain ! text", InputIntent::Agent, "plain ! text"),
     ] {
         let mut app = FileBackedApp::new("/agent/root".into());
-        app.composer.set_text(input);
+        app.insert_input_text(input);
         let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
             panic!("expected input record")
         };
@@ -125,7 +125,7 @@ fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
         record.validate().unwrap();
         assert_eq!(
             app.composer.text(),
-            input,
+            body,
             "unaccepted input stays in the editor"
         );
         assert!(app.transcript.is_empty());
@@ -135,9 +135,12 @@ fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
     }
     for input in ["!", ":", "! \n"] {
         let mut app = FileBackedApp::new("/agent/root".into());
-        app.composer.set_text(input);
+        app.insert_input_text(input);
         assert!(app.handle_submit().is_none());
-        assert_eq!(app.composer.text(), input);
+        assert_eq!(
+            app.composer.text(),
+            alan_agent_protocol::parse_input_prefix(input).1
+        );
         assert!(app.transcript.is_empty());
     }
 }
@@ -230,4 +233,41 @@ fn prefix_inserted_at_the_start_of_an_existing_agent_draft_is_literal() {
             assert_eq!(record.body, format!("{prefix}explain this"));
         }
     }
+}
+
+#[test]
+fn draft_intent_survives_editing_history_and_rejected_empty_input() {
+    use alan_agent_protocol::InputIntent;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.insert_input_text("explain");
+    app.handle_key(key(KeyCode::Home));
+    app.insert_input_text("!");
+    assert_eq!(app.composer.text(), "!explain");
+    app.handle_key(key(KeyCode::Home));
+    app.handle_key(key(KeyCode::Right));
+    app.handle_key(key(KeyCode::Backspace));
+    app.insert_input_text("!");
+    let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
+        panic!("input")
+    };
+    assert_eq!(record.intent, InputIntent::ForceAgent);
+    assert_eq!(record.body, "!explain");
+    app.accept_input();
+    app.insert_input_text("!draft");
+    app.handle_key(key(KeyCode::Up));
+    assert_eq!(app.input_intent, InputIntent::ForceAgent);
+    assert_eq!(app.composer.text(), "!explain");
+    app.handle_key(key(KeyCode::Down));
+    assert_eq!(app.input_intent, InputIntent::Command);
+    assert_eq!(app.composer.text(), "draft");
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    assert!(app.handle_submit().is_none());
+    assert_eq!(app.input_intent, InputIntent::Command);
+    app.handle_key(key(KeyCode::Backspace));
+    assert_eq!(app.input_intent, InputIntent::Agent);
+    app.insert_input_text(":!literal");
+    assert_eq!(app.composer.text(), "!literal");
+    assert_eq!(app.input_intent, InputIntent::ForceAgent);
 }

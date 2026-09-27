@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use alan_agent_protocol::{
-    UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot,
-    UiThinkingSnapshot, UiThinkingState, YieldKind,
+    InputIntent, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot,
+    UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState, YieldKind,
 };
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Style};
@@ -69,6 +69,8 @@ pub(super) struct FileBackedApp {
     pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
     pub(super) composer: Composer,
+    pub(super) input_intent: InputIntent,
+    history_draft_intent: Option<InputIntent>,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
     pub(super) activity: UiActivitySnapshot,
@@ -104,6 +106,8 @@ impl FileBackedApp {
             expected_terminal_error: None,
             agent_path,
             composer: Composer::default(),
+            input_intent: InputIntent::Agent,
+            history_draft_intent: None,
             transcript: Vec::new(),
             action_cells: BTreeMap::new(),
             activity: UiActivitySnapshot::idle(),
@@ -231,6 +235,16 @@ impl FileBackedApp {
                 None
             }
             _ => {
+                if self.pending_yield.is_none() {
+                    if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                        self.recall_input(key);
+                        self.refresh_completion();
+                        return None;
+                    }
+                    if key.code == KeyCode::Backspace && self.composer.text().is_empty() {
+                        self.input_intent = InputIntent::Agent;
+                    }
+                }
                 let outcome = self.composer.handle_key(key);
                 self.refresh_completion();
                 match outcome {
@@ -242,17 +256,37 @@ impl FileBackedApp {
         }
     }
 
-    fn insert_input_text(&mut self, text: &str) {
-        // A prefix inserted into an existing Agent body is data, not a route switch.
-        if self.pending_yield.is_none()
-            && self.composer.cursor() == 0
-            && !self.composer.text().is_empty()
-            && !self.composer.text().starts_with(['!', ':'])
-            && text.starts_with(['!', ':'])
-        {
-            self.composer.insert_text(":");
-        }
+    pub(super) fn insert_input_text(&mut self, text: &str) {
+        let text = if self.pending_yield.is_none() && self.input_intent == InputIntent::Agent {
+            if self.composer.text().is_empty() {
+                let (intent, body) = alan_agent_protocol::parse_input_prefix(text);
+                self.input_intent = intent;
+                body
+            } else {
+                if self.composer.cursor() == 0 && text.starts_with(['!', ':']) {
+                    self.input_intent = InputIntent::ForceAgent;
+                }
+                text
+            }
+        } else {
+            text
+        };
         self.composer.insert_text(text);
+    }
+
+    fn recall_input(&mut self, key: KeyEvent) {
+        if !self.composer.is_recalling() {
+            self.history_draft_intent = Some(self.input_intent);
+        }
+        self.composer.handle_key(key);
+        if self.composer.is_recalling() {
+            let (intent, body) = alan_agent_protocol::parse_input_prefix(self.composer.text());
+            let prefix_len = self.composer.text().len() - body.len();
+            self.input_intent = intent;
+            self.composer.strip_recalled_prefix(prefix_len);
+        } else if let Some(intent) = self.history_draft_intent.take() {
+            self.input_intent = intent;
+        }
     }
 
     pub(super) fn consume_completion_key(&mut self, key: KeyEvent) -> bool {
@@ -414,28 +448,30 @@ impl FileBackedApp {
             return None;
         }
         self.completion = None;
-        if text.trim().starts_with('/') {
+        if self.input_intent == InputIntent::Agent && text.trim().starts_with('/') {
             self.composer.set_text("");
             self.composer.remember(&text);
             return self.handle_command(text.trim());
         }
-        let (intent, body) = alan_agent_protocol::parse_input_prefix(&text);
-        if body.trim().is_empty() {
-            self.notice = Some("Enter text after the input prefix".into());
-            return None;
-        }
         let record = alan_agent_protocol::UserInputRecord::new(
-            intent,
+            self.input_intent,
             alan_agent_protocol::InputMode::FollowUp,
-            body,
+            text,
         );
         Some(FileBackedAction::Submit(record))
     }
 
     pub(super) fn accept_input(&mut self) {
-        let text = self.composer.text().to_owned();
-        self.composer.remember(&text);
+        let prefix = match self.input_intent {
+            InputIntent::Agent => "",
+            InputIntent::Command => "!",
+            InputIntent::ForceAgent => ":",
+        };
+        self.composer
+            .remember(&format!("{prefix}{}", self.composer.text()));
         self.composer.set_text("");
+        self.input_intent = InputIntent::Agent;
+        self.history_draft_intent = None;
         // Submission may be queued behind another client. Tape owns turn boundaries.
     }
 
@@ -444,7 +480,7 @@ impl FileBackedApp {
             return false;
         }
         let text = self.composer.text().trim();
-        !text.is_empty() && !text.starts_with('/')
+        !text.is_empty() && (self.input_intent != InputIntent::Agent || !text.starts_with('/'))
     }
 
     pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {
