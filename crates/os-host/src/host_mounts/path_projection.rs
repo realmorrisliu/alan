@@ -5,34 +5,39 @@ use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
-    let Some(active_mount) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)
-    else {
+    if longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd).is_none() {
         return text.to_string();
-    };
-    let cwd = adapter.cwd.to_string_lossy();
+    }
+    let physical_cwd = dunce::canonicalize(&adapter.cwd).unwrap_or_else(|_| adapter.cwd.clone());
+    let is_filesystem_root = Path::new(std::path::MAIN_SEPARATOR_STR);
+    let has_root_grant = adapter
+        .mounts
+        .iter()
+        .any(|mount| mount.host_path == is_filesystem_root);
+    let cwd = physical_cwd.to_string_lossy();
     let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
     let cwd = if cwd.is_empty() {
         std::path::MAIN_SEPARATOR_STR
     } else {
         cwd
     };
-    let mut candidates = vec![(cwd.to_owned(), ".".to_owned())];
-
-    // The filesystem root is public; projecting every leading slash rewrites root-relative URLs.
-    if active_mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR) {
-        let mount_from_cwd = relative_path(&adapter.namespace_cwd, &active_mount.namespace_path);
-        let host_path = active_mount.host_path.to_string_lossy();
-        let replacement = mount_from_cwd.to_string_lossy().into_owned();
-        let host_path = host_path.into_owned();
-        candidates.push((host_path.clone(), replacement.clone()));
-        let shell_escaped_host_path = host_path.replace(' ', "\\ ");
-        if shell_escaped_host_path != host_path {
-            candidates.push((shell_escaped_host_path, replacement.clone()));
-        }
-        if let Ok(file_url) = url::Url::from_file_path(&active_mount.host_path)
-            && file_url.path() != host_path
-        {
-            candidates.push((file_url.path().to_owned(), replacement));
+    let mut candidates = Vec::new();
+    if !has_root_grant {
+        candidates.push((cwd.to_owned(), ".".to_owned()));
+        for mount in &adapter.mounts {
+            let mount_from_cwd = relative_path(&physical_cwd, &mount.host_path);
+            let host_path = mount.host_path.to_string_lossy().into_owned();
+            let replacement = mount_from_cwd.to_string_lossy().into_owned();
+            candidates.push((host_path.clone(), replacement.clone()));
+            let shell_escaped_host_path = host_path.replace(' ', "\\ ");
+            if shell_escaped_host_path != host_path {
+                candidates.push((shell_escaped_host_path, replacement.clone()));
+            }
+            if let Ok(file_url) = url::Url::from_file_path(&mount.host_path)
+                && file_url.path() != host_path
+            {
+                candidates.push((file_url.path().to_owned(), replacement));
+            }
         }
     }
 
@@ -42,9 +47,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     for (path, replacement) in candidates {
         projected = replace_path_prefixes(&projected, &path, &replacement);
     }
-    if active_mount.host_path == Path::new(std::path::MAIN_SEPARATOR_STR) {
-        let physical_cwd =
-            dunce::canonicalize(&adapter.cwd).unwrap_or_else(|_| adapter.cwd.clone());
+    if has_root_grant {
         projected = project_rooted_path_tokens(&projected, &physical_cwd);
     }
     projected

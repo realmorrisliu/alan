@@ -121,10 +121,11 @@ async fn project_text_preserves_unmatched_paths_with_space_siblings() {
 }
 
 #[tokio::test]
-async fn project_text_does_not_map_paths_from_a_disjoint_grant() {
+async fn project_text_maps_disjoint_grant_paths_from_the_native_cwd() {
     let project = tempfile::tempdir().unwrap();
     let docs = tempfile::tempdir().unwrap();
     let other_path = dunce::canonicalize(docs.path()).unwrap().join("notes.txt");
+    std::fs::write(&other_path, "notes").unwrap();
 
     let service = service();
     service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
@@ -150,8 +151,16 @@ async fn project_text_does_not_map_paths_from_a_disjoint_grant() {
         .adapter()
         .unwrap();
     let output = format!("realpath {}", other_path.display());
+    let projected = adapter
+        .project_text(&output)
+        .strip_prefix("realpath ")
+        .unwrap()
+        .to_owned();
 
-    assert_eq!(adapter.project_text(&output), output);
+    assert_eq!(
+        dunce::canonicalize(project.path().join(projected)).unwrap(),
+        other_path
+    );
 }
 
 #[tokio::test]
