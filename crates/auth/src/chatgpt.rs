@@ -487,6 +487,7 @@ impl ChatgptAuthManager {
                 "{}/oauth/token",
                 self.inner.config.issuer.trim_end_matches('/')
             ))
+            .timeout(Duration::from_secs(30))
             .json(&serde_json::json!({
                 "client_id": self.inner.config.client_id,
                 "grant_type": "refresh_token",
