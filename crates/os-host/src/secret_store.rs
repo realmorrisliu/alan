@@ -1,6 +1,6 @@
 //! Host credential-store adapter used while materializing callable connections.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,9 @@ const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
 struct SecretStoreFile {
     #[serde(default)]
     secrets: BTreeMap<String, String>,
+    // Retain explicit logout across legacy native-store fallback and process restarts.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    revoked: BTreeSet<String>,
 }
 
 /// Explicit Host credential-store binding. Connection Service receives only
@@ -58,13 +61,23 @@ impl SecretStore {
         Ok(store)
     }
 
+    pub(crate) fn has_local_override(&self, credential_id: &str) -> anyhow::Result<bool> {
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        let stored = self.read_secret_file()?;
+        Ok(stored.secrets.contains_key(credential_id) || stored.revoked.contains(credential_id))
+    }
+
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
-        if let Some(secret) = self.resolved_secrets.get(credential_id) {
-            return Ok(Some(secret.clone()));
-        }
         let secrets = self.read_secret_file()?;
-        Ok(secrets.secrets.get(credential_id).cloned())
+        if secrets.revoked.contains(credential_id) {
+            return Ok(None);
+        }
+        Ok(secrets
+            .secrets
+            .get(credential_id)
+            .or_else(|| self.resolved_secrets.get(credential_id))
+            .cloned())
     }
 
     pub fn save(&self, credential_id: &str, secret: &str) -> anyhow::Result<()> {
@@ -74,6 +87,7 @@ impl SecretStore {
         secrets
             .secrets
             .insert(credential_id.to_string(), secret.trim().to_string());
+        secrets.revoked.remove(credential_id);
         self.write_secret_file(&secrets)
     }
 
@@ -81,8 +95,11 @@ impl SecretStore {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
         let _lock = self.lock()?;
         let mut secrets = self.read_secret_file()?;
-        let removed = secrets.secrets.remove(credential_id).is_some();
-        if removed {
+        let removed = secrets.secrets.remove(credential_id).is_some()
+            || (!secrets.revoked.contains(credential_id)
+                && self.resolved_secrets.contains_key(credential_id));
+        let newly_revoked = secrets.revoked.insert(credential_id.to_string());
+        if removed || newly_revoked {
             self.write_secret_file(&secrets)?;
         }
         Ok(removed)
@@ -129,7 +146,7 @@ impl SecretStore {
 
     fn write_secret_file(&self, secret_file: &SecretStoreFile) -> anyhow::Result<()> {
         let path = self.secret_file_path()?;
-        if secret_file.secrets.is_empty() {
+        if secret_file.secrets.is_empty() && secret_file.revoked.is_empty() {
             match std::fs::remove_file(&path) {
                 Ok(()) => std::fs::File::open(&self.credentials_dir)?.sync_all()?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -301,6 +318,31 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn explicit_updates_and_logout_override_legacy_native_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback =
+            || SecretStore::with_resolved_secret(temp.path(), "native", "legacy".into()).unwrap();
+        let reader = fallback();
+        let writer = SecretStore::from_directory(temp.path()).unwrap();
+        assert_eq!(reader.load("native").unwrap().as_deref(), Some("legacy"));
+        writer.save("native", "replacement").unwrap();
+        assert_eq!(
+            reader.load("native").unwrap().as_deref(),
+            Some("replacement")
+        );
+        assert!(writer.delete("native").unwrap());
+        assert_eq!(reader.load("native").unwrap(), None);
+        assert_eq!(fallback().load("native").unwrap(), None);
+        writer.save("native", "renewed").unwrap();
+        assert_eq!(
+            fallback().load("native").unwrap().as_deref(),
+            Some("renewed")
+        );
+        assert!(reader.delete("native").unwrap());
+        assert!(!reader.delete("native").unwrap());
     }
 
     #[test]

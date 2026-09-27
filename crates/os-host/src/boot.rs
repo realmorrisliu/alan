@@ -105,21 +105,24 @@ impl ProductLlmClientFactory {
         };
         let mut core_config = base_config.clone();
         let resolved = connections.resolve_profile(Some(selected_profile))?;
+        let local_store = SecretStore::from_directory(&self.credentials_dir)?;
         let secret_store = match (
             self.keychain_service.as_deref(),
             resolved.credential_id.as_deref(),
         ) {
-            (Some(service), Some(credential_id)) => {
+            (Some(service), Some(credential_id))
+                if !local_store.has_local_override(credential_id)? =>
+            {
                 match load_macos_keychain_secret(service, credential_id)? {
                     Some(secret) => SecretStore::with_resolved_secret(
                         &self.credentials_dir,
                         credential_id,
                         secret,
                     )?,
-                    None => SecretStore::from_directory(&self.credentials_dir)?,
+                    None => local_store,
                 }
             }
-            _ => SecretStore::from_directory(&self.credentials_dir)?,
+            _ => local_store,
         };
         apply_profile_to_config(
             connections,
