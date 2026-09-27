@@ -185,7 +185,14 @@ impl FileBackedApp {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Some(FileBackedAction::Interrupt);
         }
-        if pending_input || self.input_intent == InputIntent::Command {
+        if pending_input
+            || self.input_intent == InputIntent::Command
+            || (self.input_intent == InputIntent::ForceAgent
+                && self
+                    .completion
+                    .as_ref()
+                    .is_some_and(|state| state.kind == completion::CompletionKind::Command))
+        {
             self.completion = None;
         } else if self.completion.is_some() && self.consume_completion_key(key) {
             return None;
@@ -373,7 +380,11 @@ impl FileBackedApp {
             self.composer.text(),
             self.composer.cursor(),
             &self.completion_sources,
-        );
+        )
+        .filter(|state| {
+            self.input_intent != InputIntent::ForceAgent
+                || state.kind != completion::CompletionKind::Command
+        });
     }
 
     pub(super) fn submit_form(&mut self) -> Option<FileBackedAction> {

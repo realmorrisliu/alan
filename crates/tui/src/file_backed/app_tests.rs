@@ -379,3 +379,31 @@ fn upgrading_history_preserves_legacy_agent_text_and_new_explicit_intent() {
         assert_eq!(restarted.composer.text(), body);
     }
 }
+
+#[test]
+fn forced_agent_slash_submits_exact_body_without_local_completion() {
+    use crate::completion::{CompletionCandidate, CompletionKind};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.composer.set_text("/clear");
+    app.refresh_completion();
+    let stale = app.completion.clone();
+    assert!(stale.is_some());
+    app.composer.set_text("");
+    app.dispatch(super::FileBackedEvent::Terminal(
+        super::TerminalEvent::Paste(":/clear".into()),
+    ));
+    assert!(app.completion.is_none());
+    app.completion = stale;
+    let Some(FileBackedAction::Submit(record)) =
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("forced Agent submission")
+    };
+    assert_eq!(record.intent, alan_agent_protocol::InputIntent::ForceAgent);
+    assert_eq!(record.body, "/clear");
+    app.set_skill_candidates(vec![CompletionCandidate::new("code-review", None)]);
+    app.composer.set_text("$co");
+    app.refresh_completion();
+    assert_eq!(app.completion.unwrap().kind, CompletionKind::Skill);
+}
