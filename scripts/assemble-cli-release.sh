@@ -17,23 +17,17 @@ fail() {
 mkdir -p "$OUT_DIR"
 
 cargo build --locked --release -p alan --bin alan --target "$TARGET" --target-dir "$TARGET_DIR"
-cargo build --locked --release -p alan-os-host \
-    --bin alan-os-host --bin alan-os-host-dev --target "$TARGET" --target-dir "$TARGET_DIR"
 
 BIN_DIR="$TARGET_DIR/$TARGET/release"
-for binary in alan alan-os-host alan-os-host-dev; do
-    [[ -x "$BIN_DIR/$binary" ]] || fail "missing release binary: $BIN_DIR/$binary"
-done
+[[ -x "$BIN_DIR/alan" ]] || fail "missing release binary: $BIN_DIR/alan"
 
 stage="$(mktemp -d "$TARGET_DIR/cli-stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-for binary in alan alan-os-host alan-os-host-dev; do
-    install -m 0755 "$BIN_DIR/$binary" "$stage/$binary"
-done
+install -m 0755 "$BIN_DIR/alan" "$stage/alan"
 ln -s alan "$stage/alan-dev"
 
 manifest="$stage/manifest.json"
-printf '{\n  "product": "alan-cli",\n  "version": "%s",\n  "target": "%s",\n  "binaries": ["alan", "alan-dev", "alan-os-host", "alan-os-host-dev"]\n}\n' \
+printf '{\n  "product": "alan-cli",\n  "version": "%s",\n  "target": "%s",\n  "binaries": ["alan", "alan-dev"]\n}\n' \
     "$VERSION" "$TARGET" >"$manifest"
 
 archive="$OUT_DIR/alan-$VERSION-$TARGET.tar.gz"

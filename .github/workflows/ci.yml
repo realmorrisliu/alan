@@ -228,14 +228,11 @@ jobs:
           cache-bin: false
 
       - name: Build release binary
-        run: cargo build --workspace --release --target ${{ matrix.target }}
+        run: cargo build --locked --release -p alan --bin alan --target ${{ matrix.target }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: alan-${{ matrix.target }}
-          path: |
-            target/${{ matrix.target }}/release/alan
-            target/${{ matrix.target }}/release/alan-os-host
-            target/${{ matrix.target }}/release/alan-os-host-dev
+          path: target/${{ matrix.target }}/release/alan
           if-no-files-found: error
