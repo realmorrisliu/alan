@@ -99,12 +99,13 @@ all existing executables and the manifest unchanged.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL NOT register or start an Alan runtime. Ordinary
-`alan` execution SHALL own its foreground instance through existing product
-composition. Metadata-only commands such as `--version` and durable connection
-profile or credential operations SHALL NOT require starting that instance.
-An explicitly targeted auxiliary client MAY connect to a live instance, but
-installation or a missing target MUST NOT implicitly create a background Host.
+Standalone installation SHALL NOT start or register an Alan runtime. With
+`ALAN_INSTANCE_RUNTIME_DIR` unset or set to a directory not in use by another
+invocation, ordinary `alan` execution SHALL own its foreground instance
+through existing composition. A shared explicit directory permits only one
+owner. `--version`, connection-profile and credential commands SHALL NOT
+require starting the instance. An explicitly targeted client MAY connect to a
+live instance, but a missing target MUST NOT create a background Host.
 
 #### Scenario: CLI is installed but no Host is running
 
@@ -113,13 +114,21 @@ installation or a missing target MUST NOT implicitly create a background Host.
 - **AND** no Host process or launchd product registration is created by the
   installer
 
-#### Scenario: A foreground Alan invocation runs
+#### Scenario: Concurrent foreground Alan invocations use separate runtime directories
 
 - **WHEN** a user starts bare `alan` or submits redirected input for Agent
-  execution
+  execution with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a directory
+  distinct from every other live invocation
 - **THEN** that invocation starts and owns its foreground instance
 - **AND** another invocation has an independent Root and runtime endpoint
 - **AND** exiting the invocation ends its instance
+
+#### Scenario: Concurrent invocations select the same runtime directory
+
+- **WHEN** two invocations use the same explicit `ALAN_INSTANCE_RUNTIME_DIR`
+- **THEN** only one may own that runtime directory at a time
+- **AND** the other fails to acquire it instead of attaching to or borrowing
+  the owner's Root Agent
 
 #### Scenario: Metadata commands remain processless
 

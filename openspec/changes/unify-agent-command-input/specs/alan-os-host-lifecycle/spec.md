@@ -9,10 +9,13 @@
 ## MODIFIED Requirements
 
 ### Requirement: Each foreground invocation owns its alan9 instance
-Each bare or redirected Agent-execution invocation of `alan` SHALL own an
-independent alan9 instance, Kernel and native application lifetime. In this
-contract, an invocation means that execution path; metadata, configuration and
-explicitly targeted management subcommands SHALL NOT boot an unrelated Root Agent.
+Each bare or redirected Agent-execution invocation of `alan` with
+`ALAN_INSTANCE_RUNTIME_DIR` unset or unique to that invocation SHALL own an
+independent alan9 instance, Kernel and native application lifetime. An explicit
+shared runtime directory selects one exact endpoint and permits only one owner.
+In this contract, an invocation means that execution path; metadata,
+configuration and explicitly targeted management subcommands SHALL NOT boot an
+unrelated Root Agent.
 Install channel SHALL select persistent
 configuration and store boundaries, not a singleton live runtime. Service Manager
 SHALL retain ownership of services and the instance-local Root Agent Process.
@@ -21,11 +24,19 @@ launch or attach to a separate background Host, including through launchd or
 systemd. Herdr SHALL NOT be required for ordinary terminal operation.
 
 #### Scenario: CLI and macOS use stable
-- **WHEN** two terminal sessions start stable `alan` for the same user, including on macOS
+- **WHEN** two terminal sessions start stable `alan` for the same user,
+  including on macOS, with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to distinct
+  directories
 - **THEN** each owns an independent Root Agent, Process table, input queue and cwd
 - **AND** exiting one invocation does not stop or submit work to the other
 - **AND** concurrent access to shared package, connection and credential stores preserves their commit and authorization contracts
 - **AND** live service Processes remain independently owned by each invocation
+
+#### Scenario: Two invocations select the same runtime directory
+- **WHEN** two terminal sessions select the same explicit
+  `ALAN_INSTANCE_RUNTIME_DIR`
+- **THEN** only one invocation owns that runtime directory
+- **AND** the other fails to acquire it instead of attaching to or borrowing its Root Agent
 
 #### Scenario: Terminal host retains a process
 - **WHEN** Herdr or another terminal host detaches a view while retaining the Alan process

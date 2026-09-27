@@ -74,12 +74,12 @@ will replace or retire against that channel's ownership manifest.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL NOT register or start an alan9 runtime. Each
-bare or redirected Agent-execution invocation of `alan` SHALL own one
-foreground alan9 instance and its Root Agent Process. Metadata, configuration
-and explicitly targeted management commands SHALL NOT boot an unrelated Root
-Agent. A new Agent-execution invocation SHALL start with an independent Root;
-process exit SHALL end the instance owned by that invocation.
+Standalone installation SHALL NOT register or start an alan9 runtime. Bare or
+redirected Agent-execution invocations SHALL use a foreground instance and
+independent Root when `ALAN_INSTANCE_RUNTIME_DIR` is unset or selects a
+directory not in use by another invocation. A shared explicit directory
+permits only one owner. Metadata, configuration and targeted management
+commands SHALL NOT boot a Root. Process exit SHALL end its instance.
 
 #### Scenario: CLI is installed but no Host is running
 
@@ -88,13 +88,21 @@ process exit SHALL end the instance owned by that invocation.
 - **AND** no runtime process or launchd product registration is created by the
   installer
 
-#### Scenario: A foreground Alan invocation runs
+#### Scenario: Concurrent foreground Alan invocations use separate runtime directories
 
 - **WHEN** a user starts bare `alan` or submits redirected input for Agent
-  execution
+  execution with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a directory
+  distinct from every other live invocation
 - **THEN** that invocation starts and owns its foreground instance
 - **AND** another invocation has an independent Root and runtime endpoint
 - **AND** exiting the invocation ends its instance
+
+#### Scenario: Concurrent invocations select the same runtime directory
+
+- **WHEN** two invocations use the same explicit `ALAN_INSTANCE_RUNTIME_DIR`
+- **THEN** only one may own that runtime directory at a time
+- **AND** the other fails to acquire it instead of attaching to or borrowing
+  the owner's Root Agent
 
 #### Scenario: Metadata commands remain processless
 
@@ -117,5 +125,5 @@ Sparkle, appcast, or Apple GUI checks.
 #### Scenario: CI builds a release target
 
 - **WHEN** CI builds a supported release target
-- **THEN** it uploads the standalone CLI distribution
+- **THEN** it uploads the standalone foreground CLI executable
 - **AND** the build does not depend on an Xcode app archive
