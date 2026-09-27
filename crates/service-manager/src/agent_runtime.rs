@@ -95,33 +95,11 @@ impl RootAgentProcess {
 pub(crate) struct AgentRuntimeService {
     procfs: alan_kernel::ProcFs,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
-}
-
-pub(crate) struct AgentRuntimeFileServers {
-    agent_root: Arc<alan_agentfs::AgentRootFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
-}
-
-impl AgentRuntimeFileServers {
-    pub(crate) fn new(
-        agent_root: Arc<alan_agentfs::AgentRootFs>,
-        llmfs: Arc<alan_llmfs::LlmFs>,
-    ) -> Self {
-        Self { agent_root, llmfs }
-    }
-
-    pub(crate) fn from_refs(
-        agent_root: &Arc<alan_agentfs::AgentRootFs>,
-        llmfs: &Arc<alan_llmfs::LlmFs>,
-    ) -> Self {
-        Self::new(agent_root.clone(), llmfs.clone())
-    }
 }
 
 struct PendingRootLaunch {
@@ -143,15 +121,14 @@ struct AgentLaunch {
 impl AgentRuntimeService {
     pub(crate) fn new(
         procfs: alan_kernel::ProcFs,
-        file_servers: AgentRuntimeFileServers,
+        agent_root: Arc<alan_agentfs::AgentRootFs>,
         host_mount: Arc<HostMountService>,
         connection: Arc<ConnectionService>,
         tool_runner: ToolProcessRunner,
     ) -> Arc<Self> {
         Arc::new(Self {
             procfs,
-            agent_root: file_servers.agent_root,
-            llmfs: file_servers.llmfs,
+            agent_root,
             host_mount,
             connection,
             tool_runner,
@@ -339,7 +316,9 @@ impl AgentRuntimeService {
         launch.namespace.replace_mount(
             "/mnt/llm",
             InProcessTransport::new(Arc::new(
-                self.llmfs.connection_view(&launch.template.llm_connection),
+                self.connection
+                    .capture_connection(&launch.template.llm_connection)
+                    .await?,
             )),
             Access::ReadWrite,
         );
