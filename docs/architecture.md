@@ -51,6 +51,10 @@ selection and queue/cwd restoration flow remains active work. Interactive `!`
 requests a command through the governed `bash` Tool, while `:` forces Agent
 routing. The lifecycle revision to [ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md)
 supersedes its historical background-Host behavior.
+This describes the shipped CLI behavior. The canonical `alan-os-host-lifecycle`,
+`alan-shell`, renderer and attachment lifecycle specs still contain parts of the
+prior channel-wide contract; syncing their implemented startup subset is tracked
+by task 4.2.2 in the active unified-input change.
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed. Rust Host platform adapters remain. Herdr supplies terminal topology,

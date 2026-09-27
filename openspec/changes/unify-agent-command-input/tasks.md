@@ -57,5 +57,6 @@
 
 - [ ] 4.1 Run strict OpenSpec validation and applicable implementation checks, complete PR review and required current-head CI for each delivery slice; record the exact reviewed and merged commits.
 - [ ] 4.2 Sync only implemented and merged requirements to canonical specs; verify no automatic-routing guarantee is synced merely because the explicit slice shipped.
-- [x] 4.2.1 Sync the CLI-only distribution and foreground ownership requirements delivered by PR #1009; the canonical specification and strict validation are included in PR #1010.
+- [x] 4.2.1 Sync the CLI-only distribution requirement delivered by PR #1009; the canonical standalone-distribution specification and strict validation are included in PR #1010.
+- [ ] 4.2.2 Sync only the shipped foreground-startup ownership subset in the `alan-os-host-lifecycle`, `alan-shell`, renderer, and local-attachment canonical specs, plus ADR-0056; leave explicit recovery and cross-invocation cwd/queue claims pending.
 - [ ] 4.3 Archive only after remaining work is delivered or explicitly handed to an active successor, with canonical specs synced; verify links, disposition and implementation evidence before archive.

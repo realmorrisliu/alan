@@ -29,11 +29,12 @@ records this slice. Cross-invocation cwd/queue isolation and shared-store
 concurrency remain under task 2.18.2. Explicit durable recovery selection,
 authority validation and paused queue restoration remain under task 2.19.
 
-This is a partial delivery. The canonical standalone distribution and foreground
-ownership requirements are synchronized in this change; the other lifecycle
-clauses in its deltas, ADR-0047/0054/0056/0058, and canonical specs still require
-the cross-surface audit in task 2.17.4 and remaining sync in task 4.2 before this
-change can be archived. PR #981's automatic Root rollout selector and PR #982's
+This is a partial delivery. The canonical standalone distribution requirement
+is synchronized in this change; the owning lifecycle specs and ADR-0056 still
+need the focused implementation-status sync tracked by task 4.2.2. The remaining
+lifecycle clauses in its deltas, ADR-0047/0054/0056/0058 and canonical specs also
+require the cross-surface audit in task 2.17.4 and remaining sync in task 4.2
+before this change can be archived. PR #981's automatic Root rollout selector and PR #982's
 automatic Host-restart acceptance are not merge prerequisites for the revised
 delivery; reusable evidence-recovery fixes may be extracted into focused PRs.
 

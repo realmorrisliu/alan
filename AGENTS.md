@@ -44,13 +44,17 @@ OpenSpec and the ADRs.
 - Memory Stores and handoff files own continuity across Agent Processes.
 - provider, sandbox, terminal, macOS, and app details stay behind adapters.
 - agent-ness is a file-layout convention, never a second Kernel Process type.
-- bare `alan` owns one foreground alan9 instance per invocation and attaches its
+- shipped CLI behavior: bare `alan` owns one foreground alan9 instance per
+  invocation and attaches its
   terminal renderer to that instance's `/agent/root`; it creates no extra Shell
   Process and never borrows another invocation's Root. Actual Alan exit ends its
   instance; a Herdr view detach may leave the native process alive (ADR-0054 and
   the lifecycle update to ADR-0056). Starting another Herdr session starts a
   separate invocation; reusing earlier durable work requires explicit user
-  selection, never automatic channel-wide recovery.
+  selection, never automatic channel-wide recovery. The canonical lifecycle
+  spec sync for this shipped startup behavior remains tracked by task 4.2.2 in
+  `unify-agent-command-input`; do not treat this statement as evidence that
+  recovery or cross-invocation cwd/queue isolation has shipped.
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
 - prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).
