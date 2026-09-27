@@ -36,6 +36,12 @@ the standalone binaries. The installer MUST refuse to overwrite a non-owned
 file and MUST NOT edit shell startup files, user data stores, credentials,
 installed applications, or launchd registrations.
 
+For an existing installation, the installer MAY replace the selected channel's
+CLI executable only when its ownership manifest records that path and its
+current content matches the recorded digest. A modified executable or a
+missing ownership record is a conflict; the installer MUST preserve both the
+file and existing manifest.
+
 #### Scenario: Destination is empty
 
 - **WHEN** the installer is run with an empty destination directory for a
@@ -54,6 +60,15 @@ installed applications, or launchd registrations.
 - **AND** a modified or unowned file is preserved and reported as a conflict
   without discarding its existing ownership record
 - **AND** stable and development channel ownership remain separate
+
+#### Scenario: Upgrade replaces the manifest-owned CLI executable
+
+- **WHEN** an existing selected-channel CLI executable matches the digest in
+  its ownership manifest and the installer receives a new executable
+- **THEN** the installer replaces it and records the new digest
+- **AND** a modified executable or missing ownership record fails with the
+  conflicting path while preserving the executable and existing manifest
+- **AND** the other install channel remains unchanged
 
 #### Scenario: Destination contains an unrelated file
 
