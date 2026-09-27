@@ -204,7 +204,7 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
     assert!(!missing_target.status.success());
     assert!(
         String::from_utf8_lossy(&missing_target.stderr)
-            .contains("native Connection requests require ALAN_INSTANCE_RUNTIME_DIR")
+            .contains("select a live Alan instance with ALAN_INSTANCE_RUNTIME_DIR")
     );
     assert!(!paths.root.exists());
 }
