@@ -25,6 +25,46 @@ human commands. Existing standalone aP Shell use does not need to disappear.
 
 ## Decisions
 
+### Foreground instance lifetime — accepted 2026-09-27
+
+Each ordinary `alan` invocation boots its own alan9 instance in its foreground
+native process, using the existing composition and Service Manager. The renderer
+remains a file client and does not acquire Agent Machine, Tool or supervision
+ownership. `/agent/root` is an alias within this instance, not a channel-global
+execution identity. Starting a second terminal or redirected invocation starts
+independent work; it never borrows the first invocation's cwd or queue.
+
+Herdr owns terminal session presentation and may retain the native process across
+view detach. Alan must also work in an ordinary terminal, without Herdr detection,
+IDs or a separately launched Host. Herdr identifiers grant no authority and are
+not durable Agent identities. Logical File-Server Services remain ordinary alan9
+Processes; this direction does not require one OS process per service.
+
+Exiting Alan shuts down its instance and owned execution through existing
+lifecycle/cancellation boundaries. Completed effects remain completed. Forced
+termination may leave an unknown outcome; a future launch must not infer success
+or retry from that absence. Keeping a terminal-host session alive is distinct
+from exiting the application. No login-start registration or background replacement
+process is part of this delivery.
+
+Recovery is opt-in and identifies existing rollout/checkpoint evidence explicitly.
+A new invocation creates fresh Process identity, validates the selected records
+and current grants, and exposes recoverable pending work paused. It does not
+select the most recent channel rollout automatically. Missing/invalid evidence
+fails the requested recovery instead of silently starting fresh. Exact CLI syntax
+and evidence selection/discovery are delivery tasks using existing stores, not a
+new globally addressable Session/Conversation registry.
+
+Installed packages, connection profiles and credentials keep their current
+channel-isolated service/Host stores. Concurrent foreground instances must not
+share live Process files or mutable execution pointers. Audit shared persistent
+service writes against existing locking/commit ownership before claiming safe
+concurrent instances; do not create private copies of user projects or credentials.
+
+This revision supersedes older background-lifetime assumptions in this change.
+The owning lifecycle deltas and ADR reconciliation remain explicit tasks; no
+unimplemented lifecycle requirement may be synced to canonical specs.
+
 ### One runtime authority with native command execution
 
 The Agent Machine accepts and orders work, dispatching a command through the
@@ -221,7 +261,8 @@ environment; persistent interactive-shell state is outside this slice.
 The Agent Process owns one cwd reference (delegated Host Mount plus relative
 location); the Host adapter resolves its native execution path. Machine orders
 changes made by standalone explicit user `cd`.
-All attachments see it and each command resolves it at execution time. Agent
+All authorized attachments to that same Agent see it; separate Alan invocations
+do not share it. Each command resolves it at execution time. Agent
 per-action cwd does not mutate this shared value. Ordinary submissions queue
 behind active work; responses and controls do not become queued ordinary work.
 Process-local submission identity correlates output and cancellation, without
@@ -230,10 +271,12 @@ must be reconciled with ordered acceptance rather than silently bypassed.
 
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
 continuation/discard through the existing machine control surface. It does not
-roll back effects or start the next command. Detach, quit and empty-input
-terminal Ctrl-D with no pending Agent input leave accepted work running; Ctrl-D
-with a pending confirmation or structured-input request keeps the client
-attached. Pipe EOF completes a submission. Without a response channel,
+roll back effects or start the next command. Explicit quit and empty-input
+terminal Ctrl-D with no pending Agent input end this foreground Alan invocation
+and shut down its owned work. Ctrl-D with a pending confirmation or structured
+input keeps the application available to answer it. A Herdr view detach is not
+an Alan exit and may preserve its running terminal process. Pipe EOF completes
+a submission; the invocation shuts down after reporting its terminal outcome. Without a response channel,
 clarification/approval fails with stderr and nonzero exit; never read a hidden
 terminal. Report prior effects accurately.
 
@@ -248,7 +291,7 @@ Interactive clients show route and cwd; redirected stdout contains the result,
 with routing/diagnostics on stderr. Commands propagate their exit status; Agent
 work preserves the existing final-answer success/failure convention.
 
-After Agent/Host restart, recoverable pending work is paused for explicit review.
+After explicitly selected recovery, recoverable pending work is paused for explicit review.
 Never replay unknown effects automatically. Restore cwd only from reliable state
 and after checking current reachability/rights; otherwise require a new explicit
 directory choice before directory-dependent work. Missing recovery records are
