@@ -276,6 +276,7 @@ impl AgentMachine {
         let recovered_latest_memory_flush_attempt =
             Self::latest_memory_flush_attempt_from_rollout_items_internal(&items);
         let mut context_items: Vec<ContextItem> = Vec::new();
+        let mut recovered_context = None;
         let mut compaction_attempt_records: Vec<CompactionAttemptSnapshot> = Vec::new();
         let mut memory_flush_attempt_records: Vec<MemoryFlushAttemptSnapshot> = Vec::new();
         let mut recovered_compaction: Option<CompactedItem> = None;
@@ -302,6 +303,7 @@ impl AgentMachine {
                     machine.tape.push(message);
                 }
                 RolloutItem::TurnContext(ctx) => {
+                    recovered_context = Some(ctx.clone());
                     context_items = ctx
                         .context_items
                         .into_iter()
@@ -402,6 +404,7 @@ impl AgentMachine {
                     .into_iter()
                     .map(RolloutItem::MemoryFlushAttempt),
             );
+            recovered.extend(recovered_context.map(RolloutItem::TurnContext));
             recovered.extend(recovered_compaction.map(RolloutItem::Compacted));
             recovered.extend(effect_records.into_iter().map(RolloutItem::Effect));
             recovered.extend(event_records.into_iter().map(RolloutItem::Event));
