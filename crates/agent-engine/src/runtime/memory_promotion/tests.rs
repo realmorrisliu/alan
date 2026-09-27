@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
 use alan_ap::InProcessTransport;
@@ -141,6 +143,25 @@ async fn concurrent_promotions_preserve_updates_from_both_sessions() {
         .unwrap();
     assert!(user_memory.contains("short engineering pull requests"));
     assert!(user_memory.contains("explicit session recovery"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn write_text_file_does_not_replace_a_read_only_target() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("USER.md");
+    tokio::fs::write(&path, "protected memory").await.unwrap();
+    let mut permissions = tokio::fs::metadata(&path).await.unwrap().permissions();
+    permissions.set_mode(0o444);
+    tokio::fs::set_permissions(&path, permissions)
+        .await
+        .unwrap();
+
+    assert!(write_text_file(&path, "replacement").await.is_err());
+    assert_eq!(
+        tokio::fs::read_to_string(path).await.unwrap(),
+        "protected memory"
+    );
 }
 
 #[tokio::test]

@@ -61,7 +61,14 @@ pub(super) async fn write_text_file(path: &Path, content: &str) -> Result<()> {
 
     #[cfg(unix)]
     let mode = match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) if metadata.is_file() => metadata.permissions().mode() & 0o7777,
+        Ok(metadata) if metadata.is_file() => {
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .await
+                .with_context(|| format!("open {} for update", path.display()))?;
+            metadata.permissions().mode() & 0o7777
+        }
         Ok(_) => 0o600,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0o600,
         Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
