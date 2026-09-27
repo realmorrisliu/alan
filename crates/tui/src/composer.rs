@@ -2,14 +2,35 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
+use alan_agent_protocol::InputIntent;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// A recalled body and its explicitly recorded submission intent.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryEntry {
+    /// Exact submitted body, without route framing.
+    pub body: String,
+    /// Intent recorded at submission time.
+    pub intent: InputIntent,
+}
+
+impl HistoryEntry {
+    fn agent(body: String) -> Self {
+        Self {
+            body,
+            intent: InputIntent::Agent,
+        }
+    }
+}
 
 /// The bottom input editor: readline-style editing plus persisted history recall.
 #[derive(Debug, Default, Clone)]
 pub struct Composer {
     buffer: String,
     cursor: usize,
-    history: Vec<String>,
+    history: Vec<HistoryEntry>,
     /// Index into `history` while recalling; `None` while editing the live buffer.
     history_index: Option<usize>,
     /// Live buffer stashed while recalling history.
@@ -19,7 +40,7 @@ pub struct Composer {
 
 impl Composer {
     /// Build a composer seeded with prior history and a path to append new entries to.
-    pub fn with_history(history: Vec<String>, history_path: Option<PathBuf>) -> Self {
+    pub fn with_history(history: Vec<HistoryEntry>, history_path: Option<PathBuf>) -> Self {
         Self {
             history,
             history_path,
@@ -39,10 +60,8 @@ impl Composer {
         self.history_index.is_some()
     }
 
-    /// Remove framing from a recalled entry without resetting history navigation.
-    pub(crate) fn strip_recalled_prefix(&mut self, prefix_len: usize) {
-        self.buffer.drain(..prefix_len);
-        self.cursor = self.cursor.saturating_sub(prefix_len);
+    pub(crate) fn recalled_intent(&self) -> Option<InputIntent> {
+        self.history_index.map(|index| self.history[index].intent)
     }
 
     pub fn set_text(&mut self, text: impl Into<String>) {
@@ -75,17 +94,26 @@ impl Composer {
 
     /// Record a submitted entry into history (adjacent-deduplicated) and persist it.
     pub fn remember(&mut self, entry: &str) {
-        if entry.trim().is_empty() {
+        self.remember_input(entry, InputIntent::Agent);
+    }
+
+    /// Persist an accepted input with intent independent of its text.
+    pub fn remember_input(&mut self, body: &str, intent: InputIntent) {
+        if body.trim().is_empty() {
             return;
         }
-        if self.history.last().map(String::as_str) == Some(entry) {
+        let entry = HistoryEntry {
+            body: body.to_owned(),
+            intent,
+        };
+        if self.history.last() == Some(&entry) {
             self.reset_recall();
             return;
         }
-        self.history.push(entry.to_string());
+        self.history.push(entry.clone());
         self.reset_recall();
         if let Some(path) = &self.history_path
-            && let Err(err) = append_history_line(path, entry)
+            && let Err(err) = append_history_line(path, &entry)
         {
             tracing::warn!(%err, "failed to persist composer history");
         }
@@ -198,7 +226,7 @@ impl Composer {
             Some(index) => index - 1,
         };
         self.history_index = Some(next_index);
-        self.buffer = self.history[next_index].clone();
+        self.buffer = self.history[next_index].body.clone();
         self.cursor = self.buffer.len();
     }
 
@@ -208,7 +236,7 @@ impl Composer {
         };
         if index + 1 < self.history.len() {
             self.history_index = Some(index + 1);
-            self.buffer = self.history[index + 1].clone();
+            self.buffer = self.history[index + 1].body.clone();
         } else {
             self.history_index = None;
             self.buffer = self.stash.take().unwrap_or_default();
@@ -277,40 +305,49 @@ impl Composer {
     }
 }
 
-fn history_records_path(path: &std::path::Path) -> PathBuf {
+fn history_records_path(path: &std::path::Path, version: u8) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
-    name.push(".v1.jsonl");
+    name.push(format!(".v{version}.jsonl"));
     PathBuf::from(name)
 }
 
-fn append_history_line(path: &std::path::Path, entry: &str) -> std::io::Result<()> {
+fn append_history_line(path: &std::path::Path, entry: &HistoryEntry) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(history_records_path(path))?;
+        .open(history_records_path(path, 2))?;
     let encoded = serde_json::to_string(entry).map_err(std::io::Error::other)?;
     writeln!(file, "{encoded}")
 }
 
-/// Load legacy plain lines followed by versioned JSON records, oldest first.
-/// New records live beside the legacy file with a `.v1.jsonl` suffix.
-pub fn load_history(path: &PathBuf, limit: usize) -> Vec<String> {
+/// Load legacy Agent entries, then typed v2 history, oldest first.
+/// New records live beside the legacy file with a `.v2.jsonl` suffix.
+pub fn load_history(path: &PathBuf, limit: usize) -> Vec<HistoryEntry> {
     let legacy = std::fs::read_to_string(path).unwrap_or_default();
-    let mut entries: Vec<String> = legacy
+    let mut entries: Vec<HistoryEntry> = legacy
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(str::to_owned)
+        .map(|line| HistoryEntry::agent(line.to_owned()))
         .collect();
-    if let Ok(records) = std::fs::read_to_string(history_records_path(path)) {
+    if let Ok(records) = std::fs::read_to_string(history_records_path(path, 1)) {
         entries.extend(
             records
                 .lines()
                 .filter_map(|line| serde_json::from_str::<String>(line).ok())
-                .filter(|entry| !entry.trim().is_empty()),
+                .filter(|entry| !entry.trim().is_empty())
+                .map(HistoryEntry::agent),
+        );
+    }
+    if let Ok(records) = std::fs::read_to_string(history_records_path(path, 2)) {
+        entries.extend(
+            records
+                .lines()
+                .filter_map(|line| serde_json::from_str::<HistoryEntry>(line).ok())
+                .filter(|entry| !entry.body.trim().is_empty()),
         );
     }
     if entries.len() > limit {
@@ -366,7 +403,10 @@ mod tests {
         assert_eq!(composer.text(), text);
         let loaded = load_history(&path, 100);
         assert_eq!(
-            loaded,
+            loaded
+                .iter()
+                .map(|entry| entry.body.as_str())
+                .collect::<Vec<_>>(),
             [
                 "legacy command",
                 "\"quoted legacy\"",
@@ -376,7 +416,7 @@ mod tests {
             ]
         );
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(load_history(&path, 1), [text]);
+        assert_eq!(load_history(&path, 1)[0].body, text);
         let mut restarted = Composer::with_history(loaded, Some(path));
         restarted.handle_key(key(KeyCode::Up));
         assert_eq!(restarted.text(), text);
@@ -468,7 +508,10 @@ mod tests {
             composer.remember("persisted entry");
         }
         let loaded = load_history(&path, 100);
-        assert_eq!(loaded, vec!["persisted entry".to_string()]);
+        assert_eq!(
+            loaded,
+            vec![HistoryEntry::agent("persisted entry".to_string())]
+        );
         let mut next = Composer::with_history(loaded, Some(path));
         next.handle_key(key(KeyCode::Up));
         assert_eq!(next.text(), "persisted entry");

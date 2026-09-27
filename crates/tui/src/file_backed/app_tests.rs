@@ -342,3 +342,40 @@ fn explicit_commands_bypass_semantic_completions_and_submit_exact_bodies() {
         assert_eq!(record.body, &input[1..]);
     }
 }
+
+#[test]
+fn upgrading_history_preserves_legacy_agent_text_and_new_explicit_intent() {
+    use crate::composer::{Composer, load_history};
+    use alan_agent_protocol::InputIntent;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("history");
+    std::fs::write(&path, "!legacy\n").unwrap();
+    std::fs::write(
+        temp.path().join("history.v1.jsonl"),
+        format!("{}\n", serde_json::to_string(":!legacy-v1\n  ").unwrap()),
+    )
+    .unwrap();
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.composer = Composer::with_history(load_history(&path, 100), Some(path.clone()));
+    app.insert_input_text("!printf x\n  ");
+    app.accept_input();
+    app.insert_input_text(":!literal");
+    app.accept_input();
+    let mut restarted = FileBackedApp::new("/agent/root".into());
+    restarted.composer = Composer::with_history(load_history(&path, 100), Some(path));
+    for (intent, body) in [
+        (InputIntent::ForceAgent, "!literal"),
+        (InputIntent::Command, "printf x\n  "),
+        (InputIntent::Agent, ":!legacy-v1\n  "),
+        (InputIntent::Agent, "!legacy"),
+    ] {
+        restarted.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let Some(FileBackedAction::Submit(record)) = restarted.handle_submit() else {
+            panic!("history input")
+        };
+        assert_eq!(record.intent, intent);
+        assert_eq!(record.body, body);
+        assert_eq!(restarted.composer.text(), body);
+    }
+}
