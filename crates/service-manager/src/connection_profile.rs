@@ -446,8 +446,9 @@ pub fn default_profile_source() -> String {
     "managed".to_string()
 }
 
+/// Stable sentinel for legacy metadata whose creation or update time is unknown.
 pub fn default_profile_timestamp() -> DateTime<Utc> {
-    Utc::now()
+    DateTime::<Utc>::UNIX_EPOCH
 }
 
 pub fn normalize_profile_settings(

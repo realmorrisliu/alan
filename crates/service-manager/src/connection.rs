@@ -94,6 +94,18 @@ struct State {
 
 impl State {
     fn replace_connections(&mut self, connections: ConnectionsFile) {
+        let unchanged = connections
+            .profiles
+            .iter()
+            .filter_map(|(id, profile)| {
+                let same_credential = profile.credential_id.as_ref().is_none_or(|credential| {
+                    self.connections.credentials.get(credential)
+                        == connections.credentials.get(credential)
+                });
+                (self.connections.profiles.get(id) == Some(profile) && same_credential)
+                    .then_some(id.clone())
+            })
+            .collect::<BTreeSet<_>>();
         self.connections = connections;
         let installed = self
             .connections
@@ -104,11 +116,11 @@ impl State {
         self.selections
             .retain(|_, profile| installed.contains(profile));
         self.requests
-            .retain(|_, request| installed.contains(&request.profile_id));
+            .retain(|_, request| unchanged.contains(&request.profile_id));
         self.native_status
-            .retain(|profile, _| installed.contains(profile));
+            .retain(|profile, _| unchanged.contains(profile));
         self.validation
-            .retain(|profile, _| installed.contains(profile));
+            .retain(|profile, _| unchanged.contains(profile));
         for profile in installed {
             self.validation
                 .entry(profile)

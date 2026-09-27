@@ -627,3 +627,64 @@ async fn independent_services_reject_stale_writes_and_refresh_for_retry() {
     assert!(!disk.profiles.contains_key("first"));
     assert!(disk.profiles.contains_key("second"));
 }
+
+#[tokio::test]
+async fn legacy_timestamps_are_stable_and_replaced_profiles_discard_native_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    std::fs::write(
+        &bindings.metadata_path,
+        r#"version = 1
+[profiles.main]
+provider = "openai_responses"
+[profiles.main.settings]
+base_url = "https://api.openai.com/v1"
+model = "gpt-5.4"
+"#,
+    )
+    .unwrap();
+    let first = ConnectionService::open("test", &bindings).unwrap();
+    let second = ConnectionService::open("test", &bindings).unwrap();
+    assert_eq!(first.metadata(), second.metadata());
+    first
+        .apply(ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    let second = ConnectionService::open("test", &bindings).unwrap();
+    {
+        let mut state = second.state.lock().unwrap();
+        state
+            .native_status
+            .insert("main".into(), "logged_out".into());
+        state.requests.insert(
+            "old".into(),
+            NativeConnectionRequest {
+                id: "old".into(),
+                profile_id: "main".into(),
+                action: NativeConnectionAction::SecretEntry,
+            },
+        );
+    }
+    let mut changed = first.metadata();
+    changed.profiles.get_mut("main").unwrap().credential_id = Some("new-secret".into());
+    first
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: first.metadata().fingerprint().unwrap(),
+            connections: changed,
+        })
+        .await
+        .unwrap();
+    assert!(
+        second
+            .apply(ConnectionCommand::SetDefault {
+                profile_id: "main".into()
+            })
+            .await
+            .is_err()
+    );
+    let state = second.state.lock().unwrap();
+    assert!(!state.requests.contains_key("old"));
+    assert!(!state.native_status.contains_key("main"));
+}
