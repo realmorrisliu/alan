@@ -854,3 +854,52 @@ fn standalone_cd_updates_process_binding_and_reconciles_host_projection() {
         namespace_cwd
     );
 }
+
+#[test]
+fn separate_tool_runners_keep_their_process_cwds_independent() {
+    let first_runner = {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        ToolProcessRunner::from_registry(&registry)
+    };
+    let second_runner = {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        ToolProcessRunner::from_registry(&registry)
+    };
+    first_runner.register_process_binding(
+        7,
+        test_binding(
+            "/mnt/source",
+            PathBuf::from("/host/source"),
+            PathBuf::from("/tmp/first-scratch"),
+        ),
+    );
+    first_runner.register_process_authority(7, Arc::new(TestHostMountAuthority));
+    second_runner.register_process_binding(
+        7,
+        test_binding(
+            "/mnt/fixtures",
+            PathBuf::from("/host/fixtures"),
+            PathBuf::from("/tmp/second-scratch"),
+        ),
+    );
+
+    let updated = first_runner
+        .change_process_directory(7, std::path::Path::new("src"))
+        .unwrap();
+
+    assert_eq!(updated, PathBuf::from("/mnt/source/src"));
+    let first_binding = first_runner.process_binding(7).unwrap();
+    assert_eq!(first_binding.namespace_cwd, updated);
+    assert_eq!(
+        first_binding.adapter().unwrap().cwd().unwrap(),
+        PathBuf::from("/host/source/src")
+    );
+    let second_binding = second_runner.process_binding(7).unwrap();
+    assert_eq!(second_binding.namespace_cwd, PathBuf::from("/mnt/fixtures"));
+    assert_eq!(
+        second_binding.adapter().unwrap().cwd().unwrap(),
+        PathBuf::from("/host/fixtures")
+    );
+}
