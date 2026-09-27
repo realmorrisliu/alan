@@ -684,7 +684,7 @@ pub(super) fn parse_tape_history(raw: &str) -> Vec<HistoryCell> {
             continue;
         }
         match record.role.as_str() {
-            "user" => cells.push(HistoryCell::User(record.content)),
+            "user" => cells.push(record.into_user_cell()),
             "assistant" => match cells.last_mut() {
                 Some(HistoryCell::Assistant(text)) => text.push_str(&record.content),
                 _ => cells.push(HistoryCell::Assistant(record.content)),
@@ -914,12 +914,22 @@ pub(super) struct TapeRecordV1 {
     pub(super) role: String,
     pub(super) content: String,
     #[serde(default)]
+    pub(super) input_intent: Option<alan_agent_protocol::InputIntent>,
+    #[serde(default)]
     pub(super) submission_id: Option<String>,
     #[serde(default)]
     pub(super) related_submission_ids: Vec<String>,
 }
 
 impl TapeRecordV1 {
+    pub(super) fn into_user_cell(self) -> HistoryCell {
+        if self.input_intent == Some(alan_agent_protocol::InputIntent::Command) {
+            HistoryCell::Command(self.content)
+        } else {
+            HistoryCell::User(self.content)
+        }
+    }
+
     pub(super) fn belongs_to(&self, submission_id: &str) -> bool {
         self.submission_id.as_deref() == Some(submission_id)
             || self

@@ -14,7 +14,7 @@ pub(super) fn merge_reconnected_history(
         .iter()
         .enumerate()
         .filter_map(|(index, cell)| {
-            matches!(cell, HistoryCell::User(text) if text == submitted_input).then_some(index)
+            matches!(cell, HistoryCell::User(text) | HistoryCell::Command(text) if text == submitted_input).then_some(index)
         })
         .nth(prior_matching_turns)
     else {
@@ -25,7 +25,7 @@ pub(super) fn merge_reconnected_history(
     if let Some(previous_boundary) = app
         .transcript
         .iter()
-        .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == submitted_input))
+        .rposition(|cell| matches!(cell, HistoryCell::User(text) | HistoryCell::Command(text) if text == submitted_input))
         && let Some((previous_answer_index, previous_answer)) = app
             .transcript
             .iter()
@@ -173,6 +173,8 @@ fn rendered_history_tokens(cell: &HistoryCell) -> Vec<String> {
     if let Some(first) = lines.first_mut() {
         for prefix in [
             "alan > ",
+            "alan: ",
+            "alan! ",
             "you> ",
             "alan> ",
             "tool> ",
