@@ -715,6 +715,8 @@ async fn run_bare_in_foreground_instance(
     paths: HostEndpointPaths,
     mode: BareRunMode,
 ) -> Result<i32> {
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
     let config = HostBootConfig::product(channel.descriptor().id)?;
@@ -733,8 +735,13 @@ async fn run_bare_in_foreground_instance(
             match mode {
                 BareRunMode::Interactive => {
                     let config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                    alan_tui::run_file_backed(config).await?;
-                    Ok(0)
+                    tokio::select! {
+                        result = alan_tui::run_file_backed(config) => {
+                            result?;
+                            Ok(0)
+                        }
+                        _ = interrupt.recv() => Ok(130),
+                    }
                 }
                 BareRunMode::OneShot => {
                     let (input_tx, input_rx) = tokio::sync::oneshot::channel();
@@ -751,10 +758,7 @@ async fn run_bare_in_foreground_instance(
                     });
                     let input = tokio::select! {
                         input = input_rx => input.context("stdin reader stopped")??,
-                        signal = tokio::signal::ctrl_c() => {
-                            signal.context("listen for Ctrl-C while reading Agent task")?;
-                            return Ok(130);
-                        }
+                        _ = interrupt.recv() => return Ok(130),
                     };
                     let exit_code = alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
                     Ok(exit_code)
