@@ -10,6 +10,8 @@ use alan_llmfs::LlmFs;
 use async_trait::async_trait;
 use tempfile::TempDir;
 
+mod storage;
+
 use crate::{
     config::Config,
     runtime::{
@@ -74,7 +76,7 @@ async fn promote_inbox_entry_updates_memory_file_and_marks_confirmed() {
     .await
     .unwrap();
 
-    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now)
+    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
@@ -84,10 +86,65 @@ async fn promote_inbox_entry_updates_memory_file_and_marks_confirmed() {
         .unwrap();
     assert!(memory_file.contains("## Promoted Facts"));
     assert!(memory_file.contains("lexical and file-backed"));
+    assert!(!memory_dir.join(".memory-promotion.lock").exists());
+    assert!(!temp.path().join(".memory-promotion.lock").exists());
 
     let updated_inbox = tokio::fs::read_to_string(inbox_path).await.unwrap();
     let parsed = parse_inbox_entry(&updated_inbox).unwrap();
     assert_eq!(parsed.frontmatter.status, "confirmed");
+}
+
+#[tokio::test]
+async fn concurrent_promotions_preserve_updates_from_both_sessions() {
+    let temp = TempDir::new().unwrap();
+    let memory_dir = temp.path().join("memory-store");
+    ensure_memory_store_layout_at(&memory_dir).unwrap();
+    let now = Utc::now();
+    let first = stage_inbox_entry(
+        &memory_dir,
+        InboxEntryDraft {
+            kind: "user_preference",
+            target: MEMORY_USER_FILENAME.to_string(),
+            confidence: "high",
+            observation: "Prefer short engineering pull requests.".to_string(),
+            evidence: vec!["Requested small reviewable changes.".to_string()],
+            promotion_rationale: "Directly stated preference.".to_string(),
+            source_processes: vec!["session-a".to_string()],
+        },
+        now,
+    )
+    .await
+    .unwrap();
+    let second = stage_inbox_entry(
+        &memory_dir,
+        InboxEntryDraft {
+            kind: "user_preference",
+            target: MEMORY_USER_FILENAME.to_string(),
+            confidence: "high",
+            observation: "Prefer explicit session recovery.".to_string(),
+            evidence: vec!["Selected explicit recovery.".to_string()],
+            promotion_rationale: "Directly stated preference.".to_string(),
+            source_processes: vec!["session-b".to_string()],
+        },
+        now,
+    )
+    .await
+    .unwrap();
+
+    let first_cancel = CancellationToken::new();
+    let second_cancel = CancellationToken::new();
+    let (first, second) = tokio::join!(
+        promote_inbox_entry(&memory_dir, &first, now, &first_cancel),
+        promote_inbox_entry(&memory_dir, &second, now, &second_cancel),
+    );
+    first.unwrap();
+    second.unwrap();
+
+    let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+        .await
+        .unwrap();
+    assert!(user_memory.contains("short engineering pull requests"));
+    assert!(user_memory.contains("explicit session recovery"));
 }
 
 #[tokio::test]
@@ -115,7 +172,7 @@ async fn promote_topic_entry_creates_topic_page_and_memory_index() {
     .await
     .unwrap();
 
-    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now)
+    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
@@ -160,7 +217,7 @@ async fn promote_inbox_entry_rejects_topic_target_path_traversal() {
     .await
     .unwrap();
 
-    let err = promote_inbox_entry(&memory_dir, &inbox_path, now)
+    let err = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .expect_err("traversal target should be rejected");
     assert!(err.to_string().contains("unsupported inbox target path"));
@@ -277,7 +334,7 @@ async fn promote_inbox_entry_treats_similar_facts_as_distinct_observations() {
     .await
     .unwrap();
 
-    promote_inbox_entry(&memory_dir, &inbox_path, now)
+    promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
@@ -331,7 +388,7 @@ Direct user-stated stable identity detail.
     .await
     .unwrap();
 
-    promote_inbox_entry(&memory_dir, &inbox_path, now)
+    promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
