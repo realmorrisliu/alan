@@ -259,7 +259,16 @@ impl NamespaceAgentFiles {
     pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
         // ponytail: startup scans the rollout once more; index evidence if large histories warrant it.
         let client = NamespaceClient::new(self.root.clone());
-        for item in crate::rollout::RolloutRecorder::load_history(path).await? {
+        let mut items = crate::rollout::RolloutRecorder::load_history(path).await?;
+        let pid = self
+            .agent_path
+            .strip_prefix("/agent/")
+            .context("recovered Agent path")?;
+        crate::agent_machine::AgentMachine::rebase_recovered_actions(
+            &mut items,
+            &format!("/proc/{pid}"),
+        )?;
+        for item in items {
             if let crate::rollout::RolloutItem::Event(event) = item
                 && event.event_type == "agent_action_v1"
             {

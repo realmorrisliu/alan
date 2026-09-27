@@ -17,7 +17,7 @@ use crate::agent_machine::{
     input_queue::{MachineInputQueue, QueuedRuntimeItem},
 };
 use alan_agent_protocol::Submission;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -273,53 +273,26 @@ async fn initialize_agent_machine(
     let reasoning_effort = request_controls.reasoning_effort();
 
     let machine = if let Some(path) = recovery_rollout_path {
-        let load_result = AgentMachine::load_from_rollout_with_recorder_cwd(
+        let (machine, durability_error) = AgentMachine::load_from_rollout_with_recorder_cwd(
             path,
             launch.process_path,
             launch.model,
             rollouts_dir.map(|dir| dir.as_path()),
             rollout_cwd,
             reasoning_effort,
+            durability_required,
         )
-        .await;
-
-        match load_result {
-            Ok(machine) => machine,
-            Err(err) => {
-                if durability_required {
-                    return Err(anyhow::anyhow!(
-                        "Strict durability required: failed to load persisted machine from {}: {}",
-                        path.display(),
-                        err
-                    ));
-                }
-
-                warn!(
-                    error = %err,
-                    path = %path.display(),
-                    "Failed to load machine from rollout; creating fresh persistent machine"
-                );
-                match create_persistent_machine(
-                    launch.process_path,
-                    launch.model,
-                    rollouts_dir,
-                    rollout_cwd,
-                    reasoning_effort,
-                )
-                .await
-                {
-                    Ok(machine) => machine,
-                    Err(create_err) => {
-                        warn!(
-                            error = %create_err,
-                            "Failed to create a persistent machine after rollout recovery; using an in-memory machine"
-                        );
-                        warnings.push(best_effort_durability_warning(&create_err));
-                        AgentMachine::new()
-                    }
-                }
-            }
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to recover selected Agent Machine rollout {}",
+                path.display()
+            )
+        })?;
+        if let Some(error) = durability_error {
+            warnings.push(best_effort_durability_warning(&error));
         }
+        machine
     } else {
         match create_persistent_machine(
             launch.process_path,
@@ -490,8 +463,7 @@ fn spawn_with_prepared_runtime_environment(
         let machine = startup.machine;
         let _ = runtime_recorder.set(machine.recorder());
         let environment = environment.with_action_recorder(machine.recorder());
-        if recovery_rollout_path.is_some()
-            && let Some(path) = machine.rollout_path()
+        if let Some(path) = recovery_rollout_path.as_ref()
             && let Err(error) = environment.agent_files().restore_actions(path).await
         {
             let _ = ready_tx.send(Err(format!("restore Action evidence: {error:#}")));

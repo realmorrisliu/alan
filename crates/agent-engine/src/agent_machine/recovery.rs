@@ -14,6 +14,12 @@ use crate::rollout::{CompactedItem, EffectRecord, EventRecord, RolloutItem, Roll
 use crate::tape::ContextItem;
 
 impl AgentMachine {
+    pub(crate) fn rebase_recovered_actions(
+        items: &mut [RolloutItem],
+        process_path: &str,
+    ) -> anyhow::Result<()> {
+        action_evidence::rebase(items, process_path)
+    }
     pub(crate) fn recorder(&self) -> Option<RolloutRecorder> {
         self.recorder.clone()
     }
@@ -211,8 +217,17 @@ impl AgentMachine {
         model: &str,
         rollouts_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, process_path, model, Some(rollouts_dir), None, None)
-            .await
+        Self::load_from_rollout_impl(
+            path,
+            process_path,
+            model,
+            Some(rollouts_dir),
+            None,
+            None,
+            true,
+        )
+        .await
+        .map(|(machine, _)| machine)
     }
 
     pub(crate) async fn load_from_rollout_with_recorder_cwd(
@@ -222,7 +237,8 @@ impl AgentMachine {
         rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    ) -> anyhow::Result<Self> {
+        durability_required: bool,
+    ) -> anyhow::Result<(Self, Option<anyhow::Error>)> {
         Self::load_from_rollout_impl(
             path,
             process_path,
@@ -230,6 +246,7 @@ impl AgentMachine {
             rollouts_dir,
             rollout_cwd,
             reasoning_effort,
+            durability_required,
         )
         .await
     }
@@ -241,7 +258,8 @@ impl AgentMachine {
         rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    ) -> anyhow::Result<Self> {
+        durability_required: bool,
+    ) -> anyhow::Result<(Self, Option<anyhow::Error>)> {
         let mut items = RolloutRecorder::load_history(path).await?;
         if !matches!(items.first(), Some(RolloutItem::AgentMachineMeta(_))) {
             anyhow::bail!("rollout does not begin with current Agent Machine metadata");
@@ -251,14 +269,7 @@ impl AgentMachine {
 
         // Recovery is explicitly scoped to the newly launched Agent Process. The
         // source rollout is evidence, not a globally addressable execution identity.
-        let mut machine = Self::new_with_recorder_options(
-            process_path,
-            model,
-            rollouts_dir,
-            rollout_cwd,
-            reasoning_effort,
-        )
-        .await?;
+        let mut machine = Self::new();
 
         let recovered_latest_compaction_attempt =
             Self::latest_compaction_attempt_from_rollout_items_internal(&items);
@@ -354,6 +365,25 @@ impl AgentMachine {
             machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
 
+        // Semantic replay must succeed before creating replacement durable evidence.
+        let mut durability_error = match Self::new_with_recorder_options(
+            process_path,
+            model,
+            rollouts_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await
+        {
+            Ok(durable) => {
+                machine.recorder = durable.recorder;
+                machine.memory_record_id = durable.memory_record_id;
+                None
+            }
+            Err(error) if !durability_required => Some(error),
+            Err(error) => return Err(error),
+        };
+
         if let Some(recorder) = machine.recorder.as_ref() {
             let mut recovered = machine
                 .messages()
@@ -375,10 +405,16 @@ impl AgentMachine {
             recovered.extend(recovered_compaction.map(RolloutItem::Compacted));
             recovered.extend(effect_records.into_iter().map(RolloutItem::Effect));
             recovered.extend(event_records.into_iter().map(RolloutItem::Event));
-            recorder.persist_batch(recovered).await?;
+            if let Err(error) = recorder.persist_batch(recovered).await {
+                if durability_required {
+                    return Err(error);
+                }
+                machine.recorder = None;
+                durability_error = Some(error);
+            }
         }
 
-        Ok(machine)
+        Ok((machine, durability_error))
     }
 }
 
