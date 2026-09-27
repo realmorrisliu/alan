@@ -4,7 +4,7 @@
 The foreground alan9 composition SHALL create Kernel and start one Service
 Manager Process per invocation. Service Manager SHALL be the sole owner of later
 system service and Root Agent Process lifecycle; the renderer and Host adapters
-MUST NOT retain fallback boot or supervision. Logical Services SHALL NOT require
+MUST NOT retain fallback boot or supervision. File-Server Services SHALL NOT require
 separate operating-system background processes.
 
 #### Scenario: System boot begins
