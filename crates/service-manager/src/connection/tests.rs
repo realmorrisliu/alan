@@ -554,3 +554,76 @@ async fn metadata_replacement_rejects_stale_clients_without_losing_the_first_upd
     assert!(first.write("/ctl", &unguarded).await.is_err());
     assert_eq!(service.metadata(), merged);
 }
+
+#[tokio::test]
+async fn independent_services_reject_stale_writes_and_refresh_for_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let first = ConnectionService::open("test", &bindings).unwrap();
+    let second = ConnectionService::open("test", &bindings).unwrap();
+    first
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "first".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        second
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: "second".into(),
+                profile: profile()
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(second.metadata(), first.metadata());
+    assert_eq!(
+        second
+            .state
+            .lock()
+            .unwrap()
+            .validation
+            .get("first")
+            .map(String::as_str),
+        Some("unavailable")
+    );
+    second
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "second".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        first
+            .apply(ConnectionCommand::RemoveProfile {
+                profile_id: "first".into()
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(first.metadata(), second.metadata());
+    second.select(7, "first").unwrap();
+    first
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "first".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        second
+            .apply(ConnectionCommand::SetDefault {
+                profile_id: "first".into()
+            })
+            .await
+            .is_err()
+    );
+    assert!(second.state.lock().unwrap().selections.is_empty());
+    let disk = ConnectionsFile::load_from_path(&bindings.metadata_path)
+        .unwrap()
+        .0;
+    assert_eq!(disk, second.metadata());
+    assert!(!disk.profiles.contains_key("first"));
+    assert!(disk.profiles.contains_key("second"));
+}

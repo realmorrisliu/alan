@@ -92,6 +92,31 @@ struct State {
     validation: BTreeMap<String, String>,
 }
 
+impl State {
+    fn replace_connections(&mut self, connections: ConnectionsFile) {
+        self.connections = connections;
+        let installed = self
+            .connections
+            .profiles
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        self.selections
+            .retain(|_, profile| installed.contains(profile));
+        self.requests
+            .retain(|_, request| installed.contains(&request.profile_id));
+        self.native_status
+            .retain(|profile, _| installed.contains(profile));
+        self.validation
+            .retain(|profile, _| installed.contains(profile));
+        for profile in installed {
+            self.validation
+                .entry(profile)
+                .or_insert_with(|| "unavailable".into());
+        }
+    }
+}
+
 struct CallableRegistry {
     llmfs: Arc<alan_llmfs::LlmFs>,
     factory: Arc<dyn LlmClientFactory>,
@@ -322,25 +347,7 @@ impl ConnectionService {
                         "connection metadata changed; reload before retrying"
                     );
                     validate_connections(&connections)?;
-                    state.connections = connections;
-                    let installed = state
-                        .connections
-                        .profiles
-                        .keys()
-                        .cloned()
-                        .collect::<std::collections::BTreeSet<_>>();
-                    state
-                        .selections
-                        .retain(|_, profile| installed.contains(profile));
-                    state
-                        .requests
-                        .retain(|_, request| installed.contains(&request.profile_id));
-                    state
-                        .native_status
-                        .retain(|profile, _| installed.contains(profile));
-                    state
-                        .validation
-                        .retain(|profile, _| installed.contains(profile));
+                    state.replace_connections(connections);
                     persist = true;
                     refresh = true;
                 }
@@ -428,7 +435,7 @@ impl ConnectionService {
             let save_result = if persist {
                 state
                     .connections
-                    .save_to_path(&self.metadata_path)
+                    .save_if_unchanged(&self.metadata_path, &committed.connections)
                     .context("persist Connection Service metadata")
             } else {
                 Ok(())
@@ -448,14 +455,23 @@ impl ConnectionService {
         candidate: State,
         save_result: &Result<()>,
     ) -> bool {
-        // Directory sync can fail after atomic replacement has published the file.
-        let published = save_result.is_ok()
-            || ConnectionsFile::load_from_path(&self.metadata_path)
-                .is_ok_and(|(on_disk, _)| on_disk == candidate.connections);
-        if published {
+        if save_result.is_ok() {
             *committed = candidate;
+            return true;
         }
-        published
+        // A failed save may follow publication or a commit by another instance.
+        let Ok((on_disk, _)) = ConnectionsFile::load_from_path(&self.metadata_path) else {
+            return false;
+        };
+        if validate_connections(&on_disk).is_err() {
+            return false;
+        }
+        if on_disk == candidate.connections {
+            *committed = candidate;
+        } else {
+            committed.replace_connections(on_disk);
+        }
+        true
     }
 
     async fn refresh_callables(&self) {

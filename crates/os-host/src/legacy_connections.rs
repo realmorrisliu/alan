@@ -105,10 +105,10 @@ fn migrate_connection_metadata(source: &Path, target: &Path) -> Result<bool> {
     );
     let legacy = load_legacy_connections(source)?;
     let (current, _) = ConnectionsFile::load_from_path(target)?;
-    let merged = merge_connections(current, legacy)?;
+    let merged = merge_connections(current.clone(), legacy)?;
 
     if !target.is_file() || ConnectionsFile::load_from_path(target)?.0 != merged {
-        merged.save_to_path(target)?;
+        merged.save_if_unchanged(target, &current)?;
     }
     ensure!(
         ConnectionsFile::load_from_path(target)?.0 == merged,
