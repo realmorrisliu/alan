@@ -185,7 +185,7 @@ impl FileBackedApp {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Some(FileBackedAction::Interrupt);
         }
-        if pending_input {
+        if pending_input || self.input_intent == InputIntent::Command {
             self.completion = None;
         } else if self.completion.is_some() && self.consume_completion_key(key) {
             return None;
@@ -368,7 +368,7 @@ impl FileBackedApp {
     }
 
     pub(super) fn refresh_completion(&mut self) {
-        if self.pending_yield.is_some() {
+        if self.pending_yield.is_some() || self.input_intent == InputIntent::Command {
             self.completion = None;
             return;
         }

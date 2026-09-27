@@ -312,3 +312,33 @@ fn pending_response_resets_intent_only_when_it_consumes_the_draft() {
         }
     }
 }
+
+#[test]
+fn explicit_commands_bypass_semantic_completions_and_submit_exact_bodies() {
+    use crate::completion::CompletionCandidate;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    for input in ["!echo $co", "!echo @fi", "!/he"] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.set_skill_candidates(vec![CompletionCandidate::new("code-review", None)]);
+        app.set_file_candidates(vec![CompletionCandidate::new("file.txt", None)]);
+        app.composer.set_text("use $co");
+        app.refresh_completion();
+        let stale_completion = app.completion.clone();
+        assert!(stale_completion.is_some());
+        app.composer.set_text("");
+        app.dispatch(super::FileBackedEvent::Terminal(
+            super::TerminalEvent::Paste(input.into()),
+        ));
+        assert!(app.completion.is_none());
+        app.completion = stale_completion;
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(app.completion.is_none());
+        let Some(FileBackedAction::Submit(record)) =
+            app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        else {
+            panic!("command")
+        };
+        assert_eq!(record.intent, alan_agent_protocol::InputIntent::Command);
+        assert_eq!(record.body, &input[1..]);
+    }
+}
