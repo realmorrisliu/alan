@@ -103,19 +103,25 @@ attaches directly to `/agent/root`.
 - **AND** the renderer attaches to that Process instead of creating a hidden
   Shell Process
 
-### Requirement: Bare Alan attaches to the Root Agent
-Running bare `alan` SHALL start or attach to the matching dedicated alan9
-Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
-to the Host-managed `/agent/root`. When stdin is redirected it SHALL submit
-stdin as one task to that Agent and follow the one-shot standard-stream
-contract. If stdin is a terminal but stdout is not, it SHALL report an error
-instead of waiting for terminal EOF. The CLI MUST NOT privately boot an Agent
-Runtime or select an Agent Definition as Host startup behavior.
+### Requirement: Bare Alan owns a foreground instance
+Running bare `alan` SHALL boot one independent foreground alan9 instance
+through the existing product composition and Service Manager. When
+`ALAN_INSTANCE_RUNTIME_DIR` is unset, it SHALL use a unique temporary runtime
+directory; when set, it selects that exact instance endpoint, which permits
+only one owner. With terminal stdin and stdout, the CLI SHALL render that
+instance's `/agent/root`. With redirected stdin, it SHALL submit stdin once to
+its own instance and follow the one-shot standard-stream contract. If stdin is a
+terminal but stdout is not, it SHALL report an error before startup. The CLI
+MUST NOT attach to an ambient channel Host, select a previous invocation's
+execution implicitly, or bypass Service Manager to privately start Agent
+Runtime.
 
 #### Scenario: User runs alan with no subcommand
-- **WHEN** the system Host is ready and both stdin and stdout are terminals
-- **THEN** the client attaches the file-backed renderer to `/agent/root`
-- **AND** the Root Agent remains the Process and execution authority
+- **WHEN** both stdin and stdout are terminals and the foreground instance is
+  ready
+- **THEN** the CLI opens the file-backed renderer on its instance-local
+  `/agent/root`
+- **AND** Service Manager remains the Agent Process lifecycle owner
 
 #### Scenario: User runs alan with redirected IO
 - **WHEN** stdin is not a terminal, regardless of stdout
@@ -124,6 +130,7 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **AND** diagnostics go to stderr and task failure is reported by a nonzero
   exit code
 - **AND** it does not emit terminal UI control sequences
+- **AND** Alan shuts down the instance it owns after reporting the outcome
 
 #### Scenario: One-shot starts during Root Agent PID handoff
 - **WHEN** redirected `alan` starts while the Service Manager publishes a
@@ -184,13 +191,13 @@ Runtime or select an Agent Definition as Host startup behavior.
   Process
 
 #### Scenario: A client overlaps another Root Agent task
-- **WHEN** another TTY or redirected `alan` client owns the channel's
-  nonblocking task-submission lease, or the Root Agent remains running or
-  paused after its prior renderer exited
-- **THEN** the new client fails clearly and does not attach its result to the
-  other client's task
-- **AND** it does not write new task input while the Root Agent is active
-- **AND** the user can retry after the active task settles
+- **WHEN** another terminal starts a bare `alan` invocation while one is already
+  running
+- **THEN** the new invocation boots an independent instance instead of joining
+  the other invocation's Root Agent
+- **AND** their input, cwd, cancellation, and results remain independent
+- **AND** explicitly authorized clients of one Agent still use ordered admission
+  and correlated results
 
 #### Scenario: Root Agent Process changes during redirected task
 - **WHEN** the Root Agent PID changes while the client waits for the submitted

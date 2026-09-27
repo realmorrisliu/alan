@@ -14,10 +14,12 @@ terminal host; Alan remains a terminal-neutral programmable personal computing
 environment. Alan Shell and its renderer do not recreate windows, workspaces,
 tabs, panes or a terminal emulator already supplied by that host.
 
-Herdr owns presentation topology and PTY delivery. Alan OS Host owns system
-lifetime; ordinary Process, Agent Machine, AgentFS, services and durable stores
-retain their existing ownership. Herdr identifiers and detection states are
-not Alan Process identity, execution evidence or authorization.
+Herdr owns presentation topology and PTY delivery. Each foreground Alan
+invocation owns its alan9 instance and application lifetime; Process, Agent
+Machine, AgentFS, services and durable stores retain their existing ownership
+within their respective instances. Herdr identifiers and detection states are
+not Alan Process identity, execution evidence or authorization. No separate
+background Host is required to keep these services available.
 
 At adoption, desktop source, FFI, app distribution and associated contracts
 were retained for maintenance pending scoped removal. macOS platform support,

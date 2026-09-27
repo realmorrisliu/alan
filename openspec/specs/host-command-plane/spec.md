@@ -6,15 +6,17 @@ namespace-native Alan Shell operations, including permanent workspace-era CLI
 removal.
 ## Requirements
 ### Requirement: Host and alan9 commands remain separate
-The system SHALL use the Host Command Plane for Host lifecycle, attachment,
+The Host Command Plane SHALL own explicit Host lifecycle and local attachment,
 Host Mount authorization, credentials, and native integration. Namespace file
-operations, service control, and executable invocation SHALL use Alan Shell and
-MUST NOT be duplicated as typed Host manager commands.
+operations, service control, and executable invocation inside alan9 SHALL use
+Alan Shell and MUST NOT be duplicated as typed Host manager commands. Bare
+`alan` startup SHALL create a foreground instance per invocation.
 
 #### Scenario: User starts Alan
-- **WHEN** the user runs `alan`
-- **THEN** the Host Command Plane boots or attaches alan9
-- **AND** control passes to Alan Shell without selecting an Agent profile
+- **WHEN** the user runs bare `alan`
+- **THEN** the CLI starts one independent foreground alan9 instance
+- **AND** the renderer attaches directly to that instance's `/agent/root`
+- **AND** it does not select a channel-wide Host or another invocation's Root
 
 ### Requirement: Removed workspace commands have no aliases
 Alan MUST remove `alan init`, `alan workspace`, workspace registry operations,

@@ -9,11 +9,11 @@ assumptions for this delivery. Ordinary terminals use the same foreground model;
 Herdr is a preferred terminal host, not an Alan runtime or authorization dependency.
 
 The CLI owns the native application lifetime. Its existing alan9 composition
-keeps Kernel, Service Manager and Agent Runtime Service responsibilities intact
-inside that invocation; a logical Service does not require a separate background process.
-`/agent/root` is local to that instance. Separate invocations do not implicitly
-share input, cwd, Process identity or pending work. Multiple authorized clients
-of one live Agent still use its ordered admission and correlated results.
+keeps Kernel, Service Manager and Agent Runtime Service responsibilities inside
+that invocation; logical Services do not require a separate, always-running
+Host process. `/agent/root` is local to that instance. Separate invocations do
+not share input, cwd, Process identity or pending work. Multiple authorized
+clients of one live Agent still use its ordered admission and correlated results.
 
 A terminal host may keep the foreground process alive when its view detaches.
 Actual Alan exit ends that instance and its owned work; Alan does not start a
@@ -22,28 +22,31 @@ records, validates current authority, and restores reliable pending work paused.
 No automatic channel-wide latest-rollout selection or effect replay is authorized.
 
 The CLI-only distribution and independent foreground startup, Root, runtime
-endpoint and shutdown shipped in PR #1009 (`faf7ee8e6b71c9f6c460e45ac049485035ec4d3b`).
-Current-head Codex review found no issues and required CI passed; integration
-tests cover two simultaneous invocations and independent shutdown. Task 2.18.1
-records this slice. Task 2.18.2 is verified by this PR's regression tests: two
-live CLI invocations retain separate input streams, and separate Tool Process
-runners keep cwd bindings isolated even for matching Process IDs. The store and
-command audit found Package Store transactions, Connection metadata, credential
-writes and legacy migration already serialized through their owning locks.
+endpoint and shutdown shipped in PR #1009 (merge
+`faf7ee8e6b71c9f6c460e45ac049485035ec4d3b`). PR #1011 verified that concurrent
+CLI invocations retain separate input streams and that separate Tool Process
+runners keep cwd bindings isolated even for matching Process IDs; its reviewed
+head was `2dc85e87a9469c4b2f559f60cc6d0ab35035fb18` and merge was
+`0e9092e1ec5092f78f797e7ec2898e068b75f2bf`. GitHub Codex review found no
+findings and required current-head CI passed. The store and command audit found
+Package Store transactions, Connection metadata, credential writes and legacy
+migration already serialized through their owning locks.
 `alan host status/stop` require an explicit `ALAN_INSTANCE_RUNTIME_DIR`; ordinary
 `alan connection` operations use the channel stores directly, and only a native
 Connection request attaches to its explicitly selected instance. Review and
-current-head CI evidence remains under task 4.1. Explicit durable recovery selection,
-authority validation and paused queue restoration remain under task 2.19.
+current-head CI evidence for the remaining slices remains under task 4.1.
+Explicit durable recovery selection, authority validation and paused queue
+restoration remain under task 2.19. Herdr detach acceptance is not inferred from
+the concurrent CLI tests.
 
-This is a partial delivery. The canonical standalone distribution requirement
-is synchronized in this change; the owning lifecycle specs and ADR-0056 still
-need the focused implementation-status sync tracked by task 4.2.2. The remaining
-lifecycle clauses in its deltas, ADR-0047/0054/0056/0058 and canonical specs also
-require the cross-surface audit in task 2.17.4 and remaining sync in task 4.2
-before this change can be archived. PR #981's automatic Root rollout selector and PR #982's
-automatic Host-restart acceptance are not merge prerequisites for the revised
-delivery; reusable evidence-recovery fixes may be extracted into focused PRs.
+This remains a partial delivery. This slice synchronizes shipped foreground
+startup, cross-invocation isolation, and Ctrl-D/exit behavior in the lifecycle
+specs and ADR-0056; explicit recovery and Herdr detach acceptance remain open.
+The cross-surface audit in task 2.17.4 is complete; other implementation sync,
+review and merge requirements remain under tasks 4.1–4.3.
+PR #981's automatic Root rollout selector and PR #982's automatic Host-restart
+acceptance are not merge prerequisites for the revised delivery; reusable
+evidence-recovery fixes may be extracted into focused PRs.
 
 Delivery boundary updated 2026-09-26: automatic typed routing, qualification and
 activation are owned by the active [qualify-agent-input-routing](../qualify-agent-input-routing/)

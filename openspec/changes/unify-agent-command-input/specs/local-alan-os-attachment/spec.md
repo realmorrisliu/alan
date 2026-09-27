@@ -35,17 +35,18 @@ operation's Shell Process semantics for older clients. A processless client MUST
 use its distinct advertised operation and MUST NOT fall back to the legacy
 operation when the selected ready instance does not support it.
 
-#### Scenario: A ready Host lacks processless attachment support
+#### Scenario: A ready instance lacks processless attachment support
 - **WHEN** a processless client connects to an explicitly selected older endpoint
 - **THEN** it reports the protocol incompatibility
 - **AND** it neither creates a Shell Process through fallback nor starts a replacement instance
 
-#### Scenario: A legacy Host status is stale
-- **WHEN** an attachment target is stale or its owner has exited
+#### Scenario: A stale instance endpoint is selected
+- **WHEN** the selected instance has exited or no longer accepts its attachment
+  socket
 - **THEN** the client reports that target as unavailable
-- **AND** it does not start or select a channel-wide Host
+- **AND** it does not start or select another instance for the same channel
 
-#### Scenario: An older Host is still starting
+#### Scenario: An older instance is still starting
 - **WHEN** an explicitly selected instance endpoint is not yet ready
 - **THEN** attachment may wait within its existing bounded startup window
 - **AND** it reports incompatibility if that instance lacks the required protocol

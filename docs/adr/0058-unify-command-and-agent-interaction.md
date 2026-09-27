@@ -4,11 +4,15 @@ Lifetime direction revised 2026-09-27: the user selected independent foreground
 Alan invocations and explicitly selected recovery. The older background lifetime
 assumptions below are superseded as target direction by
 [the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
-This does not claim the foreground runtime or canonical spec sync is complete.
+The foreground startup slice is shipped; the active OpenSpec change tracks the
+remaining runtime work and this lifecycle specification sync.
 
 Status: accepted direction, 2026-09-24. The user confirmed the consolidated
-design after all interview rounds. Runtime implementation remains pending. The target revises ADR-0056 input semantics
-while preserving its non-owning attachment and Process lifecycle boundaries.
+design after all interview rounds. Foreground startup and cross-invocation
+isolation shipped in PRs #1009–#1011; explicit command routing, recovery, and
+the remaining interaction requirements are still in progress. This revises
+ADR-0056's historical channel-wide attachment behavior while preserving its
+non-owning renderer and Process lifecycle boundaries.
 
 Alan offers one interaction and execution model: its Agent Machine can perform
 an exact deterministic command or advance through model reasoning. The TUI
