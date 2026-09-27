@@ -51,7 +51,7 @@ pub(super) enum FileBackedEvent {
 
 #[derive(Debug)]
 pub(super) enum FileBackedAction {
-    Submit(String),
+    Submit(alan_agent_protocol::UserInputRecord),
     Resume {
         request_id: String,
         response: String,
@@ -142,7 +142,7 @@ impl FileBackedApp {
                         form.insert_char(ch);
                     }
                 } else {
-                    self.composer.insert_text(&text);
+                    self.insert_input_text(&text);
                     self.refresh_completion();
                 }
                 None
@@ -221,6 +221,15 @@ impl FileBackedApp {
                 self.refresh_completion();
                 None
             }
+            KeyEvent {
+                code: KeyCode::Char(ch),
+                modifiers,
+                ..
+            } if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT => {
+                self.insert_input_text(&ch.to_string());
+                self.refresh_completion();
+                None
+            }
             _ => {
                 let outcome = self.composer.handle_key(key);
                 self.refresh_completion();
@@ -231,6 +240,19 @@ impl FileBackedApp {
                 }
             }
         }
+    }
+
+    fn insert_input_text(&mut self, text: &str) {
+        // A prefix inserted into an existing Agent body is data, not a route switch.
+        if self.pending_yield.is_none()
+            && self.composer.cursor() == 0
+            && !self.composer.text().is_empty()
+            && !self.composer.text().starts_with(['!', ':'])
+            && text.starts_with(['!', ':'])
+        {
+            self.composer.insert_text(":");
+        }
+        self.composer.insert_text(text);
     }
 
     pub(super) fn consume_completion_key(&mut self, key: KeyEvent) -> bool {
@@ -387,14 +409,34 @@ impl FileBackedApp {
             }
         }
 
-        let text = self.composer.take_submit()?;
+        let text = self.composer.text().to_owned();
+        if text.trim().is_empty() {
+            return None;
+        }
         self.completion = None;
-        self.composer.remember(&text);
         if text.trim().starts_with('/') {
+            self.composer.set_text("");
+            self.composer.remember(&text);
             return self.handle_command(text.trim());
         }
+        let (intent, body) = alan_agent_protocol::parse_input_prefix(&text);
+        if body.trim().is_empty() {
+            self.notice = Some("Enter text after the input prefix".into());
+            return None;
+        }
+        let record = alan_agent_protocol::UserInputRecord::new(
+            intent,
+            alan_agent_protocol::InputMode::FollowUp,
+            body,
+        );
+        Some(FileBackedAction::Submit(record))
+    }
+
+    pub(super) fn accept_input(&mut self) {
+        let text = self.composer.text().to_owned();
+        self.composer.remember(&text);
+        self.composer.set_text("");
         // Submission may be queued behind another client. Tape owns turn boundaries.
-        Some(FileBackedAction::Submit(text))
     }
 
     pub(super) fn enter_submits_agent_task(&self) -> bool {

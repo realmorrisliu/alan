@@ -170,15 +170,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             && let Some(action) = app.dispatch(other)
                         {
                             match action {
-                                FileBackedAction::Submit(text) => {
+                                FileBackedAction::Submit(record) => {
                                     let submitted_at_ms = unix_time_ms();
-                                    let record = alan_agent_protocol::UserInputRecord::new(
-                                        alan_agent_protocol::InputIntent::Agent,
-                                        alan_agent_protocol::InputMode::FollowUp,
-                                        &text,
-                                    );
+                                    let text = record.body.clone();
                                     match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
                                         Ok(()) => {
+                                            app.accept_input();
                                             app.notice = None;
                                             if follows_root_agent {
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
