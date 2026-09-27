@@ -86,6 +86,7 @@ pub struct RuntimeHandle {
     /// Shutdown signal sender for graceful shutdown.
     shutdown_tx: Option<mpsc::Sender<()>>,
     recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
+    runtime_abort: Option<tokio::task::AbortHandle>,
 }
 
 impl RuntimeHandle {
@@ -94,6 +95,7 @@ impl RuntimeHandle {
             submission_tx,
             shutdown_tx,
             recorder: Arc::new(OnceLock::new()),
+            runtime_abort: None,
         }
     }
 
@@ -118,6 +120,19 @@ impl RuntimeHandle {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 })])
                 .await?;
+        }
+        Ok(())
+    }
+
+    /// Wait for the runtime task to stop, then flush and terminate its rollout writer.
+    pub async fn finish_after_exit(&self) -> Result<()> {
+        if let Some(runtime_abort) = &self.runtime_abort {
+            while !runtime_abort.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        }
+        if let Some(recorder) = self.recorder.get().and_then(Option::as_ref) {
+            recorder.close().await?;
         }
         Ok(())
     }
@@ -158,6 +173,7 @@ impl RuntimeController {
     ) -> Self {
         let mut handle = RuntimeHandle::new(submission_tx, Some(shutdown_tx));
         handle.recorder = recorder;
+        handle.runtime_abort = Some(task_handle.abort_handle());
         Self {
             handle,
             task_handle: Some(task_handle),
@@ -210,9 +226,8 @@ impl RuntimeController {
             warn!("Shutdown channel closed - runtime may already be stopped");
         }
 
-        let timeout = tokio::time::Duration::from_secs(10);
-        if let Some(ref mut handle) = self.task_handle {
-            match tokio::time::timeout(timeout, &mut *handle).await {
+        let task_result = if let Some(ref mut handle) = self.task_handle {
+            match tokio::time::timeout(Duration::from_secs(10), &mut *handle).await {
                 Ok(Ok(())) => {
                     info!("Runtime task completed gracefully");
                     Ok(())
@@ -221,18 +236,18 @@ impl RuntimeController {
                 Err(_) => {
                     warn!("Runtime shutdown timeout, aborting task");
                     handle.abort();
-                    match tokio::time::timeout(Duration::from_secs(5), handle).await {
-                        Ok(_) => {
-                            info!("Runtime task aborted successfully");
-                            Ok(())
-                        }
-                        Err(_) => Err(anyhow::anyhow!("Runtime shutdown timeout and abort failed")),
-                    }
+                    let _ = (&mut *handle).await;
+                    info!("Runtime task stopped after abort");
+                    Ok(())
                 }
             }
         } else {
             Err(anyhow::anyhow!("Task handle not available"))
-        }
+        };
+        let recorder_result = self.handle.finish_after_exit().await;
+        task_result?;
+        recorder_result?;
+        Ok(())
     }
 
     /// Abort the runtime immediately without waiting for graceful shutdown.
@@ -248,7 +263,10 @@ impl RuntimeController {
 
         if let Some(handle) = self.task_handle.take() {
             handle.abort();
-            let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+            let _ = handle.await;
+        }
+        if let Err(err) = self.handle.finish_after_exit().await {
+            warn!(?err, "Failed to finish rollout writer after abort");
         }
     }
 }

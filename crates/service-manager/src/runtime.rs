@@ -40,6 +40,8 @@ const SERVICE_MANAGER_EXECUTABLE: &str = "/bin/service-manager";
 pub struct ServiceManagerConfig {
     pub channel_id: String,
     pub process: AgentProcessConfig,
+    /// Restore the previously selected Root Agent rollout for this invocation.
+    pub resume_root: bool,
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
     pub package_store: Option<std::path::PathBuf>,
@@ -108,6 +110,7 @@ impl ServiceManagerConfig {
             connection_store: None,
             package_store: None,
             process,
+            resume_root: false,
             llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
                 llm_client,
             )))),
@@ -141,6 +144,10 @@ impl ServiceManager {
             matches!(config.channel_id.as_str(), "stable" | "dev" | "test"),
             "invalid Alan OS Host channel `{}`",
             config.channel_id
+        );
+        ensure!(
+            !config.resume_root || config.process.store_bindings.is_some(),
+            "Root Agent recovery requires durable store bindings"
         );
         ensure!(
             config.launch_context.package_references.is_empty(),
@@ -245,6 +252,7 @@ impl ServiceManager {
             connection_base_config,
             host_mount_adapter: config.host_mount_adapter.clone(),
             process: config.process,
+            resume_root: config.resume_root,
             launch_context: config.launch_context,
             tools: config.tools,
             host_capabilities,
@@ -362,6 +370,7 @@ struct AssembleInputs {
     connection_base_config: alan_agent_engine::Config,
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     process: AgentProcessConfig,
+    resume_root: bool,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
@@ -380,6 +389,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         connection_base_config,
         host_mount_adapter,
         mut process,
+        resume_root,
         mut launch_context,
         tools,
         host_capabilities,
@@ -629,13 +639,14 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         host_capabilities,
         generation_capabilities,
         llm_connection,
+        resume_root,
     );
     let root = agent_runtime
         .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
         .await?;
     let root_pid = root.pid();
     if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
-        agent_runtime.detach_root(root, 1).await;
+        agent_runtime.detach_root(root, 1).await?;
         return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
     }
     active_units.insert(

@@ -17,9 +17,14 @@ clients of one live Agent still use its ordered admission and correlated results
 
 A terminal host may keep the foreground process alive when its view detaches.
 Actual Alan exit ends that instance and its owned work; Alan does not start a
-replacement background process to preserve execution. Recovery selects explicit durable
-records, validates current authority, and restores reliable pending work paused.
-No automatic channel-wide latest-rollout selection or effect replay is authorized.
+replacement background process to preserve execution. A new invocation restores
+the previous Root rollout only with `alan --resume`; Root replacement inside the
+same live instance may automatically continue the latest rollout path held by
+that instance's Agent Runtime Service. The channel-wide selector is read only
+for an explicit `--resume`, so concurrent invocations cannot redirect each
+other's supervised recovery.
+Recovery validates current authority and restores reliable pending work paused.
+No automatic cross-invocation rollout selection or effect replay is authorized.
 
 The CLI-only distribution and independent foreground startup, Root, runtime
 endpoint and shutdown shipped in PR #1009 (merge
@@ -35,8 +40,9 @@ migration already serialized through their owning locks.
 `alan connection` operations use the channel stores directly, and only a native
 Connection request attaches to its explicitly selected instance. Review and
 current-head CI evidence for the remaining slices remains under task 4.1.
-Explicit durable recovery selection, authority validation and paused queue
-restoration remain under task 2.19. Herdr detach acceptance is not inferred from
+Explicit durable recovery discovery, authority validation and paused queue
+restoration remain under task 2.19. The `--resume` selector is being delivered
+as a focused Root recovery slice. Herdr detach acceptance is not inferred from
 the concurrent CLI tests.
 
 This remains a partial delivery. This slice synchronizes shipped foreground

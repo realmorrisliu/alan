@@ -98,6 +98,17 @@ Service Manager to privately start an Agent Runtime.
 - **THEN** the CLI opens the file-backed renderer on its instance-local `/agent/root`
 - **AND** Service Manager remains the Agent Process lifecycle owner
 
+#### Scenario: User explicitly restores a previous Root rollout
+- **WHEN** the user starts bare `alan --resume`
+- **THEN** the new foreground instance restores the selected durable Root rollout
+- **AND** a missing or invalid selected rollout fails startup instead of silently starting fresh
+
+#### Scenario: Service Manager replaces Root inside one foreground instance
+- **WHEN** the Root Agent Process fails after becoming ready
+- **THEN** Service Manager resumes the current instance's latest durable rollout
+- **AND** a concurrent invocation cannot change which rollout this replacement selects
+- **AND** a fresh invocation never selects a previous invocation's rollout unless `--resume` was requested
+
 #### Scenario: User runs alan with redirected IO
 - **WHEN** stdin is not a terminal, regardless of stdout
 - **THEN** stdin is submitted once with the unified input routing semantics

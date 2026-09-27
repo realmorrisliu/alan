@@ -8,12 +8,15 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
 mod durable_payload;
+mod writer;
+use writer::{RolloutCmd, RolloutWriter};
 
 #[cfg(test)]
 use durable_payload::DURABLE_PAYLOAD_MAX_STRING_CHARS;
@@ -229,22 +232,10 @@ fn checkpoint_record(
     }
 }
 
-/// Commands for the background writer task
-enum RolloutCmd {
-    Record(Box<RolloutItem>),
-    PersistBatch {
-        items: Vec<RolloutItem>,
-        ack: oneshot::Sender<Result<()>>,
-    },
-    Flush {
-        ack: Option<oneshot::Sender<Result<()>>>,
-    },
-}
-
 /// Persistent recorder for machine history
 #[derive(Debug)]
 pub struct RolloutRecorder {
-    tx: mpsc::UnboundedSender<RolloutCmd>,
+    writer: Arc<RolloutWriter>,
     rollout_id: String,
     rollout_path: PathBuf,
 }
@@ -358,7 +349,7 @@ impl RolloutRecorder {
         let _path = rollout_path.clone();
 
         // Spawn background writer task
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let mut writer = BufWriter::new(file);
 
             while let Some(cmd) = rx.recv().await {
@@ -385,6 +376,14 @@ impl RolloutRecorder {
                             let _ = ack.send(flush_result);
                         }
                     }
+                    RolloutCmd::Close { ack } => {
+                        let close_result = Self::flush_writer(&mut writer).await;
+                        if let Err(err) = close_result.as_ref() {
+                            error!(?err, "Failed to flush rollout file on close");
+                        }
+                        let _ = ack.send(close_result);
+                        return;
+                    }
                 }
             }
 
@@ -395,7 +394,7 @@ impl RolloutRecorder {
         });
 
         let recorder = Self {
-            tx,
+            writer: Arc::new(RolloutWriter::new(tx, task)),
             rollout_id: rollout_id.to_string(),
             rollout_path: rollout_path.clone(),
         };
@@ -420,9 +419,9 @@ impl RolloutRecorder {
 
     /// Record an item
     pub fn record_nowait(&self, item: RolloutItem) -> Result<()> {
-        if self.tx.send(RolloutCmd::Record(Box::new(item))).is_err() {
+        if let Err(err) = self.writer.send(RolloutCmd::Record(Box::new(item))) {
             warn!("Rollout channel closed, cannot record item");
-            return Err(anyhow!("Rollout channel closed, cannot record item"));
+            return Err(err);
         }
         Ok(())
     }
@@ -438,13 +437,12 @@ impl RolloutRecorder {
             return Ok(());
         }
         let (ack_tx, ack_rx) = oneshot::channel();
-        if self
-            .tx
+        if let Err(err) = self
+            .writer
             .send(RolloutCmd::PersistBatch { items, ack: ack_tx })
-            .is_err()
         {
             warn!("Rollout channel closed, cannot persist batch");
-            return Err(anyhow!("Rollout channel closed, cannot persist batch"));
+            return Err(err);
         }
         ack_rx.await.map_err(|_| {
             warn!("Rollout writer dropped before batch persistence ack");
@@ -454,9 +452,9 @@ impl RolloutRecorder {
 
     /// Enqueue a flush request without waiting for the writer to drain.
     pub fn flush_nowait(&self) -> Result<()> {
-        if self.tx.send(RolloutCmd::Flush { ack: None }).is_err() {
+        if let Err(err) = self.writer.send(RolloutCmd::Flush { ack: None }) {
             warn!("Rollout channel closed, cannot flush");
-            return Err(anyhow!("Rollout channel closed, cannot flush"));
+            return Err(err);
         }
         Ok(())
     }
@@ -860,18 +858,19 @@ impl RolloutRecorder {
     /// Flush pending writes to disk
     pub async fn flush(&self) -> Result<()> {
         let (ack_tx, ack_rx) = oneshot::channel();
-        if self
-            .tx
-            .send(RolloutCmd::Flush { ack: Some(ack_tx) })
-            .is_err()
-        {
+        if let Err(err) = self.writer.send(RolloutCmd::Flush { ack: Some(ack_tx) }) {
             warn!("Rollout channel closed, cannot flush");
-            return Err(anyhow!("Rollout channel closed, cannot flush"));
+            return Err(err);
         }
         ack_rx.await.map_err(|_| {
             warn!("Rollout writer dropped before flush ack");
             anyhow!("Rollout writer dropped before flush ack")
         })?
+    }
+
+    /// Drain and terminate the rollout writer before its file is read for recovery.
+    pub(crate) async fn close(&self) -> Result<()> {
+        self.writer.close().await
     }
 
     /// Load history from a rollout file
@@ -984,11 +983,8 @@ impl RolloutRecorder {
 
 impl Clone for RolloutRecorder {
     fn clone(&self) -> Self {
-        // Create a new channel for the cloned recorder
-        // This is a limitation - cloned recorders share the same file but have separate channels
-        // In practice, only one recorder should be used per machine
         Self {
-            tx: self.tx.clone(),
+            writer: Arc::clone(&self.writer),
             rollout_id: self.rollout_id.clone(),
             rollout_path: self.rollout_path.clone(),
         }

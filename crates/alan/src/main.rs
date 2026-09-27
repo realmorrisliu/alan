@@ -19,6 +19,9 @@ use std::{
     version
 )]
 struct Cli {
+    /// Restore the latest selected Root Agent rollout for this invocation.
+    #[arg(long)]
+    resume: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -360,6 +363,14 @@ fn parse_cli() -> Cli {
     }
 }
 
+fn validate_resume_scope(resume: bool, has_subcommand: bool) -> Result<()> {
+    anyhow::ensure!(
+        !resume || !has_subcommand,
+        "`--resume` only applies to bare `alan`"
+    );
+    Ok(())
+}
+
 fn is_retired_host_start_invocation(args: &[std::ffi::OsString]) -> bool {
     let args = args
         .iter()
@@ -385,6 +396,7 @@ fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = parse_cli();
+    validate_resume_scope(cli.resume, cli.command.is_some())?;
 
     match cli.command {
         Some(Commands::Host { action }) => match action {
@@ -667,7 +679,7 @@ async fn main() -> Result<()> {
             let (runtime_dir, remove_runtime_dir) =
                 foreground_runtime_dir(channel.descriptor().id)?;
             let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, channel.descriptor().id)?;
-            let result = run_bare_in_foreground_instance(channel, paths, mode).await;
+            let result = run_bare_in_foreground_instance(channel, paths, mode, cli.resume).await;
             if remove_runtime_dir
                 && let Err(error) = std::fs::remove_dir_all(&runtime_dir)
                 && error.kind() != std::io::ErrorKind::NotFound
@@ -716,12 +728,13 @@ async fn run_bare_in_foreground_instance(
     channel: alan_agent_engine::InstallChannel,
     paths: HostEndpointPaths,
     mode: BareRunMode,
+    resume_root: bool,
 ) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
-    let config = HostBootConfig::product(channel.descriptor().id)?;
+    let config = HostBootConfig::product_with_root_resume(channel.descriptor().id, resume_root)?;
     let host = AlanOsHost::boot(config, paths.clone()).await?;
     let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
@@ -924,7 +937,7 @@ mod tests {
     use super::HostEndpointPaths;
     #[cfg(target_os = "macos")]
     use super::generated_foreground_runtime_dir;
-    use super::{BareRunMode, Cli, bare_run_mode};
+    use super::{BareRunMode, Cli, bare_run_mode, validate_resume_scope};
     use clap::Parser;
 
     #[test]
@@ -942,6 +955,14 @@ mod tests {
         assert_eq!(bare_run_mode(false, false).unwrap(), BareRunMode::OneShot);
         let err = bare_run_mode(true, false).unwrap_err();
         assert!(err.to_string().contains("needs terminal stdout"));
+    }
+
+    #[test]
+    fn bare_resume_is_explicit_and_cannot_be_combined_with_a_subcommand() {
+        assert!(!Cli::try_parse_from(["alan"]).unwrap().resume);
+        assert!(Cli::try_parse_from(["alan", "--resume"]).unwrap().resume);
+        assert!(validate_resume_scope(true, true).is_err());
+        assert!(validate_resume_scope(true, false).is_ok());
     }
 
     #[cfg(target_os = "macos")]

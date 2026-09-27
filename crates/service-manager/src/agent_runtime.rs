@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -13,8 +13,8 @@ use std::{
 use alan_agent_engine::{
     AGENT_DEFINITION_FD, AgentExecutablePause, AgentExecutableRequest, AgentExecutableResult,
     AgentExecutableStatus, AgentProcessConfig, ContentPart, MEMORY_STORE_FD, Op, RuntimeController,
-    SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind,
-    UiNoticeSnapshot, YieldKind,
+    RuntimeHandle, SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState,
+    UiNoticeKind, UiNoticeSnapshot, YieldKind,
     skills::SkillHostCapabilities,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
@@ -32,12 +32,18 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod process_cleanup;
+#[path = "agent_runtime/root_recovery.rs"]
+mod root_recovery;
+use process_cleanup::ProcessCleanup;
+
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 
 #[derive(Clone)]
 pub(crate) struct RootAgentTemplate {
     process: AgentProcessConfig,
+    pub(crate) resume_persisted_rollout: bool,
     launch_context: ProcessLaunchContext,
     host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
@@ -51,9 +57,11 @@ impl RootAgentTemplate {
         host_capabilities: SkillHostCapabilities,
         generation_capabilities: ProviderCapabilities,
         llm_connection: String,
+        resume_persisted_rollout: bool,
     ) -> Self {
         Self {
             process,
+            resume_persisted_rollout,
             launch_context,
             host_capabilities,
             generation_capabilities,
@@ -100,6 +108,8 @@ pub(crate) struct AgentRuntimeService {
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
+    root_runtime_handles: Mutex<HashMap<u64, RuntimeHandle>>,
+    current_root_rollout: Mutex<root_recovery::RootRolloutState>,
 }
 
 struct PendingRootLaunch {
@@ -134,6 +144,8 @@ impl AgentRuntimeService {
             tool_runner,
             pending_roots: Mutex::new(HashMap::new()),
             process_templates: Mutex::new(HashMap::new()),
+            root_runtime_handles: Mutex::new(HashMap::new()),
+            current_root_rollout: Mutex::new(root_recovery::RootRolloutState::NotStarted),
         })
     }
 
@@ -155,6 +167,15 @@ impl AgentRuntimeService {
             unit.executable == AGENT_EXECUTABLE,
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
+        let mut template = template.clone();
+        root_recovery::select(
+            &mut template.process,
+            template.resume_persisted_rollout,
+            &mut self
+                .current_root_rollout
+                .lock()
+                .expect("current Root rollout mutex poisoned"),
+        )?;
         let source = namespace_with_package_references(
             system_namespace.snapshot(),
             &template.launch_context,
@@ -224,10 +245,14 @@ impl AgentRuntimeService {
         })
     }
 
-    pub(crate) async fn detach_root(&self, mut root: RootAgentProcess, exit_code: i32) {
+    pub(crate) async fn detach_root(
+        &self,
+        mut root: RootAgentProcess,
+        exit_code: i32,
+    ) -> Result<()> {
         root.stop.take();
         self.procfs.record_exit(root.pid, exit_code).await;
-        self.release_process(root.pid).await;
+        self.release_process(root.pid).await
     }
 
     pub(crate) async fn shutdown_root(&self, mut root: RootAgentProcess) -> Result<()> {
@@ -235,7 +260,7 @@ impl AgentRuntimeService {
             let _ = stop.send(());
         }
         wait_for_process_exit(&self.procfs, root.pid, Duration::from_secs(12)).await?;
-        Ok(())
+        self.release_process(root.pid).await
     }
 
     pub(crate) async fn run_agent_process(
@@ -406,10 +431,29 @@ impl AgentRuntimeService {
             launch.template.host_capabilities.clone(),
             launch.template.generation_capabilities,
         )?;
-        controller
+        if launch.root {
+            self.root_runtime_handles
+                .lock()
+                .expect("Root runtime handles mutex poisoned")
+                .insert(pid.0, controller.handle.clone());
+        }
+        let startup = controller
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
+        if launch.root {
+            root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+            let rollout = startup
+                .rollout_path
+                .clone()
+                .or_else(|| launch.template.process.recovery_rollout_path.clone());
+            *self
+                .current_root_rollout
+                .lock()
+                .expect("current Root rollout mutex poisoned") = rollout
+                .map(root_recovery::RootRolloutState::Durable)
+                .unwrap_or(root_recovery::RootRolloutState::NoDurableRollout);
+        }
         let runtime_handle = controller.handle.clone();
         agent
             .set_retention_recorder(move |id, cause| {
@@ -469,7 +513,32 @@ impl AgentRuntimeService {
         Ok(outcome)
     }
 
-    pub(crate) async fn release_process(&self, pid: Pid) {
+    pub(crate) async fn release_process(&self, pid: Pid) -> Result<()> {
+        let runtime_handle = self
+            .root_runtime_handles
+            .lock()
+            .expect("Root runtime handles mutex poisoned")
+            .get(&pid.0)
+            .cloned();
+        let recorder_result = if let Some(runtime_handle) = runtime_handle {
+            let result = runtime_handle
+                .finish_after_exit()
+                .await
+                .context("finish Root rollout recorder before releasing Process")
+                .map_err(|error| {
+                    tracing::warn!(pid = pid.0, %error, "Failed to finish Root rollout recorder");
+                    error
+                });
+            if result.is_ok() {
+                self.root_runtime_handles
+                    .lock()
+                    .expect("Root runtime handles mutex poisoned")
+                    .remove(&pid.0);
+            }
+            result
+        } else {
+            Ok(())
+        };
         self.process_templates
             .lock()
             .expect("process templates mutex poisoned")
@@ -482,6 +551,7 @@ impl AgentRuntimeService {
         self.host_mount.unregister_process(pid);
         self.connection.release_process(pid.0);
         self.tool_runner.unregister_process(pid.0);
+        recorder_result
     }
 
     fn register_tool_execution_binding(
@@ -630,6 +700,7 @@ fn child_template(
         .collect::<Vec<_>>();
     Ok(RootAgentTemplate {
         process,
+        resume_persisted_rollout: false,
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
@@ -847,37 +918,6 @@ fn process_error(error: anyhow::Error) -> ProcessOutcome {
             .to_process_output_record()
             .unwrap_or_else(|_| format!("alan-agent: {error:#}\n").into_bytes()),
     )
-}
-
-struct ProcessCleanup {
-    service: Weak<AgentRuntimeService>,
-    pid: Pid,
-}
-
-impl ProcessCleanup {
-    fn new(service: Weak<AgentRuntimeService>, pid: Pid) -> Self {
-        Self { service, pid }
-    }
-}
-
-impl Drop for ProcessCleanup {
-    fn drop(&mut self) {
-        let service = self.service.clone();
-        let pid = self.pid;
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                if let Some(service) = service.upgrade() {
-                    if let Err(error) =
-                        wait_for_process_exit(&service.procfs, pid, Duration::from_secs(12)).await
-                    {
-                        tracing::warn!(pid = pid.0, %error, "Agent Process cleanup deferred");
-                        return;
-                    }
-                    service.release_process(pid).await;
-                }
-            });
-        }
-    }
 }
 
 #[cfg(test)]
