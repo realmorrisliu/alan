@@ -87,6 +87,12 @@ impl HostEndpointPaths {
             "Alan OS Host socket path exceeds the macOS limit: {}",
             paths.socket.display()
         );
+        #[cfg(target_os = "linux")]
+        ensure!(
+            paths.socket.as_os_str().len() < 108,
+            "Alan OS Host socket path exceeds the Linux limit: {}",
+            paths.socket.display()
+        );
         Ok(paths)
     }
 
@@ -953,6 +959,14 @@ mod tests {
         assert!(paths.has_active_host_lock().unwrap());
         drop(lock);
         assert!(!paths.has_active_host_lock().unwrap());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn host_endpoint_rejects_socket_paths_that_exceed_the_platform_limit() {
+        let runtime = PathBuf::from(format!("/{}", "x".repeat(160)));
+
+        assert!(HostEndpointPaths::from_runtime_dir(&runtime, "stable").is_err());
     }
 }
 
