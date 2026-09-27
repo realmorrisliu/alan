@@ -80,6 +80,7 @@ enum ConnectionCommand {
     },
 }
 
+#[derive(Clone)]
 struct State {
     connections: ConnectionsFile,
     selections: BTreeMap<u64, String>,
@@ -306,7 +307,8 @@ impl ConnectionService {
 
     async fn apply(&self, command: ConnectionCommand) -> Result<()> {
         let refresh = {
-            let mut state = self.state.lock().unwrap();
+            let mut committed = self.state.lock().unwrap();
+            let mut state = committed.clone();
             let mut persist = false;
             let mut refresh = false;
             match command {
@@ -421,6 +423,7 @@ impl ConnectionService {
                     .save_to_path(&self.metadata_path)
                     .context("persist Connection Service metadata")?;
             }
+            *committed = state;
             refresh
         };
         if refresh {
