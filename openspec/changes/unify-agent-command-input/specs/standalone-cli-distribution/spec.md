@@ -84,10 +84,10 @@ all existing executables and the manifest unchanged.
 - **AND** when preflight succeeds, the CLI replacement, Host removal and
   manifest update complete as one upgrade operation
 
-#### Scenario: Upgrade is interrupted
+#### Scenario: Upgrade is interrupted by a handled signal
 
-- **WHEN** an upgrade is interrupted before its new ownership manifest is
-  installed
+- **WHEN** the installer handles SIGHUP or SIGTERM before installing its new
+  ownership manifest
 - **THEN** the prior CLI and any retired legacy Host are restored
 - **AND** the previous ownership manifest remains unchanged
 
@@ -129,7 +129,8 @@ Sparkle, appcast, or Apple GUI checks.
 #### Scenario: Quality gate runs
 
 - **WHEN** the canonical quality command runs
-- **THEN** it verifies CLI packaging, independent foreground startup and owned shutdown
+- **THEN** it verifies the standalone installer and release archive contract
+- **AND** it runs the CLI `--version` startup check
 - **AND** it does not invoke an app-bundle, appcast, or desktop UI test
 
 #### Scenario: CI builds a release target

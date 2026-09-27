@@ -59,10 +59,10 @@ will replace or retire against that channel's ownership manifest.
 - **AND** a modified or unowned path fails preflight without changing the
   existing CLI, Host, or manifest
 
-#### Scenario: Upgrade is interrupted
+#### Scenario: Upgrade is interrupted by a handled signal
 
-- **WHEN** an upgrade is interrupted before its new ownership manifest is
-  installed
+- **WHEN** the installer handles SIGHUP or SIGTERM before installing its new
+  ownership manifest
 - **THEN** the prior CLI and any retired legacy Host are restored
 - **AND** the previous ownership manifest remains unchanged
 
@@ -102,8 +102,8 @@ Sparkle, appcast, or Apple GUI checks.
 #### Scenario: Quality gate runs
 
 - **WHEN** the canonical quality command runs
-- **THEN** it verifies standalone CLI packaging and foreground startup and
-  shutdown
+- **THEN** it verifies the standalone installer and release archive contract
+- **AND** it runs the CLI `--version` startup check
 - **AND** it does not invoke an app-bundle, appcast, or desktop UI test
 
 #### Scenario: CI builds a release target
