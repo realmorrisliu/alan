@@ -3,6 +3,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 const CONNECTIONS_VERSION: u32 = 1;
@@ -147,16 +148,23 @@ impl ConnectionsFile {
         }
         let rendered = toml::to_string_pretty(self)
             .context("failed to encode connections.toml while saving")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create connection metadata directory {}",
-                    parent.display()
-                )
-            })?;
-        }
-        std::fs::write(path, rendered)
-            .with_context(|| format!("failed to write connections file {}", path.display()))
+        let parent = path
+            .parent()
+            .context("connection metadata path has no parent")?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create connection metadata directory {}",
+                parent.display()
+            )
+        })?;
+        let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+        staged.write_all(rendered.as_bytes())?;
+        staged.as_file().sync_all()?;
+        staged
+            .persist(path)
+            .with_context(|| format!("failed to replace connections file {}", path.display()))?;
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
     }
 
     pub fn profile_descriptor(provider: LlmProvider) -> &'static ProviderDescriptor {
@@ -629,6 +637,36 @@ mod tests {
             validate_profile_settings(LlmProvider::OpenAiChatCompletionsCompatible, &settings);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("http_referer"));
+    }
+
+    #[test]
+    fn saving_metadata_preserves_open_readers_and_rejects_invalid_replacement() {
+        use std::io::Read;
+
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("connections.toml");
+        let original = ConnectionsFile::default();
+        original.save_to_path(&path).unwrap();
+        let mut existing_reader = std::fs::File::open(&path).unwrap();
+        let updated = ConnectionsFile {
+            default_profile: Some("updated".into()),
+            ..original.clone()
+        };
+        updated.save_to_path(&path).unwrap();
+        let mut previous_bytes = String::new();
+        existing_reader.read_to_string(&mut previous_bytes).unwrap();
+        assert_eq!(
+            toml::from_str::<ConnectionsFile>(&previous_bytes).unwrap(),
+            original
+        );
+        assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
+        let invalid = ConnectionsFile {
+            version: CONNECTIONS_VERSION + 1,
+            ..updated.clone()
+        };
+        assert!(invalid.save_to_path(&path).is_err());
+        assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]
