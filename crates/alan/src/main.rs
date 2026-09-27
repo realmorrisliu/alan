@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{
     io::{IsTerminal, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[derive(Parser)]
@@ -662,7 +662,8 @@ async fn main() -> Result<()> {
                 std::io::stdout().is_terminal(),
             )?;
             let channel = alan_agent_engine::InstallChannel::detect_current();
-            let (runtime_dir, remove_runtime_dir) = foreground_runtime_dir();
+            let (runtime_dir, remove_runtime_dir) =
+                foreground_runtime_dir(channel.descriptor().id)?;
             let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, channel.descriptor().id)?;
             let result = run_bare_in_foreground_instance(channel, paths, mode).await;
             if remove_runtime_dir
@@ -685,15 +686,28 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn foreground_runtime_dir() -> (PathBuf, bool) {
+fn foreground_runtime_dir(channel_id: &str) -> Result<(PathBuf, bool)> {
     if let Some(runtime_dir) = std::env::var_os(cli::host::INSTANCE_RUNTIME_DIR_ENV) {
-        (PathBuf::from(runtime_dir), false)
-    } else {
-        (
-            std::env::temp_dir().join(format!("alan-{}", uuid::Uuid::new_v4())),
-            true,
-        )
+        return Ok((PathBuf::from(runtime_dir), false));
     }
+
+    Ok((
+        generated_foreground_runtime_dir(&std::env::temp_dir(), channel_id)?,
+        true,
+    ))
+}
+
+fn generated_foreground_runtime_dir(temp_root: &Path, channel_id: &str) -> Result<PathBuf> {
+    let instance_name = format!("alan-{}", uuid::Uuid::new_v4());
+    let runtime_dir = temp_root.join(&instance_name);
+    if HostEndpointPaths::from_runtime_dir(&runtime_dir, channel_id).is_ok() {
+        return Ok(runtime_dir);
+    }
+
+    // macOS's sockaddr path is short; its default TMPDIR can exceed that limit.
+    let runtime_dir = Path::new("/tmp").join(instance_name);
+    HostEndpointPaths::from_runtime_dir(&runtime_dir, channel_id)?;
+    Ok(runtime_dir)
 }
 
 async fn run_bare_in_foreground_instance(
@@ -891,8 +905,12 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
+    use super::HostEndpointPaths;
+    #[cfg(target_os = "macos")]
     use super::cli::host::os_host_launch_label;
     use super::cli::host::sibling_executable;
+    #[cfg(target_os = "macos")]
+    use super::generated_foreground_runtime_dir;
     use super::{BareRunMode, Cli, bare_run_mode};
     #[cfg(target_os = "macos")]
     use alan_agent_engine::InstallChannel;
@@ -913,6 +931,16 @@ mod tests {
         assert_eq!(bare_run_mode(false, false).unwrap(), BareRunMode::OneShot);
         let err = bare_run_mode(true, false).unwrap_err();
         assert!(err.to_string().contains("needs terminal stdout"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn foreground_runtime_falls_back_when_tempdir_exceeds_socket_path_limit() {
+        let long_tempdir = std::path::Path::new("/").join("x".repeat(100));
+        let runtime_dir = generated_foreground_runtime_dir(&long_tempdir, "stable").unwrap();
+
+        assert_eq!(runtime_dir.parent(), Some(std::path::Path::new("/tmp")));
+        assert!(HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").is_ok());
     }
 
     #[test]
