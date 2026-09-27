@@ -86,6 +86,7 @@ pub struct RuntimeHandle {
     /// Shutdown signal sender for graceful shutdown.
     shutdown_tx: Option<mpsc::Sender<()>>,
     recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
+    runtime_abort: Option<tokio::task::AbortHandle>,
 }
 
 impl RuntimeHandle {
@@ -94,6 +95,7 @@ impl RuntimeHandle {
             submission_tx,
             shutdown_tx,
             recorder: Arc::new(OnceLock::new()),
+            runtime_abort: None,
         }
     }
 
@@ -122,7 +124,13 @@ impl RuntimeHandle {
         Ok(())
     }
 
-    async fn finish_recorder(&self) -> Result<()> {
+    /// Wait for the runtime task to stop, then flush and terminate its rollout writer.
+    pub async fn finish_after_exit(&self) -> Result<()> {
+        if let Some(runtime_abort) = &self.runtime_abort {
+            while !runtime_abort.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        }
         if let Some(recorder) = self.recorder.get().and_then(Option::as_ref) {
             recorder.close().await?;
         }
@@ -165,6 +173,7 @@ impl RuntimeController {
     ) -> Self {
         let mut handle = RuntimeHandle::new(submission_tx, Some(shutdown_tx));
         handle.recorder = recorder;
+        handle.runtime_abort = Some(task_handle.abort_handle());
         Self {
             handle,
             task_handle: Some(task_handle),
@@ -235,7 +244,7 @@ impl RuntimeController {
         } else {
             Err(anyhow::anyhow!("Task handle not available"))
         };
-        let recorder_result = self.handle.finish_recorder().await;
+        let recorder_result = self.handle.finish_after_exit().await;
         task_result?;
         recorder_result?;
         Ok(())
@@ -256,7 +265,7 @@ impl RuntimeController {
             handle.abort();
             let _ = handle.await;
         }
-        if let Err(err) = self.handle.finish_recorder().await {
+        if let Err(err) = self.handle.finish_after_exit().await {
             warn!(?err, "Failed to finish rollout writer after abort");
         }
     }

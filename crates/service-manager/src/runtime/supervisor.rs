@@ -315,10 +315,13 @@ impl SupervisorRuntime {
         self.active.remove(name);
         self.invalidate_handles(name).await;
         if name == "root-agent" {
-            if let Some(root) = self.root.take() {
-                self.agent_runtime.detach_root(root, exit_code).await;
-            }
+            let detach_result = if let Some(root) = self.root.take() {
+                self.agent_runtime.detach_root(root, exit_code).await
+            } else {
+                Ok(())
+            };
             self.root_pid.store(0, Ordering::Release);
+            detach_result?;
         }
         let stable_for_ms =
             u64::try_from(active.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -338,8 +341,8 @@ impl SupervisorRuntime {
             self.procfs.record_exit(Pid(pid), 1).await;
             self.active.remove(name);
             if name == "root-agent" {
-                self.agent_runtime.release_process(Pid(pid)).await;
                 self.root_pid.store(0, Ordering::Release);
+                self.agent_runtime.release_process(Pid(pid)).await?;
             }
         }
         self.invalidate_handles(name).await;
@@ -442,11 +445,11 @@ impl SupervisorRuntime {
             .await?;
         let pid = root.pid();
         if let Err(error) = self.state.lock().await.start_attempt("root-agent", pid) {
-            self.agent_runtime.detach_root(root, 1).await;
+            self.agent_runtime.detach_root(root, 1).await?;
             return Err(anyhow::anyhow!("track Root Agent restart: {error:?}"));
         }
         if let Err(error) = root.wait_until_ready().await {
-            self.agent_runtime.detach_root(root, 1).await;
+            self.agent_runtime.detach_root(root, 1).await?;
             return Err(error).context("replacement Root Agent failed before readiness");
         }
         self.root_template.resume_persisted_rollout = true;

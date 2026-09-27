@@ -116,3 +116,55 @@ async fn shutdown_drains_and_joins_the_rollout_writer() {
         .count();
     assert_eq!(queued, 256);
 }
+
+#[tokio::test]
+async fn external_process_abort_finishes_runtime_before_closing_rollout_writer() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let recorder = RolloutRecorder::new_in_dir("/proc/1", "test", dir.path())
+        .await
+        .unwrap();
+    let path = recorder.path().to_path_buf();
+    let recorder_clone = recorder.clone();
+    for index in 0..128 {
+        recorder
+            .record_event_item_nowait(EventRecord {
+                event_type: "queued_before_process_abort".into(),
+                payload: serde_json::json!({"index": index}),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            })
+            .unwrap();
+    }
+
+    let (submission_tx, _) = mpsc::channel(1);
+    let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+    let (ready_tx, ready_rx) = oneshot::channel();
+    drop(ready_tx);
+    let task = tokio::spawn(std::future::pending::<()>());
+    let recorder_state = Arc::new(OnceLock::new());
+    recorder_state.set(Some(recorder)).unwrap();
+    let controller =
+        RuntimeController::spawned(submission_tx, shutdown_tx, task, ready_rx, recorder_state);
+    let runtime_handle = controller.handle.clone();
+
+    drop(controller);
+    runtime_handle.finish_after_exit().await.unwrap();
+
+    assert!(
+        recorder_clone
+            .record_nowait(RolloutItem::Event(EventRecord {
+                event_type: "after_process_abort".into(),
+                payload: serde_json::Value::Null,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            }))
+            .is_err()
+    );
+    let items = RolloutRecorder::load_history(&path).await.unwrap();
+    let queued = items
+        .iter()
+        .filter(|item| {
+            matches!(item, RolloutItem::Event(event)
+            if event.event_type == "queued_before_process_abort")
+        })
+        .count();
+    assert_eq!(queued, 128);
+}

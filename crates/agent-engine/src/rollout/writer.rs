@@ -22,6 +22,7 @@ pub(super) enum RolloutCmd {
 pub(super) struct RolloutWriter {
     tx: Mutex<Option<mpsc::UnboundedSender<RolloutCmd>>>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    close_error: Mutex<Option<String>>,
 }
 
 impl RolloutWriter {
@@ -29,6 +30,7 @@ impl RolloutWriter {
         Self {
             tx: Mutex::new(Some(tx)),
             task: tokio::sync::Mutex::new(Some(task)),
+            close_error: Mutex::new(None),
         }
     }
 
@@ -47,7 +49,13 @@ impl RolloutWriter {
     pub(super) async fn close(&self) -> Result<()> {
         let mut task = self.task.lock().await;
         let Some(task) = task.take() else {
-            return Ok(());
+            let close_error = self
+                .close_error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            return close_error
+                .as_ref()
+                .map_or(Ok(()), |error| Err(anyhow!(error.clone())));
         };
 
         let (ack_tx, ack_rx) = oneshot::channel();
@@ -77,8 +85,31 @@ impl RolloutWriter {
         };
         let task_result = task.await.context("Rollout writer task failed");
 
-        ack_result?;
-        task_result?;
-        Ok(())
+        let result = ack_result.and(task_result);
+        if let Err(error) = &result {
+            *self
+                .close_error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(format!("{error:#}"));
+        }
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn close_failure_is_preserved_for_every_waiter() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let task = tokio::spawn(async {});
+        let writer = RolloutWriter::new(tx, task);
+
+        let first_error = writer.close().await.unwrap_err().to_string();
+        let second_error = writer.close().await.unwrap_err().to_string();
+
+        assert_eq!(first_error, second_error);
     }
 }

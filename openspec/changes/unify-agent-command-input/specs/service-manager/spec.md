@@ -37,6 +37,7 @@ the prior Agent Machine's recorder to flush and terminate.
 - **WHEN** Root exits with rollout records still queued by non-blocking writes
 - **THEN** Agent Runtime Service flushes and terminates the prior recorder
   before replacement recovery reads that rollout
+- **AND** a recorder flush failure prevents replacement recovery from that rollout
 
 #### Scenario: Root Agent restarts while another invocation is active
 - **WHEN** the foreground Root Agent fails after readiness while another

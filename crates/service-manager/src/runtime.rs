@@ -646,7 +646,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         .await?;
     let root_pid = root.pid();
     if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
-        agent_runtime.detach_root(root, 1).await;
+        agent_runtime.detach_root(root, 1).await?;
         return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
     }
     active_units.insert(
