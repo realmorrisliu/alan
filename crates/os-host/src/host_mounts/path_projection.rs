@@ -124,7 +124,8 @@ fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
             && !is_root_relative_url(text, cursor + path_start)
         {
             let rooted_start = cursor + path_start;
-            let rooted_end = extend_root_path_through_space(text, rooted_start + path_end);
+            let rooted_end =
+                extend_root_path_through_space(text, rooted_start, rooted_start + path_end);
             let rooted_path = &text[rooted_start..rooted_end];
             let trimmed_end = rooted_path
                 .trim_end_matches(|ch| {
@@ -158,15 +159,24 @@ fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
     projected
 }
 
-fn extend_root_path_through_space(text: &str, mut path_end: usize) -> usize {
-    while space_continues_path(&text[path_end..]) {
-        let next_start = path_end
-            + text[path_end..]
-                .find(|ch: char| !ch.is_whitespace())
-                .unwrap();
-        path_end = text[next_start..]
+fn extend_root_path_through_space(text: &str, path_start: usize, mut path_end: usize) -> usize {
+    while text[path_end..].starts_with(' ') {
+        let Some(next_start) = text[path_end..]
+            .find(|ch: char| !ch.is_whitespace())
+            .map(|offset| path_end + offset)
+        else {
+            break;
+        };
+        let next_end = text[next_start..]
             .find(char::is_whitespace)
             .map_or(text.len(), |offset| next_start + offset);
+        // ponytail: join ambiguous final spaces only when the resulting native path exists.
+        if !space_continues_path(&text[path_end..])
+            && !Path::new(&text[path_start..next_end]).exists()
+        {
+            break;
+        }
+        path_end = next_end;
     }
     path_end
 }
@@ -235,7 +245,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let emphasized = is_underscore_emphasis_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
         let boundary_after = is_path_end(suffix) || emphasized;
-        if boundary_before && boundary_after && !is_root_relative_url(text, start) {
+        if boundary_before && boundary_after {
             let replacement_start = file_uri_scheme_start(text, start).unwrap_or(start);
             projected.push_str(&text[copied_through..replacement_start]);
             projected.push_str(replacement);

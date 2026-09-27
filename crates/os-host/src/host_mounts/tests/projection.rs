@@ -10,6 +10,7 @@ use std::sync::Arc;
 async fn project_text_projects_paths_from_the_active_mount() {
     let project = tempfile::tempdir().unwrap();
     let target = project.path().join("notes.txt");
+    let root = dunce::canonicalize(project.path()).unwrap();
     std::fs::write(&target, "notes").unwrap();
 
     let service = service();
@@ -32,6 +33,10 @@ async fn project_text_projects_paths_from_the_active_mount() {
     assert_eq!(
         adapter.project_text(&format!("realpath {}", resolved.display())),
         "realpath ./notes.txt"
+    );
+    assert_eq!(
+        adapter.project_text(&format!("<a href=\"{}/report.html\">", root.display())),
+        "<a href=\"./report.html\">"
     );
 }
 
@@ -114,6 +119,21 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         dunce::canonicalize(cwd.join(projected)).unwrap(),
         path_with_space,
         "root-grant paths with a space remain usable from a nested cwd"
+    );
+    let projected_sibling = nested
+        .project_text(&format!("realpath {}", sibling.display()))
+        .strip_prefix("realpath ")
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        dunce::canonicalize(cwd.join(projected_sibling)).unwrap(),
+        dunce::canonicalize(sibling).unwrap(),
+        "root-grant paths with a spaced final component remain usable"
+    );
+    assert_eq!(
+        nested.project_text(&format!("pwd: {} is cwd", cwd.display())),
+        "pwd: . is cwd",
+        "ordinary prose after the cwd is not part of the path"
     );
 }
 
