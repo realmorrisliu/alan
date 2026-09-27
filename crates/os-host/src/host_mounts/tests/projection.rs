@@ -72,6 +72,45 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
 }
 
 #[tokio::test]
+async fn project_text_matches_longer_mount_roots_before_space_siblings() {
+    let parent = tempfile::tempdir().unwrap();
+    let parent = dunce::canonicalize(parent.path()).unwrap();
+    let project = parent.join("project");
+    let project_with_space = parent.join("project backup");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&project_with_space).unwrap();
+
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        &project,
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/project backup",
+        HostMountAccess::ReadOnly,
+        &project_with_space,
+    )
+    .await;
+
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    assert_eq!(
+        adapter.project_text(&format!("{}/file", project_with_space.display())),
+        "../project backup/file"
+    );
+}
+
+#[tokio::test]
 async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_siblings() {
     let project = tempfile::Builder::new()
         .prefix("alan project with spaces ")
