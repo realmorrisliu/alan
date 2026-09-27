@@ -108,7 +108,7 @@ fn migrate_connection_metadata(source: &Path, target: &Path) -> Result<bool> {
     let merged = merge_connections(current, legacy)?;
 
     if !target.is_file() || ConnectionsFile::load_from_path(target)?.0 != merged {
-        save_connections_atomically(&merged, target)?;
+        merged.save_to_path(target)?;
     }
     ensure!(
         ConnectionsFile::load_from_path(target)?.0 == merged,
@@ -196,34 +196,6 @@ fn merge_connections(
         }
     }
     Ok(current)
-}
-
-fn save_connections_atomically(connections: &ConnectionsFile, target: &Path) -> Result<()> {
-    let parent = target
-        .parent()
-        .context("Connection Service metadata path has no parent")?;
-    fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "failed to create Connection Service directory {}",
-            parent.display()
-        )
-    })?;
-    let staging = parent.join(format!(
-        ".connections-migration-{}.tmp",
-        uuid::Uuid::new_v4().simple()
-    ));
-    connections.save_to_path(&staging)?;
-    ensure!(
-        ConnectionsFile::load_from_path(&staging)?.0 == *connections,
-        "staged Connection Service metadata failed verification"
-    );
-    fs::rename(&staging, target).with_context(|| {
-        format!(
-            "failed to atomically install Connection Service metadata {}",
-            target.display()
-        )
-    })?;
-    Ok(())
 }
 
 fn migrate_host_file(source: &Path, target: &Path, label: &str) -> Result<bool> {
