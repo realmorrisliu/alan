@@ -443,3 +443,18 @@ fn live_host_commands_require_an_explicit_instance() {
         );
     }
 }
+
+#[test]
+fn dedicated_host_start_guides_users_to_foreground_alan() {
+    let output = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["host", "start"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("run bare `alan` to start a foreground instance"),
+        "{output:?}"
+    );
+}

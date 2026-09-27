@@ -149,6 +149,7 @@ handle_signal() {
     exit "$exit_status"
 }
 trap 'handle_signal 130' INT
+trap 'handle_signal 129' HUP
 trap 'handle_signal 143' TERM
 
 if [[ -e "$HOST_PATH" ]]; then

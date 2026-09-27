@@ -96,17 +96,8 @@ cmp -s "$TEST_ROOT/modified-host-before" "$modified_host/alan-os-host" \
 cmp -s "$TEST_ROOT/modified-manifest-before" "$modified_host/.alan-cli-manifest-stable" \
     || fail "host conflict changed the existing manifest"
 
-signal_upgrade="$TEST_ROOT/signal-upgrade"
 signal_bin="$TEST_ROOT/signal-bin"
-mkdir -p "$signal_upgrade" "$signal_bin"
-printf 'old CLI before interruption\n' >"$signal_upgrade/alan"
-printf 'old Host before interruption\n' >"$signal_upgrade/alan-os-host"
-printf 'alan|%s\nalan-os-host|%s\n' \
-    "$(sha256 "$signal_upgrade/alan")" "$(sha256 "$signal_upgrade/alan-os-host")" \
-    >"$signal_upgrade/.alan-cli-manifest-stable"
-cp "$signal_upgrade/alan" "$TEST_ROOT/signal-cli-before"
-cp "$signal_upgrade/alan-os-host" "$TEST_ROOT/signal-host-before"
-cp "$signal_upgrade/.alan-cli-manifest-stable" "$TEST_ROOT/signal-manifest-before"
+mkdir -p "$signal_bin"
 cat >"$signal_bin/mv" <<'EOF'
 #!/usr/bin/env bash
 /bin/mv "$@"
@@ -114,28 +105,44 @@ status=$?
 if [[ "$status" == 0 && "${2:-}" == "${ALAN_TEST_SIGNAL_AFTER_MV_DEST:-}" \
     && ! -e "${ALAN_TEST_SIGNAL_SENT:-}" ]]; then
     : >"$ALAN_TEST_SIGNAL_SENT"
-    kill -TERM "$PPID"
+    kill -s "$ALAN_TEST_SIGNAL_NAME" "$PPID"
 fi
 exit "$status"
 EOF
 chmod +x "$signal_bin/mv"
-if PATH="$signal_bin:$PATH" \
-    ALAN_CLI_INSTALL_DIR="$signal_upgrade" \
-    ALAN_SKIP_BUILD=1 \
-    ALAN_TEST_SIGNAL_AFTER_MV_DEST="$signal_upgrade/alan" \
-    ALAN_TEST_SIGNAL_SENT="$TEST_ROOT/signal-sent" \
-    "$SCRIPT_DIR/install-cli.sh" >"$TEST_ROOT/signal-output.txt" 2>&1; then
-    fail "installer ignored SIGTERM during the upgrade"
-else
-    signal_status=$?
-    [[ "$signal_status" == 143 ]] || fail "installer exited with unexpected signal status: $signal_status"
-fi
-cmp -s "$TEST_ROOT/signal-cli-before" "$signal_upgrade/alan" \
-    || fail "SIGTERM left the old CLI replaced"
-cmp -s "$TEST_ROOT/signal-host-before" "$signal_upgrade/alan-os-host" \
-    || fail "SIGTERM left the old Host removed"
-cmp -s "$TEST_ROOT/signal-manifest-before" "$signal_upgrade/.alan-cli-manifest-stable" \
-    || fail "SIGTERM changed the old manifest"
+for signal_name in TERM HUP; do
+    signal_upgrade="$TEST_ROOT/signal-upgrade-$signal_name"
+    mkdir -p "$signal_upgrade"
+    printf 'old CLI before interruption\n' >"$signal_upgrade/alan"
+    printf 'old Host before interruption\n' >"$signal_upgrade/alan-os-host"
+    printf 'alan|%s\nalan-os-host|%s\n' \
+        "$(sha256 "$signal_upgrade/alan")" "$(sha256 "$signal_upgrade/alan-os-host")" \
+        >"$signal_upgrade/.alan-cli-manifest-stable"
+    cp "$signal_upgrade/alan" "$TEST_ROOT/signal-cli-before"
+    cp "$signal_upgrade/alan-os-host" "$TEST_ROOT/signal-host-before"
+    cp "$signal_upgrade/.alan-cli-manifest-stable" "$TEST_ROOT/signal-manifest-before"
+    if PATH="$signal_bin:$PATH" \
+        ALAN_CLI_INSTALL_DIR="$signal_upgrade" \
+        ALAN_SKIP_BUILD=1 \
+        ALAN_TEST_SIGNAL_AFTER_MV_DEST="$signal_upgrade/alan" \
+        ALAN_TEST_SIGNAL_SENT="$TEST_ROOT/signal-sent-$signal_name" \
+        ALAN_TEST_SIGNAL_NAME="$signal_name" \
+        "$SCRIPT_DIR/install-cli.sh" >"$TEST_ROOT/signal-output.txt" 2>&1; then
+        fail "installer ignored SIG$signal_name during the upgrade"
+    else
+        signal_status=$?
+        expected_status=143
+        [[ "$signal_name" == HUP ]] && expected_status=129
+        [[ "$signal_status" == "$expected_status" ]] \
+            || fail "installer exited with unexpected SIG$signal_name status: $signal_status"
+    fi
+    cmp -s "$TEST_ROOT/signal-cli-before" "$signal_upgrade/alan" \
+        || fail "SIG$signal_name left the old CLI replaced"
+    cmp -s "$TEST_ROOT/signal-host-before" "$signal_upgrade/alan-os-host" \
+        || fail "SIG$signal_name left the old Host removed"
+    cmp -s "$TEST_ROOT/signal-manifest-before" "$signal_upgrade/.alan-cli-manifest-stable" \
+        || fail "SIG$signal_name changed the old manifest"
+done
 
 unowned_host="$TEST_ROOT/unowned-host"
 mkdir -p "$unowned_host"
