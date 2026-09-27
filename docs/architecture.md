@@ -38,19 +38,23 @@ semantics.
 
 ## Current startup
 
-Each bare `alan` invocation starts and owns one foreground alan9 instance and
-its Root Agent Process. With terminal stdin and stdout it runs the file-backed
-Agent renderer against that instance's `/agent/root`; with redirected stdin it
-submits one task to the same instance and writes the answer to stdout and
-diagnostics to stderr without starting the interactive renderer. Separate
-Herdr sessions therefore have separate Roots and runtime endpoints while using
-the same channel stores. Actual Alan process exit shuts down its instance; a
-terminal-host view detach is separate from process exit. New invocations start
-fresh by default; explicit durable recovery is the accepted direction, but its
-selection and queue/cwd restoration flow remains active work. Interactive `!`
-requests a command through the governed `bash` Tool, while `:` forces Agent
-routing. The lifecycle revision to [ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md)
-supersedes its historical background-Host behavior.
+Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
+directory not in use by another invocation starts and owns one foreground
+alan9 instance and its Root Agent Process. With terminal stdin and stdout it
+runs the file-backed Agent renderer against that instance's `/agent/root`;
+with redirected stdin it submits one task to the same instance and writes the
+answer to stdout and diagnostics to stderr without starting the interactive
+renderer. Herdr sessions using separate runtime directories have separate
+Roots and endpoints while using the same channel stores. Reusing one explicit
+runtime directory allows only one owner; another invocation fails to acquire
+it rather than sharing its Root. Actual Alan process exit shuts down its
+instance; a terminal-host view detach is separate from process exit. New
+invocations start fresh by default; explicit durable recovery is the accepted
+direction, but its selection and queue/cwd restoration flow remains active
+work. Interactive `!` requests a command through the governed `bash` Tool,
+while `:` forces Agent routing. The lifecycle revision to
+[ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md) supersedes its
+historical background-Host behavior.
 This describes the shipped CLI behavior. The canonical `alan-os-host-lifecycle`,
 `alan-shell`, renderer and attachment lifecycle specs still contain parts of the
 prior channel-wide contract; syncing their implemented startup subset is tracked

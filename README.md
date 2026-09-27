@@ -14,13 +14,16 @@ removed. Herdr is the preferred terminal host, without making Alan
 dependent on Herdr or claiming native Alan agent detection already exists.
 See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 
-Each bare `alan` invocation boots and owns one foreground alan9 instance and
-its Root Agent Process. A Herdr session runs its own invocation, so separate
-sessions have separate Roots and runtime endpoints while channel stores remain
-shared. Detaching a terminal view is separate from exiting the Alan process;
-when Alan exits, its instance stops. A new invocation never automatically
-adopts earlier work; resuming durable execution requires explicit user
-selection, whose recovery flow remains in active implementation work.
+Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
+directory not in use by another invocation boots and owns a foreground alan9
+instance and its Root Agent Process. Herdr sessions using separate runtime
+directories have separate Roots and endpoints while channel stores remain
+shared. Reusing one explicit runtime directory allows only one owner; another
+invocation fails to acquire it rather than sharing its Root. Detaching a
+terminal view is separate from exiting the Alan process; when Alan exits, its
+instance stops. A new invocation never automatically adopts earlier work;
+resuming durable execution requires explicit user selection, whose recovery
+flow remains in active implementation work.
 
 Package Service is the system owner for installed Skill distributions. It
 publishes `/srv/package`; Quartermaster runs as the ordinary `/bin/q` Process.
