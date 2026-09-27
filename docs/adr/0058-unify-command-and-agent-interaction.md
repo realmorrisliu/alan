@@ -1,5 +1,11 @@
 # Unify command and Agent interaction
 
+Lifetime direction revised 2026-09-27: the user selected independent foreground
+Alan invocations and explicitly selected recovery. The older background lifetime
+assumptions below are superseded as target direction by
+[the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
+This does not claim the foreground runtime or canonical spec sync is complete.
+
 Status: accepted direction, 2026-09-24. The user confirmed the consolidated
 design after all interview rounds. Runtime implementation remains pending. The target revises ADR-0056 input semantics
 while preserving its non-owning attachment and Process lifecycle boundaries.

@@ -1,5 +1,11 @@
 # Closing an Agent view only detaches
 
+Lifetime direction revised 2026-09-27: the user selected independent foreground
+Alan invocations and explicitly selected recovery. The older background lifetime
+assumptions below are superseded as target direction by
+[the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
+This does not claim the foreground runtime or canonical spec sync is complete.
+
 Status: accepted
 
 Closing an Agent ContentInstance, Pane, Tab, window, or the macOS app releases

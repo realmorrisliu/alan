@@ -1,5 +1,11 @@
 # Retire the desktop client and prefer existing terminal hosts
 
+Lifetime direction revised 2026-09-27: the user selected independent foreground
+Alan invocations and explicitly selected recovery. The older background lifetime
+assumptions below are superseded as target direction by
+[the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
+This does not claim the foreground runtime or canonical spec sync is complete.
+
 Status: accepted, 2026-09-19. Supersedes ADR-0001's product obligation and the
 desktop-consumer assumptions of ADR-0027/0044, not Alan OS ownership.
 
