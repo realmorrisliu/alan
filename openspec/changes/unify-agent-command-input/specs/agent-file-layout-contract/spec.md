@@ -7,7 +7,9 @@ durable backing stores. The Process path and durable record identifiers SHALL be
 locate and interpret that state.
 
 Accepted submission identity, intent, queue ordering/pause and shared cwd
-recovery evidence SHALL use these owners. Reliable pending work is restored
+recovery evidence SHALL use these owners. Restoring prior execution SHALL require
+explicit durable-record selection and current authority validation; records do
+not confer live capabilities. Reliable pending work is restored
 paused; unknown effects are reconciled and never automatically replayed.
 Missing or untrustworthy records are reported rather than fabricated.
 

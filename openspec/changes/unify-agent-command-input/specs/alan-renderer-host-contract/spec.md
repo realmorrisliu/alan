@@ -1,14 +1,23 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: The terminal CLI attaches to the existing Root Agent`
+- TO: `### Requirement: The terminal renderer uses its foreground instance`
+
 ## MODIFIED Requirements
 
-### Requirement: The terminal CLI attaches to the existing Root Agent
-A local terminal renderer SHALL receive a mounted alan9 namespace and the
-concrete `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
-supervise an Agent Process. AgentFS remains the authority for input, streamed
+### Requirement: The terminal renderer uses its foreground instance
+A local terminal renderer SHALL receive its foreground invocation's mounted
+alan9 namespace and the concrete instance-local `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
+supervise an Agent Process. The CLI composition, outside the renderer, owns
+the foreground application lifetime. A renderer MUST NOT connect to another
+invocation as an implicit fallback. Existing PID-change handling is defensive
+observation, not authorization to replace or recover a Root Agent automatically.
+AgentFS remains the authority for input, streamed
 output, status, and Agent UI state.
 
 #### Scenario: Bare Alan opens the terminal renderer
-- **WHEN** bare `alan` runs with interactive stdin and stdout after attaching to
-  the dedicated Host
+- **WHEN** bare `alan` runs with interactive stdin and stdout after
+  its own alan9 instance has become ready
 - **THEN** it opens the file-backed renderer on `/agent/root`
 - **AND** it does not create a second Agent or Shell Process
 
@@ -139,9 +148,10 @@ for explicit continuation or discard; no next action SHALL start automatically.
 - **AND** if that submission already settled the control does not cancel later work
 
 #### Scenario: Renderer exits
-- **WHEN** the user quits or closes the local renderer
-- **THEN** it closes its own file streams and restores the terminal
-- **AND** it does not stop the shared alan9 Host or Root Agent Process
+- **WHEN** the user quits or closes the local renderer in the owning Alan invocation
+- **THEN** it closes its file streams and restores the terminal
+- **AND** the application shuts down its owned instance through existing lifecycle boundaries
+- **AND** terminal-host view detach while retaining the process does not count as Alan exit
 
 ## ADDED Requirements
 
@@ -161,16 +171,19 @@ private cwd, execution queue, command executor or durable result database.
 - **THEN** the interface shows its result and status without starting an explanatory model call
 
 ### Requirement: Terminal EOF and redirected EOF have distinct transport meanings
-Interactive Ctrl-D with empty input and no pending Agent input SHALL detach, as
-shall an explicit client exit. With a confirmation or structured-input request
+Interactive Ctrl-D with empty input and no pending Agent input SHALL exit the
+foreground Alan invocation, as SHALL explicit quit. With a confirmation or structured-input request
 pending, Ctrl-D MUST leave the client attached and the request available for a
-response. Detach MUST NOT stop accepted work, the Agent Process or the Host.
+response. The application SHALL shut down its owned work on actual exit.
+A terminal host MAY keep the process alive when only its view detaches; Alan
+MUST NOT start a background replacement to preserve execution.
 Redirected EOF SHALL finish collection of one submission rather than cancel
 execution.
 
 #### Scenario: Empty terminal input receives Ctrl-D
 - **WHEN** Ctrl-D is pressed with an empty composer and no pending Agent input
-- **THEN** the client detaches and already accepted work continues
+- **THEN** the renderer exits and the application shuts down its owned instance
+- **AND** completed effects are not rolled back and uncertain work is not replayed
 
 #### Scenario: Pending Agent input receives Ctrl-D
 - **WHEN** Ctrl-D is pressed while a confirmation or structured-input request is pending
