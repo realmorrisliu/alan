@@ -45,6 +45,12 @@ pub(super) fn publish(config: &AgentProcessConfig, rollout: Option<&Path>) -> Re
     let name = name
         .to_str()
         .context("Root Agent rollout filename is not UTF-8")?;
+    fs::File::open(rollout)?
+        .sync_all()
+        .context("sync selected Root Agent rollout")?;
+    fs::File::open(&stores.rollouts)?
+        .sync_all()
+        .context("sync Root Agent rollout directory")?;
     fs::create_dir_all(&stores.metadata)?;
     let mut temporary = tempfile::NamedTempFile::new_in(&stores.metadata)?;
     temporary.write_all(name.as_bytes())?;
@@ -94,6 +100,11 @@ mod tests {
             select(&mut config).unwrap();
             assert_eq!(config.recovery_rollout_path.as_ref(), Some(&path));
         }
+        assert!(publish(&config, Some(&stores.rollouts.join("unavailable.jsonl"))).is_err());
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            "second.jsonl"
+        );
         config.recovery_rollout_path = Some(stores.rollouts.join("explicit.jsonl"));
         select(&mut config).unwrap();
         assert_eq!(
