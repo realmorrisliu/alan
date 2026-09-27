@@ -209,6 +209,11 @@ impl LlmProvider for LiveSecretProvider {
 impl HostBootConfig {
     /// Build product inputs from the channel stores and native adapters.
     pub fn product(channel_id: &str) -> Result<Self> {
+        Self::product_with_root_resume(channel_id, false)
+    }
+
+    /// Build product inputs and optionally restore the selected Root Agent rollout.
+    pub fn product_with_root_resume(channel_id: &str, resume_root: bool) -> Result<Self> {
         let channel = InstallChannel::from_id(channel_id)
             .with_context(|| format!("unknown Alan OS Host channel `{channel_id}`"))?;
         let system_store = SystemStorePaths::detect(channel_id)?;
@@ -276,6 +281,7 @@ impl HostBootConfig {
         Ok(Self(ServiceManagerConfig {
             channel_id: channel_id.into(),
             process,
+            resume_root,
             launch_context,
             connection_store: Some(connection_store),
             package_store: Some(system_store.packages()?),

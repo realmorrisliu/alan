@@ -219,12 +219,14 @@ impl SupervisorRuntime {
             .wait_until_ready()
             .await;
         match initial_ready {
-            Ok(_) => self
-                .state
-                .lock()
-                .await
-                .mark_ready("root-agent")
-                .map_err(|error| anyhow::anyhow!("mark Root Agent ready: {error:?}")),
+            Ok(_) => {
+                self.root_template.resume_persisted_rollout = true;
+                self.state
+                    .lock()
+                    .await
+                    .mark_ready("root-agent")
+                    .map_err(|error| anyhow::anyhow!("mark Root Agent ready: {error:?}"))
+            }
             Err(error) => {
                 let active = self
                     .active
@@ -447,6 +449,7 @@ impl SupervisorRuntime {
             self.agent_runtime.detach_root(root, 1).await;
             return Err(error).context("replacement Root Agent failed before readiness");
         }
+        self.root_template.resume_persisted_rollout = true;
         self.state
             .lock()
             .await

@@ -1,7 +1,7 @@
 //! Root Agent continuity selection in the Agent Runtime Service System Store.
 
 use alan_agent_engine::AgentProcessConfig;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use std::{
     fs,
     io::Write,
@@ -10,8 +10,8 @@ use std::{
 
 const CURRENT: &str = "root-rollout";
 
-pub(super) fn select(config: &mut AgentProcessConfig) -> Result<()> {
-    if config.recovery_rollout_path.is_some() {
+pub(super) fn select(config: &mut AgentProcessConfig, resume_previous: bool) -> Result<()> {
+    if config.recovery_rollout_path.is_some() || !resume_previous {
         return Ok(());
     }
     let Some(stores) = config.store_bindings.as_ref() else {
@@ -19,7 +19,9 @@ pub(super) fn select(config: &mut AgentProcessConfig) -> Result<()> {
     };
     let name = match fs::read_to_string(stores.metadata.join(CURRENT)) {
         Ok(name) => name,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            bail!("no selected Root Agent rollout is available to resume")
+        }
         Err(error) => return Err(error).context("read Root Agent recovery selection"),
     };
     validate_filename(Path::new(&name))?;
@@ -85,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn root_selection_is_atomic_explicit_and_rejects_missing_records() {
+    fn root_selection_is_opt_in_atomic_and_rejects_missing_records() {
         let temp = tempfile::tempdir().unwrap();
         let stores = alan_agent_engine::AgentRuntimeStoreBindings {
             rollouts: temp.path().join("rollouts"),
@@ -98,15 +100,18 @@ mod tests {
             store_bindings: Some(stores.clone()),
             ..Default::default()
         };
-        select(&mut config).unwrap();
+        select(&mut config, false).unwrap();
         assert!(config.recovery_rollout_path.is_none());
+        assert!(select(&mut config, true).is_err());
         fs::create_dir_all(&stores.rollouts).unwrap();
         for name in ["first.jsonl", "second.jsonl"] {
             let path = stores.rollouts.join(name);
             fs::write(&path, "test evidence").unwrap();
             publish(&config, Some(&path)).unwrap();
             config.recovery_rollout_path = None;
-            select(&mut config).unwrap();
+            select(&mut config, false).unwrap();
+            assert!(config.recovery_rollout_path.is_none());
+            select(&mut config, true).unwrap();
             assert_eq!(config.recovery_rollout_path.as_ref(), Some(&path));
         }
         assert!(publish(&config, Some(&stores.rollouts.join("unavailable.jsonl"))).is_err());
@@ -115,21 +120,135 @@ mod tests {
             "second.jsonl"
         );
         config.recovery_rollout_path = Some(stores.rollouts.join("explicit.jsonl"));
-        select(&mut config).unwrap();
+        select(&mut config, false).unwrap();
         assert_eq!(
             config.recovery_rollout_path,
             Some(stores.rollouts.join("explicit.jsonl"))
         );
         config.recovery_rollout_path = None;
         fs::remove_file(stores.rollouts.join("second.jsonl")).unwrap();
-        assert!(select(&mut config).is_err());
+        assert!(select(&mut config, true).is_err());
         for invalid in ["", "../first.jsonl", "/outside.jsonl"] {
             fs::write(stores.metadata.join(CURRENT), invalid).unwrap();
-            assert!(select(&mut config).is_err());
+            assert!(select(&mut config, true).is_err());
         }
+        let mut ephemeral = AgentProcessConfig::default();
+        select(&mut ephemeral, true).unwrap();
+        assert!(ephemeral.recovery_rollout_path.is_none());
     }
+
     #[tokio::test]
-    async fn supervised_root_restart_selects_latest_durable_history() {
+    async fn explicit_resume_requires_durable_store_bindings() {
+        let mut config = crate::ServiceManagerConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            crate::ProcessLaunchContext::root(),
+            alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
+            alan_agent_engine::tools::ToolRegistry::new(),
+        );
+        config.resume_root = true;
+        let error = match crate::ServiceManager::boot(config).await {
+            Ok(manager) => {
+                manager.shutdown().await.unwrap();
+                panic!("explicit resume without durable stores must fail");
+            }
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("recovery requires durable store bindings"));
+    }
+
+    #[tokio::test]
+    async fn fresh_root_starts_new_then_recovers_within_its_instance() {
+        use alan_agent_engine::{RolloutItem, RolloutRecorder};
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        fs::create_dir_all(&stores.rollouts).unwrap();
+        let config = AgentProcessConfig {
+            store_bindings: Some(stores.clone()),
+            ..Default::default()
+        };
+        let previous = RolloutRecorder::new_in_dir("/proc/old", "mock", &stores.rollouts)
+            .await
+            .unwrap();
+        previous
+            .record_tape_message(&alan_agent_engine::tape::Message::user(
+                "previous invocation",
+            ))
+            .await
+            .unwrap();
+        publish(&config, Some(previous.path())).unwrap();
+
+        let provider = alan_llm::MockLlmProvider::new();
+        let probe = provider.clone();
+        let manager = crate::ServiceManager::boot(crate::ServiceManagerConfig::ephemeral(
+            "test",
+            config,
+            crate::ProcessLaunchContext::root(),
+            alan_agent_engine::LlmClient::new(provider),
+            alan_agent_engine::tools::ToolRegistry::new(),
+        ))
+        .await
+        .unwrap();
+        let selected = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
+        assert_ne!(stores.rollouts.join(&selected), *previous.path());
+        let items = RolloutRecorder::load_history(&stores.rollouts.join(selected))
+            .await
+            .unwrap();
+        assert!(!items.iter().any(|item| matches!(item, RolloutItem::Message(record)
+            if record.message.as_ref().is_some_and(|message| message.text_content() == "previous invocation"))));
+
+        let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
+        let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(namespace));
+        shell
+            .write("/agent/root/io/input", b"work in fresh invocation")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let activity: serde_json::Value = serde_json::from_slice(
+                    &shell.cat("/agent/root/machine/ui/activity").await.unwrap(),
+                )
+                .unwrap();
+                if !probe.recorded_requests().is_empty() && activity["state"] == "idle" {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let old_pid = manager.root_pid();
+        manager.terminate_unit("root-agent", 0).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let pid = manager.root_pid();
+                if pid.0 != 0 && pid != old_pid {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let resumed = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
+        let items = RolloutRecorder::load_history(&stores.rollouts.join(resumed))
+            .await
+            .unwrap();
+        assert!(items.iter().any(|item| matches!(item, RolloutItem::Message(record)
+            if record.message.as_ref().is_some_and(|message| message.text_content() == "work in fresh invocation"))));
+        assert!(!items.iter().any(|item| matches!(item, RolloutItem::Message(record)
+            if record.message.as_ref().is_some_and(|message| message.text_content() == "previous invocation"))));
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_resume_and_supervised_restart_select_latest_durable_history() {
         use alan_agent_engine::{LlmClient, RolloutItem, RolloutRecorder, tools::ToolRegistry};
         use alan_ap::InProcessTransport;
         use std::time::Duration;
@@ -154,15 +273,15 @@ mod tests {
         publish(&config, Some(seed.path())).unwrap();
         let provider = alan_llm::MockLlmProvider::new();
         let probe = provider.clone();
-        let manager = crate::ServiceManager::boot(crate::ServiceManagerConfig::ephemeral(
+        let mut manager_config = crate::ServiceManagerConfig::ephemeral(
             "test",
             config,
             crate::ProcessLaunchContext::root(),
             LlmClient::new(provider),
             ToolRegistry::new(),
-        ))
-        .await
-        .unwrap();
+        );
+        manager_config.resume_root = true;
+        let manager = crate::ServiceManager::boot(manager_config).await.unwrap();
         let first = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
         assert_ne!(stores.rollouts.join(&first), *seed.path());
         let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
@@ -227,14 +346,15 @@ mod tests {
         let source = stores.rollouts.join("selected.jsonl");
         fs::write(&source, "invalid rollout\n").unwrap();
         publish(&config, Some(&source)).unwrap();
-        let result = crate::ServiceManager::boot(crate::ServiceManagerConfig::ephemeral(
+        let mut manager_config = crate::ServiceManagerConfig::ephemeral(
             "test",
             config,
             crate::ProcessLaunchContext::root(),
             alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
             alan_agent_engine::tools::ToolRegistry::new(),
-        ))
-        .await;
+        );
+        manager_config.resume_root = true;
+        let result = crate::ServiceManager::boot(manager_config).await;
         let error = match result {
             Ok(manager) => {
                 manager.shutdown().await.unwrap();

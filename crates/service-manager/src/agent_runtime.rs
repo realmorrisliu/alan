@@ -41,6 +41,7 @@ static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 #[derive(Clone)]
 pub(crate) struct RootAgentTemplate {
     process: AgentProcessConfig,
+    pub(crate) resume_persisted_rollout: bool,
     launch_context: ProcessLaunchContext,
     host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
@@ -54,9 +55,11 @@ impl RootAgentTemplate {
         host_capabilities: SkillHostCapabilities,
         generation_capabilities: ProviderCapabilities,
         llm_connection: String,
+        resume_persisted_rollout: bool,
     ) -> Self {
         Self {
             process,
+            resume_persisted_rollout,
             launch_context,
             host_capabilities,
             generation_capabilities,
@@ -315,7 +318,10 @@ impl AgentRuntimeService {
         launch: &mut AgentLaunch,
     ) -> Result<ProcessOutcome> {
         if launch.root {
-            root_recovery::select(&mut launch.template.process)?;
+            root_recovery::select(
+                &mut launch.template.process,
+                launch.template.resume_persisted_rollout,
+            )?;
         }
         let pid = invocation.pid;
         let credentials = invocation.credentials.clone();
@@ -639,6 +645,7 @@ fn child_template(
         .collect::<Vec<_>>();
     Ok(RootAgentTemplate {
         process,
+        resume_persisted_rollout: false,
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
