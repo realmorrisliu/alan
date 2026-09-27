@@ -161,7 +161,7 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
     };
     let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
     let host = AlanOsHost::boot(
-        HostBootConfig::ephemeral("test", process, LlmClient::new(provider), tools),
+        HostBootConfig::ephemeral("test", process.clone(), LlmClient::new(provider), tools),
         paths.clone(),
     )
     .await
@@ -196,7 +196,7 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
     })
     .await
     .unwrap();
-    HostCommandPlane::new(paths)
+    HostCommandPlane::new(paths.clone())
         .approve_host_mount(request, project.path().to_owned())
         .await
         .unwrap();
@@ -392,7 +392,39 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             .contains("Search text not found")
     );
     assert_eq!(probe.recorded_requests().len(), 11);
+    let persisted_id = submit_command(&shell,
+        "printf 'retained stdout\\n'; printf 'retained stderr\\n' >&2; printf x >> restart-marker.txt; exit 7"
+    ).await;
+    let persisted = command_result(&shell, &persisted_id).await;
+    assert_eq!(persisted["exit_code"], 7);
+    assert_eq!(persisted["output"]["stdout"], "retained stdout\n");
+    assert_eq!(persisted["output"]["stderr"], "retained stderr\n");
+    drop(shell);
     stop.cancel();
+    server.await.unwrap().unwrap();
+    let restarted = AlanOsHost::boot(
+        HostBootConfig::ephemeral(
+            "test",
+            process,
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        ),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
+    let shutdown = CancellationToken::new();
+    let requested = shutdown.clone();
+    let server =
+        tokio::spawn(async move { restarted.serve_until(requested.cancelled_owned()).await });
+    let shell = Shell::new(LocalAttachment::new(paths).connect().await.unwrap().root);
+    assert_eq!(command_result(&shell, &persisted_id).await, persisted);
+    assert_eq!(
+        std::fs::read(project.path().join("src/restart-marker.txt")).unwrap(),
+        b"x",
+        "completed native command must not be replayed on recovery"
+    );
+    shutdown.cancel();
     server.await.unwrap().unwrap();
 }
 
