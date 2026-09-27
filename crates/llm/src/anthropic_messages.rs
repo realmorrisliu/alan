@@ -720,7 +720,7 @@ impl LlmProvider for AnthropicMessagesClient {
     }
 
     async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
-        self.chat(system, user).await
+        AnthropicMessagesClient::chat(self, system, user).await
     }
 
     async fn generate_stream(
