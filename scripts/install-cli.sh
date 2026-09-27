@@ -102,20 +102,37 @@ install -m 0755 "$CLI_SOURCE" "$stage/new-cli"
 new_digest="$(sha256 "$stage/new-cli")"
 printf '%s|%s\n' "$ALAN_CLI_NAME" "$new_digest" >"$stage/new-manifest"
 
-cli_backed_up=0
-host_backed_up=0
-new_cli_installed=0
+cli_existed=0
+if [[ -e "$CLI_PATH" ]]; then
+    cp -p "$CLI_PATH" "$stage/old-cli"
+    cli_existed=1
+fi
+
 rollback() {
     local rollback_failed=0
-    if [[ "$new_cli_installed" == 1 ]]; then
-        rm -f "$CLI_PATH" || rollback_failed=1
+
+    if [[ ! -e "$stage/new-cli" ]]; then
+        if [[ "$cli_existed" == 1 ]]; then
+            if ! mv "$stage/old-cli" "$CLI_PATH"; then
+                rollback_failed=1
+            fi
+        elif [[ -e "$CLI_PATH" ]]; then
+            if [[ "$(sha256 "$CLI_PATH")" == "$new_digest" ]]; then
+                rm -f "$CLI_PATH" || rollback_failed=1
+            else
+                rollback_failed=1
+            fi
+        fi
     fi
-    if [[ "$cli_backed_up" == 1 ]]; then
-        mv "$stage/old-cli" "$CLI_PATH" || rollback_failed=1
+
+    if [[ -e "$stage/retired-host" ]]; then
+        if [[ -e "$HOST_PATH" || -L "$HOST_PATH" ]]; then
+            rollback_failed=1
+        elif ! mv "$stage/retired-host" "$HOST_PATH"; then
+            rollback_failed=1
+        fi
     fi
-    if [[ "$host_backed_up" == 1 ]]; then
-        mv "$stage/old-host" "$HOST_PATH" || rollback_failed=1
-    fi
+
     if [[ "$rollback_failed" == 1 ]]; then
         keep_stage=1
         printf 'error: upgrade rollback was incomplete; recovery files are in %s\n' "$stage" >&2
@@ -124,24 +141,26 @@ rollback() {
     fi
 }
 
-if [[ -e "$CLI_PATH" ]]; then
-    if ! mv "$CLI_PATH" "$stage/old-cli"; then
-        fail "unable to stage existing CLI at $CLI_PATH"
+handle_signal() {
+    local exit_status="$1"
+    if [[ -e "$stage/new-manifest" ]]; then
+        rollback
     fi
-    cli_backed_up=1
-fi
+    exit "$exit_status"
+}
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
 if [[ -e "$HOST_PATH" ]]; then
-    if ! mv "$HOST_PATH" "$stage/old-host"; then
+    if ! mv "$HOST_PATH" "$stage/retired-host"; then
         rollback
         fail "unable to retire previous Host executable at $HOST_PATH"
     fi
-    host_backed_up=1
 fi
 if ! mv "$stage/new-cli" "$CLI_PATH"; then
     rollback
     fail "unable to install CLI at $CLI_PATH"
 fi
-new_cli_installed=1
 if ! mv "$stage/new-manifest" "$manifest"; then
     rollback
     fail "unable to update ownership manifest at $manifest"
