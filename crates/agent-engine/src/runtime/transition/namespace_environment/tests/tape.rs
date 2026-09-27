@@ -53,7 +53,7 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
 
 #[test]
 fn tape_record_shape_is_content_addressable_ready() {
-    let record = tape_record_bytes("assistant", "stable text", None, &[]).unwrap();
+    let record = tape_record_bytes("assistant", "stable text", None, &[], None).unwrap();
     assert_eq!(
         String::from_utf8(record).unwrap(),
         r#"{"version":1,"kind":"message","role":"assistant","content":"stable text"}"#.to_string()

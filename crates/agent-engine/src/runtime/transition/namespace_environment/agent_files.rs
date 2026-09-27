@@ -492,6 +492,8 @@ struct TapeRecordV1<'a> {
     role: &'a str,
     content: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    input_intent: Option<alan_agent_protocol::InputIntent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     submission_id: Option<&'a str>,
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     related_submission_ids: &'a [String],
@@ -521,11 +523,26 @@ impl NamespaceTapeWriter {
         submission_id: Option<&str>,
         related_submission_ids: &[String],
     ) -> Result<()> {
-        let bytes = tape_record_bytes(role, content, submission_id, related_submission_ids)?;
+        let bytes = tape_record_bytes(role, content, submission_id, related_submission_ids, None)?;
         self.client
             .write_at(self.guard.fid(), 0, &bytes)
             .await
             .context("append tape record")?;
+        Ok(())
+    }
+
+    /// Append an admitted input with its explicit route, preserving the literal body.
+    pub async fn append_input_record(
+        &self,
+        content: &str,
+        submission_id: &str,
+        intent: alan_agent_protocol::InputIntent,
+    ) -> Result<()> {
+        let bytes = tape_record_bytes("user", content, Some(submission_id), &[], Some(intent))?;
+        self.client
+            .write_at(self.guard.fid(), 0, &bytes)
+            .await
+            .context("append input tape record")?;
         Ok(())
     }
 
@@ -580,12 +597,14 @@ pub(super) fn tape_record_bytes(
     content: &str,
     submission_id: Option<&str>,
     related_submission_ids: &[String],
+    input_intent: Option<alan_agent_protocol::InputIntent>,
 ) -> Result<Vec<u8>> {
     let record = TapeRecordV1 {
         version: 1,
         kind: "message",
         role,
         content,
+        input_intent,
         submission_id,
         related_submission_ids,
     };
