@@ -260,7 +260,7 @@ impl AgentRuntimeService {
             let _ = stop.send(());
         }
         wait_for_process_exit(&self.procfs, root.pid, Duration::from_secs(12)).await?;
-        Ok(())
+        self.release_process(root.pid).await
     }
 
     pub(crate) async fn run_agent_process(
