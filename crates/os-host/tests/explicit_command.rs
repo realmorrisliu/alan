@@ -408,7 +408,8 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             process,
             LlmClient::new(MockLlmProvider::new()),
             ToolRegistry::new(),
-        ),
+        )
+        .with_root_resume(),
         paths.clone(),
     )
     .await
