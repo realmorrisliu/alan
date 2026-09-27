@@ -10,7 +10,7 @@ use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use alan_service_manager::{
-    ConnectionsFile, LlmClientFactory, ProcessLaunchContext, ServiceManagerConfig,
+    ConnectionsFile, LlmClientFactory, ProcessLaunchContext, ServiceManager, ServiceManagerConfig,
 };
 use anyhow::{Context, Result, bail};
 
@@ -232,6 +232,12 @@ impl HostBootConfig {
         Self(config)
     }
 
+    /// Boot an independent in-process instance without a listener or background launcher.
+    /// The caller owns the returned manager and must shut it down before exiting.
+    pub async fn boot_foreground(self) -> Result<ServiceManager> {
+        ServiceManager::boot(self.0).await
+    }
+
     pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
         self.0
     }
@@ -294,6 +300,37 @@ fn snapshot_agent_definition(root: &Path) -> Result<ProcessFileTree> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn foreground_instances_have_independent_lifetimes() {
+        use alan_ap::InProcessTransport;
+        use alan_shell::Shell;
+        let boot = || {
+            super::HostBootConfig::ephemeral(
+                "test",
+                alan_agent_engine::AgentProcessConfig::default(),
+                alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
+                alan_agent_engine::ToolRegistry::new(),
+            )
+            .boot_foreground()
+        };
+        let first = boot().await.unwrap();
+        let second = boot().await.unwrap();
+        assert_ne!(first.boot_id(), second.boot_id());
+        let first_shell = Shell::new(InProcessTransport::new(
+            first.local_entry().namespace_for_local_client(),
+        ));
+        let second_shell = Shell::new(InProcessTransport::new(
+            second.local_entry().namespace_for_local_client(),
+        ));
+        first_shell.ls("/agent/root").await.unwrap();
+        second_shell.ls("/agent/root").await.unwrap();
+        first.shutdown().await.unwrap();
+        assert!(first_shell.ls("/agent/root").await.is_err());
+        second_shell.ls("/agent/root").await.unwrap();
+        second.shutdown().await.unwrap();
+        assert!(second_shell.ls("/agent/root").await.is_err());
+    }
+
     use super::*;
     use std::collections::BTreeSet;
 
