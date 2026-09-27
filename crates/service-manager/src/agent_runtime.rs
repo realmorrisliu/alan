@@ -32,6 +32,9 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+#[path = "agent_runtime/root_recovery.rs"]
+mod root_recovery;
+
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 
@@ -311,6 +314,9 @@ impl AgentRuntimeService {
         invocation: &ProcessInvocation,
         launch: &mut AgentLaunch,
     ) -> Result<ProcessOutcome> {
+        if launch.root {
+            root_recovery::select(&mut launch.template.process)?;
+        }
         let pid = invocation.pid;
         let credentials = invocation.credentials.clone();
         launch.namespace.replace_mount(
@@ -406,10 +412,13 @@ impl AgentRuntimeService {
             launch.template.host_capabilities.clone(),
             launch.template.generation_capabilities,
         )?;
-        controller
+        let startup = controller
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
+        if launch.root {
+            root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+        }
         let runtime_handle = controller.handle.clone();
         agent
             .set_retention_recorder(move |id, cause| {
