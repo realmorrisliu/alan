@@ -112,10 +112,15 @@ Service Manager to privately start an Agent Runtime.
 - **AND** it does not emit terminal UI control sequences
 
 #### Scenario: One-shot starts during Root Agent PID handoff
-- **WHEN** Root Agent publication is unavailable, stale or changes during startup
+- **WHEN** Root Agent publication is unavailable or stale during startup
 - **THEN** readiness and attachment remain bounded and tied to that invocation's boot identity
 - **AND** startup failure closes partial streams and shuts down the failed instance without submitting
 - **AND** the CLI never falls back to another terminal's Root Agent
+
+#### Scenario: Root Agent PID changes during one-shot startup
+- **WHEN** Root Agent publication changes after the client observes its initial concrete PID
+- **THEN** startup fails even if the new PID belongs to the same invocation boot identity
+- **AND** the client does not attach or submit input to the replacement Process
 
 #### Scenario: User redirects stdout without redirecting stdin
 - **WHEN** stdin is a terminal and stdout is not a terminal
