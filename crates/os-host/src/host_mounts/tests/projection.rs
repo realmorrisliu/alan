@@ -59,6 +59,13 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         adapter.project_text("realpath /etc/passwd"),
         "realpath ./etc/passwd"
     );
+    assert_eq!(
+        adapter.project_text("path=/etc/passwd"),
+        "path=./etc/passwd"
+    );
+    let file_url = url::Url::from_file_path("/etc/passwd").unwrap();
+    assert_eq!(adapter.project_text(file_url.as_str()), "./etc/passwd");
+    assert_eq!(adapter.project_text("[guide]: /guide"), "[guide]: /guide");
     assert_eq!(adapter.project_text("[docs](/guide)"), "[docs](/guide)");
     assert_eq!(
         adapter.project_text("body { background: url(/assets/bg.png) }"),
@@ -80,6 +87,33 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
     assert_eq!(
         dunce::canonicalize(cwd.join(projected)).unwrap(),
         dunce::canonicalize("/usr/bin/env").unwrap()
+    );
+
+    let parent = tempfile::tempdir().unwrap();
+    let cwd = parent.path().join("project");
+    let sibling = parent.path().join("project backup");
+    std::fs::create_dir(&cwd).unwrap();
+    std::fs::create_dir(&sibling).unwrap();
+    let path_with_space = sibling.join("file.txt");
+    std::fs::write(&path_with_space, "notes").unwrap();
+    let cwd = dunce::canonicalize(cwd).unwrap();
+    let path_with_space = dunce::canonicalize(path_with_space).unwrap();
+    let namespace_cwd = std::path::Path::new("/mnt/project")
+        .join(cwd.strip_prefix(std::path::MAIN_SEPARATOR_STR).unwrap());
+    let nested = service
+        .reconcile(7, binding(namespace_cwd.to_str().unwrap()))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let projected = nested
+        .project_text(&format!("realpath {}", path_with_space.display()))
+        .strip_prefix("realpath ")
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        dunce::canonicalize(cwd.join(projected)).unwrap(),
+        path_with_space,
+        "root-grant paths with a space remain usable from a nested cwd"
     );
 }
 
@@ -117,6 +151,45 @@ async fn project_text_preserves_unmatched_paths_with_space_siblings() {
         adapter.project_text(&format!("{} is cwd", project.display())),
         ". is cwd",
         "ordinary prose after the active root must not expose its backing path"
+    );
+    assert_eq!(
+        adapter.project_text(&format!("{} /etc/passwd", project.display())),
+        ". /etc/passwd",
+        "a following absolute path is a separate token"
+    );
+}
+
+#[tokio::test]
+async fn project_text_does_not_use_an_inactive_root_grant_for_path_projection() {
+    let project = tempfile::tempdir().unwrap();
+    let project_root = dunce::canonicalize(project.path()).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/root",
+        HostMountAccess::ReadWrite,
+        std::path::Path::new(std::path::MAIN_SEPARATOR_STR),
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        project.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+
+    assert_eq!(
+        adapter.project_text(&format!("path={}/file", project_root.display())),
+        "path=./file"
     );
 }
 
@@ -188,7 +261,7 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     let root = dunce::canonicalize(project.path()).unwrap();
     let uri = url::Url::from_file_path(root.join("notes.txt")).unwrap();
     assert!(uri.as_str().contains("%20"));
-    assert_eq!(adapter.project_text(uri.as_str()), "file://./notes.txt");
+    assert_eq!(adapter.project_text(uri.as_str()), "./notes.txt");
 
     let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
     let sibling_uri =
@@ -202,6 +275,10 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     assert_eq!(adapter.project_text(&emphasized_root), "__.__");
     let ansi_emphasized_root = format!("__{}__\x1b[0m", root.display());
     assert_eq!(adapter.project_text(&ansi_emphasized_root), "__.__\x1b[0m");
+    assert_eq!(
+        adapter.project_text(&format!("__{}/src/lib.rs__", root.display())),
+        "__./src/lib.rs__"
+    );
     let single_emphasized_root = format!("_{}_", root.display());
     assert_eq!(adapter.project_text(&single_emphasized_root), "_._");
 

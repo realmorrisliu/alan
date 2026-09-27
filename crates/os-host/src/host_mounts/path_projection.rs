@@ -5,15 +5,13 @@ use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
-    if longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd).is_none() {
+    let Some(active_mount) = longest_namespace_mount(&adapter.mounts, &adapter.namespace_cwd)
+    else {
         return text.to_string();
-    }
+    };
     let physical_cwd = dunce::canonicalize(&adapter.cwd).unwrap_or_else(|_| adapter.cwd.clone());
     let is_filesystem_root = Path::new(std::path::MAIN_SEPARATOR_STR);
-    let has_root_grant = adapter
-        .mounts
-        .iter()
-        .any(|mount| mount.host_path == is_filesystem_root);
+    let has_root_grant = active_mount.host_path == is_filesystem_root;
     let cwd = physical_cwd.to_string_lossy();
     let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
     let cwd = if cwd.is_empty() {
@@ -25,6 +23,9 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     if !has_root_grant {
         candidates.push((cwd.to_owned(), ".".to_owned()));
         for mount in &adapter.mounts {
+            if mount.host_path == is_filesystem_root {
+                continue;
+            }
             let mount_from_cwd = relative_path(&physical_cwd, &mount.host_path);
             let host_path = mount.host_path.to_string_lossy().into_owned();
             let replacement = mount_from_cwd.to_string_lossy().into_owned();
@@ -53,18 +54,41 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     projected
 }
 
-// ponytail: handle whitespace-delimited absolute path tokens; parse more formats if needed.
+// ponytail: recognize common absolute-path boundaries; extend the formatter grammar if needed.
 fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
     let mut projected = String::with_capacity(text.len());
-    for part in text.split_inclusive(char::is_whitespace) {
-        let token_end = part.find(char::is_whitespace).unwrap_or(part.len());
-        let (token, separator) = part.split_at(token_end);
-        let path_start = token
-            .char_indices()
-            .take_while(|(_, ch)| matches!(ch, '(' | '\'' | '"' | '`'))
-            .map(|(index, ch)| index + ch.len_utf8())
-            .last()
-            .unwrap_or(0);
+    let mut cursor = 0;
+    while cursor < text.len() {
+        let first = text[cursor..].chars().next().expect("cursor is in text");
+        if first.is_whitespace() {
+            let end = text[cursor..]
+                .find(|ch: char| !ch.is_whitespace())
+                .map_or(text.len(), |offset| cursor + offset);
+            projected.push_str(&text[cursor..end]);
+            cursor = end;
+            continue;
+        }
+        let token_end = text[cursor..]
+            .find(char::is_whitespace)
+            .map_or(text.len(), |offset| cursor + offset);
+        let token = &text[cursor..token_end];
+        let lowercase_token = token.to_ascii_lowercase();
+        if token.contains("://") && !lowercase_token.contains("file://") {
+            projected.push_str(token);
+            cursor = token_end;
+            continue;
+        }
+        let path_start = lowercase_token.find("file://").or_else(|| {
+            token.char_indices().find_map(|(index, ch)| {
+                (ch == std::path::MAIN_SEPARATOR && is_path_start(text, cursor + index))
+                    .then_some(index)
+            })
+        });
+        let Some(path_start) = path_start else {
+            projected.push_str(token);
+            cursor = token_end;
+            continue;
+        };
         let path_and_suffix = &token[path_start..];
         let path_end = path_and_suffix
             .trim_end_matches(|ch| {
@@ -75,21 +99,85 @@ fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
             })
             .len();
         let path_text = &path_and_suffix[..path_end];
-        let path = Path::new(path_text);
-        if path_text.starts_with(std::path::MAIN_SEPARATOR) && path.is_absolute() {
-            let mut relative = relative_path(cwd, path);
-            if matches!(relative.components().next(), Some(Component::Normal(_))) {
-                relative = Path::new(".").join(relative);
-            }
+        if let Ok(file_url) = url::Url::parse(path_text)
+            && file_url.scheme() == "file"
+            && let Ok(path) = file_url.to_file_path()
+        {
+            let relative = display_relative_path(cwd, &path);
             projected.push_str(&token[..path_start]);
             projected.push_str(&relative.to_string_lossy());
+            if let Some(query) = file_url.query() {
+                projected.push('?');
+                projected.push_str(query);
+            }
+            if let Some(fragment) = file_url.fragment() {
+                projected.push('#');
+                projected.push_str(fragment);
+            }
             projected.push_str(&path_and_suffix[path_end..]);
+            cursor = token_end;
+            continue;
+        }
+        let path = Path::new(path_text);
+        if path_text.starts_with(std::path::MAIN_SEPARATOR)
+            && path.is_absolute()
+            && !is_root_relative_url(text, cursor + path_start)
+        {
+            let rooted_start = cursor + path_start;
+            let rooted_end = extend_root_path_through_space(text, rooted_start + path_end);
+            let rooted_path = &text[rooted_start..rooted_end];
+            let trimmed_end = rooted_path
+                .trim_end_matches(|ch| {
+                    matches!(
+                        ch,
+                        ',' | ';'
+                            | ':'
+                            | ')'
+                            | ']'
+                            | '}'
+                            | '\''
+                            | '"'
+                            | '>'
+                            | '`'
+                            | '.'
+                            | '!'
+                            | '?'
+                    )
+                })
+                .len();
+            let path_end = rooted_start + trimmed_end;
+            let relative = display_relative_path(cwd, Path::new(&text[rooted_start..path_end]));
+            projected.push_str(&text[cursor..rooted_start]);
+            projected.push_str(&relative.to_string_lossy());
+            cursor = path_end;
         } else {
             projected.push_str(token);
+            cursor = token_end;
         }
-        projected.push_str(separator);
     }
     projected
+}
+
+fn extend_root_path_through_space(text: &str, mut path_end: usize) -> usize {
+    while space_continues_path(&text[path_end..]) {
+        let next_start = path_end
+            + text[path_end..]
+                .find(|ch: char| !ch.is_whitespace())
+                .unwrap();
+        path_end = text[next_start..]
+            .find(char::is_whitespace)
+            .map_or(text.len(), |offset| next_start + offset);
+    }
+    path_end
+}
+
+fn display_relative_path(cwd: &Path, path: &Path) -> PathBuf {
+    let relative = relative_path(cwd, path);
+    if matches!(relative.components().next(), Some(Component::Normal(_))) {
+        Path::new(".").join(relative)
+    } else {
+        relative
+    }
 }
 
 fn relative_path(from: &Path, to: &Path) -> PathBuf {
@@ -128,10 +216,14 @@ fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
         return false;
     }
 
-    let suffix = strip_leading_terminal_sequences(&text[end..]);
-    let closing_length = suffix.chars().take_while(|ch| *ch == '_').count();
-    let after_closing = strip_leading_terminal_sequences(&suffix[closing_length..]);
-    closing_length == opening_length && is_path_end(after_closing)
+    let suffix = strip_trailing_terminal_sequences(strip_leading_terminal_sequences(&text[end..]));
+    let closing_length = suffix.chars().rev().take_while(|ch| *ch == '_').count();
+    let closing_start = suffix.len() - closing_length;
+    let path_extension = &suffix[..closing_start];
+    let after_closing = strip_leading_terminal_sequences(&text[end + suffix.len()..]);
+    closing_length == opening_length
+        && (path_extension.is_empty() || path_extension.starts_with(std::path::MAIN_SEPARATOR))
+        && is_path_end(after_closing)
 }
 
 fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String {
@@ -143,14 +235,43 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let emphasized = is_underscore_emphasis_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
         let boundary_after = is_path_end(suffix) || emphasized;
-        if boundary_before && boundary_after {
-            projected.push_str(&text[copied_through..start]);
+        if boundary_before && boundary_after && !is_root_relative_url(text, start) {
+            let replacement_start = file_uri_scheme_start(text, start).unwrap_or(start);
+            projected.push_str(&text[copied_through..replacement_start]);
             projected.push_str(replacement);
             copied_through = end;
         }
     }
     projected.push_str(&text[copied_through..]);
     projected
+}
+
+fn is_root_relative_url(text: &str, start: usize) -> bool {
+    let prefix = strip_trailing_terminal_sequences(&text[..start]);
+    let line_prefix = prefix.rsplit(['\n', '\r']).next().unwrap_or_default();
+    if line_prefix.trim_start().starts_with('[') && line_prefix.contains("]:") {
+        return true;
+    }
+    let lowercase = prefix.to_ascii_lowercase();
+    if [
+        "](", "url(", "url('", "url(\"", "href='", "href=\"", "src='", "src=\"",
+    ]
+    .iter()
+    .any(|suffix| lowercase.ends_with(suffix))
+    {
+        return true;
+    }
+    prefix.rfind('<').is_some_and(|tag_start| {
+        let tag = lowercase.get(tag_start..).unwrap_or_default();
+        !tag.contains('>') && (tag.contains("href=") || tag.contains("src="))
+    })
+}
+
+fn file_uri_scheme_start(text: &str, start: usize) -> Option<usize> {
+    let scheme_start = start.checked_sub("file://".len())?;
+    text.get(scheme_start..start)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+        .then_some(scheme_start)
 }
 
 fn is_path_end(suffix: &str) -> bool {
@@ -170,11 +291,15 @@ fn space_continues_path(suffix: &str) -> bool {
         return false;
     };
     // ponytail: recognize one unquoted component; parse broader text-path syntax when required.
-    after_space
+    let component = after_space
         .trim_start_matches(' ')
         .split_whitespace()
-        .next()
-        .is_some_and(|component| component.contains(std::path::MAIN_SEPARATOR))
+        .next();
+    component.is_some_and(|component| {
+        let component = component.trim_start_matches(['(', '\'', '"', '`']);
+        !component.starts_with(std::path::MAIN_SEPARATOR)
+            && component.contains(std::path::MAIN_SEPARATOR)
+    })
 }
 
 fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
