@@ -93,6 +93,8 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
             .filter(|record: &serde_json::Value| record["role"] == "user").collect();
         assert_eq!(users.len(), 1);
         assert_eq!(users[0]["submission_id"], id);
+        assert_eq!(users[0]["input_intent"], "command");
+        assert_eq!(users[0]["content"], script);
         assert!(state.machine.active_skills().is_empty());
         assert!(!state.machine.record_guardian_review(true), "prior-turn denials must be cleared");
         if let Some(choice) = choice {
