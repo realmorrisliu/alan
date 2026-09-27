@@ -279,11 +279,8 @@ impl FileBackedApp {
             self.history_draft_intent = Some(self.input_intent);
         }
         self.composer.handle_key(key);
-        if self.composer.is_recalling() {
-            let (intent, body) = alan_agent_protocol::parse_input_prefix(self.composer.text());
-            let prefix_len = self.composer.text().len() - body.len();
+        if let Some(intent) = self.composer.recalled_intent() {
             self.input_intent = intent;
-            self.composer.strip_recalled_prefix(prefix_len);
         } else if let Some(intent) = self.history_draft_intent.take() {
             self.input_intent = intent;
         }
@@ -463,13 +460,8 @@ impl FileBackedApp {
     }
 
     pub(super) fn accept_input(&mut self) {
-        let prefix = match self.input_intent {
-            InputIntent::Agent => "",
-            InputIntent::Command => "!",
-            InputIntent::ForceAgent => ":",
-        };
-        self.composer
-            .remember(&format!("{prefix}{}", self.composer.text()));
+        let body = self.composer.text().to_owned();
+        self.composer.remember_input(&body, self.input_intent);
         self.composer.set_text("");
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;
