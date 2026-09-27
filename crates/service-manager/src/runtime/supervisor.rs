@@ -236,7 +236,7 @@ impl SupervisorRuntime {
                 self.state
                     .lock()
                     .await
-                    .note_error("root-agent", error.to_string())
+                    .note_error("root-agent", format!("{error:#}"))
                     .map_err(|code| anyhow::anyhow!("record Root Agent boot error: {code:?}"))?;
                 loop {
                     let Some(deadline) = self.pending.remove("root-agent") else {
@@ -247,7 +247,7 @@ impl SupervisorRuntime {
                                 .await
                                 .unit("root-agent")
                                 .and_then(|unit| unit.error)
-                                .unwrap_or_else(|| error.to_string())
+                                .unwrap_or_else(|| format!("{error:#}"))
                         );
                     };
                     tokio::time::sleep(deadline.saturating_duration_since(Instant::now())).await;
@@ -344,14 +344,14 @@ impl SupervisorRuntime {
         let mut state = self.state.lock().await;
         if pid.is_none() {
             state
-                .start_failure(name, error.to_string())
+                .start_failure(name, format!("{error:#}"))
                 .map_err(|code| anyhow::anyhow!("track `{name}` launch failure: {code:?}"))?;
         }
         let decision = state
             .record_exit(name, 1, 0)
             .map_err(|code| anyhow::anyhow!("record `{name}` launch failure: {code:?}"))?;
         state
-            .note_error(name, error.to_string())
+            .note_error(name, format!("{error:#}"))
             .map_err(|code| anyhow::anyhow!("record `{name}` launch error: {code:?}"))?;
         drop(state);
         self.apply_restart_decision(name, decision);

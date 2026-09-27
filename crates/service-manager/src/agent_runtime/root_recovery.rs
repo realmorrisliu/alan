@@ -200,4 +200,48 @@ mod tests {
         }
         manager.shutdown().await.unwrap();
     }
+    #[tokio::test]
+    async fn failed_root_recovery_preserves_the_selected_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        let config = AgentProcessConfig {
+            store_bindings: Some(stores.clone()),
+            ..Default::default()
+        };
+        fs::create_dir_all(&stores.rollouts).unwrap();
+        let source = stores.rollouts.join("selected.jsonl");
+        fs::write(&source, "invalid rollout\n").unwrap();
+        publish(&config, Some(&source)).unwrap();
+        let result = crate::ServiceManager::boot(crate::ServiceManagerConfig::ephemeral(
+            "test",
+            config,
+            crate::ProcessLaunchContext::root(),
+            alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
+            alan_agent_engine::tools::ToolRegistry::new(),
+        ))
+        .await;
+        let error = match result {
+            Ok(manager) => {
+                manager.shutdown().await.unwrap();
+                panic!("invalid selected recovery must fail startup");
+            }
+            Err(error) => error,
+        };
+        assert!(
+            format!("{error:#}").contains("Failed to recover selected"),
+            "{error:#}"
+        );
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            "selected.jsonl"
+        );
+        assert_eq!(fs::read_to_string(source).unwrap(), "invalid rollout\n");
+        assert_eq!(fs::read_dir(stores.rollouts).unwrap().count(), 1);
+    }
 }
