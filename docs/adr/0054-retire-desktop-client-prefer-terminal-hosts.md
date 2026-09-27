@@ -28,9 +28,12 @@ published feeds.
 
 Ordinary terminal operation precedes optional Herdr-native agent detection.
 Herdr 0.9.1's inspected CLI does not advertise an Alan agent kind. No such
-integration is claimed implemented. Closing a renderer must not own system
-Host shutdown; foreground cancellation versus detach needs explicit terminal
-acceptance tests before new behavior ships.
+integration is claimed implemented. When Alan owns a foreground invocation,
+renderer exit ends that invocation and drains its Host; later continuity is
+restored only through explicit user-selected recovery. A Herdr view detach that
+retains the Alan process does not end the invocation or stop its Host. This
+explicitly supersedes the earlier rule that renderer closure could not stop its
+Host.
 
 Normative lifecycle scope: `documentation-governance`. Desktop source removal
 is complete and recorded in the
