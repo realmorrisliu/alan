@@ -60,7 +60,8 @@ impl PackageStore {
         let mut catalog = load_catalog(&self.root)?;
         validate_catalog_structure(&catalog)?;
         recover_staging(&self.root, &catalog)?;
-        let changed = reconcile_references(&mut catalog, &leases::active(&self.root)?);
+        let leases = leases::active(&self.root)?;
+        let changed = reconcile_references(&mut catalog, &leases);
         let retired = catalog
             .packages
             .values()
@@ -73,10 +74,8 @@ impl PackageStore {
         if changed || !retired.is_empty() {
             catalog.generation = catalog.generation.saturating_add(1);
             persist_catalog(&self.root, &catalog)?;
-        }
-        for package_id in retired {
-            if let Err(error) = remove_package_revisions(&self.root, &package_id) {
-                tracing::warn!(package_id, %error, "retired package cleanup deferred after catalog commit");
+            if let Err(error) = gc_unreferenced_store_revisions(&self.root, &catalog, &leases) {
+                tracing::warn!(%error, "package revision cleanup deferred after reference reconciliation");
             }
         }
         Ok(catalog)

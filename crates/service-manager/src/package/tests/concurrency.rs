@@ -155,11 +155,13 @@ fn concurrent_services_do_not_overwrite_each_others_catalog_entries() {
 #[test]
 fn crashed_process_releases_revision_and_staging_is_recovered() {
     for surviving_reference in [false, true] {
-        verify_crash_recovery(surviving_reference);
+        for retiring in [false, true] {
+            verify_crash_recovery(surviving_reference, retiring);
+        }
     }
 }
 
-fn verify_crash_recovery(surviving_reference: bool) {
+fn verify_crash_recovery(surviving_reference: bool, retiring: bool) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
     let service = PackageService::open("dev", root.clone()).unwrap();
@@ -181,6 +183,10 @@ fn verify_crash_recovery(surviving_reference: bool) {
             "--nocapture",
         ])
         .env("ALAN_PACKAGE_CRASH_TEST_ROOT", &root)
+        .env(
+            "ALAN_PACKAGE_CRASH_TEST_RETIRING",
+            if retiring { "1" } else { "0" },
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -206,22 +212,45 @@ fn verify_crash_recovery(surviving_reference: bool) {
     let reopened = PackageService::open("dev", root.clone()).unwrap();
     assert_eq!(
         reopened.catalog().unwrap().packages["crashed"].state,
-        PackageState::Retiring
+        if retiring {
+            PackageState::Retiring
+        } else {
+            PackageState::Installed
+        }
     );
-    assert!(root.join("revisions/crashed").is_dir());
+    let old_revision = service
+        .store
+        .revision_root("crashed", &catalog.packages["crashed"].revision);
+    if !retiring {
+        assert!(
+            service
+                .execute(PackageCommand::Upgrade {
+                    request_id: "upgrade".into(),
+                    package_id: "crashed".into(),
+                    snapshot: native_snapshot("crashed", "upgraded"),
+                })
+                .unwrap()
+                .success
+        );
+    }
+    assert!(old_revision.is_dir());
     child.stdin.take().unwrap().write_all(b"x").unwrap();
     assert!(child.wait().unwrap().success());
     drop(survivor);
-    assert!(service.catalog().unwrap().packages.is_empty());
-    assert!(service.catalog().unwrap().packages.is_empty());
-    assert!(!root.join("revisions/crashed").exists());
+    let refreshed = service.catalog().unwrap();
+    assert_eq!(refreshed.packages.is_empty(), retiring);
+    if !retiring {
+        assert_eq!(refreshed.packages["crashed"].reference_count, 0);
+    }
+    assert_eq!(reopened.catalog().unwrap(), refreshed);
+    assert!(!old_revision.exists());
     fs::create_dir_all(root.join("staging/interrupted/source")).unwrap();
     fs::write(root.join("staging/interrupted/source/file"), b"partial").unwrap();
     fs::write(root.join("catalog-interrupted.tmp"), b"partial").unwrap();
     let recovered = PackageService::open("dev", root.clone()).unwrap();
-    assert!(recovered.catalog().unwrap().packages.is_empty());
-    assert!(service.catalog().unwrap().packages.is_empty());
-    assert!(!root.join("revisions/crashed").exists());
+    assert_eq!(recovered.catalog().unwrap(), refreshed);
+    assert_eq!(service.catalog().unwrap(), refreshed);
+    assert!(!old_revision.exists());
     assert_eq!(fs::read_dir(root.join("leases")).unwrap().count(), 0);
     assert_eq!(fs::read_dir(root.join("staging")).unwrap().count(), 0);
     assert!(!root.join("catalog-interrupted.tmp").exists());
@@ -234,15 +263,17 @@ fn package_crash_worker() {
     };
     let service = PackageService::open("dev", root.into()).unwrap();
     let _lease = service.acquire("crashed").unwrap();
-    assert!(
-        service
-            .execute(PackageCommand::Uninstall {
-                request_id: "remove".into(),
-                package_id: "crashed".into(),
-            })
-            .unwrap()
-            .success
-    );
+    if std::env::var("ALAN_PACKAGE_CRASH_TEST_RETIRING").unwrap() == "1" {
+        assert!(
+            service
+                .execute(PackageCommand::Uninstall {
+                    request_id: "remove".into(),
+                    package_id: "crashed".into(),
+                })
+                .unwrap()
+                .success
+        );
+    }
     println!("LEASE_READY");
     std::io::stdout().flush().unwrap();
     std::io::stdin().read_exact(&mut [0]).unwrap();
