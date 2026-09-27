@@ -117,6 +117,34 @@ pub struct ProviderDescriptor {
     pub default_settings: &'static [(&'static str, &'static str)],
 }
 
+fn lock_metadata(path: &Path) -> anyhow::Result<std::fs::File> {
+    validate_safe_absolute_path("connection metadata path", path)?;
+    std::fs::create_dir_all(
+        path.parent()
+            .context("connection metadata path has no parent")?,
+    )?;
+    let mut lock_path = path.as_os_str().to_owned();
+    lock_path.push(".lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let lock = options
+        .open(PathBuf::from(lock_path))
+        .context("open Connection Store lock")?;
+    anyhow::ensure!(
+        lock.metadata()?.is_file(),
+        "Connection Store lock is not a regular file"
+    );
+    lock.lock().context("lock Connection Store metadata")?;
+    Ok(lock)
+}
+
 impl ConnectionsFile {
     /// Stable content fingerprint for optimistic metadata replacement.
     pub fn fingerprint(&self) -> anyhow::Result<String> {
@@ -148,6 +176,21 @@ impl ConnectionsFile {
     }
 
     pub fn save_to_path(&self, path: &Path) -> anyhow::Result<()> {
+        let _lock = lock_metadata(path)?;
+        self.save_locked(path)
+    }
+
+    /// Atomically reject a stale snapshot or publish its replacement under the store lock.
+    pub fn save_if_unchanged(&self, path: &Path, expected: &Self) -> anyhow::Result<()> {
+        let _lock = lock_metadata(path)?;
+        anyhow::ensure!(
+            Self::load_from_path(path)?.0 == *expected,
+            "connection metadata changed; reload before retrying"
+        );
+        self.save_locked(path)
+    }
+
+    fn save_locked(&self, path: &Path) -> anyhow::Result<()> {
         validate_safe_absolute_path("connection metadata path", path)?;
         if self.version != CONNECTIONS_VERSION {
             anyhow::bail!("unsupported connections file version {}", self.version);
@@ -403,8 +446,9 @@ pub fn default_profile_source() -> String {
     "managed".to_string()
 }
 
+/// Stable sentinel for legacy metadata whose creation or update time is unknown.
 pub fn default_profile_timestamp() -> DateTime<Utc> {
-    Utc::now()
+    DateTime::<Utc>::UNIX_EPOCH
 }
 
 pub fn normalize_profile_settings(
@@ -672,7 +716,16 @@ mod tests {
         };
         assert!(invalid.save_to_path(&path).is_err());
         assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        let names = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            names,
+            ["connections.toml", "connections.toml.lock"]
+                .map(std::ffi::OsString::from)
+                .into()
+        );
     }
 
     #[test]
@@ -781,5 +834,42 @@ mod tests {
             Some("openrouter-main")
         );
         assert_eq!(config.openrouter_api_key, None);
+    }
+    #[test]
+    fn metadata_lock_excludes_another_process() {
+        const ENV: &str = "ALAN_TEST_CONNECTION_LOCK_PATH";
+        if let Some(path) = std::env::var_os(ENV) {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .unwrap();
+            assert!(matches!(
+                file.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            return;
+        }
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("connections.toml");
+        let lock = lock_metadata(&path).unwrap();
+        let lock_path = temp.path().join("connections.toml.lock");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "connection_profile::tests::metadata_lock_excludes_another_process",
+            ])
+            .env(ENV, &lock_path)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        drop(lock);
+        let released = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .unwrap();
+        released.try_lock().unwrap();
     }
 }
