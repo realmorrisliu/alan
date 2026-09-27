@@ -369,7 +369,7 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
 }
 
 #[tokio::test]
-async fn root_agent_boot_owns_its_namespace_and_services() {
+async fn root_agent_is_replaced_without_pid_continuity() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
@@ -380,14 +380,32 @@ async fn root_agent_boot_owns_its_namespace_and_services() {
     .await
     .unwrap();
     assert_eq!(manager.manager_pid(), Pid(1));
-    let root_pid = manager.root_pid();
+    let old_pid = manager.root_pid();
+
+    manager.terminate_unit("root-agent", 0).await.unwrap();
+    let new_pid = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let pid = manager.root_pid();
+            if pid != Pid(0) && pid != old_pid {
+                break pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Root Agent was not replaced");
+
     assert_eq!(
-        manager.procfs.try_observe_process_lifecycle(root_pid),
+        manager.procfs.try_observe_process_lifecycle(old_pid),
+        Some((Status::Exited, Some(0)))
+    );
+    assert_eq!(
+        manager.procfs.try_observe_process_lifecycle(new_pid),
         Some((Status::Running, None))
     );
     let unit = manager.state().lock().await.unit("root-agent").unwrap();
-    assert_eq!(unit.pid, Some(root_pid.0));
-    assert_eq!(unit.attempts, 1);
+    assert_eq!(unit.pid, Some(new_pid.0));
+    assert_eq!(unit.attempts, 2);
     assert_eq!(unit.status, crate::UnitStatus::Ready);
 
     let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
@@ -397,7 +415,7 @@ async fn root_agent_boot_owns_its_namespace_and_services() {
     assert_eq!(
         String::from_utf8(
             shell
-                .cat(&format!("/proc/{}/parent", root_pid.0))
+                .cat(&format!("/proc/{}/parent", new_pid.0))
                 .await
                 .unwrap()
         )
@@ -452,7 +470,7 @@ async fn root_agent_boot_owns_its_namespace_and_services() {
     assert_eq!(
         serde_json::from_slice::<BTreeMap<u32, String>>(
             &shell
-                .cat(&format!("/proc/{}/descriptors", root_pid.0))
+                .cat(&format!("/proc/{}/descriptors", new_pid.0))
                 .await
                 .unwrap()
         )

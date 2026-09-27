@@ -544,9 +544,9 @@ mod tests {
         let manifest = BootManifest::system().unwrap();
         let mut state = ManagerState::new(manifest);
         for attempt in 1..=6 {
-            state.start_attempt("connection", Pid(attempt)).unwrap();
-            state.mark_ready("connection").unwrap();
-            let decision = state.record_exit("connection", 1, 0).unwrap();
+            state.start_attempt("root-agent", Pid(attempt)).unwrap();
+            state.mark_ready("root-agent").unwrap();
+            let decision = state.record_exit("root-agent", 1, 0).unwrap();
             if attempt < 6 {
                 assert!(matches!(decision, RestartDecision::RestartAfterMs(_)));
             } else {
@@ -558,12 +558,12 @@ mod tests {
         let state = Arc::new(Mutex::new(state));
         let fs = Arc::new(ServiceManagerFs::new(state.clone()));
         let shell = Shell::new(InProcessTransport::new(fs));
-        shell.write("/ctl", b"retry connection").await.unwrap();
+        shell.write("/ctl", b"retry root-agent").await.unwrap();
         assert_eq!(
-            state.lock().await.unit("connection").unwrap().status,
+            state.lock().await.unit("root-agent").unwrap().status,
             UnitStatus::Pending
         );
-        assert_eq!(state.lock().await.take_retry_requests(), vec!["connection"]);
+        assert_eq!(state.lock().await.take_retry_requests(), vec!["root-agent"]);
     }
 
     #[test]
@@ -571,7 +571,7 @@ mod tests {
         let manifest = BootManifest::system().unwrap();
         assert_eq!(
             manifest.get("root-agent").unwrap().restart,
-            crate::RestartPolicy::Never
+            crate::RestartPolicy::Always
         );
         assert_eq!(
             manifest.get("route").unwrap().restart,

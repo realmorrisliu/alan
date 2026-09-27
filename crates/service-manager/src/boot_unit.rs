@@ -346,7 +346,7 @@ published_handles = []
         );
         assert_eq!(
             manifest.get("root-agent").unwrap().restart,
-            RestartPolicy::Never
+            RestartPolicy::Always
         );
         assert_eq!(manifest.get("root-agent").unwrap().backoff_ms(20), 1_000);
         assert!(manifest.ordered().all(|unit| !unit.mounts.is_empty()));
