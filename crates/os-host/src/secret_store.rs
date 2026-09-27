@@ -99,10 +99,11 @@ impl SecretStore {
             || (!secrets.revoked.contains(credential_id)
                 && self.resolved_secrets.contains_key(credential_id));
         let newly_revoked = secrets.revoked.insert(credential_id.to_string());
-        if removed || newly_revoked {
+        let changed = removed || newly_revoked;
+        if changed {
             self.write_secret_file(&secrets)?;
         }
-        Ok(removed)
+        Ok(changed)
     }
 
     fn lock(&self) -> anyhow::Result<std::fs::File> {
@@ -343,6 +344,19 @@ mod tests {
         );
         assert!(reader.delete("native").unwrap());
         assert!(!reader.delete("native").unwrap());
+    }
+
+    #[test]
+    fn logout_reports_a_new_revocation_of_a_native_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let live =
+            SecretStore::with_resolved_secret(temp.path(), "native", "legacy".into()).unwrap();
+        let logout = SecretStore::from_directory(temp.path()).unwrap();
+
+        assert_eq!(live.load("native").unwrap().as_deref(), Some("legacy"));
+        assert!(logout.delete("native").unwrap());
+        assert_eq!(live.load("native").unwrap(), None);
+        assert!(!logout.delete("native").unwrap());
     }
 
     #[test]
