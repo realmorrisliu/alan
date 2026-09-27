@@ -9,10 +9,11 @@
 ## MODIFIED Requirements
 
 ### Requirement: Each foreground invocation owns its alan9 instance
-Each bare or redirected Agent-execution invocation of `alan` with
-`ALAN_INSTANCE_RUNTIME_DIR` unset or unique to that invocation SHALL own an
-independent alan9 instance, Kernel and native application lifetime. An explicit
-shared runtime directory selects one exact endpoint and permits only one owner.
+Each bare or redirected Agent-execution invocation of `alan` SHALL own an
+independent alan9 instance when `ALAN_INSTANCE_RUNTIME_DIR` is unset or unique
+to that invocation. It also owns its Kernel and native application lifetime.
+An explicit shared runtime directory selects one exact endpoint and permits
+only one owner.
 In this contract, an invocation means that execution path; metadata,
 configuration and explicitly targeted management subcommands SHALL NOT boot an
 unrelated Root Agent.
