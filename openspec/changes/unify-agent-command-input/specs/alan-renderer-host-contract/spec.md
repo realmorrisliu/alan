@@ -10,8 +10,9 @@ A local terminal renderer SHALL receive its foreground invocation's mounted
 alan9 namespace and the concrete instance-local `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
 supervise an Agent Process. The CLI composition, outside the renderer, owns
 the foreground application lifetime. A renderer MUST NOT connect to another
-invocation as an implicit fallback. Existing PID-change handling is defensive
-observation, not authorization to replace or recover a Root Agent automatically.
+invocation as an implicit fallback. Root identity SHALL be pinned for this
+invocation: an unexpected PID change or disappearance SHALL stop observation and
+report failure, never reopen another Root or recover history automatically.
 AgentFS remains the authority for input, streamed
 output, status, and Agent UI state.
 
@@ -30,70 +31,46 @@ output, status, and Agent UI state.
 - **AND** the renderer does not privately call a provider or Tool
 
 #### Scenario: Root Agent Process changes between submissions
-- **WHEN** the renderer submits a task and the Service Manager reports a new
-  Root Agent PID
-- **THEN** the renderer reopens its AgentFS tails against the current
-  `/agent/root` and preserves the already-rendered transcript
-- **AND** it merges a recovered turn only when current UI activity and its execution evidence
-  can be correlated to that submission
-- **AND** if the replacement is idle without correlated turn evidence, it
-  renders an outcome-unknown error instead of reusing an older identical
-  prompt or stale UI error
-- **AND** it never resubmits the input
+- **WHEN** the pinned Root Agent PID changes or disappears between submissions
+- **THEN** the renderer preserves its transcript and reports that its Agent is unavailable
+- **AND** it stops admitting input to that attachment rather than selecting the new PID
+- **AND** prior work can be recovered only by an explicitly selected fresh invocation
 
 #### Scenario: Recovered Tape reconciles an existing assistant preview
-- **WHEN** the old Process streamed the submitted turn's assistant preview
-  before reattachment and the two answers are equal or one is a prefix of the
-  other
-- **THEN** the renderer keeps the longer compatible answer, using Tape when it
-  extends the preview
-- **AND** it does not display the current-turn answer twice
+- **WHEN** an explicitly selected fresh recovery loads durable Tape from work that previously streamed an assistant preview
+- **THEN** it renders the recovered evidence once without importing another invocation's transient preview
+- **AND** partial text alone is not presented as proof that the prior submission completed
 
 #### Scenario: Queued events from a superseded attachment are discarded
-- **WHEN** the Root Agent PID changes while old watcher events remain queued
-- **THEN** the renderer discards queued output, Tape, UI, action, request, and
-  watcher-error events before hydrating the replacement Process
-- **AND** it preserves queued terminal input and terminal-reader errors
-- **AND** events from the replacement tails update only the replacement view
+- **WHEN** the pinned Root Agent identity changes while old watcher events remain queued
+- **THEN** the renderer stops its watchers and discards their queued output, Tape, UI, action, request and watcher-error events
+- **AND** it reports the identity failure and preserves visible transcript and unsent input
+- **AND** it does not open replacement tails or submit preserved input to a new Process
 
 #### Scenario: Root Agent Process changes while this renderer is idle
-- **WHEN** `/agent/root` is rebound while this renderer has no submitted turn
-  and the replacement Process already has completed AgentFS history
-- **THEN** the renderer preserves its existing transcript and appends the
-  replacement history not already represented there
-- **AND** it does not duplicate an unambiguous shared suffix or resubmit work
-- **AND** when identical retained history appears more than once, it keeps the
-  replacement turns after the earliest matching window rather than dropping
-  intervening turns
+- **WHEN** `/agent/root` changes while this renderer has no submitted turn
+- **THEN** the renderer reports the identity change without hydrating replacement history
+- **AND** its existing transcript remains intact and work is not replayed
 
 #### Scenario: Idle reattachment follows partially pruned scrollback
-- **WHEN** the renderer's first retained history cell was partially pruned to
-  bound scrollback before the Root Agent changed
-- **THEN** it matches the retained rendered-text suffix against replacement
-  history and appends only the replacement history after that match
-- **AND** it does not replay the full pruned cell
+- **WHEN** the pinned Agent becomes unavailable after the renderer pruned old scrollback
+- **THEN** the renderer retains the visible transcript and reports the unavailable Agent
+- **AND** it does not automatically reattach or reconstruct pruned text from another Process
 
 #### Scenario: Root Agent identity changes while a tail is opening
-- **WHEN** the Service Manager changes the Root Agent PID between the renderer's
-  history snapshot and tail open
-- **THEN** the renderer opens all history snapshots and watcher tails against
-  one concrete `/agent/<pid>` path
-- **AND** it discards that attachment and retries if the reported PID changed
-  before hydration is complete
+- **WHEN** Root identity changes between the renderer's history snapshot and tail open
+- **THEN** the renderer rejects the inconsistent attachment and closes partial tails
+- **AND** it reports failure instead of retrying hydration against another Process
 
 #### Scenario: Renderer starts during stale Root Agent PID publication
-- **WHEN** the supervisor has detached the Root Agent but the Service Manager
-  still publishes its old PID
-- **THEN** the renderer retries hydration within a bounded startup window
-- **AND** it attaches to the replacement if the published PID changes during
-  that window
-- **AND** it surfaces the attachment error if the bounded retries are exhausted
+- **WHEN** startup finds a stale or unavailable Root Agent publication
+- **THEN** it reports startup failure after the existing bounded readiness window
+- **AND** it does not attach to a replacement or another invocation as a fallback
 
 #### Scenario: The replacement Root Agent fails before persisting the user turn
-- **WHEN** a replacement Root Agent emits a post-submission `Running`, an
-  `Error`, and then `Idle` without writing the user message to tape
-- **THEN** the renderer preserves that correlated error in its transcript
-- **AND** it stops polling for this turn after rendering the terminal outcome
+- **WHEN** a Root Agent created by explicit recovery emits correlated Running, Error and Idle events for new input without persisting that input to Tape
+- **THEN** the renderer displays the correlated error and stops waiting for that submission
+- **AND** it does not replay the input or start another recovery
 
 #### Scenario: Hydration omits completed actions with unknown turn position
 - **WHEN** Tape contains multiple completed turns and action snapshots contain
