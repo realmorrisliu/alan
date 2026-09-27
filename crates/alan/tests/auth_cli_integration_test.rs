@@ -1,10 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use alan_agent_engine::{AgentProcessConfig, InstallChannel, LlmClient, ToolRegistry};
+use alan_agent_engine::InstallChannel;
 use alan_auth::{AuthStorage, AuthStore, ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth};
-use alan_llm::{GenerationResponse, MockLlmProvider};
-use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths};
+use alan_os_host::{HostEndpointPaths, SystemStorePaths};
 use base64::Engine;
 use serde_json::json;
 
@@ -35,6 +34,8 @@ fn alan_command(home: &Path, xdg_data: &Path, runtime: &Path, args: &[&str]) -> 
         .env("XDG_RUNTIME_DIR", runtime_base(runtime))
         .env("TMPDIR", runtime)
         .env("ALAN_INSTALL_CHANNEL", "dev")
+        .env_remove("ALAN_NATIVE_CONNECTION_REQUEST_ID")
+        .env_remove("ALAN_INSTANCE_RUNTIME_DIR")
         .args(args)
         .output()
         .unwrap();
@@ -86,8 +87,8 @@ fn seed_chatgpt_auth(data_dir: &Path) {
         .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection_cli_uses_the_live_dev_connection_service_and_host_credentials() {
+#[test]
+fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() {
     let temp = tempfile::tempdir_in("/tmp").unwrap();
     let runtime = temp.path().join("runtime-root");
     let home = temp.path().join("home");
@@ -95,33 +96,6 @@ async fn connection_cli_uses_the_live_dev_connection_service_and_host_credential
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&home).unwrap();
     let paths = HostEndpointPaths::from_runtime_dir(&runtime_base(&runtime), "dev").unwrap();
-    let response = GenerationResponse {
-        content: "unused".into(),
-        thinking: None,
-        thinking_signature: None,
-        redacted_thinking: Vec::new(),
-        tool_calls: Vec::new(),
-        usage: None,
-        finish_reason: None,
-        provider_response_id: None,
-        provider_response_status: None,
-        warnings: Vec::new(),
-    };
-    let host = AlanOsHost::boot(
-        HostBootConfig::ephemeral(
-            "dev",
-            AgentProcessConfig::default(),
-            LlmClient::new(MockLlmProvider::new().with_response(response)),
-            ToolRegistry::new(),
-        ),
-        paths,
-    )
-    .await
-    .unwrap();
-    let (shutdown, shutdown_request) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(host.serve_until(async move {
-        let _ = shutdown_request.await;
-    }));
 
     alan_command(
         &home,
@@ -201,6 +175,36 @@ async fn connection_cli_uses_the_live_dev_connection_service_and_host_credential
     );
     assert!(String::from_utf8_lossy(&tested.stdout).contains("status: success"));
 
-    let _ = shutdown.send(());
-    server.await.unwrap().unwrap();
+    assert!(
+        !paths.root.exists(),
+        "metadata commands created a Host endpoint"
+    );
+    let system =
+        SystemStorePaths::from_data_dir(&detected_data_dir(&home, &xdg_data), "dev").unwrap();
+    assert!(
+        system
+            .connection_bindings()
+            .unwrap()
+            .metadata_path
+            .is_file()
+    );
+    assert!(!system.service("agent-runtime").unwrap().exists());
+
+    let missing_target = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env("ALAN_INSTALL_CHANNEL", "dev")
+        .env("ALAN_NATIVE_CONNECTION_REQUEST_ID", "pending-request")
+        .env_remove("ALAN_INSTANCE_RUNTIME_DIR")
+        .args(["connection", "logout", "chatgpt-main"])
+        .output()
+        .unwrap();
+    assert!(!missing_target.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_target.stderr)
+            .contains("native Connection requests require ALAN_INSTANCE_RUNTIME_DIR")
+    );
+    assert!(!paths.root.exists());
 }

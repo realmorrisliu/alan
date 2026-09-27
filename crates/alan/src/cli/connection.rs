@@ -7,7 +7,7 @@ use alan_os_host::{
     migrate_legacy_connections,
 };
 use alan_service_manager::{
-    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
+    ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
     default_credential_backend, normalize_profile_settings, sanitize_identifier,
     validate_profile_settings,
 };
@@ -25,6 +25,9 @@ use std::{
 /// The value is an opaque request id, never credential material.
 pub const NATIVE_CONNECTION_REQUEST_ENV: &str = "ALAN_NATIVE_CONNECTION_REQUEST_ID";
 
+/// Explicit runtime directory of the instance owning a native Connection request.
+pub const INSTANCE_RUNTIME_DIR_ENV: &str = "ALAN_INSTANCE_RUNTIME_DIR";
+
 struct ConnectionStores {
     credentials_dir: PathBuf,
     managed_auth: PathBuf,
@@ -39,7 +42,32 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
     if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
         migrate_legacy_connections(&legacy, &system, &host)?;
     }
-    let shell = Shell::new(super::host::attach_or_start_host(channel).await?.root);
+    let shell = if std::env::var_os(NATIVE_CONNECTION_REQUEST_ENV).is_some() {
+        let runtime = std::env::var_os(INSTANCE_RUNTIME_DIR_ENV)
+            .context("native Connection requests require ALAN_INSTANCE_RUNTIME_DIR")?;
+        let paths = alan_os_host::HostEndpointPaths::from_runtime_dir(
+            &PathBuf::from(runtime),
+            channel.descriptor().id,
+        )?;
+        Shell::new(
+            alan_os_host::LocalAttachment::new(paths)
+                .connect()
+                .await?
+                .root,
+        )
+    } else {
+        let service =
+            ConnectionService::open(channel.descriptor().id, &system.connection_bindings()?)?;
+        let mut namespace = alan_kernel::Namespace::new();
+        namespace.mount(
+            "/mnt/connections",
+            alan_ap::InProcessTransport::new(service.file_server()),
+            alan_kernel::Access::ReadWrite,
+        );
+        Shell::new(alan_ap::InProcessTransport::new(std::sync::Arc::new(
+            alan_kernel::MountFs::new(namespace),
+        )))
+    };
     let bytes = shell
         .cat("/mnt/connections/metadata")
         .await
