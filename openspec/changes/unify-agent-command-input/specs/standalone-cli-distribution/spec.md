@@ -54,7 +54,7 @@ all existing executables and the manifest unchanged.
 - **AND** a subsequent `alan --version` exits successfully without starting a
   Host
 
-#### Scenario: Upgrade removes previously owned Host executables
+#### Scenario: Owned legacy Host is retired on upgrade
 
 - **WHEN** an existing channel installation records a separate Host executable
   in its ownership manifest and is upgraded to the foreground CLI distribution
@@ -84,6 +84,13 @@ all existing executables and the manifest unchanged.
 - **AND** when preflight succeeds, the CLI replacement, Host removal and
   manifest update complete as one upgrade operation
 
+#### Scenario: Upgrade is interrupted by a handled signal
+
+- **WHEN** the installer handles SIGHUP or SIGTERM before installing its new
+  ownership manifest
+- **THEN** the prior CLI and any retired legacy Host are restored
+- **AND** the previous ownership manifest remains unchanged
+
 #### Scenario: Destination contains an unrelated file
 
 - **WHEN** a requested target path contains a file not owned by the installer
@@ -92,12 +99,13 @@ all existing executables and the manifest unchanged.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL NOT register or start an Alan runtime. Ordinary
-`alan` execution SHALL own its foreground instance through existing product
-composition. Metadata-only commands such as `--version` and durable connection
-profile or credential operations SHALL NOT require starting that instance.
-An explicitly targeted auxiliary client MAY connect to a live instance, but
-installation or a missing target MUST NOT implicitly create a background Host.
+Standalone installation SHALL NOT start or register an Alan runtime. With
+`ALAN_INSTANCE_RUNTIME_DIR` unset or set to a directory not in use by another
+invocation, ordinary `alan` execution SHALL own its foreground instance
+through existing composition. A shared explicit directory permits only one
+owner. `--version`, connection-profile and credential commands SHALL NOT
+require starting the instance. An explicitly targeted client MAY connect to a
+live instance, but a missing target MUST NOT create a background Host.
 
 #### Scenario: CLI is installed but no Host is running
 
@@ -106,11 +114,26 @@ installation or a missing target MUST NOT implicitly create a background Host.
 - **AND** no Host process or launchd product registration is created by the
   installer
 
-#### Scenario: A Host-backed command runs later
+#### Scenario: Concurrent foreground Alan invocations use separate runtime directories
 
-- **WHEN** a user subsequently starts ordinary `alan`
-- **THEN** the CLI boots its own foreground instance with the selected channel stores
-- **AND** the installer is not re-entered as a side effect
+- **WHEN** a user starts bare `alan` or submits redirected input for Agent
+  execution with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a directory
+  distinct from every other live invocation
+- **THEN** that invocation starts and owns its foreground instance
+- **AND** another invocation has an independent Root and runtime endpoint
+- **AND** exiting the invocation ends its instance
+
+#### Scenario: Concurrent invocations select the same runtime directory
+
+- **WHEN** two invocations use the same explicit `ALAN_INSTANCE_RUNTIME_DIR`
+- **THEN** only one may own that runtime directory at a time
+- **AND** the other fails to acquire it instead of attaching to or borrowing
+  the owner's Root Agent
+
+#### Scenario: Metadata commands remain processless
+
+- **WHEN** a user runs `alan --version` or a connection-profile operation
+- **THEN** the command completes without starting a foreground Alan instance
 
 ### Requirement: Quality checks cover the standalone boundary
 
@@ -121,7 +144,8 @@ Sparkle, appcast, or Apple GUI checks.
 #### Scenario: Quality gate runs
 
 - **WHEN** the canonical quality command runs
-- **THEN** it verifies CLI packaging, independent foreground startup and owned shutdown
+- **THEN** it verifies the standalone installer and release archive contract
+- **AND** it runs the CLI `--version` startup check
 - **AND** it does not invoke an app-bundle, appcast, or desktop UI test
 
 #### Scenario: CI builds a release target

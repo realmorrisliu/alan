@@ -21,13 +21,22 @@ replacement background process to preserve execution. Recovery selects explicit 
 records, validates current authority, and restores reliable pending work paused.
 No automatic channel-wide latest-rollout selection or effect replay is authorized.
 
-This is accepted target direction, not shipped behavior. The older lifecycle
-clauses in this change's deltas, ADR-0047/0054/0056/0058, and canonical specs still
-describe the prior model. Tasks 2.17–2.19 must reconcile the owning deltas and
-implementation before those clauses are synced or this change is archived.
-In particular, PR #981's automatic Root rollout selector and PR #982's automatic
-Host-restart acceptance are not merge prerequisites for the revised delivery.
-Their reusable evidence-recovery fixes may be extracted into focused PRs.
+The CLI-only distribution and independent foreground startup, Root, runtime
+endpoint and shutdown shipped in PR #1009 (`faf7ee8e6b71c9f6c460e45ac049485035ec4d3b`).
+Current-head Codex review found no issues and required CI passed; integration
+tests cover two simultaneous invocations and independent shutdown. Task 2.18.1
+records this slice. Cross-invocation cwd/queue isolation and shared-store
+concurrency remain under task 2.18.2. Explicit durable recovery selection,
+authority validation and paused queue restoration remain under task 2.19.
+
+This is a partial delivery. The canonical standalone distribution requirement
+is synchronized in this change; the owning lifecycle specs and ADR-0056 still
+need the focused implementation-status sync tracked by task 4.2.2. The remaining
+lifecycle clauses in its deltas, ADR-0047/0054/0056/0058 and canonical specs also
+require the cross-surface audit in task 2.17.4 and remaining sync in task 4.2
+before this change can be archived. PR #981's automatic Root rollout selector and PR #982's
+automatic Host-restart acceptance are not merge prerequisites for the revised
+delivery; reusable evidence-recovery fixes may be extracted into focused PRs.
 
 Delivery boundary updated 2026-09-26: automatic typed routing, qualification and
 activation are owned by the active [qualify-agent-input-routing](../qualify-agent-input-routing/)

@@ -14,9 +14,16 @@ removed. Herdr is the preferred terminal host, without making Alan
 dependent on Herdr or claiming native Alan agent detection already exists.
 See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 
-The dedicated system Host boots the Service Manager and Root Agent Process.
-Terminal renderers attach to the matching stable/dev Host over its protected
-aP endpoint. Host lifetime and Process authority do not belong to a terminal pane.
+Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
+directory not in use by another invocation boots and owns a foreground alan9
+instance and its Root Agent Process. Herdr sessions using separate runtime
+directories have separate Roots and endpoints while channel stores remain
+shared. Reusing one explicit runtime directory allows only one owner; another
+invocation fails to acquire it rather than sharing its Root. Detaching a
+terminal view is separate from exiting the Alan process; when Alan exits, its
+instance stops. A new invocation never automatically adopts earlier work;
+resuming durable execution requires explicit user selection, whose recovery
+flow remains in active implementation work.
 
 Package Service is the system owner for installed Skill distributions. It
 publishes `/srv/package`; Quartermaster runs as the ordinary `/bin/q` Process.
@@ -101,7 +108,7 @@ cargo test -p alan-terminal-ui
 used by the versioned pre-commit hook and required CI. CI remains authoritative
 because local hooks can be bypassed with `--no-verify`.
 
-Standalone CLI/Host distribution:
+Standalone CLI distribution:
 
 ```bash
 just install
@@ -114,12 +121,13 @@ Herdr is the preferred external terminal host.
 
 ## CLI
 
-Running bare `alan` with terminal stdin and stdout attaches the local namespace
-to the existing `/agent/root` Agent Process and opens the file-backed Agent
-renderer. With redirected stdin, it submits one Agent task, writes the final
-answer to stdout, sends diagnostics to stderr, and returns the task's exit
-status. A leading `!` in the interactive renderer requests a command through
-the governed `bash` Tool; it does not execute a host command directly.
+Running bare `alan` with terminal stdin and stdout starts its foreground
+instance and opens the file-backed Agent renderer for that instance's
+`/agent/root`. With redirected stdin, the invocation submits one Agent task,
+writes the final answer to stdout, sends diagnostics to stderr, and returns the
+task's exit status. A leading `!` in the interactive renderer requests a
+command through the governed `bash` Tool; it does not execute a host command
+directly.
 The current direct command families are:
 
 ```text
