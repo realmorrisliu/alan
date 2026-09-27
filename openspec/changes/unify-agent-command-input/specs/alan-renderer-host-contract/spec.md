@@ -1,14 +1,24 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: The terminal CLI attaches to the existing Root Agent`
+- TO: `### Requirement: The terminal renderer uses its foreground instance`
+
 ## MODIFIED Requirements
 
-### Requirement: The terminal CLI attaches to the existing Root Agent
-A local terminal renderer SHALL receive a mounted alan9 namespace and the
-concrete `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
-supervise an Agent Process. AgentFS remains the authority for input, streamed
+### Requirement: The terminal renderer uses its foreground instance
+A local terminal renderer SHALL receive its foreground invocation's mounted
+alan9 namespace and the concrete instance-local `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
+supervise an Agent Process. The CLI composition, outside the renderer, owns
+the foreground application lifetime. A renderer MUST NOT connect to another
+invocation as an implicit fallback. Root identity SHALL be pinned for this
+invocation: an unexpected PID change or disappearance SHALL stop observation and
+report failure, never reopen another Root or recover history automatically.
+AgentFS remains the authority for input, streamed
 output, status, and Agent UI state.
 
 #### Scenario: Bare Alan opens the terminal renderer
-- **WHEN** bare `alan` runs with interactive stdin and stdout after attaching to
-  the dedicated Host
+- **WHEN** bare `alan` runs with interactive stdin and stdout after
+  its own alan9 instance has become ready
 - **THEN** it opens the file-backed renderer on `/agent/root`
 - **AND** it does not create a second Agent or Shell Process
 
@@ -21,70 +31,46 @@ output, status, and Agent UI state.
 - **AND** the renderer does not privately call a provider or Tool
 
 #### Scenario: Root Agent Process changes between submissions
-- **WHEN** the renderer submits a task and the Service Manager reports a new
-  Root Agent PID
-- **THEN** the renderer reopens its AgentFS tails against the current
-  `/agent/root` and preserves the already-rendered transcript
-- **AND** it merges a recovered turn only when current UI activity and its execution evidence
-  can be correlated to that submission
-- **AND** if the replacement is idle without correlated turn evidence, it
-  renders an outcome-unknown error instead of reusing an older identical
-  prompt or stale UI error
-- **AND** it never resubmits the input
+- **WHEN** the pinned Root Agent PID changes or disappears between submissions
+- **THEN** the renderer preserves its transcript and reports that its Agent is unavailable
+- **AND** it stops admitting input to that attachment rather than selecting the new PID
+- **AND** prior work can be recovered only by an explicitly selected fresh invocation
 
 #### Scenario: Recovered Tape reconciles an existing assistant preview
-- **WHEN** the old Process streamed the submitted turn's assistant preview
-  before reattachment and the two answers are equal or one is a prefix of the
-  other
-- **THEN** the renderer keeps the longer compatible answer, using Tape when it
-  extends the preview
-- **AND** it does not display the current-turn answer twice
+- **WHEN** an explicitly selected fresh recovery loads durable Tape from work that previously streamed an assistant preview
+- **THEN** it renders the recovered evidence once without importing another invocation's transient preview
+- **AND** partial text alone is not presented as proof that the prior submission completed
 
 #### Scenario: Queued events from a superseded attachment are discarded
-- **WHEN** the Root Agent PID changes while old watcher events remain queued
-- **THEN** the renderer discards queued output, Tape, UI, action, request, and
-  watcher-error events before hydrating the replacement Process
-- **AND** it preserves queued terminal input and terminal-reader errors
-- **AND** events from the replacement tails update only the replacement view
+- **WHEN** the pinned Root Agent identity changes while old watcher events remain queued
+- **THEN** the renderer stops its watchers and discards their queued output, Tape, UI, action, request and watcher-error events
+- **AND** it reports the identity failure and preserves visible transcript and unsent input
+- **AND** it does not open replacement tails or submit preserved input to a new Process
 
 #### Scenario: Root Agent Process changes while this renderer is idle
-- **WHEN** `/agent/root` is rebound while this renderer has no submitted turn
-  and the replacement Process already has completed AgentFS history
-- **THEN** the renderer preserves its existing transcript and appends the
-  replacement history not already represented there
-- **AND** it does not duplicate an unambiguous shared suffix or resubmit work
-- **AND** when identical retained history appears more than once, it keeps the
-  replacement turns after the earliest matching window rather than dropping
-  intervening turns
+- **WHEN** `/agent/root` changes while this renderer has no submitted turn
+- **THEN** the renderer reports the identity change without hydrating replacement history
+- **AND** its existing transcript remains intact and work is not replayed
 
 #### Scenario: Idle reattachment follows partially pruned scrollback
-- **WHEN** the renderer's first retained history cell was partially pruned to
-  bound scrollback before the Root Agent changed
-- **THEN** it matches the retained rendered-text suffix against replacement
-  history and appends only the replacement history after that match
-- **AND** it does not replay the full pruned cell
+- **WHEN** the pinned Agent becomes unavailable after the renderer pruned old scrollback
+- **THEN** the renderer retains the visible transcript and reports the unavailable Agent
+- **AND** it does not automatically reattach or reconstruct pruned text from another Process
 
 #### Scenario: Root Agent identity changes while a tail is opening
-- **WHEN** the Service Manager changes the Root Agent PID between the renderer's
-  history snapshot and tail open
-- **THEN** the renderer opens all history snapshots and watcher tails against
-  one concrete `/agent/<pid>` path
-- **AND** it discards that attachment and retries if the reported PID changed
-  before hydration is complete
+- **WHEN** Root identity changes between the renderer's history snapshot and tail open
+- **THEN** the renderer rejects the inconsistent attachment and closes partial tails
+- **AND** it reports failure instead of retrying hydration against another Process
 
 #### Scenario: Renderer starts during stale Root Agent PID publication
-- **WHEN** the supervisor has detached the Root Agent but the Service Manager
-  still publishes its old PID
-- **THEN** the renderer retries hydration within a bounded startup window
-- **AND** it attaches to the replacement if the published PID changes during
-  that window
-- **AND** it surfaces the attachment error if the bounded retries are exhausted
+- **WHEN** startup finds a stale or unavailable Root Agent publication
+- **THEN** it reports startup failure after the existing bounded readiness window
+- **AND** it does not attach to a replacement or another invocation as a fallback
 
 #### Scenario: The replacement Root Agent fails before persisting the user turn
-- **WHEN** a replacement Root Agent emits a post-submission `Running`, an
-  `Error`, and then `Idle` without writing the user message to tape
-- **THEN** the renderer preserves that correlated error in its transcript
-- **AND** it stops polling for this turn after rendering the terminal outcome
+- **WHEN** a Root Agent created by explicit recovery emits correlated Running, Error and Idle events for new input without persisting that input to Tape
+- **THEN** the renderer displays the correlated error and stops waiting for that submission
+- **AND** it does not replay the input or start another recovery
 
 #### Scenario: Hydration omits completed actions with unknown turn position
 - **WHEN** Tape contains multiple completed turns and action snapshots contain
@@ -139,9 +125,10 @@ for explicit continuation or discard; no next action SHALL start automatically.
 - **AND** if that submission already settled the control does not cancel later work
 
 #### Scenario: Renderer exits
-- **WHEN** the user quits or closes the local renderer
-- **THEN** it closes its own file streams and restores the terminal
-- **AND** it does not stop the shared alan9 Host or Root Agent Process
+- **WHEN** the user quits or closes the local renderer in the owning Alan invocation
+- **THEN** it closes its file streams and restores the terminal
+- **AND** the application shuts down its owned instance through existing lifecycle boundaries
+- **AND** terminal-host view detach while retaining the process does not count as Alan exit
 
 ## ADDED Requirements
 
@@ -161,16 +148,19 @@ private cwd, execution queue, command executor or durable result database.
 - **THEN** the interface shows its result and status without starting an explanatory model call
 
 ### Requirement: Terminal EOF and redirected EOF have distinct transport meanings
-Interactive Ctrl-D with empty input and no pending Agent input SHALL detach, as
-shall an explicit client exit. With a confirmation or structured-input request
+Interactive Ctrl-D with empty input and no pending Agent input SHALL exit the
+foreground Alan invocation, as SHALL explicit quit. With a confirmation or structured-input request
 pending, Ctrl-D MUST leave the client attached and the request available for a
-response. Detach MUST NOT stop accepted work, the Agent Process or the Host.
+response. The application SHALL shut down its owned work on actual exit.
+A terminal host MAY keep the process alive when only its view detaches; Alan
+MUST NOT start a background replacement to preserve execution.
 Redirected EOF SHALL finish collection of one submission rather than cancel
 execution.
 
 #### Scenario: Empty terminal input receives Ctrl-D
 - **WHEN** Ctrl-D is pressed with an empty composer and no pending Agent input
-- **THEN** the client detaches and already accepted work continues
+- **THEN** the renderer exits and the application shuts down its owned instance
+- **AND** completed effects are not rolled back and uncertain work is not replayed
 
 #### Scenario: Pending Agent input receives Ctrl-D
 - **WHEN** Ctrl-D is pressed while a confirmation or structured-input request is pending
