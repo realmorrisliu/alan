@@ -48,10 +48,9 @@ pub(super) fn publish(config: &AgentProcessConfig, rollout: Option<&Path>) -> Re
     fs::File::open(rollout)?
         .sync_all()
         .context("sync selected Root Agent rollout")?;
-    fs::File::open(&stores.rollouts)?
-        .sync_all()
-        .context("sync Root Agent rollout directory")?;
+    sync_directory_ancestors(&stores.rollouts)?;
     fs::create_dir_all(&stores.metadata)?;
+    sync_directory_ancestors(&stores.metadata)?;
     let mut temporary = tempfile::NamedTempFile::new_in(&stores.metadata)?;
     temporary.write_all(name.as_bytes())?;
     temporary.as_file().sync_all()?;
@@ -59,6 +58,16 @@ pub(super) fn publish(config: &AgentProcessConfig, rollout: Option<&Path>) -> Re
         .persist(stores.metadata.join(CURRENT))
         .context("publish Root Agent recovery selection")?;
     fs::File::open(&stores.metadata)?.sync_all()?;
+    Ok(())
+}
+
+// The Host may have just created any ancestor of these store directories.
+fn sync_directory_ancestors(path: &Path) -> Result<()> {
+    for directory in fs::canonicalize(path)?.ancestors() {
+        fs::File::open(directory)?
+            .sync_all()
+            .with_context(|| format!("sync Root Agent store directory {}", directory.display()))?;
+    }
     Ok(())
 }
 
