@@ -345,7 +345,7 @@ mod command_tests {
             let task = StdioTaskWaitContext::new("!printf partial").unwrap();
             let id = task.record.submission_id.clone();
             let path = format!("/agent/{pid}");
-            let mut attachment = tail::open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+            let mut attachment = tail::open_stdio_tail_attachment(&shell, "/agent/root")
                 .await
                 .unwrap();
             super::super::submit_stdio_task(&shell, &task, &attachment)
@@ -425,7 +425,6 @@ mod command_tests {
                 std::time::Duration::from_secs(2),
                 super::super::wait_for_stdio_answer_after_submit(
                     &shell,
-                    "/agent/root",
                     task,
                     &mut attachment,
                     std::future::pending(),

@@ -729,12 +729,17 @@ async fn one_shot_waits_without_timeout_but_fails_when_its_tail_closes() {
 
 #[tokio::test]
 async fn one_shot_fails_on_missing_or_changed_root_without_replacing_tails() {
-    for published in [0, 999] {
+    for (published, input) in [
+        (0, "pinned task"),
+        (999, "pinned task"),
+        (0, "!printf x"),
+        (999, "!printf x"),
+    ] {
         let (shell, _agent_root, namespace, pid) = live_root_agent().await;
         let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
             .await
             .unwrap();
-        let task = task("pinned task");
+        let task = task(input);
         submit_stdio_task(&shell, &task, &attachment).await.unwrap();
         namespace.replace_mount(
             PID_MOUNT,
