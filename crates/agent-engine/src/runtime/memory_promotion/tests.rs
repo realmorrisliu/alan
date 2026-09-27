@@ -91,6 +91,57 @@ async fn promote_inbox_entry_updates_memory_file_and_marks_confirmed() {
 }
 
 #[tokio::test]
+async fn concurrent_promotions_preserve_updates_from_both_sessions() {
+    let temp = TempDir::new().unwrap();
+    let memory_dir = temp.path().join("memory-store");
+    ensure_memory_store_layout_at(&memory_dir).unwrap();
+    let now = Utc::now();
+    let first = stage_inbox_entry(
+        &memory_dir,
+        InboxEntryDraft {
+            kind: "user_preference",
+            target: MEMORY_USER_FILENAME.to_string(),
+            confidence: "high",
+            observation: "Prefer short engineering pull requests.".to_string(),
+            evidence: vec!["Requested small reviewable changes.".to_string()],
+            promotion_rationale: "Directly stated preference.".to_string(),
+            source_processes: vec!["session-a".to_string()],
+        },
+        now,
+    )
+    .await
+    .unwrap();
+    let second = stage_inbox_entry(
+        &memory_dir,
+        InboxEntryDraft {
+            kind: "user_preference",
+            target: MEMORY_USER_FILENAME.to_string(),
+            confidence: "high",
+            observation: "Prefer explicit session recovery.".to_string(),
+            evidence: vec!["Selected explicit recovery.".to_string()],
+            promotion_rationale: "Directly stated preference.".to_string(),
+            source_processes: vec!["session-b".to_string()],
+        },
+        now,
+    )
+    .await
+    .unwrap();
+
+    let (first, second) = tokio::join!(
+        promote_inbox_entry(&memory_dir, &first, now),
+        promote_inbox_entry(&memory_dir, &second, now),
+    );
+    first.unwrap();
+    second.unwrap();
+
+    let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+        .await
+        .unwrap();
+    assert!(user_memory.contains("short engineering pull requests"));
+    assert!(user_memory.contains("explicit session recovery"));
+}
+
+#[tokio::test]
 async fn promote_topic_entry_creates_topic_page_and_memory_index() {
     let temp = TempDir::new().unwrap();
     let memory_dir = temp.path().join("memory-store");

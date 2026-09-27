@@ -21,6 +21,8 @@ use crate::prompts::{
 use crate::tape::Message;
 
 use super::transition::NamespaceGeneration;
+mod storage;
+use storage::{acquire_promotion_lock, write_text_file};
 
 const DEFAULT_PROMOTED_FACTS_HEADER: &str = "## Promoted Facts";
 const DEFAULT_TOPIC_SUMMARY: &str = "Promoted from inbox entries.";
@@ -159,6 +161,8 @@ pub(crate) async fn promote_inbox_entry(
             memory_dir.display()
         )
     })?;
+    // ponytail: one lock serializes promotions per store; split per target if contention warrants it.
+    let _lock = acquire_promotion_lock(memory_dir).await?;
 
     let raw = tokio::fs::read_to_string(inbox_path)
         .await
@@ -940,18 +944,6 @@ async fn read_text_file_or_default(path: &Path) -> Result<String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
     }
-}
-
-async fn write_text_file(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("create directory {}", parent.display()))?;
-    }
-    tokio::fs::write(path, content)
-        .await
-        .with_context(|| format!("write {}", path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]
