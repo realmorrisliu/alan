@@ -13,12 +13,12 @@ Herdr view while retaining the native process is not an application exit.
 - **THEN** the terminal's native mouse selection and copy behavior is available
 - **AND** the TUI does not enable mouse capture
 
-#### Scenario: Renderer exits while a task is active
+#### Scenario: The foreground application exits while a task is active
 - **WHEN** the user quits Alan or the terminal input ends during a running task
 - **THEN** the renderer restores terminal modes and the application shuts down owned work
 - **AND** completed effects are retained and an unknown outcome does not trigger automatic replay
 
-#### Scenario: Ctrl-D detaches from an empty prompt with no pending input
+#### Scenario: Ctrl-D exits from an empty prompt
 - **WHEN** the user presses Ctrl-D with an empty prompt and no pending Agent input
 - **THEN** the renderer exits and restores terminal modes
 - **AND** the foreground application shuts down its owned Agent and services

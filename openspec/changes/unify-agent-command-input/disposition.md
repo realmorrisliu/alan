@@ -39,11 +39,11 @@ Explicit durable recovery selection, authority validation and paused queue
 restoration remain under task 2.19. Herdr detach acceptance is not inferred from
 the concurrent CLI tests.
 
-This remains a partial delivery. This slice synchronizes the shipped
-foreground-startup and cross-invocation isolation subset of the lifecycle specs
-and ADR-0056; explicit recovery and Herdr detach acceptance remain unsynchronized
-until delivered. The cross-surface audit in task 2.17.4 is complete; other
-implementation sync, review and merge requirements remain under tasks 4.1–4.3.
+This remains a partial delivery. This slice synchronizes shipped foreground
+startup, cross-invocation isolation, and Ctrl-D/exit behavior in the lifecycle
+specs and ADR-0056; explicit recovery and Herdr detach acceptance remain open.
+The cross-surface audit in task 2.17.4 is complete; other implementation sync,
+review and merge requirements remain under tasks 4.1–4.3.
 PR #981's automatic Root rollout selector and PR #982's automatic Host-restart
 acceptance are not merge prerequisites for the revised delivery; reusable
 evidence-recovery fixes may be extracted into focused PRs.
