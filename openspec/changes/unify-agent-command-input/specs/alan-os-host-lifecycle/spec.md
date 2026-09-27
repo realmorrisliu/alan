@@ -21,7 +21,8 @@ systemd. Herdr SHALL NOT be required for ordinary terminal operation.
 - **WHEN** two terminal sessions start stable `alan` for the same user, including on macOS
 - **THEN** each owns an independent Root Agent, Process table, input queue and cwd
 - **AND** exiting one invocation does not stop or submit work to the other
-- **AND** simultaneous access to shared persistent services preserves their existing commit and authorization contracts
+- **AND** concurrent access to shared package, connection and credential stores preserves their commit and authorization contracts
+- **AND** live service Processes remain independently owned by each invocation
 
 #### Scenario: Terminal host retains a process
 - **WHEN** Herdr or another terminal host detaches a view while retaining the Alan process
