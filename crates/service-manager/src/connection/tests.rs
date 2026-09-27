@@ -376,3 +376,126 @@ async fn callable_profiles_follow_metadata_and_native_readiness() {
             .contains(&"broken".to_string())
     );
 }
+
+#[tokio::test]
+async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    service
+        .apply(ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    service.select(7, "main").unwrap();
+    service
+        .apply(ConnectionCommand::RequestNative {
+            request: NativeConnectionRequest {
+                id: "login".into(),
+                profile_id: "main".into(),
+                action: NativeConnectionAction::BrowserLogin,
+            },
+        })
+        .await
+        .unwrap();
+    let before = service.metadata();
+    let disk = std::fs::read(&bindings.metadata_path).unwrap();
+    let backup = temp.path().join("committed.toml");
+    std::fs::rename(&bindings.metadata_path, &backup).unwrap();
+    std::fs::create_dir(&bindings.metadata_path).unwrap();
+    for command in [
+        ConnectionCommand::AddProfile {
+            profile_id: "other".into(),
+            profile: profile(),
+        },
+        ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        },
+        ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        },
+        ConnectionCommand::ClearDefault,
+        ConnectionCommand::ReplaceMetadata {
+            connections: ConnectionsFile::default(),
+        },
+    ] {
+        assert!(service.apply(command).await.is_err());
+        assert_eq!(service.metadata(), before);
+        let state = service.state.lock().unwrap();
+        assert_eq!(state.selections.get(&7).map(String::as_str), Some("main"));
+        assert!(state.requests.contains_key("login"));
+        assert!(state.validation.contains_key("main"));
+        assert_eq!(std::fs::read(&backup).unwrap(), disk);
+    }
+    std::fs::remove_dir(&bindings.metadata_path).unwrap();
+    std::fs::rename(backup, &bindings.metadata_path).unwrap();
+    service
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    assert!(service.metadata().profiles.is_empty());
+    assert!(service.state.lock().unwrap().selections.is_empty());
+    assert!(service.state.lock().unwrap().requests.is_empty());
+    assert_eq!(
+        ConnectionsFile::load_from_path(&bindings.metadata_path)
+            .unwrap()
+            .0,
+        service.metadata()
+    );
+}
+
+#[tokio::test]
+async fn post_replace_error_publishes_visible_metadata_and_dependent_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    service.select(7, "main").unwrap();
+    {
+        let mut committed = service.state.lock().unwrap();
+        let mut candidate = committed.clone();
+        candidate.connections.profiles.clear();
+        candidate.selections.clear();
+        candidate.validation.clear();
+        candidate
+            .connections
+            .save_to_path(&bindings.metadata_path)
+            .unwrap();
+        // Inject the error at the directory-sync boundary, after publication.
+        let failed_sync = Err(anyhow::anyhow!("sync parent directory failed"));
+        assert!(service.publish_saved_state(&mut committed, candidate, &failed_sync));
+        assert!(failed_sync.is_err());
+        assert!(committed.connections.profiles.is_empty());
+        assert!(committed.selections.is_empty());
+        assert!(committed.validation.is_empty());
+    }
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "next".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    let disk = ConnectionsFile::load_from_path(&bindings.metadata_path)
+        .unwrap()
+        .0;
+    assert_eq!(disk, service.metadata());
+    assert!(disk.profiles.contains_key("next"));
+    assert!(!disk.profiles.contains_key("main"));
+}
