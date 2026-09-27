@@ -54,6 +54,7 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         .adapter()
         .unwrap();
     assert_eq!(adapter.project_text("pwd: /"), "pwd: .");
+    assert_eq!(adapter.project_text("pwd: / is cwd"), "pwd: . is cwd");
     assert_eq!(adapter.project_text("[docs](/guide)"), "[docs](/guide)");
     assert_eq!(
         adapter.project_text("body { background: url(/assets/bg.png) }"),
@@ -90,6 +91,11 @@ async fn project_text_preserves_unmatched_paths_with_space_siblings() {
         adapter.project_text(&sibling),
         sibling,
         "an unmatched filename may continue a root through a space"
+    );
+    assert_eq!(
+        adapter.project_text(&format!("{} is cwd", project.display())),
+        ". is cwd",
+        "ordinary prose after the active root must not expose its backing path"
     );
 }
 
@@ -180,6 +186,10 @@ async fn captured_paths_follow_cwd_without_rewriting_project_file_data() {
             "./file.rs:12".to_string(),
         ),
         (
+            format!("{}/src is cwd", root.display()),
+            ". is cwd".to_string(),
+        ),
+        (
             format!("{}/README.md", root.display()),
             "../README.md".to_string(),
         ),
@@ -200,11 +210,15 @@ async fn captured_paths_follow_cwd_without_rewriting_project_file_data() {
         assert_eq!(adapter.project_text(&input), expected, "{input}");
     }
     let context = ToolContext::from_binding(execution, Arc::new(Config::default()));
+    let host_cwd = root.join("src").to_string_lossy().replace('\'', "'\\''");
     let result = alan_tools::BashTool::new()
-        .execute(json!({"command":"pwd > cwd.txt; pwd"}), &context)
+        .execute(
+            json!({"command":format!("pwd > cwd.txt; pwd; printf '%s is cwd\\n' '{host_cwd}'")}),
+            &context,
+        )
         .await
         .unwrap();
-    assert_eq!(result["stdout"], ".\n");
+    assert_eq!(result["stdout"], ".\n. is cwd\n");
     let native_cwd = format!("{}\n", root.join("src").display());
     assert_eq!(
         std::fs::read_to_string(root.join("src/cwd.txt")).unwrap(),

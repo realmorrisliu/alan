@@ -101,13 +101,25 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
 fn is_path_end(suffix: &str) -> bool {
     let after = suffix.chars().next();
     after.is_none_or(|ch| {
-        (ch.is_whitespace() && ch != ' ')
+        ch.is_whitespace() && (ch != ' ' || !space_continues_path(suffix))
             || ch == std::path::MAIN_SEPARATOR
             || matches!(
                 ch,
                 ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*' | '?' | '#'
             )
     }) || is_terminal_sentence_punctuation(suffix, 0)
+}
+
+fn space_continues_path(suffix: &str) -> bool {
+    let Some(after_space) = suffix.strip_prefix(' ') else {
+        return false;
+    };
+    // ponytail: recognize one unquoted component; parse broader text-path syntax when required.
+    after_space
+        .trim_start_matches(' ')
+        .split_whitespace()
+        .next()
+        .is_some_and(|component| component.contains(std::path::MAIN_SEPARATOR))
 }
 
 fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
