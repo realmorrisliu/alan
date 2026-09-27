@@ -40,7 +40,10 @@ For an existing installation, the installer MAY replace the selected channel's
 CLI executable only when its ownership manifest records that path and its
 current content matches the recorded digest. A modified executable or a
 missing ownership record is a conflict; the installer MUST preserve both the
-file and existing manifest.
+file and existing manifest. Before changing any executable or the manifest,
+the installer MUST preflight all existing selected-channel paths it will
+replace or retire. Any conflict MUST fail the upgrade before mutation, leaving
+all existing executables and the manifest unchanged.
 
 #### Scenario: Destination is empty
 
@@ -69,6 +72,17 @@ file and existing manifest.
 - **AND** a modified executable or missing ownership record fails with the
   conflicting path while preserving the executable and existing manifest
 - **AND** the other install channel remains unchanged
+
+#### Scenario: Upgrade preflights the complete selected-channel install
+
+- **WHEN** an upgrade must replace the CLI and remove a previously owned Host
+  executable
+- **THEN** the installer verifies every existing path it will change against
+  the selected channel's ownership manifest before changing any path
+- **AND** any modified or unowned executable fails with the conflicting path
+  while preserving all existing executables and the manifest
+- **AND** when preflight succeeds, the CLI replacement, Host removal and
+  manifest update complete as one upgrade operation
 
 #### Scenario: Destination contains an unrelated file
 
