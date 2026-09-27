@@ -235,6 +235,25 @@ impl LlmFs {
         }
     }
 
+    /// Capture one Connection for a Process lifetime, with private Generation and fid state.
+    /// Registry replacement cannot change or abort this captured binding. The Connection's
+    /// provider, limits and metering remain shared through its existing reference.
+    pub fn connection_snapshot(&self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        let snapshot = Self::new();
+        if self.connection_visible(&name)
+            && let Some(connection) = self.state.lock().unwrap().connections.get(&name).cloned()
+        {
+            snapshot
+                .state
+                .lock()
+                .unwrap()
+                .connections
+                .insert(name, connection);
+        }
+        snapshot
+    }
+
     fn connection_visible(&self, name: &str) -> bool {
         self.allowed_connections
             .as_ref()

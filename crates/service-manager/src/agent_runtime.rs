@@ -336,10 +336,12 @@ impl AgentRuntimeService {
     ) -> Result<ProcessOutcome> {
         let pid = invocation.pid;
         let credentials = invocation.credentials.clone();
+        self.connection.refresh().await?;
         launch.namespace.replace_mount(
             "/mnt/llm",
             InProcessTransport::new(Arc::new(
-                self.llmfs.connection_view(&launch.template.llm_connection),
+                self.llmfs
+                    .connection_snapshot(&launch.template.llm_connection),
             )),
             Access::ReadWrite,
         );
@@ -370,7 +372,6 @@ impl AgentRuntimeService {
             InProcessTransport::new(self.host_mount.file_server_for_process(pid.0)),
             Access::ReadWrite,
         );
-        self.connection.refresh().await?;
         if self.connection.has_profile(&launch.template.llm_connection) {
             self.connection
                 .select(pid.0, &launch.template.llm_connection)?;
