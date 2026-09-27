@@ -14,10 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 
 pub(super) async fn acquire_promotion_lock(memory_dir: &Path) -> Result<File> {
-    let path = memory_dir
-        .parent()
-        .context("Memory Store has no parent directory")?
-        .join(".memory-promotion.lock");
+    let path = memory_dir.join(".memory-promotion.lock");
 
     tokio::task::spawn_blocking(move || {
         let mut options = OpenOptions::new();

@@ -84,6 +84,8 @@ async fn promote_inbox_entry_updates_memory_file_and_marks_confirmed() {
         .unwrap();
     assert!(memory_file.contains("## Promoted Facts"));
     assert!(memory_file.contains("lexical and file-backed"));
+    assert!(memory_dir.join(".memory-promotion.lock").exists());
+    assert!(!temp.path().join(".memory-promotion.lock").exists());
 
     let updated_inbox = tokio::fs::read_to_string(inbox_path).await.unwrap();
     let parsed = parse_inbox_entry(&updated_inbox).unwrap();
