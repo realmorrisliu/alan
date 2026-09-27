@@ -57,8 +57,11 @@ while `:` forces Agent routing. The lifecycle revision to
 historical background-Host behavior.
 This describes the shipped CLI behavior. The canonical `alan-os-host-lifecycle`,
 `alan-shell`, renderer and attachment lifecycle specs still contain parts of the
-prior channel-wide contract; syncing their implemented startup subset is tracked
-by task 4.2.2 in the active unified-input change.
+prior channel-wide contract; their implemented startup and cross-invocation
+isolation subset is synchronized by the active unified-input change. Explicit
+recovery selection and restoration remain separate unimplemented work. Herdr
+view-detach acceptance is also still pending and is not inferred from the
+ordinary-terminal or automated concurrency checks.
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed. Rust Host platform adapters remain. Herdr supplies terminal topology,
@@ -109,4 +112,5 @@ namespaces, and tasks are ephemeral.
 - live child state is read from `/proc`; delegation metadata is bounded and
   Process-local.
 - terminal-host integration cannot grant mounts, credentials or action approval;
-  closing a renderer does not own system Host shutdown.
+  the foreground CLI composition owns instance shutdown, while a view detach is
+  distinct from actual Alan process exit.

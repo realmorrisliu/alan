@@ -1,11 +1,6 @@
-## RENAMED Requirements
-
-- FROM: `### Requirement: The terminal CLI attaches to the existing Root Agent`
-- TO: `### Requirement: The terminal renderer uses its foreground instance`
-
 ## MODIFIED Requirements
 
-### Requirement: The terminal renderer uses its foreground instance
+### Requirement: The terminal CLI renders its invocation's Root Agent
 A local terminal renderer SHALL receive its foreground invocation's mounted
 alan9 namespace and the concrete instance-local `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
 supervise an Agent Process. The CLI composition, outside the renderer, owns
@@ -16,7 +11,7 @@ report failure, never reopen another Root or recover history automatically.
 AgentFS remains the authority for input, streamed
 output, status, and Agent UI state.
 
-#### Scenario: Bare Alan opens the terminal renderer
+#### Scenario: Bare Alan opens its instance's terminal renderer
 - **WHEN** bare `alan` runs with interactive stdin and stdout after
   its own alan9 instance has become ready
 - **THEN** it opens the file-backed renderer on `/agent/root`

@@ -51,10 +51,10 @@ OpenSpec and the ADRs.
   instance; a Herdr view detach may leave the native process alive (ADR-0054 and
   the lifecycle update to ADR-0056). Starting another Herdr session starts a
   separate invocation; reusing earlier durable work requires explicit user
-  selection, never automatic channel-wide recovery. The canonical lifecycle
-  spec sync for this shipped startup behavior remains tracked by task 4.2.2 in
-  `unify-agent-command-input`; do not treat this statement as evidence that
-  recovery or cross-invocation cwd/queue isolation has shipped.
+  selection, never automatic channel-wide recovery. PR #1011 verifies separate
+  input streams and cwd bindings across simultaneous invocations. Explicit
+  durable recovery and Herdr detach acceptance remain open; do not infer them
+  from the startup or isolation evidence.
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
 - prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).

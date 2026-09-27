@@ -1,8 +1,3 @@
-## RENAMED Requirements
-
-- FROM: `### Requirement: Bare Alan attaches to the Root Agent`
-- TO: `### Requirement: Bare Alan owns a foreground instance`
-
 ## MODIFIED Requirements
 
 ### Requirement: Alan Shell is a general namespace client over aP

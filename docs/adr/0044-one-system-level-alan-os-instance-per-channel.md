@@ -1,8 +1,8 @@
 # One system-level Alan OS instance per channel
 
-> ADR-0054 retires the Alan for macOS consumer, not the independent per-channel OS Host. Terminal clients remain consumers of the protected aP endpoint.
+> Superseded for live runtime ownership on 2026-09-27 by ADR-0056 and ADR-0058: each bare `alan` invocation owns a foreground instance; install channels still select persistent configuration and store boundaries. The text below records the former decision.
 
-Status: accepted
+Status: superseded 2026-09-27
 
 Each user and device has at most one active Alan OS instance per install
 channel, owned by a dedicated Alan OS Host process. Alan for macOS, Alan CLI,

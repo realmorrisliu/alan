@@ -1,11 +1,3 @@
-## RENAMED Requirements
-
-- FROM: `### Requirement: One system Host owns each channel`
-- TO: `### Requirement: Each foreground invocation owns its alan9 instance`
-
-- FROM: `### Requirement: Ephemeral Host is test-only`
-- TO: `### Requirement: Product composition preserves production adapters`
-
 ## MODIFIED Requirements
 
 ### Requirement: Each foreground invocation owns its alan9 instance
@@ -24,14 +16,15 @@ The renderer SHALL remain a file client of that instance. Bare `alan` MUST NOT
 launch or attach to a separate background Host, including through launchd or
 systemd. Herdr SHALL NOT be required for ordinary terminal operation.
 
-#### Scenario: CLI and macOS use stable
-- **WHEN** two terminal sessions start stable `alan` for the same user,
-  including on macOS, with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to distinct
+#### Scenario: Two terminal sessions start Alan
+- **WHEN** two terminal sessions start `alan` for the same user and install
+  channel without `ALAN_INSTANCE_RUNTIME_DIR`, or with distinct runtime
   directories
-- **THEN** each owns an independent Root Agent, Process table, input queue and cwd
+- **THEN** each owns an independent Root Agent, Process table, input queue, cwd,
+  and runtime endpoint
 - **AND** exiting one invocation does not stop or submit work to the other
-- **AND** concurrent access to shared package, connection and credential stores preserves their commit and authorization contracts
-- **AND** live service Processes remain independently owned by each invocation
+- **AND** concurrent use of package, connection, and credential stores preserves
+  their existing commit and authorization contracts
 
 #### Scenario: Two invocations select the same runtime directory
 - **WHEN** two terminal sessions select the same explicit
@@ -65,13 +58,14 @@ fresh task. Current authority SHALL be revalidated; recorded paths or grants are
 not live capabilities. Reliable pending work SHALL remain paused, and unknown
 effects MUST NOT be replayed automatically.
 
-#### Scenario: Stored Process Reference predates restart
+#### Scenario: A Process reference belongs to another boot
 - **WHEN** a client presents a reference with a different instance boot identity
 - **THEN** Alan rejects it even if the PID has been reused
 
-#### Scenario: User starts without recovery selection
+#### Scenario: A new invocation starts
 - **WHEN** the user starts a new invocation without explicitly selecting recovery
-- **THEN** it starts fresh Agent execution without loading another invocation's work
+- **THEN** it creates fresh execution in its own instance
+- **AND** it does not implicitly attach to or resume another invocation's Root
 
 #### Scenario: User selects durable recovery
 - **WHEN** the user explicitly selects valid durable execution evidence
@@ -88,12 +82,11 @@ selection. Foreground product composition SHALL use the existing product adapter
 channel stores and governance; running in-process SHALL NOT itself select a test
 Host or weaken authorization.
 
-#### Scenario: Product Host fails
+#### Scenario: Product composition fails
 - **WHEN** product composition fails to boot its independent foreground instance
 - **THEN** startup fails with a diagnostic
-- **AND** it does not substitute mock providers, test-only authority or an ambient background Host
-
-## ADDED Requirements
+- **AND** it does not substitute mock providers, test-only authority, or an
+  ambient background Host
 
 ### Requirement: Foreground application exit ends its owned runtime
 Actual Alan exit SHALL shut down its owned services and active execution through

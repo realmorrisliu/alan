@@ -47,15 +47,17 @@ the gap and MUST NOT silently jump forward or claim complete continuity.
 - **WHEN** a renderer reattaches after retention has truncated earlier bytes
 - **THEN** it reports the missing range before continuing
 
-### Requirement: The terminal CLI attaches to the existing Root Agent
-A local terminal renderer SHALL receive a mounted alan9 namespace and the
-concrete `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
-supervise an Agent Process. AgentFS remains the authority for input, streamed
-output, status, and Agent UI state.
+### Requirement: The terminal CLI renders its invocation's Root Agent
+A local terminal renderer SHALL receive its foreground invocation's mounted
+alan9 namespace and the concrete instance-local `/agent/root` Agent Process
+path. The CLI composition owns the foreground application lifetime; the
+renderer MUST NOT create a Shell Process or become a separate execution
+manager. AgentFS remains the authority for input, streamed output, status, and
+Agent UI state. A renderer MUST NOT attach to another invocation as a fallback.
 
-#### Scenario: Bare Alan opens the terminal renderer
-- **WHEN** bare `alan` runs with interactive stdin and stdout after attaching to
-  the dedicated Host
+#### Scenario: Bare Alan opens its instance's terminal renderer
+- **WHEN** bare `alan` runs with interactive stdin and stdout after its own
+  alan9 instance has become ready
 - **THEN** it opens the file-backed renderer on `/agent/root`
 - **AND** it does not create a second Agent or Shell Process
 
@@ -187,6 +189,10 @@ usable for subsequent input after a turn is interrupted.
   active
 
 #### Scenario: Renderer exits
-- **WHEN** the user quits or closes the local renderer
+- **WHEN** the user quits the local renderer in the owning bare `alan`
+  invocation
 - **THEN** it closes its own file streams and restores the terminal
-- **AND** it does not stop the shared alan9 Host or Root Agent Process
+- **AND** the owning application shuts down its instance through existing
+  lifecycle boundaries
+- **AND** terminal-host view detach while retaining the process does not count
+  as Alan process exit
