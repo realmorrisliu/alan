@@ -10,15 +10,21 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     }
     let cwd = adapter.cwd.to_string_lossy();
     let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
-    let mut projected = if cwd.is_empty() {
-        text.to_string()
+    let cwd = if cwd.is_empty() {
+        std::path::MAIN_SEPARATOR_STR
     } else {
-        replace_path_prefixes(text, cwd, ".")
+        cwd
     };
+    let mut projected = replace_path_prefixes(text, cwd, ".");
 
     let mut mounts = adapter.mounts.iter().rev().collect::<Vec<_>>();
     mounts.sort_by_key(|mount| Reverse(mount.host_path.components().count()));
     for mount in mounts {
+        if mount.host_path == Path::new(std::path::MAIN_SEPARATOR_STR) {
+            // The filesystem root is public; treating every leading slash as a private root path
+            // rewrites root-relative URLs such as Markdown links and CSS `url(/image.png)`.
+            continue;
+        }
         let common = adapter
             .namespace_cwd
             .components()
@@ -37,31 +43,18 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
         if mount_from_cwd.as_os_str().is_empty() {
             mount_from_cwd.push(".");
         }
-        if mount.host_path == Path::new("/") {
-            let replacement = mount_from_cwd.to_string_lossy();
-            let replacement = if replacement == "." {
-                "./".to_string()
-            } else {
-                format!("{replacement}/")
-            };
-            projected = replace_rooted_path_starts(&projected, &replacement);
-        } else {
-            let host_path = mount.host_path.to_string_lossy();
-            let replacement = mount_from_cwd.to_string_lossy();
-            projected = replace_path_prefixes(&projected, host_path.as_ref(), replacement.as_ref());
-            let shell_escaped_host_path = host_path.replace(' ', "\\ ");
-            if shell_escaped_host_path != host_path {
-                projected = replace_path_prefixes(
-                    &projected,
-                    &shell_escaped_host_path,
-                    replacement.as_ref(),
-                );
-            }
-            if let Ok(file_url) = url::Url::from_file_path(&mount.host_path) {
-                let uri_path = file_url.path();
-                if uri_path != host_path.as_ref() {
-                    projected = replace_path_prefixes(&projected, uri_path, replacement.as_ref());
-                }
+        let host_path = mount.host_path.to_string_lossy();
+        let replacement = mount_from_cwd.to_string_lossy();
+        projected = replace_path_prefixes(&projected, host_path.as_ref(), replacement.as_ref());
+        let shell_escaped_host_path = host_path.replace(' ', "\\ ");
+        if shell_escaped_host_path != host_path {
+            projected =
+                replace_path_prefixes(&projected, &shell_escaped_host_path, replacement.as_ref());
+        }
+        if let Ok(file_url) = url::Url::from_file_path(&mount.host_path) {
+            let uri_path = file_url.path();
+            if uri_path != host_path.as_ref() {
+                projected = replace_path_prefixes(&projected, uri_path, replacement.as_ref());
             }
         }
     }
@@ -122,26 +115,6 @@ fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
         && suffix.next().is_none_or(|ch| {
             ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | ')' | ']' | '}' | '\'' | '"')
         })
-}
-
-fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
-    let mut projected = String::with_capacity(text.len());
-    let mut copied_through = 0;
-    for (start, _) in text.match_indices('/') {
-        let after = text[start + 1..].chars().next();
-        let uri_authority_delimiter =
-            text[..start].ends_with(':') && text[start..].starts_with("//");
-        if is_path_start(text, start)
-            && !uri_authority_delimiter
-            && after.is_some_and(|ch| !ch.is_whitespace() && ch != '/')
-        {
-            projected.push_str(&text[copied_through..start]);
-            projected.push_str(replacement);
-            copied_through = start + 1;
-        }
-    }
-    projected.push_str(&text[copied_through..]);
-    projected
 }
 
 fn is_path_start(text: &str, start: usize) -> bool {

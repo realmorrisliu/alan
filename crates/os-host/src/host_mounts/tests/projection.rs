@@ -46,6 +46,32 @@ async fn project_text_projects_paths_from_every_delegated_mount() {
 }
 
 #[tokio::test]
+async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        std::path::Path::new(std::path::MAIN_SEPARATOR_STR),
+    )
+    .await;
+
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    assert_eq!(adapter.project_text("pwd: /"), "pwd: .");
+    assert_eq!(adapter.project_text("[docs](/guide)"), "[docs](/guide)");
+    assert_eq!(
+        adapter.project_text("body { background: url(/assets/bg.png) }"),
+        "body { background: url(/assets/bg.png) }"
+    );
+}
+
+#[tokio::test]
 async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_siblings() {
     let project = tempfile::Builder::new()
         .prefix("alan project with spaces ")
