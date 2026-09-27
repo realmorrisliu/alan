@@ -66,9 +66,10 @@ pub(super) async fn refresh_answer_after_completion(
                 Some(read_command_output(shell, agent_path, &task.record.submission_id).await?);
             if snapshot.completion != Some(UiInputStatus::Completed)
                 && let Some(output) = snapshot.command_output.as_mut()
-                && output.exit_code == 0
             {
-                output.exit_code = 1;
+                if output.exit_code == 0 {
+                    output.exit_code = 1;
+                }
                 if let Some(error) = &snapshot.task_error {
                     output.stderr.push_str(&format!("\n{error}\n"));
                 }
@@ -409,10 +410,12 @@ mod command_tests {
                 submission_ids: vec![id],
                 status: if exit_code == 1 {
                     UiInputStatus::Cancelled
+                } else if exit_code == 7 {
+                    UiInputStatus::Failed
                 } else {
                     UiInputStatus::Completed
                 },
-                error: None,
+                error: (exit_code == 7).then(|| "tape finalization failed".into()),
             };
             shell
                 .write(
@@ -447,7 +450,9 @@ mod command_tests {
             assert_eq!(
                 output.stderr,
                 if exit_code == 1 {
-                    "Queued input cancelled without execution\n"
+                    "Queued input cancelled without execution\n\ninput cancelled\n"
+                } else if exit_code == 7 {
+                    "diagnostic\n\ntape finalization failed\n"
                 } else if exit_code == 2 {
                     "launch denied\n"
                 } else {
