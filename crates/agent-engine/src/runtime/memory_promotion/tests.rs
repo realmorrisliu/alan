@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::Arc;
 
 use alan_ap::InProcessTransport;
@@ -229,6 +229,35 @@ async fn write_text_file_does_not_replace_a_read_only_target() {
         tokio::fs::read_to_string(path).await.unwrap(),
         "protected memory"
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn write_text_file_updates_existing_target_without_parent_write_access() {
+    let temp = TempDir::new().unwrap();
+    let parent = temp.path().join("topics");
+    tokio::fs::create_dir(&parent).await.unwrap();
+    let path = parent.join("existing.md");
+    tokio::fs::write(&path, "old topic").await.unwrap();
+    let inode = tokio::fs::metadata(&path).await.unwrap().ino();
+    let original_permissions = tokio::fs::metadata(&parent).await.unwrap().permissions();
+    let mut read_only_directory = original_permissions.clone();
+    read_only_directory.set_mode(0o555);
+    tokio::fs::set_permissions(&parent, read_only_directory)
+        .await
+        .unwrap();
+
+    let result = write_text_file(&path, "updated topic").await;
+    tokio::fs::set_permissions(&parent, original_permissions)
+        .await
+        .unwrap();
+
+    result.unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(&path).await.unwrap(),
+        "updated topic"
+    );
+    assert_eq!(tokio::fs::metadata(path).await.unwrap().ino(), inode);
 }
 
 #[tokio::test]

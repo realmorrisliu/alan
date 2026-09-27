@@ -4,13 +4,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(not(unix))]
 use anyhow::anyhow;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 #[cfg(unix)]
@@ -78,64 +75,13 @@ pub(super) async fn acquire_promotion_lock(
 }
 
 pub(super) async fn write_text_file(path: &Path, content: &str) -> Result<()> {
-    let parent = path
-        .parent()
-        .with_context(|| format!("Memory Store path has no parent: {}", path.display()))?;
-    tokio::fs::create_dir_all(parent)
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create directory {}", parent.display()))?;
+    }
+    tokio::fs::write(path, content)
         .await
-        .with_context(|| format!("create directory {}", parent.display()))?;
-
-    #[cfg(unix)]
-    let mode = match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) if metadata.is_file() => {
-            tokio::fs::OpenOptions::new()
-                .write(true)
-                .open(path)
-                .await
-                .with_context(|| format!("open {} for update", path.display()))?;
-            metadata.permissions().mode() & 0o7777
-        }
-        Ok(_) => 0o600,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0o600,
-        Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
-    };
-
-    let file_name = path
-        .file_name()
-        .context("Memory Store path has no filename")?
-        .to_string_lossy();
-    let temporary = parent.join(format!(
-        ".{file_name}.tmp-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let result = async {
-        let mut options = tokio::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(mode).custom_flags(libc::O_NOFOLLOW);
-        let mut file = options.open(&temporary).await.with_context(|| {
-            format!("create temporary Memory Store file {}", temporary.display())
-        })?;
-        #[cfg(unix)]
-        file.set_permissions(std::fs::Permissions::from_mode(mode))
-            .await
-            .with_context(|| format!("set permissions on {}", temporary.display()))?;
-        file.write_all(content.as_bytes())
-            .await
-            .with_context(|| format!("write {}", temporary.display()))?;
-        file.sync_all()
-            .await
-            .with_context(|| format!("sync {}", temporary.display()))?;
-        drop(file);
-        tokio::fs::rename(&temporary, path)
-            .await
-            .with_context(|| format!("replace Memory Store file {}", path.display()))?;
-        Ok(())
-    }
-    .await;
-
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temporary).await;
-    }
-    result
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
