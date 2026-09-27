@@ -1,10 +1,10 @@
-# Standalone CLI/Host Distribution
+# Standalone CLI Distribution
 
-The supported Alan delivery boundary is the terminal-neutral Rust CLI plus the
-alan9 Host executables. The durable contract is
-[`standalone-cli-distribution`](../openspec/specs/standalone-cli-distribution/spec.md)
-and its completed distribution migration is recorded in
-[`retire-macos-client-and-standalone-cli`](../openspec/changes/archive/2026-09-20-retire-macos-client-and-standalone-cli/).
+The supported Alan product entry point is the standalone `alan` executable,
+which links the foreground alan9 composition. The development channel provides
+`alan-dev` as an alias. The current distribution contract is in the
+[active unified-input change](../openspec/changes/unify-agent-command-input/specs/standalone-cli-distribution/spec.md);
+canonical synchronization remains tracked by task 4.2.
 
 ## Local install
 
@@ -14,10 +14,15 @@ just install-dev
 ```
 
 The installer defaults to `~/.local/bin`; set `ALAN_CLI_INSTALL_DIR` to an
-explicit alternative. It installs `alan`, both Host executables, and the
-`alan-dev` development alias when the dev channel is selected. It does not
-start a Host, register launchd services, edit shell startup files, or touch
+explicit alternative. The stable channel installs `alan`; the development
+channel installs `alan-dev`. Neither channel installs or starts a separate Host
+executable, registers launchd services, edits shell startup files, or touches
 System/Host Store data.
+
+On upgrade, the installer checks the selected channel's existing CLI and any
+legacy Host executable against its ownership manifest before changing files.
+It removes a legacy Host only when its digest still matches; a modified or
+unowned path stops the upgrade and preserves the existing files and manifest.
 
 Owned command files can be removed without removing stores:
 
@@ -32,9 +37,9 @@ just uninstall-dev
 just release
 ```
 
-The archive contains `alan`, `alan-dev`, `alan-os-host`, `alan-os-host-dev`, a
-manifest, and a SHA-256 checksum. Set `ALAN_TARGET`, `ALAN_RELEASE_VERSION`, or
-`ALAN_RELEASE_OUT_DIR` to select the target, version label, or output directory.
+The archive contains `alan`, the `alan-dev` symlink, a manifest, and a SHA-256
+checksum. Set `ALAN_TARGET`, `ALAN_RELEASE_VERSION`, or `ALAN_RELEASE_OUT_DIR`
+to select the target, version label, or output directory.
 
 ## Verification
 
@@ -43,7 +48,9 @@ just standalone-distribution-test
 just quality
 ```
 
-The check starts only `alan --version`; Host lifecycle remains the existing
-channel-aware CLI attachment/start path. Alan.app, Sparkle, appcast, cask, and
-embedded-CLI workflows are retired. Desktop source has been removed; macOS
-credentials, Host Mounts and sandboxing remain owned by Rust runtime adapters.
+The check starts only `alan --version` and validates the installer, safe legacy
+upgrade, and CLI-only archive. Each ordinary invocation owns its foreground
+instance; selecting durable work for recovery is explicit and its runtime flow
+is still pending. Alan.app, Sparkle, appcast, cask, and embedded-CLI workflows
+are retired. Desktop source has been removed; macOS credentials, Host Mounts
+and sandboxing remain owned by Rust runtime adapters.

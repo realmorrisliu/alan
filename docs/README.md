@@ -34,12 +34,13 @@ guarantees today.
 - [Skills And Tools](./skills_and_tools.md)
 - [Skill Authoring](./skill_authoring.md)
 - [Testing Strategy](./testing_strategy.md)
-- [Standalone CLI/Host Distribution](./standalone_cli_distribution.md)
+- [Standalone CLI Distribution](./standalone_cli_distribution.md)
 - [Live Provider Harness](./live_provider_harness.md)
 - [Live Runtime Smoke](./live_runtime_smoke.md)
 
-The retired Apple desktop source and its checks have been removed. CLI/Host
-and macOS Rust platform adapters are the supported product surfaces.
+The retired Apple desktop source and its checks have been removed. The linked
+foreground CLI and macOS Rust platform adapters are the supported product
+surfaces.
 
 Read each active change's disposition before applying tasks. A parked change
 is retained planning context, not approval to resume implementation.

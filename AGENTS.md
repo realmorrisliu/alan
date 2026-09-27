@@ -20,7 +20,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Agent Runtime Service | The internal file-server service that executes Agent Processes and serves AgentFS at `/agent`. |
 | Process | Bounded execution with PID, parent, descriptors, credentials, lifecycle, streams, status, and exit state. |
 | Agent Process | An ordinary Process recognized by its AgentFS file layout. `/proc/<pid>` is lifecycle truth; `/agent/<pid>` is its agent view. |
-| Root Agent Process | The always-available root of the agent process tree, surfaced through `/agent/root`. |
+| Root Agent Process | The root of the agent process tree for one Alan invocation, surfaced within that instance through `/agent/root`. |
 | Agent Executable | An executable bound into `/bin` that creates an Agent Process when spawned. |
 | Tool | A reusable executable in the alan9 command namespace. |
 | Skill | A manual-like knowledge package passed to Agent Processes by descriptor. |
@@ -28,7 +28,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Alan Agent | An optional Agent Workspace app that inspects and steers Agent Processes through files. |
 | Agent Execution Engine / `alan-agent-engine` | The current tape/model/Tool/policy/memory transition loop in `crates/agent-engine`. |
 | Alan for macOS | Retired desktop product; App and shell-core/FFI source removed (ADR-0054). |
-| Alan Shell / `alan-shell` | The file-native shell. Bare `alan` uses the file-backed TUI on terminal stdin/stdout to attach to `/agent/root`; redirected stdin submits one Agent task and writes its answer to stdout. |
+| Alan Shell / `alan-shell` | The file-native shell. Each bare `alan` invocation owns a foreground instance and uses the file-backed TUI on terminal stdin/stdout with that instance's `/agent/root`; redirected stdin submits one task to the same instance and writes its answer to stdout. |
 | Alan Apps | Apps with app-owned domain cores and Alan file-server adapters. |
 
 ## Architecture rules
@@ -44,8 +44,13 @@ OpenSpec and the ADRs.
 - Memory Stores and handoff files own continuity across Agent Processes.
 - provider, sandbox, terminal, macOS, and app details stay behind adapters.
 - agent-ness is a file-layout convention, never a second Kernel Process type.
-- bare `alan` attaches its terminal renderer to the existing `/agent/root`; it
-  does not create a Shell Process or own Root Agent lifecycle (ADR-0056).
+- bare `alan` owns one foreground alan9 instance per invocation and attaches its
+  terminal renderer to that instance's `/agent/root`; it creates no extra Shell
+  Process and never borrows another invocation's Root. Actual Alan exit ends its
+  instance; a Herdr view detach may leave the native process alive (ADR-0054 and
+  the lifecycle update to ADR-0056). Starting another Herdr session starts a
+  separate invocation; reusing earlier durable work requires explicit user
+  selection, never automatic channel-wide recovery.
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
 - prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).
@@ -130,7 +135,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 Desktop App, shell-core and FFI source has been removed. Validate standalone
-CLI/Host behavior and macOS Rust platform adapters; no Apple UI build is needed.
+CLI behavior and macOS Rust platform adapters; no Apple UI build is needed.
 
 ## Rust style
 
