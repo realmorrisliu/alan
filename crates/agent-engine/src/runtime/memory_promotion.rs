@@ -154,7 +154,9 @@ pub(crate) async fn promote_inbox_entry(
     memory_dir: &Path,
     inbox_path: &Path,
     now: DateTime<Utc>,
+    cancel: &CancellationToken,
 ) -> Result<PromotionOutcome> {
+    ensure_memory_promotion_not_cancelled(cancel)?;
     ensure_memory_store_layout_at(memory_dir).with_context(|| {
         format!(
             "failed to ensure Memory Store layout before promoting inbox entry at {}",
@@ -162,7 +164,8 @@ pub(crate) async fn promote_inbox_entry(
         )
     })?;
     // ponytail: one lock serializes promotions per store; split per target if contention warrants it.
-    let _lock = acquire_promotion_lock(memory_dir).await?;
+    let _lock = acquire_promotion_lock(memory_dir, cancel).await?;
+    ensure_memory_promotion_not_cancelled(cancel)?;
 
     let raw = tokio::fs::read_to_string(inbox_path)
         .await
@@ -354,7 +357,7 @@ async fn apply_memory_promotion_candidates(
         let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
         if candidate.disposition == PromotionDisposition::PromoteNow {
             ensure_memory_promotion_not_cancelled(cancel)?;
-            promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+            promote_inbox_entry(memory_dir, &inbox_path, now, cancel).await?;
         }
     }
 
@@ -402,7 +405,7 @@ async fn capture_confirmed_turn_memory_for_test(
     for candidate in candidates {
         let inbox_path = stage_inbox_entry(memory_dir, candidate.draft, now).await?;
         if candidate.disposition == PromotionDisposition::PromoteNow {
-            promote_inbox_entry(memory_dir, &inbox_path, now).await?;
+            promote_inbox_entry(memory_dir, &inbox_path, now, &cancel).await?;
         }
     }
 

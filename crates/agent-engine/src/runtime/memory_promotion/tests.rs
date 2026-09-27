@@ -76,7 +76,7 @@ async fn promote_inbox_entry_updates_memory_file_and_marks_confirmed() {
     .await
     .unwrap();
 
-    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now)
+    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
@@ -131,9 +131,11 @@ async fn concurrent_promotions_preserve_updates_from_both_sessions() {
     .await
     .unwrap();
 
+    let first_cancel = CancellationToken::new();
+    let second_cancel = CancellationToken::new();
     let (first, second) = tokio::join!(
-        promote_inbox_entry(&memory_dir, &first, now),
-        promote_inbox_entry(&memory_dir, &second, now),
+        promote_inbox_entry(&memory_dir, &first, now, &first_cancel),
+        promote_inbox_entry(&memory_dir, &second, now, &second_cancel),
     );
     first.unwrap();
     second.unwrap();
@@ -143,6 +145,71 @@ async fn concurrent_promotions_preserve_updates_from_both_sessions() {
         .unwrap();
     assert!(user_memory.contains("short engineering pull requests"));
     assert!(user_memory.contains("explicit session recovery"));
+}
+
+#[tokio::test]
+async fn promotion_lock_wait_is_cancelled_before_writing() {
+    let temp = TempDir::new().unwrap();
+    let memory_dir = temp.path().join("memory-store");
+    ensure_memory_store_layout_at(&memory_dir).unwrap();
+    let now = Utc::now();
+    let inbox_path = stage_inbox_entry(
+        &memory_dir,
+        InboxEntryDraft {
+            kind: "user_preference",
+            target: MEMORY_USER_FILENAME.to_string(),
+            confidence: "high",
+            observation: "Do not write after promotion is cancelled.".to_string(),
+            evidence: vec!["Cancellation must win while waiting for the store lock.".to_string()],
+            promotion_rationale: "Cancellation contract regression test.".to_string(),
+            source_processes: vec!["session-cancelled".to_string()],
+        },
+        now,
+    )
+    .await
+    .unwrap();
+
+    let held_lock = acquire_promotion_lock(&memory_dir, &CancellationToken::new())
+        .await
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let cancel_for_task = cancel.clone();
+    let memory_dir_for_task = memory_dir.clone();
+    let inbox_path_for_task = inbox_path.clone();
+    let mut promotion = tokio::spawn(async move {
+        promote_inbox_entry(
+            &memory_dir_for_task,
+            &inbox_path_for_task,
+            now,
+            &cancel_for_task,
+        )
+        .await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    cancel.cancel();
+    let completed_while_locked =
+        tokio::time::timeout(std::time::Duration::from_secs(1), &mut promotion).await;
+    drop(held_lock);
+
+    let result = match completed_while_locked {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => panic!("promotion task failed: {error}"),
+        Err(_) => {
+            let _ = promotion.await;
+            panic!("promotion did not observe cancellation while waiting for the lock");
+        }
+    };
+    assert!(result.is_err());
+    let user_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_USER_FILENAME))
+        .await
+        .unwrap();
+    assert!(!user_memory.contains("Do not write after promotion is cancelled"));
+    let inbox = tokio::fs::read_to_string(inbox_path).await.unwrap();
+    assert_eq!(
+        parse_inbox_entry(&inbox).unwrap().frontmatter.status,
+        "observed"
+    );
 }
 
 #[cfg(unix)]
@@ -189,7 +256,7 @@ async fn promote_topic_entry_creates_topic_page_and_memory_index() {
     .await
     .unwrap();
 
-    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now)
+    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
@@ -234,7 +301,7 @@ async fn promote_inbox_entry_rejects_topic_target_path_traversal() {
     .await
     .unwrap();
 
-    let err = promote_inbox_entry(&memory_dir, &inbox_path, now)
+    let err = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .expect_err("traversal target should be rejected");
     assert!(err.to_string().contains("unsupported inbox target path"));
@@ -351,7 +418,7 @@ async fn promote_inbox_entry_treats_similar_facts_as_distinct_observations() {
     .await
     .unwrap();
 
-    promote_inbox_entry(&memory_dir, &inbox_path, now)
+    promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
@@ -405,7 +472,7 @@ Direct user-stated stable identity detail.
     .await
     .unwrap();
 
-    promote_inbox_entry(&memory_dir, &inbox_path, now)
+    promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
         .await
         .unwrap();
 
