@@ -1,25 +1,29 @@
 # standalone-cli-distribution Specification
 
 ## Purpose
-Defines the supported terminal-neutral distribution boundary for Alan CLI and
-alan9 Host binaries after the macOS desktop product is retired.
+Defines the supported terminal distribution boundary for the standalone Alan
+CLI and its linked foreground alan9 composition after the macOS desktop product
+is retired.
 
 ## Requirements
 
-### Requirement: Standalone distribution contains the CLI and Host binaries
+### Requirement: Standalone distribution contains the foreground CLI
 
-The supported local and release distribution SHALL provide `alan`,
-`alan-os-host`, and `alan-os-host-dev` as standalone executables without an
-app bundle, embedded GUI, or app-owned lifecycle. A development CLI alias MAY
-be provided as `alan-dev` and SHALL use the existing install-channel contract.
+The supported local and release distribution SHALL provide `alan` as a
+standalone executable with its linked foreground alan9 composition. It SHALL
+NOT require or distribute separate product executables named `alan-os-host` or
+`alan-os-host-dev`. A development alias MAY be provided as `alan-dev` and SHALL
+use the existing install-channel contract. Native platform adapters and service
+libraries remain part of the CLI composition.
 
 #### Scenario: Release archive is assembled
 
 - **WHEN** a release archive is produced for a supported target
-- **THEN** it contains the three required executables
+- **THEN** it contains the standalone CLI and its `alan-dev` alias
+- **AND** its manifest identifies the target and the CLI entry points
+- **AND** it does not contain separate Host executables
 - **AND** it does not contain `Alan.app`, a GUI executable, Sparkle metadata, or
   an appcast
-- **AND** its manifest identifies the target and each executable
 
 #### Scenario: CLI alias is installed
 
@@ -30,21 +34,37 @@ be provided as `alan-dev` and SHALL use the existing install-channel contract.
 
 ### Requirement: Installation is explicit and non-destructive
 
-The repository SHALL provide one installer with an explicit destination for
-the standalone binaries. The installer MUST refuse to overwrite a non-owned
-file and MUST NOT edit shell startup files, user data stores, credentials,
-installed applications, or launchd registrations.
+The repository SHALL provide one installer with a configurable destination for
+the selected channel's standalone CLI. The installer MUST refuse to overwrite
+or retire a non-owned or modified file and MUST NOT edit shell startup files,
+user data stores, credentials, installed applications, or launchd registrations.
+Before changing files, it MUST verify every existing selected-channel path it
+will replace or retire against that channel's ownership manifest.
 
 #### Scenario: Destination is empty
 
 - **WHEN** the installer is run with an empty destination directory for a
   selected channel
-- **THEN** it installs that channel's CLI entry point and dedicated Host
-  executable
-- **AND** the release archive remains the distribution that contains both
-  channel Host executables
+- **THEN** it installs that channel's CLI entry point
+- **AND** it does not install a separate Host executable
 - **AND** a subsequent `alan --version` exits successfully without starting a
-  Host
+  foreground instance
+
+#### Scenario: Owned legacy Host is retired on upgrade
+
+- **WHEN** an existing install manifest records a legacy Host executable and
+  its current digest still matches
+- **THEN** the installer removes that executable while upgrading to the
+  foreground CLI distribution
+- **AND** a modified or unowned path fails preflight without changing the
+  existing CLI, Host, or manifest
+
+#### Scenario: Upgrade is interrupted
+
+- **WHEN** an upgrade is interrupted before its new ownership manifest is
+  installed
+- **THEN** the prior CLI and any retired legacy Host are restored
+- **AND** the previous ownership manifest remains unchanged
 
 #### Scenario: Destination contains an unrelated file
 
@@ -54,22 +74,24 @@ installed applications, or launchd registrations.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL not register or start an alan9 Host. The
-existing CLI Host attachment and start path remains responsible for deciding
-whether to attach to or start a Host when a command needs one.
+Standalone installation SHALL NOT register or start an alan9 runtime. Each
+ordinary `alan` invocation SHALL own one foreground alan9 instance and its
+Root Agent Process. A new invocation SHALL start with an independent Root;
+process exit SHALL end the instance owned by that invocation.
 
 #### Scenario: CLI is installed but no Host is running
 
-- **WHEN** installation completes on a machine without an active Host
+- **WHEN** installation completes on a machine without an active Alan instance
 - **THEN** installation succeeds
-- **AND** no Host process or launchd product registration is created by the
+- **AND** no runtime process or launchd product registration is created by the
   installer
 
-#### Scenario: A Host-backed command runs later
+#### Scenario: A foreground Alan invocation runs
 
-- **WHEN** a user subsequently invokes a command that needs the Host
-- **THEN** the CLI uses the existing channel-aware attachment/start path
-- **AND** the installer is not re-entered as a side effect
+- **WHEN** a user starts `alan` in a terminal session
+- **THEN** that invocation starts and owns its foreground instance
+- **AND** another invocation has an independent Root and runtime endpoint
+- **AND** exiting the invocation ends its instance
 
 ### Requirement: Quality checks cover the standalone boundary
 
@@ -80,11 +102,12 @@ Sparkle, appcast, or Apple GUI checks.
 #### Scenario: Quality gate runs
 
 - **WHEN** the canonical quality command runs
-- **THEN** it verifies the required standalone binaries and CLI startup check
+- **THEN** it verifies standalone CLI packaging and foreground startup and
+  shutdown
 - **AND** it does not invoke an app-bundle, appcast, or desktop UI test
 
 #### Scenario: CI builds a release target
 
 - **WHEN** CI builds a supported release target
-- **THEN** it uploads the standalone CLI and Host executables
+- **THEN** it uploads the standalone CLI distribution
 - **AND** the build does not depend on an Xcode app archive

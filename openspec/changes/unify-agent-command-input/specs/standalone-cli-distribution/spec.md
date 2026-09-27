@@ -54,7 +54,7 @@ all existing executables and the manifest unchanged.
 - **AND** a subsequent `alan --version` exits successfully without starting a
   Host
 
-#### Scenario: Upgrade removes previously owned Host executables
+#### Scenario: Owned legacy Host is retired on upgrade
 
 - **WHEN** an existing channel installation records a separate Host executable
   in its ownership manifest and is upgraded to the foreground CLI distribution
@@ -84,6 +84,13 @@ all existing executables and the manifest unchanged.
 - **AND** when preflight succeeds, the CLI replacement, Host removal and
   manifest update complete as one upgrade operation
 
+#### Scenario: Upgrade is interrupted
+
+- **WHEN** an upgrade is interrupted before its new ownership manifest is
+  installed
+- **THEN** the prior CLI and any retired legacy Host are restored
+- **AND** the previous ownership manifest remains unchanged
+
 #### Scenario: Destination contains an unrelated file
 
 - **WHEN** a requested target path contains a file not owned by the installer
@@ -106,11 +113,12 @@ installation or a missing target MUST NOT implicitly create a background Host.
 - **AND** no Host process or launchd product registration is created by the
   installer
 
-#### Scenario: A Host-backed command runs later
+#### Scenario: A foreground Alan invocation runs
 
-- **WHEN** a user subsequently starts ordinary `alan`
-- **THEN** the CLI boots its own foreground instance with the selected channel stores
-- **AND** the installer is not re-entered as a side effect
+- **WHEN** a user starts `alan` in a terminal session
+- **THEN** that invocation starts and owns its foreground instance
+- **AND** another invocation has an independent Root and runtime endpoint
+- **AND** exiting the invocation ends its instance
 
 ### Requirement: Quality checks cover the standalone boundary
 

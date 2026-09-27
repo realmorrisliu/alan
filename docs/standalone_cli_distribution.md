@@ -2,9 +2,10 @@
 
 The supported Alan product entry point is the standalone `alan` executable,
 which links the foreground alan9 composition. The development channel provides
-`alan-dev` as an alias. The current distribution contract is in the
-[active unified-input change](../openspec/changes/unify-agent-command-input/specs/standalone-cli-distribution/spec.md);
-canonical synchronization remains tracked by task 4.2.
+`alan-dev` as an alias. The normative distribution contract is the
+[canonical standalone CLI specification](../openspec/specs/standalone-cli-distribution/spec.md).
+The active unified-input change tracks the delivered migration and remaining
+lifecycle work, including explicit recovery selection.
 
 ## Local install
 
