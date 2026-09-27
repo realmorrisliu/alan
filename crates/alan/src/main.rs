@@ -7,8 +7,10 @@ mod shell_command;
 use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::{io::IsTerminal, path::PathBuf};
-use tokio::io::AsyncReadExt;
+use std::{
+    io::{IsTerminal, Read},
+    path::PathBuf,
+};
 
 #[derive(Parser)]
 #[command(
@@ -709,26 +711,38 @@ async fn run_bare_in_foreground_instance(
         .await
     });
 
-    let run_result: Result<i32> = async {
-        let attachment = LocalAttachment::new(paths).connect().await?;
-        match mode {
-            BareRunMode::Interactive => {
-                let config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                alan_tui::run_file_backed(config).await?;
-                Ok(0)
-            }
-            BareRunMode::OneShot => {
-                let mut input = Vec::new();
-                tokio::io::stdin()
-                    .read_to_end(&mut input)
-                    .await
-                    .context("read Agent task from stdin")?;
-                let input = String::from_utf8(input).context("stdin task is not valid UTF-8")?;
-                Ok(alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?)
+    let run_result: Result<i32> = tokio::select! {
+        result = async {
+            let attachment = LocalAttachment::new(paths).connect().await?;
+            match mode {
+                BareRunMode::Interactive => {
+                    let config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
+                    alan_tui::run_file_backed(config).await?;
+                    Ok(0)
+                }
+                BareRunMode::OneShot => {
+                    let (input_tx, input_rx) = tokio::sync::oneshot::channel();
+                    // A detached OS thread keeps cancelled stdin reads out of Tokio's blocking pool.
+                    std::thread::spawn(move || {
+                        let input = (|| -> Result<String> {
+                            let mut input = Vec::new();
+                            std::io::stdin()
+                                .read_to_end(&mut input)
+                                .context("read Agent task from stdin")?;
+                            String::from_utf8(input).context("stdin task is not valid UTF-8")
+                        })();
+                        let _ = input_tx.send(input);
+                    });
+                    let input = input_rx.await.context("stdin reader stopped")??;
+                    Ok(alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?)
+                }
             }
         }
-    }
-    .await;
+        => result,
+        signal = wait_for_host_termination() => {
+            signal.map(|()| 0)
+        }
+    };
 
     let _ = shutdown.send(());
     let server_result = server
@@ -737,6 +751,13 @@ async fn run_bare_in_foreground_instance(
     let exit_code = run_result?;
     server_result?;
     Ok(exit_code)
+}
+
+async fn wait_for_host_termination() -> Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("listen for Alan instance shutdown")?;
+    terminate.recv().await;
+    Ok(())
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {

@@ -141,6 +141,76 @@ async fn bare_cli_uses_an_independent_foreground_instance() {
     server.await.unwrap().unwrap();
 }
 
+#[tokio::test]
+async fn host_stop_gracefully_stops_bare_foreground_instance() {
+    let runtime = tempfile::tempdir_in("/tmp").unwrap();
+    let runtime_dir = runtime.path().join("foreground");
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
+    let home = runtime.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let mut foreground = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("ALAN_INSTALL_CHANNEL", "stable")
+        .env("ALAN_INSTANCE_RUNTIME_DIR", &runtime_dir)
+        .env("HOME", &home)
+        .env("TMPDIR", runtime.path())
+        .env_remove("ALAN_CONFIG_PATH")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let mut ready = false;
+    for _ in 0..400 {
+        if paths
+            .read_status()
+            .is_ok_and(|status| status.readiness == HostReadiness::Ready)
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if !ready {
+        let _ = foreground.kill();
+        let _ = foreground.wait();
+        panic!("foreground Alan instance did not become ready");
+    }
+
+    let stop = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["host", "stop", "--json"])
+        .env("ALAN_INSTALL_CHANNEL", "stable")
+        .env("ALAN_INSTANCE_RUNTIME_DIR", &runtime_dir)
+        .env("HOME", &home)
+        .env("TMPDIR", runtime.path())
+        .output()
+        .unwrap();
+    if !stop.status.success() {
+        let _ = foreground.kill();
+        let _ = foreground.wait();
+    }
+    assert!(stop.status.success(), "{stop:?}");
+
+    let mut exited = None;
+    for _ in 0..400 {
+        if let Some(status) = foreground.try_wait().unwrap() {
+            exited = Some(status);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if exited.is_none() {
+        let _ = foreground.kill();
+        let _ = foreground.wait();
+        panic!("foreground Alan instance did not exit after host stop");
+    }
+
+    assert!(exited.unwrap().success());
+    assert!(!paths.status.exists());
+    assert!(!paths.socket.exists());
+}
+
 #[test]
 fn host_status_reports_stopping_without_attaching() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
