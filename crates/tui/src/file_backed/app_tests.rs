@@ -142,6 +142,17 @@ fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
             alan_agent_protocol::parse_input_prefix(input).1
         );
         assert!(app.transcript.is_empty());
+        assert_eq!(
+            app.notice.as_deref(),
+            Some("Enter content after the input prefix.")
+        );
+        assert_eq!(
+            app.input_intent,
+            alan_agent_protocol::parse_input_prefix(input).0
+        );
+        app.insert_input_text("pwd");
+        assert!(app.handle_submit().is_some());
+        assert!(app.notice.is_none());
     }
 }
 

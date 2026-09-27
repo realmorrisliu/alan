@@ -455,8 +455,12 @@ impl FileBackedApp {
 
         let text = self.composer.text().to_owned();
         if text.trim().is_empty() {
+            if self.input_intent != InputIntent::Agent {
+                self.notice = Some("Enter content after the input prefix.".into());
+            }
             return None;
         }
+        self.notice = None;
         self.completion = None;
         if self.input_intent == InputIntent::Agent && text.trim().starts_with('/') {
             self.composer.set_text("");
