@@ -58,10 +58,26 @@ impl PackageStore {
 
     pub(super) fn load(&self) -> Result<PackageCatalog> {
         let mut catalog = load_catalog(&self.root)?;
+        validate_catalog_structure(&catalog)?;
+        let changed = reconcile_references(&mut catalog, &leases::active(&self.root)?);
+        let retired = catalog
+            .packages
+            .values()
+            .filter(|record| record.state == PackageState::Retiring && record.reference_count == 0)
+            .map(|record| record.id.clone())
+            .collect::<Vec<_>>();
+        for package_id in &retired {
+            catalog.packages.remove(package_id);
+        }
         verify_catalog(&self.root, &catalog)?;
-        if reconcile_references(&mut catalog, &leases::active(&self.root)?) {
+        if changed || !retired.is_empty() {
             catalog.generation = catalog.generation.saturating_add(1);
             persist_catalog(&self.root, &catalog)?;
+        }
+        for package_id in retired {
+            if let Err(error) = remove_package_revisions(&self.root, &package_id) {
+                tracing::warn!(package_id, %error, "retired package cleanup deferred after catalog commit");
+            }
         }
         Ok(catalog)
     }
@@ -72,29 +88,11 @@ impl PackageStore {
 
     // Called only while the cross-process transaction lock is held.
     pub(super) fn recover(&self) -> Result<PackageCatalog> {
-        let store_root = &self.root;
-        let leases = leases::active(store_root)?;
-        let mut catalog = load_catalog(store_root)?;
+        let catalog = load_catalog(&self.root)?;
         validate_catalog_structure(&catalog)?;
-        recover_staging(store_root, &catalog)?;
-        let mut recovered = reconcile_references(&mut catalog, &leases);
-        let retiring = catalog
-            .packages
-            .values()
-            .filter(|record| record.state == PackageState::Retiring && record.reference_count == 0)
-            .map(|record| record.id.clone())
-            .collect::<Vec<_>>();
-        for package_id in retiring {
-            catalog.packages.remove(&package_id);
-            remove_package_revisions(store_root, &package_id)?;
-            recovered = true;
-        }
-        verify_catalog(store_root, &catalog)?;
-        gc_unreferenced_store_revisions(store_root, &catalog, &leases)?;
-        if recovered {
-            catalog.generation = catalog.generation.saturating_add(1);
-            persist_catalog(store_root, &catalog)?;
-        }
+        recover_staging(&self.root, &catalog)?;
+        let catalog = self.load()?;
+        self.gc_unreferenced_revisions(&catalog)?;
         Ok(catalog)
     }
 

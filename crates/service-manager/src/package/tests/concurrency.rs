@@ -160,10 +160,9 @@ fn verify_crash_recovery(surviving_reference: bool) {
     child.stdin.take().unwrap().write_all(b"x").unwrap();
     assert!(child.wait().unwrap().success());
     drop(survivor);
-    if surviving_reference {
-        assert!(service.catalog().unwrap().packages.is_empty());
-        assert!(!root.join("revisions/crashed").exists());
-    }
+    assert!(service.catalog().unwrap().packages.is_empty());
+    assert!(service.catalog().unwrap().packages.is_empty());
+    assert!(!root.join("revisions/crashed").exists());
     fs::create_dir_all(root.join("staging/interrupted/source")).unwrap();
     fs::write(root.join("staging/interrupted/source/file"), b"partial").unwrap();
     fs::write(root.join("catalog-interrupted.tmp"), b"partial").unwrap();
