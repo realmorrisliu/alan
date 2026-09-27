@@ -213,7 +213,7 @@ async fn host_stop_gracefully_stops_bare_foreground_instance() {
         panic!("foreground Alan instance did not exit after host stop");
     };
 
-    assert!(exited.success());
+    assert_eq!(exited.code(), Some(143));
     assert!(!paths.status.exists());
     assert!(!paths.socket.exists());
 }
@@ -252,7 +252,7 @@ async fn ctrl_c_stops_bare_foreground_instance_while_stdin_is_open() {
 }
 
 #[tokio::test]
-async fn sigterm_before_one_shot_input_exits_cleanly_and_removes_runtime_files() {
+async fn sigterm_before_one_shot_input_exits_with_signal_status_and_removes_runtime_files() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let runtime_dir = runtime.path().join("foreground");
     let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
@@ -279,7 +279,7 @@ async fn sigterm_before_one_shot_input_exits_cleanly_and_removes_runtime_files()
         panic!("foreground Alan instance did not exit after SIGTERM");
     };
 
-    assert_eq!(exited.code(), Some(0));
+    assert_eq!(exited.code(), Some(143));
     assert!(!paths.status.exists());
     assert!(!paths.socket.exists());
 }

@@ -10,10 +10,6 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{
     io::{IsTerminal, Read},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
 };
 
 #[derive(Parser)]
@@ -719,6 +715,8 @@ async fn run_bare_in_foreground_instance(
     paths: HostEndpointPaths,
     mode: BareRunMode,
 ) -> Result<i32> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("listen for Alan instance shutdown")?;
     let config = HostBootConfig::product(channel.descriptor().id)?;
     let host = AlanOsHost::boot(config, paths.clone()).await?;
     let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
@@ -728,8 +726,6 @@ async fn run_bare_in_foreground_instance(
         })
         .await
     });
-    let task_in_flight = Arc::new(AtomicBool::new(false));
-    let signal_task_in_flight = Arc::clone(&task_in_flight);
 
     let run_result: Result<i32> = tokio::select! {
         result = async {
@@ -760,18 +756,13 @@ async fn run_bare_in_foreground_instance(
                             return Ok(130);
                         }
                     };
-                    task_in_flight.store(true, Ordering::Relaxed);
-                    let exit_code =
-                        alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
-                    task_in_flight.store(false, Ordering::Relaxed);
+                    let exit_code = alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
                     Ok(exit_code)
                 }
             }
         }
         => result,
-        signal = wait_for_host_termination() => {
-            signal.map(|()| if signal_task_in_flight.load(Ordering::Relaxed) { 143 } else { 0 })
-        }
+        _ = terminate.recv() => Ok(143),
     };
 
     let _ = shutdown.send(());
@@ -781,13 +772,6 @@ async fn run_bare_in_foreground_instance(
     let exit_code = run_result?;
     server_result?;
     Ok(exit_code)
-}
-
-async fn wait_for_host_termination() -> Result<()> {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .context("listen for Alan instance shutdown")?;
-    terminate.recv().await;
-    Ok(())
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
