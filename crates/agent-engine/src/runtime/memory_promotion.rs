@@ -163,8 +163,22 @@ pub(crate) async fn promote_inbox_entry(
             memory_dir.display()
         )
     })?;
-    // ponytail: one lock serializes promotions per store; split per target if contention warrants it.
-    let _lock = acquire_promotion_lock(memory_dir, cancel).await?;
+    // ponytail: lock the inbox and files this path updates; extend this set with future shared writes.
+    let _inbox_lock = acquire_promotion_lock(inbox_path, cancel).await?;
+    ensure_memory_promotion_not_cancelled(cancel)?;
+
+    let raw = tokio::fs::read_to_string(inbox_path)
+        .await
+        .with_context(|| format!("read inbox entry {}", inbox_path.display()))?;
+    let document = parse_inbox_entry(&raw)
+        .with_context(|| format!("parse inbox entry {}", inbox_path.display()))?;
+    let target_path = resolve_target_path(memory_dir, &document.frontmatter.target)?;
+    let lock_path = if is_topic_target(&document.frontmatter.target) {
+        memory_dir.join(MEMORY_STORE_FILENAME)
+    } else {
+        target_path.clone()
+    };
+    let _target_lock = acquire_promotion_lock(&lock_path, cancel).await?;
     ensure_memory_promotion_not_cancelled(cancel)?;
 
     let raw = tokio::fs::read_to_string(inbox_path)
@@ -173,6 +187,14 @@ pub(crate) async fn promote_inbox_entry(
     let mut document = parse_inbox_entry(&raw)
         .with_context(|| format!("parse inbox entry {}", inbox_path.display()))?;
     let target_path = resolve_target_path(memory_dir, &document.frontmatter.target)?;
+    let current_lock_path = if is_topic_target(&document.frontmatter.target) {
+        memory_dir.join(MEMORY_STORE_FILENAME)
+    } else {
+        target_path.clone()
+    };
+    if current_lock_path != lock_path {
+        bail!("inbox target changed while waiting for its promotion lock");
+    }
     let promoted_from = format_relative_memory_path(memory_dir, inbox_path);
     let promoted_stamp = now.format("%F").to_string();
     let promoted_observation = normalize_inline_text(&document.observation);

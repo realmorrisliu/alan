@@ -15,18 +15,20 @@ use std::time::Duration;
 
 #[cfg(unix)]
 pub(super) async fn acquire_promotion_lock(
-    memory_dir: &Path,
+    lock_path: &Path,
     cancel: &CancellationToken,
 ) -> Result<File> {
-    let path = memory_dir.join(".memory-promotion.lock");
+    let path = lock_path.to_path_buf();
 
     let file = tokio::task::spawn_blocking(move || {
         let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true);
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        options
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW);
         options
             .open(&path)
-            .with_context(|| format!("open Memory Store promotion lock {}", path.display()))
+            .with_context(|| format!("open promotion lock target {}", path.display()))
     })
     .await
     .context("join Memory Store promotion lock task")??;
@@ -66,7 +68,7 @@ pub(super) async fn acquire_promotion_lock(
 
 #[cfg(not(unix))]
 pub(super) async fn acquire_promotion_lock(
-    _memory_dir: &Path,
+    _lock_path: &Path,
     _cancel: &CancellationToken,
 ) -> Result<File> {
     Err(anyhow!(
