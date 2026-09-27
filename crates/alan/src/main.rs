@@ -671,7 +671,15 @@ async fn main() -> Result<()> {
                         .context("read Agent task from stdin")?;
                     let input =
                         String::from_utf8(input).context("stdin task is not valid UTF-8")?;
-                    alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                    let exit_code =
+                        alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                    if exit_code != 0 {
+                        std::process::exit(if (1..=255).contains(&exit_code) {
+                            exit_code
+                        } else {
+                            1
+                        });
+                    }
                 }
             }
         }

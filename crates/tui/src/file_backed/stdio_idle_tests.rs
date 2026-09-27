@@ -201,7 +201,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         wait_for_answer.await.unwrap()
     };
 
-    assert_eq!(answer, "new answer");
+    assert_eq!(answer.agent_answer(), "new answer");
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
@@ -396,8 +396,8 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
         )
         .await
         .unwrap();
-    let a = StdioTaskWaitContext::new("client a");
-    let b = StdioTaskWaitContext::new("client b");
+    let a = StdioTaskWaitContext::new("client a").unwrap();
+    let b = StdioTaskWaitContext::new("client b").unwrap();
     let a_id = a.record.submission_id.clone();
     let b_id = b.record.submission_id.clone();
     assert_ne!(a_id, b_id);
@@ -479,7 +479,8 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
                     .await
                     .unwrap()
                     .unwrap()
-                    .unwrap(),
+                    .unwrap()
+                    .agent_answer(),
                 answer
             );
             assert!(
@@ -494,7 +495,8 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
             .await
             .unwrap()
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .agent_answer(),
         "answer b"
     );
 }
