@@ -459,6 +459,7 @@ async fn expired_action_evidence_stays_expired_across_repeated_recovery() {
         .unwrap();
     let mut previous = recorder.path().clone();
     for pid in [2, 3] {
+        let source = previous.clone();
         let machine = crate::agent_machine::AgentMachine::load_from_rollout_in_dir(
             &previous,
             &format!("/proc/{pid}"),
@@ -479,7 +480,7 @@ async fn expired_action_evidence_stays_expired_across_repeated_recovery() {
         let environment = NamespaceRuntimeEnvironment::new(root.clone(), &path, "default");
         environment
             .agent_files()
-            .restore_actions(&previous)
+            .restore_actions(&source)
             .await
             .unwrap();
         let output = Shell::new(root.clone())

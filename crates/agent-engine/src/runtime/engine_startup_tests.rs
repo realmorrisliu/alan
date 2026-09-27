@@ -163,3 +163,45 @@ async fn selected_recovery_failure_never_creates_a_fresh_machine() {
         }
     }
 }
+
+#[tokio::test]
+async fn best_effort_recovery_preserves_history_without_new_persistence() {
+    let temp = TempDir::new().unwrap();
+    let mut source = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", temp.path())
+        .await
+        .unwrap();
+    source.add_user_message("recover this history");
+    source.flush().await;
+    let path = source.rollout_path().unwrap();
+    let unavailable = temp.path().join("not-a-directory");
+    std::fs::write(&unavailable, "occupied").unwrap();
+    for destination in [None, Some(&unavailable)] {
+        for required in [false, true] {
+            let result = initialize_agent_machine(
+                AgentMachineLaunchContext {
+                    process_path: "/proc/2",
+                    agent_path: "/agent/2",
+                    model: "mock",
+                },
+                Some(path),
+                destination,
+                required,
+                None,
+                crate::ResolvedRequestControls::default(),
+            )
+            .await;
+            if required {
+                assert!(result.is_err());
+            } else {
+                let recovered = result.unwrap();
+                assert!(!recovered.metadata.durability.durable);
+                assert!(recovered.metadata.rollout_path.is_none());
+                assert!(!recovered.metadata.warnings.is_empty());
+                assert_eq!(
+                    recovered.machine.messages()[0].text_content(),
+                    "recover this history"
+                );
+            }
+        }
+    }
+}
