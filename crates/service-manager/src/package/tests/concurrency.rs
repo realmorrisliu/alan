@@ -102,9 +102,26 @@ fn concurrent_services_do_not_overwrite_each_others_catalog_entries() {
 
 #[test]
 fn crashed_process_releases_revision_and_staging_is_recovered() {
+    for surviving_reference in [false, true] {
+        verify_crash_recovery(surviving_reference);
+    }
+}
+
+fn verify_crash_recovery(surviving_reference: bool) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
     let service = PackageService::open("dev", root.clone()).unwrap();
+    assert!(
+        service
+            .execute(PackageCommand::Install {
+                request_id: "install".into(),
+                package_id: "crashed".into(),
+                snapshot: native_snapshot("crashed", "body"),
+            })
+            .unwrap()
+            .success
+    );
+    let survivor = surviving_reference.then(|| service.acquire("crashed").unwrap());
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -130,7 +147,10 @@ fn crashed_process_releases_revision_and_staging_is_recovered() {
         }
     }
     let catalog = service.catalog().unwrap();
-    assert_eq!(catalog.packages["crashed"].reference_count, 1);
+    assert_eq!(
+        catalog.packages["crashed"].reference_count,
+        1 + u64::from(surviving_reference)
+    );
     let reopened = PackageService::open("dev", root.clone()).unwrap();
     assert_eq!(
         reopened.catalog().unwrap().packages["crashed"].state,
@@ -139,6 +159,11 @@ fn crashed_process_releases_revision_and_staging_is_recovered() {
     assert!(root.join("revisions/crashed").is_dir());
     child.stdin.take().unwrap().write_all(b"x").unwrap();
     assert!(child.wait().unwrap().success());
+    drop(survivor);
+    if surviving_reference {
+        assert!(service.catalog().unwrap().packages.is_empty());
+        assert!(!root.join("revisions/crashed").exists());
+    }
     fs::create_dir_all(root.join("staging/interrupted/source")).unwrap();
     fs::write(root.join("staging/interrupted/source/file"), b"partial").unwrap();
     fs::write(root.join("catalog-interrupted.tmp"), b"partial").unwrap();
@@ -157,16 +182,6 @@ fn package_crash_worker() {
         return;
     };
     let service = PackageService::open("dev", root.into()).unwrap();
-    assert!(
-        service
-            .execute(PackageCommand::Install {
-                request_id: "install".into(),
-                package_id: "crashed".into(),
-                snapshot: native_snapshot("crashed", "body"),
-            })
-            .unwrap()
-            .success
-    );
     let _lease = service.acquire("crashed").unwrap();
     assert!(
         service

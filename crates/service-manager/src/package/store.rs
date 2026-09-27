@@ -57,8 +57,12 @@ impl PackageStore {
     }
 
     pub(super) fn load(&self) -> Result<PackageCatalog> {
-        let catalog = load_catalog(&self.root)?;
+        let mut catalog = load_catalog(&self.root)?;
         verify_catalog(&self.root, &catalog)?;
+        if reconcile_references(&mut catalog, &leases::active(&self.root)?) {
+            catalog.generation = catalog.generation.saturating_add(1);
+            persist_catalog(&self.root, &catalog)?;
+        }
         Ok(catalog)
     }
 
@@ -73,14 +77,7 @@ impl PackageStore {
         let mut catalog = load_catalog(store_root)?;
         validate_catalog_structure(&catalog)?;
         recover_staging(store_root, &catalog)?;
-        let mut recovered = false;
-        for record in catalog.packages.values_mut() {
-            let count = leases.values().filter(|(id, _)| id == &record.id).count() as u64;
-            if record.reference_count != count {
-                record.reference_count = count;
-                recovered = true;
-            }
-        }
+        let mut recovered = reconcile_references(&mut catalog, &leases);
         let retiring = catalog
             .packages
             .values()
@@ -152,6 +149,21 @@ impl PackageStore {
             &leases::active(&self.root)?,
         )
     }
+}
+
+fn reconcile_references(
+    catalog: &mut PackageCatalog,
+    leases: &BTreeMap<u64, (String, String)>,
+) -> bool {
+    let mut changed = false;
+    for record in catalog.packages.values_mut() {
+        let count = leases.values().filter(|(id, _)| id == &record.id).count() as u64;
+        if record.reference_count != count {
+            record.reference_count = count;
+            changed = true;
+        }
+    }
+    changed
 }
 
 #[cfg(test)]
