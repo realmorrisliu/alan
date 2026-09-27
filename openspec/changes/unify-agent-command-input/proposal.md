@@ -59,6 +59,8 @@ None.
 - `os-sandbox-enforcement`: native project-path identity in reified views with unchanged confinement.
 
 - `alan-shell`: unified entry routing, Host shell execution, aP path boundaries and redirected IO.
+- `alan-interaction-model` and `rust-inline-tui`: foreground Ctrl-D/exit semantics
+  and acceptance checks, replacing the old renderer-exit survival guarantee.
 - `alan-renderer-host-contract`: route/cwd presentation, instance-local rendering,
   direct-command input and interruption behavior.
 - `agent-namespace-runtime`: deterministic command transitions, ordered execution,

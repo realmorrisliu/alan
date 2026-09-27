@@ -10,14 +10,14 @@ Herdr is a preferred terminal host, not an Alan runtime or authorization depende
 
 The CLI owns the native application lifetime. Its existing alan9 composition
 keeps Kernel, Service Manager and Agent Runtime Service responsibilities intact
-inside that invocation; a logical Service does not require a separate daemon.
+inside that invocation; a logical Service does not require a separate background process.
 `/agent/root` is local to that instance. Separate invocations do not implicitly
 share input, cwd, Process identity or pending work. Multiple authorized clients
 of one live Agent still use its ordered admission and correlated results.
 
 A terminal host may keep the foreground process alive when its view detaches.
 Actual Alan exit ends that instance and its owned work; Alan does not start a
-replacement daemon to preserve execution. Recovery selects explicit durable
+replacement background process to preserve execution. Recovery selects explicit durable
 records, validates current authority, and restores reliable pending work paused.
 No automatic channel-wide latest-rollout selection or effect replay is authorized.
 
