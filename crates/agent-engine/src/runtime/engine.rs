@@ -489,6 +489,14 @@ fn spawn_with_prepared_runtime_environment(
         };
         let machine = startup.machine;
         let _ = runtime_recorder.set(machine.recorder());
+        let environment = environment.with_action_recorder(machine.recorder());
+        if recovery_rollout_path.is_some()
+            && let Some(path) = machine.rollout_path()
+            && let Err(error) = environment.agent_files().restore_actions(path).await
+        {
+            let _ = ready_tx.send(Err(format!("restore Action evidence: {error:#}")));
+            return;
+        }
 
         // Build the transition context owned by this Process loop.
         let mut state = RuntimeLoopState {

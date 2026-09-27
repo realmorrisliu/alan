@@ -239,9 +239,38 @@ impl NamespaceAgentFiles {
         Ok(())
     }
 
-    pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
+    pub async fn write_action(&self, mut record: NamespaceActionRecord) -> Result<String> {
+        if let Some(output) = record.output.as_mut() {
+            *output = crate::evidence::redact_durable_evidence_text(output).text;
+        }
+        if let Some(result) = record.result.as_mut() {
+            *result = crate::evidence::redact_durable_evidence_text(result).text;
+        }
         let client = NamespaceClient::new(self.root.clone());
-        write_action_record(&client, &self.agent_path, record).await
+        write_action_record(
+            &client,
+            &self.agent_path,
+            record,
+            self.action_recorder.as_ref(),
+        )
+        .await
+    }
+
+    pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
+        // ponytail: startup scans the rollout once more; index evidence if large histories warrant it.
+        let client = NamespaceClient::new(self.root.clone());
+        for item in crate::rollout::RolloutRecorder::load_history(path).await? {
+            if let crate::rollout::RolloutItem::Event(event) = item
+                && event.event_type == "agent_action_v1"
+            {
+                let record: NamespaceActionRecord =
+                    serde_json::from_value(event.payload["record"].clone())
+                        .context("decode recovered Action evidence")?;
+                // This is an IO projection into a fresh Process, never a Tool replay.
+                write_action_record(&client, &self.agent_path, record, None).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn read_ui_activity_snapshot(&self) -> Result<UiActivitySnapshot> {
@@ -623,7 +652,15 @@ async fn write_action_record(
     client: &NamespaceClient,
     agent_path: &str,
     record: NamespaceActionRecord,
+    recorder: Option<&crate::rollout::RolloutRecorder>,
 ) -> Result<String> {
+    // AgentFS document fields accept at most 1 MiB. Status is the only field
+    // not written before the durability barrier, because it publishes completion.
+    anyhow::ensure!(
+        record.status.len() <= 1 << 20,
+        "Action status exceeds document limit"
+    );
+    let payload = serde_json::to_value(&record)?;
     let clone_path = format!("{agent_path}/actions/clone");
     let id = client
         .clone_via_open(&clone_path)
@@ -652,6 +689,20 @@ async fn write_action_record(
         client
             .write_document(&format!("{action_path}/process"), process.as_bytes())
             .await?;
+    }
+    if let Some(recorder) = recorder {
+        recorder
+            .persist_batch(vec![crate::rollout::RolloutItem::Event(
+                crate::rollout::EventRecord {
+                    event_type: "agent_action_v1".into(),
+                    payload: serde_json::json!({
+                        "agent_path":agent_path, "action_id":id, "record":payload
+                    }),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                },
+            )])
+            .await
+            .context("persist Action evidence before publishing completion")?;
     }
     // The terminal status event publishes a complete Action snapshot to watchers.
     client

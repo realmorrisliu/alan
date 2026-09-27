@@ -1,8 +1,9 @@
+mod action_evidence;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
-use tracing::error;
 
 use super::{
     AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
@@ -241,10 +242,12 @@ impl AgentMachine {
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        let items = RolloutRecorder::load_history(path).await?;
+        let mut items = RolloutRecorder::load_history(path).await?;
         if !matches!(items.first(), Some(RolloutItem::AgentMachineMeta(_))) {
             anyhow::bail!("rollout does not begin with current Agent Machine metadata");
         }
+
+        action_evidence::rebase(&mut items, process_path)?;
 
         // Recovery is explicitly scoped to the newly launched Agent Process. The
         // source rollout is evidence, not a globally addressable execution identity.
@@ -351,48 +354,28 @@ impl AgentMachine {
             machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
 
-        let recovered_messages = machine.messages().to_vec();
-        if (!recovered_messages.is_empty()
-            || recovered_compaction.is_some()
-            || !compaction_attempt_records.is_empty()
-            || !memory_flush_attempt_records.is_empty()
-            || !effect_records.is_empty()
-            || !event_records.is_empty())
-            && let Some(recorder) = machine.recorder.as_ref()
-        {
-            for message in recovered_messages {
-                if let Err(err) = recorder.record_tape_message_nowait(&message) {
-                    error!(error = %err, "Failed to re-persist recovered message");
-                }
-            }
-            for attempt in compaction_attempt_records {
-                if let Err(err) = recorder.record_compaction_attempt_nowait(attempt) {
-                    error!(error = %err, "Failed to re-persist recovered compaction attempt");
-                }
-            }
-            for attempt in memory_flush_attempt_records {
-                if let Err(err) = recorder.record_memory_flush_attempt_nowait(attempt) {
-                    error!(error = %err, "Failed to re-persist recovered memory flush attempt");
-                }
-            }
-            if let Some(compacted) = recovered_compaction
-                && let Err(err) = recorder.record_compacted_item_nowait(compacted)
-            {
-                error!(error = %err, "Failed to re-persist recovered summary");
-            }
-            for effect in effect_records {
-                if let Err(err) = recorder.record_effect_nowait(effect) {
-                    error!(error = %err, "Failed to re-persist recovered effect");
-                }
-            }
-            for event in event_records {
-                if let Err(err) = recorder.record_event_item_nowait(event) {
-                    error!(error = %err, "Failed to re-persist recovered event");
-                }
-            }
-            if let Err(err) = recorder.flush().await {
-                error!(error = %err, "Failed to flush recovered rollout state");
-            }
+        if let Some(recorder) = machine.recorder.as_ref() {
+            let mut recovered = machine
+                .messages()
+                .iter()
+                .map(|message| {
+                    RolloutItem::Message(RolloutRecorder::message_record_from_tape_message(message))
+                })
+                .collect::<Vec<_>>();
+            recovered.extend(
+                compaction_attempt_records
+                    .into_iter()
+                    .map(RolloutItem::CompactionAttempt),
+            );
+            recovered.extend(
+                memory_flush_attempt_records
+                    .into_iter()
+                    .map(RolloutItem::MemoryFlushAttempt),
+            );
+            recovered.extend(recovered_compaction.map(RolloutItem::Compacted));
+            recovered.extend(effect_records.into_iter().map(RolloutItem::Effect));
+            recovered.extend(event_records.into_iter().map(RolloutItem::Event));
+            recorder.persist_batch(recovered).await?;
         }
 
         Ok(machine)
