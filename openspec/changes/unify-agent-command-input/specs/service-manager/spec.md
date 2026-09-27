@@ -21,7 +21,8 @@ system degraded and await explicit retry. The foreground Root Agent SHALL use
 rollout path held by that instance's Agent Runtime Service, and MUST NOT reread
 the channel-wide selector. A new invocation SHALL read that selector only when
 the user explicitly requests `alan --resume`; no background Host survives the
-foreground invocation.
+foreground invocation. If an instance has no durable rollout, its replacement
+SHALL start fresh without consulting the channel-wide selector.
 
 #### Scenario: Root Agent crash loops
 - **WHEN** the foreground Root Agent fails after readiness
@@ -37,6 +38,12 @@ foreground invocation.
   rollout
 - **AND** its recovery is independent of the other invocation's selector write
 - **AND** each replacement remains subject to the bounded restart budget
+
+#### Scenario: Root Agent has no durable rollout
+- **WHEN** best-effort startup succeeds without creating a durable rollout and
+  the Root Agent later restarts
+- **THEN** its replacement starts without restoring any channel-wide rollout
+- **AND** a later successful durable startup becomes that invocation's recovery source
 
 #### Scenario: Another required service exhausts its restart budget
 - **WHEN** a required non-Root service exceeds its configured retry budget

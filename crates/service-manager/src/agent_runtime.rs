@@ -106,7 +106,7 @@ pub(crate) struct AgentRuntimeService {
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
-    current_root_rollout: Mutex<Option<PathBuf>>,
+    current_root_rollout: Mutex<root_recovery::RootRolloutState>,
 }
 
 struct PendingRootLaunch {
@@ -141,7 +141,7 @@ impl AgentRuntimeService {
             tool_runner,
             pending_roots: Mutex::new(HashMap::new()),
             process_templates: Mutex::new(HashMap::new()),
-            current_root_rollout: Mutex::new(None),
+            current_root_rollout: Mutex::new(root_recovery::RootRolloutState::NotStarted),
         })
     }
 
@@ -163,6 +163,15 @@ impl AgentRuntimeService {
             unit.executable == AGENT_EXECUTABLE,
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
+        let mut template = template.clone();
+        root_recovery::select(
+            &mut template.process,
+            template.resume_persisted_rollout,
+            &mut self
+                .current_root_rollout
+                .lock()
+                .expect("current Root rollout mutex poisoned"),
+        )?;
         let source = namespace_with_package_references(
             system_namespace.snapshot(),
             &template.launch_context,
@@ -319,18 +328,6 @@ impl AgentRuntimeService {
         invocation: &ProcessInvocation,
         launch: &mut AgentLaunch,
     ) -> Result<ProcessOutcome> {
-        if launch.root {
-            let current_rollout = self
-                .current_root_rollout
-                .lock()
-                .expect("current Root rollout mutex poisoned")
-                .clone();
-            root_recovery::select(
-                &mut launch.template.process,
-                launch.template.resume_persisted_rollout,
-                current_rollout.as_deref(),
-            )?;
-        }
         let pid = invocation.pid;
         let credentials = invocation.credentials.clone();
         launch.namespace.replace_mount(
@@ -432,12 +429,16 @@ impl AgentRuntimeService {
             .context("Agent Machine failed to start")?;
         if launch.root {
             root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
-            if let Some(rollout) = startup.rollout_path.as_ref() {
-                *self
-                    .current_root_rollout
-                    .lock()
-                    .expect("current Root rollout mutex poisoned") = Some(rollout.clone());
-            }
+            let rollout = startup
+                .rollout_path
+                .clone()
+                .or_else(|| launch.template.process.recovery_rollout_path.clone());
+            *self
+                .current_root_rollout
+                .lock()
+                .expect("current Root rollout mutex poisoned") = rollout
+                .map(root_recovery::RootRolloutState::Durable)
+                .unwrap_or(root_recovery::RootRolloutState::NoDurableRollout);
         }
         let runtime_handle = controller.handle.clone();
         agent

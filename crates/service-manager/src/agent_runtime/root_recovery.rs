@@ -5,25 +5,36 @@ use anyhow::{Context, Result, bail, ensure};
 use std::{
     fs,
     io::Write,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
 
 const CURRENT: &str = "root-rollout";
 
+#[derive(Clone, Debug, Default)]
+pub(super) enum RootRolloutState {
+    #[default]
+    NotStarted,
+    NoDurableRollout,
+    Durable(PathBuf),
+}
+
 pub(super) fn select(
     config: &mut AgentProcessConfig,
     resume_previous: bool,
-    current_rollout: Option<&Path>,
+    current_rollout: &mut RootRolloutState,
 ) -> Result<()> {
-    if config.recovery_rollout_path.is_some() || (!resume_previous && current_rollout.is_none()) {
+    if config.recovery_rollout_path.is_some() {
         return Ok(());
     }
     let Some(stores) = config.store_bindings.as_ref() else {
         return Ok(());
     };
+    let pin_instance_state = matches!(current_rollout, RootRolloutState::NotStarted);
     let path = match current_rollout {
-        Some(path) => path.to_path_buf(),
-        None => {
+        RootRolloutState::Durable(path) => path.clone(),
+        RootRolloutState::NoDurableRollout => return Ok(()),
+        RootRolloutState::NotStarted if !resume_previous => return Ok(()),
+        RootRolloutState::NotStarted => {
             let name = match fs::read_to_string(stores.metadata.join(CURRENT)) {
                 Ok(name) => name,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -45,7 +56,10 @@ pub(super) fn select(
             .is_file(),
         "selected Root Agent rollout is not a file"
     );
-    config.recovery_rollout_path = Some(path);
+    config.recovery_rollout_path = Some(path.clone());
+    if pin_instance_state {
+        *current_rollout = RootRolloutState::Durable(path);
+    }
     Ok(())
 }
 
@@ -113,18 +127,20 @@ mod tests {
             store_bindings: Some(stores.clone()),
             ..Default::default()
         };
-        select(&mut config, false, None).unwrap();
+        let mut not_started = RootRolloutState::NotStarted;
+        select(&mut config, false, &mut not_started).unwrap();
         assert!(config.recovery_rollout_path.is_none());
-        assert!(select(&mut config, true, None).is_err());
+        assert!(select(&mut config, true, &mut not_started).is_err());
         fs::create_dir_all(&stores.rollouts).unwrap();
         for name in ["first.jsonl", "second.jsonl"] {
             let path = stores.rollouts.join(name);
             fs::write(&path, "test evidence").unwrap();
             publish(&config, Some(&path)).unwrap();
             config.recovery_rollout_path = None;
-            select(&mut config, false, None).unwrap();
+            let mut new_instance = RootRolloutState::NotStarted;
+            select(&mut config, false, &mut new_instance).unwrap();
             assert!(config.recovery_rollout_path.is_none());
-            select(&mut config, true, None).unwrap();
+            select(&mut config, true, &mut new_instance).unwrap();
             assert_eq!(config.recovery_rollout_path.as_ref(), Some(&path));
         }
         assert!(publish(&config, Some(&stores.rollouts.join("unavailable.jsonl"))).is_err());
@@ -133,25 +149,25 @@ mod tests {
             "second.jsonl"
         );
         config.recovery_rollout_path = Some(stores.rollouts.join("explicit.jsonl"));
-        select(&mut config, false, None).unwrap();
+        select(&mut config, false, &mut not_started).unwrap();
         assert_eq!(
             config.recovery_rollout_path,
             Some(stores.rollouts.join("explicit.jsonl"))
         );
         config.recovery_rollout_path = None;
         fs::remove_file(stores.rollouts.join("second.jsonl")).unwrap();
-        assert!(select(&mut config, true, None).is_err());
+        assert!(select(&mut config, true, &mut not_started).is_err());
         for invalid in ["", "../first.jsonl", "/outside.jsonl"] {
             fs::write(stores.metadata.join(CURRENT), invalid).unwrap();
-            assert!(select(&mut config, true, None).is_err());
+            assert!(select(&mut config, true, &mut not_started).is_err());
         }
         let mut ephemeral = AgentProcessConfig::default();
-        select(&mut ephemeral, true, None).unwrap();
+        select(&mut ephemeral, true, &mut not_started).unwrap();
         assert!(ephemeral.recovery_rollout_path.is_none());
     }
 
     #[test]
-    fn current_instance_rollout_takes_precedence_over_channel_resume_selector() {
+    fn current_instance_rollout_precedes_and_new_instance_pins_channel_selector() {
         let temp = tempfile::tempdir().unwrap();
         let stores = alan_agent_engine::AgentRuntimeStoreBindings {
             rollouts: temp.path().join("rollouts"),
@@ -168,13 +184,47 @@ mod tests {
         fs::write(&selected, "channel selector").unwrap();
         fs::write(stores.metadata.join(CURRENT), "session-b.jsonl").unwrap();
         let mut config = AgentProcessConfig {
+            store_bindings: Some(stores.clone()),
+            ..Default::default()
+        };
+
+        let mut current_instance = RootRolloutState::Durable(current.clone());
+        select(&mut config, true, &mut current_instance).unwrap();
+
+        assert_eq!(config.recovery_rollout_path, Some(current));
+
+        config.recovery_rollout_path = None;
+        let mut new_instance = RootRolloutState::NotStarted;
+        select(&mut config, true, &mut new_instance).unwrap();
+        assert_eq!(config.recovery_rollout_path, Some(selected.clone()));
+        fs::write(stores.metadata.join(CURRENT), "session-a.jsonl").unwrap();
+        config.recovery_rollout_path = None;
+        select(&mut config, true, &mut new_instance).unwrap();
+        assert_eq!(config.recovery_rollout_path, Some(selected));
+    }
+
+    #[test]
+    fn started_instance_without_durable_rollout_never_uses_channel_selector() {
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        fs::create_dir_all(&stores.rollouts).unwrap();
+        fs::create_dir_all(&stores.metadata).unwrap();
+        fs::write(stores.rollouts.join("other-session.jsonl"), "other session").unwrap();
+        fs::write(stores.metadata.join(CURRENT), "other-session.jsonl").unwrap();
+        let mut config = AgentProcessConfig {
             store_bindings: Some(stores),
             ..Default::default()
         };
 
-        select(&mut config, true, Some(&current)).unwrap();
+        select(&mut config, true, &mut RootRolloutState::NoDurableRollout).unwrap();
 
-        assert_eq!(config.recovery_rollout_path, Some(current));
+        assert!(config.recovery_rollout_path.is_none());
     }
 
     #[tokio::test]
