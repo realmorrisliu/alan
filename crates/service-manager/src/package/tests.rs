@@ -4,6 +4,7 @@ use super::*;
 use alan_agent_engine::skills::{SkillScope, parse_skill_metadata};
 use std::fs::File;
 
+mod concurrency;
 mod file_surface;
 
 fn native_snapshot(name: &str, body: &str) -> PackageSnapshot {
@@ -115,7 +116,13 @@ fn install_rejects_a_stale_file_at_the_revision_path() {
 
     assert!(!result.unwrap().success);
     assert!(target.is_file());
-    assert!(!service.catalog().packages.contains_key("stale-file-pack"));
+    assert!(
+        !service
+            .catalog()
+            .unwrap()
+            .packages
+            .contains_key("stale-file-pack")
+    );
 }
 
 #[cfg(unix)]
@@ -144,7 +151,13 @@ fn install_rejects_a_stale_symlink_at_the_revision_path() {
             .file_type()
             .is_symlink()
     );
-    assert!(!service.catalog().packages.contains_key("stale-link-pack"));
+    assert!(
+        !service
+            .catalog()
+            .unwrap()
+            .packages
+            .contains_key("stale-link-pack")
+    );
 }
 
 #[cfg(unix)]
@@ -168,6 +181,7 @@ fn install_rejects_a_symlinked_package_revision_parent() {
     assert!(
         !service
             .catalog()
+            .unwrap()
             .packages
             .contains_key("symlinked-parent-pack")
     );
@@ -258,6 +272,7 @@ fn install_rejects_case_colliding_snapshot_paths_before_materialization() {
     assert!(
         !service
             .catalog()
+            .unwrap()
             .packages
             .contains_key("case-collision-pack")
     );
@@ -362,7 +377,7 @@ fn one_distribution_rejects_duplicate_runtime_skill_ids() {
         .unwrap();
     assert!(!result.success);
     assert!(result.message.contains("duplicate Skill id"));
-    assert!(service.catalog().packages.is_empty());
+    assert!(service.catalog().unwrap().packages.is_empty());
 }
 
 #[test]
@@ -416,7 +431,7 @@ fn failed_upgrade_keeps_the_current_catalog_and_revision() {
             snapshot: native_snapshot("research", "current"),
         })
         .unwrap();
-    let before = service.catalog();
+    let before = service.catalog().unwrap();
     let failed = service
         .execute(PackageCommand::Upgrade {
             request_id: "atomic-upgrade".to_string(),
@@ -433,7 +448,7 @@ fn failed_upgrade_keeps_the_current_catalog_and_revision() {
         .unwrap();
 
     assert!(!failed.success);
-    assert_eq!(service.catalog(), before);
+    assert_eq!(service.catalog().unwrap(), before);
     assert_eq!(
         fs::read_dir(service.store.root().join("revisions/atomic-pack"))
             .unwrap()
@@ -493,7 +508,7 @@ fn failed_uninstall_keeps_the_current_catalog_and_revision() {
             snapshot: native_snapshot("atomic-uninstall", "current"),
         })
         .unwrap();
-    let before = service.catalog();
+    let before = service.catalog().unwrap();
     let staging = service.store.root().join("staging");
     fs::remove_dir(&staging).unwrap();
     fs::write(&staging, b"block revision staging").unwrap();
@@ -506,7 +521,7 @@ fn failed_uninstall_keeps_the_current_catalog_and_revision() {
         .unwrap();
 
     assert!(!failed.success);
-    assert_eq!(service.catalog(), before);
+    assert_eq!(service.catalog().unwrap(), before);
     assert!(service.resolve("atomic-uninstall-pack").is_ok());
     assert!(
         service
@@ -586,7 +601,13 @@ fn live_reference_retains_old_revision_until_retiring_package_is_released() {
     assert!(service.resolve("leased-pack").is_err());
     assert!(lease.content_root().is_dir());
     drop(lease);
-    assert!(!service.catalog().packages.contains_key("leased-pack"));
+    assert!(
+        !service
+            .catalog()
+            .unwrap()
+            .packages
+            .contains_key("leased-pack")
+    );
     assert!(!service.store.root().join("revisions/leased-pack").exists());
 }
 
@@ -618,38 +639,6 @@ fn preinstalled_packages_update_only_through_seeding_and_cannot_be_removed() {
     let second = service.resolve("alan-memory").unwrap();
     assert_ne!(first.revision, second.revision);
     assert_eq!(second.kind, PackageKind::Preinstalled);
-}
-
-#[test]
-fn restart_cleans_staging_and_finalizes_ephemeral_retiring_references() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
-    service
-        .execute(PackageCommand::Install {
-            request_id: "restart-install".to_string(),
-            package_id: "restart-pack".to_string(),
-            snapshot: native_snapshot("restart", "body"),
-        })
-        .unwrap();
-    let lease = service.acquire("restart-pack").unwrap();
-    service
-        .execute(PackageCommand::Uninstall {
-            request_id: "restart-uninstall".to_string(),
-            package_id: "restart-pack".to_string(),
-        })
-        .unwrap();
-    std::mem::forget(lease);
-    drop(service);
-    fs::create_dir_all(root.join("staging/interrupted/source")).unwrap();
-    fs::write(root.join("staging/interrupted/source/file"), b"partial").unwrap();
-    fs::write(root.join("catalog-interrupted.tmp"), b"partial").unwrap();
-
-    let reopened = PackageService::open("dev", root.clone()).unwrap();
-    assert!(!reopened.catalog().packages.contains_key("restart-pack"));
-    assert_eq!(fs::read_dir(root.join("staging")).unwrap().count(), 0);
-    assert!(!root.join("catalog-interrupted.tmp").exists());
-    assert!(!root.join("revisions/restart-pack").exists());
 }
 
 #[test]
@@ -716,7 +705,7 @@ fn restart_rejects_invalid_retiring_package_id_before_removing_revisions() {
             snapshot: native_snapshot("unsafe-recovery", "body"),
         })
         .unwrap();
-    let mut catalog = service.catalog();
+    let mut catalog = service.catalog().unwrap();
     drop(service);
 
     let victim = directory.path().join("victim");
@@ -753,19 +742,6 @@ fn restart_rejects_symlinked_staging_without_deleting_its_target() {
 }
 
 #[test]
-fn package_store_has_only_one_live_service_owner() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
-
-    let error = PackageService::open("dev", root.clone()).unwrap_err();
-    assert!(error.to_string().contains("already owned"));
-
-    drop(service);
-    assert!(PackageService::open("dev", root).is_ok());
-}
-
-#[test]
 fn stable_and_dev_package_catalogs_are_isolated() {
     let directory = tempfile::tempdir().unwrap();
     let stable_root = directory.path().join("stable/services/packages");
@@ -781,7 +757,7 @@ fn stable_and_dev_package_catalogs_are_isolated() {
         .unwrap();
     assert!(stable.resolve("stable-only").is_ok());
     assert!(dev.resolve("stable-only").is_err());
-    assert!(dev.catalog().packages.is_empty());
+    assert!(dev.catalog().unwrap().packages.is_empty());
     let catalog = fs::read_to_string(stable_root.join("catalog.json")).unwrap();
     let host_root = directory.path().to_string_lossy();
     assert!(!catalog.contains(host_root.as_ref()));
@@ -916,6 +892,7 @@ fn command_materialization_rejects_generated_skill_above_descriptor_limit() {
     assert!(
         !service
             .catalog()
+            .unwrap()
             .packages
             .contains_key("oversized-command-pack")
     );

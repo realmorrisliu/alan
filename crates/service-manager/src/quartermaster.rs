@@ -852,7 +852,13 @@ mod tests {
         assert!(service.resolve("dogfood-pack").is_err());
         drop(package_shell);
         drop(lease);
-        assert!(!service.catalog().packages.contains_key("dogfood-pack"));
+        assert!(
+            !service
+                .catalog()
+                .unwrap()
+                .packages
+                .contains_key("dogfood-pack")
+        );
     }
 
     #[tokio::test]
@@ -904,7 +910,7 @@ mod tests {
             output.contains("NoAccess") || output.contains("NotFound"),
             "{output}"
         );
-        assert!(service.catalog().packages.is_empty());
+        assert!(service.catalog().unwrap().packages.is_empty());
     }
 
     #[cfg(unix)]
@@ -942,6 +948,12 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&result.output)
         );
-        assert!(service.catalog().packages.contains_key("git-symlink-pack"));
+        assert!(
+            service
+                .catalog()
+                .unwrap()
+                .packages
+                .contains_key("git-symlink-pack")
+        );
     }
 }
