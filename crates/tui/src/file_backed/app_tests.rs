@@ -1,4 +1,4 @@
-use super::FileBackedApp;
+use super::{FileBackedAction, FileBackedApp};
 use crate::history::{HistoryCell, RenderOpts};
 use std::collections::BTreeMap;
 
@@ -102,6 +102,76 @@ fn idle_reconnect_matches_a_partially_pruned_rendered_cell() {
 }
 
 #[test]
+fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
+    use alan_agent_protocol::InputIntent;
+    for (input, intent, body) in [
+        (
+            "!printf '%s' 'x'\n  echo done \n",
+            InputIntent::Command,
+            "printf '%s' 'x'\n  echo done \n",
+        ),
+        (":!literal", InputIntent::ForceAgent, "!literal"),
+        ("!!literal", InputIntent::Command, "!literal"),
+        (":/clear", InputIntent::ForceAgent, "/clear"),
+        ("plain ! text", InputIntent::Agent, "plain ! text"),
+    ] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.composer.set_text(input);
+        let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
+            panic!("expected input record")
+        };
+        assert_eq!(record.intent, intent);
+        assert_eq!(record.body, body);
+        record.validate().unwrap();
+        assert_eq!(
+            app.composer.text(),
+            input,
+            "unaccepted input stays in the editor"
+        );
+        assert!(app.transcript.is_empty());
+        app.accept_input();
+        assert!(app.composer.text().is_empty());
+        assert!(app.transcript.is_empty());
+    }
+    for input in ["!", ":", "! \n"] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.composer.set_text(input);
+        assert!(app.handle_submit().is_none());
+        assert_eq!(app.composer.text(), input);
+        assert!(app.transcript.is_empty());
+    }
+}
+
+#[test]
+fn pending_response_keeps_prefixes_as_literal_response_data() {
+    for input in ["!answer", ":!answer", "/clear"] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.set_pending_yield(crate::history::PendingYieldCell {
+            request_id: "request-1".into(),
+            kind: alan_agent_protocol::YieldKind::Custom("text".into()),
+            title: "Answer".into(),
+            prompt: None,
+            options: Vec::new(),
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        });
+        app.composer.set_text(input);
+        let Some(FileBackedAction::Resume {
+            request_id,
+            response,
+        }) = app.handle_submit()
+        else {
+            panic!("expected response to existing request")
+        };
+        assert_eq!(request_id, "request-1");
+        assert_eq!(response, input);
+    }
+}
+
+#[test]
 fn queued_local_input_does_not_replace_the_active_tape_boundary() {
     let mut app = FileBackedApp::new("/agent/root".into());
     app.apply_tape_record(super::super::tests::tape_message("user", "same prompt"));
@@ -111,6 +181,7 @@ fn queued_local_input_does_not_replace_the_active_tape_boundary() {
         app.handle_submit(),
         Some(super::FileBackedAction::Submit(_))
     ));
+    app.accept_input();
     app.push_output("lier".into());
     app.apply_tape_record(super::super::tests::tape_message("assistant", "earlier"));
     assert_eq!(
@@ -132,4 +203,31 @@ fn queued_local_input_does_not_replace_the_active_tape_boundary() {
             HistoryCell::Assistant("later".into()),
         ]
     );
+}
+
+#[test]
+fn prefix_inserted_at_the_start_of_an_existing_agent_draft_is_literal() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    for pasted in [false, true] {
+        for prefix in ["!", ":"] {
+            let mut app = FileBackedApp::new("/agent/root".into());
+            app.composer.set_text("explain this");
+            app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+            if pasted {
+                app.dispatch(super::FileBackedEvent::Terminal(
+                    super::TerminalEvent::Paste(prefix.into()),
+                ));
+            } else {
+                app.handle_key(KeyEvent::new(
+                    KeyCode::Char(prefix.chars().next().unwrap()),
+                    KeyModifiers::NONE,
+                ));
+            }
+            let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
+                panic!("input")
+            };
+            assert_eq!(record.intent, alan_agent_protocol::InputIntent::ForceAgent);
+            assert_eq!(record.body, format!("{prefix}explain this"));
+        }
+    }
 }
