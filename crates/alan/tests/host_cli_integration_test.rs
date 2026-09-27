@@ -251,6 +251,39 @@ async fn ctrl_c_stops_bare_foreground_instance_while_stdin_is_open() {
     assert!(!paths.socket.exists());
 }
 
+#[tokio::test]
+async fn sigterm_before_one_shot_input_exits_cleanly_and_removes_runtime_files() {
+    let runtime = tempfile::tempdir_in("/tmp").unwrap();
+    let runtime_dir = runtime.path().join("foreground");
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
+    let mut foreground = spawn_blocked_bare_cli(runtime.path(), &runtime_dir);
+    if !wait_for_host_ready(&paths).await {
+        let _ = foreground.kill();
+        let _ = foreground.wait();
+        panic!("foreground Alan instance did not become ready");
+    }
+
+    let terminate = Command::new("/bin/kill")
+        .args(["-TERM", &foreground.id().to_string()])
+        .status()
+        .unwrap();
+    if !terminate.success() {
+        let _ = foreground.kill();
+        let _ = foreground.wait();
+    }
+    assert!(terminate.success());
+
+    let Some(exited) = wait_for_child_exit(&mut foreground).await else {
+        let _ = foreground.kill();
+        let _ = foreground.wait();
+        panic!("foreground Alan instance did not exit after SIGTERM");
+    };
+
+    assert_eq!(exited.code(), Some(0));
+    assert!(!paths.status.exists());
+    assert!(!paths.socket.exists());
+}
+
 #[test]
 fn host_status_reports_stopping_without_attaching() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();

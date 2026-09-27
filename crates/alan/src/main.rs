@@ -10,6 +10,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{
     io::{IsTerminal, Read},
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 #[derive(Parser)]
@@ -724,6 +728,8 @@ async fn run_bare_in_foreground_instance(
         })
         .await
     });
+    let task_in_flight = Arc::new(AtomicBool::new(false));
+    let signal_task_in_flight = Arc::clone(&task_in_flight);
 
     let run_result: Result<i32> = tokio::select! {
         result = async {
@@ -754,13 +760,17 @@ async fn run_bare_in_foreground_instance(
                             return Ok(130);
                         }
                     };
-                    Ok(alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?)
+                    task_in_flight.store(true, Ordering::Relaxed);
+                    let exit_code =
+                        alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                    task_in_flight.store(false, Ordering::Relaxed);
+                    Ok(exit_code)
                 }
             }
         }
         => result,
         signal = wait_for_host_termination() => {
-            signal.map(|()| 0)
+            signal.map(|()| if signal_task_in_flight.load(Ordering::Relaxed) { 143 } else { 0 })
         }
     };
 
