@@ -40,19 +40,19 @@ migration already serialized through their owning locks.
 `alan connection` operations use the channel stores directly, and only a native
 Connection request attaches to its explicitly selected instance. Review and
 current-head CI evidence for the remaining slices remains under task 4.1.
-Explicit durable recovery discovery, authority validation and paused queue
-restoration remain under task 2.19. The `--resume` selector is being delivered
-as a focused Root recovery slice. Herdr detach acceptance is not inferred from
-the concurrent CLI tests.
+The `--resume` selector shipped in PR #981, and PR #982 verifies that explicit
+recovery preserves completed command evidence without replaying its effects.
+Further durable recovery discovery, authority and paused-queue acceptance remain
+under task 2.19. Herdr detach acceptance is not inferred from the concurrent CLI
+tests.
 
 This remains a partial delivery. This slice synchronizes shipped foreground
 startup, cross-invocation isolation, and Ctrl-D/exit behavior in the lifecycle
 specs and ADR-0056; explicit recovery and Herdr detach acceptance remain open.
 The cross-surface audit in task 2.17.4 is complete; other implementation sync,
 review and merge requirements remain under tasks 4.1–4.3.
-PR #981's automatic Root rollout selector and PR #982's automatic Host-restart
-acceptance are not merge prerequisites for the revised delivery; reusable
-evidence-recovery fixes may be extracted into focused PRs.
+PR #981 and PR #982 have merged as explicit-recovery implementation and
+acceptance slices; they do not complete the remaining lifecycle checks in task 2.19.
 
 Delivery boundary updated 2026-09-26: automatic typed routing, qualification and
 activation are owned by the active [qualify-agent-input-routing](../qualify-agent-input-routing/)
@@ -67,10 +67,9 @@ correlated completion and cancellation have landed through PR #970. The full
 explicit-input contract and acceptance matrix remain incomplete; unchecked tasks
 are not an assertion that no supporting code exists.
 
-The `/bin/agent_work` facade is implemented in PR #973 with its command/schema
-contract in design.md. Local Service Manager tests, schema validation and the
-full repository quality gate pass after retaining the existing dependency boundary.
-Its current-head review and CI merge gates remain pending. End-to-end Agent discovery,
+The `/bin/agent_work` facade shipped in PR #973 with its command/schema
+contract in design.md. Its current-head Codex review and required CI passed before
+merge; exact evidence is recorded under task 4.1. End-to-end Agent discovery,
 commit-failure injection and unknown-outcome acceptance remain part of task 2.13;
 this implementation is not an archive-readiness or canonical-spec sync claim.
 
