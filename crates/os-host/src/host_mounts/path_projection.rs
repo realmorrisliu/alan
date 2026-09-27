@@ -16,9 +16,10 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
 
 fn project_csv_records(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
     let mut projected = String::with_capacity(text.len());
-    for line in text.split_inclusive('\n') {
-        let record_end = line.trim_end_matches(['\r', '\n']).len();
-        let record = &line[..record_end];
+    let mut record_start = 0;
+    while record_start < text.len() {
+        let (record_end, next_record) = csv_record_bounds(text, record_start);
+        let record = &text[record_start..record_end];
         let is_native_root = |field: &str| {
             adapter.cwd.to_str() == Some(field)
                 || adapter.projection_cwd.0.to_str() == Some(field)
@@ -47,7 +48,8 @@ fn project_csv_records(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
                     is_native_root(field) || !field.contains('/')
                 })
         }) else {
-            projected.push_str(line);
+            projected.push_str(&text[record_start..next_record]);
+            record_start = next_record;
             continue;
         };
 
@@ -74,9 +76,48 @@ fn project_csv_records(adapter: &NativeToolExecutionAdapter, text: &str) -> Stri
                 projected.push_str(&projected_field);
             }
         }
-        projected.push_str(&line[record_end..]);
+        projected.push_str(&text[record_end..next_record]);
+        record_start = next_record;
     }
     projected
+}
+
+fn csv_record_bounds(text: &str, start: usize) -> (usize, usize) {
+    let bytes = text.as_bytes();
+    let mut cursor = start;
+    let mut quoted = false;
+    let mut field_start = true;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'"' if quoted && bytes.get(cursor + 1) == Some(&b'"') => cursor += 2,
+            b'"' if quoted => {
+                quoted = false;
+                cursor += 1;
+            }
+            b'"' if field_start => {
+                quoted = true;
+                field_start = false;
+                cursor += 1;
+            }
+            b',' if !quoted => {
+                field_start = true;
+                cursor += 1;
+            }
+            b'\n' if !quoted => {
+                let end = if cursor > start && bytes[cursor - 1] == b'\r' {
+                    cursor - 1
+                } else {
+                    cursor
+                };
+                return (end, cursor + 1);
+            }
+            _ => {
+                field_start = false;
+                cursor += 1;
+            }
+        }
+    }
+    (bytes.len(), bytes.len())
 }
 
 fn csv_fields(record: &str) -> Option<Vec<(std::ops::Range<usize>, bool)>> {
@@ -285,6 +326,61 @@ fn markdown_link_destination_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
                         end = Some(start + offset);
                         break;
                     }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            break;
+        };
+        ranges.push(start..end);
+        cursor = end + 1;
+    }
+    ranges
+}
+
+// Preserve CSS url() destinations without parsing stylesheet rules or declarations.
+fn css_url_destination_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some((relative, _)) = text.as_bytes()[cursor..]
+        .windows(4)
+        .enumerate()
+        .find(|(_, bytes)| bytes.eq_ignore_ascii_case(b"url("))
+    {
+        let function_start = cursor + relative;
+        if text[..function_start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+        {
+            cursor = function_start + 4;
+            continue;
+        }
+        let start = function_start + 4;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut end = None;
+        for (offset, ch) in text[start..].char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if let Some(delimiter) = quote {
+                if ch == delimiter {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                ')' => {
+                    end = Some(start + offset);
+                    break;
                 }
                 _ => {}
             }
@@ -547,10 +643,19 @@ fn replace_native_prefix(
 fn gnu_escape_path(path: &str) -> String {
     let mut escaped = String::with_capacity(path.len());
     for ch in path.chars() {
-        if ch.is_whitespace() {
-            escaped.push('\\');
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\x0b' => escaped.push_str("\\v"),
+            '\x0c' => escaped.push_str("\\f"),
+            ch if ch.is_whitespace() => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            ch => escaped.push(ch),
         }
-        escaped.push(ch);
     }
     escaped
 }
@@ -734,6 +839,7 @@ fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool
     let mut copied_through = 0;
     let mut protected_ranges = markup_tag_ranges(text);
     protected_ranges.extend(markdown_link_destination_ranges(text));
+    protected_ranges.extend(css_url_destination_ranges(text));
     protected_ranges.sort_by_key(|range| range.start);
     let mut markup = protected_ranges.into_iter().peekable();
     for (slash, _) in text.match_indices('/') {

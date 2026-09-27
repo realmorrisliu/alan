@@ -408,6 +408,10 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("/etc/hosts", "./etc/hosts"),
         ("[docs](/guide)", "[docs](/guide)"),
         (
+            "body { background: url(/assets/bg.png) }",
+            "body { background: url(/assets/bg.png) }",
+        ),
+        (
             r#"{"cwd":"\/","path":"\/etc\/hosts"}"#,
             r#"{"cwd":".","path":"./etc/hosts"}"#,
         ),
@@ -520,15 +524,18 @@ async fn projection_preserves_csv_quoting_and_projects_compact_roots() {
     let comma_sibling = format!("{},backup/file", project_root.display());
     assert_eq!(adapter.project_text(&comma_sibling), comma_sibling);
     assert_eq!(
-        adapter.project_text(&format!("\"{}/file.txt\",ok", docs_root.display())),
-        "\"../do\"\"cs/file.txt\",ok"
+        adapter.project_text(&format!(
+            "\"{}/file.txt\",\"first\nsecond\",ok\n",
+            docs_root.display()
+        )),
+        "\"../do\"\"cs/file.txt\",\"first\nsecond\",ok\n"
     );
 }
 
 #[tokio::test]
 async fn projection_matches_gnu_escape_quoted_roots() {
     let project = tempfile::Builder::new()
-        .prefix("alan space\"quote ")
+        .prefix("alan space\\\"quote ")
         .tempdir()
         .unwrap();
     let service = service();
@@ -547,7 +554,10 @@ async fn projection_matches_gnu_escape_quoted_roots() {
         .adapter()
         .unwrap();
     let root = dunce::canonicalize(project.path()).unwrap();
-    let escaped = root.to_string_lossy().replace(' ', "\\ ");
+    let escaped = root
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace(' ', "\\ ");
 
     assert_eq!(
         adapter.project_text(&format!("{escaped}/file.txt")),
