@@ -1,6 +1,14 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: One system Host owns each channel`
+- TO: `### Requirement: Each foreground invocation owns its alan9 instance`
+
+- FROM: `### Requirement: Ephemeral Host is test-only`
+- TO: `### Requirement: Product composition preserves production adapters`
+
 ## MODIFIED Requirements
 
-### Requirement: One system Host owns each channel
+### Requirement: Each foreground invocation owns its alan9 instance
 Each foreground `alan` invocation SHALL own an independent alan9 instance,
 Kernel and native application lifetime. Install channel SHALL select persistent
 configuration and store boundaries, not a singleton live runtime. Service Manager
@@ -55,7 +63,7 @@ effects MUST NOT be replayed automatically.
 - **AND** reliable pending work is exposed paused with current access revalidated
 - **AND** missing or invalid records fail recovery rather than cause fresh execution
 
-### Requirement: Ephemeral Host is test-only
+### Requirement: Product composition preserves production adapters
 Mock providers and ephemeral test stores SHALL require explicit development/test
 selection. Foreground product composition SHALL use the existing product adapters,
 channel stores and governance; running in-process SHALL NOT itself select a test
