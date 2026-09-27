@@ -301,6 +301,7 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     let uri = url::Url::from_file_path(root.join("notes.txt")).unwrap();
     assert!(uri.as_str().contains("%20"));
     assert_eq!(adapter.project_text(uri.as_str()), "./notes.txt");
+    assert_eq!(adapter.project_text(uri.path()), uri.path());
 
     let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
     let sibling_uri =
@@ -317,6 +318,11 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
     assert_eq!(
         adapter.project_text(&format!("__{}/src/lib.rs__", root.display())),
         "__./src/lib.rs__"
+    );
+    let ansi_unicode_descendant = format!("___{}\x1b[0m/src/é___", root.display());
+    assert_eq!(
+        adapter.project_text(&ansi_unicode_descendant),
+        "___.\x1b[0m/src/é___"
     );
     let single_emphasized_root = format!("_{}_", root.display());
     assert_eq!(adapter.project_text(&single_emphasized_root), "_._");

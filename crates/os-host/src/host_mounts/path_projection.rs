@@ -34,11 +34,6 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
             if shell_escaped_host_path != host_path {
                 candidates.push((shell_escaped_host_path, replacement.clone()));
             }
-            if let Ok(file_url) = url::Url::from_file_path(&mount.host_path)
-                && file_url.path() != host_path
-            {
-                candidates.push((file_url.path().to_owned(), replacement));
-            }
         }
     }
 
@@ -236,11 +231,16 @@ fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
         return false;
     }
 
-    let suffix = strip_trailing_terminal_sequences(strip_leading_terminal_sequences(&text[end..]));
+    let original_suffix = &text[end..];
+    let leading_sequence_length =
+        original_suffix.len() - strip_leading_terminal_sequences(original_suffix).len();
+    let suffix = strip_trailing_terminal_sequences(&original_suffix[leading_sequence_length..]);
     let closing_length = suffix.chars().rev().take_while(|ch| *ch == '_').count();
     let closing_start = suffix.len() - closing_length;
     let path_extension = &suffix[..closing_start];
-    let after_closing = strip_leading_terminal_sequences(&text[end + suffix.len()..]);
+    let after_closing = strip_leading_terminal_sequences(
+        &text[end + leading_sequence_length + closing_start + closing_length..],
+    );
     closing_length == opening_length
         && (path_extension.is_empty() || path_extension.starts_with(std::path::MAIN_SEPARATOR))
         && is_path_end(after_closing)
