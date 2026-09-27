@@ -57,6 +57,7 @@
 ## 4. Review, merge and archive readiness
 
 - [ ] 4.1 Run strict OpenSpec validation and applicable implementation checks, complete PR review and required current-head CI for each delivery slice; record the exact reviewed and merged commits.
+  - PR #981 reviewed head `3928b50a3f1fffb06b6572335c2e04458ede4a78` (Codex found no major issues); all 16 current-head checks passed; merged as `b61400380b88acfa34208e0c0ea0debfdaa6da82`. `just quality` and strict OpenSpec validation passed.
 - [ ] 4.2 Sync only implemented and merged requirements to canonical specs; verify no automatic-routing guarantee is synced merely because the explicit slice shipped.
 - [x] 4.2.1 Sync the CLI-only distribution requirement delivered by PR #1009; the canonical standalone-distribution specification and strict validation are included in PR #1010.
 - [x] 4.2.2 Sync shipped foreground startup, PR #1011's verified cross-invocation input/cwd isolation, and the CLI's Ctrl-D/exit lifecycle in the `alan-os-host-lifecycle`, `host-command-plane`, `alan-shell`, `alan-renderer-host-contract`, `local-alan-os-attachment`, `alan-interaction-model`, and `rust-inline-tui` canonical specs, plus ADR-0045 and ADR-0056. Explicit recovery restoration and Herdr detach acceptance remain pending.

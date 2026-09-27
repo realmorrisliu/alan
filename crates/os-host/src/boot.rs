@@ -309,6 +309,12 @@ impl HostBootConfig {
         Self(config)
     }
 
+    /// Explicitly restore the selected Root Agent rollout for this invocation.
+    pub fn with_root_resume(mut self) -> Self {
+        self.0.resume_root = true;
+        self
+    }
+
     /// Boot an independent in-process instance without a listener or background launcher.
     /// The caller owns the returned manager and must shut it down before exiting.
     pub async fn boot_foreground(self) -> Result<ServiceManager> {
