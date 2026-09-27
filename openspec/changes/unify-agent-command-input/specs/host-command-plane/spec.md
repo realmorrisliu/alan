@@ -19,7 +19,7 @@ paths to use supported task operations.
 #### Scenario: User starts Alan
 - **WHEN** the user runs `alan`
 - **THEN** product composition boots an independent foreground alan9 instance
-- **AND** its renderer reads that instance's namespace through Alan Shell
+- **AND** its renderer attaches directly to that instance's `/agent/root`
 - **AND** it neither discovers an ambient Root Agent nor bypasses Service Manager
 
 #### Scenario: Agent invokes an alan9 control command
