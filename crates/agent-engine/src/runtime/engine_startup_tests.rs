@@ -117,3 +117,39 @@ async fn test_initialize_agent_machine_from_rollout_preserves_current_process_cw
     drop(startup);
     let _ = tokio::fs::remove_file(persisted_path).await;
 }
+
+#[tokio::test]
+async fn selected_recovery_failure_never_creates_a_fresh_machine() {
+    let temp = TempDir::new().unwrap();
+    let corrupt = temp.path().join("corrupt.jsonl");
+    std::fs::write(&corrupt, "not a rollout\n").unwrap();
+    let missing = temp.path().join("missing.jsonl");
+    let output = temp.path().join("new-rollouts");
+    for source in [&missing, &corrupt] {
+        for durability_required in [false, true] {
+            let result = initialize_agent_machine(
+                AgentMachineLaunchContext {
+                    process_path: "/proc/42",
+                    agent_path: "/agent/42",
+                    model: "mock",
+                },
+                Some(source),
+                Some(&output),
+                durability_required,
+                None,
+                crate::ResolvedRequestControls::default(),
+            )
+            .await;
+            let error = match result {
+                Ok(_) => panic!("selected recovery must not silently reset"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("Failed to recover selected"));
+            assert!(error.to_string().contains(source.to_str().unwrap()));
+            assert!(
+                !output.exists(),
+                "failure must not create a replacement rollout"
+            );
+        }
+    }
+}
