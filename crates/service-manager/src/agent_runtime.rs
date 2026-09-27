@@ -106,6 +106,7 @@ pub(crate) struct AgentRuntimeService {
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
+    current_root_rollout: Mutex<Option<PathBuf>>,
 }
 
 struct PendingRootLaunch {
@@ -140,6 +141,7 @@ impl AgentRuntimeService {
             tool_runner,
             pending_roots: Mutex::new(HashMap::new()),
             process_templates: Mutex::new(HashMap::new()),
+            current_root_rollout: Mutex::new(None),
         })
     }
 
@@ -318,9 +320,15 @@ impl AgentRuntimeService {
         launch: &mut AgentLaunch,
     ) -> Result<ProcessOutcome> {
         if launch.root {
+            let current_rollout = self
+                .current_root_rollout
+                .lock()
+                .expect("current Root rollout mutex poisoned")
+                .clone();
             root_recovery::select(
                 &mut launch.template.process,
                 launch.template.resume_persisted_rollout,
+                current_rollout.as_deref(),
             )?;
         }
         let pid = invocation.pid;
@@ -424,6 +432,12 @@ impl AgentRuntimeService {
             .context("Agent Machine failed to start")?;
         if launch.root {
             root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+            if let Some(rollout) = startup.rollout_path.as_ref() {
+                *self
+                    .current_root_rollout
+                    .lock()
+                    .expect("current Root rollout mutex poisoned") = Some(rollout.clone());
+            }
         }
         let runtime_handle = controller.handle.clone();
         agent

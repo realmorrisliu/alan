@@ -106,6 +106,7 @@ Service Manager to privately start an Agent Runtime.
 #### Scenario: Service Manager replaces Root inside one foreground instance
 - **WHEN** the Root Agent Process fails after becoming ready
 - **THEN** Service Manager resumes the current instance's latest durable rollout
+- **AND** a concurrent invocation cannot change which rollout this replacement selects
 - **AND** a fresh invocation never selects a previous invocation's rollout unless `--resume` was requested
 
 #### Scenario: User runs alan with redirected IO

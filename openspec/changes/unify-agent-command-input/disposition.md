@@ -19,7 +19,10 @@ A terminal host may keep the foreground process alive when its view detaches.
 Actual Alan exit ends that instance and its owned work; Alan does not start a
 replacement background process to preserve execution. A new invocation restores
 the previous Root rollout only with `alan --resume`; Root replacement inside the
-same live instance may automatically continue that instance's selected rollout.
+same live instance may automatically continue the latest rollout path held by
+that instance's Agent Runtime Service. The channel-wide selector is read only
+for an explicit `--resume`, so concurrent invocations cannot redirect each
+other's supervised recovery.
 Recovery validates current authority and restores reliable pending work paused.
 No automatic cross-invocation rollout selection or effect replay is authorized.
 
