@@ -9,8 +9,11 @@
 ## MODIFIED Requirements
 
 ### Requirement: Each foreground invocation owns its alan9 instance
-Each foreground `alan` invocation SHALL own an independent alan9 instance,
-Kernel and native application lifetime. Install channel SHALL select persistent
+Each bare or redirected Agent-execution invocation of `alan` SHALL own an
+independent alan9 instance, Kernel and native application lifetime. In this
+contract, an invocation means that execution path; metadata, configuration and
+explicitly targeted management subcommands SHALL NOT boot an unrelated Root Agent.
+Install channel SHALL select persistent
 configuration and store boundaries, not a singleton live runtime. Service Manager
 SHALL retain ownership of services and the instance-local Root Agent Process.
 The renderer SHALL remain a file client of that instance. Bare `alan` MUST NOT
