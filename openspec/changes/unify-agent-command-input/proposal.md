@@ -22,8 +22,12 @@ users from issuing a predictable command while retaining the same context.
   for HostFS and sandbox authority; resolve native paths only inside the Host adapter.
 - Reconcile Linux reified mounts with native path identity; retain confinement
   and existing degraded-backend rules without requiring VM/FUSE deployment.
-- Preserve non-owning terminal attachment; interrupt pauses queued work, detach
-  leaves submitted work running, and recovery never automatically replays work.
+- **BREAKING**: each foreground `alan` invocation owns an independent alan9
+  instance; Herdr may retain its terminal process, but Alan does not depend on
+  a channel-wide background Host. Separate invocations do not share Root state.
+- Interrupt pauses queued work. Exiting Alan shuts down its owned instance;
+  terminal-host view detach preserves work only while that process remains alive.
+  Recovery is explicitly selected and never automatically replays work.
 - Expose command results to users directly and to later model input through bounded
   output and evidence references. Report missing response channels explicitly.
 - Deliver explicit prefixes first. Keep unprefixed Agent behavior until typed
@@ -42,6 +46,12 @@ None.
 
 ### Modified Capabilities
 
+- `alan-os-host-lifecycle`, `local-alan-os-attachment`, `service-manager` and
+  `standalone-cli-distribution`: reconcile foreground instance ownership,
+  instance-scoped attachment and packaging under the accepted 2026-09-27 revision.
+  Their lifecycle deltas are pending tasks 2.17–2.19; this proposal does not claim
+  that the current runtime or canonical specifications already implement it.
+
 - `host-command-plane`: distinguish thin alan9 command clients from duplicate Host managers.
 
 - `host-mount-service`: private grant-to-native-path resolution, preserving logical grants.
@@ -49,7 +59,9 @@ None.
 - `os-sandbox-enforcement`: native project-path identity in reified views with unchanged confinement.
 
 - `alan-shell`: unified entry routing, Host shell execution, aP path boundaries and redirected IO.
-- `alan-renderer-host-contract`: route/cwd presentation, non-owning attachment,
+- `alan-interaction-model` and `rust-inline-tui`: foreground Ctrl-D/exit semantics
+  and acceptance checks, replacing the old renderer-exit survival guarantee.
+- `alan-renderer-host-contract`: route/cwd presentation, instance-local rendering,
   direct-command input and interruption behavior.
 - `agent-namespace-runtime`: deterministic command transitions, ordered execution,
   Process-owned cwd and conservative restart handling.

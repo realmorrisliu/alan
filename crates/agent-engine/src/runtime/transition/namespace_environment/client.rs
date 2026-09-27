@@ -115,7 +115,11 @@ impl NamespaceClient {
         }
     }
 
-    async fn open_guarded_fid(&self, fid: Fid, mode: OpenMode) -> Result<NamespaceFidGuard> {
+    pub(super) async fn open_guarded_fid(
+        &self,
+        fid: Fid,
+        mode: OpenMode,
+    ) -> Result<NamespaceFidGuard> {
         match self.open(fid, mode).await {
             Ok(_) => Ok(NamespaceFidGuard::new(self.clone(), fid)),
             Err(err) => {

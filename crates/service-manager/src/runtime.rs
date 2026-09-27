@@ -25,7 +25,7 @@ use crate::{
     BootManifest, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
     ProcessLaunchContext, RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
-    agent_runtime::{AgentRuntimeFileServers, AgentRuntimeService, RootAgentTemplate},
+    agent_runtime::{AgentRuntimeService, RootAgentTemplate},
     process_spawn::{spawn_process, spawn_unit_process},
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
@@ -400,6 +400,10 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         !tools.list_tools().contains(&"q"),
         "Tool name `q` is reserved for Quartermaster"
     );
+    ensure!(
+        !tools.list_tools().contains(&"agent_work"),
+        "Tool name `agent_work` is reserved for Agent work commands"
+    );
     // System and Shell Processes are lifecycle records supervised by Alan OS;
     // they must not be fed to an executable runner merely because `/bin/q`
     // exists. Process-specific `/proc` views add the Quartermaster runner below.
@@ -414,7 +418,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     let package_handle = SwitchableFileServer::new();
     let agent_runtime = AgentRuntimeService::new(
         procfs.clone(),
-        AgentRuntimeFileServers::from_refs(&agent_root, &llmfs),
+        agent_root.clone(),
         host_mount_service.clone(),
         connection_service.clone(),
         tools.process_runner(),
@@ -694,6 +698,7 @@ fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) 
             SERVICE_MANAGER_EXECUTABLE,
             "/bin/alan-shell",
             QUARTERMASTER_EXECUTABLE,
+            crate::agent_work::EXECUTABLE,
         ])
     {
         namespace.mount(
@@ -705,6 +710,14 @@ fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) 
 }
 
 fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Result<()> {
+    namespace.mount(
+        "/lib/exec/agent_work",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            crate::agent_work::manifest(),
+        ))),
+        Access::ReadOnly,
+    );
     for name in tools.list_tools() {
         namespace.mount(
             &format!("/bin/{name}"),

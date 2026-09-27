@@ -117,3 +117,91 @@ async fn test_initialize_agent_machine_from_rollout_preserves_current_process_cw
     drop(startup);
     let _ = tokio::fs::remove_file(persisted_path).await;
 }
+
+#[tokio::test]
+async fn selected_recovery_failure_never_creates_a_fresh_machine() {
+    let temp = TempDir::new().unwrap();
+    let corrupt = temp.path().join("corrupt.jsonl");
+    std::fs::write(&corrupt, "not a rollout\n").unwrap();
+    let missing = temp.path().join("missing.jsonl");
+    let legacy = crate::rollout::RolloutRecorder::new_in_dir("/proc/1", "mock", temp.path())
+        .await
+        .unwrap();
+    legacy
+        .record_message("user", Some("legacy text without rich message"), None)
+        .await
+        .unwrap();
+    let legacy_path = legacy.path().clone();
+    let original = std::fs::read(&legacy_path).unwrap();
+    let output = temp.path().join("new-rollouts");
+    for source in [&missing, &corrupt, &legacy_path] {
+        for durability_required in [false, true] {
+            let result = initialize_agent_machine(
+                AgentMachineLaunchContext {
+                    process_path: "/proc/42",
+                    agent_path: "/agent/42",
+                    model: "mock",
+                },
+                Some(source),
+                Some(&output),
+                durability_required,
+                None,
+                crate::ResolvedRequestControls::default(),
+            )
+            .await;
+            let error = match result {
+                Ok(_) => panic!("selected recovery must not silently reset"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("Failed to recover selected"));
+            assert!(error.to_string().contains(source.to_str().unwrap()));
+            assert!(
+                !output.exists(),
+                "failure must not create a replacement rollout"
+            );
+            assert_eq!(std::fs::read(&legacy_path).unwrap(), original);
+        }
+    }
+}
+
+#[tokio::test]
+async fn best_effort_recovery_preserves_history_without_new_persistence() {
+    let temp = TempDir::new().unwrap();
+    let mut source = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", temp.path())
+        .await
+        .unwrap();
+    source.add_user_message("recover this history");
+    source.flush().await;
+    let path = source.rollout_path().unwrap();
+    let unavailable = temp.path().join("not-a-directory");
+    std::fs::write(&unavailable, "occupied").unwrap();
+    for destination in [None, Some(&unavailable)] {
+        for required in [false, true] {
+            let result = initialize_agent_machine(
+                AgentMachineLaunchContext {
+                    process_path: "/proc/2",
+                    agent_path: "/agent/2",
+                    model: "mock",
+                },
+                Some(path),
+                destination,
+                required,
+                None,
+                crate::ResolvedRequestControls::default(),
+            )
+            .await;
+            if required {
+                assert!(result.is_err());
+            } else {
+                let recovered = result.unwrap();
+                assert!(!recovered.metadata.durability.durable);
+                assert!(recovered.metadata.rollout_path.is_none());
+                assert!(!recovered.metadata.warnings.is_empty());
+                assert_eq!(
+                    recovered.machine.messages()[0].text_content(),
+                    "recover this history"
+                );
+            }
+        }
+    }
+}

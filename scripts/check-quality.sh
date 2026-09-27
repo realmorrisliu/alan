@@ -18,8 +18,6 @@ if [[ -z "$host_target" ]]; then
 fi
 quality_target_dir="${ALAN_QUALITY_TARGET_DIR:-$ROOT/target/quality-gate}"
 alan_binary="$quality_target_dir/$host_target/debug/alan"
-host_binary="$quality_target_dir/$host_target/debug/alan-os-host"
-dev_host_binary="$quality_target_dir/$host_target/debug/alan-os-host-dev"
 export CARGO_BUILD_TARGET="$host_target"
 export CARGO_TARGET_DIR="$quality_target_dir"
 
@@ -29,12 +27,15 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 bash "$ROOT/scripts/check-rust-inline-tui-contract.sh"
 
 cargo build --locked -p alan --bin alan
-cargo build --locked -p alan-os-host --bin alan-os-host --bin alan-os-host-dev
 "$ROOT/scripts/check-daemon-era-absence.sh" "$alan_binary"
 bash "$ROOT/scripts/test-daemon-era-absence.sh"
 "$ROOT/scripts/check-workspace-runtime-absence.sh" "$ROOT" "$alan_binary"
 "$ROOT/scripts/check-legacy-macos-absence.sh"
 bash "$ROOT/scripts/check-openspec-current-surfaces.sh"
-"$ROOT/scripts/check-standalone-cli.sh" "$alan_binary" "$host_binary" "$dev_host_binary"
+"$ROOT/scripts/check-standalone-cli.sh" "$alan_binary"
+ALAN_STANDALONE_TARGET_DIR="$quality_target_dir" \
+ALAN_BUILD_PROFILE=debug \
+ALAN_SKIP_BUILD=1 \
+    "$ROOT/scripts/test-standalone-cli-distribution.sh"
 
 printf 'Repository quality gate passed.\n'

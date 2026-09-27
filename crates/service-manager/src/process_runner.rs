@@ -39,6 +39,11 @@ impl ProcessRunner for SystemProcessRunner {
         {
             return ProcessOutcome::exited(127, b"executable is not mounted\n");
         }
+        if invocation.exec.executable == crate::agent_work::EXECUTABLE {
+            return crate::agent_work::AgentWorkProcessRunner
+                .run(invocation)
+                .await;
+        }
         if invocation.exec.executable == QUARTERMASTER_EXECUTABLE {
             return self.quartermaster.run(invocation).await;
         }

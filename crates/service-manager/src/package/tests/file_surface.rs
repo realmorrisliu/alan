@@ -59,7 +59,7 @@ async fn file_surface_rejects_duplicate_request_documents_on_clunk() {
         shell.write("/ctl", &command).await,
         Err(ErrorCode::BadRequest)
     );
-    assert_eq!(service.catalog().generation, 0);
+    assert_eq!(service.catalog().unwrap().generation, 0);
 }
 
 #[tokio::test]

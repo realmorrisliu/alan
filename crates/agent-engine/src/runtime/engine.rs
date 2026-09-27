@@ -17,9 +17,9 @@ use crate::agent_machine::{
     input_queue::{MachineInputQueue, QueuedRuntimeItem},
 };
 use alan_agent_protocol::Submission;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
@@ -106,7 +106,6 @@ async fn read_pending_namespace_submission(
     }
 }
 
-#[derive(Default)]
 struct RuntimeSubmissionQueues {
     /// Shared handle to the Agent Machine's ordinary queue.
     outer_queue: Arc<Mutex<MachineInputQueue>>,
@@ -114,7 +113,20 @@ struct RuntimeSubmissionQueues {
     active_turn_broker: TurnInputBroker,
 }
 
+impl Default for RuntimeSubmissionQueues {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
 impl RuntimeSubmissionQueues {
+    fn new(outer_queue: Arc<Mutex<MachineInputQueue>>) -> Self {
+        Self {
+            active_turn_broker: TurnInputBroker::from_queue(outer_queue.clone()),
+            outer_queue,
+        }
+    }
+
     fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
         let mut queue = self.outer_queue.lock().expect("input queue poisoned");
         if queue.paused {
@@ -261,53 +273,26 @@ async fn initialize_agent_machine(
     let reasoning_effort = request_controls.reasoning_effort();
 
     let machine = if let Some(path) = recovery_rollout_path {
-        let load_result = AgentMachine::load_from_rollout_with_recorder_cwd(
+        let (machine, durability_error) = AgentMachine::load_from_rollout_with_recorder_cwd(
             path,
             launch.process_path,
             launch.model,
             rollouts_dir.map(|dir| dir.as_path()),
             rollout_cwd,
             reasoning_effort,
+            durability_required,
         )
-        .await;
-
-        match load_result {
-            Ok(machine) => machine,
-            Err(err) => {
-                if durability_required {
-                    return Err(anyhow::anyhow!(
-                        "Strict durability required: failed to load persisted machine from {}: {}",
-                        path.display(),
-                        err
-                    ));
-                }
-
-                warn!(
-                    error = %err,
-                    path = %path.display(),
-                    "Failed to load machine from rollout; creating fresh persistent machine"
-                );
-                match create_persistent_machine(
-                    launch.process_path,
-                    launch.model,
-                    rollouts_dir,
-                    rollout_cwd,
-                    reasoning_effort,
-                )
-                .await
-                {
-                    Ok(machine) => machine,
-                    Err(create_err) => {
-                        warn!(
-                            error = %create_err,
-                            "Failed to create a persistent machine after rollout recovery; using an in-memory machine"
-                        );
-                        warnings.push(best_effort_durability_warning(&create_err));
-                        AgentMachine::new()
-                    }
-                }
-            }
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to recover selected Agent Machine rollout {}",
+                path.display()
+            )
+        })?;
+        if let Some(error) = durability_error {
+            warnings.push(best_effort_durability_warning(&error));
         }
+        machine
     } else {
         match create_persistent_machine(
             launch.process_path,
@@ -430,6 +415,9 @@ fn spawn_with_prepared_runtime_environment(
             .flatten(),
     );
 
+    let recorder = Arc::new(OnceLock::new());
+    let runtime_recorder = recorder.clone();
+
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
         let process_path = match environment.process_files().process_path() {
@@ -473,6 +461,14 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
         let machine = startup.machine;
+        let _ = runtime_recorder.set(machine.recorder());
+        let environment = environment.with_action_recorder(machine.recorder());
+        if let Some(path) = recovery_rollout_path.as_ref()
+            && let Err(error) = environment.agent_files().restore_actions(path).await
+        {
+            let _ = ready_tx.send(Err(format!("restore Action evidence: {error:#}")));
+            return;
+        }
 
         // Build the transition context owned by this Process loop.
         let mut state = RuntimeLoopState {
@@ -501,10 +497,7 @@ fn spawn_with_prepared_runtime_environment(
         let mut submissions_closed = false;
         let mut shutdown_requested = false;
 
-        let mut queues = RuntimeSubmissionQueues {
-            outer_queue: state.machine.input_queue(),
-            ..Default::default()
-        };
+        let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
 
         let mut namespace_ready = VecDeque::new();
         let mut namespace_batch_admitted = false;
@@ -609,7 +602,7 @@ fn spawn_with_prepared_runtime_environment(
             };
 
             match queued_item {
-                QueuedRuntimeItem::Submission(submission) => {
+                QueuedRuntimeItem::Submission(mut submission) => {
                     if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
                         && submission.intent != alan_agent_protocol::InputIntent::Command
                         && state.machine.has_pending_interaction()
@@ -620,7 +613,25 @@ fn spawn_with_prepared_runtime_environment(
                         .handle_control(&submission, &state.agent_files(), None)
                         .await
                     {
+                        if !state.machine.has_pending_interaction() {
+                            let files = state.agent_files();
+                            let result = if queues.is_paused() {
+                                super::ui_surfaces::paused(&files, None).await
+                            } else {
+                                super::ui_surfaces::turn_completed(&files, false).await
+                            };
+                            if let Err(error) = result {
+                                warn!(%error, "Failed to publish queue activity");
+                            }
+                        }
                         continue;
+                    }
+                    if matches!(
+                        submission.op,
+                        alan_agent_protocol::Op::InterruptSubmission { .. }
+                    ) {
+                        // A matching suspended input has no live future/token to cancel.
+                        submission.op = alan_agent_protocol::Op::Interrupt;
                     }
                     // Only boundary controls may overtake admitted work. Ordinary
                     // Machine controls share the same FIFO as Turn/Input records.
@@ -691,7 +702,10 @@ fn spawn_with_prepared_runtime_environment(
                                     queues.pause();
                                 }
                                 if queues.is_paused() {
-                                    let _ = super::ui_surfaces::paused(&namespace_heartbeat).await;
+                                    let _ = super::ui_surfaces::paused(
+                                        &namespace_heartbeat,
+                                        state.machine.has_pending_interaction().then_some(&state.machine),
+                                    ).await;
                                 }
                                 queues.outer_queue.lock().expect("input queue poisoned").pending.extend(
                                     outcome
@@ -844,6 +858,7 @@ fn spawn_with_prepared_runtime_environment(
         shutdown_tx,
         task_handle,
         ready_rx,
+        recorder,
     ))
 }
 

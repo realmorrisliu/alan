@@ -80,8 +80,9 @@ _Avoid_: Host shell session, Runtime console
 Its lifecycle source of truth is `/proc/<pid>` and its AgentFS view is
 `/agent/<pid>`.
 
-**Root Agent Process** — The always-available root of the agent process tree,
-surfaced through `/agent/root`. It coordinates child Agent Processes.
+**Root Agent Process** — The instance-local root of the agent process tree for
+one Alan invocation, surfaced through that instance's `/agent/root` after
+startup. It coordinates child Agent Processes.
 
 **Agent Executable** — An executable bound into `/bin` that creates an Agent
 Process when spawned.
@@ -201,12 +202,13 @@ used by an Agent Process. Secret material remains in its owning host store.
 
 ## Hosts and apps
 
-**alan9 Host** — The dedicated per-user, per-device, per-install-channel
-process that owns one alan9 instance, exposes its namespace attachment
-surface, and shuts down the whole instance. It owns the system's external
-lifecycle, while the Service Manager owns internal service and Process
-lifecycle. Renderer hosts attach instead of booting their own instance.
-_Avoid_: Runtime Manager, Session Host, app-owned runtime, per-window runtime
+**alan9 Host** — The product composition around one alan9 instance. A bare or
+redirected Agent-execution invocation boots it in the foreground and owns its
+external lifetime; the Service Manager owns internal service and Process
+lifecycle. The install channel selects persistent configuration and stores,
+not a shared live runtime. An explicitly targeted client may attach over aP to a
+selected live instance.
+_Avoid_: Runtime Manager, Session Host, app-owned runtime, per-channel runtime
 
 **alan9 Attachment** — An aP client view of a ready alan9 Standard
 Namespace. It discovers Processes and services through stable paths such as

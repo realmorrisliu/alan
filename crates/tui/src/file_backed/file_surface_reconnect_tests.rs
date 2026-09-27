@@ -31,7 +31,35 @@ async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() 
     .unwrap();
 
     let mut pending_terminal_events = std::collections::VecDeque::new();
-    crate::file_backed::discard_superseded_attachment_events(&mut rx, &mut pending_terminal_events);
+    let completion = alan_agent_protocol::UiEvent::InputCompleted {
+        submission_ids: vec!["mine".into()],
+        status: alan_agent_protocol::UiInputStatus::Completed,
+        error: None,
+    };
+    tx.send(FileBackedEvent::Ui(completion.clone()))
+        .await
+        .unwrap();
+    tx.send(FileBackedEvent::Tape(
+        crate::file_backed::file_surface::TapeRecordV1 {
+            end_offset: 0,
+            version: 1,
+            input_intent: None,
+            kind: "message".into(),
+            role: "assistant".into(),
+            content: "final answer".into(),
+            submission_id: Some("mine".into()),
+            related_submission_ids: Vec::new(),
+        },
+    ))
+    .await
+    .unwrap();
+    let preserved = crate::file_backed::discard_superseded_attachment_events(
+        &mut rx,
+        &mut pending_terminal_events,
+        Some("mine"),
+    );
+    assert_eq!(preserved.0, Some(completion));
+    assert_eq!(preserved.1.as_deref(), Some("final answer"));
 
     assert!(matches!(
         pending_terminal_events.pop_front(),
@@ -300,6 +328,8 @@ async fn renderer_hydration_retries_all_streams_after_root_pid_changes() {
     tails.ui.close().await.unwrap();
     tails.tape.close().await.unwrap();
     tails.output.close().await.unwrap();
+    tails.recovery_ui.close().await.unwrap();
+    tails.recovery_tape.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -343,6 +373,8 @@ async fn renderer_hydration_waits_for_a_stale_published_root_pid_to_change() {
     tails.ui.close().await.unwrap();
     tails.tape.close().await.unwrap();
     tails.output.close().await.unwrap();
+    tails.recovery_ui.close().await.unwrap();
+    tails.recovery_tape.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -382,6 +414,8 @@ async fn hydration_does_not_append_a_historical_error_after_later_tape_turns() {
     tails.ui.close().await.unwrap();
     tails.tape.close().await.unwrap();
     tails.output.close().await.unwrap();
+    tails.recovery_ui.close().await.unwrap();
+    tails.recovery_tape.close().await.unwrap();
 }
 
 async fn create_request(agent_root: &alan_agentfs::AgentRootFs, pid: &str, fid: Fid) -> String {

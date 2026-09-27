@@ -715,15 +715,18 @@
             async {}
         };
 
+        let writer = state.agent_files().begin_tape_generation().await.unwrap();
         let outcome = orchestrate_tool_batch(
             &mut loop_guard,
             state,
             &tool_calls,
             inputs,
+            &writer,
             &mut emit,
         )
         .await
         .expect("tool orchestration should succeed");
+        writer.finish().await.unwrap();
         (outcome, events)
     }
 

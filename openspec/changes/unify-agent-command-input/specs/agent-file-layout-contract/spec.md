@@ -7,7 +7,9 @@ durable backing stores. The Process path and durable record identifiers SHALL be
 locate and interpret that state.
 
 Accepted submission identity, intent, queue ordering/pause and shared cwd
-recovery evidence SHALL use these owners. Reliable pending work is restored
+recovery evidence SHALL use these owners. Restoring prior execution SHALL require
+explicit durable-record selection and current authority validation; records do
+not confer live capabilities. Reliable pending work is restored
 paused; unknown effects are reconciled and never automatically replayed.
 Missing or untrustworthy records are reported rather than fabricated.
 
@@ -105,6 +107,13 @@ Process and MUST NOT introduce a global Session or renderer-owned queue.
 - **WHEN** a client attaches after an interrupt paused queued submissions
 - **THEN** it can inspect the paused queue and cwd through AgentFS
 - **AND** it need not recover state from the original renderer
+
+#### Scenario: Waiting for a response is correlated to its inputs
+- **WHEN** an input or its participating steering inputs wait for confirmation, structured input or authorization
+- **THEN** the paused UI activity snapshot and event identify those inputs in `waiting_submission_ids`
+- **AND** unrelated queued inputs are not identified as needing a response
+- **AND** resume clears those identities; a queue-only pause has an empty list
+- **AND** readers treat an absent field in older snapshots as an empty list
 
 ### Requirement: Command evidence feeds bounded shared Agent context
 Direct commands and results SHALL use existing action, Process and durable

@@ -785,3 +785,23 @@ async fn only_one_of_two_concurrent_data_commits_starts_the_generation() {
     fs.clunk(Fid(2)).await.unwrap();
     assert_eq!(fs.clunk(Fid(3)).await, Err(ErrorCode::BadRequest));
 }
+
+#[tokio::test]
+async fn captured_connection_survives_registry_replacement_and_removal() {
+    let registry = llmfs_with(HangingProvider);
+    let process = registry.connection_snapshot("default");
+    let generation = open_clone(&process, Fid(910)).await;
+    commit_request(&process, &generation, Fid(911), SIMPLE_REQUEST).await.unwrap();
+    registry.unregister_connection("default").await;
+    registry.register_connection("default", Box::new(MockLlmProvider::new()));
+    let next_process = registry.connection_snapshot("default");
+    assert_eq!(status_of(&process, &generation, Fid(912)).await, "running");
+    let old = read_all(&process, &["connections", "default", "provider"], Fid(913)).await;
+    let new = read_all(&next_process, &["connections", "default", "provider"], Fid(914)).await;
+    assert_ne!(old, new);
+    registry.unregister_connection("default").await;
+    assert_eq!(read_all(&process, &["connections", "default", "provider"], Fid(915)).await, old);
+    let narrowed = process.connection_view("withheld").connection_snapshot("default");
+    assert!(read_all(&narrowed, &["connections"], Fid(916)).await.is_empty());
+    process.unregister_connection("default").await;
+}

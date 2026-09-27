@@ -6,13 +6,13 @@ use alan_agent_protocol::{
     ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
     UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
-use alan_ap::{Fid, OpenMode};
+use alan_ap::OpenMode;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use super::{
     NamespaceActionRecord, NamespaceAgentFiles, NamespaceRequestRecord,
-    client::{InputFrame, NamespaceClient},
+    client::{InputFrame, NamespaceClient, NamespaceFidGuard},
 };
 use crate::evidence::{
     EvidenceResolutionError, EvidenceResolutionErrorCode, NamespaceEvidenceReference,
@@ -169,22 +169,12 @@ impl NamespaceAgentFiles {
         write_agent_output(&client, &self.agent_path, response).await
     }
 
+    #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
-        write_tape_records(&client, &self.agent_path, [("user", input)]).await
+        write_tape_records(&client, &self.agent_path, [("user", input)], None).await
     }
 
-    pub async fn write_turn_tape_state(&self, input: Option<&str>, response: &str) -> Result<()> {
-        let client = NamespaceClient::new(self.root.clone());
-        let mut records = Vec::new();
-        if let Some(input) = input.filter(|value| !value.trim().is_empty()) {
-            records.push(("user", input));
-        }
-        records.push(("assistant", response));
-        write_tape_records(&client, &self.agent_path, records).await
-    }
-
-    #[cfg(test)]
     pub async fn begin_tape_generation(&self) -> Result<NamespaceTapeWriter> {
         let client = NamespaceClient::new(self.root.clone());
         NamespaceTapeWriter::open(client, &self.agent_path).await
@@ -249,9 +239,47 @@ impl NamespaceAgentFiles {
         Ok(())
     }
 
-    pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
+    pub async fn write_action(&self, mut record: NamespaceActionRecord) -> Result<String> {
+        if let Some(output) = record.output.as_mut() {
+            *output = crate::evidence::redact_durable_evidence_text(output).text;
+        }
+        if let Some(result) = record.result.as_mut() {
+            *result = crate::evidence::redact_durable_evidence_text(result).text;
+        }
         let client = NamespaceClient::new(self.root.clone());
-        write_action_record(&client, &self.agent_path, record).await
+        write_action_record(
+            &client,
+            &self.agent_path,
+            record,
+            self.action_recorder.as_ref(),
+        )
+        .await
+    }
+
+    pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
+        // ponytail: startup scans the rollout once more; index evidence if large histories warrant it.
+        let client = NamespaceClient::new(self.root.clone());
+        let mut items = crate::rollout::RolloutRecorder::load_history(path).await?;
+        let pid = self
+            .agent_path
+            .strip_prefix("/agent/")
+            .context("recovered Agent path")?;
+        crate::agent_machine::AgentMachine::rebase_recovered_actions(
+            &mut items,
+            &format!("/proc/{pid}"),
+        )?;
+        for item in items {
+            if let crate::rollout::RolloutItem::Event(event) = item
+                && event.event_type == "agent_action_v1"
+            {
+                let record: NamespaceActionRecord =
+                    serde_json::from_value(event.payload["record"].clone())
+                        .context("decode recovered Action evidence")?;
+                // This is an IO projection into a fresh Process, never a Tool replay.
+                write_action_record(&client, &self.agent_path, record, None).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn read_ui_activity_snapshot(&self) -> Result<UiActivitySnapshot> {
@@ -463,50 +491,63 @@ struct TapeRecordV1<'a> {
     kind: &'static str,
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_intent: Option<alan_agent_protocol::InputIntent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    submission_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    related_submission_ids: &'a [String],
 }
 
 /// A held GENERATING lease for `machine/tape`.
 pub struct NamespaceTapeWriter {
     client: NamespaceClient,
-    fid: Fid,
-    closed: bool,
+    guard: NamespaceFidGuard,
 }
 
 impl NamespaceTapeWriter {
     async fn open(client: NamespaceClient, agent_path: &str) -> Result<Self> {
         let tape_path = format!("{agent_path}/machine/tape");
         let fid = client.walk_to(&tape_path).await?;
-        client
-            .open(fid, OpenMode::Write)
+        let guard = client
+            .open_guarded_fid(fid, OpenMode::Write)
             .await
             .with_context(|| format!("open tape writer for {tape_path}"))?;
-        Ok(Self {
-            client,
-            fid,
-            closed: false,
-        })
+        Ok(Self { client, guard })
     }
 
-    pub async fn append_record(&mut self, role: &str, content: &str) -> Result<()> {
-        let bytes = tape_record_bytes(role, content)?;
+    pub async fn append_record(
+        &self,
+        role: &str,
+        content: &str,
+        submission_id: Option<&str>,
+        related_submission_ids: &[String],
+    ) -> Result<()> {
+        let bytes = tape_record_bytes(role, content, submission_id, related_submission_ids, None)?;
         self.client
-            .write_at(self.fid, 0, &bytes)
+            .write_at(self.guard.fid(), 0, &bytes)
             .await
             .context("append tape record")?;
         Ok(())
     }
 
-    pub async fn finish(mut self) -> Result<()> {
-        self.closed = true;
-        self.client.clunk(self.fid).await
+    /// Append an admitted input with its explicit route, preserving the literal body.
+    pub async fn append_input_record(
+        &self,
+        content: &str,
+        submission_id: &str,
+        intent: alan_agent_protocol::InputIntent,
+    ) -> Result<()> {
+        let bytes = tape_record_bytes("user", content, Some(submission_id), &[], Some(intent))?;
+        self.client
+            .write_at(self.guard.fid(), 0, &bytes)
+            .await
+            .context("append input tape record")?;
+        Ok(())
     }
-}
 
-impl Drop for NamespaceTapeWriter {
-    fn drop(&mut self) {
-        if !self.closed {
-            tracing::warn!("namespace tape writer dropped without clunking machine/tape lease");
-        }
+    pub async fn finish(self) -> Result<()> {
+        self.guard.close().await
     }
 }
 
@@ -522,14 +563,18 @@ pub(super) async fn write_agent_output(
         .with_context(|| format!("write assistant output to {output_path}"))
 }
 
+#[cfg(test)]
 pub(super) async fn write_tape_records<'a>(
     client: &NamespaceClient,
     agent_path: &str,
     records: impl IntoIterator<Item = (&'a str, &'a str)>,
+    submission_id: Option<&str>,
 ) -> Result<()> {
-    let mut writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
+    let writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
     for (role, content) in records {
-        writer.append_record(role, content).await?;
+        writer
+            .append_record(role, content, submission_id, &[])
+            .await?;
     }
     writer.finish().await
 }
@@ -547,12 +592,21 @@ async fn read_current_tape_checkpoint(
     Ok(checkpoint.trim().to_string())
 }
 
-pub(super) fn tape_record_bytes(role: &str, content: &str) -> Result<Vec<u8>> {
+pub(super) fn tape_record_bytes(
+    role: &str,
+    content: &str,
+    submission_id: Option<&str>,
+    related_submission_ids: &[String],
+    input_intent: Option<alan_agent_protocol::InputIntent>,
+) -> Result<Vec<u8>> {
     let record = TapeRecordV1 {
         version: 1,
         kind: "message",
         role,
         content,
+        input_intent,
+        submission_id,
+        related_submission_ids,
     };
     let mut bytes = serde_json::to_vec(&record).context("serialize tape record")?;
     bytes.push(b'\n');
@@ -574,7 +628,15 @@ fn request_response_content_part(response: String) -> ContentPart {
 }
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
-    match command.trim() {
+    let command = command.trim();
+    if let Some(id) = command.strip_prefix("queue-v1 interrupt ") {
+        return uuid::Uuid::parse_str(id).ok().map(|_| {
+            Submission::new(Op::InterruptSubmission {
+                submission_id: id.to_owned(),
+            })
+        });
+    }
+    match command {
         "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
         "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
@@ -618,7 +680,15 @@ async fn write_action_record(
     client: &NamespaceClient,
     agent_path: &str,
     record: NamespaceActionRecord,
+    recorder: Option<&crate::rollout::RolloutRecorder>,
 ) -> Result<String> {
+    // AgentFS document fields accept at most 1 MiB. Status is the only field
+    // not written before the durability barrier, because it publishes completion.
+    anyhow::ensure!(
+        record.status.len() <= 1 << 20,
+        "Action status exceeds document limit"
+    );
+    let payload = serde_json::to_value(&record)?;
     let clone_path = format!("{agent_path}/actions/clone");
     let id = client
         .clone_via_open(&clone_path)
@@ -647,6 +717,20 @@ async fn write_action_record(
         client
             .write_document(&format!("{action_path}/process"), process.as_bytes())
             .await?;
+    }
+    if let Some(recorder) = recorder {
+        recorder
+            .persist_batch(vec![crate::rollout::RolloutItem::Event(
+                crate::rollout::EventRecord {
+                    event_type: "agent_action_v1".into(),
+                    payload: serde_json::json!({
+                        "agent_path":agent_path, "action_id":id, "record":payload
+                    }),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                },
+            )])
+            .await
+            .context("persist Action evidence before publishing completion")?;
     }
     // The terminal status event publishes a complete Action snapshot to watchers.
     client

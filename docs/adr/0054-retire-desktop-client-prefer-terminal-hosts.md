@@ -1,5 +1,11 @@
 # Retire the desktop client and prefer existing terminal hosts
 
+Lifetime direction revised 2026-09-27: the user selected independent foreground
+Alan invocations and explicitly selected recovery. The older background lifetime
+assumptions below are superseded as target direction by
+[the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
+This does not claim the foreground runtime or canonical spec sync is complete.
+
 Status: accepted, 2026-09-19. Supersedes ADR-0001's product obligation and the
 desktop-consumer assumptions of ADR-0027/0044, not Alan OS ownership.
 
@@ -8,10 +14,12 @@ terminal host; Alan remains a terminal-neutral programmable personal computing
 environment. Alan Shell and its renderer do not recreate windows, workspaces,
 tabs, panes or a terminal emulator already supplied by that host.
 
-Herdr owns presentation topology and PTY delivery. Alan OS Host owns system
-lifetime; ordinary Process, Agent Machine, AgentFS, services and durable stores
-retain their existing ownership. Herdr identifiers and detection states are
-not Alan Process identity, execution evidence or authorization.
+Herdr owns presentation topology and PTY delivery. Each foreground Alan
+invocation owns its alan9 instance and application lifetime; Process, Agent
+Machine, AgentFS, services and durable stores retain their existing ownership
+within their respective instances. Herdr identifiers and detection states are
+not Alan Process identity, execution evidence or authorization. No separate
+background Host is required to keep these services available.
 
 At adoption, desktop source, FFI, app distribution and associated contracts
 were retained for maintenance pending scoped removal. macOS platform support,
@@ -22,9 +30,12 @@ published feeds.
 
 Ordinary terminal operation precedes optional Herdr-native agent detection.
 Herdr 0.9.1's inspected CLI does not advertise an Alan agent kind. No such
-integration is claimed implemented. Closing a renderer must not own system
-Host shutdown; foreground cancellation versus detach needs explicit terminal
-acceptance tests before new behavior ships.
+integration is claimed implemented. When Alan owns a foreground invocation,
+renderer exit ends that invocation and drains its Host; later continuity is
+restored only through explicit user-selected recovery. A Herdr view detach that
+retains the Alan process does not end the invocation or stop its Host. This
+explicitly supersedes the earlier rule that renderer closure could not stop its
+Host.
 
 Normative lifecycle scope: `documentation-governance`. Desktop source removal
 is complete and recorded in the

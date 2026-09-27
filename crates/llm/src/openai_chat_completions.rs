@@ -689,8 +689,7 @@ impl LlmProvider for OpenAiChatCompletionsClient {
     }
 
     async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
-        // Directly use the existing chat method
-        self.chat(system, user).await
+        OpenAiChatCompletionsClient::chat(self, system, user).await
     }
 
     async fn generate_stream(

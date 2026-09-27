@@ -55,9 +55,10 @@ where
     // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
     reset_turn_after_cancelling_host_mounts(machine, host_mount_requests).await?;
+    machine.mark_submission_cancelled();
     machine.clear_plan_snapshot();
     machine.clear_active_task();
-    super::ui_surfaces::turn_completed(agent_files, true).await?;
+    super::ui_surfaces::plan_updated(agent_files, None, Vec::new()).await?;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),
     })
@@ -66,7 +67,6 @@ where
 }
 
 pub(super) async fn emit_task_completed_success<E, F>(
-    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
     summary: impl Into<String>,
 ) -> Result<()>
@@ -75,7 +75,6 @@ where
     F: std::future::Future<Output = ()>,
 {
     let summary = summary.into();
-    super::ui_surfaces::turn_completed(agent_files, false).await?;
     emit(Event::TurnCompleted {
         summary: Some(summary),
     })

@@ -1,8 +1,9 @@
+mod action_evidence;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
-use tracing::error;
 
 use super::{
     AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
@@ -13,6 +14,16 @@ use crate::rollout::{CompactedItem, EffectRecord, EventRecord, RolloutItem, Roll
 use crate::tape::ContextItem;
 
 impl AgentMachine {
+    pub(crate) fn rebase_recovered_actions(
+        items: &mut [RolloutItem],
+        process_path: &str,
+    ) -> anyhow::Result<()> {
+        action_evidence::rebase(items, process_path)
+    }
+    pub(crate) fn recorder(&self) -> Option<RolloutRecorder> {
+        self.recorder.clone()
+    }
+
     fn pending_host_mounts_from_event_records(
         event_records: &[EventRecord],
     ) -> Vec<PendingHostMountRequest> {
@@ -206,8 +217,17 @@ impl AgentMachine {
         model: &str,
         rollouts_dir: &Path,
     ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, process_path, model, Some(rollouts_dir), None, None)
-            .await
+        Self::load_from_rollout_impl(
+            path,
+            process_path,
+            model,
+            Some(rollouts_dir),
+            None,
+            None,
+            true,
+        )
+        .await
+        .map(|(machine, _)| machine)
     }
 
     pub(crate) async fn load_from_rollout_with_recorder_cwd(
@@ -217,7 +237,8 @@ impl AgentMachine {
         rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    ) -> anyhow::Result<Self> {
+        durability_required: bool,
+    ) -> anyhow::Result<(Self, Option<anyhow::Error>)> {
         Self::load_from_rollout_impl(
             path,
             process_path,
@@ -225,6 +246,7 @@ impl AgentMachine {
             rollouts_dir,
             rollout_cwd,
             reasoning_effort,
+            durability_required,
         )
         .await
     }
@@ -236,28 +258,25 @@ impl AgentMachine {
         rollouts_dir: Option<&Path>,
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    ) -> anyhow::Result<Self> {
-        let items = RolloutRecorder::load_history(path).await?;
+        durability_required: bool,
+    ) -> anyhow::Result<(Self, Option<anyhow::Error>)> {
+        let mut items = RolloutRecorder::load_history(path).await?;
         if !matches!(items.first(), Some(RolloutItem::AgentMachineMeta(_))) {
             anyhow::bail!("rollout does not begin with current Agent Machine metadata");
         }
 
+        action_evidence::rebase(&mut items, process_path)?;
+
         // Recovery is explicitly scoped to the newly launched Agent Process. The
         // source rollout is evidence, not a globally addressable execution identity.
-        let mut machine = Self::new_with_recorder_options(
-            process_path,
-            model,
-            rollouts_dir,
-            rollout_cwd,
-            reasoning_effort,
-        )
-        .await?;
+        let mut machine = Self::new();
 
         let recovered_latest_compaction_attempt =
             Self::latest_compaction_attempt_from_rollout_items_internal(&items);
         let recovered_latest_memory_flush_attempt =
             Self::latest_memory_flush_attempt_from_rollout_items_internal(&items);
         let mut context_items: Vec<ContextItem> = Vec::new();
+        let mut recovered_context = None;
         let mut compaction_attempt_records: Vec<CompactionAttemptSnapshot> = Vec::new();
         let mut memory_flush_attempt_records: Vec<MemoryFlushAttemptSnapshot> = Vec::new();
         let mut recovered_compaction: Option<CompactedItem> = None;
@@ -284,6 +303,7 @@ impl AgentMachine {
                     machine.tape.push(message);
                 }
                 RolloutItem::TurnContext(ctx) => {
+                    recovered_context = Some(ctx.clone());
                     context_items = ctx
                         .context_items
                         .into_iter()
@@ -347,51 +367,57 @@ impl AgentMachine {
             machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
 
-        let recovered_messages = machine.messages().to_vec();
-        if (!recovered_messages.is_empty()
-            || recovered_compaction.is_some()
-            || !compaction_attempt_records.is_empty()
-            || !memory_flush_attempt_records.is_empty()
-            || !effect_records.is_empty()
-            || !event_records.is_empty())
-            && let Some(recorder) = machine.recorder.as_ref()
+        // Semantic replay must succeed before creating replacement durable evidence.
+        let mut durability_error = match Self::new_with_recorder_options(
+            process_path,
+            model,
+            rollouts_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await
         {
-            for message in recovered_messages {
-                if let Err(err) = recorder.record_tape_message_nowait(&message) {
-                    error!(error = %err, "Failed to re-persist recovered message");
+            Ok(durable) => {
+                machine.recorder = durable.recorder;
+                machine.memory_record_id = durable.memory_record_id;
+                None
+            }
+            Err(error) if !durability_required => Some(error),
+            Err(error) => return Err(error),
+        };
+
+        if let Some(recorder) = machine.recorder.as_ref() {
+            let mut recovered = machine
+                .messages()
+                .iter()
+                .map(|message| {
+                    RolloutItem::Message(RolloutRecorder::message_record_from_tape_message(message))
+                })
+                .collect::<Vec<_>>();
+            recovered.extend(
+                compaction_attempt_records
+                    .into_iter()
+                    .map(RolloutItem::CompactionAttempt),
+            );
+            recovered.extend(
+                memory_flush_attempt_records
+                    .into_iter()
+                    .map(RolloutItem::MemoryFlushAttempt),
+            );
+            recovered.extend(recovered_context.map(RolloutItem::TurnContext));
+            recovered.extend(recovered_compaction.map(RolloutItem::Compacted));
+            recovered.extend(effect_records.into_iter().map(RolloutItem::Effect));
+            recovered.extend(event_records.into_iter().map(RolloutItem::Event));
+            if let Err(error) = recorder.persist_batch(recovered).await {
+                if durability_required {
+                    return Err(error);
                 }
-            }
-            for attempt in compaction_attempt_records {
-                if let Err(err) = recorder.record_compaction_attempt_nowait(attempt) {
-                    error!(error = %err, "Failed to re-persist recovered compaction attempt");
-                }
-            }
-            for attempt in memory_flush_attempt_records {
-                if let Err(err) = recorder.record_memory_flush_attempt_nowait(attempt) {
-                    error!(error = %err, "Failed to re-persist recovered memory flush attempt");
-                }
-            }
-            if let Some(compacted) = recovered_compaction
-                && let Err(err) = recorder.record_compacted_item_nowait(compacted)
-            {
-                error!(error = %err, "Failed to re-persist recovered summary");
-            }
-            for effect in effect_records {
-                if let Err(err) = recorder.record_effect_nowait(effect) {
-                    error!(error = %err, "Failed to re-persist recovered effect");
-                }
-            }
-            for event in event_records {
-                if let Err(err) = recorder.record_event_item_nowait(event) {
-                    error!(error = %err, "Failed to re-persist recovered event");
-                }
-            }
-            if let Err(err) = recorder.flush().await {
-                error!(error = %err, "Failed to flush recovered rollout state");
+                machine.recorder = None;
+                durability_error = Some(error);
             }
         }
 
-        Ok(machine)
+        Ok((machine, durability_error))
     }
 }
 

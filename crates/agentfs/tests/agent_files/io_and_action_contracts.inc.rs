@@ -400,10 +400,41 @@ async fn expired_action_output_returns_structured_retention_record() {
     .await
     .unwrap();
 
+    fs.set_retention_recorder(|_, _| async { Err(ErrorCode::Io) })
+        .await;
+    assert_eq!(
+        fs.expire_action_output_for_retention(&id, "age_limit")
+            .await,
+        Err(ErrorCode::Io)
+    );
+    assert_eq!(
+        read_text(&fs, &["actions", &id, "output"], Fid(30)).await,
+        "retained until policy expiry"
+    );
+    let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let journal = recorded.clone();
+    fs.set_retention_recorder(move |id, cause| {
+        let journal = journal.clone();
+        async move {
+            journal.lock().unwrap().push((id, cause));
+            Ok(())
+        }
+    })
+    .await;
+    assert_eq!(
+        fs.expire_action_output_for_retention("missing", "age_limit")
+            .await,
+        Err(ErrorCode::NotFound)
+    );
+    assert!(recorded.lock().unwrap().is_empty());
     fs.expire_action_output_for_retention(&id, "age_limit")
         .await
         .unwrap();
 
+    assert_eq!(
+        *recorded.lock().unwrap(),
+        vec![(id.clone(), "age_limit".into())]
+    );
     let expired = read_text(&fs, &["actions", &id, "output"], Fid(3)).await;
     assert!(expired.contains("\"type\":\"evidence_retention_expired\""));
     assert!(expired.contains("\"cause\":\"age_limit\""));

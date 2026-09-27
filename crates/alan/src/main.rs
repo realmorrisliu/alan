@@ -4,10 +4,13 @@ mod cli;
 mod legacy_state;
 mod shell_command;
 
+use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::{io::IsTerminal, path::PathBuf};
-use tokio::io::AsyncReadExt;
+use std::{
+    io::{IsTerminal, Read},
+    path::{Path, PathBuf},
+};
 
 #[derive(Parser)]
 #[command(
@@ -62,25 +65,19 @@ fn bare_run_mode(stdin_is_terminal: bool, stdout_is_terminal: bool) -> Result<Ba
 
 #[derive(Subcommand)]
 enum HostAction {
-    /// Start the matching dedicated Alan OS Host
-    Start {
-        /// Emit structured JSON
-        #[arg(long)]
-        json: bool,
-    },
-    /// Report the matching Alan OS Host lifecycle state
+    /// Report the instance selected by ALAN_INSTANCE_RUNTIME_DIR
     Status {
         /// Emit structured JSON
         #[arg(long)]
         json: bool,
     },
-    /// Stop the matching dedicated Alan OS Host
+    /// Stop the instance selected by ALAN_INSTANCE_RUNTIME_DIR
     Stop {
         /// Emit structured JSON
         #[arg(long)]
         json: bool,
     },
-    /// Inspect or answer Host Mount Service requests
+    /// Inspect or answer mount requests in the explicitly selected instance
     Mount {
         #[command(subcommand)]
         action: HostMountAction,
@@ -349,7 +346,11 @@ fn parse_cli() -> Cli {
     match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
-            if is_retired_workspace_invocation(&args) {
+            if is_retired_host_start_invocation(&args) {
+                eprintln!(
+                    "`alan host start` was removed; run bare `alan` to start a foreground instance."
+                );
+            } else if is_retired_workspace_invocation(&args) {
                 eprintln!(
                     "Workspace runtime commands were removed. Authorize Host files with an explicit Host Mount, then use Alan Shell operations inside Alan OS."
                 );
@@ -357,6 +358,15 @@ fn parse_cli() -> Cli {
             error.exit()
         }
     }
+}
+
+fn is_retired_host_start_invocation(args: &[std::ffi::OsString]) -> bool {
+    let args = args
+        .iter()
+        .skip(1)
+        .filter_map(|argument| argument.to_str())
+        .collect::<Vec<_>>();
+    matches!(args.as_slice(), ["host", "start", ..])
 }
 
 fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
@@ -378,29 +388,27 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Host { action }) => match action {
-            HostAction::Start { json } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                let attachment = cli::host::attach_or_start_host(channel).await?;
-                print_host_status(&attachment.status, json)?;
-            }
             HostAction::Status { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+                let paths = cli::host::explicit_instance_paths(channel)?;
                 let status = paths
                     .read_status()
-                    .context("Alan OS Host status is unavailable; run `alan host start`")?;
+                    .context("selected Alan instance status is unavailable")?;
                 print_host_status(&status, json)?;
             }
             HostAction::Stop { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
-                let status = request_platform_host_stop(channel, &paths).await?;
+                let paths = cli::host::explicit_instance_paths(channel)?;
+                let status = alan_os_host::request_host_stop(&paths).await?;
                 wait_for_host_stop(&paths).await?;
                 print_host_status(&status, json)?;
             }
             HostAction::Mount { action } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let attached = cli::host::attach_or_start_host(channel).await?;
+                let paths = cli::host::explicit_instance_paths(channel)?;
+                let attached = alan_os_host::LocalAttachment::new(paths.clone())
+                    .connect()
+                    .await?;
                 match action {
                     HostMountAction::List => {
                         let shell = alan_shell::Shell::new(attached.root);
@@ -414,15 +422,14 @@ async fn main() -> Result<()> {
                             format!("resolve Host directory {}", host_path.display())
                         })?;
                         anyhow::ensure!(host_path.is_dir(), "Host Mount path is not a directory");
-                        let grant =
-                            alan_os_host::HostCommandPlane::detect(channel.descriptor().id)?
-                                .approve_host_mount(request_id, host_path)
-                                .await?;
+                        let grant = alan_os_host::HostCommandPlane::new(paths)
+                            .approve_host_mount(request_id, host_path)
+                            .await?;
                         println!("grant_id: {}", grant.id);
                         println!("namespace_path: {}", grant.namespace_path);
                     }
                     HostMountAction::Revoke { grant_id } => {
-                        alan_os_host::HostCommandPlane::detect(channel.descriptor().id)?
+                        alan_os_host::HostCommandPlane::new(paths)
                             .revoke_host_mount(&grant_id)
                             .await?;
                         println!("Revoked Host Mount grant {grant_id}.");
@@ -657,27 +664,23 @@ async fn main() -> Result<()> {
                 std::io::stdout().is_terminal(),
             )?;
             let channel = alan_agent_engine::InstallChannel::detect_current();
-            let attachment = cli::host::attach_or_start_host(channel).await?;
-            let host_paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
-            let task_lock_path = host_paths.root.join("task.lock");
-            match mode {
-                BareRunMode::Interactive => {
-                    let mut config =
-                        alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                    config.task_submission_lock_path = Some(task_lock_path);
-                    alan_tui::run_file_backed(config).await?;
-                }
-                BareRunMode::OneShot => {
-                    let mut input = Vec::new();
-                    tokio::io::stdin()
-                        .read_to_end(&mut input)
-                        .await
-                        .context("read Agent task from stdin")?;
-                    let input =
-                        String::from_utf8(input).context("stdin task is not valid UTF-8")?;
-                    let _task_lock = alan_tui::acquire_task_submission_lock(&task_lock_path)?;
-                    alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
-                }
+            let (runtime_dir, remove_runtime_dir) =
+                foreground_runtime_dir(channel.descriptor().id)?;
+            let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, channel.descriptor().id)?;
+            let result = run_bare_in_foreground_instance(channel, paths, mode).await;
+            if remove_runtime_dir
+                && let Err(error) = std::fs::remove_dir_all(&runtime_dir)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(%error, path = %runtime_dir.display(), "failed to remove temporary Alan instance runtime directory");
+            }
+            let exit_code = result?;
+            if exit_code != 0 {
+                std::process::exit(if (1..=255).contains(&exit_code) {
+                    exit_code
+                } else {
+                    1
+                });
             }
         }
     }
@@ -685,32 +688,106 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-async fn request_platform_host_stop(
-    channel: alan_agent_engine::InstallChannel,
-    paths: &alan_os_host::HostEndpointPaths,
-) -> Result<alan_os_host::HostStatus> {
-    let mut status = paths.read_status()?;
-    let label = cli::host::os_host_launch_label(channel);
-    let result = std::process::Command::new("/bin/launchctl")
-        .arg("remove")
-        .arg(&label)
-        .status()
-        .with_context(|| format!("request launchd stop for dedicated Host {label}"))?;
-    anyhow::ensure!(
-        result.success(),
-        "launchd failed to remove Host {label}: {result}"
-    );
-    status.readiness = alan_os_host::HostReadiness::Stopping;
-    Ok(status)
+fn foreground_runtime_dir(channel_id: &str) -> Result<(PathBuf, bool)> {
+    if let Some(runtime_dir) = std::env::var_os(cli::host::INSTANCE_RUNTIME_DIR_ENV) {
+        return Ok((PathBuf::from(runtime_dir), false));
+    }
+
+    Ok((
+        generated_foreground_runtime_dir(&std::env::temp_dir(), channel_id)?,
+        true,
+    ))
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn request_platform_host_stop(
-    _channel: alan_agent_engine::InstallChannel,
-    paths: &alan_os_host::HostEndpointPaths,
-) -> Result<alan_os_host::HostStatus> {
-    alan_os_host::request_host_stop(paths).await
+fn generated_foreground_runtime_dir(temp_root: &Path, channel_id: &str) -> Result<PathBuf> {
+    let instance_name = format!("alan-{}", uuid::Uuid::new_v4());
+    let runtime_dir = temp_root.join(&instance_name);
+    if HostEndpointPaths::from_runtime_dir(&runtime_dir, channel_id).is_ok() {
+        return Ok(runtime_dir);
+    }
+
+    // macOS's sockaddr path is short; its default TMPDIR can exceed that limit.
+    let runtime_dir = Path::new("/tmp").join(instance_name);
+    HostEndpointPaths::from_runtime_dir(&runtime_dir, channel_id)?;
+    Ok(runtime_dir)
+}
+
+async fn run_bare_in_foreground_instance(
+    channel: alan_agent_engine::InstallChannel,
+    paths: HostEndpointPaths,
+    mode: BareRunMode,
+) -> Result<i32> {
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .context("listen for Alan foreground interrupt")?;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("listen for Alan instance shutdown")?;
+    let config = HostBootConfig::product(channel.descriptor().id)?;
+    let host = AlanOsHost::boot(config, paths.clone()).await?;
+    let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        host.serve_until(async move {
+            let _ = shutdown_requested.await;
+        })
+        .await
+    });
+
+    let run_result: Result<i32> = tokio::select! {
+        result = async {
+            let attachment = LocalAttachment::new(paths).connect().await?;
+            match mode {
+                BareRunMode::Interactive => {
+                    let config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
+                    tokio::select! {
+                        result = alan_tui::run_file_backed(config) => {
+                            result?;
+                            Ok(0)
+                        }
+                        _ = interrupt.recv() => Ok(130),
+                    }
+                }
+                BareRunMode::OneShot => {
+                    let (input_tx, input_rx) = tokio::sync::oneshot::channel();
+                    // A detached OS thread keeps cancelled stdin reads out of Tokio's blocking pool.
+                    std::thread::spawn(move || {
+                        let input = (|| -> Result<String> {
+                            let mut input = Vec::new();
+                            std::io::stdin()
+                                .read_to_end(&mut input)
+                                .context("read Agent task from stdin")?;
+                            String::from_utf8(input).context("stdin task is not valid UTF-8")
+                        })();
+                        let _ = input_tx.send(input);
+                    });
+                    let input = tokio::select! {
+                        biased;
+                        _ = interrupt.recv() => return Ok(130),
+                        input = input_rx => input.context("stdin reader stopped")??,
+                    };
+                    let exit_code = alan_tui::run_stdio_task(
+                        attachment.root,
+                        "/agent/root",
+                        &input,
+                        async {
+                            interrupt.recv().await;
+                            Ok::<(), anyhow::Error>(())
+                        },
+                    )
+                    .await?;
+                    Ok(exit_code)
+                }
+            }
+        }
+        => result,
+        _ = terminate.recv() => Ok(143),
+    };
+
+    let _ = shutdown.send(());
+    let server_result = server
+        .await
+        .context("Alan OS foreground instance task failed")?;
+    let exit_code = run_result?;
+    server_result?;
+    Ok(exit_code)
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
@@ -844,11 +921,10 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
-    use super::cli::host::os_host_launch_label;
-    use super::cli::host::sibling_executable;
-    use super::{BareRunMode, Cli, bare_run_mode};
+    use super::HostEndpointPaths;
     #[cfg(target_os = "macos")]
-    use alan_agent_engine::InstallChannel;
+    use super::generated_foreground_runtime_dir;
+    use super::{BareRunMode, Cli, bare_run_mode};
     use clap::Parser;
 
     #[test]
@@ -868,37 +944,21 @@ mod tests {
         assert!(err.to_string().contains("needs terminal stdout"));
     }
 
-    #[test]
     #[cfg(target_os = "macos")]
-    fn alan_os_host_launch_labels_are_channel_isolated() {
-        assert_eq!(
-            os_host_launch_label(InstallChannel::Stable),
-            "alan-stable.os-host"
-        );
-        assert_eq!(
-            os_host_launch_label(InstallChannel::Dev),
-            "alan-dev.os-host"
-        );
+    #[test]
+    fn foreground_runtime_falls_back_when_tempdir_exceeds_socket_path_limit() {
+        let long_tempdir = std::path::Path::new("/").join("x".repeat(100));
+        let runtime_dir = generated_foreground_runtime_dir(&long_tempdir, "stable").unwrap();
+
+        assert_eq!(runtime_dir.parent(), Some(std::path::Path::new("/tmp")));
+        assert!(HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").is_ok());
     }
 
-    #[cfg(unix)]
     #[test]
-    fn sibling_executable_resolves_the_real_cli_behind_a_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let cli = bin.join("alan");
-        let host = bin.join("alan-os-host");
-        std::fs::write(&cli, []).unwrap();
-        std::fs::write(&host, []).unwrap();
-        let link = root.path().join("installed-alan");
-        symlink(&cli, &link).unwrap();
-
-        assert_eq!(
-            sibling_executable(&link, "alan-os-host").unwrap(),
-            host.canonicalize().unwrap()
-        );
+    fn host_start_is_rejected_as_a_retired_background_command() {
+        let error = Cli::try_parse_from(["alan", "host", "start"])
+            .map(|_| ())
+            .unwrap_err();
+        assert!(error.to_string().contains("unrecognized subcommand"));
     }
 }

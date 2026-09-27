@@ -1,7 +1,7 @@
 //! Ordinary submissions retained by an Agent Machine across transition cancellation.
 use std::collections::VecDeque;
 
-use alan_agent_protocol::Submission;
+use alan_agent_protocol::{ContentPart, Submission};
 
 #[derive(Debug)]
 pub(crate) enum QueuedRuntimeItem {
@@ -13,6 +13,14 @@ pub(crate) enum QueuedRuntimeItem {
 pub(crate) struct MachineInputQueue {
     pub(crate) pending: VecDeque<QueuedRuntimeItem>,
     pub(crate) paused: bool,
+    /// Derived lookup for Process controls while a transition borrows the Machine.
+    pub(crate) active_submission_ids: Vec<String>,
+    /// Accepted control request, observed by the Machine at settlement.
+    pub(crate) active_cancel_requested: bool,
+    pub(crate) inband: VecDeque<Submission>,
+    pub(crate) buffered_inband_submissions: VecDeque<Submission>,
+    pub(crate) queued_next_turn_inputs: VecDeque<(Option<String>, Vec<ContentPart>)>,
+    pub(crate) notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl super::AgentMachine {

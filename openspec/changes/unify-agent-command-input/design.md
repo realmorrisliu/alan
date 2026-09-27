@@ -25,6 +25,46 @@ human commands. Existing standalone aP Shell use does not need to disappear.
 
 ## Decisions
 
+### Foreground instance lifetime — accepted 2026-09-27
+
+Each ordinary `alan` invocation boots its own alan9 instance in its foreground
+native process, using the existing composition and Service Manager. The renderer
+remains a file client and does not acquire Agent Machine, Tool or supervision
+ownership. `/agent/root` is an alias within this instance, not a channel-global
+execution identity. Starting a second terminal or redirected invocation starts
+independent work; it never borrows the first invocation's cwd or queue.
+
+Herdr owns terminal session presentation and may retain the native process across
+view detach. Alan must also work in an ordinary terminal, without Herdr detection,
+IDs or a separately launched Host. Herdr identifiers grant no authority and are
+not durable Agent identities. Logical File-Server Services remain ordinary alan9
+Processes; this direction does not require one OS process per service.
+
+Exiting Alan shuts down its instance and owned execution through existing
+lifecycle/cancellation boundaries. Completed effects remain completed. Forced
+termination may leave an unknown outcome; a future launch must not infer success
+or retry from that absence. Keeping a terminal-host session alive is distinct
+from exiting the application. No login-start registration or background replacement
+process is part of this delivery.
+
+Recovery is opt-in and identifies existing rollout/checkpoint evidence explicitly.
+A new invocation creates fresh Process identity, validates the selected records
+and current grants, and exposes recoverable pending work paused. It does not
+select the most recent channel rollout automatically. Missing/invalid evidence
+fails the requested recovery instead of silently starting fresh. Exact CLI syntax
+and evidence selection/discovery are delivery tasks using existing stores, not a
+new globally addressable Session/Conversation registry.
+
+Installed packages, connection profiles and credentials keep their current
+channel-isolated service/Host stores. Concurrent foreground instances must not
+share live Process files or mutable execution pointers. Audit shared persistent
+service writes against existing locking/commit ownership before claiming safe
+concurrent instances; do not create private copies of user projects or credentials.
+
+This revision supersedes older background-lifetime assumptions in this change.
+The owning lifecycle deltas and ADR reconciliation remain explicit tasks; no
+unimplemented lifecycle requirement may be synced to canonical specs.
+
 ### One runtime authority with native command execution
 
 The Agent Machine accepts and orders work, dispatching a command through the
@@ -162,6 +202,19 @@ unknown commit outcomes must not trigger automatic duplicate submission.
 The same Process/Tool launch boundary records their effects. Host lifecycle,
 credential and native authorization commands keep their existing owner.
 
+The first implemented facade is `/bin/agent_work`, discovered through the existing
+`/lib/exec/agent_work/manifest`. It supports `status TARGET`, `submit TARGET TEXT`,
+`cancel TARGET INPUT_ID`, `continue TARGET` and `discard TARGET`; TARGET is `root`
+or a visible positive Agent PID. The model calls the same executable using one JSON
+argument with `action`, `target`, and (where required) `text` or `submission_id`.
+All results are version-1 JSON. Submit returns a submission ID and `submitted`;
+queue controls return `requested`. Neither receipt means execution completed.
+Status returns the current activity projection, not Process exit/result truth.
+Errors use nonzero exit status; uncertain writes are reported without retries.
+The executable uses only its invocation namespace, with no ambient Host connection.
+Its conservative manifest capability is write, including status; no argument-based
+policy relaxation is introduced. Native shell name resolution remains unchanged.
+
 ### One project file identity across editing and commands
 
 Project tools expose grant-relative paths for any delegated mount and
@@ -208,7 +261,8 @@ environment; persistent interactive-shell state is outside this slice.
 The Agent Process owns one cwd reference (delegated Host Mount plus relative
 location); the Host adapter resolves its native execution path. Machine orders
 changes made by standalone explicit user `cd`.
-All attachments see it and each command resolves it at execution time. Agent
+All authorized attachments to that same Agent see it; separate Alan invocations
+do not share it. Each command resolves it at execution time. Agent
 per-action cwd does not mutate this shared value. Ordinary submissions queue
 behind active work; responses and controls do not become queued ordinary work.
 Process-local submission identity correlates output and cancellation, without
@@ -217,10 +271,12 @@ must be reconciled with ordered acceptance rather than silently bypassed.
 
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
 continuation/discard through the existing machine control surface. It does not
-roll back effects or start the next command. Detach, quit and empty-input
-terminal Ctrl-D with no pending Agent input leave accepted work running; Ctrl-D
-with a pending confirmation or structured-input request keeps the client
-attached. Pipe EOF completes a submission. Without a response channel,
+roll back effects or start the next command. Explicit quit and empty-input
+terminal Ctrl-D with no pending Agent input end this foreground Alan invocation
+and shut down its owned work. Ctrl-D with a pending confirmation or structured
+input keeps the application available to answer it. A Herdr view detach is not
+an Alan exit and may preserve its running terminal process. Pipe EOF completes
+a submission; the invocation shuts down after reporting its terminal outcome. Without a response channel,
 clarification/approval fails with stderr and nonzero exit; never read a hidden
 terminal. Report prior effects accurately.
 
@@ -235,7 +291,7 @@ Interactive clients show route and cwd; redirected stdout contains the result,
 with routing/diagnostics on stderr. Commands propagate their exit status; Agent
 work preserves the existing final-answer success/failure convention.
 
-After Agent/Host restart, recoverable pending work is paused for explicit review.
+After explicitly selected recovery, recoverable pending work is paused for explicit review.
 Never replay unknown effects automatically. Restore cwd only from reliable state
 and after checking current reachability/rights; otherwise require a new explicit
 directory choice before directory-dependent work. Missing recovery records are
@@ -328,7 +384,11 @@ Ordinary `follow_up` submissions now enter the same outer runtime FIFO for Agent
 and command intent. Only explicit steering and pending-request responses may
 enter an active transition. This prevents a later Agent follow-up from overtaking
 an earlier queued command or explicit turn. The ordinary FIFO and its pause flag belong to the Agent Machine; the Process
-loop retains a shared handle while a transition is executing. Interrupt pauses
+loop retains a shared handle while a transition is executing. In-turn brokered,
+buffered and next-turn inputs use that same Machine-owned queue storage. Broker
+handles share its notification and capacity boundary; the Process loop does not
+allocate a separate steering queue. Existing FIFO, reset and settlement behavior
+is preserved while targeted input controls are implemented separately. Interrupt pauses
 ordinary dispatch before cancelling active work. New ordinary input remains queued
 until `queue-v1 continue` or `queue-v1 discard` is written to `machine/ctl` (or the
 corresponding `ContinueQueue` / `DiscardQueue` operation is submitted). The TUI
@@ -352,3 +412,40 @@ reader channel whose buffered frames can cross an interrupt/discard boundary.
 This is in-memory ordinary-queue control only. Rollout/checkpoint recovery,
 next-turn queue integration, client prefix/control activation and complete
 per-client result delivery remain pending; tasks 2.1, 2.5, 2.6 and 2.8 stay open.
+
+### Tape input correlation
+
+Agent Tape user records carry their accepted `submission_id` before generation.
+Assistant records retain that identity across pending-request responses. When
+steering joins active work, each steering input receives its own user record;
+the answer identifies the latest steering input with `submission_id` and the
+other participating inputs with `related_submission_ids`. This represents a
+shared answer to steered work, not independent executions. These fields do not
+prove completion by themselves: clients still need correlated terminal state.
+Legacy records without identity remain readable but cannot prove a particular
+client input completed. Client completion and concurrent admission are separate
+remaining delivery work.
+
+### Correlated input settlement
+
+The existing Machine UI event stream emits `input_completed` after an ordinary
+accepted input settles, with its participating submission IDs and a completed,
+failed or cancelled advancement status. Waiting for approval is not settlement.
+Queue discard publishes a cancelled event for each removed input after its Action
+record. Command exit status remains in the correlated Action result; completing
+input advancement does not imply a zero shell exit status. TUI event readers
+accept this variant, but client completion selection, next-turn identity and
+restart recovery still require their own delivery slices.
+
+
+### Targeted input interruption
+
+`queue-v1 interrupt <submission-id>` on `machine/ctl` maps to
+`InterruptSubmission`. It removes an unstarted ordinary, in-turn buffered or
+next-turn input and publishes its cancelled completion and Action without
+executing it. A target participating in active work cancels that transition;
+a suspended target uses the existing interrupt transition. Matching interruption
+pauses later ordinary dispatch for explicit continuation/discard. Unknown or
+settled IDs do not cancel other work or alter pause state. Accepted identities
+are visible before the transition future is first polled, while all Machine
+identity changes remain owned by the accepted-submission transition.

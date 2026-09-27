@@ -95,33 +95,11 @@ impl RootAgentProcess {
 pub(crate) struct AgentRuntimeService {
     procfs: alan_kernel::ProcFs,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
-}
-
-pub(crate) struct AgentRuntimeFileServers {
-    agent_root: Arc<alan_agentfs::AgentRootFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
-}
-
-impl AgentRuntimeFileServers {
-    pub(crate) fn new(
-        agent_root: Arc<alan_agentfs::AgentRootFs>,
-        llmfs: Arc<alan_llmfs::LlmFs>,
-    ) -> Self {
-        Self { agent_root, llmfs }
-    }
-
-    pub(crate) fn from_refs(
-        agent_root: &Arc<alan_agentfs::AgentRootFs>,
-        llmfs: &Arc<alan_llmfs::LlmFs>,
-    ) -> Self {
-        Self::new(agent_root.clone(), llmfs.clone())
-    }
 }
 
 struct PendingRootLaunch {
@@ -143,15 +121,14 @@ struct AgentLaunch {
 impl AgentRuntimeService {
     pub(crate) fn new(
         procfs: alan_kernel::ProcFs,
-        file_servers: AgentRuntimeFileServers,
+        agent_root: Arc<alan_agentfs::AgentRootFs>,
         host_mount: Arc<HostMountService>,
         connection: Arc<ConnectionService>,
         tool_runner: ToolProcessRunner,
     ) -> Arc<Self> {
         Arc::new(Self {
             procfs,
-            agent_root: file_servers.agent_root,
-            llmfs: file_servers.llmfs,
+            agent_root,
             host_mount,
             connection,
             tool_runner,
@@ -339,7 +316,9 @@ impl AgentRuntimeService {
         launch.namespace.replace_mount(
             "/mnt/llm",
             InProcessTransport::new(Arc::new(
-                self.llmfs.connection_view(&launch.template.llm_connection),
+                self.connection
+                    .capture_connection(&launch.template.llm_connection)
+                    .await?,
             )),
             Access::ReadWrite,
         );
@@ -376,7 +355,9 @@ impl AgentRuntimeService {
         }
 
         let agent = Arc::new(alan_agentfs::AgentFs::new());
-        self.agent_root.bind_process(pid.0.to_string(), agent).await;
+        self.agent_root
+            .bind_process(pid.0.to_string(), agent.clone())
+            .await;
         if launch.root {
             self.agent_root.set_root_process(pid.0.to_string()).await;
         }
@@ -429,6 +410,18 @@ impl AgentRuntimeService {
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
+        let runtime_handle = controller.handle.clone();
+        agent
+            .set_retention_recorder(move |id, cause| {
+                let handle = runtime_handle.clone();
+                async move {
+                    handle
+                        .record_action_retention(&format!("/agent/{}", pid.0), &id, &cause)
+                        .await
+                        .map_err(|_| alan_ap::ErrorCode::Io)
+                }
+            })
+            .await;
         self.process_templates
             .lock()
             .expect("process templates mutex poisoned")

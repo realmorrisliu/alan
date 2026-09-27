@@ -1,15 +1,19 @@
 //! In-turn input brokering and file-native resume selection.
 
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alan_agent_protocol::{Event, InputIntent, InputMode, Op, Submission};
 use anyhow::Result;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests};
 use super::turn_support::cancel_current_task;
-use crate::agent_machine::AgentMachine;
+use crate::agent_machine::{AgentMachine, input_queue::MachineInputQueue};
 
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
 pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
@@ -17,28 +21,25 @@ pub(super) const NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL: Duration = Duration::
 
 #[derive(Clone)]
 pub(super) struct TurnInputBroker {
-    inner: Arc<TurnInputBrokerInner>,
-}
-
-struct TurnInputBrokerInner {
-    queue: Mutex<VecDeque<Submission>>,
-    notify: Notify,
+    queue: Arc<Mutex<MachineInputQueue>>,
+    notify: Arc<Notify>,
 }
 
 impl Default for TurnInputBroker {
     fn default() -> Self {
-        Self {
-            inner: Arc::new(TurnInputBrokerInner {
-                queue: Mutex::new(VecDeque::new()),
-                notify: Notify::new(),
-            }),
-        }
+        Self::from_queue(Default::default())
     }
 }
 
 impl TurnInputBroker {
+    pub(super) fn from_queue(queue: Arc<Mutex<MachineInputQueue>>) -> Self {
+        let notify = queue.lock().expect("input queue poisoned").notify.clone();
+        Self { queue, notify }
+    }
+
     pub(super) async fn push(&self, submission: Submission) -> bool {
-        let mut guard = self.inner.queue.lock().await;
+        let mut state = self.queue.lock().expect("input queue poisoned");
+        let guard = &mut state.inband;
         if is_brokered_input(&submission.op)
             && guard
                 .iter()
@@ -49,8 +50,8 @@ impl TurnInputBroker {
             return false;
         }
         guard.push_back(submission);
-        drop(guard);
-        self.inner.notify.notify_one();
+        drop(state);
+        self.notify.notify_one();
         true
     }
 
@@ -62,17 +63,13 @@ impl TurnInputBroker {
 
             tokio::select! {
                 _ = cancel.cancelled() => return None,
-                _ = self.inner.notify.notified() => {}
+                _ = self.notify.notified() => {}
             }
         }
     }
 
-    pub(super) async fn clear(&self) {
-        self.inner.queue.lock().await.clear();
-    }
-
     pub(super) async fn drain(&self) -> VecDeque<Submission> {
-        std::mem::take(&mut *self.inner.queue.lock().await)
+        std::mem::take(&mut self.queue.lock().expect("input queue poisoned").inband)
     }
 
     pub(super) async fn try_recv(&self) -> Option<Submission> {
@@ -80,7 +77,11 @@ impl TurnInputBroker {
     }
 
     async fn try_pop(&self) -> Option<Submission> {
-        self.inner.queue.lock().await.pop_front()
+        self.queue
+            .lock()
+            .expect("input queue poisoned")
+            .inband
+            .pop_front()
     }
 }
 
@@ -158,10 +159,14 @@ where
                 if is_brokered_input(&incoming.op)
                     && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
+                    let message = format!("Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input.");
+                    agent_files.append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
+                        submission_ids: vec![incoming.id],
+                        status: alan_agent_protocol::UiInputStatus::Failed,
+                        error: Some(message.clone()),
+                    }).await?;
                     emit(Event::Error {
-                        message: format!(
-                            "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                        ),
+                        message,
                         recoverable: true,
                     })
                     .await;
@@ -216,9 +221,14 @@ async fn emit_dropped_in_turn_submissions<E, F>(
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let dropped_buffered = machine.clear_buffered_inband_submissions();
-    let dropped_brokered = broker.drain().await.len();
-    let dropped_total = dropped_buffered + dropped_brokered;
+    let mut dropped = machine.drain_buffered_inband_submissions();
+    dropped.extend(broker.drain().await);
+    let dropped_total = dropped.len();
+    for submission in dropped {
+        if is_brokered_input(&submission.op) {
+            machine.accept_steering_submission(submission.id);
+        }
+    }
     if dropped_total > 0 {
         emit(Event::Error {
             message: format!(
@@ -281,7 +291,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_turn_input_broker_roundtrip_and_clear() {
+    async fn machine_broker_handles_share_wakeups_and_capacity() {
+        let machine = AgentMachine::new();
+        let receiver = TurnInputBroker::from_queue(machine.input_queue());
+        let sender = TurnInputBroker::from_queue(machine.input_queue());
+        let cancel = CancellationToken::new();
+        let waiting = receiver.recv(&cancel);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), &mut waiting)
+                .await
+                .is_err()
+        );
+        let input = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("steering")],
+            mode: InputMode::Steer,
+        });
+        assert!(sender.push(input.clone()).await);
+        let received = tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received.id, input.id);
+        for _ in 0..MAX_BROKERED_INBAND_USER_INPUTS {
+            assert!(sender.push(input.clone()).await);
+        }
+        assert!(!receiver.push(input).await);
+        assert_eq!(
+            receiver.drain().await.len(),
+            MAX_BROKERED_INBAND_USER_INPUTS
+        );
+        assert!(sender.try_recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_turn_input_broker_roundtrip_and_drain() {
         let broker = TurnInputBroker::default();
         assert!(
             broker
@@ -331,7 +375,9 @@ mod tests {
                 })
                 .await
         );
-        broker.clear().await;
+        let drained = broker.drain().await;
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, "sub-3");
         cancel.cancel();
         assert!(broker.recv(&cancel).await.is_none());
     }
@@ -388,6 +434,19 @@ mod tests {
     async fn test_emit_dropped_in_turn_submissions_reports_count() {
         let broker = TurnInputBroker::default();
         let mut machine = AgentMachine::new();
+        machine.accept_submission("original");
+        assert!(
+            broker
+                .push(Submission {
+                    intent: Default::default(),
+                    id: "u-2".into(),
+                    op: Op::Input {
+                        parts: vec![alan_agent_protocol::ContentPart::text("brokered")],
+                        mode: InputMode::Steer
+                    },
+                })
+                .await
+        );
         machine.push_buffered_inband_submission(Submission {
             intent: Default::default(),
             id: "u-1".to_string(),
@@ -419,12 +478,15 @@ mod tests {
 
         emit_dropped_in_turn_submissions(&mut emit, &mut machine, &broker).await;
 
+        machine.reset_turn();
+        assert_eq!(machine.current_submission_id(), Some("u-2"));
+        assert_eq!(machine.related_submission_ids(), ["original", "u-1"]);
         assert_eq!(machine.clear_buffered_inband_submissions(), 0);
         assert!(broker.try_recv().await.is_none());
         assert!(events.iter().any(|event| matches!(
             event,
             Event::Error { message, recoverable }
-                if *recoverable && message.contains("Dropped 2 in-turn buffered submissions")
+                if *recoverable && message.contains("Dropped 3 in-turn buffered submissions")
         )));
     }
 
@@ -460,6 +522,18 @@ mod tests {
         });
 
         let broker = TurnInputBroker::default();
+        for _ in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
+            machine.push_buffered_inband_submission(Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("queued")],
+                mode: InputMode::Steer,
+            }));
+        }
+        let overflow = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("overflow")],
+            mode: InputMode::Steer,
+        });
+        let overflow_id = overflow.id.clone();
+        assert!(broker.push(overflow).await);
         let cancel = CancellationToken::new();
         let mut events = Vec::new();
         let mut emit = |event| {
@@ -512,7 +586,18 @@ mod tests {
             }
             other => panic!("expected Op::Resume from namespace response, got {other:?}"),
         }
-        assert!(events.is_empty());
+        assert!(events.iter().any(|event| matches!(event, Event::Error { message, .. } if message.contains("Too many queued"))));
+        let ui = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+        let terminal: alan_agent_protocol::UiEvent = serde_json::from_slice(&ui).unwrap();
+        assert!(
+            matches!(terminal, alan_agent_protocol::UiEvent::InputCompleted {
+            submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, error: Some(_)
+        } if submission_ids == [overflow_id])
+        );
+        assert_eq!(
+            machine.buffered_inband_user_input_count(),
+            MAX_BUFFERED_INBAND_USER_INPUTS
+        );
     }
 
     #[tokio::test]

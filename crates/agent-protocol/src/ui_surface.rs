@@ -19,6 +19,9 @@ pub struct UiActivitySnapshot {
     pub state: UiActivityState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms: Option<u64>,
+    /// Inputs awaiting a response; empty for a queue-only pause.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waiting_submission_ids: Vec<String>,
 }
 
 impl UiActivitySnapshot {
@@ -27,6 +30,7 @@ impl UiActivitySnapshot {
             version: UI_SURFACE_VERSION,
             state: UiActivityState::Idle,
             started_at_ms: None,
+            waiting_submission_ids: Vec::new(),
         }
     }
 
@@ -35,6 +39,7 @@ impl UiActivitySnapshot {
             version: UI_SURFACE_VERSION,
             state: UiActivityState::Running,
             started_at_ms: Some(started_at_ms),
+            waiting_submission_ids: Vec::new(),
         }
     }
 
@@ -43,6 +48,7 @@ impl UiActivitySnapshot {
             version: UI_SURFACE_VERSION,
             state: UiActivityState::Paused,
             started_at_ms,
+            waiting_submission_ids: Vec::new(),
         }
     }
 }
@@ -184,14 +190,41 @@ impl Default for UiNoticeSnapshot {
     }
 }
 
+/// Terminal outcome of advancing accepted input, distinct from Process exit.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiInputStatus {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiEvent {
-    Activity { snapshot: UiActivitySnapshot },
-    Plan { snapshot: UiPlanSnapshot },
-    Thinking { snapshot: UiThinkingSnapshot },
-    Notice { snapshot: UiNoticeSnapshot },
-    Error { message: String, recoverable: bool },
+    /// Emitted after settlement; Tape/Actions contain the correlated result.
+    InputCompleted {
+        submission_ids: Vec<String>,
+        status: UiInputStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    Activity {
+        snapshot: UiActivitySnapshot,
+    },
+    Plan {
+        snapshot: UiPlanSnapshot,
+    },
+    Thinking {
+        snapshot: UiThinkingSnapshot,
+    },
+    Notice {
+        snapshot: UiNoticeSnapshot,
+    },
+    Error {
+        message: String,
+        recoverable: bool,
+    },
 }
 
 #[cfg(test)]

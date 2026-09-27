@@ -58,6 +58,7 @@ pub struct NativeConnectionResponse {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum ConnectionCommand {
     ReplaceMetadata {
+        expected: String,
         connections: ConnectionsFile,
     },
     AddProfile {
@@ -80,6 +81,7 @@ enum ConnectionCommand {
     },
 }
 
+#[derive(Clone)]
 struct State {
     connections: ConnectionsFile,
     selections: BTreeMap<u64, String>,
@@ -88,6 +90,43 @@ struct State {
     response_order: VecDeque<String>,
     native_status: BTreeMap<String, String>,
     validation: BTreeMap<String, String>,
+}
+
+impl State {
+    fn replace_connections(&mut self, connections: ConnectionsFile) {
+        let unchanged = connections
+            .profiles
+            .iter()
+            .filter_map(|(id, profile)| {
+                let same_credential = profile.credential_id.as_ref().is_none_or(|credential| {
+                    self.connections.credentials.get(credential)
+                        == connections.credentials.get(credential)
+                });
+                (self.connections.profiles.get(id) == Some(profile) && same_credential)
+                    .then_some(id.clone())
+            })
+            .collect::<BTreeSet<_>>();
+        self.connections = connections;
+        let installed = self
+            .connections
+            .profiles
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        self.selections
+            .retain(|_, profile| installed.contains(profile));
+        self.requests
+            .retain(|_, request| unchanged.contains(&request.profile_id));
+        self.native_status
+            .retain(|profile, _| unchanged.contains(profile));
+        self.validation
+            .retain(|profile, _| unchanged.contains(profile));
+        for profile in installed {
+            self.validation
+                .entry(profile)
+                .or_insert_with(|| "unavailable".into());
+        }
+    }
 }
 
 struct CallableRegistry {
@@ -217,6 +256,29 @@ impl ConnectionService {
         Ok(())
     }
 
+    /// Refresh shared metadata and its callable projection at an operation boundary.
+    pub async fn refresh(&self) -> Result<()> {
+        {
+            let mut state = self.state.lock().unwrap();
+            let (connections, _) = ConnectionsFile::load_from_path(&self.metadata_path)?;
+            if connections != state.connections {
+                state.replace_connections(connections);
+            }
+        }
+        self.refresh_callables().await;
+        Ok(())
+    }
+
+    /// Capture a refreshed Process binding while registry replacement is excluded.
+    pub async fn capture_connection(&self, profile_id: &str) -> Result<alan_llmfs::LlmFs> {
+        self.refresh().await?;
+        let callables = self.callables.lock().await;
+        let registry = callables
+            .as_ref()
+            .context("callable registry is not attached")?;
+        Ok(registry.llmfs.connection_snapshot(profile_id))
+    }
+
     pub fn selected_profile(&self, pid: u64) -> Option<String> {
         let state = self.state.lock().unwrap();
         state
@@ -305,32 +367,22 @@ impl ConnectionService {
     }
 
     async fn apply(&self, command: ConnectionCommand) -> Result<()> {
-        let refresh = {
-            let mut state = self.state.lock().unwrap();
+        let (refresh, save_result) = {
+            let mut committed = self.state.lock().unwrap();
+            let mut state = committed.clone();
             let mut persist = false;
             let mut refresh = false;
             match command {
-                ConnectionCommand::ReplaceMetadata { connections } => {
+                ConnectionCommand::ReplaceMetadata {
+                    expected,
+                    connections,
+                } => {
+                    ensure!(
+                        state.connections.fingerprint()? == expected,
+                        "connection metadata changed; reload before retrying"
+                    );
                     validate_connections(&connections)?;
-                    state.connections = connections;
-                    let installed = state
-                        .connections
-                        .profiles
-                        .keys()
-                        .cloned()
-                        .collect::<std::collections::BTreeSet<_>>();
-                    state
-                        .selections
-                        .retain(|_, profile| installed.contains(profile));
-                    state
-                        .requests
-                        .retain(|_, request| installed.contains(&request.profile_id));
-                    state
-                        .native_status
-                        .retain(|profile, _| installed.contains(profile));
-                    state
-                        .validation
-                        .retain(|profile, _| installed.contains(profile));
+                    state.replace_connections(connections);
                     persist = true;
                     refresh = true;
                 }
@@ -415,21 +467,50 @@ impl ConnectionService {
                     refresh = true;
                 }
             }
-            if persist {
+            let save_result = if persist {
                 state
                     .connections
-                    .save_to_path(&self.metadata_path)
-                    .context("persist Connection Service metadata")?;
-            }
-            refresh
+                    .save_if_unchanged(&self.metadata_path, &committed.connections)
+                    .context("persist Connection Service metadata")
+            } else {
+                Ok(())
+            };
+            let published = self.publish_saved_state(&mut committed, state, &save_result);
+            (refresh && published, save_result)
         };
         if refresh {
             self.refresh_callables().await;
         }
-        Ok(())
+        save_result
+    }
+
+    fn publish_saved_state(
+        &self,
+        committed: &mut State,
+        candidate: State,
+        save_result: &Result<()>,
+    ) -> bool {
+        if save_result.is_ok() {
+            *committed = candidate;
+            return true;
+        }
+        // A failed save may follow publication or a commit by another instance.
+        let Ok((on_disk, _)) = ConnectionsFile::load_from_path(&self.metadata_path) else {
+            return false;
+        };
+        if validate_connections(&on_disk).is_err() {
+            return false;
+        }
+        if on_disk == candidate.connections {
+            *committed = candidate;
+        } else {
+            committed.replace_connections(on_disk);
+        }
+        true
     }
 
     async fn refresh_callables(&self) {
+        let mut callables = self.callables.lock().await;
         let (connections, pending_profiles, native_status) = {
             let state = self.state.lock().unwrap();
             (
@@ -461,7 +542,6 @@ impl ConnectionService {
             validation.insert(profile_id.clone(), status.to_string());
         }
 
-        let mut callables = self.callables.lock().await;
         let Some(registry) = callables.as_mut() else {
             self.state.lock().unwrap().validation = validation;
             return;
@@ -560,7 +640,6 @@ impl ConnectionService {
                 .register_connection(&name, Box::new(ConnectionLlmProvider { client }));
             registry.published_fallbacks.insert(name);
         }
-        drop(callables);
         self.state.lock().unwrap().validation = validation;
     }
 }
@@ -571,7 +650,8 @@ impl FlatFileService for ConnectionService {
         FILES
     }
 
-    fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
+    async fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
+        self.refresh().await.map_err(|_| ErrorCode::Io)?;
         let state = self.state.lock().unwrap();
         let text = match name {
             "metadata" => serde_json::to_string(&state.connections),

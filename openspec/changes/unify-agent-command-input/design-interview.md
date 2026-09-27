@@ -5,6 +5,17 @@ interview rounds; ADR-0058 is accepted direction. Runtime implementation remains
 pending. This record does not reactivate superseded plans; ADR-0058 defines the
 target revision of ADR-0056 input semantics. The alan9 naming decision is accepted separately in ADR-0057.
 
+## Accepted lifetime revision — 2026-09-27
+
+The user selected an independent foreground Alan invocation per Herdr terminal
+session, with recovery only on explicit selection. Ordinary terminals use the
+same model. This supersedes the older rounds' promises that exiting Alan or
+pressing empty-input Ctrl-D leaves a background Host running. Only terminal-host
+view detach that retains the native process preserves execution; actual Alan
+exit shuts down its owned instance. Service Manager remains the service owner
+inside that instance. See [design](design.md) and the owning lifecycle deltas;
+this revision is accepted direction, not a runtime delivery claim.
+
 ## Accepted prompt refinement
 
 The user confirmed `alan: ` as the default conversation prompt and `alan! ` for

@@ -376,3 +376,372 @@ async fn callable_profiles_follow_metadata_and_native_readiness() {
             .contains(&"broken".to_string())
     );
 }
+
+#[tokio::test]
+async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    service
+        .apply(ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    service.select(7, "main").unwrap();
+    service
+        .apply(ConnectionCommand::RequestNative {
+            request: NativeConnectionRequest {
+                id: "login".into(),
+                profile_id: "main".into(),
+                action: NativeConnectionAction::BrowserLogin,
+            },
+        })
+        .await
+        .unwrap();
+    let before = service.metadata();
+    let disk = std::fs::read(&bindings.metadata_path).unwrap();
+    let backup = temp.path().join("committed.toml");
+    std::fs::rename(&bindings.metadata_path, &backup).unwrap();
+    std::fs::create_dir(&bindings.metadata_path).unwrap();
+    for command in [
+        ConnectionCommand::AddProfile {
+            profile_id: "other".into(),
+            profile: profile(),
+        },
+        ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        },
+        ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        },
+        ConnectionCommand::ClearDefault,
+        ConnectionCommand::ReplaceMetadata {
+            expected: before.fingerprint().unwrap(),
+            connections: ConnectionsFile::default(),
+        },
+    ] {
+        assert!(service.apply(command).await.is_err());
+        assert_eq!(service.metadata(), before);
+        let state = service.state.lock().unwrap();
+        assert_eq!(state.selections.get(&7).map(String::as_str), Some("main"));
+        assert!(state.requests.contains_key("login"));
+        assert!(state.validation.contains_key("main"));
+        assert_eq!(std::fs::read(&backup).unwrap(), disk);
+    }
+    std::fs::remove_dir(&bindings.metadata_path).unwrap();
+    std::fs::rename(backup, &bindings.metadata_path).unwrap();
+    service
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    assert!(service.metadata().profiles.is_empty());
+    assert!(service.state.lock().unwrap().selections.is_empty());
+    assert!(service.state.lock().unwrap().requests.is_empty());
+    assert_eq!(
+        ConnectionsFile::load_from_path(&bindings.metadata_path)
+            .unwrap()
+            .0,
+        service.metadata()
+    );
+}
+
+#[tokio::test]
+async fn post_replace_error_publishes_visible_metadata_and_dependent_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    service.select(7, "main").unwrap();
+    {
+        let mut committed = service.state.lock().unwrap();
+        let mut candidate = committed.clone();
+        candidate.connections.profiles.clear();
+        candidate.selections.clear();
+        candidate.validation.clear();
+        candidate
+            .connections
+            .save_to_path(&bindings.metadata_path)
+            .unwrap();
+        // Inject the error at the directory-sync boundary, after publication.
+        let failed_sync = Err(anyhow::anyhow!("sync parent directory failed"));
+        assert!(service.publish_saved_state(&mut committed, candidate, &failed_sync));
+        assert!(failed_sync.is_err());
+        assert!(committed.connections.profiles.is_empty());
+        assert!(committed.selections.is_empty());
+        assert!(committed.validation.is_empty());
+    }
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "next".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    let disk = ConnectionsFile::load_from_path(&bindings.metadata_path)
+        .unwrap()
+        .0;
+    assert_eq!(disk, service.metadata());
+    assert!(disk.profiles.contains_key("next"));
+    assert!(!disk.profiles.contains_key("main"));
+}
+
+#[tokio::test]
+async fn metadata_replacement_rejects_stale_clients_without_losing_the_first_update() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    let first = Shell::new(InProcessTransport::new(service.file_server()));
+    let second = Shell::new(InProcessTransport::new(service.file_server()));
+    let expected: ConnectionsFile =
+        serde_json::from_slice(&first.cat("/metadata").await.unwrap()).unwrap();
+    let stale: ConnectionsFile =
+        serde_json::from_slice(&second.cat("/metadata").await.unwrap()).unwrap();
+    let mut first_update = expected.clone();
+    first_update.profiles.insert("first".into(), profile());
+    // A metadata document above half the write limit must remain editable.
+    first_update.profiles.get_mut("first").unwrap().label = Some("x".repeat(600_000));
+    let replace = |expected: &ConnectionsFile, connections: &ConnectionsFile| {
+        serde_json::to_vec(&serde_json::json!({ "op": "replace_metadata", "expected": expected.fingerprint().unwrap(), "connections": connections })).unwrap()
+    };
+    first
+        .write("/ctl", &replace(&expected, &first_update))
+        .await
+        .unwrap();
+    let mut stale_update = stale.clone();
+    stale_update.profiles.insert("second".into(), profile());
+    assert!(
+        second
+            .write("/ctl", &replace(&stale, &stale_update))
+            .await
+            .is_err()
+    );
+    assert_eq!(service.metadata(), first_update);
+    assert_eq!(
+        ConnectionsFile::load_from_path(&bindings.metadata_path)
+            .unwrap()
+            .0,
+        first_update
+    );
+    let refreshed: ConnectionsFile =
+        serde_json::from_slice(&second.cat("/metadata").await.unwrap()).unwrap();
+    let mut merged = refreshed.clone();
+    merged.profiles.insert("second".into(), profile());
+    second
+        .write("/ctl", &replace(&refreshed, &merged))
+        .await
+        .unwrap();
+    assert_eq!(service.metadata(), merged);
+    let unguarded = serde_json::to_vec(
+        &serde_json::json!({ "op": "replace_metadata", "connections": expected }),
+    )
+    .unwrap();
+    assert!(first.write("/ctl", &unguarded).await.is_err());
+    assert_eq!(service.metadata(), merged);
+}
+
+#[tokio::test]
+async fn independent_services_reject_stale_writes_and_refresh_for_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let first = ConnectionService::open("test", &bindings).unwrap();
+    let second = ConnectionService::open("test", &bindings).unwrap();
+    first
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "first".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        second
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: "second".into(),
+                profile: profile()
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(second.metadata(), first.metadata());
+    assert_eq!(
+        second
+            .state
+            .lock()
+            .unwrap()
+            .validation
+            .get("first")
+            .map(String::as_str),
+        Some("unavailable")
+    );
+    second
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "second".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        first
+            .apply(ConnectionCommand::RemoveProfile {
+                profile_id: "first".into()
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(first.metadata(), second.metadata());
+    second.select(7, "first").unwrap();
+    first
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "first".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        second
+            .apply(ConnectionCommand::SetDefault {
+                profile_id: "first".into()
+            })
+            .await
+            .is_err()
+    );
+    assert!(second.state.lock().unwrap().selections.is_empty());
+    let disk = ConnectionsFile::load_from_path(&bindings.metadata_path)
+        .unwrap()
+        .0;
+    assert_eq!(disk, second.metadata());
+    assert!(!disk.profiles.contains_key("first"));
+    assert!(disk.profiles.contains_key("second"));
+}
+
+#[tokio::test]
+async fn legacy_timestamps_are_stable_and_replaced_profiles_discard_native_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    std::fs::write(
+        &bindings.metadata_path,
+        r#"version = 1
+[profiles.main]
+provider = "openai_responses"
+[profiles.main.settings]
+base_url = "https://api.openai.com/v1"
+model = "gpt-5.4"
+"#,
+    )
+    .unwrap();
+    let first = ConnectionService::open("test", &bindings).unwrap();
+    let second = ConnectionService::open("test", &bindings).unwrap();
+    assert_eq!(first.metadata(), second.metadata());
+    first
+        .apply(ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    let second = ConnectionService::open("test", &bindings).unwrap();
+    {
+        let mut state = second.state.lock().unwrap();
+        state
+            .native_status
+            .insert("main".into(), "logged_out".into());
+        state.requests.insert(
+            "old".into(),
+            NativeConnectionRequest {
+                id: "old".into(),
+                profile_id: "main".into(),
+                action: NativeConnectionAction::SecretEntry,
+            },
+        );
+    }
+    let mut changed = first.metadata();
+    changed.profiles.get_mut("main").unwrap().credential_id = Some("new-secret".into());
+    first
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: first.metadata().fingerprint().unwrap(),
+            connections: changed,
+        })
+        .await
+        .unwrap();
+    assert!(
+        second
+            .apply(ConnectionCommand::SetDefault {
+                profile_id: "main".into()
+            })
+            .await
+            .is_err()
+    );
+    let state = second.state.lock().unwrap();
+    assert!(!state.requests.contains_key("old"));
+    assert!(!state.native_status.contains_key("main"));
+}
+
+#[tokio::test]
+async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
+    use alan_ap::{Fid, OpenMode};
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let writer = ConnectionService::open("test", &bindings).unwrap();
+    let reader = ConnectionService::open("test", &bindings).unwrap();
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    reader
+        .attach_callable_registry(
+            llmfs.clone(),
+            Arc::new(TestLlmClientFactory::default()),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    let callable = Shell::new(InProcessTransport::new(llmfs));
+    let fs = reader.file_server();
+    writer
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    let fid = Fid(42);
+    fs.walk(Fid::ROOT, fid, &["metadata".into()]).await.unwrap();
+    fs.open(fid, OpenMode::Read).await.unwrap();
+    assert_eq!(callable.ls("/connections").await.unwrap(), ["main"]);
+    let bound = Shell::new(InProcessTransport::new(Arc::new(
+        reader.capture_connection("main").await.unwrap(),
+    )));
+    reader.select(7, "main").unwrap();
+    let expected = serde_json::to_vec(&writer.metadata()).unwrap();
+    let mut bytes = fs.read(fid, 0, 8).await.unwrap();
+    writer
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    let fresh = Shell::new(InProcessTransport::new(fs.clone()));
+    let metadata: ConnectionsFile =
+        serde_json::from_slice(&fresh.cat("/metadata").await.unwrap()).unwrap();
+    assert!(metadata.profiles.is_empty());
+    assert!(callable.ls("/connections").await.unwrap().is_empty());
+    assert!(reader.selected_profile(7).is_none());
+    assert_eq!(bound.ls("/connections").await.unwrap(), ["main"]);
+    assert_eq!(fs.stat(fid).await.unwrap().length, expected.len() as u64);
+    bytes.extend(fs.read(fid, 8, u32::MAX).await.unwrap());
+    assert_eq!(bytes, expected);
+    fs.clunk(fid).await.unwrap();
+    std::fs::write(&bindings.metadata_path, "invalid = [").unwrap();
+    assert!(fresh.cat("/metadata").await.is_err());
+}

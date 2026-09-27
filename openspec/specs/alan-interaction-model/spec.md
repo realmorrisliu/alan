@@ -40,7 +40,16 @@ SHALL return a nonzero exit code.
 - **THEN** the user sees the failure in terminal output without consulting logs
 - **AND** the error does not claim the task succeeded
 
-#### Scenario: Ctrl-D detaches at an empty prompt
-- **WHEN** the user presses Ctrl-D with no pending input
-- **THEN** the interactive renderer exits and restores terminal modes
-- **AND** any accepted Agent task continues without interruption or replay
+#### Scenario: Ctrl-D exits at an empty prompt
+- **WHEN** the user presses Ctrl-D with an empty composer and no pending Agent
+  input
+- **THEN** the renderer exits and restores terminal modes
+- **AND** the owning foreground application shuts down its instance and work
+- **AND** completed effects remain completed and uncertain outcomes are not
+  replayed automatically
+
+#### Scenario: Ctrl-D preserves pending Agent input
+- **WHEN** the user presses Ctrl-D while a confirmation or structured-input
+  request is pending
+- **THEN** the renderer remains attached
+- **AND** the request remains available for a response

@@ -349,3 +349,37 @@ async fn test_mock_provider_stream() {
     assert!(final_chunk.is_finished);
     assert_eq!(final_chunk.finish_reason.as_deref(), Some("stop"));
 }
+
+#[tokio::test]
+async fn chat_trait_forwarding_reaches_both_provider_endpoints() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 8192];
+            assert!(socket.read(&mut bytes).await.unwrap() > 0);
+            socket
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                )
+                .await
+                .unwrap();
+        }
+    });
+    let clients: [Box<dyn LlmProvider>; 2] = [
+        Box::new(OpenAiChatCompletionsClient::official_with_params(
+            "test", &url, "gpt-5.4",
+        )),
+        Box::new(AnthropicMessagesClient::with_params("test", &url, "test")),
+    ];
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        for mut client in clients {
+            assert!(client.chat(None, "test").await.is_err());
+        }
+        server.await.unwrap();
+    })
+    .await
+    .unwrap();
+}

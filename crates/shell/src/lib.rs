@@ -882,6 +882,23 @@ impl Tail {
         Ok(data)
     }
 
+    /// Read a finite snapshot through the held descriptor without moving the tail.
+    /// The observed length bounds stream reads, including after path removal.
+    pub async fn snapshot(&self) -> Result<Vec<u8>, ErrorCode> {
+        let shell = Shell::new(self.fs.clone());
+        let length = shell.length(self.fid).await?;
+        let mut bytes = Vec::new();
+        while (bytes.len() as u64) < length {
+            let count = (length - bytes.len() as u64).min(4096) as u32;
+            let chunk = shell.read_at(self.fid, bytes.len() as u64, count).await?;
+            if chunk.is_empty() {
+                break;
+            }
+            bytes.extend(chunk);
+        }
+        Ok(bytes)
+    }
+
     /// The offset the next [`read`](Tail::read) will resume from.
     pub fn offset(&self) -> Offset {
         self.offset

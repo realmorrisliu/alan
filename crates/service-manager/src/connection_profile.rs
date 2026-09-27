@@ -2,7 +2,9 @@ use alan_agent_engine::{Config, LlmProvider};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 const CONNECTIONS_VERSION: u32 = 1;
@@ -115,7 +117,40 @@ pub struct ProviderDescriptor {
     pub default_settings: &'static [(&'static str, &'static str)],
 }
 
+fn lock_metadata(path: &Path) -> anyhow::Result<std::fs::File> {
+    validate_safe_absolute_path("connection metadata path", path)?;
+    std::fs::create_dir_all(
+        path.parent()
+            .context("connection metadata path has no parent")?,
+    )?;
+    let mut lock_path = path.as_os_str().to_owned();
+    lock_path.push(".lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let lock = options
+        .open(PathBuf::from(lock_path))
+        .context("open Connection Store lock")?;
+    anyhow::ensure!(
+        lock.metadata()?.is_file(),
+        "Connection Store lock is not a regular file"
+    );
+    lock.lock().context("lock Connection Store metadata")?;
+    Ok(lock)
+}
+
 impl ConnectionsFile {
+    /// Stable content fingerprint for optimistic metadata replacement.
+    pub fn fingerprint(&self) -> anyhow::Result<String> {
+        Ok(hex::encode(Sha256::digest(serde_json::to_vec(self)?)))
+    }
+
     pub fn load_from_path(path: &Path) -> anyhow::Result<(Self, Option<PathBuf>)> {
         validate_safe_absolute_path("connection metadata path", path)?;
         match std::fs::read_to_string(path) {
@@ -141,22 +176,44 @@ impl ConnectionsFile {
     }
 
     pub fn save_to_path(&self, path: &Path) -> anyhow::Result<()> {
+        let _lock = lock_metadata(path)?;
+        self.save_locked(path)
+    }
+
+    /// Atomically reject a stale snapshot or publish its replacement under the store lock.
+    pub fn save_if_unchanged(&self, path: &Path, expected: &Self) -> anyhow::Result<()> {
+        let _lock = lock_metadata(path)?;
+        anyhow::ensure!(
+            Self::load_from_path(path)?.0 == *expected,
+            "connection metadata changed; reload before retrying"
+        );
+        self.save_locked(path)
+    }
+
+    fn save_locked(&self, path: &Path) -> anyhow::Result<()> {
         validate_safe_absolute_path("connection metadata path", path)?;
         if self.version != CONNECTIONS_VERSION {
             anyhow::bail!("unsupported connections file version {}", self.version);
         }
         let rendered = toml::to_string_pretty(self)
             .context("failed to encode connections.toml while saving")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create connection metadata directory {}",
-                    parent.display()
-                )
-            })?;
-        }
-        std::fs::write(path, rendered)
-            .with_context(|| format!("failed to write connections file {}", path.display()))
+        let parent = path
+            .parent()
+            .context("connection metadata path has no parent")?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create connection metadata directory {}",
+                parent.display()
+            )
+        })?;
+        let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+        staged.write_all(rendered.as_bytes())?;
+        staged.as_file().sync_all()?;
+        staged
+            .persist(path)
+            .with_context(|| format!("failed to replace connections file {}", path.display()))?;
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
     }
 
     pub fn profile_descriptor(provider: LlmProvider) -> &'static ProviderDescriptor {
@@ -389,8 +446,9 @@ pub fn default_profile_source() -> String {
     "managed".to_string()
 }
 
+/// Stable sentinel for legacy metadata whose creation or update time is unknown.
 pub fn default_profile_timestamp() -> DateTime<Utc> {
-    Utc::now()
+    DateTime::<Utc>::UNIX_EPOCH
 }
 
 pub fn normalize_profile_settings(
@@ -632,6 +690,45 @@ mod tests {
     }
 
     #[test]
+    fn saving_metadata_preserves_open_readers_and_rejects_invalid_replacement() {
+        use std::io::Read;
+
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("connections.toml");
+        let original = ConnectionsFile::default();
+        original.save_to_path(&path).unwrap();
+        let mut existing_reader = std::fs::File::open(&path).unwrap();
+        let updated = ConnectionsFile {
+            default_profile: Some("updated".into()),
+            ..original.clone()
+        };
+        updated.save_to_path(&path).unwrap();
+        let mut previous_bytes = String::new();
+        existing_reader.read_to_string(&mut previous_bytes).unwrap();
+        assert_eq!(
+            toml::from_str::<ConnectionsFile>(&previous_bytes).unwrap(),
+            original
+        );
+        assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
+        let invalid = ConnectionsFile {
+            version: CONNECTIONS_VERSION + 1,
+            ..updated.clone()
+        };
+        assert!(invalid.save_to_path(&path).is_err());
+        assert_eq!(ConnectionsFile::load_from_path(&path).unwrap().0, updated);
+        let names = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            names,
+            ["connections.toml", "connections.toml.lock"]
+                .map(std::ffi::OsString::from)
+                .into()
+        );
+    }
+
+    #[test]
     fn dev_connection_store_does_not_fall_back_to_stable_store() {
         let temp = TempDir::new().unwrap();
         let stable_path = temp.path().join("system-store/stable/connections.toml");
@@ -737,5 +834,42 @@ mod tests {
             Some("openrouter-main")
         );
         assert_eq!(config.openrouter_api_key, None);
+    }
+    #[test]
+    fn metadata_lock_excludes_another_process() {
+        const ENV: &str = "ALAN_TEST_CONNECTION_LOCK_PATH";
+        if let Some(path) = std::env::var_os(ENV) {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .unwrap();
+            assert!(matches!(
+                file.try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ));
+            return;
+        }
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("connections.toml");
+        let lock = lock_metadata(&path).unwrap();
+        let lock_path = temp.path().join("connections.toml.lock");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "connection_profile::tests::metadata_lock_excludes_another_process",
+            ])
+            .env(ENV, &lock_path)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        drop(lock);
+        let released = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .unwrap();
+        released.try_lock().unwrap();
     }
 }

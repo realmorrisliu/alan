@@ -78,8 +78,17 @@ pub(crate) async fn error_notice(namespace: &NamespaceAgentFiles, message: &str)
         .await
 }
 
-pub(crate) async fn paused(namespace: &NamespaceAgentFiles) -> Result<()> {
-    let activity = UiActivitySnapshot::paused(None);
+pub(crate) async fn paused(
+    namespace: &NamespaceAgentFiles,
+    machine: Option<&crate::agent_machine::AgentMachine>,
+) -> Result<()> {
+    let mut activity = UiActivitySnapshot::paused(None);
+    if let Some(machine) = machine {
+        activity.waiting_submission_ids = machine.related_submission_ids().to_vec();
+        if let Some(id) = machine.current_submission_id() {
+            activity.waiting_submission_ids.push(id.to_owned());
+        }
+    }
     namespace.write_ui_activity_snapshot(&activity).await?;
     namespace
         .append_ui_event(&UiEvent::Activity { snapshot: activity })
@@ -342,10 +351,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paused_activity_correlates_waiting_inputs_and_clears_on_resume() {
+        let (environment, shell) = agent_files();
+        let mut machine = crate::agent_machine::AgentMachine::new();
+        machine.accept_submission("original");
+        machine.accept_steering_submission("steering".into());
+        paused(&environment, Some(&machine)).await.unwrap();
+        heartbeat(&environment).await.unwrap();
+        let activity = environment.read_ui_activity_snapshot().await.unwrap();
+        assert_eq!(activity.waiting_submission_ids, ["original", "steering"]);
+        let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
+        let event: UiEvent = serde_json::from_slice(&events).unwrap();
+        assert_eq!(event, UiEvent::Activity { snapshot: activity });
+        resumed(&environment).await.unwrap();
+        assert!(
+            environment
+                .read_ui_activity_snapshot()
+                .await
+                .unwrap()
+                .waiting_submission_ids
+                .is_empty()
+        );
+        paused(&environment, None).await.unwrap();
+        assert!(
+            environment
+                .read_ui_activity_snapshot()
+                .await
+                .unwrap()
+                .waiting_submission_ids
+                .is_empty()
+        );
+        let legacy: UiActivitySnapshot =
+            serde_json::from_str(r#"{"version":1,"state":"paused"}"#).unwrap();
+        assert!(legacy.waiting_submission_ids.is_empty());
+    }
+
+    #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
         let (environment, _) = agent_files();
         initialize(&environment).await.unwrap();
-        paused(&environment).await.unwrap();
+        paused(&environment, None).await.unwrap();
 
         heartbeat(&environment).await.unwrap();
 

@@ -36,6 +36,8 @@ mod root;
 mod surface_state;
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use std::pin::Pin;
 
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream, VersionTable,
@@ -210,9 +212,16 @@ enum Node {
     ChildrenDir,
 }
 
+type RetentionRecorder = Box<
+    dyn Fn(String, String) -> Pin<Box<dyn Future<Output = Result<(), ErrorCode>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// The agent file server.
 pub struct AgentFs {
     state: Mutex<State>,
+    retention_recorder: Mutex<Option<RetentionRecorder>>,
 }
 
 impl Default for AgentFs {
@@ -225,6 +234,7 @@ impl AgentFs {
     pub fn new() -> Self {
         let (knowledge, tape_root) = initial_tape_knowledge();
         Self {
+            retention_recorder: Mutex::new(None),
             state: Mutex::new(State {
                 input: Stream::new(),
                 output: Stream::new(),
@@ -250,6 +260,17 @@ impl AgentFs {
                 fids: HashMap::new(),
             }),
         }
+    }
+
+    /// Install the owning runtime's durable retention journal before exposing readiness.
+    /// The callback runs under the state lock and must not call back into this server.
+    pub async fn set_retention_recorder<F, Fut>(&self, record: F)
+    where
+        F: Fn(String, String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), ErrorCode>> + Send + 'static,
+    {
+        *self.retention_recorder.lock().await =
+            Some(Box::new(move |id, cause| Box::pin(record(id, cause))));
     }
 
     /// Current content-addressed checkpoint root for `machine/tape`.
@@ -281,6 +302,12 @@ impl AgentFs {
         cause: &str,
     ) -> Result<(), ErrorCode> {
         let mut state = self.state.lock().await;
+        if !state.actions.contains_key(action_id) {
+            return Err(ErrorCode::NotFound);
+        }
+        if let Some(record) = self.retention_recorder.lock().await.as_ref() {
+            record(action_id.to_string(), cause.to_string()).await?;
+        }
         let root_name = action_output_root_name(action_id);
         state
             .knowledge
