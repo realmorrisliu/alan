@@ -74,9 +74,9 @@ impl PackageStore {
         if changed || !retired.is_empty() {
             catalog.generation = catalog.generation.saturating_add(1);
             persist_catalog(&self.root, &catalog)?;
-            if let Err(error) = gc_unreferenced_store_revisions(&self.root, &catalog, &leases) {
-                tracing::warn!(%error, "package revision cleanup deferred after reference reconciliation");
-            }
+        }
+        if let Err(error) = gc_unreferenced_store_revisions(&self.root, &catalog, &leases) {
+            tracing::warn!(%error, "package revision cleanup deferred during shared refresh");
         }
         Ok(catalog)
     }
@@ -271,14 +271,6 @@ fn remove_path_without_following(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_package_revisions(root: &Path, package_id: &str) -> Result<()> {
-    let path = root.join("revisions").join(package_id);
-    if path.exists() {
-        remove_path_without_following(&path)?;
-    }
-    Ok(())
-}
-
 pub(super) struct StagedPackageRevisions {
     pub(super) active: PathBuf,
     pub(super) staged: PathBuf,
@@ -353,11 +345,7 @@ fn gc_unreferenced_store_revisions(
             .to_str()
             .context("package revision directory is not UTF-8")?
             .to_string();
-        if catalog.packages.contains_key(&package_id) {
-            gc_one_package_revisions(root, &package_id, catalog, leases)?;
-        } else {
-            remove_path_without_following(&entry.path())?;
-        }
+        gc_one_package_revisions(root, &package_id, catalog, leases)?;
     }
     Ok(())
 }
@@ -368,9 +356,7 @@ fn gc_one_package_revisions(
     catalog: &PackageCatalog,
     leases: &BTreeMap<u64, (String, String)>,
 ) -> Result<()> {
-    let Some(record) = catalog.packages.get(package_id) else {
-        return remove_package_revisions(root, package_id);
-    };
+    let record = catalog.packages.get(package_id);
     let package_root = root.join("revisions").join(package_id);
     if !package_root.exists() {
         return Ok(());
@@ -379,7 +365,7 @@ fn gc_one_package_revisions(
         .values()
         .filter(|(id, _)| id == package_id)
         .map(|(_, revision)| revision.as_str())
-        .chain(std::iter::once(record.revision.as_str()))
+        .chain(record.map(|record| record.revision.as_str()))
         .collect::<BTreeSet<_>>();
     for entry in fs::read_dir(&package_root)? {
         let entry = entry?;
@@ -387,9 +373,17 @@ fn gc_one_package_revisions(
         let revision = revision
             .to_str()
             .context("package revision name is not UTF-8")?;
+        validate_revision_id(revision)?;
+        ensure!(
+            fs::symlink_metadata(entry.path())?.file_type().is_dir(),
+            "package revision is not an owned directory"
+        );
         if !retained.contains(revision) {
             remove_path_without_following(&entry.path())?;
         }
+    }
+    if retained.is_empty() {
+        fs::remove_dir(package_root)?;
     }
     Ok(())
 }

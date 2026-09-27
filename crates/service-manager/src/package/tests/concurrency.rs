@@ -3,6 +3,37 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 
 #[test]
+fn refresh_collects_materialized_revisions_that_never_reached_the_catalog() {
+    let service = PackageService::ephemeral("test").unwrap();
+    assert!(
+        service
+            .execute(PackageCommand::Install {
+                request_id: "install".into(),
+                package_id: "installed".into(),
+                snapshot: native_snapshot("installed", "committed"),
+            })
+            .unwrap()
+            .success
+    );
+    let catalog = service.catalog().unwrap();
+    let unpublished = native_snapshot("unpublished", "uncommitted");
+    let revision = fingerprint(&unpublished).unwrap();
+    for id in ["installed", "orphan"] {
+        {
+            let _transaction = service.store.transaction().unwrap();
+            PackageMaterializer::new(service.store.root())
+                .materialize(id, &revision, &unpublished)
+                .unwrap();
+        }
+        let orphan = service.store.revision_root(id, &revision);
+        assert!(orphan.is_dir());
+        assert_eq!(service.catalog().unwrap(), catalog);
+        assert!(!orphan.exists());
+    }
+    assert!(service.acquire("installed").is_ok());
+}
+
+#[test]
 fn refresh_recovers_an_interrupted_removal_without_reopening_the_service() {
     let service = PackageService::ephemeral("test").unwrap();
     assert!(
