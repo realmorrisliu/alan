@@ -278,20 +278,44 @@ async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown
         "concurrent first boot must finish shared legacy migration"
     );
 
-    let first_instance = instances
+    let first_index = instances
         .iter()
-        .find(|(_, status)| status.pid == first.0.id())
+        .position(|(_, status)| status.pid == first.0.id())
         .expect("first CLI must own a distinct Host endpoint");
-    let second_instance = instances
+    let second_index = instances
         .iter()
-        .find(|(_, status)| status.pid == second.0.id())
+        .position(|(_, status)| status.pid == second.0.id())
         .expect("second CLI must own a distinct Host endpoint");
+    let first_instance = &instances[first_index];
+    let second_instance = &instances[second_index];
+    let mut shells = Vec::with_capacity(instances.len());
     for (paths, _) in &instances {
         let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
-        let shell = alan_shell::Shell::new(attachment.root);
+        let shell = alan_shell::Shell::new(attachment.root.clone());
         assert_eq!(shell.cat("/proc/1/status").await.unwrap(), b"running\n");
         assert!(shell.ls("/agent/root").await.is_ok());
+        shells.push(shell);
     }
+
+    let input_path = "/agent/root/io/input";
+    let mut first_input = shells[first_index].tail(input_path).await.unwrap();
+    let mut second_input = shells[second_index].tail(input_path).await.unwrap();
+    shells[first_index]
+        .write(input_path, b"first-only")
+        .await
+        .unwrap();
+    let first_frame = first_input.read(4096).await.unwrap();
+    assert_eq!(first_frame, b"10\nfirst-only");
+    let first_snapshot = first_input.snapshot().await.unwrap();
+
+    shells[second_index]
+        .write(input_path, b"second-only")
+        .await
+        .unwrap();
+    assert_eq!(second_input.read(4096).await.unwrap(), b"11\nsecond-only");
+    assert_eq!(first_input.snapshot().await.unwrap(), first_snapshot);
+    first_input.close().await.unwrap();
+    second_input.close().await.unwrap();
 
     let terminate_first = Command::new("/bin/kill")
         .args(["-TERM", &first.0.id().to_string()])

@@ -25,8 +25,15 @@ The CLI-only distribution and independent foreground startup, Root, runtime
 endpoint and shutdown shipped in PR #1009 (`faf7ee8e6b71c9f6c460e45ac049485035ec4d3b`).
 Current-head Codex review found no issues and required CI passed; integration
 tests cover two simultaneous invocations and independent shutdown. Task 2.18.1
-records this slice. Cross-invocation cwd/queue isolation and shared-store
-concurrency remain under task 2.18.2. Explicit durable recovery selection,
+records this slice. Task 2.18.2 is verified by this PR's regression tests: two
+live CLI invocations retain separate input streams, and separate Tool Process
+runners keep cwd bindings isolated even for matching Process IDs. The store and
+command audit found Package Store transactions, Connection metadata, credential
+writes and legacy migration already serialized through their owning locks.
+`alan host status/stop` require an explicit `ALAN_INSTANCE_RUNTIME_DIR`; ordinary
+`alan connection` operations use the channel stores directly, and only a native
+Connection request attaches to its explicitly selected instance. Review and
+current-head CI evidence remains under task 4.1. Explicit durable recovery selection,
 authority validation and paused queue restoration remain under task 2.19.
 
 This is a partial delivery. The canonical standalone distribution requirement
