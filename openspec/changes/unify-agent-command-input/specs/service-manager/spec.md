@@ -22,7 +22,9 @@ rollout path held by that instance's Agent Runtime Service, and MUST NOT reread
 the channel-wide selector. A new invocation SHALL read that selector only when
 the user explicitly requests `alan --resume`; no background Host survives the
 foreground invocation. If an instance has no durable rollout, its replacement
-SHALL start fresh without consulting the channel-wide selector.
+SHALL start fresh without consulting the channel-wide selector. Before loading
+a replacement from a prior Root rollout, Agent Runtime Service SHALL wait for
+the prior Agent Machine's recorder to flush and terminate.
 
 #### Scenario: Root Agent crash loops
 - **WHEN** the foreground Root Agent fails after readiness
@@ -30,6 +32,11 @@ SHALL start fresh without consulting the channel-wide selector.
   rollout while restart attempts remain within budget
 - **AND** failed recovery leaves the selected durable evidence available for
   retry or explicit recovery
+
+#### Scenario: Root replacement waits for pending rollout writes
+- **WHEN** Root exits with rollout records still queued by non-blocking writes
+- **THEN** Agent Runtime Service flushes and terminates the prior recorder
+  before replacement recovery reads that rollout
 
 #### Scenario: Root Agent restarts while another invocation is active
 - **WHEN** the foreground Root Agent fails after readiness while another
