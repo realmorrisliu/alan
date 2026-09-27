@@ -55,10 +55,31 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         .unwrap();
     assert_eq!(adapter.project_text("pwd: /"), "pwd: .");
     assert_eq!(adapter.project_text("pwd: / is cwd"), "pwd: . is cwd");
+    assert_eq!(
+        adapter.project_text("realpath /etc/passwd"),
+        "realpath ./etc/passwd"
+    );
     assert_eq!(adapter.project_text("[docs](/guide)"), "[docs](/guide)");
     assert_eq!(
         adapter.project_text("body { background: url(/assets/bg.png) }"),
         "body { background: url(/assets/bg.png) }"
+    );
+
+    let nested = service
+        .reconcile(7, binding("/mnt/project/tmp"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let projected = nested
+        .project_text("realpath /usr/bin/env")
+        .strip_prefix("realpath ")
+        .unwrap()
+        .to_owned();
+    let cwd = dunce::canonicalize(std::path::Path::new(std::path::MAIN_SEPARATOR_STR).join("tmp"))
+        .unwrap();
+    assert_eq!(
+        dunce::canonicalize(cwd.join(projected)).unwrap(),
+        dunce::canonicalize("/usr/bin/env").unwrap()
     );
 }
 
@@ -97,6 +118,40 @@ async fn project_text_preserves_unmatched_paths_with_space_siblings() {
         ". is cwd",
         "ordinary prose after the active root must not expose its backing path"
     );
+}
+
+#[tokio::test]
+async fn project_text_does_not_map_paths_from_a_disjoint_grant() {
+    let project = tempfile::tempdir().unwrap();
+    let docs = tempfile::tempdir().unwrap();
+    let other_path = dunce::canonicalize(docs.path()).unwrap().join("notes.txt");
+
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        project.path(),
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/docs",
+        HostMountAccess::ReadWrite,
+        docs.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let output = format!("realpath {}", other_path.display());
+
+    assert_eq!(adapter.project_text(&output), output);
 }
 
 #[tokio::test]

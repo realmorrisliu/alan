@@ -20,24 +20,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
 
     // The filesystem root is public; projecting every leading slash rewrites root-relative URLs.
     if active_mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR) {
-        let common = adapter
-            .namespace_cwd
-            .components()
-            .zip(active_mount.namespace_path.components())
-            .take_while(|(left, right)| left == right)
-            .count();
-        let mut mount_from_cwd = PathBuf::new();
-        for _ in common..adapter.namespace_cwd.components().count() {
-            mount_from_cwd.push("..");
-        }
-        for component in active_mount.namespace_path.components().skip(common) {
-            if let Component::Normal(part) = component {
-                mount_from_cwd.push(part);
-            }
-        }
-        if mount_from_cwd.as_os_str().is_empty() {
-            mount_from_cwd.push(".");
-        }
+        let mount_from_cwd = relative_path(&adapter.namespace_cwd, &active_mount.namespace_path);
         let host_path = active_mount.host_path.to_string_lossy();
         let replacement = mount_from_cwd.to_string_lossy().into_owned();
         let host_path = host_path.into_owned();
@@ -59,7 +42,76 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     for (path, replacement) in candidates {
         projected = replace_path_prefixes(&projected, &path, &replacement);
     }
+    if active_mount.host_path == Path::new(std::path::MAIN_SEPARATOR_STR) {
+        let physical_cwd =
+            dunce::canonicalize(&adapter.cwd).unwrap_or_else(|_| adapter.cwd.clone());
+        projected = project_rooted_path_tokens(&projected, &physical_cwd);
+    }
     projected
+}
+
+// ponytail: handle whitespace-delimited absolute path tokens; parse more formats if needed.
+fn project_rooted_path_tokens(text: &str, cwd: &Path) -> String {
+    let mut projected = String::with_capacity(text.len());
+    for part in text.split_inclusive(char::is_whitespace) {
+        let token_end = part.find(char::is_whitespace).unwrap_or(part.len());
+        let (token, separator) = part.split_at(token_end);
+        let path_start = token
+            .char_indices()
+            .take_while(|(_, ch)| matches!(ch, '(' | '\'' | '"' | '`'))
+            .map(|(index, ch)| index + ch.len_utf8())
+            .last()
+            .unwrap_or(0);
+        let path_and_suffix = &token[path_start..];
+        let path_end = path_and_suffix
+            .trim_end_matches(|ch| {
+                matches!(
+                    ch,
+                    ',' | ';' | ':' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '.' | '!' | '?'
+                )
+            })
+            .len();
+        let path_text = &path_and_suffix[..path_end];
+        let path = Path::new(path_text);
+        if path_text.starts_with(std::path::MAIN_SEPARATOR) && path.is_absolute() {
+            let mut relative = relative_path(cwd, path);
+            if matches!(relative.components().next(), Some(Component::Normal(_))) {
+                relative = Path::new(".").join(relative);
+            }
+            projected.push_str(&token[..path_start]);
+            projected.push_str(&relative.to_string_lossy());
+            projected.push_str(&path_and_suffix[path_end..]);
+        } else {
+            projected.push_str(token);
+        }
+        projected.push_str(separator);
+    }
+    projected
+}
+
+fn relative_path(from: &Path, to: &Path) -> PathBuf {
+    let from_components = from.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+    let common = from_components
+        .iter()
+        .zip(&to_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut relative = PathBuf::new();
+    for component in &from_components[common..] {
+        if matches!(component, Component::Normal(_) | Component::ParentDir) {
+            relative.push("..");
+        }
+    }
+    for component in &to_components[common..] {
+        if let Component::Normal(part) = component {
+            relative.push(part);
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    relative
 }
 
 fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
