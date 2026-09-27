@@ -719,6 +719,9 @@ async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
     fs.walk(Fid::ROOT, fid, &["metadata".into()]).await.unwrap();
     fs.open(fid, OpenMode::Read).await.unwrap();
     assert_eq!(callable.ls("/connections").await.unwrap(), ["main"]);
+    let bound = Shell::new(InProcessTransport::new(Arc::new(
+        reader.capture_connection("main").await.unwrap(),
+    )));
     reader.select(7, "main").unwrap();
     let expected = serde_json::to_vec(&writer.metadata()).unwrap();
     let mut bytes = fs.read(fid, 0, 8).await.unwrap();
@@ -734,6 +737,7 @@ async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
     assert!(metadata.profiles.is_empty());
     assert!(callable.ls("/connections").await.unwrap().is_empty());
     assert!(reader.selected_profile(7).is_none());
+    assert_eq!(bound.ls("/connections").await.unwrap(), ["main"]);
     assert_eq!(fs.stat(fid).await.unwrap().length, expected.len() as u64);
     bytes.extend(fs.read(fid, 8, u32::MAX).await.unwrap());
     assert_eq!(bytes, expected);

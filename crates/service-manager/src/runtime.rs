@@ -25,7 +25,7 @@ use crate::{
     BootManifest, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
     ProcessLaunchContext, RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
-    agent_runtime::{AgentRuntimeFileServers, AgentRuntimeService, RootAgentTemplate},
+    agent_runtime::{AgentRuntimeService, RootAgentTemplate},
     process_spawn::{spawn_process, spawn_unit_process},
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
@@ -418,7 +418,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     let package_handle = SwitchableFileServer::new();
     let agent_runtime = AgentRuntimeService::new(
         procfs.clone(),
-        AgentRuntimeFileServers::from_refs(&agent_root, &llmfs),
+        agent_root.clone(),
         host_mount_service.clone(),
         connection_service.clone(),
         tools.process_runner(),

@@ -269,6 +269,16 @@ impl ConnectionService {
         Ok(())
     }
 
+    /// Capture a refreshed Process binding while registry replacement is excluded.
+    pub async fn capture_connection(&self, profile_id: &str) -> Result<alan_llmfs::LlmFs> {
+        self.refresh().await?;
+        let callables = self.callables.lock().await;
+        let registry = callables
+            .as_ref()
+            .context("callable registry is not attached")?;
+        Ok(registry.llmfs.connection_snapshot(profile_id))
+    }
+
     pub fn selected_profile(&self, pid: u64) -> Option<String> {
         let state = self.state.lock().unwrap();
         state
