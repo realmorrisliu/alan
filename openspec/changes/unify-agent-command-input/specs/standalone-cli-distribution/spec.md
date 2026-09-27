@@ -45,6 +45,16 @@ installed applications, or launchd registrations.
 - **AND** a subsequent `alan --version` exits successfully without starting a
   Host
 
+#### Scenario: Upgrade removes previously owned Host executables
+
+- **WHEN** an existing channel installation records a separate Host executable
+  in its ownership manifest and is upgraded to the foreground CLI distribution
+- **THEN** the installer removes that executable only if it still matches the
+  previously recorded owned content, before replacing the manifest
+- **AND** a modified or unowned file is preserved and reported as a conflict
+  without discarding its existing ownership record
+- **AND** stable and development channel ownership remain separate
+
 #### Scenario: Destination contains an unrelated file
 
 - **WHEN** a requested target path contains a file not owned by the installer
