@@ -1,5 +1,11 @@
 # Bare `alan` attaches to the existing Root Agent
 
+Lifetime direction revised 2026-09-27: the user selected independent foreground
+Alan invocations and explicitly selected recovery. The older background lifetime
+assumptions below are superseded as target direction by
+[the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
+This does not claim the foreground runtime or canonical spec sync is complete.
+
 Status: accepted, 2026-09-24. Supersedes ADR-0039 for bare CLI startup and
 narrows ADR-0048: the bare terminal renderer is an attached Agent client, not an
 Alan Shell Process. ADR-0048 still applies to an explicitly provided
