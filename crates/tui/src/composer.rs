@@ -35,6 +35,16 @@ impl Composer {
         self.cursor
     }
 
+    pub(crate) fn is_recalling(&self) -> bool {
+        self.history_index.is_some()
+    }
+
+    /// Remove framing from a recalled entry without resetting history navigation.
+    pub(crate) fn strip_recalled_prefix(&mut self, prefix_len: usize) {
+        self.buffer.drain(..prefix_len);
+        self.cursor = self.cursor.saturating_sub(prefix_len);
+    }
+
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.buffer = text.into();
         self.cursor = self.buffer.len();
