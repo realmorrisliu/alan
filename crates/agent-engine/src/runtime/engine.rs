@@ -19,7 +19,7 @@ use crate::agent_machine::{
 use alan_agent_protocol::Submission;
 use anyhow::Result;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
@@ -442,6 +442,9 @@ fn spawn_with_prepared_runtime_environment(
             .flatten(),
     );
 
+    let recorder = Arc::new(OnceLock::new());
+    let runtime_recorder = recorder.clone();
+
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
         let process_path = match environment.process_files().process_path() {
@@ -485,6 +488,7 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
         let machine = startup.machine;
+        let _ = runtime_recorder.set(machine.recorder());
 
         // Build the transition context owned by this Process loop.
         let mut state = RuntimeLoopState {
@@ -874,6 +878,7 @@ fn spawn_with_prepared_runtime_environment(
         shutdown_tx,
         task_handle,
         ready_rx,
+        recorder,
     ))
 }
 
