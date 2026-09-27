@@ -426,17 +426,18 @@ impl FileBackedApp {
     pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
         if let Some(pending) = self.pending_yield.clone() {
             let text = self.composer.text().trim().to_string();
-            self.composer.set_text("");
             self.completion = None;
             match pending.resume_content(&text) {
                 Ok(content) => {
+                    self.composer.set_text("");
+                    self.input_intent = InputIntent::Agent;
+                    self.history_draft_intent = None;
                     return Some(FileBackedAction::Resume {
                         request_id: pending.request_id,
                         response: response_text_from_content(content),
                     });
                 }
                 Err(message) => {
-                    self.composer.set_text(text);
                     self.notice = Some(message);
                     return None;
                 }

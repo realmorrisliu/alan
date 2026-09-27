@@ -271,3 +271,44 @@ fn draft_intent_survives_editing_history_and_rejected_empty_input() {
     assert_eq!(app.composer.text(), "!literal");
     assert_eq!(app.input_intent, InputIntent::ForceAgent);
 }
+
+#[test]
+fn pending_response_resets_intent_only_when_it_consumes_the_draft() {
+    use alan_agent_protocol::{InputIntent, YieldKind};
+    for accepted in [false, true] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.insert_input_text("!  draft  ");
+        app.set_pending_yield(crate::history::PendingYieldCell {
+            request_id: "request".into(),
+            kind: if accepted {
+                YieldKind::Custom("text".into())
+            } else {
+                YieldKind::Confirmation
+            },
+            title: "Answer".into(),
+            prompt: None,
+            options: vec!["yes".into(), "no".into()],
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        });
+        let response = app.handle_submit();
+        app.clear_pending_yield();
+        if accepted {
+            assert!(matches!(response, Some(FileBackedAction::Resume { .. })));
+            assert_eq!(app.composer.text(), "");
+            assert_eq!(app.input_intent, InputIntent::Agent);
+            app.insert_input_text("explain this");
+            let Some(FileBackedAction::Submit(record)) = app.handle_submit() else {
+                panic!("input")
+            };
+            assert_eq!(record.intent, InputIntent::Agent);
+        } else {
+            assert!(response.is_none());
+            assert_eq!(app.composer.text(), "  draft  ");
+            assert_eq!(app.input_intent, InputIntent::Command);
+        }
+    }
+}
