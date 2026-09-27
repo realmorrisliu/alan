@@ -65,12 +65,6 @@ fn bare_run_mode(stdin_is_terminal: bool, stdout_is_terminal: bool) -> Result<Ba
 
 #[derive(Subcommand)]
 enum HostAction {
-    /// Start the matching dedicated Alan OS Host
-    Start {
-        /// Emit structured JSON
-        #[arg(long)]
-        json: bool,
-    },
     /// Report the instance selected by ALAN_INSTANCE_RUNTIME_DIR
     Status {
         /// Emit structured JSON
@@ -352,7 +346,11 @@ fn parse_cli() -> Cli {
     match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
-            if is_retired_workspace_invocation(&args) {
+            if is_retired_host_start_invocation(&args) {
+                eprintln!(
+                    "`alan host start` was removed; run bare `alan` to start a foreground instance."
+                );
+            } else if is_retired_workspace_invocation(&args) {
                 eprintln!(
                     "Workspace runtime commands were removed. Authorize Host files with an explicit Host Mount, then use Alan Shell operations inside Alan OS."
                 );
@@ -360,6 +358,15 @@ fn parse_cli() -> Cli {
             error.exit()
         }
     }
+}
+
+fn is_retired_host_start_invocation(args: &[std::ffi::OsString]) -> bool {
+    let args = args
+        .iter()
+        .skip(1)
+        .filter_map(|argument| argument.to_str())
+        .collect::<Vec<_>>();
+    matches!(args.as_slice(), ["host", "start", ..])
 }
 
 fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
@@ -381,11 +388,6 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Host { action }) => match action {
-            HostAction::Start { json } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                let attachment = cli::host::attach_or_start_host(channel).await?;
-                print_host_status(&attachment.status, json)?;
-            }
             HostAction::Status { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
                 let paths = cli::host::explicit_instance_paths(channel)?;
@@ -921,13 +923,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::HostEndpointPaths;
     #[cfg(target_os = "macos")]
-    use super::cli::host::os_host_launch_label;
-    use super::cli::host::sibling_executable;
-    #[cfg(target_os = "macos")]
     use super::generated_foreground_runtime_dir;
     use super::{BareRunMode, Cli, bare_run_mode};
-    #[cfg(target_os = "macos")]
-    use alan_agent_engine::InstallChannel;
     use clap::Parser;
 
     #[test]
@@ -958,36 +955,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn alan_os_host_launch_labels_are_channel_isolated() {
-        assert_eq!(
-            os_host_launch_label(InstallChannel::Stable),
-            "alan-stable.os-host"
-        );
-        assert_eq!(
-            os_host_launch_label(InstallChannel::Dev),
-            "alan-dev.os-host"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn sibling_executable_resolves_the_real_cli_behind_a_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().unwrap();
-        let bin = root.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let cli = bin.join("alan");
-        let host = bin.join("alan-os-host");
-        std::fs::write(&cli, []).unwrap();
-        std::fs::write(&host, []).unwrap();
-        let link = root.path().join("installed-alan");
-        symlink(&cli, &link).unwrap();
-
-        assert_eq!(
-            sibling_executable(&link, "alan-os-host").unwrap(),
-            host.canonicalize().unwrap()
-        );
+    fn host_start_is_rejected_as_a_retired_background_command() {
+        let error = Cli::try_parse_from(["alan", "host", "start"])
+            .map(|_| ())
+            .unwrap_err();
+        assert!(error.to_string().contains("unrecognized subcommand"));
     }
 }

@@ -7,12 +7,8 @@ fail() {
 }
 
 alan_binary="${1:?alan binary path is required}"
-host_binary="${2:?stable Host binary path is required}"
-dev_host_binary="${3:?development Host binary path is required}"
 
-for binary in "$alan_binary" "$host_binary" "$dev_host_binary"; do
-    [[ -x "$binary" ]] || fail "standalone binary is missing or not executable: $binary"
-done
+[[ -x "$alan_binary" ]] || fail "standalone CLI is missing or not executable: $alan_binary"
 
 "$alan_binary" --version >/dev/null || fail "standalone CLI --version failed"
-printf 'standalone CLI/Host distribution check passed\n'
+printf 'standalone CLI check passed\n'
