@@ -5,12 +5,124 @@ use super::{NativeToolExecutionAdapter, longest_namespace_mount};
 
 // ponytail: project known roots at text boundaries; this is presentation, never path authority.
 pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
+    let text = project_csv_records(adapter, text);
     project_native_text(
         adapter,
-        &project_file_urls(adapter, &project_json_strings(adapter, text)),
+        &project_file_urls(adapter, &project_json_strings(adapter, &text)),
         true,
         true,
     )
+}
+
+fn project_csv_records(adapter: &NativeToolExecutionAdapter, text: &str) -> String {
+    let mut projected = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let record_end = line.trim_end_matches(['\r', '\n']).len();
+        let record = &line[..record_end];
+        let is_native_root = |field: &str| {
+            adapter.cwd.to_str() == Some(field)
+                || adapter.projection_cwd.0.to_str() == Some(field)
+                || adapter
+                    .mounts
+                    .iter()
+                    .any(|mount| mount.host_path.to_str() == Some(field))
+        };
+        let Some(fields) = csv_fields(record).filter(|fields| {
+            if fields.len() <= 1 {
+                return false;
+            }
+            if fields.iter().any(|(_, quoted)| *quoted) {
+                return true;
+            }
+            // ponytail: compact CSV is ambiguous with comma-bearing filenames; only infer it
+            // when an exact mount root is a cell and no other cell contains a path separator.
+            fields
+                .iter()
+                .all(|(range, _)| !record[range.clone()].chars().any(char::is_whitespace))
+                && fields
+                    .iter()
+                    .any(|(range, _)| is_native_root(&record[range.clone()]))
+                && fields.iter().all(|(range, _)| {
+                    let field = &record[range.clone()];
+                    is_native_root(field) || !field.contains('/')
+                })
+        }) else {
+            projected.push_str(line);
+            continue;
+        };
+
+        for (index, (range, quoted)) in fields.iter().enumerate() {
+            if index > 0 {
+                projected.push(',');
+            }
+            let field = &record[range.clone()];
+            let decoded;
+            let field = if *quoted {
+                decoded = field.replace("\"\"", "\"");
+                decoded.as_str()
+            } else {
+                field
+            };
+            let projected_field =
+                project_native_text(adapter, &project_file_urls(adapter, field), false, true);
+            let quoted = *quoted || projected_field.contains([',', '"', '\r', '\n']);
+            if quoted {
+                projected.push('"');
+                projected.push_str(&projected_field.replace('"', "\"\""));
+                projected.push('"');
+            } else {
+                projected.push_str(&projected_field);
+            }
+        }
+        projected.push_str(&line[record_end..]);
+    }
+    projected
+}
+
+fn csv_fields(record: &str) -> Option<Vec<(std::ops::Range<usize>, bool)>> {
+    let bytes = record.as_bytes();
+    let mut fields = Vec::new();
+    let mut cursor = 0;
+    loop {
+        if bytes.get(cursor) == Some(&b'"') {
+            cursor += 1;
+            let start = cursor;
+            let end = loop {
+                match bytes.get(cursor) {
+                    Some(b'"') if bytes.get(cursor + 1) == Some(&b'"') => cursor += 2,
+                    Some(b'"') => {
+                        let end = cursor;
+                        cursor += 1;
+                        break end;
+                    }
+                    Some(_) => cursor += 1,
+                    None => return None,
+                }
+            };
+            if cursor < bytes.len() && bytes[cursor] != b',' {
+                return None;
+            }
+            fields.push((start..end, true));
+        } else {
+            let start = cursor;
+            while cursor < bytes.len() && bytes[cursor] != b',' {
+                if bytes[cursor] == b'"' {
+                    return None;
+                }
+                cursor += 1;
+            }
+            fields.push((start..cursor, false));
+        }
+        if cursor == bytes.len() {
+            break;
+        }
+        cursor += 1;
+        if cursor == bytes.len() {
+            fields.push((cursor..cursor, false));
+            break;
+        }
+    }
+    Some(fields)
 }
 
 // Decode JSON string tokens so Unicode, surrogate pairs and optional solidus escapes
@@ -147,6 +259,41 @@ fn markup_tag_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
         }
         ranges.push(start..end);
         cursor = end;
+    }
+    ranges
+}
+
+fn markdown_link_destination_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find("](") {
+        let start = cursor + relative + 2;
+        let mut depth = 1usize;
+        let mut escaped = false;
+        let mut end = None;
+        for (offset, ch) in text[start..].char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(start + offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            break;
+        };
+        ranges.push(start..end);
+        cursor = end + 1;
     }
     ranges
 }
@@ -377,6 +524,12 @@ fn replace_native_prefix(
             replace_path_prefixes(&projected, &path.replace('\'', "'\\''"), replacement, true);
     }
     projected = replace_path_prefixes(&projected, &path, replacement, shell_quoting);
+    projected = replace_path_prefixes(
+        &projected,
+        &gnu_escape_path(&path),
+        replacement,
+        shell_quoting,
+    );
     for escape_non_ascii in [false, true] {
         if native.to_str().is_some()
             && !path
@@ -389,6 +542,17 @@ fn replace_native_prefix(
         projected = replace_path_prefixes(&projected, &quoted, replacement, shell_quoting);
     }
     projected
+}
+
+fn gnu_escape_path(path: &str) -> String {
+    let mut escaped = String::with_capacity(path.len());
+    for ch in path.chars() {
+        if ch.is_whitespace() {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 fn project_native_text(
@@ -568,7 +732,10 @@ fn is_path_end(suffix: &str) -> bool {
 fn replace_rooted_path_starts(text: &str, replacement: &str, shell_quoting: bool) -> String {
     let mut projected = String::with_capacity(text.len());
     let mut copied_through = 0;
-    let mut markup = markup_tag_ranges(text).into_iter().peekable();
+    let mut protected_ranges = markup_tag_ranges(text);
+    protected_ranges.extend(markdown_link_destination_ranges(text));
+    protected_ranges.sort_by_key(|range| range.start);
+    let mut markup = protected_ranges.into_iter().peekable();
     for (slash, _) in text.match_indices('/') {
         while markup.peek().is_some_and(|range| range.end <= slash) {
             markup.next();

@@ -406,6 +406,7 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
         ("**/**", "**.**"),
         ("_\x1b[31m/\x1b[0m_", "_\x1b[31m.\x1b[0m_"),
         ("/etc/hosts", "./etc/hosts"),
+        ("[docs](/guide)", "[docs](/guide)"),
         (
             r#"{"cwd":"\/","path":"\/etc\/hosts"}"#,
             r#"{"cwd":".","path":"./etc/hosts"}"#,
@@ -480,6 +481,78 @@ async fn root_backed_mount_projects_bare_cwd_and_descendants() {
     ] {
         assert_eq!(adapter.project_text(input), expected, "{input}");
     }
+}
+
+#[tokio::test]
+async fn projection_preserves_csv_quoting_and_projects_compact_roots() {
+    let project = tempfile::tempdir().unwrap();
+    let docs = tempfile::tempdir().unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadOnly,
+        project.path(),
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/do\"cs",
+        HostMountAccess::ReadOnly,
+        docs.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let project_root = dunce::canonicalize(project.path()).unwrap();
+    let docs_root = dunce::canonicalize(docs.path()).unwrap();
+
+    assert_eq!(
+        adapter.project_text(&format!("{},ok", project_root.display())),
+        ".,ok"
+    );
+    let comma_sibling = format!("{},backup/file", project_root.display());
+    assert_eq!(adapter.project_text(&comma_sibling), comma_sibling);
+    assert_eq!(
+        adapter.project_text(&format!("\"{}/file.txt\",ok", docs_root.display())),
+        "\"../do\"\"cs/file.txt\",ok"
+    );
+}
+
+#[tokio::test]
+async fn projection_matches_gnu_escape_quoted_roots() {
+    let project = tempfile::Builder::new()
+        .prefix("alan space\"quote ")
+        .tempdir()
+        .unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadOnly,
+        project.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
+    let escaped = root.to_string_lossy().replace(' ', "\\ ");
+
+    assert_eq!(
+        adapter.project_text(&format!("{escaped}/file.txt")),
+        "./file.txt"
+    );
 }
 
 #[tokio::test]
