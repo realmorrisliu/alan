@@ -22,7 +22,7 @@ use crate::{
 /// Host-supplied adapters and durable bindings needed by Service Manager.
 pub struct HostBootConfig(ServiceManagerConfig);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ProductLlmClientFactory {
     credentials_dir: std::path::PathBuf,
     keychain_service: Option<String>,
@@ -93,8 +93,8 @@ impl LlmProvider for UnconfiguredLlmProvider {
     }
 }
 
-impl LlmClientFactory for ProductLlmClientFactory {
-    fn create(
+impl ProductLlmClientFactory {
+    fn resolve(
         &self,
         base_config: &Config,
         selected_profile: Option<&str>,
@@ -132,6 +132,74 @@ impl LlmClientFactory for ProductLlmClientFactory {
             self.managed_auth.clone(),
         )
         .context("failed to create Root Agent LLM connection")
+    }
+}
+
+impl LlmClientFactory for ProductLlmClientFactory {
+    fn create(
+        &self,
+        base_config: &Config,
+        selected_profile: Option<&str>,
+        connections: &ConnectionsFile,
+    ) -> Result<LlmClient> {
+        let client = self.resolve(base_config, selected_profile, connections)?;
+        let Some(profile_id) = selected_profile else {
+            return Ok(client);
+        };
+        if connections
+            .resolve_profile(Some(profile_id))?
+            .credential_kind
+            != alan_service_manager::CredentialKind::SecretString
+        {
+            return Ok(client);
+        }
+        Ok(LlmClient::new(LiveSecretProvider {
+            factory: self.clone(),
+            base_config: base_config.clone(),
+            profile_id: profile_id.to_string(),
+            connections: connections.clone(),
+            provider_name: client.provider_name(),
+        }))
+    }
+}
+
+// Keep Process profile settings fixed while resolving the owning Host credential store at
+// each request boundary. In-flight requests retain their original authorization.
+// ponytail: rebuild secret-backed clients per request; add versioned reuse if setup costs matter.
+struct LiveSecretProvider {
+    factory: ProductLlmClientFactory,
+    base_config: Config,
+    profile_id: String,
+    connections: ConnectionsFile,
+    provider_name: &'static str,
+}
+
+impl LiveSecretProvider {
+    fn client(&self) -> Result<LlmClient> {
+        self.factory
+            .resolve(&self.base_config, Some(&self.profile_id), &self.connections)
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for LiveSecretProvider {
+    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
+        self.client()?.generate(request).await
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+        self.client()?.chat(system, user).await
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        self.client()?.generate_stream(request).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        self.provider_name
     }
 }
 
@@ -391,3 +459,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "boot/live_credential_tests.rs"]
+mod live_credential_tests;
