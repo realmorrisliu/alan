@@ -12,16 +12,15 @@ fn publish_root_agent_pid(namespace: &alan_kernel::LiveNamespace, pid: impl std:
 }
 
 #[tokio::test]
-async fn one_shot_start_waits_for_root_agent_pid_during_restart() {
+async fn one_shot_start_waits_for_initial_root_agent_publication() {
     let (shell, _agent_root, namespace, pid) = stdio_tests::live_root_agent().await;
     publish_root_agent_pid(&namespace, 0);
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_for_submit(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(async move { open_stdio_tail_attachment(&attach_shell, "/agent/root").await });
     tokio::select! {
-        _ = &mut attaching => panic!("one-shot startup returned before a replacement PID was published"),
+        _ = &mut attaching => panic!("one-shot startup returned before the initial PID was published"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
     }
 
@@ -39,14 +38,13 @@ async fn one_shot_start_waits_for_root_agent_pid_during_restart() {
 }
 
 #[tokio::test]
-async fn one_shot_start_retries_a_stale_published_root_agent_pid() {
+async fn one_shot_start_rejects_a_change_after_observing_a_stale_pid() {
     let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
     assert!(agent_root.unbind_process(&old_pid).await);
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_for_submit(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(async move { open_stdio_tail_attachment(&attach_shell, "/agent/root").await });
     tokio::select! {
         _ = &mut attaching => panic!("one-shot startup failed on the detached but published PID"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
@@ -64,58 +62,18 @@ async fn one_shot_start_retries_a_stale_published_root_agent_pid() {
         .await;
     agent_root.set_root_process(new_pid.clone()).await;
     publish_root_agent_pid(&namespace, &new_pid);
-    let attachment = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
         .await
         .unwrap()
         .unwrap()
-        .unwrap();
+        .err()
+        .expect("startup must reject a different PID");
 
-    assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
-    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
-        .await
-        .unwrap();
+    assert!(error.to_string().contains("Root Agent changed"));
 }
 
 #[tokio::test]
-async fn one_shot_tail_open_retries_a_stale_published_root_agent_pid() {
-    let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
-    assert!(agent_root.unbind_process(&old_pid).await);
-
-    let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        tail::open_stdio_tail_attachment(&attach_shell, "/agent/root").await
-    });
-    tokio::select! {
-        _ = &mut attaching => panic!("one-shot tail open failed on the detached but published PID"),
-        _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
-    }
-
-    publish_root_agent_pid(&namespace, 0);
-    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-
-    let new_pid = shell.spawn(stdio_tests::EXEC_SPEC).await.unwrap();
-    agent_root
-        .bind_process(
-            new_pid.clone(),
-            std::sync::Arc::new(alan_agentfs::AgentFs::new()),
-        )
-        .await;
-    agent_root.set_root_process(new_pid.clone()).await;
-    publish_root_agent_pid(&namespace, &new_pid);
-    let attachment = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
-    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_between_phases() {
+async fn one_shot_start_rejects_root_changes_between_attachment_phases() {
     let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
     let pid_fs = std::sync::Arc::new(stdio_tests::FaultingFileServer::new(std::sync::Arc::new(
         alan_ap::reference::MemFs::with_read_only_file("pid", format!("{old_pid}\n").into_bytes()),
@@ -128,9 +86,8 @@ async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_betw
     );
 
     let attach_shell = shell.clone();
-    let mut attaching = tokio::spawn(async move {
-        open_stdio_tail_attachment_for_submit(&attach_shell, "/agent/root").await
-    });
+    let mut attaching =
+        tokio::spawn(async move { open_stdio_tail_attachment(&attach_shell, "/agent/root").await });
     tokio::time::timeout(std::time::Duration::from_secs(2), read_reached)
         .await
         .unwrap()
@@ -149,15 +106,13 @@ async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_betw
     publish_root_agent_pid(&namespace, &new_pid);
     resume_read.send(()).unwrap();
 
-    let attachment = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
         .await
         .unwrap()
         .unwrap()
-        .unwrap();
-    assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
-    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
-        .await
-        .unwrap();
+        .err()
+        .expect("startup must reject a different PID");
+    assert!(error.to_string().contains("Root Agent changed"));
 }
 
 #[tokio::test]
@@ -182,7 +137,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         .await
         .unwrap();
 
-    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+    let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     close_stdio_tails(previous.tape_tail, previous.ui_tail)
@@ -262,7 +217,7 @@ async fn one_shot_fails_when_final_tape_read_races_root_agent_replacement() {
         alan_ap::InProcessTransport::new(tail_closer.clone()),
         alan_kernel::Access::ReadWrite,
     );
-    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+    let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
@@ -446,7 +401,7 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
     let a_id = a.record.submission_id.clone();
     let b_id = b.record.submission_id.clone();
     assert_ne!(a_id, b_id);
-    let mut a_tail = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+    let mut a_tail = open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     let mut paused = UiActivitySnapshot::paused(None);
@@ -458,7 +413,7 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
         )
         .await
         .unwrap();
-    let mut b_tail = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+    let mut b_tail = open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     submit_stdio_task(&shell, &a, &a_tail).await.unwrap();

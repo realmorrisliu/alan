@@ -686,7 +686,7 @@ async fn one_shot_waits_without_timeout_but_fails_when_its_tail_closes() {
         InProcessTransport::new(fault.clone()),
         Access::ReadWrite,
     );
-    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+    let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     let mut input = shell.tail("/agent/root/io/input").await.unwrap();
@@ -726,7 +726,7 @@ async fn one_shot_waits_without_timeout_but_fails_when_its_tail_closes() {
 async fn one_shot_fails_on_missing_or_changed_root_without_replacing_tails() {
     for published in [0, 999] {
         let (shell, _agent_root, namespace, pid) = live_root_agent().await;
-        let mut attachment = open_stdio_tail_attachment_for_submit(&shell, "/agent/root")
+        let mut attachment = open_stdio_tail_attachment(&shell, "/agent/root")
             .await
             .unwrap();
         let task = task("pinned task");

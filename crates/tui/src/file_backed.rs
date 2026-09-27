@@ -45,8 +45,8 @@ use file_surface::{
 };
 use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
-    StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
-    open_stdio_tail_attachment_for_submit, root_agent_path_for_pid,
+    StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
+    root_agent_path_for_pid,
 };
 
 use crate::completion::CompletionCandidate;
@@ -471,7 +471,7 @@ pub async fn run_stdio_task(
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment_for_submit(&shell, &agent_path).await?;
+    let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
 
     let task = StdioTaskWaitContext::new(input);
 
