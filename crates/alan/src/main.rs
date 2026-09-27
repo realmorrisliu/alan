@@ -4,6 +4,7 @@ mod cli;
 mod legacy_state;
 mod shell_command;
 
+use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{io::IsTerminal, path::PathBuf};
@@ -659,35 +660,83 @@ async fn main() -> Result<()> {
                 std::io::stdout().is_terminal(),
             )?;
             let channel = alan_agent_engine::InstallChannel::detect_current();
-            let attachment = cli::host::attach_or_start_host(channel).await?;
-            match mode {
-                BareRunMode::Interactive => {
-                    let config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                    alan_tui::run_file_backed(config).await?;
-                }
-                BareRunMode::OneShot => {
-                    let mut input = Vec::new();
-                    tokio::io::stdin()
-                        .read_to_end(&mut input)
-                        .await
-                        .context("read Agent task from stdin")?;
-                    let input =
-                        String::from_utf8(input).context("stdin task is not valid UTF-8")?;
-                    let exit_code =
-                        alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
-                    if exit_code != 0 {
-                        std::process::exit(if (1..=255).contains(&exit_code) {
-                            exit_code
-                        } else {
-                            1
-                        });
-                    }
-                }
+            let (runtime_dir, remove_runtime_dir) = foreground_runtime_dir();
+            let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, channel.descriptor().id)?;
+            let result = run_bare_in_foreground_instance(channel, paths, mode).await;
+            if remove_runtime_dir
+                && let Err(error) = std::fs::remove_dir_all(&runtime_dir)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(%error, path = %runtime_dir.display(), "failed to remove temporary Alan instance runtime directory");
+            }
+            let exit_code = result?;
+            if exit_code != 0 {
+                std::process::exit(if (1..=255).contains(&exit_code) {
+                    exit_code
+                } else {
+                    1
+                });
             }
         }
     }
 
     Ok(())
+}
+
+fn foreground_runtime_dir() -> (PathBuf, bool) {
+    if let Some(runtime_dir) = std::env::var_os(cli::host::INSTANCE_RUNTIME_DIR_ENV) {
+        (PathBuf::from(runtime_dir), false)
+    } else {
+        (
+            std::env::temp_dir().join(format!("alan-{}", uuid::Uuid::new_v4())),
+            true,
+        )
+    }
+}
+
+async fn run_bare_in_foreground_instance(
+    channel: alan_agent_engine::InstallChannel,
+    paths: HostEndpointPaths,
+    mode: BareRunMode,
+) -> Result<i32> {
+    let config = HostBootConfig::product(channel.descriptor().id)?;
+    let host = AlanOsHost::boot(config, paths.clone()).await?;
+    let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        host.serve_until(async move {
+            let _ = shutdown_requested.await;
+        })
+        .await
+    });
+
+    let run_result: Result<i32> = async {
+        let attachment = LocalAttachment::new(paths).connect().await?;
+        match mode {
+            BareRunMode::Interactive => {
+                let config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
+                alan_tui::run_file_backed(config).await?;
+                Ok(0)
+            }
+            BareRunMode::OneShot => {
+                let mut input = Vec::new();
+                tokio::io::stdin()
+                    .read_to_end(&mut input)
+                    .await
+                    .context("read Agent task from stdin")?;
+                let input = String::from_utf8(input).context("stdin task is not valid UTF-8")?;
+                Ok(alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?)
+            }
+        }
+    }
+    .await;
+
+    let _ = shutdown.send(());
+    let server_result = server
+        .await
+        .context("Alan OS foreground instance task failed")?;
+    let exit_code = run_result?;
+    server_result?;
+    Ok(exit_code)
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {

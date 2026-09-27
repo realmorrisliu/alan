@@ -22,7 +22,7 @@ fn runtime_base(root: &Path) -> PathBuf {
 }
 
 #[tokio::test]
-async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
+async fn bare_cli_uses_an_independent_foreground_instance() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let base = runtime_base(runtime.path());
     let paths = HostEndpointPaths::from_runtime_dir(&base, "stable").unwrap();
@@ -60,22 +60,44 @@ async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
     assert!(observer_shell.write("/proc/clone", b"").await.is_err());
 
     let temporary_root = runtime.path().to_owned();
+    let home = runtime.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let data_home = runtime.path().join("data");
     let output = tokio::task::spawn_blocking(move || {
         let mut child = Command::new(env!("CARGO_BIN_EXE_alan"))
             .env("ALAN_INSTALL_CHANNEL", "stable")
+            .env("HOME", home)
             .env("TMPDIR", temporary_root)
             .env("XDG_RUNTIME_DIR", base)
+            .env("XDG_DATA_HOME", data_home)
+            .env_remove("ALAN_CONFIG_PATH")
+            .env_remove("ALAN_INSTANCE_RUNTIME_DIR")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(b"exit\n").unwrap();
+        child.stdin.take().unwrap().write_all(b"\n").unwrap();
         child.wait_with_output().unwrap()
     })
     .await
     .unwrap();
-    assert!(output.status.success(), "{output:?}");
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("stdin input body is empty"),
+        "{output:?}"
+    );
+    assert!(
+        std::fs::read_dir(runtime.path())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .strip_prefix("alan-")
+                .is_some_and(|name| !name.starts_with("os-"))),
+        "temporary foreground endpoint was not removed"
+    );
 
     let processes_after = observer_shell.ls("/proc").await.unwrap();
     let added_processes = processes_after
@@ -104,13 +126,14 @@ async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
     }
     assert_eq!(
         processes_after, processes_before,
-        "bare `alan` must not allocate a hidden Shell Process: {added_process_details:?}"
+        "bare `alan` must not attach to the ambient instance: {added_process_details:?}"
     );
     assert!(observer_shell.ls("/agent/root").await.is_ok());
     assert_eq!(
         observer_shell.cat("/proc/1/status").await.unwrap(),
         b"running\n"
     );
+    assert_eq!(paths.read_status().unwrap().boot_id, observer.boot_id);
 
     drop(observer_shell);
     drop(observer);
