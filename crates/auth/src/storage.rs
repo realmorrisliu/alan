@@ -2,7 +2,7 @@ use crate::token_data::{ChatgptTokenData, parse_jwt_expiration};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Component, PathBuf};
 
@@ -90,7 +90,47 @@ impl AuthStorage {
         }
     }
 
+    pub(crate) fn lock(&self, name: &str) -> io::Result<fs::File> {
+        let root = self.resolve_root_dir()?;
+        fs::create_dir_all(&root)?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let lock = options.open(root.join(name))?;
+        if !lock.metadata()?.is_file() {
+            return Err(io::Error::other("auth lock is not a regular file"));
+        }
+        lock.lock()?;
+        Ok(lock)
+    }
+
+    pub(crate) fn save_if_unchanged(
+        &self,
+        expected: &AuthStore,
+        store: &AuthStore,
+    ) -> io::Result<()> {
+        let _guard = self.lock("auth.json.lock")?;
+        if self.load()? != *expected {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "auth state changed during refresh",
+            ));
+        }
+        self.save_locked(store)
+    }
+
     pub fn save(&self, store: &AuthStore) -> io::Result<()> {
+        let _guard = self.lock("auth.json.lock")?;
+        self.save_locked(store)
+    }
+
+    fn save_locked(&self, store: &AuthStore) -> io::Result<()> {
         let root_dir = self.resolve_root_dir()?;
         fs::create_dir_all(&root_dir)?;
         let root_dir = fs::canonicalize(&root_dir)?;
@@ -98,33 +138,21 @@ impl AuthStorage {
         ensure_path_within_root(&path, &root_dir)?;
 
         let raw = serde_json::to_vec_pretty(store).map_err(io::Error::other)?;
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-
-        let mut file = options.open(&path)?;
-        file.write_all(&raw)?;
-        file.write_all(b"\n")?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let permissions = fs::Permissions::from_mode(0o600);
-            fs::set_permissions(&path, permissions)?;
-        }
+        let mut staged = tempfile::NamedTempFile::new_in(&root_dir)?;
+        staged.write_all(&raw)?;
+        staged.write_all(b"\n")?;
+        staged.as_file().sync_all()?;
+        staged.persist(&path).map_err(|error| error.error)?;
+        fs::File::open(&root_dir)?.sync_all()?;
 
         Ok(())
     }
 
     pub fn clear_chatgpt(&self) -> io::Result<()> {
+        let _guard = self.lock("auth.json.lock")?;
         let mut store = self.load()?;
         store.chatgpt = None;
-        self.save(&store)
+        self.save_locked(&store)
     }
 
     fn resolve_path(&self) -> io::Result<PathBuf> {

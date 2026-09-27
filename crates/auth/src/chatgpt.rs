@@ -1,4 +1,4 @@
-use crate::storage::{AuthStorage, StoredChatgptAuth};
+use crate::storage::{AuthStorage, AuthStore, StoredChatgptAuth};
 use crate::token_data::{ChatgptTokenData, parse_chatgpt_jwt_claims};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -443,27 +443,31 @@ impl ChatgptAuthManager {
             return Ok(auth);
         }
 
+        let observed = auth;
         let _guard = self.inner.refresh_lock.lock().await;
-        let auth = self
-            .inner
-            .storage
-            .load()?
+        let storage = self.inner.storage.clone();
+        let _store_guard = tokio::task::spawn_blocking(move || storage.lock("auth.refresh.lock"))
+            .await
+            .map_err(io::Error::other)??;
+        let store = self.inner.storage.load()?;
+        let auth = store
             .chatgpt
+            .as_ref()
             .ok_or(ChatgptAuthError::NotLoggedIn)?;
-        if !force && !auth.should_refresh(Utc::now()) {
-            return Ok(auth);
+        if *auth != observed || (!force && !auth.should_refresh(Utc::now())) {
+            return Ok(auth.clone());
         }
 
         if auth.tokens.refresh_token.trim().is_empty() {
             return Err(ChatgptAuthError::TokenExpired);
         }
 
-        self.refresh_inner(auth.tokens.refresh_token.clone()).await
+        self.refresh_inner(store).await
     }
 
     async fn refresh_inner(
         &self,
-        refresh_token: String,
+        expected: AuthStore,
     ) -> Result<StoredChatgptAuth, ChatgptAuthError> {
         #[derive(Deserialize)]
         struct RefreshResponse {
@@ -472,6 +476,10 @@ impl ChatgptAuthManager {
             refresh_token: Option<String>,
         }
 
+        let existing = expected
+            .chatgpt
+            .as_ref()
+            .ok_or(ChatgptAuthError::NotLoggedIn)?;
         let response = self
             .inner
             .client
@@ -482,7 +490,7 @@ impl ChatgptAuthManager {
             .json(&serde_json::json!({
                 "client_id": self.inner.config.client_id,
                 "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
+                "refresh_token": existing.tokens.refresh_token,
             }))
             .send()
             .await?;
@@ -499,8 +507,7 @@ impl ChatgptAuthManager {
         }
 
         let refreshed: RefreshResponse = response.json().await?;
-        let mut store = self.inner.storage.load()?;
-        let existing = store.chatgpt.take().ok_or(ChatgptAuthError::NotLoggedIn)?;
+        let mut store = expected.clone();
         let id_token = refreshed
             .id_token
             .unwrap_or_else(|| existing.tokens.id_token.raw_jwt.clone());
@@ -515,7 +522,7 @@ impl ChatgptAuthManager {
         })?;
         store.version = 1;
         store.chatgpt = Some(persisted.clone());
-        self.inner.storage.save(&store)?;
+        self.inner.storage.save_if_unchanged(&expected, &store)?;
         Ok(persisted)
     }
 
@@ -628,7 +635,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio::io::AsyncWriteExt;
 
-    fn build_jwt(payload: serde_json::Value) -> String {
+    pub(super) fn build_jwt(payload: serde_json::Value) -> String {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"none","typ":"JWT"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
@@ -895,3 +902,7 @@ mod tests {
         assert_eq!(error.kind(), Some(ChatgptAuthErrorKind::WorkspaceMismatch));
     }
 }
+
+#[cfg(test)]
+#[path = "chatgpt/concurrency_tests.rs"]
+mod concurrency_tests;
