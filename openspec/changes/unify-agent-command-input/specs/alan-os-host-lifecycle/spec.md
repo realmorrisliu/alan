@@ -62,7 +62,10 @@ effects MUST NOT be replayed automatically.
 - **WHEN** the user explicitly selects valid durable execution evidence
 - **THEN** it is interpreted by the existing recovery owners in a fresh instance
 - **AND** reliable pending work is exposed paused with current access revalidated
-- **AND** missing or invalid records fail recovery rather than cause fresh execution
+
+#### Scenario: User selects missing or invalid recovery evidence
+- **WHEN** the user explicitly selects a missing or invalid durable recovery record
+- **THEN** recovery fails with a diagnostic rather than starting fresh execution
 
 ### Requirement: Product composition preserves production adapters
 Mock providers and ephemeral test stores SHALL require explicit development/test
