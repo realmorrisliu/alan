@@ -747,7 +747,13 @@ async fn run_bare_in_foreground_instance(
                         })();
                         let _ = input_tx.send(input);
                     });
-                    let input = input_rx.await.context("stdin reader stopped")??;
+                    let input = tokio::select! {
+                        input = input_rx => input.context("stdin reader stopped")??,
+                        signal = tokio::signal::ctrl_c() => {
+                            signal.context("listen for Ctrl-C while reading Agent task")?;
+                            return Ok(130);
+                        }
+                    };
                     Ok(alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?)
                 }
             }
