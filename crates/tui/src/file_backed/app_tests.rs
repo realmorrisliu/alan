@@ -471,3 +471,28 @@ fn pending_request_history_recall_keeps_body_and_intent_together() {
     assert_eq!(app.input_intent, InputIntent::Command);
     assert!(app.composer.text().is_empty());
 }
+
+#[test]
+fn live_and_rehydrated_transcripts_preserve_command_route_and_body() {
+    let body = "printf '你好'\n  pwd";
+    let raw = serde_json::json!({
+        "version": 1, "kind": "message", "role": "user", "content": body,
+        "submission_id": "command", "input_intent": "command",
+    })
+    .to_string();
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.apply_tape_record(serde_json::from_str(&raw).unwrap());
+    let hydrated = crate::file_backed::file_surface::parse_tape_history(&raw);
+    assert_eq!(app.transcript, hydrated);
+    assert_eq!(hydrated, [HistoryCell::Command(body.into())]);
+    let lines = hydrated[0].render_lines(RenderOpts::new(80, false));
+    assert_eq!(lines, ["alan! printf '你好'", "        pwd"]);
+    let legacy = crate::file_backed::file_surface::parse_tape_history(
+        r#"{"version":1,"kind":"message","role":"user","content":"!literal"}"#,
+    );
+    assert_eq!(legacy, [HistoryCell::User("!literal".into())]);
+    assert_eq!(
+        legacy[0].render_lines(RenderOpts::new(80, false)),
+        ["alan: !literal"]
+    );
+}

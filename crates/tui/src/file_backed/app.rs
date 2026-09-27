@@ -15,7 +15,9 @@ use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
 use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler};
-use crate::transcript_ui::INLINE_WAITING_PROMPT_PREFIX;
+use crate::transcript_ui::{
+    INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
+};
 
 use super::file_surface::{TapeRecordV1, response_text_from_content};
 fn default_commands() -> Vec<CompletionCandidate> {
@@ -598,13 +600,13 @@ impl FileBackedApp {
         self.transcript.push(cell);
     }
 
-    pub(super) fn insert_user_boundary(&mut self, content: String) {
+    pub(super) fn insert_user_boundary(&mut self, cell: HistoryCell) {
         let index = self
             .pending_remote_turn_start
             .take()
             .unwrap_or(self.transcript.len())
             .min(self.transcript.len());
-        self.transcript.insert(index, HistoryCell::User(content));
+        self.transcript.insert(index, cell);
         self.shift_action_cells_for_insert(index);
     }
 
@@ -637,7 +639,7 @@ impl FileBackedApp {
     pub(super) fn current_turn_has_user_boundary(&self) -> bool {
         for cell in self.transcript.iter().rev() {
             match cell {
-                HistoryCell::User(_) => return true,
+                HistoryCell::User(_) | HistoryCell::Command(_) => return true,
                 HistoryCell::Assistant(_) => return false,
                 _ => {}
             }
@@ -652,7 +654,9 @@ impl FileBackedApp {
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
             match cell {
                 HistoryCell::Assistant(_) => return Some(idx),
-                HistoryCell::User(_) | HistoryCell::PendingYield(_) => return None,
+                HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::PendingYield(_) => {
+                    return None;
+                }
                 _ => {}
             }
         }
@@ -670,7 +674,7 @@ impl FileBackedApp {
         match record.role.as_str() {
             "user" => {
                 self.reconciler.on_user_record();
-                self.insert_user_boundary(record.content);
+                self.insert_user_boundary(record.into_user_cell());
                 self.flush_held_stream_after_boundary();
             }
             "assistant" => {
@@ -976,9 +980,9 @@ impl FileBackedApp {
         if self.pending_yield.is_some() {
             INLINE_WAITING_PROMPT_PREFIX
         } else if self.input_intent == InputIntent::Command {
-            "alan! "
+            INLINE_COMMAND_PROMPT_PREFIX
         } else {
-            "alan: "
+            INLINE_PROMPT_PREFIX
         }
     }
 }

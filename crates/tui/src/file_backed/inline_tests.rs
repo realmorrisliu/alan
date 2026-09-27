@@ -129,7 +129,7 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
             .to_string()
     };
 
-    assert_eq!(line(0), "alan > pwd");
+    assert_eq!(line(0), "alan: pwd");
     assert_eq!(line(1), "/workspace/alan");
     assert_eq!(line(2), "alan:");
     assert_eq!(

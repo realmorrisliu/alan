@@ -43,6 +43,7 @@ async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() 
         crate::file_backed::file_surface::TapeRecordV1 {
             end_offset: 0,
             version: 1,
+            input_intent: None,
             kind: "message".into(),
             role: "assistant".into(),
             content: "final answer".into(),

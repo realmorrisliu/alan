@@ -15,6 +15,7 @@ pub(super) fn tape_message(role: &str, content: &str) -> TapeRecordV1 {
         kind: "message".into(),
         role: role.into(),
         content: content.into(),
+        input_intent: None,
         submission_id: None,
         related_submission_ids: Vec::new(),
     }
