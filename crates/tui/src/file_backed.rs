@@ -13,6 +13,7 @@ use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
 use crossterm::event::KeyEvent;
+#[cfg(test)]
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
 #[cfg(test)]
 use ratatui::style::Color;
@@ -108,7 +109,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         app.composer = Composer::with_history(history, Some(history_path.clone()));
     }
     let follows_root_agent = config.agent_path == "/agent/root";
-    let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
+    let mut pending_root_agent_turns = VecDeque::<PendingRootAgentTurn>::new();
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -131,7 +132,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     break;
                 };
                 if let FileBackedEvent::Ui(ref event) = event {
-                    observe_root_agent_completion(&mut pending_root_agent_turn, event, &mut app);
+                    observe_root_agent_completion(&mut pending_root_agent_turns, event, &mut app);
                 }
                 match event {
                     FileBackedEvent::RequestsChanged => {
@@ -152,22 +153,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     other => {
-                        let submission_requested = follows_root_agent
-                            && matches!(
-                                &other,
-                                FileBackedEvent::Terminal(TerminalEvent::Key(key))
-                                    if key.code == KeyCode::Enter
-                                        && !key.modifiers.contains(KeyModifiers::SHIFT)
-                            )
-                            && app.enter_submits_agent_task();
-                        let blocked_submission = if submission_requested && pending_root_agent_turn.is_some() {
-                            app.push_error("submit blocked: waiting for this input to complete".to_string());
-                            true
-                        } else {
-                            false
-                        };
-                        if !blocked_submission
-                            && let Some(action) = app.dispatch(other)
+                        if let Some(action) = app.dispatch(other)
                         {
                             match action {
                                 FileBackedAction::Submit(record) => {
@@ -178,25 +164,22 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                             app.accept_input();
                                             app.notice = None;
                                             if follows_root_agent {
-                                                pending_root_agent_turn = Some(PendingRootAgentTurn {
+                                                pending_root_agent_turns.push_back(PendingRootAgentTurn {
                                                     input: text.clone(),
                                                     submission_id: record.submission_id.clone(),
                                                     submitted_process: watchers.root_agent_pid,
                                                     submitted_at_ms,
                                                 });
-                                                let submitted_task_settled = watchers
+                                                watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
                                                     &config.agent_path,
                                                     &mut app,
                                                     &mut rx,
-                                                    Some((&text, submitted_at_ms, &record.submission_id)),
+                                                    &mut pending_root_agent_turns,
                                                     &tx,
                                                     )
                                                     .await;
-                                                if submitted_task_settled {
-                                                    pending_root_agent_turn = None;
-                                                }
                                             }
                                         }
                                         Err(err) => app.push_error(format!("submit failed: {err:#}")),
@@ -220,7 +203,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
-                                    send_interrupt(&shell, &mut app, pending_root_agent_turn.as_ref(), watchers.root_agent_pid).await;
+                                    send_interrupt(&shell, &mut app, &pending_root_agent_turns, watchers.root_agent_pid).await;
                                 }
                                 FileBackedAction::Quit => break,
                             }
@@ -228,40 +211,28 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     }
                 }
                 if follows_root_agent {
-                    settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
+                    settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 }
                 dirty = true;
             }
             _ = root_agent_pid_tick.tick(), if follows_root_agent => {
                 let previous_pid = watchers.root_agent_pid;
                 let previous_refresh_failed = watchers.pid_refresh_failed;
-                let previous_turn = pending_root_agent_turn.clone();
-                let submitted_input = pending_root_agent_turn
-                    .as_ref()
-                    .map(|turn| {
-                        (
-                            turn.input.as_str(),
-                            turn.submitted_at_ms,
-                            turn.submission_id.as_str(),
-                        )
-                    });
-                let submitted_task_settled = watchers
+                let previous_turns = pending_root_agent_turns.clone();
+                watchers
                     .refresh_root_agent_attachment(
                     &shell,
                     &config.agent_path,
                     &mut app,
                     &mut rx,
-                    submitted_input,
+                    &mut pending_root_agent_turns,
                     &tx,
                     )
                     .await;
-                if submitted_task_settled {
-                    pending_root_agent_turn = None;
-                }
-                settle_unknown_replaced_input(&mut pending_root_agent_turn, watchers.root_agent_pid, &mut app);
+                settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 if previous_pid != watchers.root_agent_pid
                     || previous_refresh_failed != watchers.pid_refresh_failed
-                    || previous_turn != pending_root_agent_turn
+                    || previous_turns != pending_root_agent_turns
                 {
                     dirty = true;
                 }
@@ -361,46 +332,56 @@ impl AgentWatchers {
         agent_path: &str,
         app: &mut FileBackedApp,
         rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-        submitted_task: Option<(&str, u64, &str)>,
+        pending_turns: &mut VecDeque<PendingRootAgentTurn>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
+                let pending_count = pending_turns.len();
                 // Tape history outlives the local pending-input lock.
                 let history_restored = if let Some((_, tape)) = &self.recovery {
                     previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
                 } else {
                     false
                 };
-                let retained = self.stop_for_input(submitted_task).await;
+                let submitted = pending_turns
+                    .iter()
+                    .map(|turn| (turn.submission_id.clone(), turn.input.clone()))
+                    .collect::<Vec<_>>();
+                let retained = self.stop_for_input(&submitted).await;
                 app.expected_terminal_error = None;
                 let queued = discard_superseded_attachment_events(
                     rx,
                     &mut self.pending_terminal_events,
-                    submitted_task.map(|(_, _, id)| id),
+                    &submitted,
                 );
-                let completion = retained.0.or(queued.0);
-                if !history_restored
-                    && let Some(answer) = retained.1.or(queued.1)
-                    && let Some((input, _, _)) = submitted_task
-                {
-                    previous_input::restore_answer(app, input, answer);
+                for event in retained.0.iter().chain(&queued.0) {
+                    interrupt::observe_root_agent_completion(pending_turns, event, app);
                 }
-                let settled = match reattach_to_current_agent(
-                    shell,
-                    agent_path,
-                    app,
-                    submitted_task.filter(|_| completion.is_none()),
-                )
-                .await
-                {
-                    Ok((tails, submitted_task_settled)) => {
+                // The detached Process's companion terminal errors are discarded with its events.
+                app.expected_terminal_error = None;
+                if !history_restored {
+                    for turn in &submitted {
+                        if let Some((_, input, answer)) = retained
+                            .1
+                            .iter()
+                            .chain(&queued.1)
+                            .find(|(id, _, _)| id.as_str() == turn.0.as_str())
+                        {
+                            previous_input::restore_answer(app, input, answer.clone());
+                        }
+                    }
+                }
+                let submitted = pending_turns.iter().cloned().collect::<Vec<_>>();
+                match reattach_to_current_agent(shell, agent_path, app, &submitted).await {
+                    Ok((tails, settled_ids)) => {
+                        pending_turns.retain(|turn| !settled_ids.contains(&turn.submission_id));
                         self.pid_refresh_failed = false;
                         let pending_terminal_events =
                             std::mem::take(&mut self.pending_terminal_events);
                         *self = Self::start(tails, agent_path, tx.clone());
                         self.pending_terminal_events = pending_terminal_events;
-                        submitted_task_settled
+                        pending_turns.len() < pending_count
                     }
                     Err(err) => {
                         self.root_agent_pid = None;
@@ -408,14 +389,8 @@ impl AgentWatchers {
                             app.push_error(format!("Root Agent reattach failed: {err:#}"));
                         }
                         self.pid_refresh_failed = true;
-                        false
+                        pending_turns.len() < pending_count
                     }
-                };
-                if let Some(event) = completion {
-                    interrupt::render_input_completion(&event, app);
-                    true
-                } else {
-                    settled
                 }
             }
             Ok(pid) => {
@@ -433,19 +408,19 @@ impl AgentWatchers {
     }
 
     async fn stop(&mut self) {
-        self.stop_for_input(None).await;
+        self.stop_for_input(&[]).await;
     }
 
     async fn stop_for_input(
         &mut self,
-        submitted: Option<(&str, u64, &str)>,
-    ) -> (Option<UiEvent>, Option<String>) {
+        submitted: &[(String, String)],
+    ) -> (Vec<UiEvent>, Vec<(String, String, String)>) {
         let _ = self.shutdown.send(true);
         for task in self.tasks.drain(..) {
             let _ = task.await;
         }
         let Some((ui, tape)) = self.recovery.take() else {
-            return (None, None);
+            return (Vec::new(), Vec::new());
         };
         let outcome = previous_input::snapshot(&ui, &tape, submitted).await;
         let _ = ui.close().await;

@@ -1,3 +1,4 @@
+use super::super::interrupt::PendingRootAgentTurn;
 use super::super::tail::{current_root_agent_pid, root_agent_path_for_pid, tail_with_history};
 use super::{
     FileBackedApp, WatchTails, action_events_path, agent_output_path, correlated_ui_task,
@@ -178,41 +179,41 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-    submitted_task: Option<(&str, u64, &str)>,
-) -> Result<(WatchTails, bool)> {
+    submitted_tasks: &[PendingRootAgentTurn],
+) -> Result<(WatchTails, Vec<String>)> {
     let mut reattached = app.clone();
     let previous_transcript = std::mem::take(&mut reattached.transcript);
     reattached.reset_for_root_process_change();
     let tails = hydrate_and_open_tails(shell, agent_path, &mut reattached).await?;
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
-    let mut submitted_task_settled = false;
-    if let Some((submitted_input, submitted_at_ms, submission_id)) = submitted_task {
-        let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms)?;
-        let completion = std::str::from_utf8(&tails.ui_history)?
+    let mut settled_ids = Vec::new();
+    if let Some(first_task) = submitted_tasks.first() {
+        let ui_task = correlated_ui_task(&tails.ui_history, first_task.submitted_at_ms)?;
+        let ui_events = std::str::from_utf8(&tails.ui_history)?
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(serde_json::from_str::<UiEvent>)
-            .collect::<std::result::Result<Vec<_>, _>>()?
-            .into_iter()
-            .find_map(|event| match event {
-                UiEvent::InputCompleted {
-                    submission_ids,
-                    status,
-                    error,
-                } if submission_ids.iter().any(|id| id == submission_id) => Some((status, error)),
-                _ => None,
-            });
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let completions = ui_events
+            .iter()
+            .filter(|event| {
+                matches!(event, UiEvent::InputCompleted { submission_ids, .. }
+                    if submitted_tasks.iter().any(|task| submission_ids.contains(&task.submission_id)))
+            })
+            .collect::<Vec<_>>();
         let records = std::str::from_utf8(&tails.tape_history)?
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(serde_json::from_str::<super::TapeRecordV1>)
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        // Text is used only to locate the display boundary after identity has matched.
-        let prompt_ordinal = records
-            .iter()
-            .filter(|record| record.role == "user" && record.content == submitted_input)
-            .position(|record| record.belongs_to(submission_id));
+        let prompt = submitted_tasks.iter().find_map(|task| {
+            let ordinal = records
+                .iter()
+                .filter(|record| record.role == "user" && record.content == task.input)
+                .position(|record| record.belongs_to(&task.submission_id));
+            ordinal.map(|ordinal| (task, ordinal))
+        });
         if reattached.notice.as_ref().is_some_and(|notice| {
             current_transcript
                 .iter()
@@ -223,29 +224,49 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
         }
         let current_transcript =
             remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
-        if let Some(ordinal) = prompt_ordinal {
-            reattached.merge_reconnected_history(current_transcript, submitted_input, ordinal);
+        if let Some((task, ordinal)) = prompt {
+            reattached.merge_reconnected_history(current_transcript, &task.input, ordinal);
         }
-        if let Some((status, error)) = completion {
-            if status != alan_agent_protocol::UiInputStatus::Completed {
-                let message = error.unwrap_or_else(|| format!("Input ended: {status:?}"));
-                reattached.notice = Some(message.clone());
-                reattached.transcript.push(HistoryCell::Error(message));
+        for event in completions {
+            if let UiEvent::InputCompleted {
+                submission_ids,
+                status,
+                error,
+            } = event
+            {
+                settled_ids.extend(
+                    submitted_tasks
+                        .iter()
+                        .filter(|task| submission_ids.contains(&task.submission_id))
+                        .map(|task| task.submission_id.clone()),
+                );
+                if *status != alan_agent_protocol::UiInputStatus::Completed {
+                    let message = error
+                        .clone()
+                        .unwrap_or_else(|| format!("Input ended: {status:?}"));
+                    reattached.notice = Some(message.clone());
+                    reattached.transcript.push(HistoryCell::Error(message));
+                }
             }
-            submitted_task_settled = true;
-        } else if reattached.activity.state == UiActivityState::Idle {
+        }
+        let unknown_ids = submitted_tasks
+            .iter()
+            .filter(|task| !settled_ids.contains(&task.submission_id))
+            .map(|task| task.submission_id.clone())
+            .collect::<Vec<_>>();
+        if reattached.activity.state == UiActivityState::Idle && !unknown_ids.is_empty() {
+            settled_ids.extend(unknown_ids);
             let message =
                 "Root Agent changed without correlated completion evidence; outcome is unknown"
                     .to_string();
             reattached.notice = Some(message.clone());
             reattached.transcript.push(HistoryCell::Error(message));
-            submitted_task_settled = true;
         }
     } else {
         reattached.merge_reconnected_idle_history(current_transcript);
     }
     *app = reattached;
-    Ok((tails, submitted_task_settled))
+    Ok((tails, settled_ids))
 }
 
 fn remove_error_cells_and_remap_actions(

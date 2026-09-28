@@ -354,11 +354,14 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         "/agent/root/machine/tape",
         b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\",\"submission_id\":\"other-client\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"other client answer\",\"submission_id\":\"other-client\"}\n",
     ).await.unwrap();
+    let mut tape = correlated_records(
+        b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n",
+    );
+    tape.extend_from_slice(
+        b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"queued task\",\"submission_id\":\"second-input\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"queued answer\",\"submission_id\":\"second-input\"}\n",
+    );
     shell
-        .write(
-            "/agent/root/machine/tape",
-            &correlated_records(b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n"),
-        )
+        .write("/agent/root/machine/tape", &tape)
         .await
         .unwrap();
     shell
@@ -376,7 +379,37 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         )
         .await
         .unwrap();
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            &serde_json::to_vec(&UiEvent::InputCompleted {
+                submission_ids: vec!["second-input".into()],
+                status: alan_agent_protocol::UiInputStatus::Completed,
+                error: None,
+            })
+            .map(|mut bytes| {
+                bytes.push(b'\n');
+                bytes
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
 
+    let mut pending = VecDeque::from([
+        PendingRootAgentTurn {
+            input: "current task".into(),
+            submission_id: INPUT_ID.into(),
+            submitted_process: Some(_old_pid.parse().unwrap()),
+            submitted_at_ms: 20,
+        },
+        PendingRootAgentTurn {
+            input: "queued task".into(),
+            submission_id: "second-input".into(),
+            submitted_process: Some(_old_pid.parse().unwrap()),
+            submitted_at_ms: 21,
+        },
+    ]);
     assert!(
         watchers
             .refresh_root_agent_attachment(
@@ -384,11 +417,12 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, INPUT_ID)),
+                &mut pending,
                 &tx,
             )
             .await
     );
+    assert!(pending.is_empty());
     assert_eq!(
         app.transcript,
         vec![
@@ -396,6 +430,8 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
             HistoryCell::Assistant("previous answer".to_string()),
             HistoryCell::User("current task".to_string()),
             HistoryCell::Assistant("current answer".to_string()),
+            HistoryCell::User("queued task".to_string()),
+            HistoryCell::Assistant("queued answer".to_string()),
         ]
     );
 
@@ -445,9 +481,17 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
         .await
         .unwrap();
 
+    let mut pending = VecDeque::new();
     assert!(
         !watchers
-            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, None, &tx,)
+            .refresh_root_agent_attachment(
+                &shell,
+                "/agent/root",
+                &mut app,
+                &mut rx,
+                &mut pending,
+                &tx,
+            )
             .await
     );
     assert_eq!(watchers.root_agent_pid, None);
@@ -474,7 +518,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
         Access::ReadOnly,
     );
     watchers
-        .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, None, &tx)
+        .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, &mut pending, &tx)
         .await;
     assert_eq!(
         watchers.root_agent_pid,
@@ -551,7 +595,12 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("same task", 20, INPUT_ID)),
+                &mut VecDeque::from([PendingRootAgentTurn {
+                    input: "same task".into(),
+                    submission_id: INPUT_ID.into(),
+                    submitted_process: Some(_old_pid.parse().unwrap()),
+                    submitted_at_ms: 20,
+                }]),
                 &tx,
             )
             .await
@@ -626,7 +675,12 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
                 "/agent/root",
                 &mut app,
                 &mut rx,
-                Some(("current task", 20, INPUT_ID)),
+                &mut VecDeque::from([PendingRootAgentTurn {
+                    input: "current task".into(),
+                    submission_id: INPUT_ID.into(),
+                    submitted_process: Some(_old_pid.parse().unwrap()),
+                    submitted_at_ms: 20,
+                }]),
                 &tx,
             )
             .await

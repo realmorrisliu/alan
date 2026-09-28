@@ -116,12 +116,20 @@ fn root_agent_file_paths_pin_to_a_process_id() {
 
 #[test]
 fn root_agent_completion_requires_its_own_input_id() {
-    let mut pending = Some(PendingRootAgentTurn {
-        input: "current task".to_string(),
-        submission_id: "input-one".into(),
-        submitted_process: Some(1),
-        submitted_at_ms: 20,
-    });
+    let mut pending = VecDeque::from([
+        PendingRootAgentTurn {
+            input: "current task".to_string(),
+            submission_id: "input-one".into(),
+            submitted_process: Some(1),
+            submitted_at_ms: 20,
+        },
+        PendingRootAgentTurn {
+            input: "queued task".to_string(),
+            submission_id: "input-two".into(),
+            submitted_process: Some(1),
+            submitted_at_ms: 21,
+        },
+    ]);
     observe_root_agent_completion(
         &mut pending,
         &UiEvent::InputCompleted {
@@ -131,7 +139,7 @@ fn root_agent_completion_requires_its_own_input_id() {
         },
         &mut FileBackedApp::new("/agent/root".into()),
     );
-    assert!(pending.is_some());
+    assert_eq!(pending.len(), 2);
     observe_root_agent_completion(
         &mut pending,
         &UiEvent::InputCompleted {
@@ -141,7 +149,18 @@ fn root_agent_completion_requires_its_own_input_id() {
         },
         &mut FileBackedApp::new("/agent/root".into()),
     );
-    assert_eq!(pending, None);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending.front().unwrap().submission_id, "input-two");
+    observe_root_agent_completion(
+        &mut pending,
+        &UiEvent::InputCompleted {
+            submission_ids: vec!["input-two".into()],
+            status: alan_agent_protocol::UiInputStatus::Completed,
+            error: None,
+        },
+        &mut FileBackedApp::new("/agent/root".into()),
+    );
+    assert!(pending.is_empty());
 }
 
 #[test]

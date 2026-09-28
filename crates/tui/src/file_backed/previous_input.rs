@@ -6,31 +6,41 @@ use std::collections::VecDeque;
 pub(super) async fn snapshot(
     ui_tail: &alan_shell::Tail,
     tape_tail: &alan_shell::Tail,
-    submitted: Option<(&str, u64, &str)>,
-) -> (Option<UiEvent>, Option<String>) {
-    let Some((_, _, id)) = submitted else {
-        return (None, None);
-    };
+    submitted: &[(String, String)],
+) -> (Vec<UiEvent>, Vec<(String, String, String)>) {
+    if submitted.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
     // Read completion first: a matching terminal record implies its final Tape
     // write already happened. Descriptor read failures fall back to queued data.
     let ui = ui_tail.snapshot().await.unwrap_or_default();
-    let completion = ui
+    let completions = ui
         .split(|byte| *byte == b'\n')
         .filter_map(|line| serde_json::from_slice::<UiEvent>(line).ok())
-        .rfind(|event| {
+        .filter(|event| {
             matches!(event, UiEvent::InputCompleted { submission_ids, .. }
-            if submission_ids.iter().any(|candidate| candidate == id))
-        });
+            if submission_ids.iter().any(|candidate| submitted.iter().any(|(id, _)| candidate == id)))
+        })
+        .collect();
     let tape = tape_tail.snapshot().await.unwrap_or_default();
-    let answer = tape
+    let records = tape
         .split(|byte| *byte == b'\n')
         .filter_map(|line| serde_json::from_slice::<TapeRecordV1>(line).ok())
-        .filter(|record| {
-            record.kind == "message" && record.role == "assistant" && record.belongs_to(id)
+        .collect::<Vec<_>>();
+    // ponytail: O(pending inputs * tape records); use an ID index if local queues grow enough to matter.
+    let answers = submitted
+        .iter()
+        .filter_map(|(id, input)| {
+            records
+                .iter()
+                .rev()
+                .find(|record| {
+                    record.kind == "message" && record.role == "assistant" && record.belongs_to(id)
+                })
+                .map(|record| (id.clone(), input.clone(), record.content.clone()))
         })
-        .map(|record| record.content)
-        .next_back();
-    (completion, answer)
+        .collect();
+    (completions, answers)
 }
 
 pub(super) async fn restore_tape_history(
@@ -73,10 +83,10 @@ pub(super) fn restore_answer(app: &mut FileBackedApp, input: &str, answer: Strin
 pub(super) fn discard_superseded_attachment_events(
     rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
     pending_terminal_events: &mut VecDeque<FileBackedEvent>,
-    submission_id: Option<&str>,
-) -> (Option<UiEvent>, Option<String>) {
-    let mut completion = None;
-    let mut answer = None;
+    submitted: &[(String, String)],
+) -> (Vec<UiEvent>, Vec<(String, String, String)>) {
+    let mut completions = Vec::new();
+    let mut answers: Vec<(String, String, String)> = Vec::new();
     for _ in 0..rx.len() {
         let Ok(event) = rx.try_recv() else {
             break;
@@ -91,18 +101,26 @@ pub(super) fn discard_superseded_attachment_events(
                 ref submission_ids, ..
             },
         ) = event
-            && submission_id
-                .is_some_and(|id| submission_ids.iter().any(|candidate| candidate == id))
+            && submission_ids
+                .iter()
+                .any(|candidate| submitted.iter().any(|(id, _)| candidate == id))
         {
-            completion = Some(ui.clone());
+            completions.push(ui.clone());
         } else if let FileBackedEvent::Tape(record) = event
             && record.role == "assistant"
-            && submission_id.is_some_and(|id| record.belongs_to(id))
         {
-            answer = Some(record.content);
+            for (id, input) in submitted.iter().filter(|(id, _)| record.belongs_to(id)) {
+                if let Some((_, _, answer)) =
+                    answers.iter_mut().find(|(candidate, _, _)| candidate == id)
+                {
+                    *answer = record.content.clone();
+                } else {
+                    answers.push((id.clone(), input.clone(), record.content.clone()));
+                }
+            }
         }
     }
-    (completion, answer)
+    (completions, answers)
 }
 
 #[cfg(test)]
@@ -132,12 +150,12 @@ mod tests {
             if let Some(preview) = preview {
                 app.transcript.push(HistoryCell::Assistant(preview.into()));
             }
-            let mut pending = Some(super::super::interrupt::PendingRootAgentTurn {
+            let mut pending = VecDeque::from([super::super::interrupt::PendingRootAgentTurn {
                 input: "task".into(),
                 submission_id: "mine".into(),
                 submitted_process: Some(pid.parse().unwrap()),
                 submitted_at_ms: 0,
-            });
+            }]);
             super::super::interrupt::observe_root_agent_completion(
                 &mut pending,
                 &UiEvent::InputCompleted {
@@ -147,7 +165,7 @@ mod tests {
                 },
                 &mut app,
             );
-            assert!(pending.is_none());
+            assert!(pending.is_empty());
             restore_tape_history(&mut app, &tail, 0).await;
             restore_tape_history(&mut app, &tail, 0).await;
             assert_eq!(app.transcript.len(), 2);
@@ -185,7 +203,16 @@ mod tests {
             status: alan_agent_protocol::UiInputStatus::Completed,
             error: None,
         };
-        let ui = format!("{}\n", serde_json::to_string(&completion).unwrap());
+        let queued_completion = UiEvent::InputCompleted {
+            submission_ids: vec!["mine-two".into()],
+            status: alan_agent_protocol::UiInputStatus::Completed,
+            error: None,
+        };
+        let ui = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&completion).unwrap(),
+            serde_json::to_string(&queued_completion).unwrap()
+        );
         shell
             .write(&format!("/agent/{pid}/machine/ui/events"), ui.as_bytes())
             .await
@@ -193,6 +220,7 @@ mod tests {
         let tape = [
             serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"final answer","submission_id":"mine"}),
             serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"another answer","submission_id":"other"}),
+            serde_json::json!({"version":1,"kind":"message","role":"assistant","content":"queued answer","submission_id":"mine-two"}),
         ].map(|record| format!("{record}\n")).concat();
         shell
             .write(&format!("/agent/{pid}/machine/tape"), tape.as_bytes())
@@ -213,19 +241,29 @@ mod tests {
                 .await
                 .is_err()
         );
-        let (observed, answer) = snapshot(&ui_tail, &tape_tail, Some(("task", 0, "mine"))).await;
+        let (observed, answers) = snapshot(
+            &ui_tail,
+            &tape_tail,
+            &[
+                ("mine".into(), "task".into()),
+                ("mine-two".into(), "queued task".into()),
+            ],
+        )
+        .await;
         assert_eq!(ui_tail.offset(), 0);
         ui_tail.close().await.unwrap();
         tape_tail.close().await.unwrap();
-        assert_eq!(observed, Some(completion));
-        assert_eq!(answer.as_deref(), Some("final answer"));
+        assert_eq!(observed, vec![completion, queued_completion]);
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0].2, "final answer");
+        assert_eq!(answers[1].2, "queued answer");
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript = vec![
             HistoryCell::User("task".into()),
             HistoryCell::Assistant("final".into()),
         ];
-        restore_answer(&mut app, "task", answer.clone().unwrap());
-        restore_answer(&mut app, "task", answer.unwrap());
+        restore_answer(&mut app, "task", answers[0].2.clone());
+        restore_answer(&mut app, "task", answers[0].2.clone());
         assert_eq!(app.transcript.len(), 2);
         assert!(
             matches!(&app.transcript[1], HistoryCell::Assistant(text) if text == "final answer")

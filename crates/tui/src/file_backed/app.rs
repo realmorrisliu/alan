@@ -484,6 +484,7 @@ impl FileBackedApp {
         // Submission may be queued behind another client. Tape owns turn boundaries.
     }
 
+    #[cfg(test)]
     pub(super) fn enter_submits_agent_task(&self) -> bool {
         if self.form.is_some() || self.pending_yield.is_some() || self.completion.is_some() {
             return false;
