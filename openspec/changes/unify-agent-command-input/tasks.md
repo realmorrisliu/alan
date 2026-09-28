@@ -53,11 +53,14 @@ Agent request specifically using `read_file` returned `shell-second`. A shell
 command returned stdout `tracer-stdout`, stderr `tracer-stderr`, and exit code 7.
 A later `!pwd` and append command also succeeded.
 
-Rapidly submitting a second command while `!false` was still active produced the
-visible `submit blocked: waiting for this input to complete` error and retained
-the draft. Pressing Enter again after the first command settled executed the
-draft once. This verifies visible rejection and recovery, not ordered queuing;
-the FIFO/next-turn submission slice remains open under tasks 2.1 and 2.5.
+On baseline source `08a1784a5217bfa760f7df5057cb5ae533c0ed29`, rapidly submitting a
+second command while `!false` was active produced the visible `submit blocked:
+waiting for this input to complete` error and retained the draft. Pressing Enter
+after the first command settled executed the draft once. This established the
+original rejection and recovery behavior, not ordered admission. PR #1021 removes
+that rejection on the Root TUI path; its separate Herdr queue acceptance is
+recorded under task 2.5.1. Multi-client identity and Process-owned cwd checks remain
+open under tasks 2.1 and 2.5.
 
 ### TB2 lifecycle and recovery evidence
 
@@ -104,6 +107,7 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
 - [ ] 2.4 Dispatch user and Agent commands through the same governed native Tool Process path; verify model-free explicit execution, no authority amplification, sandbox scope limited to the current cwd grant, switching grants only through explicit `!cd`, descendant cancellation and correlated Action evidence.
 
 - [ ] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients of one Agent and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
+  - [x] 2.5.1 Replace the observed Root-terminal busy-input rejection with FIFO admission while preserving per-submission correlation across completion, interruption and Root reattachment. PR #1021 was reviewed at `11ce47ec4f5cbea345d1a87e9a70b3ae7dd43893` (Codex: no major issues), passed all current-head checks and merged as `bc7c5a4d21f4a6bf2bc28305a6b2b15f82517385`. In Herdr, a second Agent prompt was accepted after the first visibly entered its working state; the first answer appeared before the second prompt and `QUEUE_SECOND`, with no blocked error or duplicate. Ctrl+D exited the foreground Alan and released the dev-store lock. This verifies FIFO admission for one TUI client; separate-client result ownership, Process-owned cwd ordering and delegated-grant boundaries remain open under parent tasks 2.1 and 2.5.
 - [ ] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
 - [ ] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
 - [ ] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify explicitly selected recovery restores reliable pending work paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
@@ -144,6 +148,7 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
   - PR #973: Codex found no major issues on reviewed head `c986639b8542cee7793032708dc0096f21d4d9bf`; all current-head checks passed; merged as `ff4dd79736717ce087421fe60a8c70dc919ac515`.
   - PR #981: Codex found no major issues on reviewed head `3928b50a3f1fffb06b6572335c2e04458ede4a78`; all current-head checks passed; merged as `b61400380b88acfa34208e0c0ea0debfdaa6da82`. `just quality` and strict OpenSpec validation passed.
   - PR #982: Codex review completed without findings on reviewed head `0a8177bb9d97fd941efbf4b93ffb11a6769f4245`; all current-head checks passed; merged as `54fb39a1287c9f839957029003f0695616f6532e`.
+  - PR #1021: Codex found no major issues on reviewed head `11ce47ec4f5cbea345d1a87e9a70b3ae7dd43893`; all current-head checks passed; merged as `bc7c5a4d21f4a6bf2bc28305a6b2b15f82517385`.
 - [ ] 4.2 Sync only implemented and merged requirements to canonical specs; verify no automatic-routing guarantee is synced merely because the explicit slice shipped.
 - [x] 4.2.1 Sync the CLI-only distribution requirement delivered by PR #1009; the canonical standalone-distribution specification and strict validation are included in PR #1010.
 - [x] 4.2.2 Sync shipped foreground startup, PR #1011's verified cross-invocation input/cwd isolation, and the CLI's Ctrl-D/exit lifecycle in the `alan-os-host-lifecycle`, `host-command-plane`, `alan-shell`, `alan-renderer-host-contract`, `local-alan-os-attachment`, `alan-interaction-model`, and `rust-inline-tui` canonical specs, plus ADR-0045 and ADR-0056. Explicit recovery restoration and Herdr detach acceptance remain pending.
