@@ -20,19 +20,36 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
         cwd
     };
     let mut candidates = Vec::new();
-    if !has_root_grant {
-        candidates.push((cwd.to_owned(), ".".to_owned()));
-        let escaped_cwd = bash_printable_q(cwd);
-        if escaped_cwd != cwd {
+    let mut root_escaped_projection = None;
+    let escaped_cwd = bash_printable_q(cwd);
+    if escaped_cwd != cwd {
+        if has_root_grant {
+            root_escaped_projection = Some(replace_path_prefixes(
+                text,
+                &escaped_cwd,
+                ".",
+                &physical_cwd,
+            ));
+        } else {
             candidates.push((escaped_cwd, ".".to_owned()));
         }
+    }
+    if !has_root_grant {
+        candidates.push((cwd.to_owned(), ".".to_owned()));
         for mount in &adapter.mounts {
             if mount.host_path == is_filesystem_root {
                 continue;
             }
-            let mount_from_cwd = relative_path(&physical_cwd, &mount.host_path);
             let host_path = mount.host_path.to_string_lossy().into_owned();
-            let replacement = mount_from_cwd.to_string_lossy().into_owned();
+            let replacement = if mount.namespace_path == active_mount.namespace_path {
+                relative_path(&physical_cwd, &mount.host_path)
+                    .to_string_lossy()
+                    .into_owned()
+            } else if mount.host_path == active_mount.host_path {
+                continue;
+            } else {
+                "[another grant]".to_owned()
+            };
             candidates.push((host_path.clone(), replacement.clone()));
             let shell_escaped_host_path = bash_printable_q(&host_path);
             if shell_escaped_host_path != host_path {
@@ -43,8 +60,14 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
 
     // A shorter root can prefix a sibling whose next character is a space. Resolve longest first.
     candidates.sort_by_key(|(path, _)| Reverse(path.len()));
-    let mut projected =
-        project_rooted_path_tokens(text, &physical_cwd, has_root_grant, &adapter.mounts);
+    let input = root_escaped_projection.as_deref().unwrap_or(text);
+    let mut projected = project_rooted_path_tokens(
+        input,
+        &physical_cwd,
+        active_mount,
+        has_root_grant,
+        &adapter.mounts,
+    );
     for (path, replacement) in candidates {
         projected = replace_path_prefixes(&projected, &path, &replacement, &physical_cwd);
     }
@@ -55,6 +78,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
 fn project_rooted_path_tokens(
     text: &str,
     cwd: &Path,
+    active_mount: &NativeToolMount,
     root_grant: bool,
     mounts: &[NativeToolMount],
 ) -> String {
@@ -86,6 +110,7 @@ fn project_rooted_path_tokens(
                     projected.push_str(&project_rooted_path_tokens(
                         &token[..field_start],
                         cwd,
+                        active_mount,
                         root_grant,
                         mounts,
                     ));
@@ -94,6 +119,7 @@ fn project_rooted_path_tokens(
                     projected.push_str(&project_rooted_path_tokens(
                         &token[..url_start],
                         cwd,
+                        active_mount,
                         root_grant,
                         mounts,
                     ));
@@ -102,6 +128,7 @@ fn project_rooted_path_tokens(
                 projected.push_str(&project_rooted_path_tokens(
                     &token[url_end..],
                     cwd,
+                    active_mount,
                     root_grant,
                     mounts,
                 ));
@@ -140,55 +167,48 @@ fn project_rooted_path_tokens(
             let canonical_parent = path
                 .parent()
                 .and_then(|parent| dunce::canonicalize(parent).ok());
-            let delegated = root_grant
-                || mounts.iter().any(|mount| {
-                    mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR)
-                        && (canonical_parent
-                            .as_ref()
-                            .is_some_and(|parent| parent.starts_with(&mount.host_path))
-                            || path.starts_with(&mount.host_path)
-                            || canonical_path.starts_with(&mount.host_path))
-                });
-            if !delegated {
+            let path_is_in_mount = |mount: &NativeToolMount| {
+                mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR)
+                    && (canonical_parent
+                        .as_ref()
+                        .is_some_and(|parent| parent.starts_with(&mount.host_path))
+                        || path.starts_with(&mount.host_path)
+                        || canonical_path.starts_with(&mount.host_path))
+            };
+            let file_url_mount = if root_grant {
+                None
+            } else if path_is_in_mount(active_mount) {
+                Some(active_mount)
+            } else {
+                mounts.iter().find(|mount| path_is_in_mount(mount))
+            };
+            if !root_grant && file_url_mount.is_none() {
                 projected.push_str(token);
                 cursor = token_end;
                 continue;
             }
             let display_path = if root_grant {
-                path
+                display_relative_path(cwd, &path)
             } else {
-                canonical_parent
-                    .filter(|parent| {
-                        mounts
-                            .iter()
-                            .any(|mount| parent.starts_with(&mount.host_path))
-                    })
+                let mount = file_url_mount.expect("delegated file URL has a grant");
+                let path_in_mount = canonical_parent
+                    .filter(|parent| parent.starts_with(&mount.host_path))
                     .and_then(|parent| path.file_name().map(|name| parent.join(name)))
                     .or_else(|| {
-                        mounts
-                            .iter()
-                            .filter(|mount| {
-                                mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR)
-                            })
-                            .find_map(|mount| {
-                                path.strip_prefix(&mount.host_path)
-                                    .ok()
-                                    .map(|relative| mount.host_path.join(relative))
-                            })
+                        path.strip_prefix(&mount.host_path)
+                            .ok()
+                            .map(|relative| mount.host_path.join(relative))
                     })
-                    .unwrap_or(canonical_path)
+                    .unwrap_or(canonical_path);
+                if mount.namespace_path == active_mount.namespace_path {
+                    display_relative_path(cwd, &path_in_mount)
+                } else {
+                    Path::new("[another grant]")
+                        .join(relative_path(&mount.host_path, &path_in_mount))
+                }
             };
-            let relative = display_relative_path(cwd, &display_path);
             projected.push_str(&token[..path_start]);
-            projected.push_str(&relative.to_string_lossy());
-            if let Some(query) = file_url.query() {
-                projected.push('?');
-                projected.push_str(query);
-            }
-            if let Some(fragment) = file_url.fragment() {
-                projected.push('#');
-                projected.push_str(fragment);
-            }
+            projected.push_str(&display_path.to_string_lossy());
             projected.push_str(&path_and_suffix[path_end..]);
             cursor = token_end;
             continue;

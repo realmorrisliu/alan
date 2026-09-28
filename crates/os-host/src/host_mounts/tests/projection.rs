@@ -31,7 +31,7 @@ async fn project_text_projects_paths_from_the_active_mount() {
         .unwrap()
         .adapter()
         .unwrap();
-    let resolved = dunce::canonicalize(target).unwrap();
+    let resolved = dunce::canonicalize(&target).unwrap();
     assert_eq!(
         adapter.project_text(&format!("realpath {}", resolved.display())),
         "realpath ./notes.txt"
@@ -45,6 +45,11 @@ async fn project_text_projects_paths_from_the_active_mount() {
         adapter.project_text(symlink_url.as_str()),
         "./notes-link.txt"
     );
+    let url_with_metadata = format!(
+        "{}?download=1#preview",
+        url::Url::from_file_path(&target).unwrap()
+    );
+    assert_eq!(adapter.project_text(&url_with_metadata), "./notes.txt");
     let outside = tempfile::tempdir().unwrap();
     let outside_link = project.path().join("outside-link.txt");
     std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
@@ -124,6 +129,35 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
     );
     let file_url = url::Url::from_file_path("/etc/passwd").unwrap();
     assert_eq!(adapter.project_text(file_url.as_str()), "./etc/passwd");
+    let special_dir = tempfile::Builder::new()
+        .prefix("alan project (1) ")
+        .tempdir()
+        .unwrap();
+    let native_special_dir = dunce::canonicalize(special_dir.path()).unwrap();
+    let namespace_special_dir = Path::new("/mnt/project").join(
+        native_special_dir
+            .strip_prefix(std::path::MAIN_SEPARATOR_STR)
+            .unwrap(),
+    );
+    let special_cwd = service
+        .reconcile(7, binding(namespace_special_dir.to_str().unwrap()))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let escaped_cwd = std::process::Command::new("bash")
+        .args(["-c", "printf '%q' \"$1\"", "_"])
+        .arg(special_cwd.cwd().unwrap())
+        .output()
+        .unwrap();
+    assert!(escaped_cwd.status.success());
+    let escaped_cwd = String::from_utf8(escaped_cwd.stdout).unwrap();
+    assert!(escaped_cwd.contains("\\ "));
+    assert!(escaped_cwd.contains("\\("));
+    assert_eq!(special_cwd.project_text(&escaped_cwd), ".");
+    assert_eq!(
+        special_cwd.project_text(&format!("{escaped_cwd}/src/lib.rs")),
+        "./src/lib.rs"
+    );
     assert_eq!(adapter.project_text("[guide]: /guide"), "[guide]: /guide");
     assert_eq!(adapter.project_text("[docs](/guide)"), "[docs](/guide)");
     assert_eq!(
@@ -289,7 +323,7 @@ async fn project_text_does_not_use_an_inactive_root_grant_for_path_projection() 
 }
 
 #[tokio::test]
-async fn project_text_maps_disjoint_grant_paths_from_the_native_cwd() {
+async fn project_text_keeps_disjoint_grant_paths_out_of_the_active_cwd() {
     let project = tempfile::tempdir().unwrap();
     let docs = tempfile::tempdir().unwrap();
     let other_path = dunce::canonicalize(docs.path()).unwrap().join("notes.txt");
@@ -325,9 +359,11 @@ async fn project_text_maps_disjoint_grant_paths_from_the_native_cwd() {
         .unwrap()
         .to_owned();
 
+    assert_eq!(projected, "[another grant]/notes.txt");
+    let other_file_url = url::Url::from_file_path(&other_path).unwrap();
     assert_eq!(
-        dunce::canonicalize(project.path().join(projected)).unwrap(),
-        other_path
+        adapter.project_text(other_file_url.as_str()),
+        "[another grant]/notes.txt"
     );
 }
 
