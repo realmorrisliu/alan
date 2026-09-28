@@ -21,15 +21,30 @@ milestone does not complete the full change or authorize archive.
   further runtime gap; PR #1022 records the queue evidence. Both merged PR
   worktrees were cleaned while their branches were retained. Details follow.
 
-PR #1014 remains open at `ed089a95a29b8e6d40a27e0909d68890c18da6e5`. The exact
-HEAD has 31 unresolved Codex inline findings (6 P1, 25 P2), including raw path
-disclosure in prose/JSON and path or URL corruption. All required checks are green,
-but `reviewDecision` is empty and GitHub reports the PR blocked. Its 1,239-line
-output-projection expansion (1,239 additions, 11 deletions across 5 files) is not
-part of the merged baseline; retain the branch and findings, and defer this separate
-path-projection work until a necessary smaller slice is isolated. This does not
-waive path privacy or sandbox authority. Automatic routing and universal
-output-format parsing are outside this milestone.
+PR #937 was closed without merge on 2026-09-28 at head
+`3abf4cb1ef739f13dd619e6e6f9dc82d2d6ecd42`. This stale aggregate branch changed
+148 files (14,097 additions and 2,834 deletions from its original base) and had
+31 unresolved Codex findings, including P1 sandbox and queue-durability issues.
+Several delivery slices have since landed independently through PRs #970, #973,
+and #1021–1023. Closing the aggregate branch does not complete unchecked tasks;
+its branch and review threads are retained, and remaining requirements stay open.
+
+The competing output-projection attempts PR #949 and PR #1014 were closed without
+merge on 2026-09-28 at heads `3cf82f2b6e9df2f4476e49f09f1b71dd2bb132cc` and
+`ed089a95a29b8e6d40a27e0909d68890c18da6e5`, respectively. They changed the same
+five Host files. PR #949 added 1,896 lines and retained 11 unresolved Codex P2
+findings about CSV, GNU quoting, and root-relative Markdown/CSS behavior; PR #1014
+added 1,239 lines and retained 31 findings (6 P1, 25 P2), including raw-path
+disclosure and path/URL corruption. Both branches and all review threads are
+retained. Neither implementation is accepted as delivery evidence.
+
+OpenSpec task 2.7 remains open: shared-cwd path projection and protection against
+raw Host roots and `/mnt` aliases are still required. These closures do not waive
+path privacy or sandbox authority. Future work should implement only the captured
+output forms required by that task and preserve unrelated project data; no generic
+multi-format parser is accepted here. Other unchecked input, queue, cancellation,
+and recovery tasks also remain open. Automatic routing remains outside this
+milestone.
 
 Baseline evidence (2026-09-28, source `08a1784a5217bfa760f7df5057cb5ae533c0ed29`):
 `cargo test -p alan-os-host --test explicit_command -- --nocapture` passed
