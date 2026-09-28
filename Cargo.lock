@@ -2388,9 +2388,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openrouter-rs"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4b9d4bd401a75c36bf427bd7386c50b84a5aeeba617aab8fec84babaab6257a"
+checksum = "cf5ff8e190421470f284b3aafb98df3ec602004854c2105cb3247dc7228cf77a"
 dependencies = [
  "derive_builder",
  "dotenvy_macro",
