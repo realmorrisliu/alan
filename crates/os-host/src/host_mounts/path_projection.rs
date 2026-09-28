@@ -137,10 +137,17 @@ fn project_rooted_path_tokens(
             && let Ok(path) = file_url.to_file_path()
         {
             let canonical_path = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let canonical_parent = path
+                .parent()
+                .and_then(|parent| dunce::canonicalize(parent).ok());
             let delegated = root_grant
                 || mounts.iter().any(|mount| {
                     mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR)
-                        && canonical_path.starts_with(&mount.host_path)
+                        && (canonical_parent
+                            .as_ref()
+                            .is_some_and(|parent| parent.starts_with(&mount.host_path))
+                            || path.starts_with(&mount.host_path)
+                            || canonical_path.starts_with(&mount.host_path))
                 });
             if !delegated {
                 projected.push_str(token);
@@ -150,14 +157,25 @@ fn project_rooted_path_tokens(
             let display_path = if root_grant {
                 path
             } else {
-                path.parent()
-                    .and_then(|parent| dunce::canonicalize(parent).ok())
+                canonical_parent
                     .filter(|parent| {
                         mounts
                             .iter()
                             .any(|mount| parent.starts_with(&mount.host_path))
                     })
                     .and_then(|parent| path.file_name().map(|name| parent.join(name)))
+                    .or_else(|| {
+                        mounts
+                            .iter()
+                            .filter(|mount| {
+                                mount.host_path != Path::new(std::path::MAIN_SEPARATOR_STR)
+                            })
+                            .find_map(|mount| {
+                                path.strip_prefix(&mount.host_path)
+                                    .ok()
+                                    .map(|relative| mount.host_path.join(relative))
+                            })
+                    })
                     .unwrap_or(canonical_path)
             };
             let relative = display_relative_path(cwd, &display_path);
@@ -381,7 +399,7 @@ fn is_root_relative_url(text: &str, start: usize) -> bool {
         .strip_suffix('"')
         .unwrap_or(&lowercase)
         .trim_end();
-    if text[start..].starts_with("//") && json_field.ends_with("\"url\":") {
+    if json_field.ends_with("\"url\":") {
         return true;
     }
     let css_url_prefix = lowercase

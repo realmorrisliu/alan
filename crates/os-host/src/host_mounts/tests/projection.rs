@@ -45,6 +45,15 @@ async fn project_text_projects_paths_from_the_active_mount() {
         adapter.project_text(symlink_url.as_str()),
         "./notes-link.txt"
     );
+    let outside = tempfile::tempdir().unwrap();
+    let outside_link = project.path().join("outside-link.txt");
+    std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+    std::os::unix::fs::symlink(outside.path().join("secret.txt"), &outside_link).unwrap();
+    let outside_url = url::Url::from_file_path(&outside_link).unwrap();
+    assert_eq!(
+        adapter.project_text(outside_url.as_str()),
+        "./outside-link.txt"
+    );
     let spaced_target = root.join("notes file.txt");
     std::fs::write(&spaced_target, "notes").unwrap();
     let spaced_url = url::Url::from_file_path(&spaced_target).unwrap();
@@ -87,6 +96,8 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         adapter.project_text(scheme_relative_url),
         scheme_relative_url
     );
+    let root_relative_url = r#"{"url":"/api/items"}"#;
+    assert_eq!(adapter.project_text(root_relative_url), root_relative_url);
     let cwd = adapter.cwd().unwrap();
     assert_eq!(
         adapter.project_text(&format!("\x1b[31m{}\x1b[0m", cwd.display())),
