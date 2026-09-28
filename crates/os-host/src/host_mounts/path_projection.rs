@@ -404,7 +404,16 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str, cwd: &Path
         let suffix = strip_leading_terminal_sequences(&text[end..]);
         let emphasized = is_underscore_emphasis_path(text, start, end);
         let boundary_before = is_path_start(text, start) || emphasized;
-        let boundary_after = is_candidate_path_end(suffix, cwd) || emphasized;
+        // ponytail: structured output can remove this one-word path/prose ambiguity.
+        let trailing_word_is_prose = suffix.strip_prefix(' ').is_some_and(|tail| {
+            let tail = tail.trim();
+            !tail.is_empty()
+                && !tail.contains(std::path::MAIN_SEPARATOR)
+                && !tail.chars().any(char::is_whitespace)
+                && !Path::new(&format!("{prefix}{suffix}")).exists()
+        });
+        let boundary_after =
+            is_candidate_path_end(suffix, cwd) || trailing_word_is_prose || emphasized;
         if boundary_before && boundary_after {
             let replacement_start = file_uri_scheme_start(text, start).unwrap_or(start);
             projected.push_str(&text[copied_through..replacement_start]);

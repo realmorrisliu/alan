@@ -286,6 +286,17 @@ async fn project_text_preserves_unmatched_paths_with_space_siblings() {
         "ordinary prose after the active root must not expose its backing path"
     );
     assert_eq!(
+        adapter.project_text(&format!("{} exists", project.display())),
+        ". exists",
+        "a final prose word after the active root must not expose its backing path"
+    );
+    let sibling = project_with_space.display().to_string();
+    assert_eq!(
+        adapter.project_text(&sibling),
+        sibling,
+        "an existing sibling whose name follows a space remains unchanged"
+    );
+    assert_eq!(
         adapter.project_text(&format!("{} /etc/passwd", project.display())),
         ". /etc/passwd",
         "a following absolute path is a separate token"
