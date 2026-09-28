@@ -10,14 +10,16 @@ milestone does not complete the full change or authorize archive.
   cwd, Agent write → shell read, shell write → Agent read, stdout/stderr and exit
   status. Exact-source live evidence is recorded below.
 - [x] TB2 Verify owned exit, fresh default startup, and explicit `--resume`.
-  Prior and restored Root rollout/Action evidence is recorded below. Moving the
-  pane to an unfocused tab was also tested; this is not full Herdr view-detach
-  acceptance, which remains open under task 2.19. The baseline integration test
-  verifies completed-effect non-replay; the targeted engine test verifies
-  unknown-effect gating.
-- [ ] TB3 Fix only gaps observed in this workflow in independently reviewable
-  PRs. Merge only after current-head Codex review and required CI pass; record
-  verified evidence and clean unused merged worktrees while retaining branches.
+  Prior and restored Root rollout/Action evidence is recorded below. The
+  current-main Herdr run also verified live completed-append non-replay. Moving
+  the pane to an unfocused tab was tested, but full Herdr view-detach acceptance
+  remains open under task 2.19. The targeted engine test verifies unknown-effect
+  gating.
+- [x] TB3 Fix only gaps observed in this workflow in independently reviewable
+  PRs. The reproduced FIFO input gap shipped in PR #1021 after current-head
+  Codex review and required CI passed. Current-main Herdr acceptance found no
+  further runtime gap; PR #1022 records the queue evidence. Both merged PR
+  worktrees were cleaned while their branches were retained. Details follow.
 
 PR #1014 remains open at `ed089a95a29b8e6d40a27e0909d68890c18da6e5`. The exact
 HEAD has 31 unresolved Codex inline findings (6 P1, 25 P2), including raw path
@@ -80,6 +82,30 @@ This is direct evidence of CLI Root selection and Action restoration. The marker
 was one byte both before and after recovery, but its overwrite is idempotent, so it
 does not prove live non-replay. The baseline explicit-command integration test above
 supplies replay-sensitive non-replay evidence. The targeted test `cargo test -p alan-agent-engine test_replay_approved_batch_bypasses_unknown_only_for_first_tool_call -- --nocapture` passed (1 test), confirming an unknown effect remains blocked unless explicitly approved. This is code-level unknown-effect coverage, not a live crash-injection test.
+
+### Current-main Herdr re-acceptance (2026-09-28)
+
+On merged main `176dcb19436026d48dedb7a86c8828ed9fa13340`,
+`cargo build -p alan --bin alan` passed (binary SHA-256
+`6b2fde0fdbfe997c4923ec7ddcd3ba6f009534e43fada70232336c6a81fb7b4f`). In a
+Herdr pane, ordinary Agent input returned `CURRENT_HEAD_TUI_READY`. After an
+explicit read-write Host Mount approval for the disposable test directory, the
+Agent wrote the 11-byte `agent-first` file and `!cat` read it; shell redirection
+wrote `shell-second` and the Agent's `read_file` returned it. A shell command
+reported stdout `tracer-stdout`, stderr `tracer-stderr`, and exit code 7.
+
+The first foreground instance appended one byte to a replay marker and exited
+with Ctrl+D. A new default instance returned `FRESH_DEFAULT_ROOT`; after a new
+explicit mount approval it appended one more byte and exited with Ctrl+D. Its
+Root rollout was `rollout-20260928-145015-37c26229-f26d-46b3-97f9-23d32e9fca7a.jsonl`,
+where the successful append is Action `a0`. Explicit `--resume` selected that
+history as `rollout-20260928-145219-bfa07fad-82f7-4df3-8cca-2527d134071a.jsonl`;
+the Root answered a follow-up about its prior transcript with
+`FRESH_DEFAULT_ROOT`. The marker remained exactly two bytes before and after
+resume, so the completed append was not replayed in this live run. Each owned
+Alan exited on Ctrl+D; the test pane was closed and the stable Host was left
+running. The separate Herdr view-detach acceptance and other lifecycle cases
+remain open under task 2.19.
 
 One earlier exact-source session did not process a quickly submitted follow-up
 and its Host API timed out; no shell Action or marker file was recorded. We stopped
