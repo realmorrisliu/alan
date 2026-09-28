@@ -25,9 +25,11 @@ PR #937 was closed without merge on 2026-09-28 at head
 `3abf4cb1ef739f13dd619e6e6f9dc82d2d6ecd42`. This stale aggregate branch changed
 148 files (14,097 additions and 2,834 deletions from its original base) and had
 31 unresolved Codex findings, including P1 sandbox and queue-durability issues.
-Several delivery slices have since landed independently through PRs #970, #973,
-and #1021–1023. Closing the aggregate branch does not complete unchecked tasks;
-its branch and review threads are retained, and remaining requirements stay open.
+Runtime and Agent command slices have since landed independently through PRs
+#970 and #973; FIFO admission shipped through #1021. PRs #1022 and #1023 record
+acceptance evidence only. Closing the aggregate branch does not complete unchecked
+tasks; its branch and review threads are retained, and remaining requirements stay
+open.
 
 The competing output-projection attempts PR #949 and PR #1014 were closed without
 merge on 2026-09-28 at heads `3cf82f2b6e9df2f4476e49f09f1b71dd2bb132cc` and
