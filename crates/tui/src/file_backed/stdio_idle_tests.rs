@@ -365,9 +365,17 @@ async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
         .await
         .unwrap();
 
+    let mut pending = VecDeque::new();
     assert!(
         !watchers
-            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, None, &tx,)
+            .refresh_root_agent_attachment(
+                &shell,
+                "/agent/root",
+                &mut app,
+                &mut rx,
+                &mut pending,
+                &tx,
+            )
             .await
     );
     assert_eq!(watchers.root_agent_pid, Some(new_pid.parse().unwrap()));

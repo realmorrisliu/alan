@@ -56,10 +56,10 @@ async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() 
     let preserved = crate::file_backed::discard_superseded_attachment_events(
         &mut rx,
         &mut pending_terminal_events,
-        Some("mine"),
+        &[("mine".into(), "task".into())],
     );
-    assert_eq!(preserved.0, Some(completion));
-    assert_eq!(preserved.1.as_deref(), Some("final answer"));
+    assert_eq!(preserved.0, vec![completion]);
+    assert_eq!(preserved.1[0].2, "final answer");
 
     assert!(matches!(
         pending_terminal_events.pop_front(),

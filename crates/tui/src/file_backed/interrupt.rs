@@ -1,4 +1,5 @@
 use alan_agent_protocol::{UiActivityState, UiEvent};
+use std::collections::VecDeque;
 
 use super::app::FileBackedApp;
 
@@ -11,15 +12,17 @@ pub(super) struct PendingRootAgentTurn {
 }
 
 pub(super) fn observe_root_agent_completion(
-    pending_turn: &mut Option<PendingRootAgentTurn>,
+    pending_turns: &mut VecDeque<PendingRootAgentTurn>,
     event: &UiEvent,
     app: &mut FileBackedApp,
 ) {
-    if let UiEvent::InputCompleted { submission_ids, .. } = event
-        && pending_turn
-            .as_ref()
-            .is_some_and(|turn| submission_ids.contains(&turn.submission_id))
-    {
+    if let UiEvent::InputCompleted { submission_ids, .. } = event {
+        let matched = pending_turns
+            .iter()
+            .any(|turn| submission_ids.contains(&turn.submission_id));
+        if !matched {
+            return;
+        }
         render_input_completion(event, app);
         if let UiEvent::InputCompleted {
             status: alan_agent_protocol::UiInputStatus::Failed,
@@ -30,7 +33,7 @@ pub(super) fn observe_root_agent_completion(
             // Process emits this terminal error immediately after failed settlement.
             app.expected_terminal_error = Some(format!("Error handling submission: {error}"));
         }
-        *pending_turn = None;
+        pending_turns.retain(|turn| !submission_ids.contains(&turn.submission_id));
     }
 }
 
@@ -47,17 +50,19 @@ pub(super) fn render_input_completion(event: &UiEvent, app: &mut FileBackedApp) 
 }
 
 pub(super) fn settle_unknown_replaced_input(
-    pending_turn: &mut Option<PendingRootAgentTurn>,
+    pending_turns: &mut VecDeque<PendingRootAgentTurn>,
     current_process: Option<u64>,
     app: &mut FileBackedApp,
 ) {
-    if app.activity.state == UiActivityState::Idle
-        && pending_turn.as_ref().is_some_and(|turn| {
-            matches!((turn.submitted_process, current_process),
+    if app.activity.state == UiActivityState::Idle {
+        let before = pending_turns.len();
+        pending_turns.retain(|turn| {
+            !matches!((turn.submitted_process, current_process),
                 (Some(submitted), Some(current)) if submitted != current)
-        })
-    {
-        *pending_turn = None;
+        });
+        if pending_turns.len() == before {
+            return;
+        }
         app.push_error(
             "Root Agent changed without correlated completion evidence; outcome is unknown".into(),
         );
@@ -67,9 +72,10 @@ pub(super) fn settle_unknown_replaced_input(
 pub(super) async fn send_interrupt(
     shell: &alan_shell::Shell,
     app: &mut FileBackedApp,
-    pending: Option<&PendingRootAgentTurn>,
+    pending_turns: &VecDeque<PendingRootAgentTurn>,
     root_pid: Option<u64>,
 ) {
+    let pending = pending_turns.front();
     let agent_path = if app.agent_path == "/agent/root" {
         let Some(pid) = pending.map_or(root_pid, |turn| turn.submitted_process) else {
             app.push_error("Root Agent is not attached; retry interrupt".into());
@@ -108,39 +114,63 @@ mod tests {
             submitted_process: Some(pid.parse().unwrap()),
             submitted_at_ms: 20,
         };
+        let pending_turns = VecDeque::from([
+            pending,
+            PendingRootAgentTurn {
+                input: "later task".into(),
+                submission_id: "00000000-0000-4000-8000-000000000002".into(),
+                submitted_process: Some(pid.parse().unwrap()),
+                submitted_at_ms: 21,
+            },
+        ]);
         root.set_root_process("99999").await;
         for refreshed_pid in [Some(99999), None] {
             app.notice = None;
-            send_interrupt(&shell, &mut app, Some(&pending), refreshed_pid).await;
+            send_interrupt(&shell, &mut app, &pending_turns, refreshed_pid).await;
             assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
         }
         let events =
             String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
-        assert!(events.contains(&format!("ctl:queue-v1 interrupt {}", pending.submission_id)));
+        assert!(events.contains(&format!(
+            "ctl:queue-v1 interrupt {}",
+            pending_turns.front().unwrap().submission_id
+        )));
         assert!(!events.contains("ctl:interrupt"));
+        assert!(!events.contains(&pending_turns.back().unwrap().submission_id));
         assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
     }
 
     #[test]
     fn replacement_that_later_becomes_idle_reports_unknown_and_releases_pending() {
-        let mut pending = Some(PendingRootAgentTurn {
-            input: "task".into(),
-            submission_id: "input-one".into(),
-            submitted_process: Some(1),
-            submitted_at_ms: 20,
-        });
+        let mut pending = VecDeque::from([
+            PendingRootAgentTurn {
+                input: "task".into(),
+                submission_id: "input-one".into(),
+                submitted_process: Some(1),
+                submitted_at_ms: 20,
+            },
+            PendingRootAgentTurn {
+                input: "task two".into(),
+                submission_id: "input-two".into(),
+                submitted_process: Some(2),
+                submitted_at_ms: 21,
+            },
+        ]);
         let mut app = FileBackedApp::new("/agent/root".into());
+        app.activity.state = UiActivityState::Running;
         settle_unknown_replaced_input(&mut pending, Some(1), &mut app);
         assert!(
-            pending.is_some(),
-            "the original Process idle is not settlement"
+            !pending.is_empty(),
+            "a running turn is not settled by Root identity refresh"
         );
-        app.activity.state = UiActivityState::Running;
         settle_unknown_replaced_input(&mut pending, Some(2), &mut app);
-        assert!(pending.is_some());
+        assert!(!pending.is_empty());
         app.activity.state = UiActivityState::Idle;
         settle_unknown_replaced_input(&mut pending, Some(2), &mut app);
-        assert!(pending.is_none());
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending.front().unwrap().submission_id, "input-two");
+        settle_unknown_replaced_input(&mut pending, Some(3), &mut app);
+        assert!(pending.is_empty());
         assert!(
             matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message))
             if message.contains("outcome is unknown"))
@@ -152,12 +182,12 @@ mod tests {
             alan_agent_protocol::UiInputStatus::Failed,
             alan_agent_protocol::UiInputStatus::Cancelled,
         ] {
-            let mut pending = Some(PendingRootAgentTurn {
+            let mut pending = VecDeque::from([PendingRootAgentTurn {
                 input: "task".into(),
                 submission_id: "mine".into(),
                 submitted_process: Some(1),
                 submitted_at_ms: 20,
-            });
+            }]);
             let mut app = FileBackedApp::new("/agent/root".into());
             let mut event = UiEvent::InputCompleted {
                 submission_ids: vec!["other".into()],
@@ -165,13 +195,13 @@ mod tests {
                 error: Some("reason".into()),
             };
             observe_root_agent_completion(&mut pending, &event, &mut app);
-            assert!(pending.is_some());
+            assert_eq!(pending.len(), 1);
             assert!(app.transcript.is_empty());
             if let UiEvent::InputCompleted { submission_ids, .. } = &mut event {
                 *submission_ids = vec!["mine".into()];
             }
             observe_root_agent_completion(&mut pending, &event, &mut app);
-            assert!(pending.is_none());
+            assert!(pending.is_empty());
             assert!(
                 matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message)) if message == "reason")
             );
