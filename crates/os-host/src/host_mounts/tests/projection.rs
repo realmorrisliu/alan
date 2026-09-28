@@ -82,6 +82,14 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         )),
         "cwd=.,url=https://example.test/path"
     );
+    let url_before_cwd = format!(
+        r#"{{"url":"https://example.test","cwd":"{}"}}"#,
+        adapter.cwd().unwrap().display()
+    );
+    assert_eq!(
+        adapter.project_text(&url_before_cwd),
+        r#"{"url":"https://example.test","cwd":"."}"#
+    );
     let file_url = url::Url::from_file_path("/etc/passwd").unwrap();
     assert_eq!(adapter.project_text(file_url.as_str()), "./etc/passwd");
     assert_eq!(adapter.project_text("[guide]: /guide"), "[guide]: /guide");
@@ -90,6 +98,8 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         adapter.project_text("body { background: url(/assets/bg.png) }"),
         "body { background: url(/assets/bg.png) }"
     );
+    let css_with_space = "body { background: url( \"/assets/bg.png\" ) }";
+    assert_eq!(adapter.project_text(css_with_space), css_with_space);
     for html in [
         "<form action=\"/submit\">",
         "<video poster=\"/poster.png\">",

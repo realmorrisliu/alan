@@ -76,14 +76,31 @@ fn project_rooted_path_tokens(
                 .char_indices()
                 .rev()
                 .find_map(|(index, ch)| matches!(ch, ',' | ';').then_some(index));
-            if root_grant && let Some(field_start) = field_start {
+            if root_grant {
+                let url_end = web_url_end(token, url_start);
+                if let Some(field_start) = field_start {
+                    projected.push_str(&project_rooted_path_tokens(
+                        &token[..field_start],
+                        cwd,
+                        root_grant,
+                        mounts,
+                    ));
+                    projected.push_str(&token[field_start..url_start]);
+                } else {
+                    projected.push_str(&project_rooted_path_tokens(
+                        &token[..url_start],
+                        cwd,
+                        root_grant,
+                        mounts,
+                    ));
+                }
+                projected.push_str(&token[url_start..url_end]);
                 projected.push_str(&project_rooted_path_tokens(
-                    &token[..field_start],
+                    &token[url_end..],
                     cwd,
                     root_grant,
                     mounts,
                 ));
-                projected.push_str(&token[field_start..]);
             } else {
                 projected.push_str(token);
             }
@@ -204,6 +221,16 @@ fn non_file_url_start(token: &str) -> Option<usize> {
     None
 }
 
+// ponytail: quote and comma boundaries cover common serialized URLs; richer output needs structure.
+fn web_url_end(token: &str, start: usize) -> usize {
+    token[start..]
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            matches!(ch, '\'' | '"' | ')' | ']' | '}' | ',' | ';').then_some(start + offset)
+        })
+        .unwrap_or(token.len())
+}
+
 fn extend_root_path_through_space(text: &str, mut path_end: usize, cwd: &Path) -> usize {
     while text[path_end..].starts_with(' ') {
         if !space_continues_path(&text[path_end..], cwd) {
@@ -308,11 +335,16 @@ fn is_root_relative_url(text: &str, start: usize) -> bool {
         return true;
     }
     let lowercase = prefix.to_ascii_lowercase();
+    let css_url_prefix = lowercase
+        .trim_end_matches(char::is_whitespace)
+        .trim_end_matches(['\'', '"'])
+        .trim_end_matches(char::is_whitespace);
     if [
         "](", "url(", "url('", "url(\"", "href='", "href=\"", "src='", "src=\"",
     ]
     .iter()
     .any(|suffix| lowercase.ends_with(suffix))
+        || css_url_prefix.ends_with("url(")
     {
         return true;
     }
