@@ -71,8 +71,22 @@ fn project_rooted_path_tokens(
             .map_or(text.len(), |offset| cursor + offset);
         let token = &text[cursor..token_end];
         let lowercase_token = token.to_ascii_lowercase();
-        if token.contains("://") && !lowercase_token.contains("file://") {
-            projected.push_str(token);
+        if let Some(url_start) = non_file_url_start(token) {
+            let field_start = token[..url_start]
+                .char_indices()
+                .rev()
+                .find_map(|(index, ch)| matches!(ch, ',' | ';').then_some(index));
+            if root_grant && let Some(field_start) = field_start {
+                projected.push_str(&project_rooted_path_tokens(
+                    &token[..field_start],
+                    cwd,
+                    root_grant,
+                    mounts,
+                ));
+                projected.push_str(&token[field_start..]);
+            } else {
+                projected.push_str(token);
+            }
             cursor = token_end;
             continue;
         }
@@ -167,6 +181,27 @@ fn project_rooted_path_tokens(
         }
     }
     projected
+}
+
+fn non_file_url_start(token: &str) -> Option<usize> {
+    let lowercase = token.to_ascii_lowercase();
+    let mut search_from = 0;
+    while let Some(relative_end) = lowercase[search_from..].find("://") {
+        let scheme_end = search_from + relative_end;
+        let scheme_start = token[..scheme_end]
+            .char_indices()
+            .rev()
+            .find_map(|(index, ch)| {
+                (!(ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')))
+                    .then_some(index + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        if !token[scheme_start..scheme_end].eq_ignore_ascii_case("file") {
+            return Some(scheme_start);
+        }
+        search_from = scheme_end + "://".len();
+    }
+    None
 }
 
 fn extend_root_path_through_space(text: &str, mut path_end: usize, cwd: &Path) -> usize {
@@ -283,8 +318,36 @@ fn is_root_relative_url(text: &str, start: usize) -> bool {
     }
     prefix.rfind('<').is_some_and(|tag_start| {
         let tag = lowercase.get(tag_start..).unwrap_or_default();
-        !tag.contains('>') && (tag.contains("href=") || tag.contains("src="))
+        !tag.contains('>') && is_url_attribute_value_prefix(tag)
     })
+}
+
+fn is_url_attribute_value_prefix(tag: &str) -> bool {
+    let tag = tag.trim_end_matches(['\'', '"']);
+    let Some((before_value, _)) = tag.rsplit_once('=') else {
+        return false;
+    };
+    matches!(
+        before_value.split_whitespace().next_back(),
+        Some(
+            "action"
+                | "background"
+                | "cite"
+                | "codebase"
+                | "data"
+                | "formaction"
+                | "href"
+                | "icon"
+                | "longdesc"
+                | "manifest"
+                | "poster"
+                | "profile"
+                | "src"
+                | "srcset"
+                | "usemap"
+                | "xlink:href"
+        )
+    )
 }
 
 fn file_uri_scheme_start(text: &str, start: usize) -> Option<usize> {

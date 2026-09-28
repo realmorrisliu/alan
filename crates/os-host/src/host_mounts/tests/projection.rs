@@ -75,6 +75,13 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         adapter.project_text("path=/etc/passwd"),
         "path=./etc/passwd"
     );
+    assert_eq!(
+        adapter.project_text(&format!(
+            "cwd={},url=https://example.test/path",
+            adapter.cwd().unwrap().display()
+        )),
+        "cwd=.,url=https://example.test/path"
+    );
     let file_url = url::Url::from_file_path("/etc/passwd").unwrap();
     assert_eq!(adapter.project_text(file_url.as_str()), "./etc/passwd");
     assert_eq!(adapter.project_text("[guide]: /guide"), "[guide]: /guide");
@@ -83,6 +90,13 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         adapter.project_text("body { background: url(/assets/bg.png) }"),
         "body { background: url(/assets/bg.png) }"
     );
+    for html in [
+        "<form action=\"/submit\">",
+        "<video poster=\"/poster.png\">",
+        "<blockquote cite=\"/quote\">",
+    ] {
+        assert_eq!(adapter.project_text(html), html);
+    }
 
     let nested = service
         .reconcile(7, binding("/mnt/project/tmp"))
