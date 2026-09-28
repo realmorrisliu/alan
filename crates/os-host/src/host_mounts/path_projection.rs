@@ -220,7 +220,16 @@ fn project_rooted_path_tokens(
             && !is_root_relative_url(text, cursor + path_start)
         {
             let rooted_start = cursor + path_start;
-            let rooted_end = extend_root_path_through_space(text, rooted_start + path_end, cwd);
+            let rooted_end = path_and_suffix
+                .char_indices()
+                .skip(1)
+                .find_map(|(index, ch)| {
+                    matches!(ch, ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`')
+                        .then_some(rooted_start + index)
+                })
+                .unwrap_or_else(|| {
+                    extend_root_path_through_space(text, rooted_start + path_end, cwd)
+                });
             let rooted_path = &text[rooted_start..rooted_end];
             let trimmed_end = rooted_path
                 .trim_end_matches(|ch| {

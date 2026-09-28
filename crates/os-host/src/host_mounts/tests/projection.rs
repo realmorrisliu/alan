@@ -93,6 +93,10 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
         "realpath ./etc/passwd"
     );
     assert_eq!(
+        adapter.project_text(r#"{"one":"/etc/passwd","two":"/usr/bin/env"}"#),
+        r#"{"one":"./etc/passwd","two":"./usr/bin/env"}"#
+    );
+    assert_eq!(
         adapter.project_text("path=/etc/passwd"),
         "path=./etc/passwd"
     );
