@@ -36,6 +36,11 @@ async fn project_text_projects_paths_from_the_active_mount() {
         adapter.project_text(&format!("realpath {}", resolved.display())),
         "realpath ./notes.txt"
     );
+    let json_root = root.to_string_lossy().replace('/', "\\/");
+    assert_eq!(
+        adapter.project_text(&format!(r#"{{"cwd":"{json_root}"}}"#)),
+        r#"{"cwd":"."}"#
+    );
     assert_eq!(
         adapter.project_text(&format!("<a href=\"{}/report.html\">", root.display())),
         "<a href=\"./report.html\">"
@@ -95,6 +100,10 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
     assert_eq!(
         adapter.project_text(r#"{"one":"/etc/passwd","two":"/usr/bin/env"}"#),
         r#"{"one":"./etc/passwd","two":"./usr/bin/env"}"#
+    );
+    assert_eq!(
+        adapter.project_text(r#"{"cwd":"\/etc\/passwd"}"#),
+        r#"{"cwd":"./etc/passwd"}"#
     );
     assert_eq!(
         adapter.project_text("path=/etc/passwd"),
@@ -379,6 +388,42 @@ async fn project_text_keeps_disjoint_grant_paths_out_of_the_active_cwd() {
     assert_eq!(
         adapter.project_text(other_file_url.as_str()),
         "[another grant]/notes.txt"
+    );
+}
+
+#[tokio::test]
+async fn project_text_keeps_nested_native_backing_relative_to_the_active_grant() {
+    let parent_dir = tempfile::tempdir().unwrap();
+    let parent = dunce::canonicalize(parent_dir.path()).unwrap();
+    let nested = parent.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/parent",
+        HostMountAccess::ReadWrite,
+        &parent,
+    )
+    .await;
+    approve(
+        &service,
+        7,
+        "/mnt/nested",
+        HostMountAccess::ReadWrite,
+        &nested,
+    )
+    .await;
+
+    let adapter = service
+        .reconcile(7, binding("/mnt/parent"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    assert_eq!(
+        adapter.project_text(&format!("{}/nested/file", parent.display())),
+        "./nested/file"
     );
 }
 

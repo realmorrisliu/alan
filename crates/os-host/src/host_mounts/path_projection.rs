@@ -9,6 +9,10 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     else {
         return text.to_string();
     };
+    let normalized_json = (text.contains("\\/")
+        && serde_json::from_str::<serde_json::Value>(text).is_ok())
+    .then(|| unescape_json_slashes(text));
+    let text = normalized_json.as_deref().unwrap_or(text);
     let physical_cwd = dunce::canonicalize(&adapter.cwd).unwrap_or_else(|_| adapter.cwd.clone());
     let is_filesystem_root = Path::new(std::path::MAIN_SEPARATOR_STR);
     let has_root_grant = active_mount.host_path == is_filesystem_root;
@@ -37,7 +41,10 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     if !has_root_grant {
         candidates.push((cwd.to_owned(), ".".to_owned()));
         for mount in &adapter.mounts {
-            if mount.host_path == is_filesystem_root {
+            if mount.host_path == is_filesystem_root
+                || (mount.host_path != active_mount.host_path
+                    && mount.host_path.starts_with(&active_mount.host_path))
+            {
                 continue;
             }
             let host_path = mount.host_path.to_string_lossy().into_owned();
@@ -72,6 +79,29 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
         projected = replace_path_prefixes(&projected, &path, &replacement, &physical_cwd);
     }
     projected
+}
+
+fn unescape_json_slashes(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if in_string && escaped {
+            if ch != '/' {
+                output.push('\\');
+            }
+            output.push(ch);
+            escaped = false;
+        } else if in_string && ch == '\\' {
+            escaped = true;
+        } else {
+            if ch == '"' {
+                in_string = !in_string;
+            }
+            output.push(ch);
+        }
+    }
+    output
 }
 
 // ponytail: recognize common absolute-path boundaries; extend the formatter grammar if needed.
