@@ -22,6 +22,10 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     let mut candidates = Vec::new();
     if !has_root_grant {
         candidates.push((cwd.to_owned(), ".".to_owned()));
+        let escaped_cwd = bash_printable_q(cwd);
+        if escaped_cwd != cwd {
+            candidates.push((escaped_cwd, ".".to_owned()));
+        }
         for mount in &adapter.mounts {
             if mount.host_path == is_filesystem_root {
                 continue;
@@ -30,7 +34,7 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
             let host_path = mount.host_path.to_string_lossy().into_owned();
             let replacement = mount_from_cwd.to_string_lossy().into_owned();
             candidates.push((host_path.clone(), replacement.clone()));
-            let shell_escaped_host_path = host_path.replace(' ', "\\ ");
+            let shell_escaped_host_path = bash_printable_q(&host_path);
             if shell_escaped_host_path != host_path {
                 candidates.push((shell_escaped_host_path, replacement.clone()));
             }
@@ -143,8 +147,20 @@ fn project_rooted_path_tokens(
                 cursor = token_end;
                 continue;
             }
-            let path = if root_grant { &path } else { &canonical_path };
-            let relative = display_relative_path(cwd, path);
+            let display_path = if root_grant {
+                path
+            } else {
+                path.parent()
+                    .and_then(|parent| dunce::canonicalize(parent).ok())
+                    .filter(|parent| {
+                        mounts
+                            .iter()
+                            .any(|mount| parent.starts_with(&mount.host_path))
+                    })
+                    .and_then(|parent| path.file_name().map(|name| parent.join(name)))
+                    .unwrap_or(canonical_path)
+            };
+            let relative = display_relative_path(cwd, &display_path);
             projected.push_str(&token[..path_start]);
             projected.push_str(&relative.to_string_lossy());
             if let Some(query) = file_url.query() {
@@ -188,9 +204,12 @@ fn project_rooted_path_tokens(
                 })
                 .len();
             let path_end = rooted_start + trimmed_end;
-            let relative = display_relative_path(cwd, Path::new(&text[rooted_start..path_end]));
+            let (path, terminal_sequences) =
+                strip_terminal_sequences(&text[rooted_start..path_end]);
+            let relative = display_relative_path(cwd, Path::new(&path));
             projected.push_str(&text[cursor..rooted_start]);
             projected.push_str(&relative.to_string_lossy());
+            projected.push_str(&terminal_sequences);
             cursor = path_end;
         } else {
             projected.push_str(token);
@@ -219,6 +238,28 @@ fn non_file_url_start(token: &str) -> Option<usize> {
         search_from = scheme_end + "://".len();
     }
     None
+}
+
+// ponytail: cover printable Bash %q paths; control-byte names need structured path data.
+fn bash_printable_q(path: &str) -> String {
+    let mut escaped = String::with_capacity(path.len());
+    for ch in path.chars() {
+        if ch.is_ascii_alphanumeric()
+            || !ch.is_ascii()
+            || matches!(
+                ch,
+                '/' | '.' | ':' | '=' | '@' | '_' | '+' | '-' | '#' | '~' | '%'
+            )
+        {
+            escaped.push(ch);
+        } else if ch == ' ' || ch.is_ascii_graphic() {
+            escaped.push('\\');
+            escaped.push(ch);
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped
 }
 
 // ponytail: quote and comma boundaries cover common serialized URLs; richer output needs structure.
@@ -335,6 +376,14 @@ fn is_root_relative_url(text: &str, start: usize) -> bool {
         return true;
     }
     let lowercase = prefix.to_ascii_lowercase();
+    let json_field = lowercase
+        .trim_end()
+        .strip_suffix('"')
+        .unwrap_or(&lowercase)
+        .trim_end();
+    if text[start..].starts_with("//") && json_field.ends_with("\"url\":") {
+        return true;
+    }
     let css_url_prefix = lowercase
         .trim_end_matches(char::is_whitespace)
         .trim_end_matches(['\'', '"'])
@@ -470,6 +519,25 @@ fn strip_leading_terminal_sequences(mut suffix: &str) -> &str {
         suffix = &suffix[end..];
     }
     suffix
+}
+
+fn strip_terminal_sequences(mut text: &str) -> (String, String) {
+    let mut path = String::with_capacity(text.len());
+    let mut sequences = String::new();
+    while !text.is_empty() {
+        if let Some(end) = terminal_sequence_end(text)
+            .or_else(|| text.strip_prefix("\x1b\\").map(|_| 2))
+            .or_else(|| text.strip_prefix('\x07').map(|_| 1))
+        {
+            sequences.push_str(&text[..end]);
+            text = &text[end..];
+        } else {
+            let ch = text.chars().next().expect("text is not empty");
+            path.push(ch);
+            text = &text[ch.len_utf8()..];
+        }
+    }
+    (path, sequences)
 }
 
 fn terminal_sequence_end(text: &str) -> Option<usize> {

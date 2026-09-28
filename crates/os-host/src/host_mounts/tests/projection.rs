@@ -12,6 +12,8 @@ async fn project_text_projects_paths_from_the_active_mount() {
     let target = project.path().join("notes.txt");
     let root = dunce::canonicalize(project.path()).unwrap();
     std::fs::write(&target, "notes").unwrap();
+    let symlink = project.path().join("notes-link.txt");
+    std::os::unix::fs::symlink(&target, &symlink).unwrap();
 
     let service = service();
     service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
@@ -37,6 +39,11 @@ async fn project_text_projects_paths_from_the_active_mount() {
     assert_eq!(
         adapter.project_text(&format!("<a href=\"{}/report.html\">", root.display())),
         "<a href=\"./report.html\">"
+    );
+    let symlink_url = url::Url::from_file_path(&symlink).unwrap();
+    assert_eq!(
+        adapter.project_text(symlink_url.as_str()),
+        "./notes-link.txt"
     );
     let spaced_target = root.join("notes file.txt");
     std::fs::write(&spaced_target, "notes").unwrap();
@@ -74,6 +81,20 @@ async fn project_text_preserves_root_relative_urls_for_a_root_mount() {
     assert_eq!(
         adapter.project_text("path=/etc/passwd"),
         "path=./etc/passwd"
+    );
+    let scheme_relative_url = r#"{"url":"//cdn.example.test/app.js"}"#;
+    assert_eq!(
+        adapter.project_text(scheme_relative_url),
+        scheme_relative_url
+    );
+    let cwd = adapter.cwd().unwrap();
+    assert_eq!(
+        adapter.project_text(&format!("\x1b[31m{}\x1b[0m", cwd.display())),
+        "\x1b[31m.\x1b[0m"
+    );
+    assert_eq!(
+        adapter.project_text(&format!("\x1b[31m{}\x1b[0m/src", cwd.display())),
+        "\x1b[31m./src\x1b[0m"
     );
     assert_eq!(
         adapter.project_text(&format!(
@@ -372,6 +393,22 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         adapter.project_text(&shell_escaped_sibling),
         shell_escaped_sibling
     );
+
+    std::fs::create_dir(root.join("source (1)")).unwrap();
+    let special_cwd = service
+        .reconcile(7, binding("/mnt/project/source (1)"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let escaped_cwd = std::process::Command::new("bash")
+        .args(["-c", "printf '%q' \"$1\"", "_"])
+        .arg(special_cwd.cwd().unwrap())
+        .output()
+        .unwrap();
+    assert!(escaped_cwd.status.success());
+    let escaped_cwd = String::from_utf8(escaped_cwd.stdout).unwrap();
+    assert!(escaped_cwd.contains("\\("));
+    assert_eq!(special_cwd.project_text(&escaped_cwd), ".");
 }
 #[tokio::test]
 async fn captured_paths_follow_cwd_without_rewriting_project_file_data() {
