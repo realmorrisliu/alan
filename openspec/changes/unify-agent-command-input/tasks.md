@@ -1,5 +1,89 @@
 # Tasks
 
+## Tracer bullet — execution priority accepted 2026-09-28
+
+Complete one real terminal workflow before expanding horizontal hardening. This
+milestone does not complete the full change or authorize archive.
+
+- [x] TB1 Verify the merged baseline through the real CLI in an ordinary terminal
+  and Herdr: ordinary Agent input, explicit `!`, one approved project and shared
+  cwd, Agent write → shell read, shell write → Agent read, stdout/stderr and exit
+  status. Exact-source live evidence is recorded below.
+- [x] TB2 Verify owned exit, fresh default startup, and explicit `--resume`.
+  Prior and restored Root rollout/Action evidence is recorded below. Moving the
+  pane to an unfocused tab was also tested; this is not full Herdr view-detach
+  acceptance, which remains open under task 2.19. The baseline integration test
+  verifies completed-effect non-replay; the targeted engine test verifies
+  unknown-effect gating.
+- [ ] TB3 Fix only gaps observed in this workflow in independently reviewable
+  PRs. Merge only after current-head Codex review and required CI pass; record
+  verified evidence and clean unused merged worktrees while retaining branches.
+
+PR #1014 remains open at `ed089a95a29b8e6d40a27e0909d68890c18da6e5`. The exact
+HEAD has 31 unresolved Codex inline findings (6 P1, 25 P2), including raw path
+disclosure in prose/JSON and path or URL corruption. All required checks are green,
+but `reviewDecision` is empty and GitHub reports the PR blocked. Its 1,239-line
+output-projection expansion (1,239 additions, 11 deletions across 5 files) is not
+part of the merged baseline; retain the branch and findings, and defer this separate
+path-projection work until a necessary smaller slice is isolated. This does not
+waive path privacy or sandbox authority. Automatic routing and universal
+output-format parsing are outside this milestone.
+
+Baseline evidence (2026-09-28, source `08a1784a5217bfa760f7df5057cb5ae533c0ed29`):
+`cargo test -p alan-os-host --test explicit_command -- --nocapture` passed
+(1 test). It covers shared project edits, command streams/exit status, cancellation
+and explicit recovery without completed-command replay using a mock provider.
+`cargo build -p alan --bin alan` passed; the resulting binary SHA-256 was
+`cdeecdff7611e7072ed079367bed1d43da8e35d699ffe6282f57168075f1a001`. The first
+real Herdr startup waited on `PackageStoreLock::acquire` while the pre-existing
+development Host held the channel lock. The user authorized a normal stop;
+launchd's `KeepAlive` restarted that Host, so its `alan-dev.os-host` job was
+temporarily booted out (registration not deleted) to let the foreground instance
+start. The stable-channel Host was left running.
+
+### TB1 live evidence
+
+The ordinary pseudo-terminal run from the exact source build returned
+`ORDINARY_TTY_READY` to normal Agent input and exited on Ctrl+D. In Herdr, the same
+binary returned `ALAN_TRACER_READY`; after explicit read-write approval for the
+test project at `/mnt/tracer`, `!cd /mnt/tracer`
+succeeded. Agent `write_file` created the 11-byte `agent.txt` (`agent-first`),
+`!cat agent.txt` read it, native shell redirection wrote `shell-second`, and an
+Agent request specifically using `read_file` returned `shell-second`. A shell
+command returned stdout `tracer-stdout`, stderr `tracer-stderr`, and exit code 7.
+A later `!pwd` and append command also succeeded.
+
+Rapidly submitting a second command while `!false` was still active produced the
+visible `submit blocked: waiting for this input to complete` error and retained
+the draft. Pressing Enter again after the first command settled executed the
+draft once. This verifies visible rejection and recovery, not ordered queuing;
+the FIFO/next-turn submission slice remains open under tasks 2.1 and 2.5.
+
+### TB2 lifecycle and recovery evidence
+
+Ctrl+D ended the successful foreground runs. Moving the still-running Herdr pane
+to a new non-focused tab preserved its PID and accepted another Agent input; Ctrl+D
+then ended that instance. This verifies tab-movement persistence, not actual Herdr
+view detach; task 2.19 still requires that acceptance. A fresh default invocation
+selected a new Root rollout. It recalled `ALAN_TRACER_READY` from the shared Memory
+Store, as required by `runtime-memory-contract`; this is memory recall, not transcript
+resume. Host Mount grants were absent from new invocations and required a new choice.
+
+The fresh-default Root rollout was `0a3696be-f725-4538-8abe-119fe4269a87`; its
+successful `!printf x > resume-marker.txt` is Action `a0`. Explicit `--resume` created Root rollout
+`6e9e243a-bd94-40db-8475-f2e44694e94b`, whose restored transcript contains that
+same command and Action `a0`; the Root selector resolves to this restored rollout.
+This is direct evidence of CLI Root selection and Action restoration. The marker
+was one byte both before and after recovery, but its overwrite is idempotent, so it
+does not prove live non-replay. The baseline explicit-command integration test above
+supplies replay-sensitive non-replay evidence. The targeted test `cargo test -p alan-agent-engine test_replay_approved_batch_bypasses_unknown_only_for_first_tool_call -- --nocapture` passed (1 test), confirming an unknown effect remains blocked unless explicitly approved. This is code-level unknown-effect coverage, not a live crash-injection test.
+
+One earlier exact-source session did not process a quickly submitted follow-up
+and its Host API timed out; no shell Action or marker file was recorded. We stopped
+only that test PID rather than exiting it with Ctrl+D. Repeating the failed-command/
+follow-up sequence later worked, including Host API queries. Treat that first timeout
+as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
+
 ## 1. Planning and contract reconciliation
 
 - [x] 1.1 Record confirmed interview decisions, ADR draft and glossary; verify links and distinguish target behavior from the current implementation.
