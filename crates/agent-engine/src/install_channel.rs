@@ -25,10 +25,6 @@ pub struct InstallChannelDescriptor {
     pub id: &'static str,
     /// CLI executable/link name.
     pub cli_name: &'static str,
-    /// Dedicated Alan OS Host executable name.
-    pub os_host_name: &'static str,
-    /// Shell-control namespace.
-    pub shell_control_namespace: &'static str,
 }
 
 impl InstallChannel {
@@ -90,14 +86,10 @@ impl InstallChannel {
             Self::Stable => InstallChannelDescriptor {
                 id: "stable",
                 cli_name: "alan",
-                os_host_name: "alan-os-host",
-                shell_control_namespace: "alan-shell-control",
             },
             Self::Dev => InstallChannelDescriptor {
                 id: "dev",
                 cli_name: "alan-dev",
-                os_host_name: "alan-os-host-dev",
-                shell_control_namespace: "alan-dev-shell-control",
             },
         }
     }
@@ -118,8 +110,6 @@ mod tests {
             InstallChannelDescriptor {
                 id: "stable",
                 cli_name: "alan",
-                os_host_name: "alan-os-host",
-                shell_control_namespace: "alan-shell-control",
             }
         );
     }
@@ -131,8 +121,6 @@ mod tests {
             InstallChannelDescriptor {
                 id: "dev",
                 cli_name: "alan-dev",
-                os_host_name: "alan-os-host-dev",
-                shell_control_namespace: "alan-dev-shell-control",
             }
         );
     }

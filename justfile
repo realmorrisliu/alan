@@ -20,19 +20,9 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
-# Reject the retired workspace runtime model and implicit Host-directory sources
-guard-workspace-runtime-absence:
-    cargo build -p alan --bin alan
-    ./scripts/check-workspace-runtime-absence.sh . target/debug/alan
-
-# Reject retired host-service architecture from current repository and CLI surfaces
-guard-daemon-era-absence:
-    cargo build -p alan --bin alan
-    ./scripts/check-daemon-era-absence.sh target/debug/alan
-
-# Reject retired macOS persistence, installer, and Managed User compatibility surfaces
-guard-legacy-macos-absence:
-    ./scripts/check-legacy-macos-absence.sh
+# Reject implicit Host-directory sources and ambient Host cwd in runtime metadata
+guard-host-source-boundaries:
+    ./scripts/check-host-source-boundaries.sh
 
 # Check canonical specs, active changes, and OpenSpec schema instructions
 guard-openspec-current-surfaces:

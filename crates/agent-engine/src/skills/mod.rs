@@ -67,7 +67,6 @@ use std::sync::OnceLock;
 pub(crate) const BUILTIN_MEMORY_PACKAGE_ID: &str = "builtin:alan-memory";
 pub(crate) const BUILTIN_PLAN_PACKAGE_ID: &str = "builtin:alan-plan";
 pub(crate) const BUILTIN_REPO_CODING_PACKAGE_ID: &str = "builtin:alan-repo-coding";
-pub(crate) const BUILTIN_SHELL_CONTROL_PACKAGE_ID: &str = "builtin:alan-shell-control";
 pub(crate) const BUILTIN_SKILL_CREATOR_PACKAGE_ID: &str = "builtin:alan-skill-creator";
 pub(crate) const BUILTIN_SWEBENCH_PACKAGE_ID: &str = "builtin:alan-swebench";
 
@@ -75,8 +74,6 @@ static MEMORY_PACKAGE_DIR: Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_
 static PLAN_PACKAGE_DIR: Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/plan");
 static REPO_CODING_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/repo-coding");
-static SHELL_CONTROL_PACKAGE_DIR: Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/alan-shell-control");
 static SKILL_CREATOR_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/skill-creator");
 static SWEBENCH_PACKAGE_DIR: Dir<'_> =
@@ -144,7 +141,7 @@ pub(crate) fn preinstalled_capability_view_for_tests() -> ResolvedCapabilityView
 static MATERIALIZED_BUILTIN_PACKAGES: OnceLock<HashMap<&'static str, MaterializedBuiltinPackage>> =
     OnceLock::new();
 
-pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 6] = [
+pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 5] = [
     BuiltinPackageAsset {
         package_id: BUILTIN_MEMORY_PACKAGE_ID,
         skill_label: "memory",
@@ -159,11 +156,6 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 6] = [
         package_id: BUILTIN_REPO_CODING_PACKAGE_ID,
         skill_label: "repo-coding",
         dir: &REPO_CODING_PACKAGE_DIR,
-    },
-    BuiltinPackageAsset {
-        package_id: BUILTIN_SHELL_CONTROL_PACKAGE_ID,
-        skill_label: "alan-shell-control",
-        dir: &SHELL_CONTROL_PACKAGE_DIR,
     },
     BuiltinPackageAsset {
         package_id: BUILTIN_SKILL_CREATOR_PACKAGE_ID,

@@ -241,7 +241,6 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-memory"));
         assert!(package_ids.contains(&"builtin:alan-plan"));
         assert!(package_ids.contains(&"builtin:alan-repo-coding"));
-        assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-skill-creator"));
         assert!(package_ids.contains(&"builtin:alan-swebench"));
     }
