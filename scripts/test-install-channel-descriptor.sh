@@ -23,14 +23,12 @@ require_equal "$ALAN_CLI_NAME" "alan" "stable CLI"
 require_equal "$ALAN_OS_HOST_NAME" "alan-os-host" "stable Alan OS Host"
 require_equal "$ALAN_SYSTEM_STORE_DISPLAY" "~/Library/Application Support/Alan/System Store/stable" "stable System Store"
 require_equal "$ALAN_HOST_STORE_DISPLAY" "~/Library/Application Support/Alan/Host Store/stable" "stable Host Store"
-require_equal "$ALAN_SHELL_CONTROL_NAMESPACE" "alan-shell-control" "stable shell namespace"
 
 alan_install_channel_load dev
 require_equal "$ALAN_CLI_NAME" "alan-dev" "dev CLI"
 require_equal "$ALAN_OS_HOST_NAME" "alan-os-host-dev" "dev Alan OS Host"
 require_equal "$ALAN_SYSTEM_STORE_DISPLAY" "~/Library/Application Support/Alan/System Store/dev" "dev System Store"
 require_equal "$ALAN_HOST_STORE_DISPLAY" "~/Library/Application Support/Alan/Host Store/dev" "dev Host Store"
-require_equal "$ALAN_SHELL_CONTROL_NAMESPACE" "alan-dev-shell-control" "dev shell namespace"
 
 if alan_install_channel_load nightly 2>/dev/null; then
     fail "unknown install channels must fail"

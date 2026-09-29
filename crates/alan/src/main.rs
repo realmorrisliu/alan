@@ -2,7 +2,6 @@
 
 mod cli;
 mod legacy_state;
-mod shell_command;
 
 use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result};
@@ -42,11 +41,6 @@ enum Commands {
     Skills {
         #[command(subcommand)]
         action: SkillsAction,
-    },
-    /// Control a local `alan shell` host via IPC
-    Shell {
-        #[command(subcommand)]
-        action: shell_command::ShellAction,
     },
 }
 
@@ -669,7 +663,6 @@ async fn main() -> Result<()> {
                 )?;
             }
         },
-        Some(Commands::Shell { action }) => shell_command::run(action)?,
         None => {
             let mode = bare_run_mode(
                 std::io::stdin().is_terminal(),

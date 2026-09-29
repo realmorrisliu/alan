@@ -452,7 +452,7 @@ impl PackageService {
             PackageCommand::Uninstall {
                 request_id,
                 package_id,
-            } => self.uninstall(request_id, package_id),
+            } => self.remove_package(request_id, package_id, PackageKind::Installed),
         });
         let result = attempted.unwrap_or_else(|error| PackageCommandResult {
             request_id: request_id.clone(),
@@ -601,7 +601,33 @@ impl PackageService {
         })
     }
 
-    fn uninstall(&self, request_id: String, package_id: String) -> Result<PackageCommandResult> {
+    /// Retire an obsolete product-owned package without touching operator packages.
+    pub(crate) fn retire_preinstalled(&self, package_id: &str) -> Result<()> {
+        let _operation = self.operation.lock().expect("package operation poisoned");
+        let _transaction = self.refresh()?;
+        if self
+            .cached_catalog()
+            .packages
+            .get(package_id)
+            .is_some_and(|record| {
+                record.kind == PackageKind::Preinstalled && record.state == PackageState::Installed
+            })
+        {
+            self.remove_package(
+                String::new(),
+                package_id.to_string(),
+                PackageKind::Preinstalled,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn remove_package(
+        &self,
+        request_id: String,
+        package_id: String,
+        expected_kind: PackageKind,
+    ) -> Result<PackageCommandResult> {
         let mut next = self.cached_catalog();
         let existing = next
             .packages
@@ -609,8 +635,8 @@ impl PackageService {
             .cloned()
             .with_context(|| format!("package `{package_id}` is not installed"))?;
         ensure!(
-            existing.kind == PackageKind::Installed,
-            "preinstalled package cannot be uninstalled"
+            existing.kind == expected_kind,
+            "package kind does not permit this removal"
         );
         let retained = existing.reference_count > 0;
         let retained_record = if retained {

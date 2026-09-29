@@ -171,7 +171,6 @@ Body
         assert!(!memory.allow_implicit_invocation);
         assert!(!plan.enabled);
         assert!(registry.get(&"repo-coding".to_string()).is_some());
-        assert!(registry.get(&"alan-shell-control".to_string()).is_some());
     }
 
     #[test]

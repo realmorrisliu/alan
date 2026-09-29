@@ -10,8 +10,10 @@ early development. Its retained implementation contains:
 - a terminal Shell entry, an Agent renderer and direct management commands.
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
-removed. Herdr is the preferred terminal host, without making Alan
-dependent on Herdr or claiming native Alan agent detection already exists.
+removed, together with the Ghostty dependency and `alan shell` desktop-control
+command. The file-native Alan Shell remains supported. Herdr is the preferred
+terminal host, without making Alan dependent on Herdr or claiming native Alan
+agent detection already exists.
 See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 
 Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
@@ -134,7 +136,6 @@ The current direct command families are:
 alan host ...
 alan connection ...
 alan skills ...
-alan shell ...
 ```
 
 Examples:
@@ -150,12 +151,10 @@ alan connection default set chatgpt-main
 alan connection test chatgpt-main
 
 alan skills validate /path/to/my-skill
-alan shell state
-alan shell pane list
 ```
 
-The `alan shell ...` direct commands above are the retained command/control surface;
-they are not Herdr commands or the file-native Shell grammar.
+Alan Shell operates on the alan9 namespace inside the running instance; it does
+not provide desktop window or pane control.
 
 Host files do not enter alan9 because `alan` was launched from their
 directory. Authorize a Host Mount explicitly, then use its alan9 path from

@@ -24,13 +24,9 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 "$ROOT/scripts/check-rust-source-size.sh"
 "$ROOT/scripts/check-rust-architecture.sh"
 "$ROOT/scripts/check-rust-quality.sh"
-bash "$ROOT/scripts/check-rust-inline-tui-contract.sh"
 
 cargo build --locked -p alan --bin alan
-"$ROOT/scripts/check-daemon-era-absence.sh" "$alan_binary"
-bash "$ROOT/scripts/test-daemon-era-absence.sh"
-"$ROOT/scripts/check-workspace-runtime-absence.sh" "$ROOT" "$alan_binary"
-"$ROOT/scripts/check-legacy-macos-absence.sh"
+"$ROOT/scripts/check-host-source-boundaries.sh"
 bash "$ROOT/scripts/check-openspec-current-surfaces.sh"
 "$ROOT/scripts/check-standalone-cli.sh" "$alan_binary"
 ALAN_STANDALONE_TARGET_DIR="$quality_target_dir" \

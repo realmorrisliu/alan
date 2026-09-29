@@ -748,6 +748,7 @@ fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Resul
 }
 
 fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<()> {
+    package_service.retire_preinstalled("alan-shell-control")?;
     for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
         let snapshot =
             crate::PackageSnapshot::from_directory(&source.root_dir).with_context(|| {

@@ -1,6 +1,6 @@
 //! Alan command-line and Host integration library.
 //!
-//! This crate provides direct CLI, shell-control, and host integration functionality.
+//! This crate provides direct CLI and host integration functionality.
 
 pub mod cli;
 pub mod install_channel;
