@@ -136,7 +136,6 @@ The current direct command families are:
 alan host ...
 alan connection ...
 alan skills ...
-alan shell ...
 ```
 
 Examples:
@@ -152,12 +151,10 @@ alan connection default set chatgpt-main
 alan connection test chatgpt-main
 
 alan skills validate /path/to/my-skill
-alan shell state
-alan shell pane list
 ```
 
-The `alan shell ...` direct commands above are the retained command/control surface;
-they are not Herdr commands or the file-native Shell grammar.
+Alan Shell operates on the alan9 namespace inside the running instance; it does
+not provide desktop window or pane control.
 
 Host files do not enter alan9 because `alan` was launched from their
 directory. Authorize a Host Mount explicitly, then use its alan9 path from

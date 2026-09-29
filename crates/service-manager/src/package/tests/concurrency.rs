@@ -325,3 +325,47 @@ fn lease_scan_rejects_symlinks_without_removing_the_target() {
     assert_eq!(fs::read(&victim).unwrap(), b"keep");
     drop(service);
 }
+
+#[test]
+fn preinstalled_retirement_preserves_live_leases_and_operator_packages() {
+    let service = PackageService::ephemeral("test").unwrap();
+    service
+        .seed_preinstalled("obsolete", native_snapshot("old", "body"))
+        .unwrap();
+    service
+        .seed_preinstalled("current", native_snapshot("current", "body"))
+        .unwrap();
+    let peer = PackageService::open("test", service.store.root().to_path_buf()).unwrap();
+    let lease = peer.acquire("obsolete").unwrap();
+    service.retire_preinstalled("obsolete").unwrap();
+    assert!(peer.resolve("obsolete").is_err());
+    assert!(peer.acquire("obsolete").is_err());
+    assert!(lease.content_root().is_dir());
+    assert_eq!(
+        service.catalog().unwrap().packages["obsolete"].state,
+        PackageState::Retiring
+    );
+    let generation = service.catalog().unwrap().generation;
+    service.retire_preinstalled("obsolete").unwrap();
+    assert_eq!(service.catalog().unwrap().generation, generation);
+    drop(lease);
+    assert!(!service.catalog().unwrap().packages.contains_key("obsolete"));
+    assert!(!service.store.root().join("revisions/obsolete").exists());
+    assert!(peer.resolve("current").is_ok());
+    service.retire_preinstalled("current").unwrap();
+    service.retire_preinstalled("current").unwrap();
+    assert!(peer.resolve("current").is_err());
+    let installed = service
+        .execute(PackageCommand::Install {
+            request_id: "operator".into(),
+            package_id: "obsolete".into(),
+            snapshot: native_snapshot("operator", "authored"),
+        })
+        .unwrap();
+    assert!(installed.success);
+    service.retire_preinstalled("obsolete").unwrap();
+    assert_eq!(
+        peer.resolve("obsolete").unwrap().kind,
+        PackageKind::Installed
+    );
+}

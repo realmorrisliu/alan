@@ -5,6 +5,7 @@
 - [x] Remove stale signing template and historical absence checks.
 - [x] Retain current Host-source security checks and remove redundant gate wiring.
 - [x] Record retained platform, migration, parked and historical boundaries.
+- [x] Address review: remove remaining README examples and retire persisted desktop Skill through Package Service.
 
 ## 2. Verification
 
@@ -28,4 +29,5 @@
 - `git diff --check`: passed. Ghostty gitlink, checkout and local submodule
   registration are absent; retired gate scripts have no live CI/Just callers.
 
-Local verification only; no commit, PR review, merge or remote CI is claimed.
+PR #1025 initial Codex review found a persisted-package retirement gap and stale
+README examples. Both are addressed; current-head re-review and CI are pending.

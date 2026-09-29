@@ -11,6 +11,8 @@ The desktop server and its canonical contracts were already removed.
   `alan-shell-control` Skill, including package registration and socket names.
 - Remove the unused Rust Host executable descriptor field. Keep script-side
   executable names required to safely retire previously installed Host binaries.
+- Retire the previously seeded desktop Skill through Package Service during
+  boot, preserving live leases and operator-owned packages.
 - Remove `.env.example`, whose signing/notarization steps no longer exist.
 - Remove historical desktop/daemon/JS-TUI absence guards and their wiring.
   Trim workspace checks to current implicit Host-source safety boundaries.
@@ -27,6 +29,8 @@ None.
 
 - `repository-quality-gate`: stop maintaining retired-feature blacklists; retain
   current Rust, Host-source safety, OpenSpec and distribution checks.
+- `package-management-contract`: trusted retirement of obsolete preinstalled
+  packages reuses the ordinary removal transaction and lease lifecycle.
 - `product-brand-identity`: treat desktop `alan shell` syntax as historical;
   the file-native Alan Shell remains supported.
 
