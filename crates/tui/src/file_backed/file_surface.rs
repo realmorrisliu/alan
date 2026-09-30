@@ -798,6 +798,21 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
         app.running_tools.push(tool);
     }
     if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+        use std::hash::{Hash, Hasher};
+        let key = (app.agent_path.clone(), snapshot.id.clone());
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (
+            &snapshot.name,
+            &snapshot.status,
+            &snapshot.output,
+            &snapshot.result,
+        )
+            .hash(&mut hash);
+        let fingerprint = hash.finish();
+        let unchanged = app.projected_actions.insert(key, fingerprint) == Some(fingerprint);
+        if unchanged && !app.action_cells.contains_key(&snapshot.id) {
+            return;
+        }
         app.upsert_action_cell(snapshot.id, cell);
     }
 }
@@ -846,10 +861,10 @@ fn action_status_is_running(status: &str) -> bool {
     matches!(status.trim(), "running" | "pending")
 }
 
-fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
+pub(super) fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
     let status = match snapshot.status.trim() {
         "completed" => ToolStatus::Complete,
-        "failed" => ToolStatus::Failed,
+        "failed" | "rejected" => ToolStatus::Failed,
         _ => return None,
     };
     let body = if !snapshot.output.trim().is_empty() {
@@ -860,11 +875,36 @@ fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryC
         None
     };
 
+    let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
+    let title = metadata
+        .as_ref()
+        .and_then(|v| v.get("title"))
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| action_title(snapshot));
+    let preview = metadata
+        .as_ref()
+        .and_then(|v| v.get("result_preview"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let presentation = metadata
+        .as_ref()
+        .and_then(|v| v.get("presentation"))
+        .and_then(|v| serde_json::from_value::<ToolResultPresentation>(v.clone()).ok())
+        .or_else(|| {
+            preview
+                .as_ref()
+                .filter(|text| !text.trim().is_empty())
+                .cloned()
+                .or(body)
+                .map(|body| ToolResultPresentation::PlainText { body })
+        });
     Some(HistoryCell::Tool {
-        title: action_title(snapshot),
+        title,
         status,
-        preview: None,
-        presentation: body.map(|body| ToolResultPresentation::PlainText { body }),
+        preview,
+        presentation,
     })
 }
 

@@ -140,8 +140,8 @@ async fn test_handle_submission_rollback() {
 
 #[tokio::test]
 async fn command_steering_requires_ordered_admission() {
-    use alan_agent_protocol::{ContentPart, InputIntent};
     use crate::runtime::turn_input::is_turn_inband_submission;
+    use alan_agent_protocol::{ContentPart, InputIntent};
     let mut state = runtime_state_with_environment(
         namespace_environment_with_live_process(DelayedMockProvider::new(
             tokio::time::Duration::ZERO,
@@ -156,28 +156,60 @@ async fn command_steering_requires_ordered_admission() {
         (InputMode::Steer, "pwd", "ordered queue admission"),
         (InputMode::NextTurn, "pwd", "ordered queue admission"),
         (InputMode::FollowUp, "", "missing command"),
-    ].into_iter().map(|(mode, body, error)| (
-        Op::Input { parts: vec![ContentPart::text(body)], mode }, error,
-    )).collect::<Vec<_>>();
-    cases.push((Op::Turn { parts: vec![ContentPart::text("pwd")], context: None }, "input operation"));
+    ]
+    .into_iter()
+    .map(|(mode, body, error)| {
+        (
+            Op::Input {
+                parts: vec![ContentPart::text(body)],
+                mode,
+            },
+            error,
+        )
+    })
+    .collect::<Vec<_>>();
+    cases.push((
+        Op::Turn {
+            parts: vec![ContentPart::text("pwd")],
+            context: None,
+        },
+        "input operation",
+    ));
     for (op, error_text) in cases {
         let submission = Submission {
-            id: uuid::Uuid::new_v4().to_string(), intent: InputIntent::Command, op,
+            id: uuid::Uuid::new_v4().to_string(),
+            intent: InputIntent::Command,
+            op,
         };
         let id = submission.id.clone();
         assert!(!is_turn_inband_submission(&submission));
         let error = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
-            .await.unwrap_err();
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains(error_text));
         assert!(state.machine.messages().is_empty());
         let shell = Shell::new(state.environment.root_transport());
         let actions = state.agent_files().action_ids().await.unwrap();
-        let base = format!("{}/actions/{}", state.environment.agent_path(), actions.last().unwrap());
-        let result: serde_json::Value = serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
+        let base = format!(
+            "{}/actions/{}",
+            state.environment.agent_path(),
+            actions.last().unwrap()
+        );
+        let result: serde_json::Value =
+            serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
         assert_eq!(result["call_id"], id);
         assert_eq!(result["exit_code"], 1);
-        assert_eq!(shell.cat(&format!("{base}/approval")).await.unwrap(), b"not_required");
-        assert!(shell.cat(&format!("{base}/process")).await.unwrap().is_empty());
+        assert_eq!(
+            shell.cat(&format!("{base}/approval")).await.unwrap(),
+            b"not_required"
+        );
+        assert!(
+            shell
+                .cat(&format!("{base}/process"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
     external_writer.finish().await.unwrap();
 }
@@ -188,7 +220,8 @@ async fn identical_inputs_publish_distinct_submission_ids_on_tape() {
         namespace_environment_with_live_process(DelayedMockProvider::new(
             tokio::time::Duration::ZERO,
             "answer",
-        )).await,
+        ))
+        .await,
     );
     let broker = TurnInputBroker::default();
     let cancel = CancellationToken::new();
@@ -199,27 +232,53 @@ async fn identical_inputs_publish_distinct_submission_ids_on_tape() {
         });
         submission.id = id.into();
         advance_accepted_submission(&mut state, submission, &broker, &cancel)
-            .await.result.unwrap();
+            .await
+            .result
+            .unwrap();
     }
     let shell = Shell::new(state.environment.root_transport());
-    let tape = shell.cat(&format!("{}/machine/tape", state.environment.agent_path())).await.unwrap();
-    let records: Vec<serde_json::Value> = std::str::from_utf8(&tape).unwrap().lines()
-        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    let tape = shell
+        .cat(&format!("{}/machine/tape", state.environment.agent_path()))
+        .await
+        .unwrap();
+    let records: Vec<serde_json::Value> = std::str::from_utf8(&tape)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     for id in ["client-one", "client-two"] {
-        let matching: Vec<_> = records.iter().filter(|record| record["submission_id"] == id).collect();
-        assert_eq!(matching.len(), 2, "one user and one assistant record per input: {records:?}");
+        let matching: Vec<_> = records
+            .iter()
+            .filter(|record| record["submission_id"] == id)
+            .collect();
+        assert_eq!(
+            matching.len(),
+            2,
+            "one user and one assistant record per input: {records:?}"
+        );
         assert_eq!(matching[0]["role"], "user");
         assert_eq!(matching[0]["content"], "identical question");
         assert_eq!(matching[1]["role"], "assistant");
         assert_eq!(matching[1]["content"], "answer");
     }
-    let events = shell.cat(&format!("{}/machine/ui/events", state.environment.agent_path())).await.unwrap();
-    let ids: Vec<_> = std::str::from_utf8(&events).unwrap().lines()
+    let events = shell
+        .cat(&format!(
+            "{}/machine/ui/events",
+            state.environment.agent_path()
+        ))
+        .await
+        .unwrap();
+    let ids: Vec<_> = std::str::from_utf8(&events)
+        .unwrap()
+        .lines()
         .map(|line| serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap())
         .filter_map(|event| match event {
-            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => Some(submission_ids),
+            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => {
+                Some(submission_ids)
+            }
             _ => None,
-        }).collect();
+        })
+        .collect();
     assert_eq!(ids, vec![vec!["client-one"], vec!["client-two"]]);
 }
 
@@ -233,24 +292,48 @@ async fn input_completion_distinguishes_success_failure_and_cancellation() {
     ] {
         let mut state = runtime_state_with_environment(
             namespace_environment_with_live_process(DelayedMockProvider::new(
-                tokio::time::Duration::ZERO, "answer",
-            )).await,
+                tokio::time::Duration::ZERO,
+                "answer",
+            ))
+            .await,
         );
         let submission = Submission::new(Op::Input {
-            parts: vec![alan_agent_protocol::ContentPart::text("same question")], mode,
+            parts: vec![alan_agent_protocol::ContentPart::text("same question")],
+            mode,
         });
         let id = submission.id.clone();
         let cancel = CancellationToken::new();
-        if cancelled { cancel.cancel(); }
-        let _ = advance_accepted_submission(&mut state, submission, &TurnInputBroker::default(), &cancel).await;
+        if cancelled {
+            cancel.cancel();
+        }
+        let _ = advance_accepted_submission(
+            &mut state,
+            submission,
+            &TurnInputBroker::default(),
+            &cancel,
+        )
+        .await;
         let shell = Shell::new(state.environment.root_transport());
-        let bytes = shell.cat(&format!("{}/machine/ui/events", state.environment.agent_path())).await.unwrap();
-        let completions: Vec<_> = std::str::from_utf8(&bytes).unwrap().lines()
+        let bytes = shell
+            .cat(&format!(
+                "{}/machine/ui/events",
+                state.environment.agent_path()
+            ))
+            .await
+            .unwrap();
+        let completions: Vec<_> = std::str::from_utf8(&bytes)
+            .unwrap()
+            .lines()
             .map(|line| serde_json::from_str::<UiEvent>(line).unwrap())
             .filter_map(|event| match event {
-                UiEvent::InputCompleted { submission_ids, status, .. } => Some((submission_ids, status)),
+                UiEvent::InputCompleted {
+                    submission_ids,
+                    status,
+                    ..
+                } => Some((submission_ids, status)),
                 _ => None,
-            }).collect();
+            })
+            .collect();
         assert_eq!(completions, vec![(vec![id], expected)]);
         assert!(state.machine.current_submission_id().is_none());
     }
@@ -260,37 +343,53 @@ async fn input_completion_distinguishes_success_failure_and_cancellation() {
 async fn next_turn_inputs_keep_their_ids_in_the_shared_answer() {
     let mut state = runtime_state_with_environment(
         namespace_environment_with_live_process(DelayedMockProvider::new(
-            tokio::time::Duration::ZERO, "combined answer",
-        )).await,
+            tokio::time::Duration::ZERO,
+            "combined answer",
+        ))
+        .await,
     );
     let broker = TurnInputBroker::default();
     let cancel = CancellationToken::new();
     for id in ["queued-one", "queued-two"] {
         let mut input = Submission::new(Op::Input {
-            parts: vec![alan_agent_protocol::ContentPart::text(id)], mode: InputMode::NextTurn,
+            parts: vec![alan_agent_protocol::ContentPart::text(id)],
+            mode: InputMode::NextTurn,
         });
         input.id = id.into();
-        advance_accepted_submission(&mut state, input, &broker, &cancel).await.result.unwrap();
+        advance_accepted_submission(&mut state, input, &broker, &cancel)
+            .await
+            .result
+            .unwrap();
     }
     let mut input = Submission::new(Op::Turn {
-        parts: vec![alan_agent_protocol::ContentPart::text("start")], context: None,
+        parts: vec![alan_agent_protocol::ContentPart::text("start")],
+        context: None,
     });
     input.id = "trigger".into();
-    advance_accepted_submission(&mut state, input, &broker, &cancel).await.result.unwrap();
+    advance_accepted_submission(&mut state, input, &broker, &cancel)
+        .await
+        .result
+        .unwrap();
     let shell = Shell::new(state.environment.root_transport());
     let tape = shell.cat("/agent/1/machine/tape").await.unwrap();
-    let records: Vec<serde_json::Value> = std::str::from_utf8(&tape).unwrap().lines()
-        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    let records: Vec<serde_json::Value> = std::str::from_utf8(&tape)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert_eq!(records.len(), 2);
     for record in records {
         assert_eq!(record["submission_id"], "trigger");
-        assert_eq!(record["related_submission_ids"], json!(["queued-one", "queued-two"]));
+        assert_eq!(
+            record["related_submission_ids"],
+            json!(["queued-one", "queued-two"])
+        );
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn late_steering_settles_separately_after_completion_or_cancellation() {
-    for cancelled in [false, true] {
+    for (cancelled, fail) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut state = runtime_state_with_environment(
             namespace_environment_with_live_process(DelayedMockProvider::new(
                 tokio::time::Duration::from_secs(1),
@@ -312,6 +411,13 @@ async fn late_steering_settles_separately_after_completion_or_cancellation() {
             mode: InputMode::Steer,
         });
         let steering_id = steering.id.clone();
+        let dir = tempfile::tempdir().unwrap();
+        state.machine = AgentMachine::new_with_recorder_in_dir("/agent/1", "test", dir.path())
+            .await
+            .unwrap();
+        let path = state.machine.rollout_path().unwrap().clone();
+        state.machine.admit_input(&steering).await.unwrap();
+        let recorder = state.machine.input_recorder().unwrap();
         let advance = advance_accepted_submission(&mut state, origin, &broker, &cancel);
         tokio::pin!(advance);
         assert!(
@@ -320,10 +426,20 @@ async fn late_steering_settles_separately_after_completion_or_cancellation() {
                 .is_err()
         );
         assert!(broker.push(steering).await);
+        if fail {
+            recorder.close().await.unwrap();
+        }
         if cancelled {
             cancel.cancel();
         }
-        advance.await.result.unwrap();
+        let outcome = advance.await;
+        assert_eq!(outcome.result.is_err(), fail);
+        let recovered =
+            AgentMachine::load_from_rollout_in_dir(&path, "/agent/2", "test", dir.path())
+                .await
+                .unwrap();
+        assert!(recovered.input_queue().lock().unwrap().pending.iter().any(|item| matches!(item,
+            crate::agent_machine::input_queue::QueuedRuntimeItem::Submission(s) if s.id == steering_id)) == fail);
         let events = shell.cat("/agent/1/machine/ui/events").await.unwrap();
         let completed: Vec<_> = String::from_utf8(events)
             .unwrap()
@@ -339,6 +455,10 @@ async fn late_steering_settles_separately_after_completion_or_cancellation() {
                 }
             })
             .collect();
+        if fail {
+            assert!(!completed.iter().any(|(ids, _)| ids.contains(&steering_id)));
+            continue;
+        }
         assert_eq!(
             completed,
             vec![
@@ -403,16 +523,21 @@ async fn steering_admitted_before_first_poll_is_settled() {
     let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
     let settlements = events
         .lines()
-        .filter_map(|line| match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
-            alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => {
-                Some(submission_ids)
+        .filter_map(|line| {
+            match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+                alan_agent_protocol::UiEvent::InputCompleted { submission_ids, .. } => {
+                    Some(submission_ids)
+                }
+                _ => None,
             }
-            _ => None,
         })
         .flatten()
         .filter(|id| id == &steering_id)
         .count();
-    assert_eq!(settlements, 1, "every admitted input must settle exactly once");
+    assert_eq!(
+        settlements, 1,
+        "every admitted input must settle exactly once"
+    );
     assert!(broker.try_recv().await.is_none());
 }
 
@@ -436,7 +561,10 @@ async fn cancellation_before_first_poll_settles_without_starting_work() {
         });
         let id = input.id.clone();
         let advance = advance_accepted_submission(&mut state, input, &broker, &cancel);
-        assert_eq!(queue.lock().unwrap().active_submission_ids, std::slice::from_ref(&id));
+        assert_eq!(
+            queue.lock().unwrap().active_submission_ids,
+            std::slice::from_ref(&id)
+        );
         cancel.cancel();
         advance.await.result.unwrap();
         assert!(state.machine.messages().is_empty());
@@ -501,12 +629,24 @@ async fn resumed_tool_finalization_observes_cancellation_before_idle() {
             cancel.cancel();
         }
         finalize_replayed_tool_end_turn_best_effort(
-            &mut state, &cancel, true, "test-resume", "test-resume",
+            &mut state,
+            &cancel,
+            true,
+            "test-resume",
+            "test-resume",
         )
         .await;
         assert_eq!(state.machine.submission_was_cancelled(), cancelled);
         assert_eq!(state.machine.current_submission_id(), Some("resumed-input"));
-        assert!(state.machine.input_queue().lock().unwrap().active_submission_ids.is_empty());
+        assert!(
+            state
+                .machine
+                .input_queue()
+                .lock()
+                .unwrap()
+                .active_submission_ids
+                .is_empty()
+        );
         assert!(!state.machine.is_turn_active());
     }
 }

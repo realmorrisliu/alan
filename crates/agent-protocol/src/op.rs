@@ -114,6 +114,12 @@ pub enum Op {
         submission_id: String,
     },
 
+    /// Select an absolute logical Process directory without dispatching work.
+    SelectProjectDirectory {
+        /// Validated absolute namespace path; never a native Host path.
+        path: String,
+    },
+
     /// Continue ordinary input retained after interruption.
     ContinueQueue,
     /// Discard ordinary input retained after interruption without executing it.

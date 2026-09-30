@@ -397,3 +397,48 @@ mod startup;
 
 #[path = "engine_input_order_tests.rs"]
 mod input_order;
+
+struct GatedFirstGeneration {
+    mock: MockLlmProvider,
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl LlmProvider for GatedFirstGeneration {
+    async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        let first = self.mock.recorded_requests().is_empty();
+        let response = self.mock.generate(request).await?;
+        if first {
+            self.started.notify_one();
+            self.release.notified().await;
+        }
+        Ok(response)
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        Ok(response_stream(self.generate(request).await?))
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
+        self.mock.chat(system, user).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "gated_first_generation"
+    }
+}
+
+#[path = "engine_directory_selection_tests.rs"]
+mod directory_selection;
+#[path = "engine_mount_cancellation_tests.rs"]
+mod mount_cancellation;
+#[path = "engine_recovery_boundary_tests.rs"]
+mod recovery_boundary;
+#[path = "engine_recovery_ux_tests.rs"]
+mod recovery_ux;
+#[path = "engine_removal_boundary_tests.rs"]
+mod removal_boundary;

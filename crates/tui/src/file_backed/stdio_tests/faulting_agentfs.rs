@@ -24,6 +24,7 @@ pub(crate) struct FaultingFileServer {
     closed_pid: watch::Sender<Option<u64>>,
     walk_pause: Mutex<Option<WalkPause>>,
     read_pause: Mutex<Option<ReadPause>>,
+    walks: std::sync::atomic::AtomicUsize,
 }
 
 impl FaultingFileServer {
@@ -35,7 +36,12 @@ impl FaultingFileServer {
             closed_pid,
             walk_pause: Mutex::new(None),
             read_pause: Mutex::new(None),
+            walks: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn walk_count(&self) -> usize {
+        self.walks.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub(crate) fn pause_next_walk_with_suffix(
@@ -112,6 +118,7 @@ impl FaultingFileServer {
 #[async_trait::async_trait]
 impl FileServer for FaultingFileServer {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        self.walks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let qid = self.inner.walk(fid, newfid, names).await?;
         let path = self.path_after(fid, names);
         self.paths.lock().unwrap().insert(newfid, path.clone());

@@ -3,7 +3,12 @@
 ### Requirement: Command and reference completion surface
 The TUI SHALL provide keyboard-driven completion for slash commands, skill
 references and file references using the current authorized sources. Candidate
-UI SHALL be temporary and adjacent to the active inline prompt. Enter on a
+UI SHALL be temporary and appear below the editable input, after all wrapped
+composer lines. With unchanged terminal geometry, transcript and input wrapping,
+changes to candidate count or candidate wrapping SHALL NOT move the input line
+or its cursor anchor. Candidate rows SHALL remain distinct from composer-height
+limits, with usable bounded disclosure near the terminal edge and no permanent
+reserved panel. Enter on a
 selected slash command SHALL run it once; Tab SHALL insert the candidate.
 Selecting a Skill or file SHALL insert a reference without submitting the task.
 The production bare CLI SHALL supply these sources, not only test entrypoints.
@@ -12,6 +17,12 @@ The production bare CLI SHALL supply these sources, not only test entrypoints.
 - **WHEN** the user types `/` at the start of input and presses Enter on a selected command
 - **THEN** the local command runs once without an additional Enter
 - **AND** it is not sent to the Agent as a task
+
+#### Scenario: Candidate filtering preserves the input anchor
+- **WHEN** slash, Skill or file candidates change as the user edits input without changing its wrapping or the terminal geometry
+- **THEN** candidates render below the input and its cursor anchor remains stable
+- **AND** candidate rows do not consume the composer height limit or hide the active input
+- **AND** the temporary menu remains usable near the terminal edge without a permanent blank panel
 
 #### Scenario: Dollar references a skill inline
 - **WHEN** the user types `$` in the composer

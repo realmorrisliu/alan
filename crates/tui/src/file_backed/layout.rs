@@ -6,16 +6,41 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use crate::completion::CompletionKind;
-use crate::transcript_ui::{style_transcript_line, wrapped_line_count};
+use crate::transcript_ui::wrapped_line_count;
 
 use super::{FileBackedApp, MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES, SPINNER};
 
+#[cfg(test)]
 pub(super) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
+    draw_at(frame, app, super::unix_time_ms());
+}
+
+pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     let area = frame.area();
     let width = area.width as usize;
+    if app.modal.active {
+        let mut rows = vec![Line::from(format!(
+            "Details {}/{} · arrows select · PgUp/Dn · Esc",
+            app.modal.selected + 1,
+            app.modal.ids.len()
+        ))];
+        let detail = crate::history::wrap_styled_lines(app.modal.rows.clone(), width);
+        let start = app.modal.scroll.min(detail.len().saturating_sub(1));
+        if detail.is_empty() {
+            rows.push(Line::from("Loading retained Action files…"));
+        }
+        rows.extend(
+            detail
+                .into_iter()
+                .skip(start)
+                .take(area.height.saturating_sub(1) as usize),
+        );
+        frame.render_widget(Paragraph::new(rows), area);
+        return;
+    }
     let mut lines = history_lines(app, width);
     let history_height = wrapped_line_count(&lines, width);
-    let (live_lines, prompt_start) = live_region_lines(app, width);
+    let (live_lines, prompt_start) = live_region_lines_at(app, width, now_ms);
     let prompt_start =
         prompt_start.map(|index| history_height + wrapped_line_count(&live_lines[..index], width));
     lines.extend(live_lines);
@@ -39,17 +64,22 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
 }
 
 fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
-    app.rendered_history_lines(width)
-        .into_iter()
-        .map(style_transcript_line)
-        .collect()
+    app.styled_history_lines(width)
 }
 
 fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
+    live_region_lines_at(app, width, super::unix_time_ms())
+}
+
+fn live_region_lines_at(
+    app: &FileBackedApp,
+    width: usize,
+    now_ms: u64,
+) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
     lines.push(app.context_line(width));
     if app.activity_label().is_some() {
-        lines.push(activity_line(app));
+        lines.push(activity_line(app, now_ms));
     }
     if let Some(notice) = &app.notice {
         lines.push(Line::styled(
@@ -108,15 +138,14 @@ fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, 
 }
 
 pub(super) fn history_prefix_to_drain(
-    lines: &[String],
+    lines: &[Line<'static>],
     width: usize,
     max_retained_height: usize,
 ) -> usize {
     let mut retained_count = 0;
     let mut retained_height = 0;
     for line in lines.iter().rev() {
-        let rendered = style_transcript_line(line.clone());
-        let height = wrapped_line_count(std::slice::from_ref(&rendered), width);
+        let height = wrapped_line_count(std::slice::from_ref(line), width);
         if retained_height + height > max_retained_height {
             break;
         }
@@ -150,6 +179,9 @@ pub(super) fn inline_viewport_height(
     width: usize,
     terminal_height: usize,
 ) -> u16 {
+    if app.modal.active {
+        return terminal_height.max(1).min(u16::MAX as usize) as u16;
+    }
     wrapped_line_count(&history_lines(app, width), width)
         .saturating_add(live_region_height(app, width) as usize)
         .max(1)
@@ -247,17 +279,26 @@ fn mark_cursor_in_span(span: &Span<'static>, cursor: usize) -> Option<(Vec<Span<
     Some((marked, cursor_column))
 }
 
-fn activity_line(app: &FileBackedApp) -> Line<'static> {
-    let elapsed = app
-        .activity_started_at_ms()
-        .and_then(|started_at_ms| {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_millis() as u64;
-            Some(now_ms.saturating_sub(started_at_ms) / 1_000)
-        })
-        .unwrap_or(0);
+pub(super) fn frame_needs_redraw(
+    dirty: bool,
+    app: &FileBackedApp,
+    now_ms: u64,
+    last_drawn_second: Option<u64>,
+) -> bool {
+    // Only Running content advances quietly; dirty events always draw.
+    dirty
+        || (matches!(app.activity.state, super::UiActivityState::Running)
+            && last_drawn_second != Some(activity_elapsed_second(app, now_ms)))
+}
+
+pub(super) fn activity_elapsed_second(app: &FileBackedApp, now_ms: u64) -> u64 {
+    app.activity_started_at_ms()
+        .map(|started_at_ms| now_ms.saturating_sub(started_at_ms) / 1_000)
+        .unwrap_or(0)
+}
+
+fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
+    let elapsed = activity_elapsed_second(app, now_ms);
     let frame_idx = (elapsed as usize) % SPINNER.len();
     Line::from(vec![
         Span::styled(

@@ -32,10 +32,7 @@ pub(super) fn merge_reconnected_history(
             .enumerate()
             .skip(previous_boundary + 1)
             .rev()
-            .find_map(|(index, cell)| match cell {
-                HistoryCell::Assistant(text) => Some((index, text.as_str())),
-                _ => None,
-            })
+            .find_map(|(index, cell)| cell.assistant_source().map(|text| (index, text)))
         && let Some((current_answer_index, current_answer)) = current
             .iter()
             .enumerate()
@@ -51,7 +48,7 @@ pub(super) fn merge_reconnected_history(
             || previous_answer.starts_with(current_answer))
     {
         if current_answer.starts_with(previous_answer) {
-            app.transcript[previous_answer_index] = current[current_answer_index].clone();
+            app.transcript[previous_answer_index].replace_assistant_source(current_answer.to_string());
         }
         omitted_current_cell = Some(current_answer_index);
     }
@@ -107,12 +104,13 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
             })
             .collect();
         for index in 0..overlap_len {
-            if let (HistoryCell::Assistant(retained), HistoryCell::Assistant(replacement)) = (
-                &mut app.transcript[suffix_start + index],
-                &current[offset + index],
-            ) && replacement.starts_with(retained.as_str())
+            let retained = &mut app.transcript[suffix_start + index];
+            if let (Some(preview), Some(replacement)) = (
+                retained.assistant_source(),
+                current[offset + index].assistant_source(),
+            ) && replacement.starts_with(preview)
             {
-                *retained = replacement.clone();
+                retained.replace_assistant_source(replacement.to_string());
             }
         }
         app.transcript.extend(current.into_iter().skip(append_from));
@@ -153,8 +151,8 @@ fn retained_history_matches(
             .enumerate()
             .all(|(index, (replacement, retained))| {
                 replacement == retained
-                    || matches!((replacement, retained),
-                        (HistoryCell::Assistant(full), HistoryCell::Assistant(preview))
+                    || matches!((replacement.assistant_source(), retained.assistant_source()),
+                        (Some(full), Some(preview))
                         if !preview.is_empty() && full.starts_with(preview))
                     || (index == 0
                         && allow_partial_front
@@ -163,6 +161,10 @@ fn retained_history_matches(
 }
 
 fn rendered_history_suffix_matches(replacement: &HistoryCell, retained: &HistoryCell) -> bool {
+    // Assistant identity is source-aware, never inferred from rendered role-like prefixes.
+    if replacement.assistant_source().is_some() || retained.assistant_source().is_some() {
+        return false;
+    }
     let replacement = rendered_history_tokens(replacement);
     let retained = rendered_history_tokens(retained);
     !retained.is_empty() && replacement.len() >= retained.len() && replacement.ends_with(&retained)

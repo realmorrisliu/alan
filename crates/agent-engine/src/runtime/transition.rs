@@ -1,10 +1,10 @@
 //! Accepted-submission transition for one Agent Machine.
-//!
 //! The outer Process loop owns input transport and lifecycle control. Once it accepts a
 //! submission, this module advances Machine state and returns only the control outcome the outer
 //! loop needs.
 
 mod accepted_submission;
+pub(crate) mod directory_control;
 mod explicit_command;
 mod namespace_environment;
 mod turn_execution;

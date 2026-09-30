@@ -22,6 +22,7 @@ use crate::transcript_ui::{
 use super::file_surface::{ActionSnapshot, TapeRecordV1, response_text_from_content};
 use super::{ProjectAccess, ProjectControl, ProjectMountReceipt};
 
+mod action_modal;
 mod history;
 mod presentation;
 mod project;
@@ -42,6 +43,13 @@ fn default_commands() -> Vec<CompletionCandidate> {
 }
 
 pub(super) enum FileBackedEvent {
+    ActionDetails {
+        path: String,
+        generation: u64,
+        ids: Result<Vec<String>, String>,
+        id: Option<String>,
+        rows: Vec<Line<'static>>,
+    },
     Terminal(TerminalEvent),
     Output(String),
     ResumeWriteCompleted {
@@ -93,6 +101,8 @@ pub(super) struct FileBackedApp {
     history_draft_intent: Option<InputIntent>,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
+    pub(super) projected_actions: BTreeMap<(String, String), u64>,
+    pub(super) modal: action_modal::ActionModal,
     pub(super) activity: UiActivitySnapshot,
     pub(super) plan: UiPlanSnapshot,
     pub(super) thinking: UiThinkingSnapshot,
@@ -141,6 +151,8 @@ impl FileBackedApp {
             history_draft_intent: None,
             transcript: Vec::new(),
             action_cells: BTreeMap::new(),
+            projected_actions: BTreeMap::new(),
+            modal: action_modal::ActionModal::default(),
             activity: UiActivitySnapshot::idle(),
             plan: UiPlanSnapshot::empty(),
             thinking: UiThinkingSnapshot::idle(),
@@ -193,10 +205,38 @@ impl FileBackedApp {
         has_pending_submission: bool,
     ) -> Option<FileBackedAction> {
         match event {
+            FileBackedEvent::ActionDetails {
+                path,
+                generation,
+                ids,
+                id,
+                rows,
+            } => {
+                if self.modal.active
+                    && path == self.modal.owner_path
+                    && generation == self.modal.generation
+                {
+                    match ids {
+                        Ok(ids) => {
+                            self.modal.selected = id
+                                .as_ref()
+                                .and_then(|id| ids.iter().position(|v| v == id))
+                                .unwrap_or(0);
+                            self.modal.ids = ids;
+                            self.modal.rows = rows;
+                        }
+                        Err(error) => self.modal.rows = vec![Line::from(error)],
+                    }
+                }
+                None
+            }
             FileBackedEvent::Terminal(TerminalEvent::Key(key)) => {
                 self.handle_key_with_pending_submission(key, has_pending_submission)
             }
             FileBackedEvent::Terminal(TerminalEvent::Paste(text)) => {
+                if self.modal.active {
+                    return None;
+                }
                 if self.project_selection.is_some() {
                     let text = text
                         .chars()
@@ -266,6 +306,9 @@ impl FileBackedApp {
         key: KeyEvent,
         has_pending_submission: bool,
     ) -> Option<FileBackedAction> {
+        if self.modal_key(key, has_pending_submission) {
+            return None;
+        }
         let pending_input =
             self.form.is_some() || self.pending_yield.is_some() || self.project_selection.is_some();
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -746,7 +789,7 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · ctrl+c clears an idle draft or interrupts active work"
+                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained Action details; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
                         .to_string(),
                 );
                 None
@@ -823,6 +866,9 @@ impl FileBackedApp {
         if let Some(index) = self.action_cells.get(&action_id).copied()
             && let Some(existing) = self.transcript.get_mut(index)
         {
+            if matches!(existing, HistoryCell::Styled(_)) {
+                return;
+            }
             *existing = cell;
             return;
         }
@@ -832,11 +878,28 @@ impl FileBackedApp {
         self.action_cells.insert(action_id, index);
     }
 
+    #[cfg(test)]
     pub(super) fn rendered_history_lines(&self, width: usize) -> Vec<String> {
+        self.styled_history_lines(width)
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    pub(super) fn styled_history_lines(&self, width: usize) -> Vec<Line<'static>> {
         let opts = self.render_opts(width);
         self.transcript
             .iter()
-            .flat_map(|cell| cell.render_lines(opts))
+            .enumerate()
+            .flat_map(|(index, cell)| {
+                if self.action_cells.values().any(|i| *i == index)
+                    && matches!(cell, HistoryCell::Tool { .. })
+                {
+                    crate::history::action_summary(cell, width)
+                } else {
+                    cell.render_styled_lines(opts)
+                }
+            })
             .collect()
     }
 
@@ -844,11 +907,14 @@ impl FileBackedApp {
         &mut self,
         viewport_width: usize,
         viewport_height: usize,
-    ) -> Vec<String> {
+    ) -> Vec<Line<'static>> {
+        if self.modal.active {
+            return Vec::new();
+        }
         let opts = self.render_opts(viewport_width);
         let max_lines = viewport_height
             .saturating_sub(super::live_region_height(self, viewport_width) as usize);
-        let lines = self.rendered_history_lines(viewport_width);
+        let lines = self.styled_history_lines(viewport_width);
         let drain_count = super::history_prefix_to_drain(&lines, viewport_width, max_lines);
         if drain_count == 0 {
             return Vec::new();
@@ -857,69 +923,12 @@ impl FileBackedApp {
         lines.into_iter().take(pruned_count).collect()
     }
 
-    pub(super) fn prune_rendered_prefix(
-        &mut self,
-        opts: RenderOpts,
-        lines_to_prune: usize,
-    ) -> usize {
-        let mut remaining = lines_to_prune;
-        let mut cells_to_remove = 0;
-        let mut pruned = 0;
-
-        while remaining > 0 && cells_to_remove < self.transcript.len() {
-            let cell_lines = self.transcript[cells_to_remove].render_lines(opts).len();
-            if cell_lines > remaining {
-                break;
-            }
-            remaining -= cell_lines;
-            pruned += cell_lines;
-            cells_to_remove += 1;
-        }
-
-        if cells_to_remove > 0 {
-            self.transcript.drain(0..cells_to_remove);
-            self.shift_action_cells(cells_to_remove);
-            self.shift_pending_remote_turn_start(cells_to_remove);
-            self.scrollback_front_is_partial = false;
-        }
-
-        if remaining > 0
-            && let Some(cell) = self.transcript.first_mut()
-            && cell.trim_rendered_prefix(opts, remaining)
-        {
-            pruned += remaining;
-            self.scrollback_front_is_partial = true;
-        }
-
-        pruned
-    }
-
-    pub(super) fn shift_action_cells(&mut self, removed_prefix_len: usize) {
-        self.action_cells = self
-            .action_cells
-            .iter()
-            .filter_map(|(action_id, index)| {
-                if *index < removed_prefix_len {
-                    None
-                } else {
-                    Some((action_id.clone(), index - removed_prefix_len))
-                }
-            })
-            .collect();
-    }
-
     pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
         for index in self.action_cells.values_mut() {
             if *index >= inserted_at {
                 *index += 1;
             }
         }
-    }
-
-    pub(super) fn shift_pending_remote_turn_start(&mut self, removed_prefix_len: usize) {
-        self.pending_remote_turn_start = self
-            .pending_remote_turn_start
-            .map(|index| index.saturating_sub(removed_prefix_len));
     }
 
     pub(super) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
@@ -938,6 +947,10 @@ impl FileBackedApp {
     pub(super) fn reset_for_root_process_change(&mut self) {
         self.tape_consumed_offset = 0;
         self.action_cells.clear();
+        self.modal.active = false;
+        self.modal.generation += 1;
+        self.modal.rows.clear();
+        self.modal.ids.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
         self.thinking = UiThinkingSnapshot::idle();

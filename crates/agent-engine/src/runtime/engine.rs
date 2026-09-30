@@ -114,6 +114,8 @@ struct RuntimeSubmissionQueues {
     outer_queue: Arc<Mutex<MachineInputQueue>>,
     /// The broker that queues in-turn submissions.
     active_turn_broker: TurnInputBroker,
+    recorder: Option<crate::rollout::RolloutRecorder>,
+    environment: Option<NamespaceRuntimeEnvironment>,
 }
 
 impl Default for RuntimeSubmissionQueues {
@@ -127,6 +129,8 @@ impl RuntimeSubmissionQueues {
         Self {
             active_turn_broker: TurnInputBroker::from_queue(outer_queue.clone()),
             outer_queue,
+            recorder: None,
+            environment: None,
         }
     }
 
@@ -173,6 +177,11 @@ impl RuntimeSubmissionQueues {
             && *mode == alan_agent_protocol::InputMode::Steer
         {
             *mode = alan_agent_protocol::InputMode::FollowUp;
+        }
+        // Journal the payload actually accepted by the scheduler, not the raw request.
+        if let Err(error) = self.admit_input(&incoming).await {
+            self.reject_admission(&incoming, &error).await;
+            return;
         }
         if accepts_inband
             && is_turn_inband_submission(&incoming)
@@ -481,7 +490,13 @@ fn spawn_with_prepared_runtime_environment(
             runtime_config,
             prompt_cache,
         };
-        match super::ui_surfaces::initialize(&state.agent_files()).await {
+        let queue_paused = state
+            .machine
+            .input_queue()
+            .lock()
+            .expect("input queue poisoned")
+            .paused;
+        match super::ui_surfaces::initialize(&state.agent_files(), queue_paused).await {
             Ok(()) => {}
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));
@@ -501,6 +516,8 @@ fn spawn_with_prepared_runtime_environment(
         let mut shutdown_requested = false;
 
         let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
+        queues.recorder = state.machine.input_recorder();
+        queues.environment = Some(state.environment.clone());
 
         let mut namespace_ready = VecDeque::new();
         let mut namespace_batch_admitted = false;
@@ -526,7 +543,7 @@ fn spawn_with_prepared_runtime_environment(
                         None
                     }
                 }
-            } else if let Some(input) = queues.admit_api_before_dispatch(&mut sub_rx) {
+            } else if let Some(input) = queues.admit_api_before_dispatch(&mut sub_rx).await {
                 Some(QueuedRuntimeItem::Submission(input))
             } else if let Some(queued_item) = if state.machine.has_pending_interaction() {
                 None
@@ -606,6 +623,25 @@ fn spawn_with_prepared_runtime_environment(
 
             match queued_item {
                 QueuedRuntimeItem::Submission(mut submission) => {
+                    if matches!(
+                        submission.op,
+                        alan_agent_protocol::Op::SelectProjectDirectory { .. }
+                    ) {
+                        if let Err(error) =
+                            super::transition::directory_control::select_project_directory(
+                                &mut state,
+                                &submission,
+                            )
+                            .await
+                        {
+                            error!(%error, "Failed to record directory selection");
+                        }
+                        continue;
+                    }
+                    if let Err(error) = queues.admit_input(&submission).await {
+                        queues.reject_admission(&submission, &error).await;
+                        continue;
+                    }
                     if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
                         && submission.intent != alan_agent_protocol::InputIntent::Command
                         && state.machine.has_pending_interaction()

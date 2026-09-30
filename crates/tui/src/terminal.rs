@@ -9,7 +9,7 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use std::io::{IsTerminal, Stdout, Write, stdout};
 
-use crate::transcript_ui::{style_transcript_line, wrapped_line_count};
+use crate::transcript_ui::wrapped_line_count;
 
 pub type AlanTerminal = Terminal<CrosstermBackend<Stdout>>;
 
@@ -39,6 +39,27 @@ impl TerminalSession {
             terminal,
             viewport_height: 1,
         })
+    }
+
+    /// Publish permanent scrollback and the rebuilt inline viewport as one host update.
+    pub fn draw_inline_frame<F>(
+        &mut self,
+        committed: &[Line<'static>],
+        height: u16,
+        draw: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&mut Frame<'_>),
+    {
+        synchronized_frame(
+            self,
+            |session, begin| synchronized_boundary(session.terminal.backend_mut(), begin),
+            |session| {
+                session.write_scrollback(committed)?;
+                session.set_inline_height(height)?;
+                session.draw_with(draw)
+            },
+        )
     }
 
     pub fn draw_with<F>(&mut self, draw: F) -> Result<()>
@@ -83,7 +104,7 @@ impl TerminalSession {
         Ok(())
     }
 
-    pub fn write_scrollback(&mut self, lines: &[String]) -> Result<()> {
+    pub fn write_scrollback(&mut self, lines: &[Line<'static>]) -> Result<()> {
         if lines.is_empty() {
             return Ok(());
         }
@@ -96,7 +117,7 @@ impl TerminalSession {
         let mut chunk = Vec::new();
         let mut chunk_height = 0usize;
         for line in lines {
-            let styled = style_transcript_line(line.clone());
+            let styled = line.clone();
             let line_height = wrapped_line_count(std::slice::from_ref(&styled), width).max(1);
             anyhow::ensure!(
                 line_height <= max_height,
@@ -170,6 +191,33 @@ impl Drop for TerminalSession {
     }
 }
 
+fn synchronized_boundary(writer: &mut impl Write, begin: bool) -> Result<()> {
+    if begin {
+        execute!(writer, crossterm_terminal::BeginSynchronizedUpdate)
+            .context("failed to begin synchronized terminal update")
+    } else {
+        execute!(writer, crossterm_terminal::EndSynchronizedUpdate)
+            .context("failed to end synchronized terminal update")
+    }
+}
+
+fn synchronized_frame<T>(
+    owner: &mut T,
+    mut boundary: impl FnMut(&mut T, bool) -> Result<()>,
+    frame: impl FnOnce(&mut T) -> Result<()>,
+) -> Result<()> {
+    let result = boundary(owner, true).and_then(|()| frame(owner));
+    // Even a partial begin or failed frame must attempt to release the host.
+    let cleanup = boundary(owner, false);
+    match (result, cleanup) {
+        (Ok(()), cleanup) => cleanup,
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "also failed to end synchronized terminal update: {cleanup:#}"
+        ))),
+    }
+}
+
 fn restore_terminal_input_and_line<W: Write>(writer: &mut W) -> std::io::Result<()> {
     execute!(writer, DisableBracketedPaste, MoveToNextLine(1))
 }
@@ -177,6 +225,63 @@ fn restore_terminal_input_and_line<W: Write>(writer: &mut W) -> std::io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_frame_transaction_orders_native_boundaries_and_closes_on_errors() {
+        // Inject only IO at the existing frame owner, not renderer geometry.
+        for failure in [
+            None,
+            Some("begin"),
+            Some("scrollback"),
+            Some("clear"),
+            Some("draw"),
+            Some("end"),
+        ] {
+            let mut output = Vec::new();
+            let result = synchronized_frame(
+                &mut output,
+                |out, begin| {
+                    synchronized_boundary(out, begin)?;
+                    let stage = if begin { "begin" } else { "end" };
+                    anyhow::ensure!(failure != Some(stage), "{stage} failed");
+                    Ok(())
+                },
+                |out| {
+                    for stage in ["scrollback", "clear", "draw"] {
+                        out.extend_from_slice(stage.as_bytes());
+                        anyhow::ensure!(failure != Some(stage), "{stage} failed");
+                    }
+                    Ok(())
+                },
+            );
+            assert!(
+                output.starts_with(b"\x1b[?2026h"),
+                "{failure:?}: {output:?}"
+            );
+            assert!(output.ends_with(b"\x1b[?2026l"), "{failure:?}: {output:?}");
+            match failure {
+                None => {
+                    assert!(result.is_ok());
+                    assert_eq!(output, b"\x1b[?2026hscrollbackcleardraw\x1b[?2026l");
+                }
+                Some(stage) => assert!(format!("{:#}", result.unwrap_err()).contains(stage)),
+            }
+        }
+        let error = synchronized_frame(
+            &mut (),
+            |_, begin| {
+                if begin {
+                    Ok(())
+                } else {
+                    anyhow::bail!("cleanup failed")
+                }
+            },
+            |_| anyhow::bail!("original draw failed"),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("original draw failed"));
+        assert!(format!("{error:#}").contains("cleanup failed"));
+    }
 
     #[test]
     fn terminal_error_names_bare_alan_contract() {

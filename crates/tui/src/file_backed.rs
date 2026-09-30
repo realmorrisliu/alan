@@ -15,6 +15,7 @@ use anyhow::{Context, Result, bail};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 #[cfg(test)]
 use ratatui::style::Color;
+mod action_detail_io;
 mod app;
 mod file_surface;
 mod history_merge;
@@ -46,7 +47,12 @@ use file_surface::{
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
-use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
+#[cfg(test)]
+use layout::draw;
+use layout::{
+    activity_elapsed_second, frame_needs_redraw, history_prefix_to_drain, inline_viewport_height,
+    live_region_height,
+};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
     root_agent_path_for_pid, spawn_root_agent_pid_refresh,
@@ -154,6 +160,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
+    let mut last_drawn_second = None;
 
     loop {
         tokio::select! {
@@ -423,19 +430,21 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 }
+                action_detail_io::start_pending_for_pid(&shell, &mut app, &tx, watchers.root_agent_pid);
                 dirty = true;
             }
             _ = frame_tick.tick() => {
-                if dirty {
+                let now_ms = unix_time_ms();
+                if frame_needs_redraw(dirty, &app, now_ms, last_drawn_second) {
                     let (viewport_width, terminal_height) = terminal.viewport_size();
                     let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
-                    terminal.write_scrollback(&committed)?;
-                    terminal.set_inline_height(inline_viewport_height(
+                    terminal.draw_inline_frame(&committed, inline_viewport_height(
                         &app,
                         viewport_width,
                         terminal_height,
-                    ))?;
-                    terminal.draw_with(|frame| draw(frame, &app))?;
+                    ), |frame| layout::draw_at(frame, &app, now_ms))?;
+                    // Record only successfully drawn seconds on the existing frame tick.
+                    last_drawn_second = Some(activity_elapsed_second(&app, now_ms));
                     dirty = false;
                 }
                 if app.should_quit {
@@ -975,6 +984,11 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
     lines
 }
 
+#[cfg(test)]
+mod action_details_tests;
+#[cfg(test)]
+#[path = "file_backed/semantic_tests.rs"]
+mod semantic_tests;
 #[cfg(test)]
 #[path = "file_backed/stdio_idle_tests.rs"]
 mod stdio_idle_tests;

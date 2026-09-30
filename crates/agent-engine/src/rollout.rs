@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 mod durable_payload;
 mod writer;
@@ -101,6 +101,9 @@ pub struct ContextItemRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactedItem {
+    /// Exact retained rich Tape at this boundary. None denotes the older format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_messages: Option<Vec<crate::tape::Message>>,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
@@ -133,6 +136,7 @@ impl CompactedItem {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            retained_messages: None,
             attempt_id: None,
             trigger: None,
             reason: None,
@@ -345,53 +349,10 @@ impl RolloutRecorder {
             .open(&rollout_path)
             .await?;
 
-        let (tx, mut rx) = mpsc::unbounded_channel::<RolloutCmd>();
+        let (tx, rx) = mpsc::unbounded_channel::<RolloutCmd>();
         let _path = rollout_path.clone();
 
-        // Spawn background writer task
-        let task = tokio::spawn(async move {
-            let mut writer = BufWriter::new(file);
-
-            while let Some(cmd) = rx.recv().await {
-                match cmd {
-                    RolloutCmd::Record(item) => {
-                        if let Err(e) = Self::write_item(&mut writer, &item).await {
-                            error!(?e, "Failed to write rollout item");
-                        }
-                    }
-                    RolloutCmd::PersistBatch { items, ack } => {
-                        let persist_result =
-                            Self::persist_items_and_flush(&mut writer, &items).await;
-                        if let Err(err) = persist_result.as_ref() {
-                            error!(?err, "Failed to persist rollout batch");
-                        }
-                        let _ = ack.send(persist_result);
-                    }
-                    RolloutCmd::Flush { ack } => {
-                        let flush_result = Self::flush_writer(&mut writer).await;
-                        if let Err(err) = flush_result.as_ref() {
-                            error!(?err, "Failed to flush rollout file");
-                        }
-                        if let Some(ack) = ack {
-                            let _ = ack.send(flush_result);
-                        }
-                    }
-                    RolloutCmd::Close { ack } => {
-                        let close_result = Self::flush_writer(&mut writer).await;
-                        if let Err(err) = close_result.as_ref() {
-                            error!(?err, "Failed to flush rollout file on close");
-                        }
-                        let _ = ack.send(close_result);
-                        return;
-                    }
-                }
-            }
-
-            // Final flush when channel closes
-            if let Err(e) = Self::flush_writer(&mut writer).await {
-                error!(?e, "Failed to flush rollout file on shutdown");
-            }
-        });
+        let task = tokio::spawn(writer::run_writer(BufWriter::new(file), rx));
 
         let recorder = Self {
             writer: Arc::new(RolloutWriter::new(tx, task)),
@@ -994,3 +955,7 @@ impl Clone for RolloutRecorder {
 #[cfg(test)]
 #[path = "rollout_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rollout/batch_probe_tests.rs"]
+mod batch_probe_tests;

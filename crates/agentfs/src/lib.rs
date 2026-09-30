@@ -67,6 +67,7 @@ const MACHINE_CTL_HELP: &str = "\
 compact   compact the tape into a checkpoint
 rollback  roll back to the previous checkpoint
 interrupt stop the current turn; the agent process stays alive
+project-cwd-v1 {\"id\":\"UUID\",\"path\":\"/absolute/namespace/path\"} select Process cwd only while settled; queued work stays paused. Engine validates the selector and current authority.
 ";
 const ACTIONS_HELP: &str = "\
 # actions — Tool effect records and durable evidence.
@@ -591,7 +592,12 @@ impl FileServer for AgentFs {
             // not interpret runtime semantics (agent-file-layout-contract). An
             // empty command is malformed.
             Node::MachineCtl => {
-                if data.is_empty() {
+                if data.is_empty()
+                    || data.len() > 8192
+                    || data.contains(&b'\n')
+                    || data.contains(&b'\r')
+                    || data.contains(&0)
+                {
                     return Err(ErrorCode::BadRequest);
                 }
                 let cmd = String::from_utf8(data.to_vec()).map_err(|_| ErrorCode::BadRequest)?;

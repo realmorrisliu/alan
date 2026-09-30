@@ -221,6 +221,7 @@ where
         NamespaceToolActionEvidence {
             call_id: &tool_call.id,
             approval,
+            arguments: tool_arguments,
         },
         tool_arguments.clone(),
         cancel,

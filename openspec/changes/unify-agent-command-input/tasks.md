@@ -181,7 +181,7 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
   - [x] 2.13.1 Implement `/bin/agent_work` status/submit/cancel/continue/discard, invocation help, versioned receipts and action-specific Tool schema through the caller namespace. PR #973 tests cover input identity, schema/deserializer agreement, invalid targets, read-only/missing authority and mounted Process dispatch; review, merge and CI evidence is recorded under 4.1.
   - [ ] 2.13.2 Complete end-to-end Agent discovery/invocation and fault-injected commit-error/unknown-outcome acceptance; retain the parent task as incomplete until these checks and the merged delivery are verified.
 - [ ] 2.14 Align structured project read/edit/search path parameters with Host shell cwd and paths through existing Host adapters. Verify Agent edit → native read/git diff and native edit → Agent read for the active grant; verify other grants remain available to Agent file tools and become shell-visible only after explicit cwd switching, while one shell action cannot span disjoint grants. Cover grant-relative and shared-cwd-relative Agent paths plus native cwd-relative shell paths, pending-buffer/save failure, stale-content conflict, read-only grants, symlink containment and revocation; no mirror copies or shell-text rewriting.
-- [ ] 2.15 Review normal user flows and Agent command help: ordinary work requires neither aP terminology nor internal mount/descriptor/commit knowledge, while explicit developer inspection remains available.
+- [ ] 2.15 Review normal user flows and Agent command help: ordinary work requires neither aP terminology nor internal mount/descriptor/commit knowledge, while explicit developer inspection remains available. Clarify existing `agent_work` HELP/Tool description after observed self-report submissions: `root` means this invocation's Root Agent Process and may be the caller itself; submit queues input and does not notify an external operator. Preserve legitimate self-scheduling, caller-scoped target resolution, schemas and queue behavior; add no coordination mechanism.
 
 - [ ] 2.16 Implement the 2026-09-29 compact `: ` / `! ` markers (superseding the current `alan: ` / `alan! ` display) as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
 
@@ -195,6 +195,36 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
 - [x] 2.18.2 Verify that simultaneous invocations also have independent cwd and queue state; complete the shared-store concurrency and ambient-Host command audit. The concurrent CLI integration test proves inputs stay on their own AgentFS stream; a runner test proves cwd bindings are isolated even when Process IDs match. Package catalog, Connection metadata, credential writes and legacy migration use their existing cross-process locks. `alan host status/stop` require `ALAN_INSTANCE_RUNTIME_DIR`; ordinary `alan connection` commands operate on channel stores without booting or selecting a live instance. PR #1011 merged at `0e9092e1ec5092f78f797e7ec2898e068b75f2bf` from reviewed head `2dc85e87a9469c4b2f559f60cc6d0ab35035fb18`; GitHub Codex review had no findings and required current-head CI passed. PR review and CI for the remaining delivery slices remain tracked by 4.1.
 - [ ] 2.19 Deliver explicit recovery selection/discovery and lifecycle acceptance: chosen durable history and Action evidence, paused reliable queue, authority-validated cwd, no unknown-effect replay, clear missing-record failure, clean one-shot shutdown, cancellation of owned descendants, ordinary terminal operation and Herdr view-detach versus actual process exit. Do not claim Herdr acceptance from unit tests or absent integration access.
 - [x] 2.19.1 Add `alan --resume` as the explicit cross-invocation Root rollout selector while retaining instance-scoped continuation after Root replacement, even when another foreground invocation updates the channel selector. Verify default fresh startup, explicit restore, malformed/missing selection failure and restart history preservation. PR #981 ships the selector; PR #982 verifies command-result preservation and no replay after explicit resume. Exact review, merge and CI evidence is recorded under 4.1; the remaining lifecycle acceptance stays under parent task 2.19.
+- [ ] 2.19.2 Complete current-authority directory selection while reliable recovered work remains paused: use the existing file-native Agent Runtime control lane and Process cwd validator, publish correlated actual cwd or rejection, preserve queued inputs and paused state, reject unsettled/running selection, and connect the native project chooser without queuing its cwd choice behind recovered work. Verify invalid/revoked grants retain the previous binding and only explicit continuation executes pending work; coordinate terminal projection with `make-alan-self-development-ready`.
+  Read-only implementation trace confirms this lane is `machine/ctl` text →
+  AgentFS `ctl:` events → real protocol `Submission`/`Op`; no `EngineControl`
+  type exists. A scoped selector needs explicit protocol/control parsing plus
+  classification before FIFO admission in the API pre-dispatch path and all four
+  active/deferred API/namespace observer branches. Active/unsettled selection
+  must reject immediately, without deferred preemption or later hidden execution.
+  Settled selection updates the actual Runtime environment through the existing
+  Process cwd validator, not only its queue-held clone. Reuse the existing `cd`
+  Action evidence shape and durability barrier, but not the whole standalone-cd
+  completion path, which changes Tape/activity to Idle and would unpause the UI.
+  Acceptance must use real Shell writes to `machine/ctl` with current grants,
+  exact correlated receipts, unchanged recovered queue/Paused state, rejected
+  invalid/revoked/running choices, and execution only after explicit continuation.
+  Backend directory-control implementation now has independent owning-crate
+  regressions and two-axis review; full completion still awaits native chooser
+  integration and actual paused recovery acceptance. On 2026-10-01 the sole UI
+  controller submitted one TUI-only task to connect mount/revoke to this control
+  lane, replacing ordinary queued cd submissions. Running, approval and unsettled
+  admission must remain rejected, and authoritative correlated cwd settlement
+  must precede success/revocation. No G3 or frontend completion is claimed.
+
+- [ ] 2.20 Coordinate Connection-confirmed model selection with input admission: capture the owning callable binding and resolver-owned controls for each acknowledged input; preserve earlier queued bindings across later selection, dispatch and explicit recovery; fail visibly if a captured binding is unavailable instead of silently remapping it. Install confirmed next-input bindings at a serialized admission boundary without Engine profile authority or implicit queue continuation. Owning contracts and terminal acceptance are in `make-alan-self-development-ready` provider/Connection deltas and task 4.4; an idle-only selection path does not complete this task.
+
+  On 2026-10-01 Root submitted one owning-backend author task via the live Alan
+  Root in w5E:p1. It requires real provider/Runtime red regressions for A/B
+  admission, selection, recovery/unavailable binding and compatible/incompatible
+  steering before implementing the owner contracts. The UI author remains
+  restricted to crates/tui; no picker-first or idle-only qualification is intended.
+  Implementation and current-source review are still pending.
 
 ## 3. Typed intent routing and qualification — transferred
 

@@ -1,6 +1,179 @@
 use super::*;
 
 #[test]
+fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
+    use ratatui::style::{Color, Modifier};
+    for width in [40, 60, 80, 120] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.transcript.push(HistoryCell::Assistant(
+            "# 标题\n**strong** and *emphasis* and `literal`\n- item\n```rust\n    let 界 = \"**literal**\";\n```\n```diff\n+    新增\n-    删除\n```\n: prose\n! prose\ntool> prose".into(),
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer.cell((0, 0)).unwrap().symbol(),
+            "标",
+            "heading marker at {width}"
+        );
+        assert!(
+            buffer
+                .cell((0, 0))
+                .unwrap()
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            buffer
+                .cell((0, 1))
+                .unwrap()
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            buffer
+                .cell((11, 1))
+                .unwrap()
+                .modifier
+                .contains(Modifier::ITALIC)
+        );
+        assert_eq!(buffer.cell((0, 2)).unwrap().symbol(), "•");
+        assert_eq!(buffer.cell((4, 3)).unwrap().symbol(), "l");
+        assert_eq!(buffer.cell((0, 4)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((0, 4)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((0, 5)).unwrap().fg, Color::Red);
+        for row in [6, 7, 8] {
+            assert_eq!(
+                buffer.cell((0, row)).unwrap().fg,
+                Color::Reset,
+                "prose must not acquire role styles"
+            );
+        }
+    }
+}
+
+#[test]
+fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
+    use crate::history::ToolStatus;
+    use alan_agent_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
+    use ratatui::style::Color;
+    for width in [40, 60, 80, 120] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.transcript.push(HistoryCell::Tool {
+            title: "Edit".into(),
+            status: ToolStatus::Complete,
+            preview: None,
+            presentation: Some(ToolResultPresentation::Diff {
+                path: "example.rs".into(),
+                hunks: vec![DiffHunk {
+                    header: Some("@@ -1 +1 @@".into()),
+                    lines: vec![
+                        DiffLine::Removed {
+                            text: "    old".into(),
+                        },
+                        DiffLine::Added {
+                            text: "    新".into(),
+                        },
+                        DiffLine::Context {
+                            text: "    ! literal".into(),
+                        },
+                    ],
+                }],
+            }),
+        });
+        let before = app.styled_history_lines(width);
+        let drained = app.drain_committed_scrollback(width, 5);
+        let retained = app.styled_history_lines(width);
+        assert!(!drained.is_empty() && !retained.is_empty());
+        assert_eq!([drained, retained.clone()].concat(), before);
+        assert!(matches!(app.transcript[0], HistoryCell::Styled(_)));
+        let mut terminal = Terminal::new(TestBackend::new(width as u16, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(before.clone()),
+                    frame.area(),
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer.cell((7, 3)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((7, 3)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((12, 4)).unwrap().symbol(), "新");
+        assert_eq!(buffer.cell((12, 4)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((12, 5)).unwrap().symbol(), "!");
+        assert_eq!(buffer.cell((12, 5)).unwrap().fg, Color::Reset);
+        assert!(
+            retained
+                .iter()
+                .any(|line| line.to_string().contains("    ! literal"))
+        );
+    }
+}
+
+#[test]
+fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() {
+    use ratatui::style::{Color, Modifier};
+    for width in [40, 60, 80, 120] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.transcript.push(HistoryCell::Assistant(
+            "# Heading\n```diff\n+    first\n-    second".into(),
+        ));
+        let before = app.styled_history_lines(width);
+        let drained = app.drain_committed_scrollback(width, 4);
+        let retained = app.styled_history_lines(width);
+        assert!(!drained.is_empty());
+        assert_eq!([drained, retained].concat(), before);
+        app.append_to_open_assistant_cell("\n+    界\n```\n**done**".into());
+        for resized in [40, 60, 80, 120] {
+            let mut terminal = Terminal::new(TestBackend::new(resized, 12)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::Green);
+            assert_eq!(buffer.cell((0, 1)).unwrap().fg, Color::Red);
+            assert_eq!(buffer.cell((5, 2)).unwrap().symbol(), "界");
+            assert_eq!(buffer.cell((5, 2)).unwrap().fg, Color::Green);
+            assert!(
+                buffer
+                    .cell((0, 3))
+                    .unwrap()
+                    .modifier
+                    .contains(Modifier::BOLD)
+            );
+        }
+    }
+}
+
+#[test]
+fn quiet_running_clock_redraws_only_when_displayed_second_changes() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.apply_ui_activity_snapshot(UiActivitySnapshot::running(1_250));
+    assert_eq!(activity_elapsed_second(&app, 1_249), 0);
+    assert_eq!(activity_elapsed_second(&app, 2_249), 0);
+    assert_eq!(activity_elapsed_second(&app, 2_250), 1);
+    assert!(frame_needs_redraw(true, &app, 1_250, None));
+    assert!(frame_needs_redraw(false, &app, 1_250, None));
+
+    // Model 33 ms ticks after drawing 0s, without any UI/file events.
+    for now_ms in (1_283..2_250).step_by(33) {
+        assert!(
+            !frame_needs_redraw(false, &app, now_ms, Some(0)),
+            "same displayed second must not redraw the active viewport"
+        );
+    }
+    assert!(frame_needs_redraw(false, &app, 2_250, Some(0)));
+    assert!(!frame_needs_redraw(false, &app, 2_283, Some(1)));
+    assert!(frame_needs_redraw(true, &app, 2_283, Some(1)));
+    assert!(frame_needs_redraw(false, &app, 5_250, Some(1)));
+
+    for snapshot in [UiActivitySnapshot::idle(), UiActivitySnapshot::paused(None)] {
+        app.apply_ui_activity_snapshot(snapshot);
+        assert!(frame_needs_redraw(true, &app, 6_250, Some(1)));
+        assert!(!frame_needs_redraw(false, &app, 6_250, Some(1)));
+    }
+}
+
+#[test]
 fn blank_prompt_cursor_uses_nonzero_viewport_origin() {
     let app = FileBackedApp::new("/agent/root".to_string());
     let area = ratatui::layout::Rect::new(4, 5, 80, 2);
@@ -63,16 +236,25 @@ fn scrollback_drains_by_rendered_lines() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.transcript
         .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
-    let before = app.rendered_history_lines(32);
+    let before = app.styled_history_lines(32);
 
     let drained = app.drain_committed_scrollback(32, 10);
-    let retained = app.rendered_history_lines(32);
+    let retained = app.styled_history_lines(32);
 
     assert!(!drained.is_empty());
     assert_eq!(drained, before[..drained.len()]);
-    assert_eq!(retained, before[drained.len()..]);
+    assert_eq!(
+        retained.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        before[drained.len()..]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    );
     assert!(retained.len() + live_region_height(&app, 32) as usize <= 10);
-    assert!(matches!(app.transcript[0], HistoryCell::Assistant(_)));
+    assert!(matches!(
+        app.transcript[0],
+        HistoryCell::AssistantTail { .. }
+    ));
 }
 
 #[test]
@@ -250,6 +432,101 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             .collect::<String>();
         assert!(text.contains("model gpt-6-luna"), "{text}");
         assert!(text.ends_with(status), "{text}");
+    }
+}
+
+#[test]
+fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
+    for width in [40, 60, 80, 120] {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        let mut typed = String::new();
+        let mut heights = Vec::new();
+        for ch in "/project".chars() {
+            typed.push(ch);
+            assert!(
+                app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+                    .is_none()
+            );
+            assert_eq!(app.composer.text(), typed);
+            assert_eq!(app.composer.cursor(), typed.len());
+            let state = app
+                .completion
+                .as_ref()
+                .expect("useful slash hints remain visible");
+            let labels = state
+                .matches
+                .iter()
+                .map(|c| c.label.as_str())
+                .collect::<Vec<_>>();
+            assert!(labels.contains(&"project"), "{typed}: {labels:?}");
+            if typed.len() >= 3 {
+                assert_eq!(labels, ["project"]);
+            }
+            let expected_hint_rows = state
+                .matches
+                .iter()
+                .take(MAX_COMPLETION_ROWS)
+                .map(|c| {
+                    let hint = ratatui::text::Line::from(format!(
+                        "  /{}  - {}",
+                        c.label,
+                        c.detail.as_ref().unwrap()
+                    ));
+                    crate::transcript_ui::wrapped_line_count(&[hint], width)
+                })
+                .sum::<usize>();
+            let height = inline_viewport_height(&app, width, 22);
+            assert_eq!(height as usize, expected_hint_rows + 2, "{width}: {typed}");
+            heights.push(height);
+            let mut terminal = Terminal::new(TestBackend::new(width as u16, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let rendered = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| {
+                            terminal
+                                .backend()
+                                .buffer()
+                                .cell((x as u16, y))
+                                .unwrap()
+                                .symbol()
+                        })
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                rendered.contains("/project"),
+                "{width}: {typed}: {rendered}"
+            );
+            assert!(rendered.contains("select or revoke"), "{rendered}");
+            let cursor = terminal.backend().cursor_position();
+            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, height - 1));
+            assert!(app.drain_committed_scrollback(width, 22).is_empty());
+            assert!(
+                app.transcript.is_empty(),
+                "completion rows must remain transient"
+            );
+        }
+        assert!(
+            heights[0] > heights[1] && heights[1] > heights[2],
+            "{width}: {heights:?}"
+        );
+        assert!(heights[2..].iter().all(|h| *h == heights[2]));
+        let saved_height = *heights.last().unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        assert_eq!(inline_viewport_height(&app, width, 22), 22);
+        app.modal.rows = vec![ratatui::text::Line::from("transient detail page")];
+        assert!(app.drain_committed_scrollback(width, 22).is_empty());
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(inline_viewport_height(&app, width, 22), saved_height);
+        assert_eq!(app.composer.text(), "/project");
+        assert!(app.transcript.is_empty());
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(app.composer.text().starts_with("/project"));
+        app.handle_key(KeyEvent::new(KeyCode::Char('界'), KeyModifiers::NONE));
+        assert!(app.composer.text().contains('界'));
+        assert_eq!(app.composer.cursor(), app.composer.text().len());
     }
 }
 

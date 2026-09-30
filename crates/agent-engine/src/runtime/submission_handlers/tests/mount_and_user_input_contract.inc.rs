@@ -128,6 +128,10 @@
         ));
         assert!(state.machine.pending_host_mount(&request_id).is_none());
         assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("approved"));
+        let result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(result["status"], "approved", "cancellation race must report the Host winner truthfully");
+        assert_eq!(result["approved"], true);
+        assert_eq!(result["grant_reference"], "grant-race-winner");
     }
 
     #[tokio::test]

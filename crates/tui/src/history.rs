@@ -1,3 +1,10 @@
+mod action_summary;
+mod markdown;
+pub(crate) use action_summary::action_summary;
+
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+
 use std::time::Instant;
 
 use alan_agent_protocol::{
@@ -32,6 +39,14 @@ impl RenderOpts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryCell {
     Rendered(Vec<String>),
+    /// Already committed prefix removed; retain semantic spans, not prefix guesses.
+    Styled(Vec<Line<'static>>),
+    /// Streaming Markdown retains its source and parse context after a partial drain.
+    AssistantTail {
+        text: String,
+        /// Stable source-byte end and expanded-character slot of committed content.
+        committed: (usize, usize),
+    },
     User(String),
     Command(String),
     Assistant(String),
@@ -99,7 +114,32 @@ pub struct PendingYieldCell {
 }
 
 impl HistoryCell {
+    pub(crate) fn assistant_source(&self) -> Option<&str> {
+        match self {
+            Self::Assistant(text) | Self::AssistantTail { text, .. } => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Replace reconciled source without replaying already committed content.
+    pub(crate) fn replace_assistant_source(&mut self, source: String) {
+        match self {
+            Self::Assistant(text) | Self::AssistantTail { text, .. } => *text = source,
+            _ => {}
+        }
+    }
+
     pub fn render_lines(&self, opts: RenderOpts) -> Vec<String> {
+        if matches!(
+            self,
+            Self::Assistant(_) | Self::Styled(_) | Self::AssistantTail { .. }
+        ) {
+            return self
+                .render_styled_lines(opts)
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+        }
         let width = opts.width.max(16);
         if let Self::Rendered(lines) = self {
             return lines
@@ -129,7 +169,11 @@ impl HistoryCell {
         }
 
         let (prefix, body) = match self {
-            Self::Rendered(_) | Self::Plan(_) | Self::Thinking { .. } => {
+            Self::Rendered(_)
+            | Self::Styled(_)
+            | Self::AssistantTail { .. }
+            | Self::Plan(_)
+            | Self::Thinking { .. } => {
                 unreachable!("handled above")
             }
             Self::User(text) => return wrap_user_prompt(text, width, INLINE_PROMPT_PREFIX),
@@ -166,24 +210,139 @@ impl HistoryCell {
         wrap_with_prefix(prefix, &body, width)
     }
 
+    /// Project typed transcript roles and Markdown directly into Ratatui spans.
+    pub fn render_styled_lines(&self, opts: RenderOpts) -> Vec<Line<'static>> {
+        let width = opts.width.max(16);
+        match self {
+            Self::Assistant(text) => markdown::project(text, width, (0, 0))
+                .into_iter()
+                .map(|(line, _)| line)
+                .collect(),
+            Self::AssistantTail { text, committed } => markdown::project(text, width, *committed)
+                .into_iter()
+                .map(|(line, _)| line)
+                .collect(),
+            Self::Styled(lines) => wrap_styled_lines(lines.clone(), width),
+            Self::Tool {
+                title,
+                status,
+                presentation: Some(presentation @ ToolResultPresentation::Diff { .. }),
+                ..
+            } => {
+                let mut lines = vec![Line::styled(
+                    format!(
+                        "tool> {} {}",
+                        if *status == ToolStatus::Complete {
+                            "✓"
+                        } else {
+                            "✗"
+                        },
+                        clean_text(title)
+                    ),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )];
+                lines.extend(
+                    presentation_rows(presentation)
+                        .into_iter()
+                        .map(|(text, style)| {
+                            Line::styled(format!("       {}", clean_text(&text)), style)
+                        }),
+                );
+                wrap_styled_lines(lines, width)
+            }
+            _ => {
+                let style = match self {
+                    Self::User(_) | Self::Command(_) | Self::PendingYield(_) => Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                    Self::Tool { .. } | Self::Plan(_) => Style::default().fg(Color::Cyan),
+                    Self::Thinking { .. } => metadata_style().add_modifier(Modifier::ITALIC),
+                    Self::Error(_) => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    _ => Style::default(),
+                };
+                self.render_lines(opts)
+                    .into_iter()
+                    .map(|text| Line::styled(clean_text(&text), style))
+                    .collect()
+            }
+        }
+    }
+
     pub fn trim_rendered_prefix(&mut self, opts: RenderOpts, lines_to_trim: usize) -> bool {
         if lines_to_trim == 0 {
             return true;
         }
 
-        if let Self::Assistant(text) = self {
-            *text = trim_wrapped_body(text, opts.width, lines_to_trim);
+        if let Some(text) = self.assistant_source() {
+            let cut = match &*self {
+                Self::AssistantTail { committed, .. } => *committed,
+                _ => (0, 0),
+            };
+            let rows = markdown::project(text, opts.width.max(16), cut);
+            let committed = rows
+                .iter()
+                .take(lines_to_trim)
+                .next_back()
+                .map_or(cut, |(_, key)| *key);
+            *self = Self::AssistantTail {
+                text: text.to_string(),
+                committed,
+            };
             return true;
         }
-
         let remaining = self
-            .render_lines(opts)
+            .render_styled_lines(opts)
             .into_iter()
             .skip(lines_to_trim)
-            .collect::<Vec<_>>();
-        *self = Self::Rendered(remaining);
+            .collect();
+        *self = Self::Styled(remaining);
         true
     }
+}
+
+fn metadata_style() -> Style {
+    Style::default().add_modifier(Modifier::DIM)
+}
+
+// Strip terminal controls and expand tabs before Ratatui filters control graphemes.
+// No tab-stop convention exists in this renderer; use four copyable spaces per tab.
+pub(crate) fn clean_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .flat_map(|c| {
+            if c == '\t' {
+                "    ".chars().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn wrap_styled_lines(
+    lines: impl IntoIterator<Item = Line<'static>>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut output = Vec::new();
+    for line in lines {
+        let mut row = Vec::new();
+        let mut cells = 0;
+        for span in &line.spans {
+            for grapheme in span.styled_graphemes(line.style) {
+                let size = unicode_width::UnicodeWidthStr::width(grapheme.symbol);
+                if cells + size > width.max(1) && cells > 0 {
+                    output.push(Line::from(std::mem::take(&mut row)));
+                    cells = 0;
+                }
+                row.push(Span::styled(grapheme.symbol.to_string(), grapheme.style));
+                cells += size;
+            }
+        }
+        output.push(Line::from(row));
+    }
+    output
 }
 
 impl PendingYieldCell {
@@ -232,23 +391,44 @@ const PRESENTATION_MAX_LINES: usize = 40;
 
 /// Render a presentation primitive into transcript lines (one renderer per form).
 fn presentation_lines(presentation: &ToolResultPresentation) -> Vec<String> {
-    let mut lines = match presentation {
-        ToolResultPresentation::Diff { path, hunks } => {
-            let mut lines = vec![path.clone()];
-            for hunk in hunks {
-                if let Some(header) = &hunk.header {
-                    lines.push(header.clone());
-                }
-                for line in &hunk.lines {
-                    lines.push(match line {
-                        DiffLine::Added { text } => format!("+{text}"),
-                        DiffLine::Removed { text } => format!("-{text}"),
-                        DiffLine::Context { text } => format!(" {text}"),
-                    });
-                }
+    presentation_rows(presentation)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect()
+}
+
+fn presentation_rows(presentation: &ToolResultPresentation) -> Vec<(String, Style)> {
+    presentation_rows_mode(presentation, false)
+}
+
+fn presentation_rows_mode(
+    presentation: &ToolResultPresentation,
+    detail: bool,
+) -> Vec<(String, Style)> {
+    if let ToolResultPresentation::Diff { path, hunks } = presentation {
+        let mut rows = vec![(path.clone(), metadata_style())];
+        for hunk in hunks {
+            if let Some(header) = &hunk.header {
+                rows.push((header.clone(), metadata_style()));
             }
-            lines
+            for line in &hunk.lines {
+                let (marker, text, color) = match line {
+                    DiffLine::Added { text } => ("+", text, Color::Green),
+                    DiffLine::Removed { text } => ("-", text, Color::Red),
+                    DiffLine::Context { text } => (" ", text, Color::Reset),
+                };
+                rows.push((format!("{marker}{text}"), Style::default().fg(color)));
+            }
         }
+        if !detail && rows.len() > PRESENTATION_MAX_LINES {
+            let hidden = rows.len() - PRESENTATION_MAX_LINES;
+            rows.truncate(PRESENTATION_MAX_LINES);
+            rows.push((format!("… +{hidden} more lines"), metadata_style()));
+        }
+        return rows;
+    }
+    let mut lines = match presentation {
+        ToolResultPresentation::Diff { .. } => unreachable!("handled above"),
         ToolResultPresentation::FileContent {
             path,
             lines,
@@ -265,7 +445,13 @@ fn presentation_lines(presentation: &ToolResultPresentation) -> Vec<String> {
             truncated,
         } => {
             let mut lines = vec![format!("$ {cmdline}")];
+            if detail {
+                lines.push("stdout".into());
+            }
             lines.extend(stdout.lines().map(str::to_string));
+            if detail {
+                lines.push("stderr".into());
+            }
             lines.extend(stderr.lines().map(str::to_string));
             if let Some(code) = exit_code {
                 lines.push(format!("exit {code}"));
@@ -279,12 +465,39 @@ fn presentation_lines(presentation: &ToolResultPresentation) -> Vec<String> {
         ToolResultPresentation::PlainText { body } => body.lines().map(str::to_string).collect(),
     };
 
-    if lines.len() > PRESENTATION_MAX_LINES {
+    if !detail && lines.len() > PRESENTATION_MAX_LINES {
         let hidden = lines.len() - PRESENTATION_MAX_LINES;
         lines.truncate(PRESENTATION_MAX_LINES);
         lines.push(format!("… +{hidden} more lines"));
     }
     lines
+        .into_iter()
+        .map(|text| (text, Style::default()))
+        .collect()
+}
+
+pub(crate) fn action_detail(cell: &HistoryCell) -> Vec<Line<'static>> {
+    if let HistoryCell::Tool {
+        title,
+        presentation: Some(presentation),
+        ..
+    } = cell
+    {
+        let mut rows = vec![Line::styled(
+            clean_text(title),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )];
+        rows.extend(
+            presentation_rows_mode(presentation, true)
+                .into_iter()
+                .map(|(text, style)| Line::styled(clean_text(&text), style)),
+        );
+        rows
+    } else {
+        cell.render_styled_lines(RenderOpts::new(16384, false))
+    }
 }
 
 fn render_plan(items: &[PlanLine], width: usize) -> Vec<String> {
@@ -352,14 +565,6 @@ fn wrap_user_prompt(body: &str, width: usize, prefix: &str) -> Vec<String> {
             }
         })
         .collect()
-}
-
-fn trim_wrapped_body(text: &str, width: usize, lines_to_trim: usize) -> String {
-    wrap_plain_text(text, width.max(16))
-        .into_iter()
-        .skip(lines_to_trim)
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {

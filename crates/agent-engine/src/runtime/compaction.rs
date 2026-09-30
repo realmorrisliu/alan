@@ -460,6 +460,7 @@ where
             },
         );
         let compacted = CompactedItem {
+            retained_messages: None,
             message: summary,
             attempt_id: Some(attempt_id),
             trigger: Some(request.trigger()),
@@ -796,6 +797,7 @@ where
         },
     );
     let compacted = CompactedItem {
+        retained_messages: None,
         message: summary,
         attempt_id: Some(attempt_id),
         trigger: Some(request.trigger()),

@@ -165,6 +165,20 @@ impl NamespaceToolExecution {
         });
         if let Some(evidence) = evidence {
             result_doc["call_id"] = serde_json::json!(evidence.call_id);
+            let payload = crate::runtime::tool_execution::namespace_tool_payload(
+                NamespaceToolActionOutput {
+                    action_id: String::new(),
+                    pid: pid.clone(),
+                    output: result.output.clone(),
+                    exit_code: action_exit_code,
+                },
+            )?;
+            crate::runtime::tool_presentation::write_action_metadata(
+                &mut result_doc,
+                tool_name,
+                evidence.arguments,
+                &payload,
+            )?;
         }
         if action_exit_code != result.exit_code
             && let Some(object) = result_doc.as_object_mut()

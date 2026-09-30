@@ -62,6 +62,30 @@ pub(crate) fn advance_accepted_submission<'a>(
         }
     }
     async move {
+        if matches!(submission.op, Op::Turn { .. } | Op::Input { .. }) {
+            let checkpoint = state.machine.dispatch_input(&submission).await;
+            if let Err(error) = checkpoint {
+                let event = UiEvent::InputCompleted {
+                    submission_ids: vec![submission.id.clone()],
+                    status: UiInputStatus::Failed,
+                    error: Some(format!(
+                        "Input dispatch persistence failed; execution did not start and recovery disposition is uncertain: {error}"
+                    )),
+                };
+                let publish = state.agent_files().append_ui_event(&event).await;
+                state.machine.finish_submission();
+                return AcceptedSubmissionOutcome {
+                    result: Err(match publish {
+                        Ok(()) => error,
+                        Err(publish_error) => error.context(format!(
+                            "also failed to publish correlated dispatch failure: {publish_error}"
+                        )),
+                    }),
+                    requeue_inband_submissions,
+                    deferred_actions: Default::default(),
+                };
+            }
+        }
         if reject_compaction {
             return AcceptedSubmissionOutcome {
                 result: Err(anyhow::anyhow!(
@@ -218,6 +242,7 @@ where
         ) && !state.machine.is_turn_active()
             && !state.machine.has_pending_interaction()
         {
+            state.machine.remove_input(&next_submission).await?;
             let (status, message) = if cancel.is_cancelled() {
                 (
                     UiInputStatus::Cancelled,
@@ -240,6 +265,16 @@ where
                 crate::runtime::ui_surfaces::error_notice(&agent_files, message).await?;
             }
             continue;
+        }
+        if matches!(next_submission.op, Op::Turn { .. } | Op::Input { .. }) {
+            state.machine.admit_input(&next_submission).await?;
+            state
+                .machine
+                .persist_input_event(
+                    "machine_input_dispatched_v1",
+                    serde_json::json!({"submission_id": next_submission.id}),
+                )
+                .await?;
         }
         // A request response continues the accepted input; its control ID is
         // not the identity of the Agent answer produced after approval.

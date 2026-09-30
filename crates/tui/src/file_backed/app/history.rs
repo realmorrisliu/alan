@@ -1,6 +1,66 @@
 use super::*;
 
 impl FileBackedApp {
+    pub(in crate::file_backed) fn prune_rendered_prefix(
+        &mut self,
+        opts: RenderOpts,
+        lines_to_prune: usize,
+    ) -> usize {
+        let mut remaining = lines_to_prune;
+        let mut index = 0;
+        while remaining > 0 && index < self.transcript.len() {
+            let is_action = self.action_cells.values().any(|i| *i == index)
+                && matches!(self.transcript[index], HistoryCell::Tool { .. });
+            let rows = if is_action {
+                crate::history::action_summary(&self.transcript[index], opts.width)
+            } else {
+                self.transcript[index].render_styled_lines(opts)
+            };
+            let cell_lines = rows.len();
+            let keep_source = Some(index) == self.current_assistant_cell();
+            if cell_lines > remaining || keep_source {
+                let count = remaining.min(cell_lines);
+                if count > 0 {
+                    if is_action {
+                        self.transcript[index] =
+                            HistoryCell::Styled(rows.into_iter().skip(count).collect());
+                    } else if !self.transcript[index].trim_rendered_prefix(opts, count) {
+                        break;
+                    }
+                    remaining -= count;
+                    self.scrollback_front_is_partial = true;
+                }
+                if cell_lines > count {
+                    break;
+                }
+                // A fully committed assistant stays in chronology as an empty
+                // source-aware tail. It owns no rows and cannot block later cells.
+                index += 1;
+            } else {
+                self.transcript.remove(index);
+                self.action_cells.retain(|_, cell_index| {
+                    if *cell_index == index {
+                        return false;
+                    }
+                    if *cell_index > index {
+                        *cell_index -= 1;
+                    }
+                    true
+                });
+                if let Some(boundary) = &mut self.pending_remote_turn_start
+                    && *boundary > index
+                {
+                    *boundary -= 1;
+                }
+                if index == 0 {
+                    self.scrollback_front_is_partial = false;
+                }
+                remaining -= cell_lines;
+            }
+        }
+        lines_to_prune - remaining
+    }
+
     pub(in crate::file_backed) fn push_output(&mut self, text: String) {
         match self.reconciler.on_stream(text) {
             StreamAction::Drop => {}
@@ -35,7 +95,10 @@ impl FileBackedApp {
 
     pub(in crate::file_backed) fn append_to_open_assistant_cell(&mut self, text: String) {
         if let Some(index) = self.current_assistant_cell()
-            && let Some(HistoryCell::Assistant(existing)) = self.transcript.get_mut(index)
+            && let Some(
+                HistoryCell::Assistant(existing)
+                | HistoryCell::AssistantTail { text: existing, .. },
+            ) = self.transcript.get_mut(index)
         {
             existing.push_str(&text);
             return;
@@ -57,7 +120,7 @@ impl FileBackedApp {
         for cell in self.transcript.iter().rev() {
             match cell {
                 HistoryCell::User(_) | HistoryCell::Command(_) => return true,
-                HistoryCell::Assistant(_) => return false,
+                HistoryCell::Assistant(_) | HistoryCell::AssistantTail { .. } => return false,
                 _ => {}
             }
         }
@@ -70,7 +133,7 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn current_assistant_cell(&self) -> Option<usize> {
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
             match cell {
-                HistoryCell::Assistant(_) => return Some(idx),
+                HistoryCell::Assistant(_) | HistoryCell::AssistantTail { .. } => return Some(idx),
                 HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::PendingYield(_) => {
                     return None;
                 }
@@ -96,20 +159,16 @@ impl FileBackedApp {
             }
             "assistant" => {
                 let idx = self.current_assistant_cell();
-                let preview = idx.and_then(|i| match &self.transcript[i] {
-                    HistoryCell::Assistant(text) => Some(text.clone()),
-                    _ => None,
-                });
+                let preview =
+                    idx.and_then(|i| self.transcript[i].assistant_source().map(str::to_string));
                 match self
                     .reconciler
                     .on_assistant_record(record.content, preview.as_deref())
                 {
                     AssistantDecision::Drop => {}
                     AssistantDecision::ReplacePreview(content) => {
-                        if let Some(HistoryCell::Assistant(existing)) =
-                            idx.map(|i| &mut self.transcript[i])
-                        {
-                            *existing = content;
+                        if let Some(index) = idx {
+                            self.transcript[index].replace_assistant_source(content);
                         }
                     }
                     AssistantDecision::Push(content) => {

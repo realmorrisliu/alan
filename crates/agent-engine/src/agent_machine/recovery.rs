@@ -14,6 +14,60 @@ use crate::rollout::{CompactedItem, EffectRecord, EventRecord, RolloutItem, Roll
 use crate::tape::ContextItem;
 
 impl AgentMachine {
+    /// Record a compaction boundary using the existing durable Tool payload policy.
+    pub async fn persist_compaction_observation(
+        &mut self,
+        attempt: CompactionAttemptSnapshot,
+        compacted: Option<CompactedItem>,
+    ) -> anyhow::Result<()> {
+        let Some(recorder) = self.recorder.as_ref() else {
+            self.latest_compaction_attempt = Some(attempt);
+            return Ok(());
+        };
+        let latest_attempt = attempt.clone();
+        let mut items = vec![RolloutItem::CompactionAttempt(attempt)];
+        if let Some(mut compacted) = compacted {
+            compacted.retained_messages = Some(
+                self.tape
+                    .messages()
+                    .iter()
+                    .map(|message| match message {
+                        crate::tape::Message::Tool { responses } => {
+                            crate::tape::Message::tool_multi(
+                                responses
+                                    .iter()
+                                    .map(|response| {
+                                        let content = Self::tool_response_content_to_payload(
+                                            &response.content,
+                                        )
+                                        .map(|payload| {
+                                            Self::tool_payload_to_content_parts(
+                                                crate::rollout::build_durable_tool_payload(
+                                                    &payload,
+                                                )
+                                                .payload,
+                                            )
+                                        })
+                                        .unwrap_or_default();
+                                        crate::tape::ToolResponse {
+                                            id: response.id.clone(),
+                                            content,
+                                        }
+                                    })
+                                    .collect(),
+                            )
+                        }
+                        _ => message.clone(),
+                    })
+                    .collect(),
+            );
+            items.push(RolloutItem::Compacted(compacted));
+        }
+        recorder.persist_batch(items).await?;
+        self.latest_compaction_attempt = Some(latest_attempt);
+        Ok(())
+    }
+
     pub(crate) fn rebase_recovered_actions(
         items: &mut [RolloutItem],
         process_path: &str,
@@ -317,6 +371,16 @@ impl AgentMachine {
                         .collect();
                 }
                 RolloutItem::Compacted(compacted) => {
+                    if let Some(retained) = &compacted.retained_messages {
+                        machine.tape.replace(retained.clone());
+                    } else if let Some(count) = compacted.output_messages {
+                        // Legacy count is the retained conversation size, excluding summary.
+                        let messages = machine.tape.messages();
+                        machine
+                            .tape
+                            .replace(messages[messages.len().saturating_sub(count)..].to_vec());
+                    }
+                    // Summary-only legacy records have no defensible retention boundary.
                     machine.tape.set_summary(compacted.message.clone());
                     recovered_compaction = Some(compacted);
                 }
@@ -346,6 +410,7 @@ impl AgentMachine {
         );
         machine.latest_compaction_attempt = recovered_latest_compaction_attempt;
         machine.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
+        machine.recover_input_queue(&event_records)?;
         machine.responses_continuation =
             Self::responses_continuation_from_event_records(&event_records);
         for pending in Self::pending_host_mounts_from_event_records(&event_records) {
@@ -405,7 +470,10 @@ impl AgentMachine {
                     .map(RolloutItem::MemoryFlushAttempt),
             );
             recovered.extend(recovered_context.map(RolloutItem::TurnContext));
-            recovered.extend(recovered_compaction.map(RolloutItem::Compacted));
+            recovered.extend(recovered_compaction.map(|mut compacted| {
+                compacted.retained_messages = Some(machine.tape.messages().to_vec());
+                RolloutItem::Compacted(compacted)
+            }));
             recovered.extend(effect_records.into_iter().map(RolloutItem::Effect));
             recovered.extend(event_records.into_iter().map(RolloutItem::Event));
             if let Err(error) = recorder.persist_batch(recovered).await {

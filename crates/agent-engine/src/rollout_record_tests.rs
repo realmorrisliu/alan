@@ -138,6 +138,7 @@ fn test_turn_context_item_deserializes_without_reference_context_metadata() {
 #[test]
 fn test_compacted_item_serialization() {
     let item = CompactedItem {
+        retained_messages: None,
         message: "Summary".to_string(),
         attempt_id: Some("attempt-123".to_string()),
         trigger: Some(CompactionTrigger::Manual),

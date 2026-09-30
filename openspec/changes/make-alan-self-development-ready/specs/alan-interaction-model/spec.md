@@ -29,10 +29,30 @@ and its running, queued or paused disposition, correlated with the existing
 submission identity. It SHALL distinguish admission from completion and SHALL
 NOT replay an input to repair missing display state.
 
+Successful delivery to `io/input` alone SHALL NOT be treated as admission. The
+Agent Machine SHALL publish the existing submission identity and its current
+admitted disposition through AgentFS-owned renderer files only after the
+durable admission boundary succeeds. Reattachment SHALL read an authoritative
+snapshot to distinguish accepted paused work from unacknowledged delivery;
+renderer timers, pending local entries and optimistic writes SHALL NOT supply
+that authority. Observation failure SHALL remain explicit and SHALL NOT
+implicitly continue, discard or resubmit work.
+
 #### Scenario: Input is admitted behind paused work
 - **WHEN** the user submits a follow-up to a paused queue and admission succeeds
 - **THEN** its text appears once with a queued disposition and visible pending count
 - **AND** the UI explains the existing continue/discard actions
+
+#### Scenario: Delivery awaits authoritative admission
+- **WHEN** the input stream accepts bytes but no matching Machine admission receipt has been observed
+- **THEN** the UI shows an unconfirmed submission and preserves its exact identity
+- **AND** it does not claim an accepted queue entry, settled cancellation or safe project-control boundary from that delivery alone
+
+#### Scenario: A client reattaches to accepted paused work
+- **WHEN** the same Agent Process publishes a reliable paused queue snapshot containing previously admitted input identities
+- **THEN** the UI distinguishes those accepted pending entries from locally delivered but unconfirmed entries
+- **AND** accepted paused work does not alone block explicit project reauthorization at the existing safe Machine boundary
+- **AND** the control operation neither consumes the queue nor grants access without explicit Host Mount approval
 
 #### Scenario: Admission fails
 - **WHEN** the authoritative input write is rejected

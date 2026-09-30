@@ -600,6 +600,7 @@ include!("tests/compaction_recovery.rs");
 include!("tests/compaction_thresholds.rs");
 include!("tests/core_behaviors.rs");
 include!("tests/submissions.rs");
+include!("tests/dispatch_failure.rs");
 
 pub(crate) async fn handle_runtime_op<E, F>(
     state: &mut RuntimeLoopState,

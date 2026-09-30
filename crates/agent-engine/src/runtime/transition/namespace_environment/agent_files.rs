@@ -104,11 +104,14 @@ impl NamespaceAgentFiles {
                     submissions.push(self.read_next_input_submission(InputMode::FollowUp).await);
                 }
                 Ok(record) => {
-                    if let Some(submission) = record
-                        .strip_prefix("ctl:")
-                        .and_then(machine_control_submission)
-                    {
-                        submissions.push(Ok(submission));
+                    if let Some(command) = record.strip_prefix("ctl:") {
+                        let parsed = machine_control_submission(command);
+                        if command.starts_with("project-cwd-v1") && parsed.is_none() {
+                            submissions
+                                .push(Err(anyhow::anyhow!("invalid project-cwd-v1 selector")));
+                        } else if let Some(submission) = parsed {
+                            submissions.push(Ok(submission));
+                        }
                     }
                 }
                 Err(error) => submissions.push(Err(error.into())),
@@ -225,15 +228,21 @@ impl NamespaceAgentFiles {
     }
 
     pub(crate) async fn write_rejected_command(&self, id: &str, message: &str) -> Result<()> {
+        let outcome = serde_json::json!({"success":false,"error":message});
+        let mut result = serde_json::json!({"call_id":id,"exit_code":1,"outcome":outcome});
+        // Rejection has no executed command or Process result. Use the shared
+        // runtime title and actual error preview, without a Command presentation.
+        crate::runtime::tool_presentation::write_action_metadata(
+            &mut result,
+            "bash",
+            &serde_json::json!({}),
+            &outcome,
+        )?;
         self.write_action(
             NamespaceActionRecord::new("bash", "failed")
                 .with_approval("not_required")
                 .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
-                .with_result(
-                    serde_json::json!({"call_id":id,"exit_code":1,
-                    "outcome":{"success":false,"error":message}})
-                    .to_string(),
-                ),
+                .with_result(result.to_string()),
         )
         .await?;
         Ok(())
@@ -627,8 +636,43 @@ fn request_response_content_part(response: String) -> ContentPart {
     }
 }
 
+pub(crate) fn valid_project_directory(path: &str) -> bool {
+    path.len() <= 4096
+        && path.starts_with('/')
+        && !path.chars().any(char::is_control)
+        && (path == "/"
+            || path[1..]
+                .split('/')
+                .all(|part| !matches!(part, "" | "." | "..")))
+}
+
+#[cfg(test)]
+#[path = "agent_files_selector_tests.rs"]
+mod selector_tests;
+
 fn machine_control_submission(command: &str) -> Option<Submission> {
     let command = command.trim();
+    if let Some(json) = command.strip_prefix("project-cwd-v1 ") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Selector {
+            id: uuid::Uuid,
+            path: String,
+        }
+        let selector: Selector = serde_json::from_str(json).ok()?;
+        if command.len() > 8192 || selector.path.len() > 4096 {
+            return None;
+        }
+        // A valid envelope retains its identity through semantic rejection.
+        // The directory-control owner validates namespace paths and authority.
+        return Some(Submission {
+            id: selector.id.to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
+            op: Op::SelectProjectDirectory {
+                path: selector.path,
+            },
+        });
+    }
     if let Some(id) = command.strip_prefix("queue-v1 interrupt ") {
         return uuid::Uuid::parse_str(id).ok().map(|_| {
             Submission::new(Op::InterruptSubmission {

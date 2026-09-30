@@ -15,10 +15,18 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub(crate) async fn initialize(namespace: &NamespaceAgentFiles) -> Result<()> {
-    namespace
-        .write_ui_activity_snapshot(&UiActivitySnapshot::idle())
-        .await?;
+pub(crate) async fn initialize(namespace: &NamespaceAgentFiles, queue_paused: bool) -> Result<()> {
+    let activity = if queue_paused {
+        UiActivitySnapshot::paused(None)
+    } else {
+        UiActivitySnapshot::idle()
+    };
+    namespace.write_ui_activity_snapshot(&activity).await?;
+    if queue_paused {
+        namespace
+            .append_ui_event(&UiEvent::Activity { snapshot: activity })
+            .await?;
+    }
     namespace
         .write_ui_plan_snapshot(&UiPlanSnapshot::empty())
         .await?;
@@ -257,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn owners_write_snapshots_and_append_ui_events() {
         let (environment, shell) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         thinking(&environment, "reasoning").await.unwrap();
         plan_updated(
@@ -319,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_turn_clears_plan_snapshot() {
         let (environment, shell) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         plan_updated(
             &environment,
             Some("ship parity".to_string()),
@@ -341,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
         let (environment, _) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         turn_failed(&environment, "provider failed").await.unwrap();
 
@@ -389,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
         let (environment, _) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         paused(&environment, None).await.unwrap();
 
         heartbeat(&environment).await.unwrap();

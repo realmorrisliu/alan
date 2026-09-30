@@ -18,7 +18,7 @@ loop has not been demonstrated.
 - Refine the inline terminal hierarchy, spacing, semantic styles, bounded Tool
   summaries and on-demand details without replacing Ratatui or host scrollback.
 - Expose the effective model and a Connection-owned model selection flow whose
-  result is bound to the next eligible turn, with explicit failure feedback.
+  result is bound to subsequently admitted inputs, with explicit failure feedback.
 - Establish staged acceptance: usable project agent, supervised self-development,
   then repeated daily use. Record real source changes, tests, diffs and relaunch
   evidence before claiming Alan can develop itself.
@@ -41,6 +41,10 @@ None. Existing product and renderer contracts own this work.
   interaction and semantic terminal presentation.
 - `tool-result-presentation`: usable summary/detail navigation, actionable errors
   and faithful truncation boundaries.
+- `provider-connection-contract`: explicit Connection-confirmed model selection at
+  a serialized admission boundary, retaining earlier admitted callable bindings.
+- `provider-request-controls`: canonical model metadata projection and observable
+  next-input versus already-admitted effective bindings and controls.
 
 ## Impact
 

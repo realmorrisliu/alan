@@ -556,7 +556,10 @@ async fn ready_api_interrupt_precedes_queued_dispatch() {
         .await
         .unwrap();
     sender.send(Submission::new(Op::Interrupt)).await.unwrap();
-    let control = queues.admit_api_before_dispatch(&mut receiver).unwrap();
+    let control = queues
+        .admit_api_before_dispatch(&mut receiver)
+        .await
+        .unwrap();
     assert!(matches!(control.op, Op::Interrupt));
     queues
         .handle_control(

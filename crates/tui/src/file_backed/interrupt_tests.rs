@@ -25,6 +25,8 @@ async fn ctrl_c_routes_accepted_input_before_running_ui_arrives() {
         submitted_at_ms: 20,
     }]);
     app.composer.set_text("next unsent draft");
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    assert!(app.modal.active);
     let ctrl_c = || {
         FileBackedEvent::Terminal(TerminalEvent::Key(KeyEvent::new(
             KeyCode::Char('c'),

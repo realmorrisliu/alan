@@ -169,7 +169,16 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         for action in state.agent_files().action_ids().await.unwrap() {
             let base = format!("{}/actions/{action}", state.environment.agent_path());
             let result: Value = serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
-            if result["call_id"] == id { matching.push(base); }
+            if result["call_id"] == id {
+                assert_eq!(result["title"], format!("Bash {script}"));
+                if choice == Some("reject") {
+                    assert!(result["result_preview"].as_str().is_some_and(|s| !s.is_empty()));
+                } else {
+                    let presentation: alan_agent_protocol::ToolResultPresentation = serde_json::from_value(result["presentation"].clone()).unwrap();
+                    assert!(matches!(presentation, alan_agent_protocol::ToolResultPresentation::Command { .. }));
+                }
+                matching.push(base);
+            }
         }
         assert_eq!(matching.len(), 1, "one terminal Action per command");
         let base = &matching[0];

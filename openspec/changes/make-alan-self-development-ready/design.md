@@ -60,6 +60,17 @@ Reuse the CLI's existing explicitly selected instance to answer requests. Do
 not ask users to discover socket paths or PIDs. Alternative rejected: implicit
 cwd mounting, which violates current authorization contracts.
 
+Recovery acceptance exposed a paused-entry dependency: the picker currently
+submits an ordinary `cd`, which queues behind recovered work, while continuation
+requires a current cwd grant. A settled directory choice therefore uses the
+existing Agent Runtime file-native control lane, delegating unchanged current
+grant/path validation and binding to the Process cwd owner. The renderer waits
+for correlated authoritative confirmation before updating cwd. Authorization
+alone selects no cwd and continues no work; the user must still explicitly
+continue the paused queue. Running or unsettled work rejects this boundary
+control. This is narrowly owned by `unify-agent-command-input`, not a privileged
+Host command manager or an arbitrary-command FIFO bypass.
+
 ### 3. Immediate receipt without inventing task completion
 
 After authoritative admission, render the submitted text once with its actual
@@ -82,6 +93,13 @@ Wire composer history to its owning channel System Store subtree; do not place
 it in the project. Seed file candidates only from approved accessible roots and
 Skill candidates only from installed/explicit descriptors. Clear stale candidates
 on grant or source changes. Persist canonical intent, including `!` and `:`.
+
+Completion candidates appear below the editable composer. Changing candidate
+count or wrapping must not move the input/cursor when the terminal, transcript
+and input wrapping remain unchanged. Count composer rows and candidate rows
+separately in the existing shared inline layout so candidate rows do not consume
+the composer limit. Preserve usable bounded disclosure near the terminal edge;
+no permanent reserved panel or separate completion viewport owner is introduced.
 
 Tab inserts a highlighted completion. Enter on a slash-command candidate executes
 that command once; a complete slash command does not require a second Enter.
@@ -172,17 +190,29 @@ Ctrl+O opens a transient details view for retained Action evidence; arrows selec
 an action, PgUp/PgDn scroll, Escape returns to the exact draft. Existing thinking
 toggle remains separate. Closing details restores the inline position, without
 copying detail pages into permanent scrollback. Use existing file reads rather
-than a new transcript database. Bound summaries by physical rows and bytes so
-a one-line escaped JSON payload cannot evade collapsing. If retained evidence
-is truncated or absent, disclose that; an expand affordance cannot reconstruct it.
+than a new transcript database. Enumerate the owning Action files when opening
+details; the pruned inline transcript index is not a retained-evidence catalog.
+Bound summaries by physical rows and bytes so a one-line escaped JSON payload
+cannot evade collapsing. Reuse the existing evidence projection, retention-expiry
+and redaction markers, distinguishing unavailable reads from genuinely empty
+output. If retained evidence is truncated, expired or absent, disclose that;
+an expand affordance cannot reconstruct it or rerun an effect.
 
 ### 7. Effective model, not a decorative picker
 
 `/status` names the effective profile/model and supported request controls;
 unknown values are explicitly unknown. `/model` reads the active Connection's
-authoritative catalog and applies the user's choice at a serialized turn boundary.
+authoritative catalog and applies the user's choice at a serialized admission boundary.
 Already-admitted inputs keep their binding; new selection affects subsequent
-inputs and never rewrites in-flight work. Selection failure preserves the last
+inputs and never rewrites in-flight work. The owning provider/Connection deltas
+permit this explicit model-selection exception to the existing Process-lifetime
+model binding. Connection Service validates and publishes the callable; Agent
+Runtime Service installs it at a serialized admission boundary before success.
+Already-admitted queued work retains its captured callable and resolver-owned
+controls, including explicit recovery; unavailable prior bindings fail visibly
+rather than silently using the newer model. Selection never resumes the queue.
+Status distinguishes the confirmed next-input binding from older admitted work.
+An idle-only picker does not complete this requirement. Selection failure preserves the last
 confirmed model and shows an error. No new automatic cheapest/fastest router or
 preference for an unverified model identifier is part of this milestone.
 

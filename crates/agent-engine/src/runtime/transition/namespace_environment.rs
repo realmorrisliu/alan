@@ -7,6 +7,7 @@
 
 mod agent_files;
 pub(crate) use agent_files::NamespaceTapeWriter;
+pub(crate) use agent_files::valid_project_directory;
 mod child_launch;
 mod client;
 mod generation;
@@ -72,6 +73,7 @@ pub(crate) struct NamespaceToolProcessError {
 pub(crate) struct NamespaceToolActionEvidence<'a> {
     pub(crate) call_id: &'a str,
     pub(crate) approval: &'a str,
+    pub(crate) arguments: &'a serde_json::Value,
 }
 
 /// A yield/request record written by the engine under `requests/<id>/`.
