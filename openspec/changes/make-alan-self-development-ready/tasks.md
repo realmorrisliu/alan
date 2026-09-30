@@ -32,9 +32,61 @@ not a second implementation owner.
   pass (1222 passed, one ignored), and `just quality` passes including standalone
   distribution. Herdr interruption acceptance additionally passed five fresh
   consecutive runs after correcting transient/literal harness assertions.
-- G1 live behavior is qualified locally; G2/G3, independent review, merge and
-  current-head CI remain unpassed. The historical failed attempts below remain
+- G1 and G2 live behavior are qualified locally; G3, full baseline review, merge
+  and current-head CI remain unpassed. The historical failed attempts below remain
   evidence of the previous candidate, not the status of this new candidate.
+- G2 is running in the explicitly approved Herdr checkout
+  `/Users/morris/.herdr/worktrees/alan/self-development-g2-20260930`, starting
+  from local snapshot `bb305940e9a44ca09b28a077976b5ffb741ff325` with the G1
+  candidate retained. Alan authored the neutral cancellation presentation in
+  the shared live/reattach path; no operator supplied or edited its source patch.
+  Independent Standards/Spec review found test placement, a removed negative
+  correlation observation and helper-only reconnect coverage gaps. Alan restored
+  the observation and extracted the full existing suite to `interrupt_tests.rs`;
+  its focused interrupt run passed eight tests. Real reconnect coverage now
+  exercises `reattach_to_current_agent` and passes. An independent generated copy retains the exact starting
+  production prefix and Alan's exact test file (SHA-256
+  `fd18a20b35190c87208baf0d9b2bbd1d928b8f52190a1c2b488d4d85188d711f`):
+  the matching-completion test actually fails its Rendered assertion on the old
+  implementation, exit 101, rather than failing compilation. Evidence is
+  `/tmp/alan-g2-independent-red-20260930.log`; the same check passes on the fixed
+  tree in `/tmp/alan-g2-independent-green-20260930.log`. Alan ran all 154 TUI tests,
+  formatting and diff checks successfully. Both independent review axes have no
+  remaining findings, pinned to tracked diff SHA-256
+  `42ab69b9ad3cb1685ba40e12928db5279c8680355234bd5ef1583951b49f42df`
+  and new test file `2899a6ae1f85dec0244a53058f96de6ed476e00d686585a0b2053bb397df4998`.
+  `just quality` passes including standalone distribution; log is
+  `/tmp/alan-g2-quality-20260930.log`. Its fresh release candidate SHA-256 is
+  `22a484b4c01880011c7c5964a3b1f76ab4d1bd02ea8b51ce5ad96a94856aef69`.
+  Herdr PID 74594 visibly authorized this checkout, started real sleep child
+  74708, acknowledged Ctrl+C with ordinary `Input cancelled` and child termination,
+  then explicitly resumed, returned actual project cwd with exit zero and exited
+  naturally to fish. ANSI evidence is `/tmp/alan-g2-relaunch-{cancel,correction}-20260930.ansi`.
+  The harness first matched a stale ready row after sending correction; a separate
+  exact-result read verified the same invocation before natural exit, without
+  restarting or rescuing it. Alan's reviewed patch is committed locally as
+  `ce6bc0e9f3c23ee6ac8c1160d7c7d89a9e05dae7`. G2 passes locally;
+  G3, current-head CI and merge do not.
+- At the user's explicit request, the dev `chatgpt-main` Connection model now
+  selects `gpt-6.1-sol`; its other settings and credential binding are preserved.
+  Subsequent supervised runs explicitly set
+  `ALAN_CONFIG_PATH=/Users/morris/.config/alan/self-development-agent.toml`, which
+  selects that profile and `model_reasoning_effort = "medium"`. A fresh Herdr
+  invocation returned `MODEL_OK` and its durable Machine metadata at
+  `rollout-20260930-113629-8f32b38e-ca4c-4da1-805b-a4b3328ce2d3.jsonl` records
+  model `gpt-6.1-sol` and effort `medium`. G1/G2 evidence retains its original
+  gpt-6-luna identity; this setting change does not retroactively requalify it.
+- Full-candidate independent review is pinned to
+  `ce6bc0e9f3c23ee6ac8c1160d7c7d89a9e05dae7` against original baseline
+  `660253fa1ff0557dc1f2ef40fb0acefdcb5d1ae2`, diff SHA-256
+  `dd15ef51fa405fe455e523197a7831dd170b7eaf3fd2ac2711597807e2872d285`.
+  Five findings remain before delivery: Ctrl+C must consider admitted pending
+  submissions before Running arrives; externally revoked project grants must
+  invalidate project/candidate UI; provider bootstrap failure must not label an
+  unbound configured model effective; `/project` remediation belongs in the
+  interactive adapter rather than shared Engine errors; the enlarged Host Mount
+  inline suite must be extracted intact. Alan is addressing the keyboard routing
+  finding first. Normal-path live G1/G2 evidence does not qualify these boundaries.
 
 - Corrected the live-test executable selection: the September 30 build outputs
   `target/quality-gate/debug/alan`; the explicit-target executable under
@@ -132,6 +184,91 @@ not a second implementation owner.
   task 2.4 complete until the fresh candidate is checked at required widths and
   through Herdr.
 
+### Second self-authored task — keyboard interruption follow-up
+
+- Alan's three-file patch against `ce6bc0e9` routes Ctrl+C using the existing
+  pending submission queue before the Running UI event arrives. The regression
+  exercises real keyboard dispatch, targeted control, chooser cancellation and
+  completion back to idle. Independent TUI verification passed 155 tests;
+  `/tmp/alan-g3-independent-tui-20260930.log` retains the result. Both review
+  axes examined diff SHA-256
+  `f4a483a5fdfdc2472e50a382424935c21c7a9a2951dbcafb262b9b839f1d6419`;
+  the before-Running interruption finding is closed. Four whole-candidate
+  findings remain open. `just quality` also passed, including standalone
+  distribution verification; `/tmp/alan-g3-quality-20260930.log` retains the
+  complete gate output. The one-line queue dispatch helper received a
+  non-blocking simplification suggestion, not a standards violation.
+- Fresh build/relaunch, recovery without replay and CI remain pending; this is
+  not a G3 pass. On continuation the operator environment lacked
+  `HERDR_ENV=1`, so Herdr control was stopped under its skill contract. The
+  existing Alan process and its authored patch were preserved, with independent
+  local validation continuing.
+- The user subsequently confirmed the Herdr-managed pane and explicitly asked
+  to continue after the environment-check explanation. The operator resumed
+  only the recorded `w5E:p1`, verified its cwd/process identity, observed Alan's
+  final ready report and unchanged reviewed diff, and requested normal `/quit`.
+  Herdr confirmed the original fish shell returned; no process rescue occurred.
+- The reviewed keyboard patch was committed as
+  `28f16b3bb736e1ced490c0ee750679f69049ae67`; its commit hook passed the full
+  quality gate. The freshly built release SHA-256 is
+  `670b1fbec8b3ad0061294f7f99bb70c58bf05c0278cf168a0a4bfe83c767395d`.
+  A new bare invocation in the same pane (PID 18457) required fresh visible
+  read-write project selection and executed `!pwd` with exit 0. The effective
+  model repair and the user's cursor report are subsequent separate tasks.
+- Alan's model repair changed only Service Manager, its adjacent boot tests,
+  OS Host and CLI projection. Both review axes closed configured-but-unbound
+  model on four-file diff SHA-256
+  `d6d7db2070cb35e15270fda59a9c8130af154d2432f71fa83c6537fd971e31c3`.
+  Its real red returned configured `gpt-5.4` instead of null; the repaired
+  unavailable and successful-profile checks passed. Independent Service Manager
+  tests passed 119 unit and both integration tests; independent OS Host tests
+  passed 31 unit plus their integration suites. Alan's own two socket-creating
+  OS Host tests were denied by its sandbox; preserve that failed execution as
+  an operator-support limitation rather than count independent checks as Alan's
+  self-executed success. No sandbox broadening or test suppression was used.
+- The user reported cursor misplacement during this continuation. Alan reproduced
+  two real `draw` failures with a nonzero native Ratatui viewport origin, then
+  changed only the two cursor-coordinate expressions to add that origin. Both
+  checks and all 157 TUI tests passed; independent TUI verification also passed
+  (`/tmp/alan-cursor-independent-tui-20260930.log`). Independent PTY verification
+  of the old binary at 40/60/80/120 columns reproduced eight incorrect cursor
+  positions, including Chinese/emoji multiline drafts
+  (`/tmp/alan-cursor-pty-red-20260930.log`). The PTY reports a nonzero initial
+  cursor row through the normal terminal query; it does not supply a runtime
+  directory, grant or provider bypass. Two preliminary harness runs failed to
+  recognize the narrow prompt and are not red evidence; the final run checked
+  actual cursor positions and all four invocations exited normally. Fresh
+  candidate PTY green and Herdr relaunch remain pending.
+- Final model review SHA-256 is
+  `eb23d5e211ed24a02284447cc9d886ebb010e168783e112a1359563795ff9eea`;
+  final cursor review SHA-256 is
+  `1a182a16913c02c2a201bfd2b2ec2d93f18c24b60094d7b22aaae61e3f05680a`.
+  Alan shortened its own unavailable-model assertion to direct `None`, preserving
+  all original tests and the recorded real red, to meet the unchanged 1000-line
+  source-size gate. A later model-only hook was terminated before a successful
+  result; the clean, reviewed six-file slice then passed the complete hook and
+  was committed as `b0e11c0f5d82ec46564e9f8b9b5d8bd760c288be`.
+  Release binary SHA-256 is
+  `fe8157aca85ac077659570a6215aee52c54b83d36d79d6c9d83a611f7389b062`.
+  The identical native PTY checks passed all eight cases
+  (`/tmp/alan-cursor-pty-green-20260930.log`); all four invocations exited
+  normally. Fresh Herdr invocation PID 9075 displayed and cleared a Chinese/emoji
+  draft. Raw `pane send-text` LF did not represent multiline paste; the actual
+  bracketed-paste multiline proof is the PTY evidence, not that raw-key probe.
+- Live G3 recovery acceptance remains failed/unqualified. Invocation 9075
+  visibly authorized the project, executed the one-marker bounded command,
+  started shell 11388/sleep 11389, cancelled them with Ctrl+C, displayed paused,
+  and exited via `/quit`. A follow-up submitted while paused did not execute
+  or show a receipt; its authoritative admission is not yet proven. Explicit
+  `--resume` invocation 12679 selected the recorded rollout in a fresh instance,
+  showed ready/no-project, and did not repeat the effect (marker count remained
+  one; queued marker remained absent). It did not expose previous paused/pending
+  state. Fresh visible authorization was needed again. Preserve these artifacts
+  in `/tmp/alan-g3-recovery-{running,paused,resumed}-20260930.ansi` and the selected
+  filename in `/tmp/alan-g3-recovery-selected-20260930.txt`; do not infer pending
+  input preservation or G3 from no-replay alone. Alan is diagnosing admission,
+  durable queue recovery and UI ownership without modifying code yet.
+
 ## 1. P0 — Make project entry usable
 
 - [ ] 1.1 Connect `/project` and Agent mount requests to a host-local chooser using the current invocation and existing Host Mount Service; verify approve/read-only/read-write/cancel/revoke in the bare CLI without a manually supplied runtime directory, and document the visible flow.
@@ -151,10 +288,10 @@ not a second implementation owner.
 
 ## 3. P2 — Demonstrate supervised self-development
 
-- [ ] 3.1 After G1 passes, prepare an isolated checkout at a recorded Alan SHA and a dev candidate executable; select one small remaining accepted defect with a clear failing check, verify relevant instructions/dispositions, and bound Alan's writable scope to the checkout.
-- [ ] 3.2 Through Herdr, ask Alan to inspect its own source, identify the shared cause and produce the patch plus regression check; preserve its prompt/Tool evidence and confirm no operator supplied or silently edited its patch.
-- [ ] 3.3 Have Alan run the focused check and inspect its diff; independently verify failing-before/passing-after, review scope and actual command exit statuses, and ensure the patch complies with repository architecture and test placement.
-- [ ] 3.4 Build the reviewed candidate through the governed workflow and freshly launch it in Herdr; demonstrate the corrected interaction and clean exit, retaining the known-good binary. Record source/binary identity and mark G2 passed only after this loop succeeds.
+- [x] 3.1 After G1 passes, prepare an isolated checkout at a recorded Alan SHA and a dev candidate executable; select one small remaining accepted defect with a clear failing check, verify relevant instructions/dispositions, and bound Alan's writable scope to the checkout.
+- [x] 3.2 Through Herdr, ask Alan to inspect its own source, identify the shared cause and produce the patch plus regression check; preserve its prompt/Tool evidence and confirm no operator supplied or silently edited its patch.
+- [x] 3.3 Have Alan run the focused check and inspect its diff; independently verify failing-before/passing-after, review scope and actual command exit statuses, and ensure the patch complies with repository architecture and test placement.
+- [x] 3.4 Build the reviewed candidate through the governed workflow and freshly launch it in Herdr; demonstrate the corrected interaction and clean exit, retaining the known-good binary. Record source/binary identity and mark G2 passed only after this loop succeeds.
 - [ ] 3.5 Complete normal review/CI/merge for the actual self-authored change under its owning OpenSpec scope; on any failed step, retain the failed-gate evidence and keep self-development unqualified.
 
 ## 4. P3 — Refine terminal presentation and repeatability

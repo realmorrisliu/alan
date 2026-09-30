@@ -47,6 +47,11 @@ position. Multiline drafts and temporary controls SHALL expand only as needed.
 - **THEN** the first prompt line shows actual context and ready state
 - **AND** the second line accepts input with an explicit Agent or command route marker
 
+#### Scenario: Cursor follows the inline draft after earlier output
+- **WHEN** the inline viewport starts below prior terminal output or moves after scrollback insertion
+- **THEN** the terminal cursor identifies the actual insertion position in the rendered draft using terminal coordinates
+- **AND** wrapped lines, Chinese text and emoji retain correct cursor placement without assuming a zero-origin viewport
+
 #### Scenario: Attention is required
 - **WHEN** work is queued, paused, failed or waiting for approval
 - **THEN** the status line distinguishes that state from working and ready

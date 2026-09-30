@@ -2,6 +2,17 @@
 
 ## Current product acceptance coordination
 
+2026-09-30 local runtime follow-up: the self-development G1 retest identified a
+FIFO mutex scheduling deadlock in Engine execution supervision. The execution
+future remained queued for AgentFS state while a selected observer branch awaited
+a later acquisition without polling that future. Both ordinary submissions and
+deferred actions now keep execution and observer IO concurrently polled, and
+settle admitted observer writes before final UI publication. Correlated evidence,
+build identity and actual ordinary-terminal/Herdr G1 results are recorded in the
+linked readiness task list. Engine tests and `just quality` pass locally;
+independent review, CI and merge are pending. This runtime fix belongs here and
+does not close unrelated unchecked queue/recovery requirements.
+
 The [self-development readiness plan](../make-alan-self-development-ready/tasks.md)
 now coordinates ordinary project entry, terminal UX and G1/G2/G3 acceptance. This
 change retains queue, cwd, cancellation and recovery runtime ownership; the earlier

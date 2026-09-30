@@ -1,5 +1,34 @@
 ## MODIFIED Requirements
 
+### Requirement: Structured completion payload is additive and backward-compatible
+Tool-call-completed records SHALL carry optional structured presentation while
+retaining fallback text. The production file-backed path SHALL carry the same
+runtime-owned title, presentation and fallback preview through additive metadata
+in `actions/<id>/result`, independently of retained raw `output`. Renderer hosts
+SHALL decode these generic forms without interpreting Tool arguments. Metadata
+SHALL pass through the existing durable-evidence redaction boundary and be
+persisted before terminal Action status is published.
+
+#### Scenario: Structured payload is preferred when present
+- **WHEN** a completed Action includes a structured presentation
+- **THEN** the file-backed TUI renders that presentation and its runtime title
+- **AND** user commands and Agent Tool calls use the same projection boundary
+
+#### Scenario: Fallback when payload absent
+- **WHEN** an older or dynamic Action has no usable presentation metadata
+- **THEN** the renderer retains a bounded textual fallback and Tool name
+- **AND** it does not fabricate a successful structured result
+
+#### Scenario: Older consumers are unaffected
+- **WHEN** a consumer does not understand the additive Action result metadata
+- **THEN** existing exit status, correlation and raw output remain available
+- **AND** absent metadata remains compatible with older durable Action records
+
+#### Scenario: Metadata is published atomically with completion evidence
+- **WHEN** a Tool completes through the authoritative Action path
+- **THEN** raw output and redacted presentation metadata are durable before its terminal status event
+- **AND** recovery preserves the presentation without re-executing the Tool
+
 ### Requirement: TUI renders each presentation primitive distinctly
 The TUI SHALL render each existing presentation primitive appropriately through
 the production file-backed path. Routine results SHALL use bounded summaries;
