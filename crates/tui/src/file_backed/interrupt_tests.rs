@@ -1,6 +1,80 @@
 use super::*;
 
 #[tokio::test]
+async fn ctrl_c_routes_accepted_input_before_running_ui_arrives() {
+    use super::super::app::{FileBackedAction, FileBackedEvent};
+    use alan_agent_protocol::{InputIntent, InputMode, UserInputRecord};
+    use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
+
+    let (shell, _root, _namespace, pid) = super::super::stdio_tests::live_root_agent().await;
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let record = UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, "task");
+    super::super::file_surface::write_agent_input(
+        &shell,
+        &app.agent_path,
+        Some(pid.parse().unwrap()),
+        &record,
+    )
+    .await
+    .unwrap();
+    app.accept_input();
+    let pending = VecDeque::from([PendingRootAgentTurn {
+        input: record.body.clone(),
+        submission_id: record.submission_id.clone(),
+        submitted_process: Some(pid.parse().unwrap()),
+        submitted_at_ms: 20,
+    }]);
+    app.composer.set_text("next unsent draft");
+    let ctrl_c = || {
+        FileBackedEvent::Terminal(TerminalEvent::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        )))
+    };
+    let action = super::super::dispatch_with_pending_submissions(&mut app, ctrl_c(), &pending);
+    assert!(
+        matches!(action, Some(FileBackedAction::Interrupt)),
+        "accepted input must route Ctrl+C to interrupt before Running UI arrives"
+    );
+    assert_eq!(app.activity.state, UiActivityState::Idle);
+    assert_eq!(app.composer.text(), "next unsent draft");
+    let (target, command) =
+        interrupt_control(&app.agent_path, &pending, Some(pid.parse().unwrap())).unwrap();
+    super::super::file_surface::write_machine_ctl(&shell, &target, &command)
+        .await
+        .unwrap();
+    let events =
+        String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
+    assert!(events.contains(&format!("ctl:queue-v1 interrupt {}", record.submission_id)));
+    assert!(!events.contains("ctl:interrupt"));
+
+    // The host-local chooser still consumes Ctrl+C, even with an accepted input.
+    app.project_candidate = Some(std::path::PathBuf::from("/tmp/fixture"));
+    assert!(app.handle_command("/project").is_none());
+    assert!(app.project_selection.is_some());
+    assert!(
+        super::super::dispatch_with_pending_submissions(&mut app, ctrl_c(), &pending).is_none()
+    );
+    assert!(app.project_selection.is_none());
+    app.composer.set_text("next unsent draft");
+
+    // Once authoritative completion removes the submission, idle draft clearing returns.
+    let completion = UiEvent::InputCompleted {
+        submission_ids: vec![record.submission_id],
+        status: alan_agent_protocol::UiInputStatus::Cancelled,
+        error: None,
+    };
+    let mut pending = pending;
+    observe_root_agent_completion(&mut pending, &completion, &mut app);
+    assert!(pending.is_empty());
+    assert!(
+        super::super::dispatch_with_pending_submissions(&mut app, ctrl_c(), &pending).is_none()
+    );
+    assert!(app.composer.text().is_empty());
+    assert_eq!(app.notice.as_deref(), Some("draft cleared"));
+}
+
+#[tokio::test]
 async fn pending_input_interrupt_is_targeted_before_activity_is_observed() {
     let (shell, root, _, pid) = super::super::stdio_tests::live_root_agent().await;
     let pending = PendingRootAgentTurn {

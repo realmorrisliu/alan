@@ -59,6 +59,14 @@ use crate::history::HistoryCell;
 #[cfg(test)]
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
+fn dispatch_with_pending_submissions(
+    app: &mut FileBackedApp,
+    event: FileBackedEvent,
+    pending_turns: &VecDeque<PendingRootAgentTurn>,
+) -> Option<FileBackedAction> {
+    app.dispatch_with_pending_submission(event, !pending_turns.is_empty())
+}
+
 const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
 const SPINNER: [&str; 10] = ["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"];
@@ -212,7 +220,11 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     other => {
-                        if let Some(action) = app.dispatch(other)
+                        if let Some(action) = dispatch_with_pending_submissions(
+                            &mut app,
+                            other,
+                            &pending_root_agent_turns,
+                        )
                         {
                             match action {
                                 FileBackedAction::Submit(record) => {

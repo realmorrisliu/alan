@@ -182,9 +182,20 @@ impl FileBackedApp {
         self.completion_sources.files = files;
     }
 
+    #[cfg(test)]
     pub(super) fn dispatch(&mut self, event: FileBackedEvent) -> Option<FileBackedAction> {
+        self.dispatch_with_pending_submission(event, false)
+    }
+
+    pub(super) fn dispatch_with_pending_submission(
+        &mut self,
+        event: FileBackedEvent,
+        has_pending_submission: bool,
+    ) -> Option<FileBackedAction> {
         match event {
-            FileBackedEvent::Terminal(TerminalEvent::Key(key)) => self.handle_key(key),
+            FileBackedEvent::Terminal(TerminalEvent::Key(key)) => {
+                self.handle_key_with_pending_submission(key, has_pending_submission)
+            }
             FileBackedEvent::Terminal(TerminalEvent::Paste(text)) => {
                 if self.project_selection.is_some() {
                     let text = text
@@ -245,7 +256,16 @@ impl FileBackedApp {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
+        self.handle_key_with_pending_submission(key, false)
+    }
+
+    fn handle_key_with_pending_submission(
+        &mut self,
+        key: KeyEvent,
+        has_pending_submission: bool,
+    ) -> Option<FileBackedAction> {
         let pending_input =
             self.form.is_some() || self.pending_yield.is_some() || self.project_selection.is_some();
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -260,7 +280,9 @@ impl FileBackedApp {
                 self.cancel_project_selection();
                 return None;
             }
-            if self.pending_yield.is_none() && !self.turn_active() {
+            // A successfully written input can precede its Running UI snapshot.
+            // Admission truth comes from the caller's existing pending queue.
+            if !has_pending_submission && self.pending_yield.is_none() && !self.turn_active() {
                 if !self.composer.text().is_empty() {
                     self.composer.set_text("");
                     self.input_intent = InputIntent::Agent;
