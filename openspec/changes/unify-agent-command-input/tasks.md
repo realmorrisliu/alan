@@ -1,5 +1,12 @@
 # Tasks
 
+## Current product acceptance coordination
+
+The [self-development readiness plan](../make-alan-self-development-ready/tasks.md)
+now coordinates ordinary project entry, terminal UX and G1/G2/G3 acceptance. This
+change retains queue, cwd, cancellation and recovery runtime ownership; the earlier
+tracer bullet remains valid evidence but does not qualify self-development.
+
 ## Tracer bullet — execution priority accepted 2026-09-28
 
 Complete one real terminal workflow before expanding horizontal hardening. This
@@ -165,7 +172,7 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
 - [ ] 2.14 Align structured project read/edit/search path parameters with Host shell cwd and paths through existing Host adapters. Verify Agent edit → native read/git diff and native edit → Agent read for the active grant; verify other grants remain available to Agent file tools and become shell-visible only after explicit cwd switching, while one shell action cannot span disjoint grants. Cover grant-relative and shared-cwd-relative Agent paths plus native cwd-relative shell paths, pending-buffer/save failure, stale-content conflict, read-only grants, symlink containment and revocation; no mirror copies or shell-text rewriting.
 - [ ] 2.15 Review normal user flows and Agent command help: ordinary work requires neither aP terminology nor internal mount/descriptor/commit knowledge, while explicit developer inspection remains available.
 
-- [ ] 2.16 Implement `alan: ` / `alan! ` as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
+- [ ] 2.16 Implement the 2026-09-29 compact `: ` / `! ` markers (superseding the current `alan: ` / `alan! ` display) as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
 
 - [x] 2.17 Reconcile lifecycle deltas and ADR references for `alan-os-host-lifecycle`, `local-alan-os-attachment`, `service-manager`, `agent-namespace-runtime`, `agent-file-layout-contract`, `alan-shell`, `alan-renderer-host-contract`, `alan-interaction-model`, `rust-inline-tui`, `host-command-plane` and `standalone-cli-distribution`. Replace channel-singleton startup, client-exit survival and cross-invocation automatic Root recovery promises with foreground ownership and explicit recovery; preserve automatic recovery only for replacement inside a live instance. Update the Ctrl-D/exit scenarios and their acceptance checks in `alan-interaction-model` and `rust-inline-tui`. Audit every existing delta for implicit restart-triggered recovery, channel-global execution and exit-survival assumptions before sync; the owner list is not an exemption for another conflicting surface. Audit and update older interview/report summaries and other active changes that depend on the superseded model.
 - [x] 2.17.1 Define foreground Host lifetime, instance-scoped local attachment and explicit Root recovery in the three owning lifecycle deltas. These are target contracts; runtime and canonical lifecycle-spec sync remain pending.

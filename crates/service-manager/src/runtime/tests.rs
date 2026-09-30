@@ -330,7 +330,7 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
                 created_at: now,
                 updated_at: now,
                 source: "managed".to_string(),
-                settings: BTreeMap::new(),
+                settings: BTreeMap::from([("model".to_string(), "model-from-profile".to_string())]),
             },
         )]
         .into_iter()
@@ -365,6 +365,7 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
         factory.selected_profiles.lock().unwrap().as_slice(),
         &[Some(profile_id)]
     );
+    assert_eq!(manager.root_model(), "model-from-profile");
     manager.shutdown().await.unwrap();
 }
 

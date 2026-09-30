@@ -1,5 +1,9 @@
 # Unified Agent input exploration — 2026-09-24
 
+> 2026-09-29 更新：下文长提示符记录为历史决定。当前目标采用两行 Agent
+> prompt 与 `: ` / `! `；见 [更新后的设计](design.md#prompt-communicates-the-submission-route)。
+> 输入意图语义不变，此注记不宣称实现已交付。
+
 Status: consolidated design confirmed by the user on 2026-09-24 after all
 interview rounds; ADR-0058 is accepted direction. Runtime implementation remains
 pending. This record does not reactivate superseded plans; ADR-0058 defines the

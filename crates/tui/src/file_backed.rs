@@ -12,9 +12,7 @@ use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
-use crossterm::event::KeyEvent;
-#[cfg(test)]
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
+use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 #[cfg(test)]
 use ratatui::style::Color;
 mod app;
@@ -23,13 +21,17 @@ mod history_merge;
 mod interrupt;
 mod layout;
 mod previous_input;
+mod project;
+pub use project::{
+    ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
+    ProjectControlResult, ProjectMountReceipt,
+};
 mod stdio_completion;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 use interrupt::{
-    PendingRootAgentTurn, observe_root_agent_completion, send_interrupt,
-    settle_unknown_replaced_input,
+    PendingRootAgentTurn, observe_root_agent_completion, settle_unknown_replaced_input,
 };
 use previous_input::discard_superseded_attachment_events;
 
@@ -47,7 +49,7 @@ use file_surface::{
 use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
-    root_agent_path_for_pid,
+    root_agent_path_for_pid, spawn_root_agent_pid_refresh,
 };
 
 use crate::completion::CompletionCandidate;
@@ -68,6 +70,8 @@ pub struct FileBackedRunConfig {
     pub root_transport: InProcessTransport,
     /// Concrete launched agent path, for example `/agent/1`.
     pub agent_path: String,
+    /// Effective model selected for this invocation, when supplied by the Host.
+    pub effective_model: Option<String>,
     /// Optional explicitly authorized Host directory used for local `@` file completion.
     pub host_file_completion_root: Option<PathBuf>,
     /// Whether stdin/stdout must be interactive before entering the UI.
@@ -76,6 +80,10 @@ pub struct FileBackedRunConfig {
     pub history_path: Option<PathBuf>,
     /// Optional local skill candidates used for `$` completion.
     pub skill_candidates: Vec<CompletionCandidate>,
+    /// Host cwd offered as the initial path in `/project`.
+    pub project_candidate: Option<PathBuf>,
+    /// Host-local project grant/revoke control for this Alan invocation.
+    pub project_control: Option<ProjectControlHandler>,
 }
 
 impl FileBackedRunConfig {
@@ -84,10 +92,13 @@ impl FileBackedRunConfig {
         Self {
             root_transport,
             agent_path: agent_path.into(),
+            effective_model: None,
             host_file_completion_root: None,
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
+            project_candidate: None,
+            project_control: None,
         }
     }
 }
@@ -100,7 +111,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     let shell = alan_shell::Shell::new(config.root_transport.clone());
     let mut app = FileBackedApp::new(config.agent_path.clone());
+    app.set_effective_model(config.effective_model.clone());
     app.set_skill_candidates(config.skill_candidates.clone());
+    app.set_project_candidate(config.project_candidate.clone());
     if let Some(host_root) = &config.host_file_completion_root {
         app.set_file_candidates(super::build_file_index(host_root, crate::FILE_INDEX_LIMIT));
     }
@@ -118,11 +131,20 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let terminal_reader = spawn_terminal_events(tx.clone());
 
     let mut watchers = AgentWatchers::start(watch_tails, &config.agent_path, tx.clone());
+    let (root_agent_pid_retry, root_agent_pid_retry_rx) = tokio::sync::watch::channel(());
+    let root_agent_pid_refresh = if follows_root_agent {
+        Some(spawn_root_agent_pid_refresh(
+            shell.clone(),
+            tx.clone(),
+            root_agent_pid_retry_rx,
+            watchers.root_agent_pid,
+        ))
+    } else {
+        None
+    };
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
-    root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
 
     loop {
@@ -135,6 +157,28 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     observe_root_agent_completion(&mut pending_root_agent_turns, event, &mut app);
                 }
                 match event {
+                    FileBackedEvent::RootAgentPidRefresh(result) => {
+                        let retry = matches!(&result, Ok(Some(_)));
+                        watchers.pending_root_agent_pid_result = Some(result);
+                        watchers
+                            .refresh_root_agent_attachment(
+                                &shell,
+                                &config.agent_path,
+                                &mut app,
+                                &mut rx,
+                                &mut pending_root_agent_turns,
+                                &tx,
+                            )
+                            .await;
+                        if retry && watchers.pid_refresh_failed {
+                            root_agent_pid_retry.send_replace(());
+                        }
+                        settle_unknown_replaced_input(
+                            &mut pending_root_agent_turns,
+                            watchers.root_agent_pid,
+                            &mut app,
+                        );
+                    }
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
                             app.push_error(format!("request refresh failed: {err:#}"));
@@ -150,6 +194,21 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         .await
                         {
                             app.push_error(format!("action refresh failed: {err:#}"));
+                        } else if let Some(grant_id) = app.take_ready_project_revoke() {
+                            if let Some(handler) = config.project_control.as_ref() {
+                                match handler(ProjectControl::Revoke { grant_id }).await {
+                                    Ok(ProjectControlResult::Revoked) => {
+                                        app.project_revoked();
+                                        app.notice = Some("project grant revoked".into());
+                                    }
+                                    Ok(ProjectControlResult::Mounted { .. }) => {
+                                        app.push_error("Host mounted a project while revoke was expected".into());
+                                    }
+                                    Err(err) => app.push_error(format!("project revoke failed: {err:#}")),
+                                }
+                            } else {
+                                app.push_error("local project selection is unavailable in this Host".into());
+                            }
                         }
                     }
                     other => {
@@ -169,7 +228,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     submission_id: record.submission_id.clone(),
                                                     submitted_process: watchers.root_agent_pid,
                                                     submitted_at_ms,
-                                                });
+                                            });
                                                 watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
@@ -185,25 +244,164 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Err(err) => app.push_error(format!("submit failed: {err:#}")),
                                     }
                                 }
-                                FileBackedAction::Resume { request_id, response } => {
-                                    match write_request_response(&shell, &app.agent_path, &request_id, &response).await {
-                                        Ok(()) => {
-                                            app.notice = Some("response sent".to_string());
-                                            if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
-                                                app.push_error(format!("request refresh failed: {err:#}"));
-                                            }
-                                        }
-                                        Err(err) => app.push_error(format!("resume failed: {err:#}")),
+                                FileBackedAction::Resume {
+                                    request_id,
+                                    response,
+                                    retry_input,
+                                } => {
+                                    let response_agent_path = if follows_root_agent {
+                                        pending_root_agent_turns
+                                            .front()
+                                            .and_then(|turn| turn.submitted_process)
+                                            .or(watchers.root_agent_pid)
+                                            .map(|pid| format!("/agent/{pid}"))
+                                    } else {
+                                        Some(app.agent_path.clone())
+                                    };
+                                    if let Some(agent_path) = response_agent_path {
+                                        app.begin_resume_write(request_id.clone());
+                                        let operation_shell =
+                                            alan_shell::Shell::new(config.root_transport.clone());
+                                        let completion_tx = tx.clone();
+                                        tokio::spawn(async move {
+                                            let result = write_request_response(
+                                                &operation_shell,
+                                                &agent_path,
+                                                &request_id,
+                                                &response,
+                                            )
+                                            .await
+                                            .map_err(|err| format!("{err:#}"));
+                                            let _ = completion_tx
+                                                .send(FileBackedEvent::ResumeWriteCompleted {
+                                                    request_id,
+                                                    retry_input,
+                                                    result,
+                                                })
+                                                .await;
+                                        });
+                                    } else {
+                                        app.push_error(
+                                            "Root Agent is not attached; retry response".into(),
+                                        );
                                     }
                                 }
                                 FileBackedAction::MachineCtl { command, success_notice } => {
-                                    match write_machine_ctl(&shell, &app.agent_path, &command).await {
-                                        Ok(()) => app.notice = Some(success_notice),
-                                        Err(err) => app.push_error(format!("control failed: {err:#}")),
+                                    spawn_control_write(
+                                        config.root_transport.clone(),
+                                        tx.clone(),
+                                        app.agent_path.clone(),
+                                        command,
+                                        success_notice,
+                                        "control failed".into(),
+                                    );
+                                }
+                                FileBackedAction::Project(command) => {
+                                    let Some(handler) = config.project_control.as_ref() else {
+                                        app.push_error("local project selection is unavailable in this Host".into());
+                                        dirty = true;
+                                        continue;
+                                    };
+                                    match command {
+                                        ProjectControl::Mount { host_path, access } => {
+                                            match handler(ProjectControl::Mount { host_path, access }).await {
+                                                Ok(ProjectControlResult::Mounted { receipt, completion_root }) => {
+                                                    let record = alan_agent_protocol::UserInputRecord::new(
+                                                        alan_agent_protocol::InputIntent::Command,
+                                                        alan_agent_protocol::InputMode::FollowUp,
+                                                        format!("cd {}", receipt.namespace_path),
+                                                    );
+                                                    let submission_id = record.submission_id.clone();
+                                                    match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
+                                                        Ok(()) => {
+                                                            if follows_root_agent {
+                                                                pending_root_agent_turns.push_back(PendingRootAgentTurn {
+                                                                    input: record.body.clone(),
+                                                                    submission_id: record.submission_id.clone(),
+                                                                    submitted_process: watchers.root_agent_pid,
+                                                                    submitted_at_ms: unix_time_ms(),
+                                                                });
+                                                            }
+                                                            app.set_file_candidates(super::build_file_index(&completion_root, crate::FILE_INDEX_LIMIT));
+                                                            app.project_mounted(receipt, submission_id);
+                                                            if follows_root_agent {
+                                                                watchers.refresh_root_agent_attachment(
+                                                                    &shell,
+                                                                    &config.agent_path,
+                                                                    &mut app,
+                                                                    &mut rx,
+                                                                    &mut pending_root_agent_turns,
+                                                                    &tx,
+                                                                ).await;
+                                                            }
+                                                        }
+                                                        Err(err) => {
+                                                            let cleanup = handler(ProjectControl::Revoke {
+                                                                grant_id: receipt.grant_id.clone(),
+                                                            }).await;
+                                                            app.push_error(match cleanup {
+                                                                Ok(_) => format!("project mounted but cwd setup failed: {err:#}"),
+                                                                Err(cleanup) => format!("project mount succeeded, cwd setup failed ({err:#}); grant cleanup also failed ({cleanup:#})"),
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                                Ok(ProjectControlResult::Revoked) => {
+                                                    app.push_error("Host revoked a project while a mount was expected".into());
+                                                }
+                                                Err(err) => app.push_error(format!("project mount failed: {err:#}")),
+                                            }
+                                        }
+                                        ProjectControl::Revoke { grant_id } => {
+                                            let record = alan_agent_protocol::UserInputRecord::new(
+                                                alan_agent_protocol::InputIntent::Command,
+                                                alan_agent_protocol::InputMode::FollowUp,
+                                                "cd /",
+                                            );
+                                            match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
+                                                Ok(()) => {
+                                                    app.begin_project_revoke(grant_id, record.submission_id.clone());
+                                                    app.notice = Some("leaving project cwd before revoking its grant".into());
+                                                    if follows_root_agent {
+                                                        pending_root_agent_turns.push_back(PendingRootAgentTurn {
+                                                            input: record.body.clone(),
+                                                            submission_id: record.submission_id.clone(),
+                                                            submitted_process: watchers.root_agent_pid,
+                                                            submitted_at_ms: unix_time_ms(),
+                                                        });
+                                                        watchers.refresh_root_agent_attachment(
+                                                            &shell,
+                                                            &config.agent_path,
+                                                            &mut app,
+                                                            &mut rx,
+                                                            &mut pending_root_agent_turns,
+                                                            &tx,
+                                                        ).await;
+                                                    }
+                                                }
+                                                Err(err) => app.push_error(format!("could not leave project before revoke: {err:#}")),
+                                            }
+                                        }
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
-                                    send_interrupt(&shell, &mut app, &pending_root_agent_turns, watchers.root_agent_pid).await;
+                                    match interrupt::interrupt_control(
+                                        &app.agent_path,
+                                        &pending_root_agent_turns,
+                                        watchers.root_agent_pid,
+                                    ) {
+                                        Ok((agent_path, command)) => {
+                                            spawn_control_write(
+                                                config.root_transport.clone(),
+                                                tx.clone(),
+                                                agent_path,
+                                                command,
+                                                "interrupt requested".into(),
+                                                "interrupt failed".into(),
+                                            );
+                                        }
+                                        Err(error) => app.push_error(error),
+                                    }
                                 }
                                 FileBackedAction::Quit => break,
                             }
@@ -214,28 +412,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 }
                 dirty = true;
-            }
-            _ = root_agent_pid_tick.tick(), if follows_root_agent => {
-                let previous_pid = watchers.root_agent_pid;
-                let previous_refresh_failed = watchers.pid_refresh_failed;
-                let previous_turns = pending_root_agent_turns.clone();
-                watchers
-                    .refresh_root_agent_attachment(
-                    &shell,
-                    &config.agent_path,
-                    &mut app,
-                    &mut rx,
-                    &mut pending_root_agent_turns,
-                    &tx,
-                    )
-                    .await;
-                settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
-                if previous_pid != watchers.root_agent_pid
-                    || previous_refresh_failed != watchers.pid_refresh_failed
-                    || previous_turns != pending_root_agent_turns
-                {
-                    dirty = true;
-                }
             }
             _ = frame_tick.tick() => {
                 if dirty {
@@ -259,6 +435,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     watchers.stop().await;
     drop(rx);
+    if let Some(task) = root_agent_pid_refresh {
+        let _ = task.await;
+    }
     terminal_reader
         .await
         .context("terminal reader task failed")?;
@@ -276,12 +455,36 @@ async fn receive_file_backed_event(
     }
 }
 
+fn spawn_control_write(
+    transport: InProcessTransport,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    agent_path: String,
+    command: String,
+    success_notice: String,
+    error_prefix: String,
+) {
+    tokio::spawn(async move {
+        let shell = alan_shell::Shell::new(transport);
+        let result = write_machine_ctl(&shell, &agent_path, &command)
+            .await
+            .map_err(|err| format!("{err:#}"));
+        let _ = tx
+            .send(FileBackedEvent::ControlWriteCompleted {
+                success_notice,
+                error_prefix,
+                result,
+            })
+            .await;
+    });
+}
+
 struct AgentWatchers {
     recovery: Option<(alan_shell::Tail, alan_shell::Tail)>,
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     root_agent_pid: Option<u64>,
     pid_refresh_failed: bool,
+    pending_root_agent_pid_result: Option<Result<Option<u64>, String>>,
     pending_terminal_events: VecDeque<FileBackedEvent>,
 }
 
@@ -322,6 +525,7 @@ impl AgentWatchers {
             tasks,
             root_agent_pid,
             pid_refresh_failed: false,
+            pending_root_agent_pid_result: None,
             pending_terminal_events: VecDeque::new(),
         }
     }
@@ -335,7 +539,13 @@ impl AgentWatchers {
         pending_turns: &mut VecDeque<PendingRootAgentTurn>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> bool {
-        match current_root_agent_pid(shell).await {
+        let current_pid = match self.pending_root_agent_pid_result.take() {
+            Some(result) => result,
+            None => current_root_agent_pid(shell)
+                .await
+                .map_err(|error| format!("{error:#}")),
+        };
+        match current_pid {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
                 let pending_count = pending_turns.len();
                 // Tape history outlives the local pending-input lock.
@@ -400,7 +610,7 @@ impl AgentWatchers {
             }
             Err(err) if !self.pid_refresh_failed => {
                 self.pid_refresh_failed = true;
-                app.push_error(format!("Root Agent identity refresh failed: {err:#}"));
+                app.push_error(format!("Root Agent identity refresh failed: {err}"));
                 false
             }
             Err(_) => false,

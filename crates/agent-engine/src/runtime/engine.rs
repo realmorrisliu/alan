@@ -29,6 +29,9 @@ use tracing::{debug, error, info, warn};
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
 
+#[path = "engine_monitor.rs"]
+mod monitor;
+
 /// Return unconsumed steering input to the Machine-owned ordinary queue.
 async fn requeue_leftover_inband_submissions(
     broker: &TurnInputBroker,
@@ -660,165 +663,142 @@ fn spawn_with_prepared_runtime_environment(
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.agent_files();
                     let namespace_heartbeat = state.agent_files();
-                    let mut submission_fut = Box::pin(advance_accepted_submission(
+                    let submission_fut = advance_accepted_submission(
                         &mut state,
                         submission,
                         &broker_for_submission,
                         &cancel,
-                    ));
+                    );
                     let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(5));
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-                    loop {
-                        tokio::select! {
-                            outcome = &mut submission_fut => {
-                                drop(submission_fut);
-                                let terminal_ui_result = match &outcome.result {
-                                    Ok(TransitionCompletion::Paused) => Ok(()),
-                                    Ok(TransitionCompletion::Completed) => super::ui_surfaces::turn_completed(
-                                        &namespace_heartbeat,
-                                        false,
-                                    )
-                                    .await,
-                                    Err(err) => super::ui_surfaces::turn_failed(
-                                        &namespace_heartbeat,
-                                        &format!("Error handling submission: {err}"),
-                                    )
-                                    .await,
-                                };
-                                if let Err(err) = terminal_ui_result {
-                                    warn!(error = %err, "Failed to write terminal runtime state");
-                                }
-                                if outcome.requeue_inband_submissions {
-                                    let _ = queues
-                                        .requeue_active_turn_leftovers(&mut state.machine)
-                                        .await;
-                                }
-                                if let Err(e) = &outcome.result {
-                                    let error_msg = format!("Error handling submission: {}", e);
-                                    error!(error = %error_msg);
-                                }
-                                if cancel.is_cancelled() {
-                                    queues.pause();
-                                }
-                                if queues.is_paused() {
-                                    let _ = super::ui_surfaces::paused(
-                                        &namespace_heartbeat,
-                                        state.machine.has_pending_interaction().then_some(&state.machine),
-                                    ).await;
-                                }
-                                queues.outer_queue.lock().expect("input queue poisoned").pending.extend(
-                                    outcome
-                                        .deferred_actions
-                                        .into_iter()
-                                        .map(QueuedRuntimeItem::Deferred),
-                                );
-                                break;
-                            }
-                            incoming = sub_rx.recv(), if !submissions_closed => {
-                                match incoming {
-                                    Some(incoming) => {
-                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
-                                            continue;
-                                        }
-                                        queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
-                                    }
-                                    None => {
-                                        submissions_closed = true;
-                                        cancel.cancel();
-                                    }
-                                }
-                            }
-                            _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                let ready = match namespace_control.read_ready_runtime_submissions().await {
-                                    Ok(ready) => ready,
-                                    Err(error) => vec![Err(error)],
-                                };
-                                for event in ready {
-                                    match event {
-                                        Ok(incoming) => {
-                                            // A machine/ctl interrupt must cancel the
-                                            // running generation/tool immediately, like
-                                            // an Op::Interrupt arriving on sub_rx.
+                    let monitor_stop = CancellationToken::new();
+                    let observer = async {
+                        loop {
+                            tokio::select! {
+                                _ = monitor_stop.cancelled() => break,
+                                incoming = sub_rx.recv(), if !submissions_closed => {
+                                    match incoming {
+                                        Some(incoming) => {
                                             if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
                                                 continue;
                                             }
                                             queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
                                         }
-                                        Err(err) => {
-                                            let error_msg = format!("Failed to read namespace input/control event: {err:#}");
-                                            error!(error = %error_msg);
-                                            let _ = super::ui_surfaces::warning(
-                                                &namespace_heartbeat,
-                                                error_msg,
-                                            ).await;
+                                        None => {
+                                            submissions_closed = true;
+                                            cancel.cancel();
                                         }
                                     }
                                 }
-                            }
-                            _ = heartbeat_interval.tick() => {
-                                if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat).await {
-                                    warn!(error = %err, "Failed to write runtime activity heartbeat");
+                                _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
+                                    let ready = match namespace_control.read_ready_runtime_submissions().await {
+                                        Ok(ready) => ready,
+                                        Err(error) => vec![Err(error)],
+                                    };
+                                    for event in ready {
+                                        match event {
+                                            Ok(incoming) => {
+                                                // A machine/ctl interrupt must cancel the
+                                                // running generation/tool immediately, like
+                                                // an Op::Interrupt arriving on sub_rx.
+                                                if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                                    continue;
+                                                }
+                                                queues.admit_during_submission(incoming, active_intent, accepts_inband).await;
+                                            }
+                                            Err(err) => {
+                                                let error_msg = format!("Failed to read namespace input/control event: {err:#}");
+                                                error!(error = %error_msg);
+                                                let _ = super::ui_surfaces::warning(
+                                                    &namespace_heartbeat,
+                                                    error_msg,
+                                                ).await;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ = heartbeat_interval.tick() => {
+                                    if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat).await {
+                                        warn!(error = %err, "Failed to write runtime activity heartbeat");
+                                    }
+                                }
+                                _ = shutdown_rx.recv() => {
+                                    shutdown_requested = true;
+                                    submissions_closed = true;
+                                    cancel.cancel();
                                 }
                             }
-                            _ = shutdown_rx.recv() => {
-                                shutdown_requested = true;
-                                submissions_closed = true;
-                                cancel.cancel();
-                            }
                         }
-
-                        if shutdown_requested {
-                            continue;
+                    };
+                    let outcome =
+                        monitor::drive_with_monitor(submission_fut, observer, &monitor_stop).await;
+                    let terminal_ui_result = match &outcome.result {
+                        Ok(TransitionCompletion::Paused) => Ok(()),
+                        Ok(TransitionCompletion::Completed) => {
+                            super::ui_surfaces::turn_completed(&namespace_heartbeat, false).await
                         }
+                        Err(err) => {
+                            super::ui_surfaces::turn_failed(
+                                &namespace_heartbeat,
+                                &format!("Error handling submission: {err}"),
+                            )
+                            .await
+                        }
+                    };
+                    if let Err(err) = terminal_ui_result {
+                        warn!(error = %err, "Failed to write terminal runtime state");
                     }
+                    if outcome.requeue_inband_submissions {
+                        let _ = queues
+                            .requeue_active_turn_leftovers(&mut state.machine)
+                            .await;
+                    }
+                    if let Err(e) = &outcome.result {
+                        let error_msg = format!("Error handling submission: {}", e);
+                        error!(error = %error_msg);
+                    }
+                    if cancel.is_cancelled() {
+                        queues.pause();
+                    }
+                    if queues.is_paused() {
+                        let _ = super::ui_surfaces::paused(
+                            &namespace_heartbeat,
+                            state
+                                .machine
+                                .has_pending_interaction()
+                                .then_some(&state.machine),
+                        )
+                        .await;
+                    }
+                    queues
+                        .outer_queue
+                        .lock()
+                        .expect("input queue poisoned")
+                        .pending
+                        .extend(
+                            outcome
+                                .deferred_actions
+                                .into_iter()
+                                .map(QueuedRuntimeItem::Deferred),
+                        );
                 }
                 QueuedRuntimeItem::Deferred(action) => {
                     let action_for_requeue = action.clone();
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
                     let namespace_control = state.agent_files();
-                    let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
-                        &mut state, action, &cancel,
-                    ));
+                    let action_fut =
+                        run_deferred_runtime_action_with_cancel(&mut state, action, &cancel);
 
-                    loop {
-                        tokio::select! {
-                            exit = &mut action_fut => {
-                                drop(action_fut);
-                                if should_requeue_deferred_action(requeue_if_cancelled, exit) {
-                                    queues.push_outer_deferred(action_for_requeue);
-                                }
-                                break;
-                            }
-                            incoming = sub_rx.recv(), if !submissions_closed => {
-                                match incoming {
-                                    Some(incoming) => {
-                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
-                                            continue;
-                                        } else {
-                                            requeue_if_cancelled = true;
-                                            cancel.cancel();
-                                            queues.push_outer_submission(incoming);
-                                        }
-                                    }
-                                    None => {
-                                        submissions_closed = true;
-                                    }
-                                }
-                            }
-                            _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                let ready = match namespace_control.read_ready_runtime_submissions().await {
-                                    Ok(ready) => ready,
-                                    Err(error) => vec![Err(error)],
-                                };
-                                for event in ready {
-                                    match event {
-                                        Ok(incoming) => {
-                                            // Mirror the sub_rx arm: a machine/ctl
-                                            // interrupt just cancels the deferred
-                                            // action; other control ops preempt and
-                                            // requeue it.
+                    let monitor_stop = CancellationToken::new();
+                    let observer = async {
+                        loop {
+                            tokio::select! {
+                                _ = monitor_stop.cancelled() => break,
+                                incoming = sub_rx.recv(), if !submissions_closed => {
+                                    match incoming {
+                                        Some(incoming) => {
                                             if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
                                                 continue;
                                             } else {
@@ -827,20 +807,51 @@ fn spawn_with_prepared_runtime_environment(
                                                 queues.push_outer_submission(incoming);
                                             }
                                         }
-                                        Err(err) => {
-                                            error!(
-                                                error = %format!("{err:#}"),
-                                                "Failed to read namespace input/control event during deferred action"
-                                            );
+                                        None => {
+                                            submissions_closed = true;
                                         }
                                     }
                                 }
-                            }
-                            _ = shutdown_rx.recv() => {
-                                shutdown_requested = true;
-                                submissions_closed = true;
+                                _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
+                                    let ready = match namespace_control.read_ready_runtime_submissions().await {
+                                        Ok(ready) => ready,
+                                        Err(error) => vec![Err(error)],
+                                    };
+                                    for event in ready {
+                                        match event {
+                                            Ok(incoming) => {
+                                                // Mirror the sub_rx arm: a machine/ctl
+                                                // interrupt just cancels the deferred
+                                                // action; other control ops preempt and
+                                                // requeue it.
+                                                if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                                    continue;
+                                                } else {
+                                                    requeue_if_cancelled = true;
+                                                    cancel.cancel();
+                                                    queues.push_outer_submission(incoming);
+                                                }
+                                            }
+                                            Err(err) => {
+                                                error!(
+                                                    error = %format!("{err:#}"),
+                                                    "Failed to read namespace input/control event during deferred action"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                _ = shutdown_rx.recv() => {
+                                    shutdown_requested = true;
+                                    submissions_closed = true;
+                                }
                             }
                         }
+                    };
+                    let exit =
+                        monitor::drive_with_monitor(action_fut, observer, &monitor_stop).await;
+                    if should_requeue_deferred_action(requeue_if_cancelled, exit) {
+                        queues.push_outer_deferred(action_for_requeue);
                     }
                 }
             }

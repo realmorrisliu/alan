@@ -1,3 +1,4 @@
+use super::app::FileBackedEvent;
 use alan_agent_protocol::UiActivitySnapshot;
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -20,6 +21,45 @@ pub(super) async fn current_root_agent_pid(shell: &alan_shell::Shell) -> Result<
         .parse::<u64>()
         .context("Root Agent PID is not an unsigned integer")?;
     Ok((pid > 0).then_some(pid))
+}
+
+pub(super) fn spawn_root_agent_pid_refresh(
+    shell: alan_shell::Shell,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    mut retry: tokio::sync::watch::Receiver<()>,
+    initial_pid: Option<u64>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last = Some(Ok(initial_pid));
+
+        loop {
+            tokio::select! {
+                _ = tx.closed() => break,
+                changed = retry.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    last = None;
+                }
+                _ = tick.tick() => {
+                    let current = tokio::select! {
+                        _ = tx.closed() => break,
+                        current = current_root_agent_pid(&shell) => {
+                            current.map_err(|error| format!("{error:#}"))
+                        }
+                    };
+                    if last.as_ref() != Some(&current) {
+                        if tx.send(FileBackedEvent::RootAgentPidRefresh(current.clone())).await.is_err() {
+                            break;
+                        }
+                        last = Some(current);
+                    }
+                }
+            }
+        }
+    })
 }
 
 pub(super) async fn wait_for_root_agent_activity(

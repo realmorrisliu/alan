@@ -2,10 +2,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
-pub(crate) const INLINE_PROMPT_PREFIX: &str = "alan: ";
-pub(crate) const INLINE_WAITING_PROMPT_PREFIX: &str = "alan » ";
-pub(crate) const INLINE_COMMAND_PROMPT_PREFIX: &str = "alan! ";
-pub(crate) const INLINE_PROMPT_CONTINUATION: &str = "      ";
+pub(crate) const INLINE_PROMPT_PREFIX: &str = ": ";
+pub(crate) const INLINE_WAITING_PROMPT_PREFIX: &str = "? ";
+pub(crate) const INLINE_COMMAND_PROMPT_PREFIX: &str = "! ";
+pub(crate) const INLINE_PROMPT_CONTINUATION: &str = "  ";
 
 pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: usize) -> usize {
     if lines.is_empty() {

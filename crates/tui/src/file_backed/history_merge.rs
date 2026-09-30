@@ -172,6 +172,9 @@ fn rendered_history_tokens(cell: &HistoryCell) -> Vec<String> {
     let mut lines = cell.render_lines(RenderOpts::new(16_384, false));
     if let Some(first) = lines.first_mut() {
         for prefix in [
+            ": ",
+            "! ",
+            "? ",
             "alan > ",
             "alan: ",
             "alan! ",

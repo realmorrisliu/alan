@@ -69,36 +69,25 @@ pub(super) fn settle_unknown_replaced_input(
     }
 }
 
-pub(super) async fn send_interrupt(
-    shell: &alan_shell::Shell,
-    app: &mut FileBackedApp,
+pub(super) fn interrupt_control(
+    agent_path: &str,
     pending_turns: &VecDeque<PendingRootAgentTurn>,
     root_pid: Option<u64>,
-) {
+) -> Result<(String, String), String> {
     let pending = pending_turns.front();
-    let agent_path = if app.agent_path == "/agent/root" {
+    let target = if agent_path == "/agent/root" {
         let Some(pid) = pending.map_or(root_pid, |turn| turn.submitted_process) else {
-            app.push_error("Root Agent is not attached; retry interrupt".into());
-            return;
+            return Err("Root Agent is not attached; retry interrupt".into());
         };
         format!("/agent/{pid}")
     } else {
-        app.agent_path.clone()
+        agent_path.to_string()
     };
-    let result = if let Some(turn) = pending {
-        super::file_surface::write_machine_ctl(
-            shell,
-            &agent_path,
-            &format!("queue-v1 interrupt {}", turn.submission_id),
-        )
-        .await
-    } else {
-        super::file_surface::write_interrupt(shell, &agent_path).await
-    };
-    match result {
-        Ok(()) => app.notice = Some("interrupt requested".to_string()),
-        Err(err) => app.push_error(format!("interrupt failed: {err:#}")),
-    }
+    let command = pending.map_or_else(
+        || "interrupt".to_string(),
+        |turn| format!("queue-v1 interrupt {}", turn.submission_id),
+    );
+    Ok((target, command))
 }
 
 #[cfg(test)]
@@ -107,7 +96,6 @@ mod tests {
     #[tokio::test]
     async fn pending_input_interrupt_is_targeted_before_activity_is_observed() {
         let (shell, root, _, pid) = super::super::stdio_tests::live_root_agent().await;
-        let mut app = FileBackedApp::new("/agent/root".into());
         let pending = PendingRootAgentTurn {
             input: "queued task".into(),
             submission_id: "00000000-0000-4000-8000-000000000001".into(),
@@ -125,9 +113,12 @@ mod tests {
         ]);
         root.set_root_process("99999").await;
         for refreshed_pid in [Some(99999), None] {
-            app.notice = None;
-            send_interrupt(&shell, &mut app, &pending_turns, refreshed_pid).await;
-            assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
+            let (agent_path, command) =
+                interrupt_control("/agent/root", &pending_turns, refreshed_pid).unwrap();
+            assert_eq!(agent_path, format!("/agent/{pid}"));
+            super::super::file_surface::write_machine_ctl(&shell, &agent_path, &command)
+                .await
+                .unwrap();
         }
         let events =
             String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
@@ -137,7 +128,6 @@ mod tests {
         )));
         assert!(!events.contains("ctl:interrupt"));
         assert!(!events.contains(&pending_turns.back().unwrap().submission_id));
-        assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
     }
 
     #[test]

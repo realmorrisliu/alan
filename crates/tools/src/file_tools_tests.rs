@@ -71,10 +71,10 @@ async fn test_read_file_tool_requires_explicit_sandbox_grant() {
         .await
         .unwrap_err();
 
-    assert!(
-        err.to_string()
-            .contains("Tool Process has no explicit Host execution adapter")
-    );
+    let message = err.to_string();
+    assert!(message.contains("No project directory is authorized"));
+    assert!(message.contains("Run `/project` in Alan Shell"));
+    assert!(message.contains("Tool Process has no explicit Host execution adapter"));
 }
 
 #[tokio::test]

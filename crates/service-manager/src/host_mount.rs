@@ -318,6 +318,36 @@ impl HostMountService {
             .map(|request| request.request.clone())
     }
 
+    /// Create a Host-local project request owned by the active Root Agent.
+    ///
+    /// The native Host adapter supplies and exports the selected directory;
+    /// this service keeps only the logical mount request and grant authority.
+    pub fn request_project_mount(
+        &self,
+        requesting_pid: Pid,
+        access: HostMountAccess,
+    ) -> Result<String> {
+        anyhow::ensure!(
+            self.state
+                .lock()
+                .unwrap()
+                .processes
+                .contains_key(&requesting_pid),
+            "Root Agent Process is not active"
+        );
+        let id = self.allocate_request_id();
+        let request = HostMountRequest {
+            id: id.clone(),
+            label: "Project".to_string(),
+            namespace_path: format!("/mnt/project-{id}"),
+            access,
+            reason: "User selected a project directory".to_string(),
+            requesting_pid: requesting_pid.0,
+        };
+        self.enqueue(request)?;
+        Ok(id)
+    }
+
     pub fn approve_export(
         &self,
         request_id: &str,
@@ -797,7 +827,6 @@ impl ToolExecutionAuthority for HostMountService {
         mut binding: ToolExecutionBinding,
     ) -> Result<ToolExecutionBinding> {
         let pid = Pid(pid);
-        let carried_host_mount_authority = binding.has_adapter();
         let requested_namespace_cwd = binding.namespace_cwd.clone();
         let state = self.state.lock().unwrap();
         let mut cwd_grants = Vec::new();
@@ -847,11 +876,6 @@ impl ToolExecutionAuthority for HostMountService {
             "Process cwd grant was revoked or replaced; choose an explicit directory"
         );
         binding.cwd_grant_id = selected_grant;
-        // Fail closed only if reconciliation removed cached Host Mount authority.
-        ensure!(
-            !carried_host_mount_authority || binding.has_adapter(),
-            "Tool Process has no active Host Mount"
-        );
         Ok(binding)
     }
 }

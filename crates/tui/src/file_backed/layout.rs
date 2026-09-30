@@ -15,7 +15,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
     let width = area.width as usize;
     let mut lines = history_lines(app, width);
     let history_height = wrapped_line_count(&lines, width);
-    let (live_lines, prompt_start) = live_region_lines(app);
+    let (live_lines, prompt_start) = live_region_lines(app, width);
     let prompt_start =
         prompt_start.map(|index| history_height + wrapped_line_count(&live_lines[..index], width));
     lines.extend(live_lines);
@@ -45,10 +45,11 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn live_region_lines(app: &FileBackedApp) -> (Vec<Line<'static>>, Option<usize>) {
+fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
-    if let Some(label) = app.activity_label() {
-        lines.push(activity_line(app, label));
+    lines.push(app.context_line(width));
+    if app.activity_label().is_some() {
+        lines.push(activity_line(app));
     }
     if let Some(notice) = &app.notice {
         lines.push(Line::styled(
@@ -126,7 +127,7 @@ pub(super) fn history_prefix_to_drain(
 }
 
 pub(super) fn live_region_height(app: &FileBackedApp, width: usize) -> u16 {
-    let (lines, prompt_start) = live_region_lines(app);
+    let (lines, prompt_start) = live_region_lines(app, width);
     let Some(prompt_start) = prompt_start else {
         return wrapped_line_count(&lines, width).max(1) as u16;
     };
@@ -246,7 +247,7 @@ fn mark_cursor_in_span(span: &Span<'static>, cursor: usize) -> Option<(Vec<Span<
     Some((marked, cursor_column))
 }
 
-fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
+fn activity_line(app: &FileBackedApp) -> Line<'static> {
     let elapsed = app
         .activity_started_at_ms()
         .and_then(|started_at_ms| {
@@ -264,11 +265,7 @@ fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
             Style::default().fg(Color::Green),
         ),
         Span::styled(
-            label.to_string(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" · ctrl+c/esc interrupt · {elapsed}s"),
+            format!("· ctrl+c/esc interrupt · {elapsed}s"),
             Style::default().fg(Color::DarkGray),
         ),
     ])

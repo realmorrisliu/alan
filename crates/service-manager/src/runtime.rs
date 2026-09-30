@@ -123,6 +123,7 @@ impl ServiceManagerConfig {
 /// One running Service-Manager-owned Alan OS instance.
 pub struct ServiceManager {
     boot_id: Uuid,
+    root_model: String,
     state: Arc<tokio::sync::Mutex<ManagerState>>,
     procfs: alan_kernel::ProcFs,
     manager_pid: Pid,
@@ -214,6 +215,12 @@ impl ServiceManager {
                 &mut config.process.agent_config.core_config,
             )?;
         }
+        let root_model = config
+            .process
+            .agent_config
+            .core_config
+            .effective_model()
+            .to_string();
         config
             .tools
             .set_config(Arc::new(config.process.agent_config.core_config.clone()));
@@ -277,6 +284,7 @@ impl ServiceManager {
 
         Ok(Self {
             boot_id,
+            root_model,
             state,
             procfs,
             manager_pid,
@@ -295,6 +303,11 @@ impl ServiceManager {
 
     pub fn boot_id(&self) -> Uuid {
         self.boot_id
+    }
+
+    /// The effective model selected for the Root Agent at boot.
+    pub fn root_model(&self) -> &str {
+        &self.root_model
     }
 
     /// The authorized local-entry service used to create one Shell Process per renderer.

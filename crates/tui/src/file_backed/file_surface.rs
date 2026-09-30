@@ -552,16 +552,6 @@ pub(super) async fn write_machine_ctl(
         .map_err(|err| anyhow!("write machine ctl failed: {err:?}"))
 }
 
-pub(super) async fn write_interrupt(shell: &alan_shell::Shell, agent_path: &str) -> Result<()> {
-    // Turn interrupt is agent-runtime control: it must cancel the running
-    // generation and leave the agent process alive. Writing "interrupt" to
-    // the kernel `/proc/<pid>/ctl` would terminate the process instead.
-    shell
-        .write(&machine_ctl_path(agent_path), b"interrupt")
-        .await
-        .map_err(|err| anyhow!("write turn interrupt failed: {err:?}"))
-}
-
 async fn read_latest_pending_request(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -795,10 +785,14 @@ pub(super) fn hydrate_actions_from_snapshots(
     app: &mut FileBackedApp,
     snapshots: Vec<ActionSnapshot>,
 ) {
+    for snapshot in &snapshots {
+        app.observe_action_cwd(snapshot);
+    }
     app.running_tools = snapshots.iter().filter_map(running_tool).collect();
 }
 
 pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnapshot) {
+    app.observe_action_cwd(&snapshot);
     app.running_tools.retain(|tool| tool.id != snapshot.id);
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);

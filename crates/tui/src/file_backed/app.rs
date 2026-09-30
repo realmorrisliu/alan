@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use alan_agent_protocol::{
-    InputIntent, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot,
-    UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState, YieldKind,
+    InputIntent, UiActivitySnapshot, UiActivityState, UiEvent, UiInputStatus, UiNoticeKind,
+    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState, YieldKind,
 };
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Style};
@@ -19,9 +19,15 @@ use crate::transcript_ui::{
     INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
 };
 
-use super::file_surface::{TapeRecordV1, response_text_from_content};
+use super::file_surface::{ActionSnapshot, TapeRecordV1, response_text_from_content};
+use super::{ProjectAccess, ProjectControl, ProjectMountReceipt};
+
+mod history;
+mod presentation;
+mod project;
 fn default_commands() -> Vec<CompletionCandidate> {
     [
+        ("project", "select or revoke a project directory"),
         ("compact", "summarize context"),
         ("rollback", "undo the last turn"),
         ("continue", "continue paused input"),
@@ -38,6 +44,17 @@ fn default_commands() -> Vec<CompletionCandidate> {
 pub(super) enum FileBackedEvent {
     Terminal(TerminalEvent),
     Output(String),
+    ResumeWriteCompleted {
+        request_id: String,
+        retry_input: String,
+        result: Result<(), String>,
+    },
+    ControlWriteCompleted {
+        success_notice: String,
+        error_prefix: String,
+        result: Result<(), String>,
+    },
+    RootAgentPidRefresh(Result<Option<u64>, String>),
     RequestsChanged,
     ActionsChanged {
         agent_path: String,
@@ -55,11 +72,13 @@ pub(super) enum FileBackedAction {
     Resume {
         request_id: String,
         response: String,
+        retry_input: String,
     },
     MachineCtl {
         command: String,
         success_notice: String,
     },
+    Project(ProjectControl),
     Interrupt,
     Quit,
 }
@@ -68,6 +87,7 @@ pub(super) enum FileBackedAction {
 pub(super) struct FileBackedApp {
     pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
+    pub(super) effective_model: Option<String>,
     pub(super) composer: Composer,
     pub(super) input_intent: InputIntent,
     history_draft_intent: Option<InputIntent>,
@@ -78,9 +98,19 @@ pub(super) struct FileBackedApp {
     pub(super) thinking: UiThinkingSnapshot,
     pub(super) running_tools: Vec<RunningTool>,
     pub(super) pending_yield: Option<PendingYieldCell>,
+    response_in_flight: Option<String>,
     pub(super) form: Option<FormState>,
     pub(super) completion: Option<CompletionState>,
     pub(super) completion_sources: CompletionSources,
+    pub(super) project_candidate: Option<std::path::PathBuf>,
+    pub(super) project_selection: Option<ProjectAccess>,
+    pub(super) project: Option<ProjectMountReceipt>,
+    pub(super) namespace_cwd: std::path::PathBuf,
+    pub(super) pending_project_cwd: Option<String>,
+    pending_project_cwd_submission_id: Option<String>,
+    pending_project_revoke: Option<(String, String)>,
+    ready_project_revoke: Option<String>,
+    pub(super) last_input_failed: bool,
     pub(super) expand_thinking: bool,
     pub(super) notice: Option<String>,
     pub(super) expected_terminal_error: Option<String>,
@@ -105,6 +135,7 @@ impl FileBackedApp {
             notice: None,
             expected_terminal_error: None,
             agent_path,
+            effective_model: None,
             composer: Composer::default(),
             input_intent: InputIntent::Agent,
             history_draft_intent: None,
@@ -115,12 +146,22 @@ impl FileBackedApp {
             thinking: UiThinkingSnapshot::idle(),
             running_tools: Vec::new(),
             pending_yield: None,
+            response_in_flight: None,
             form: None,
             completion: None,
             completion_sources: CompletionSources {
                 commands: default_commands(),
                 ..CompletionSources::default()
             },
+            project_candidate: None,
+            project_selection: None,
+            project: None,
+            namespace_cwd: std::path::PathBuf::from("/"),
+            pending_project_cwd: None,
+            pending_project_cwd_submission_id: None,
+            pending_project_revoke: None,
+            ready_project_revoke: None,
+            last_input_failed: false,
             expand_thinking: false,
             should_quit: false,
             reconciler: StreamReconciler::new(),
@@ -133,6 +174,10 @@ impl FileBackedApp {
         self.completion_sources.skills = skills;
     }
 
+    pub(super) fn set_effective_model(&mut self, model: Option<String>) {
+        self.effective_model = model;
+    }
+
     pub(super) fn set_file_candidates(&mut self, files: Vec<CompletionCandidate>) {
         self.completion_sources.files = files;
     }
@@ -141,7 +186,13 @@ impl FileBackedApp {
         match event {
             FileBackedEvent::Terminal(TerminalEvent::Key(key)) => self.handle_key(key),
             FileBackedEvent::Terminal(TerminalEvent::Paste(text)) => {
-                if let Some(form) = self.form.as_mut() {
+                if self.project_selection.is_some() {
+                    let text = text
+                        .chars()
+                        .filter(|ch| !ch.is_control())
+                        .collect::<String>();
+                    self.composer.insert_text(&text);
+                } else if let Some(form) = self.form.as_mut() {
                     for ch in text.chars().filter(|ch| !ch.is_control()) {
                         form.insert_char(ch);
                     }
@@ -157,6 +208,25 @@ impl FileBackedApp {
                 self.push_output(text);
                 None
             }
+            FileBackedEvent::ResumeWriteCompleted {
+                request_id,
+                retry_input,
+                result,
+            } => {
+                self.finish_resume_write(&request_id, &retry_input, result);
+                None
+            }
+            FileBackedEvent::ControlWriteCompleted {
+                success_notice,
+                error_prefix,
+                result,
+            } => {
+                match result {
+                    Ok(()) => self.notice = Some(success_notice),
+                    Err(error) => self.push_error(format!("{error_prefix}: {error}")),
+                }
+                None
+            }
             FileBackedEvent::Ui(event) => {
                 self.apply_ui_event(event);
                 None
@@ -165,7 +235,9 @@ impl FileBackedApp {
                 self.apply_tape_record(record);
                 None
             }
-            FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged { .. } => None,
+            FileBackedEvent::RootAgentPidRefresh(_)
+            | FileBackedEvent::RequestsChanged
+            | FileBackedEvent::ActionsChanged { .. } => None,
             FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
                 self.push_error(message);
                 None
@@ -174,7 +246,8 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
-        let pending_input = self.form.is_some() || self.pending_yield.is_some();
+        let pending_input =
+            self.form.is_some() || self.pending_yield.is_some() || self.project_selection.is_some();
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if !pending_input && self.composer.text().is_empty() {
                 self.should_quit = true;
@@ -183,7 +256,22 @@ impl FileBackedApp {
             return None;
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.project_selection.is_some() {
+                self.cancel_project_selection();
+                return None;
+            }
+            if self.pending_yield.is_none() && !self.turn_active() {
+                if !self.composer.text().is_empty() {
+                    self.composer.set_text("");
+                    self.input_intent = InputIntent::Agent;
+                    self.notice = Some("draft cleared".into());
+                }
+                return None;
+            }
             return Some(FileBackedAction::Interrupt);
+        }
+        if self.project_selection.is_some() {
+            return self.handle_project_key(key);
         }
         if pending_input
             || self.input_intent == InputIntent::Command
@@ -194,6 +282,14 @@ impl FileBackedApp {
                     .is_some_and(|state| state.kind == completion::CompletionKind::Command))
         {
             self.completion = None;
+        } else if key.code == KeyCode::Enter
+            && self
+                .completion
+                .as_ref()
+                .is_some_and(|state| state.kind == completion::CompletionKind::Command)
+        {
+            self.accept_completion();
+            return self.handle_submit();
         } else if self.completion.is_some() && self.consume_completion_key(key) {
             return None;
         }
@@ -389,16 +485,19 @@ impl FileBackedApp {
     }
 
     pub(super) fn submit_form(&mut self) -> Option<FileBackedAction> {
+        if self.response_in_flight.is_some() {
+            self.notice = Some("request response is still being sent".into());
+            return None;
+        }
         let pending = self.pending_yield.clone()?;
         let form = self.form.as_mut()?;
-        match pending.resume_content(&form.answers_json()) {
-            Ok(content) => {
-                self.form = None;
-                Some(FileBackedAction::Resume {
-                    request_id: pending.request_id,
-                    response: response_text_from_content(content),
-                })
-            }
+        let retry_input = form.answers_json();
+        match pending.resume_content(&retry_input) {
+            Ok(content) => Some(FileBackedAction::Resume {
+                request_id: pending.request_id,
+                response: response_text_from_content(content),
+                retry_input,
+            }),
             Err(message) => {
                 form.error = Some(message);
                 None
@@ -407,6 +506,9 @@ impl FileBackedApp {
     }
 
     pub(super) fn confirmation_keypress(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
+        if self.response_in_flight.is_some() {
+            return None;
+        }
         if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
             return None;
         }
@@ -424,6 +526,7 @@ impl FileBackedApp {
             Ok(content) => Some(FileBackedAction::Resume {
                 request_id: pending.request_id,
                 response: response_text_from_content(content),
+                retry_input: option,
             }),
             Err(message) => {
                 self.notice = Some(message);
@@ -433,6 +536,21 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
+        if self.response_in_flight.is_some() {
+            self.notice = Some("request response is still being sent".into());
+            return None;
+        }
+        if self.project_selection.is_some() {
+            let path = self.composer.text().trim();
+            if path.is_empty() {
+                self.notice = Some("enter a project directory path".into());
+                return None;
+            }
+            return Some(FileBackedAction::Project(ProjectControl::Mount {
+                host_path: std::path::PathBuf::from(path),
+                access: self.project_selection.unwrap_or(ProjectAccess::ReadOnly),
+            }));
+        }
         if let Some(pending) = self.pending_yield.clone() {
             let text = self.composer.text().trim().to_string();
             self.completion = None;
@@ -444,6 +562,7 @@ impl FileBackedApp {
                     return Some(FileBackedAction::Resume {
                         request_id: pending.request_id,
                         response: response_text_from_content(content),
+                        retry_input: text,
                     });
                 }
                 Err(message) => {
@@ -475,12 +594,53 @@ impl FileBackedApp {
         Some(FileBackedAction::Submit(record))
     }
 
+    pub(super) fn begin_resume_write(&mut self, request_id: String) {
+        self.response_in_flight = Some(request_id);
+        self.notice = Some("sending response…".into());
+    }
+
+    fn finish_resume_write(
+        &mut self,
+        request_id: &str,
+        retry_input: &str,
+        result: Result<(), String>,
+    ) {
+        if self.response_in_flight.as_deref() != Some(request_id) {
+            return;
+        }
+        self.response_in_flight = None;
+        match result {
+            Ok(()) => {
+                if self
+                    .pending_yield
+                    .as_ref()
+                    .is_some_and(|pending| pending.request_id == request_id)
+                {
+                    self.clear_pending_yield();
+                }
+                self.notice = Some("response sent".into());
+            }
+            Err(error) => {
+                self.notice = Some(format!("resume failed: {error}"));
+                if self
+                    .pending_yield
+                    .as_ref()
+                    .is_some_and(|pending| pending.request_id == request_id)
+                    && self.form.is_none()
+                {
+                    self.composer.set_text(retry_input);
+                }
+            }
+        }
+    }
+
     pub(super) fn accept_input(&mut self) {
         let body = self.composer.text().to_owned();
         self.composer.remember_input(&body, self.input_intent);
         self.composer.set_text("");
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;
+        self.last_input_failed = false;
         // Submission may be queued behind another client. Tape owns turn boundaries.
     }
 
@@ -497,6 +657,46 @@ impl FileBackedApp {
         let command = text.strip_prefix('/')?;
         let name = command.split_whitespace().next().unwrap_or("");
         match name {
+            "project" if command.trim() == "project" => {
+                if self.turn_active() || self.pending_yield.is_some() {
+                    self.notice =
+                        Some("wait for the current Agent turn before selecting a project".into());
+                } else if self.project.is_some() {
+                    self.notice = Some("revoke the active project before selecting another".into());
+                } else {
+                    self.project_selection = Some(ProjectAccess::ReadOnly);
+                    self.input_intent = InputIntent::Command;
+                    self.composer.set_text(
+                        self.project_candidate
+                            .as_ref()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    );
+                    self.notice = Some(format!(
+                        "project path · {} · Enter approve · Tab toggle · Esc cancel",
+                        ProjectAccess::ReadOnly.label()
+                    ));
+                }
+                None
+            }
+            "project" if command.trim() == "project revoke" => {
+                if self.turn_active() || self.pending_yield.is_some() {
+                    self.notice =
+                        Some("wait for the current Agent turn before revoking a project".into());
+                    None
+                } else if let Some(project) = &self.project {
+                    Some(FileBackedAction::Project(ProjectControl::Revoke {
+                        grant_id: project.grant_id.clone(),
+                    }))
+                } else {
+                    self.notice = Some("no project grant is active".into());
+                    None
+                }
+            }
+            "project" => {
+                self.notice = Some("usage: /project or /project revoke".into());
+                None
+            }
             "quit" => {
                 self.should_quit = true;
                 Some(FileBackedAction::Quit)
@@ -524,7 +724,7 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "/compact /rollback /continue /discard /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
+                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · ctrl+c clears an idle draft or interrupts active work"
                         .to_string(),
                 );
                 None
@@ -586,209 +786,6 @@ impl FileBackedApp {
                 }
             }
             _ => self.form = None,
-        }
-    }
-
-    pub(super) fn push_output(&mut self, text: String) {
-        match self.reconciler.on_stream(text) {
-            StreamAction::Drop => {}
-            StreamAction::Append(text) => self.append_to_open_assistant_cell(text),
-            StreamAction::StartNew(text) => {
-                self.mark_pending_remote_turn_start_if_unbounded();
-                self.transcript.push(HistoryCell::Assistant(text));
-            }
-        }
-    }
-
-    pub(super) fn push_turn_preview_cell(&mut self, cell: HistoryCell) {
-        self.mark_pending_remote_turn_start_if_unbounded();
-        self.transcript.push(cell);
-    }
-
-    pub(super) fn insert_user_boundary(&mut self, cell: HistoryCell) {
-        let index = self
-            .pending_remote_turn_start
-            .take()
-            .unwrap_or(self.transcript.len())
-            .min(self.transcript.len());
-        self.transcript.insert(index, cell);
-        self.shift_action_cells_for_insert(index);
-    }
-
-    pub(super) fn flush_held_stream_after_boundary(&mut self) {
-        if let Some(stream) = self.reconciler.take_flushed_stream() {
-            self.transcript.push(HistoryCell::Assistant(stream));
-        }
-    }
-
-    pub(super) fn append_to_open_assistant_cell(&mut self, text: String) {
-        if let Some(index) = self.current_assistant_cell()
-            && let Some(HistoryCell::Assistant(existing)) = self.transcript.get_mut(index)
-        {
-            existing.push_str(&text);
-            return;
-        }
-        self.mark_pending_remote_turn_start_if_unbounded();
-        self.transcript.push(HistoryCell::Assistant(text));
-    }
-
-    pub(super) fn mark_pending_remote_turn_start_if_unbounded(&mut self) {
-        if self.pending_remote_turn_start.is_some() {
-            return;
-        }
-        if self.reconciler.awaiting_boundary() || !self.current_turn_has_user_boundary() {
-            self.pending_remote_turn_start = Some(self.transcript.len());
-        }
-    }
-
-    pub(super) fn current_turn_has_user_boundary(&self) -> bool {
-        for cell in self.transcript.iter().rev() {
-            match cell {
-                HistoryCell::User(_) | HistoryCell::Command(_) => return true,
-                HistoryCell::Assistant(_) => return false,
-                _ => {}
-            }
-        }
-        false
-    }
-
-    /// The index of the current turn's assistant cell: the most recent
-    /// `Assistant` cell with no user message or yield after it. Interposed
-    /// plan/notice cells are scanned over; a boundary stops the scan.
-    pub(super) fn current_assistant_cell(&self) -> Option<usize> {
-        for (idx, cell) in self.transcript.iter().enumerate().rev() {
-            match cell {
-                HistoryCell::Assistant(_) => return Some(idx),
-                HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::PendingYield(_) => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// Reconcile a live `machine/tape` record with the transcript. All the
-    /// matching/suppression/echo logic lives in [`StreamReconciler`]; this
-    /// only locates the current-turn cell and applies the returned decision.
-    pub(super) fn apply_tape_record(&mut self, record: TapeRecordV1) {
-        self.tape_consumed_offset = self.tape_consumed_offset.max(record.end_offset);
-        if record.kind != "message" {
-            return;
-        }
-        match record.role.as_str() {
-            "user" => {
-                self.reconciler.on_user_record();
-                self.insert_user_boundary(record.into_user_cell());
-                self.flush_held_stream_after_boundary();
-            }
-            "assistant" => {
-                let idx = self.current_assistant_cell();
-                let preview = idx.and_then(|i| match &self.transcript[i] {
-                    HistoryCell::Assistant(text) => Some(text.clone()),
-                    _ => None,
-                });
-                match self
-                    .reconciler
-                    .on_assistant_record(record.content, preview.as_deref())
-                {
-                    AssistantDecision::Drop => {}
-                    AssistantDecision::ReplacePreview(content) => {
-                        if let Some(HistoryCell::Assistant(existing)) =
-                            idx.map(|i| &mut self.transcript[i])
-                        {
-                            *existing = content;
-                        }
-                    }
-                    AssistantDecision::Push(content) => {
-                        self.transcript.push(HistoryCell::Assistant(content))
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    pub(super) fn push_error(&mut self, message: String) {
-        self.transcript.push(HistoryCell::Error(message));
-    }
-
-    pub(super) fn apply_ui_event(&mut self, event: UiEvent) {
-        let paired_notice = matches!(&event, UiEvent::Notice { snapshot }
-            if snapshot.kind == UiNoticeKind::Error
-                && self.expected_terminal_error.as_deref() == Some(snapshot.message.as_str()));
-        let expected_error = if matches!(event, UiEvent::InputCompleted { .. }) || paired_notice {
-            None
-        } else {
-            self.expected_terminal_error.take()
-        };
-        match event {
-            UiEvent::InputCompleted { .. } => {}
-            UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
-            UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
-            UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
-            UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
-            UiEvent::Error { message, .. } => {
-                if expected_error.as_deref() != Some(message.as_str()) {
-                    self.push_error(message);
-                }
-            }
-        }
-    }
-
-    pub(super) fn apply_ui_activity_snapshot(&mut self, snapshot: UiActivitySnapshot) {
-        self.activity = snapshot;
-    }
-
-    pub(super) fn apply_ui_plan_snapshot(&mut self, snapshot: UiPlanSnapshot) {
-        let changed = self.plan != snapshot;
-        self.plan = snapshot.clone();
-        if changed && !snapshot.items.is_empty() {
-            self.push_turn_preview_cell(HistoryCell::Plan(
-                snapshot
-                    .items
-                    .into_iter()
-                    .map(|item| crate::history::PlanLine {
-                        status: item.status,
-                        content: item.content,
-                    })
-                    .collect(),
-            ));
-        }
-    }
-
-    pub(super) fn apply_ui_thinking_snapshot(&mut self, snapshot: UiThinkingSnapshot) {
-        let changed = self.thinking != snapshot;
-        self.thinking = snapshot.clone();
-        if changed
-            && matches!(snapshot.state, UiThinkingState::Complete)
-            && !snapshot.text.trim().is_empty()
-        {
-            self.push_turn_preview_cell(HistoryCell::Thinking {
-                text: snapshot.text,
-                duration_secs: snapshot.duration_secs.unwrap_or(0),
-            });
-        }
-    }
-
-    pub(super) fn apply_ui_notice_snapshot(&mut self, snapshot: UiNoticeSnapshot) {
-        self.notice = match snapshot.kind {
-            UiNoticeKind::None => None,
-            _ if snapshot.message.trim().is_empty() => None,
-            _ => Some(snapshot.message),
-        };
-    }
-
-    pub(super) fn activity_label(&self) -> Option<&str> {
-        match self.activity.state {
-            UiActivityState::Idle => None,
-            UiActivityState::Paused => Some("waiting for input"),
-            UiActivityState::Running
-                if matches!(self.thinking.state, UiThinkingState::Streaming) =>
-            {
-                Some("thinking")
-            }
-            UiActivityState::Running => Some("working"),
         }
     }
 
@@ -954,41 +951,6 @@ impl FileBackedApp {
 
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
         RenderOpts::new(width, self.expand_thinking)
-    }
-
-    pub(super) fn composer_lines(&self) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        let segments = self.composer.text().split('\n').collect::<Vec<_>>();
-        for (idx, segment) in segments.iter().enumerate() {
-            let prompt = if idx == 0 {
-                self.input_prompt_prefix()
-            } else if self.pending_yield.is_some() {
-                "       "
-            } else {
-                "      "
-            };
-            lines.push(Line::from(vec![
-                Span::styled(prompt, Style::default().fg(Color::Green)),
-                Span::raw((*segment).to_string()),
-            ]));
-        }
-        if lines.is_empty() {
-            lines.push(Line::from(vec![Span::styled(
-                self.input_prompt_prefix(),
-                Style::default().fg(Color::Green),
-            )]));
-        }
-        lines
-    }
-
-    pub(super) fn input_prompt_prefix(&self) -> &'static str {
-        if self.pending_yield.is_some() {
-            INLINE_WAITING_PROMPT_PREFIX
-        } else if self.input_intent == InputIntent::Command {
-            INLINE_COMMAND_PROMPT_PREFIX
-        } else {
-            INLINE_PROMPT_PREFIX
-        }
     }
 }
 

@@ -1,4 +1,4 @@
-use super::file_surface::write_interrupt;
+use super::file_surface::write_machine_ctl;
 use super::*;
 use std::sync::Arc;
 
@@ -505,9 +505,11 @@ fn confirmation_digit_builds_resume_response() {
         Some(FileBackedAction::Resume {
             request_id,
             response,
+            retry_input,
         }) => {
             assert_eq!(request_id, "r1");
             assert_eq!(response, r#"{"choice":"approve"}"#);
+            assert_eq!(retry_input, "approve");
         }
         other => panic!("expected resume action, got {other:?}"),
     }
@@ -561,7 +563,9 @@ async fn write_agent_input_targets_agent_surface() {
     // Esc interrupts through the agent-runtime surface (machine/ctl), not
     // kernel process lifecycle: /proc/<pid>/ctl interrupt would terminate
     // the agent process while the runtime keeps generating.
-    write_interrupt(&shell, &agent_path).await.unwrap();
+    write_machine_ctl(&shell, &agent_path, "interrupt")
+        .await
+        .unwrap();
     let events =
         String::from_utf8(shell.cat(&format!("{agent_path}/events")).await.unwrap()).unwrap();
     assert!(
