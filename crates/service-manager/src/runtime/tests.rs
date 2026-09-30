@@ -297,6 +297,7 @@ async fn unavailable_default_connection_does_not_prevent_system_boot() {
         br#"{"default-profile":"unavailable"}"#
     );
     assert_eq!(shell.cat(BOOT_STATE_PATH).await.unwrap(), b"ready\n");
+    assert_eq!(manager.root_model(), None);
     manager.shutdown().await.unwrap();
 }
 
@@ -365,7 +366,7 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
         factory.selected_profiles.lock().unwrap().as_slice(),
         &[Some(profile_id)]
     );
-    assert_eq!(manager.root_model(), "model-from-profile");
+    assert_eq!(manager.root_model(), Some("model-from-profile"));
     manager.shutdown().await.unwrap();
 }
 

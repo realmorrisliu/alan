@@ -318,8 +318,8 @@ impl AlanOsHost {
         &self.status
     }
 
-    /// The effective model selected for this invocation's Root Agent.
-    pub fn root_model(&self) -> &str {
+    /// The effective model for this invocation's callable Root Agent boot binding, if available.
+    pub fn root_model(&self) -> Option<&str> {
         self.service_manager.root_model()
     }
 

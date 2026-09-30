@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn blank_prompt_cursor_uses_nonzero_viewport_origin() {
+    let app = FileBackedApp::new("/agent/root".to_string());
+    let area = ratatui::layout::Rect::new(4, 5, 80, 2);
+    let mut terminal = Terminal::with_options(
+        TestBackend::new(90, 12),
+        ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Fixed(area),
+        },
+    )
+    .unwrap();
+
+    terminal
+        .draw(|frame| {
+            assert_eq!(frame.area(), area);
+            draw(frame, &app);
+        })
+        .unwrap();
+
+    assert_eq!(
+        terminal.backend().buffer().cell((4, 6)).unwrap().symbol(),
+        ":"
+    );
+    assert_eq!(
+        terminal.backend().cursor_position(),
+        ratatui::layout::Position::new(6, 6)
+    );
+}
+
+#[test]
+fn wrapped_unicode_draft_cursor_uses_nonzero_viewport_origin_after_scroll() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("abcdefghijk\n界終");
+    let area = ratatui::layout::Rect::new(4, 5, 8, 3);
+    let mut terminal = Terminal::with_options(
+        TestBackend::new(20, 12),
+        ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Fixed(area),
+        },
+    )
+    .unwrap();
+
+    terminal
+        .draw(|frame| {
+            assert_eq!(frame.area(), area);
+            draw(frame, &app);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer.cell((6, 7)).unwrap().symbol(), "界");
+    assert_eq!(buffer.cell((8, 7)).unwrap().symbol(), "終");
+    assert_eq!(
+        terminal.backend().cursor_position(),
+        ratatui::layout::Position::new(10, 7)
+    );
+}
+
+#[test]
 fn scrollback_drains_by_rendered_lines() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.transcript

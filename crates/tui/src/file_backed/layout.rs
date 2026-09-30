@@ -32,8 +32,8 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
     {
         let scroll_y = scroll_y.unwrap_or_default();
         frame.set_cursor_position((
-            x.min(area.width.saturating_sub(1)),
-            y.saturating_sub(scroll_y).min(area.height - 1),
+            area.x + x.min(area.width.saturating_sub(1)),
+            area.y + y.saturating_sub(scroll_y).min(area.height - 1),
         ));
     }
 }

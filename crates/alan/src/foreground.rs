@@ -39,7 +39,7 @@ pub(super) async fn run_bare_in_foreground_instance(
         .context("listen for Alan instance shutdown")?;
     let config = HostBootConfig::product_with_root_resume(channel.descriptor().id, resume_root)?;
     let host = AlanOsHost::boot(config, paths.clone()).await?;
-    let root_model = host.root_model().to_string();
+    let root_model = host.root_model().map(str::to_string);
     let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         host.serve_until(async move {
@@ -55,7 +55,7 @@ pub(super) async fn run_bare_in_foreground_instance(
                 BareRunMode::Interactive => {
                     let mut config =
                         alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                    config.effective_model = Some(root_model);
+                    config.effective_model = root_model;
                     config.project_candidate = std::env::current_dir().ok();
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {
