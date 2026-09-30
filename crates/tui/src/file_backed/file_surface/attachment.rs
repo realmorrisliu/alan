@@ -231,7 +231,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             if let UiEvent::InputCompleted {
                 submission_ids,
                 status,
-                error,
+                error: _,
             } = event
             {
                 settled_ids.extend(
@@ -241,11 +241,10 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
                         .map(|task| task.submission_id.clone()),
                 );
                 if *status != alan_agent_protocol::UiInputStatus::Completed {
-                    let message = error
-                        .clone()
-                        .unwrap_or_else(|| format!("Input ended: {status:?}"));
-                    reattached.notice = Some(message.clone());
-                    reattached.transcript.push(HistoryCell::Error(message));
+                    let message =
+                        super::super::interrupt::render_input_completion(event, &mut reattached)
+                            .expect("non-completed status has a completion message");
+                    reattached.notice = Some(message);
                 }
             }
         }
