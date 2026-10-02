@@ -454,3 +454,29 @@ mod recovery_boundary;
 mod recovery_ux;
 #[path = "engine_removal_boundary_tests.rs"]
 mod removal_boundary;
+pub(crate) async fn admit_test_input(
+    state: &crate::runtime::transition::RuntimeLoopState,
+    input: &Submission,
+) -> Result<()> {
+    use crate::runtime::model_binding::{CallableIdentity, CapturedCallable};
+    let mut bindings = state.environment.model_bindings.lock().await;
+    if bindings.confirmed.is_none() {
+        bindings.confirmed = Some(CapturedCallable {
+            identity: CallableIdentity {
+                profile: "test".into(),
+                provider: "openai_responses".into(),
+                model: "test".into(),
+                credential_ref: None,
+                revision: "1".into(),
+            },
+            root: state.environment.root_transport(),
+            connection: "default".into(),
+            config: state.core_config.clone(),
+        });
+    }
+    drop(bindings);
+    let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
+    queues.environment = Some(state.environment.clone());
+    queues.recorder = state.machine.input_recorder();
+    queues.admit_input(input).await
+}

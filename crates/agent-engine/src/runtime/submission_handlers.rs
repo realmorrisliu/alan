@@ -112,7 +112,9 @@ where
         // New unified operations (Phase 2)
         // ====================================================================
         Op::Turn { parts, context } => {
-            *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+            if tape_writer.is_none() {
+                *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+            }
             let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
 
             let queued_next_turn_inputs = runtime.machine.drain_next_turn_inputs();
@@ -202,12 +204,18 @@ where
                             emit(Event::Warning { message }).await;
                         }
                         None => {
-                            emit(Event::Error {
-                                message: "Too many queued next_turn inputs (limit=16); dropping newest input."
-                                    .to_string(),
-                                recoverable: true,
-                            })
-                            .await;
+                            let id = runtime.machine.current_submission_id().map(str::to_owned);
+                            if let Some(id) = id {
+                                crate::agent_machine::input_queue::remove_input_bindings(
+                                    &runtime.machine.input_queue(),
+                                    runtime.machine.recorder().as_ref(),
+                                    &[id],
+                                )
+                                .await?;
+                            }
+                            anyhow::bail!(
+                                "Too many queued next_turn inputs (limit=16); dropping newest input"
+                            );
                         }
                     }
                     return Ok(RuntimeOpAction::NoTurn);

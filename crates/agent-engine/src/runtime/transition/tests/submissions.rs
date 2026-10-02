@@ -356,6 +356,9 @@ async fn next_turn_inputs_keep_their_ids_in_the_shared_answer() {
             mode: InputMode::NextTurn,
         });
         input.id = id.into();
+        crate::runtime::engine::admit_test_input(&state, &input)
+            .await
+            .unwrap();
         advance_accepted_submission(&mut state, input, &broker, &cancel)
             .await
             .result
@@ -366,6 +369,9 @@ async fn next_turn_inputs_keep_their_ids_in_the_shared_answer() {
         context: None,
     });
     input.id = "trigger".into();
+    crate::runtime::engine::admit_test_input(&state, &input)
+        .await
+        .unwrap();
     advance_accepted_submission(&mut state, input, &broker, &cancel)
         .await
         .result

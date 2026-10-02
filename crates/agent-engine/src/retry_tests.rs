@@ -50,6 +50,40 @@ fn typed_transient_and_compatibility_causes_keep_retry_behavior() {
 }
 
 #[test]
+fn gemini_prompt_block_normalization_and_actual_retry_decision() {
+    for (raw, normalized, retry) in [
+        (
+            "stream_error:prompt_blocked:safety",
+            "stream_error:safety",
+            false,
+        ),
+        (
+            "stream_error:prompt_blocked:recitation",
+            "stream_error:recitation",
+            false,
+        ),
+        ("stream_error:safety", "stream_error:safety", false),
+        ("stream_error:recitation", "stream_error:recitation", false),
+        ("stream_error:timeout", "stream_error:timeout", true),
+        ("stream_error:rate_limit", "stream_error:rate_limit", true),
+        (
+            "stream_error:prompt_blocked:new_reason",
+            "stream_error:unknown",
+            true,
+        ),
+        ("stream_error:unknown", "stream_error:unknown", true),
+    ] {
+        assert_eq!(alan_llm::safe_finish_reason(raw), normalized, "{raw}");
+        let error = anyhow::Error::new(ErrorCode::Io).context(GenerationCause::new(raw));
+        assert_eq!(
+            is_retryable(&error.context("temporary stream connection")),
+            retry,
+            "{raw}"
+        );
+    }
+}
+
+#[test]
 fn untyped_legacy_heuristics_are_unchanged() {
     for reason in [
         "503 unavailable",

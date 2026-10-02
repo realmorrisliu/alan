@@ -35,6 +35,8 @@ None. Existing product and renderer contracts own this work.
 
 ### Modified Capabilities
 
+- `agent-file-layout-contract`: Service-owned request cancellation control and
+  truthful durable request status across interruption and explicit recovery.
 - `alan-interaction-model`: project onboarding, visible submission disposition,
   effective-model interaction and evidence required for self-development readiness.
 - `rust-inline-tui`: production completion wiring, predictable local-command

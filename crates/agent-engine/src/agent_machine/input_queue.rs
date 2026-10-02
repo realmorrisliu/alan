@@ -184,21 +184,35 @@ impl super::AgentMachine {
 
     pub(crate) async fn dispatch_input(&self, input: &Submission) -> anyhow::Result<()> {
         self.admit_input(input).await?;
-        let disposition = self
-            .persist_input_event(
+        self.dispatch_input_ids(std::slice::from_ref(&input.id))
+            .await
+    }
+
+    /// The dispatch owner records the complete consumed set in one durable record.
+    pub(crate) async fn dispatch_input_ids(&self, ids: &[String]) -> anyhow::Result<()> {
+        let (kind, payload) = if ids.len() == 1 {
+            (
                 "machine_input_dispatched_v1",
-                serde_json::json!({"submission_id": input.id}),
+                serde_json::json!({"submission_id": ids[0]}),
             )
-            .await;
+        } else {
+            (
+                "machine_inputs_dispatched_v1",
+                serde_json::json!({"submission_ids": ids}),
+            )
+        };
+        let disposition = self.persist_input_event(kind, payload).await;
         let queue = self.input_queue();
         {
             let mut state = queue.lock().expect("input queue poisoned");
-            if disposition.is_ok() {
-                state.bindings.remove(&input.id);
-                state.settled_ids.insert(input.id.clone());
-                state.queue_uncertain_ids.remove(&input.id);
-            } else {
-                state.queue_uncertain_ids.insert(input.id.clone());
+            for id in ids {
+                if disposition.is_ok() {
+                    state.bindings.remove(id);
+                    state.settled_ids.insert(id.clone());
+                    state.queue_uncertain_ids.remove(id);
+                } else {
+                    state.queue_uncertain_ids.insert(id.clone());
+                }
             }
         }
         crate::runtime::queue_publication::observe(&queue).await;
@@ -260,7 +274,7 @@ impl super::AgentMachine {
                         inputs.push(input);
                     }
                 }
-                "machine_inputs_removed_v1" => {
+                "machine_inputs_removed_v1" | "machine_inputs_dispatched_v1" => {
                     let ids: Vec<String> =
                         serde_json::from_value(event.payload["submission_ids"].clone())?;
                     excluded.extend(ids);

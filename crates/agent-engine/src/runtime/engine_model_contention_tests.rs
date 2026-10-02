@@ -2,6 +2,10 @@
 use super::*;
 #[path = "engine_model_deferred_tests.rs"]
 mod deferred;
+#[path = "engine_next_turn_tests.rs"]
+mod next_turn;
+#[path = "engine_next_turn_acceptance_tests.rs"]
+mod next_turn_acceptance;
 #[path = "engine_model_observation_failure_tests.rs"]
 mod observation_failure;
 #[path = "engine_model_projection_tests.rs"]

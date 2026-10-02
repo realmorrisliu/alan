@@ -252,14 +252,30 @@ async fn busy_tape_does_not_drain_queued_next_turn_inputs() {
         .await,
     );
     state.core_config.memory.enabled = false;
-    state
-        .machine
-        .queue_next_turn_input(vec![alan_agent_protocol::ContentPart::text("queued")]);
+    let queued = Submission::new(Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("queued")],
+        mode: InputMode::NextTurn,
+    });
+    crate::runtime::engine::admit_test_input(&state, &queued)
+        .await
+        .unwrap();
+    advance_accepted_submission(
+        &mut state,
+        queued,
+        &TurnInputBroker::default(),
+        &CancellationToken::new(),
+    )
+    .await
+    .result
+    .unwrap();
     let external = state.agent_files().begin_tape_generation().await.unwrap();
     let submission = Submission::new(Op::Turn {
         parts: vec![alan_agent_protocol::ContentPart::text("now")],
         context: None,
     });
+    crate::runtime::engine::admit_test_input(&state, &submission)
+        .await
+        .unwrap();
     let mut emit = |_| async {};
     let cancel = CancellationToken::new();
     assert!(
@@ -269,6 +285,10 @@ async fn busy_tape_does_not_drain_queued_next_turn_inputs() {
     );
     assert_eq!(state.machine.queued_next_turn_input_count(), 1);
     external.finish().await.unwrap();
+    let submission = Submission::new(submission.op);
+    crate::runtime::engine::admit_test_input(&state, &submission)
+        .await
+        .unwrap();
     handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
         .await
         .unwrap();

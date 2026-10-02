@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use crate::runtime::turn_input::{TurnInputBroker, next_pending_interaction_submission};
 
 use super::{
-    AcceptedSubmissionOutcome, RuntimeLoopState, TransitionCompletion,
+    AcceptedSubmissionOutcome, NamespaceTapeWriter, RuntimeLoopState, TransitionCompletion,
     handle_submission_with_cancel, handle_submission_with_cancel_and_steering,
 };
 
@@ -38,6 +38,13 @@ pub(crate) fn advance_accepted_submission<'a>(
             }
     ) || (matches!(submission.op, Op::Interrupt)
         && state.machine.has_pending_interaction());
+    let is_next_turn = matches!(
+        submission.op,
+        Op::Input {
+            mode: InputMode::NextTurn,
+            ..
+        }
+    );
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
     let reject_compaction = matches!(submission.op, Op::CompactWithOptions { .. })
         && state.machine.has_pending_interaction();
@@ -62,17 +69,19 @@ pub(crate) fn advance_accepted_submission<'a>(
         }
     }
     async move {
-        if matches!(submission.op, Op::Turn { .. } | Op::Input { .. }) {
+        if matches!(
+            submission.op,
+            Op::Input {
+                mode: InputMode::Steer | InputMode::FollowUp,
+                ..
+            }
+        ) {
             let checkpoint = state.machine.dispatch_input(&submission).await;
             if let Err(error) = checkpoint {
-                let event = UiEvent::InputCompleted {
-                    submission_ids: vec![submission.id.clone()],
-                    status: UiInputStatus::Failed,
-                    error: Some(format!(
-                        "Input dispatch persistence failed; execution did not start and recovery disposition is uncertain: {error}"
-                    )),
-                };
-                let publish = state.agent_files().append_ui_event(&event).await;
+                let publish = crate::runtime::ui_surfaces::error_notice(
+                    &state.agent_files(),
+                    &format!("Input {} dispatch persistence failed; execution did not start and recovery disposition is uncertain: {error}", submission.id),
+                ).await;
                 state.machine.finish_submission();
                 return AcceptedSubmissionOutcome {
                     result: Err(match publish {
@@ -104,8 +113,11 @@ pub(crate) fn advance_accepted_submission<'a>(
         let cancelled_before_start =
             cancel.is_cancelled() && matches!(submission.op, Op::Turn { .. } | Op::Input { .. });
         let mut result = if cancelled_before_start {
+            let removal = state.machine.remove_input(&submission).await;
             state.machine.mark_submission_cancelled();
-            if submission.intent == alan_agent_protocol::InputIntent::Command {
+            if let Err(error) = removal {
+                Err(error.context("Cancellation removal uncertain; input retained"))
+            } else if submission.intent == alan_agent_protocol::InputIntent::Command {
                 state
                     .agent_files()
                     .write_rejected_command(&submission.id, "command cancelled before execution")
@@ -135,7 +147,60 @@ pub(crate) fn advance_accepted_submission<'a>(
             .environment
             .reconcile_input_captures(&state.machine.input_queue())
             .await;
-        if (completes_input || cancelled_before_start || state.machine.submission_was_cancelled())
+        let (disposition_uncertain, next_turn_retained) = {
+            let queue = state.machine.input_queue();
+            let queue = queue.lock().expect("input queue poisoned");
+            let id = state.machine.current_submission_id();
+            (
+                id.is_some_and(|id| queue.queue_uncertain_ids.contains(id)),
+                is_next_turn
+                    && id.is_some_and(|id| {
+                        queue
+                            .queued_next_turn_inputs
+                            .iter()
+                            .any(|(queued_id, _)| queued_id.as_deref() == Some(id))
+                    }),
+            )
+        };
+        if !disposition_uncertain
+            && next_turn_retained
+            && let Err(error) = &result
+        {
+            // Queue ownership survived publication failure. Publish directly to
+            // the event stream: the notice snapshot itself may still be broken.
+            let id = state.machine.current_submission_id().unwrap_or("unknown");
+            let event = UiEvent::Error {
+                message: format!(
+                    "Input {id} retained for the next explicit turn; notice publication failed: {error}"
+                ),
+                recoverable: true,
+            };
+            if let Err(error) = state.agent_files().append_ui_event(&event).await {
+                result = Err(error.context("publish retained NextTurn nonterminal error"));
+            }
+        }
+        if disposition_uncertain {
+            let id = state.machine.current_submission_id().unwrap_or("unknown");
+            let message = format!(
+                "Input {id} disposition persistence failed; execution/recovery disposition is uncertain: {}",
+                result
+                    .as_ref()
+                    .err()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            );
+            if let Err(error) =
+                crate::runtime::ui_surfaces::error_notice(&state.agent_files(), &message).await
+            {
+                result = Err(error.context("publish input disposition uncertainty"));
+            }
+        }
+        if !disposition_uncertain
+            && !next_turn_retained
+            && (completes_input
+                || cancelled_before_start
+                || state.machine.submission_was_cancelled()
+                || result.is_err())
             && !state.machine.has_pending_interaction()
             && state.machine.current_submission_id().is_some()
         {
@@ -171,7 +236,7 @@ pub(crate) fn advance_accepted_submission<'a>(
     }
 }
 
-async fn drive_turn_submission_with_cancel<E, F>(
+pub(crate) async fn drive_turn_submission_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     initial_submission: Submission,
     broker: &TurnInputBroker,
@@ -279,7 +344,7 @@ where
             }
             continue;
         }
-        if matches!(next_submission.op, Op::Turn { .. } | Op::Input { .. }) {
+        if matches!(next_submission.op, Op::Input { .. }) {
             state.machine.dispatch_input(&next_submission).await?;
             state
                 .environment
@@ -312,4 +377,57 @@ where
     }
 
     Ok(())
+}
+pub(super) async fn begin_turn_dispatch(
+    state: &mut RuntimeLoopState,
+    submission: &Submission,
+) -> Result<NamespaceTapeWriter> {
+    let queue = state.machine.input_queue();
+    let (compatible, mut ids) = {
+        let queue = queue.lock().expect("input queue poisoned");
+        let binding = queue.bindings.get(&submission.id);
+        let compatible = queue.queued_next_turn_inputs.iter().all(|(id, _)| {
+            id.as_ref()
+                .is_some_and(|id| binding.is_some() && queue.bindings.get(id) == binding)
+        });
+        let ids = queue
+            .queued_next_turn_inputs
+            .iter()
+            .filter_map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        (compatible, ids)
+    };
+    if !compatible {
+        state
+            .machine
+            .remove_input(submission)
+            .await
+            .map_err(|e| e.context("Incompatible turn removal uncertain; input retained"))?;
+        anyhow::bail!(
+            "Queued next_turn callable or controls incompatible with explicit turn; queued inputs retained"
+        );
+    }
+    state.machine.admit_input(submission).await?;
+    // No correlated dispatch or consumption before the Tape lease is acquired.
+    let writer = match state.agent_files().begin_tape_generation().await {
+        Ok(writer) => writer,
+        Err(error) => {
+            state
+                .machine
+                .remove_input(submission)
+                .await
+                .map_err(|removal| {
+                    removal.context(format!(
+                        "Tape lease rejected ({error}); turn removal uncertain"
+                    ))
+                })?;
+            return Err(error);
+        }
+    };
+    ids.push(submission.id.clone());
+    if let Err(error) = state.machine.dispatch_input_ids(&ids).await {
+        writer.finish().await?;
+        return Err(error);
+    }
+    Ok(writer)
 }

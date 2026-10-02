@@ -78,8 +78,10 @@ pub fn safe_finish_reason(reason: &str) -> &'static str {
         "stream_error:body" => "stream_error:body",
         "stream_error:parse" => "stream_error:parse",
         "stream_error:http" => "stream_error:http",
-        "stream_error:safety" => "stream_error:safety",
-        "stream_error:recitation" => "stream_error:recitation",
+        "stream_error:safety" | "stream_error:prompt_blocked:safety" => "stream_error:safety",
+        "stream_error:recitation" | "stream_error:prompt_blocked:recitation" => {
+            "stream_error:recitation"
+        }
         "stream_error:closed" | "stream_closed" => "stream_error:closed",
         "stream_error" => "stream_error",
         _ => "stream_error:unknown",

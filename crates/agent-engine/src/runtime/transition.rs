@@ -3,11 +3,12 @@
 //! submission, this module advances Machine state and returns only the control outcome the outer
 //! loop needs.
 
-mod accepted_submission;
+pub(crate) mod accepted_submission;
 pub(crate) mod directory_control;
 mod explicit_command;
 mod namespace_environment;
 mod turn_execution;
+use turn_execution::finalize_replayed_tool_end_turn_best_effort;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
 #[cfg(test)]
@@ -59,7 +60,6 @@ use super::tool_execution::{
 };
 use super::tool_resolution::{ToolResolutionOutcome, ToolResolutionRequest, resolve_tool_call};
 use super::turn_input::TurnInputBroker;
-use super::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 #[allow(
     unused_imports,
     reason = "these helpers are imported here for the adjacent white-box test module"
@@ -771,9 +771,13 @@ where
         )
         .await;
     }
+    let mut tape_writer = if matches!(submission.op, Op::Turn { .. }) {
+        Some(accepted_submission::begin_turn_dispatch(state, &submission).await?)
+    } else {
+        None
+    };
     let op = submission.op;
 
-    let mut tape_writer = None;
     let result = async {
         let action = match handle_runtime_op_with_writer(state, op, &mut tape_writer, emit).await? {
             RuntimeOpAction::NoTurn => return Ok(()),
@@ -938,32 +942,6 @@ where
     } else {
         result
     }
-}
-
-async fn finalize_replayed_tool_end_turn_best_effort(
-    state: &mut RuntimeLoopState,
-    cancel: &CancellationToken,
-    surfaces_refreshed: bool,
-    surfaces_context: &'static str,
-    promotion_context: &'static str,
-) {
-    if !cancel.is_cancelled() {
-        let memory_runtime = turn_memory_runtime(state);
-        finalize_turn_memory_best_effort(
-            memory_runtime,
-            FinalizeTurnMemoryRequest {
-                surfaces_refreshed,
-                surfaces_context,
-                promotion_context,
-            },
-        )
-        .await;
-    }
-
-    if cancel.is_cancelled() {
-        state.machine.mark_submission_cancelled();
-    }
-    state.machine.set_turn_activity(TurnActivityState::Idle);
 }
 
 pub(super) async fn run_deferred_runtime_action_with_cancel(

@@ -23,8 +23,8 @@ use crate::runtime::virtual_tools::virtual_tool_definitions;
 
 use super::{
     NamespaceTapeWriter, NamespaceToolExecution, NormalizedToolCall, RuntimeLoopState,
-    TurnExecutionOutcome, TurnRunKind, compaction_runtime, orchestrate_tool_batch_internal,
-    turn_memory_runtime,
+    TurnActivityState, TurnExecutionOutcome, TurnRunKind, compaction_runtime,
+    orchestrate_tool_batch_internal, turn_memory_runtime,
 };
 
 mod namespace_generation;
@@ -877,4 +877,29 @@ where
         emit,
     )
     .await
+}
+pub(super) async fn finalize_replayed_tool_end_turn_best_effort(
+    state: &mut RuntimeLoopState,
+    cancel: &CancellationToken,
+    surfaces_refreshed: bool,
+    surfaces_context: &'static str,
+    promotion_context: &'static str,
+) {
+    if !cancel.is_cancelled() {
+        let memory_runtime = turn_memory_runtime(state);
+        finalize_turn_memory_best_effort(
+            memory_runtime,
+            FinalizeTurnMemoryRequest {
+                surfaces_refreshed,
+                surfaces_context,
+                promotion_context,
+            },
+        )
+        .await;
+    }
+
+    if cancel.is_cancelled() {
+        state.machine.mark_submission_cancelled();
+    }
+    state.machine.set_turn_activity(TurnActivityState::Idle);
 }

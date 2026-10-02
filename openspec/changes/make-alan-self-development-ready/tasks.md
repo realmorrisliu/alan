@@ -6,6 +6,109 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## Current delivery review — 2026-10-03
+
+PR #1026 head `b105bf7a5798badc0242bb3fcf04e977d4d08eb5` passed all 16 actual
+GitHub checks, including both platform tests/builds, Repository Quality, blocking
+Harness gates, Self-Eval and CodeQL. Independent package reviews passed before
+GitHub review exposed two additional findings; source qualification is reopened.
+The prior local G1/G2/G3 and UI transcripts remain valid for their tested paths,
+but they do not qualify deferred NextTurn binding/recovery after a model change.
+
+- P1 confirmed: NextTurn is marked dispatched and loses its captured binding
+  before the future explicit Turn consumes it. Correct its shared consumption
+  owner, compatible-binding admission and durable recovery without rebinding.
+- P2 confirmed: Gemini prompt-block safety/recitation aliases become retryable
+  unknown errors. Normalize the two known aliases at the existing shared owner.
+
+Native Alan PID `13810`, boot `875f8cd4-e7db-46fb-af75-f387623b52fa`, Root `/proc/8`
+is authoring both narrow corrections in the existing approved read-write project
+through Herdr `w5E:p7`, using explicit `gpt-6.1-sol` / `medium`. No operator Rust
+writes are authorized. Before/after tests, independent frozen review, relevant
+live acceptance and new-head CI remain required. Evidence:
+`/Users/morris/Library/Caches/Alan/ui-previews/20261003-pr-review-corrections/`.
+The first correction task `3d088dec-bd05-47dd-b0f8-8c8cdf7b8075` completed
+naturally: eight NextTurn tests and the retry suite passed, strict affected-crate
+Clippy/scoped formatting passed, while full Engine retained 16 restricted fixture
+failures and full LLM retained seven local HTTP bind failures. Source-size script
+execution was denied by the native sandbox; touched-file counts do not substitute
+for that gate. Independent preliminary review requires true consumption dispatch,
+shared compatibility, durable cancellation/overflow and uncertain-disposition
+regressions. Follow-up `eba50abe-a65b-4bb7-9092-de406586b3ca` was actually admitted,
+then failed with provider `stream_error:connect`; the same Native remained idle
+with known empty queue and an exact Failed receipt. An explicit same-instance
+retry was submitted, preserving that failure; no process restart/rescue occurred.
+
+Same-instance retry `53dfee0e-1053-45bc-bd56-923afa4f981b` completed naturally;
+fixture clarification `1da20ba0-dc1b-4026-bbd3-f97ca0cbcdb5` also completed without
+claiming Ready. Seven meaningful acceptance regressions now passed locally,
+including actual admission/capture, later broker receive, precise attempted
+removal/dispatch batches, recovery and differing full controls. Dispatch-owner
+follow-up `5eabd7e0-5e00-4594-b39e-9aebb27c4151` completed naturally with
+two dispatch-owner, four disposition and seven acceptance regressions passing.
+Lease/legacy closure `d090ee2a-6b12-4087-b887-1c523ee53e53` and source-cap closure
+`eed8a623-e314-4261-b089-2484bb22695b` completed naturally. Final helpers live in
+existing `engine_tests.rs`, `accepted_submission.rs` and `turn_execution.rs`; three
+temporary untracked helper files were removed through Native approval after their
+bodies moved. Native passed 20 NextTurn, one command admission, two dispatch-ack and
+24 replay tests, canonical affected Clippy, formatting/diff and the unmodified
+source-size script. An initial dispatch filter matched zero tests and is not counted;
+Native corrected it. Full Engine retained 1306 passes, 16 restricted fixture failures
+and one ignored test; Native does not claim full qualification.
+
+After Ready with known empty queue, `/quit` ended Native PID 13810 normally with
+wrapper exit 0 and no process rescue. Root froze 607 Rust files and 26 build inputs,
+15 tracked Rust modifications plus three new Rust tests against `b105bf7a`:
+`corrected-candidate/manifest.json` SHA256
+`d27a69ef29de439d2d709bb0c6f9e0b6fa283e9430fe98c5b36dfeeb2b1d9a98`.
+Independent owning tests passed outside the Native sandbox: Engine 1322 unit plus
+20 integration, LLM 191 unit, all actual exit 0. Frozen Standards review passed,
+but Spec review found a remaining P1: successful NextTurn enqueue followed by UI
+notice publication failure falsely settles Failed while that exact input remains
+recoverable. This candidate is NOT_PASS; quality/build/live/CI were not credited.
+After the earlier natural exit, a fresh explicit Native invocation PID `74319`,
+boot `6a5cb75f-a710-49e4-a3e4-65a14c6082ad`, Root `/proc/8` received a fresh visible
+read-write project grant and the same explicit sol/medium binding. It alone is
+correcting the shared disposition owner with a real notice-write fault regression;
+evidence is under `notice-correction/`. Task `ed0092e4-5492-4aa5-bbd2-d81bb6e8e65b`
+completed with exact durable Completed receipt, known empty queue and idle activity;
+`/quit` exited normally with code 0 and no rescue. The actual compiled notice fault
+RED and final 21 NextTurn/two dispatch/one admission/nine retry passes are retained.
+Final freeze `notice-candidate/manifest.json` SHA256
+`6cbe99b30f5655abcb3f48e4e4f285544432ae7b99328c5de9472536948e0f86`
+contains the same 607 Rust/26 build inventory, with only two files changed relative
+to d27a69. Both frozen source reviews now PASS. Independent full tests now pass: Engine 1323 unit/20 integration and LLM 191 unit,
+actual exit 0; full unmodified Repository Quality Gate and release build also exit 0.
+New binary SHA256 `79d3559accca7891a495be4c23f33cb3f02ec0b716aa73af6f338d11d51e1d7e`
+passed fresh G3 run `jrt0672v` (nonce d8017a610fc745d486168067c534fd47), with 33
+actual steps, E/Q once, D zero, one correlated approval/owned-child cancellation,
+four natural exits/live[] and no rescue. Independent joined-evidence Spec review
+PASS verified actual owners, selected durable records, approvals, Action receipts
+and effects. Hand-inserted broker Turn tests qualify the shared caller only; no
+public normal Turn-broker intake is inferred.
+
+Fresh native Herdr UI instance 91288/boot446a6e17-14bd-479c-9638-aa40ab11db65 with
+explicit RO/cwd and sol/medium passed fast-command exact Completed/known empty queue,
+69x20 Space/b paging through Line200 and exact Chinese/emoji draft/cursor restoration.
+An extra direct client detached with exit0 while the same PID/boot/Root/grants/model/
+queue remained; Native then `/quit` exited0 without rescue. The main client remained,
+so all-client disconnect is still unqualified. Evidence is under `final-native-ui/`.
+607 Rust/26 build hashes remained stable. New-head CI and delivery remain pending;
+no new commit, merge or archive is claimed.
+
+The existing ignored G3 reader exceeded its private `ls_bounded(actions, 128,
+8192)` budget on this long author session (three fixed entries leave 125 Action
+slots). The actual exit-1 diagnostic failure is retained in the correction cache.
+AgentFS supports paged directory reads and the TUI uses ordinary `ls` plus Action
+watching; this failure does not establish a public directory or TUI failure.
+No public directory limit, live process or durable evidence was changed. Fresh
+bounded G3 reader acceptance remains separate; no complete post-limit author
+snapshot is inferred from a failed reader.
+
+Delivery remains 0/10 and the weighted local qualification estimate remains 90/100.
+The confirmed P1/P2 and notice-source findings are closed with the final frozen
+checks above; new-head review/CI, merge, canonical sync and archive have not occurred.
+
 ## Current status — 2026-10-02
 
 - Terminal-hint correctiveNative79264 finalReady/normalquit independentlyexit0,

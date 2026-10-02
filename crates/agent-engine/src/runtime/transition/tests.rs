@@ -23,6 +23,7 @@ use std::{
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+mod next_turn_disposition;
 mod tape_lease;
 pub(crate) mod tool_batch;
 
@@ -170,7 +171,7 @@ fn runtime_state_with_environment(environment: NamespaceRuntimeEnvironment) -> R
     }
 }
 
-async fn namespace_environment_with_live_process(
+pub(crate) async fn namespace_environment_with_live_process(
     provider: impl LlmProvider + 'static,
 ) -> NamespaceRuntimeEnvironment {
     let (root, procfs) = namespace_root_with_provider(provider);

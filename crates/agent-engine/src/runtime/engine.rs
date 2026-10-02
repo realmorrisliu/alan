@@ -113,6 +113,9 @@ async fn read_pending_namespace_submission(
     }
 }
 
+#[cfg(test)]
+pub(crate) use tests::admit_test_input;
+
 struct RuntimeSubmissionQueues {
     /// Shared handle to the Agent Machine's ordinary queue.
     outer_queue: Arc<Mutex<MachineInputQueue>>,
