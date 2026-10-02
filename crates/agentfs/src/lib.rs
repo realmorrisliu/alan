@@ -32,6 +32,7 @@
 //! `/agent/root` to the corresponding [`AgentFs`] backing tree.
 
 mod conformance;
+mod request_control;
 mod root;
 mod surface_state;
 
@@ -130,6 +131,9 @@ struct State {
     /// Agent run-state (machine/status): read-only over aP, transitioned only by
     /// lifecycle verbs on machine/ctl (D7).
     status: String,
+    ui_skills: String,
+    ui_models: String,
+    ui_queue: String,
     ui_activity: String,
     ui_plan: String,
     ui_thinking: String,
@@ -190,6 +194,9 @@ enum Node {
     /// is the kernel's `/proc/<pid>/ctl`, not here.
     MachineCtl,
     UiDir,
+    UiSkills,
+    UiModels,
+    UiQueue,
     UiActivity,
     UiPlan,
     UiThinking,
@@ -250,9 +257,12 @@ impl AgentFs {
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
                 status: "running".to_string(),
+                ui_models: "{\"version\":1,\"publication_version\":0,\"process_path\":\"\",\"known\":false,\"catalog\":null,\"selected_next\":null,\"active\":null,\"admitted\":[]}".into(),
+                ui_queue: "{\"version\":1,\"revision\":0,\"known\":false,\"pending_submission_ids\":[],\"active_submission_ids\":[],\"paused\":false,\"deferred\":false,\"uncertain_submission_ids\":[]}".into(),
                 ui_activity: DEFAULT_UI_ACTIVITY.to_string(),
                 ui_plan: DEFAULT_UI_PLAN.to_string(),
                 ui_thinking: DEFAULT_UI_THINKING.to_string(),
+                ui_skills: surface_state::UNKNOWN_SKILLS.to_string(),
                 ui_notice: DEFAULT_UI_NOTICE.to_string(),
                 next_request: 0,
                 next_action: 0,
@@ -391,7 +401,9 @@ impl FileServer for AgentFs {
         let node = state.node_of(fid)?;
         // Dial-time access check: a write-intent open on a read-only node fails at
         // open, not later as Unsupported on write.
-        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !is_writable(&node) {
+        if matches!(mode, OpenMode::Write | OpenMode::ReadWrite)
+            && !surface_state::is_writable(&node)
+        {
             return Err(ErrorCode::NoAccess);
         }
         // Exclusive-write lease on machine/tape (agent-file-layout-contract): while
@@ -466,9 +478,12 @@ impl FileServer for AgentFs {
         };
         let read_write_base = if matches!(mode, OpenMode::ReadWrite) {
             match &node {
-                Node::UiActivity
+                Node::UiModels
+                | Node::UiQueue
+                | Node::UiActivity
                 | Node::UiPlan
                 | Node::UiThinking
+                | Node::UiSkills
                 | Node::UiNotice
                 | Node::RequestField(..)
                 | Node::ActionField(..) => Some(state.computed_bytes(&node)?),
@@ -604,13 +619,17 @@ impl FileServer for AgentFs {
                 state.events.append(format!("ctl:{cmd}\n").as_bytes()).await;
                 Ok(data.len() as u32)
             }
+            Node::RequestField(id, "ctl") => state.write_request_control(&id, offset, data).await,
             // io/input and request/action data fields are framed documents: buffer
             // at offset and commit the whole unit on clunk, so a turn never starts
             // on a truncated message (commit-on-clunk).
             Node::Input
+            | Node::UiModels
+            | Node::UiQueue
             | Node::UiActivity
             | Node::UiPlan
             | Node::UiThinking
+            | Node::UiSkills
             | Node::UiNotice
             | Node::RequestField(..)
             | Node::ActionField(..) => {
@@ -623,6 +642,10 @@ impl FileServer for AgentFs {
                     MAX_DOC_BYTES
                 };
                 if end > max_bytes {
+                    if matches!(node, Node::UiSkills) {
+                        f.write_buf = surface_state::UNKNOWN_SKILLS.as_bytes().to_vec();
+                        f.wrote = true;
+                    }
                     return Err(ErrorCode::BadRequest);
                 }
                 if f.write_buf.len() < end {
@@ -660,7 +683,7 @@ impl FileServer for AgentFs {
             qid: state.qid(&node),
             length,
             executable: false,
-            writable: is_writable(&node),
+            writable: surface_state::is_writable(&node),
         })
     }
 
@@ -777,11 +800,33 @@ impl FileServer for AgentFs {
                 .await;
         } else if matches!(
             f.node,
-            Node::UiActivity | Node::UiPlan | Node::UiThinking | Node::UiNotice
+            Node::UiModels
+                | Node::UiQueue
+                | Node::UiActivity
+                | Node::UiPlan
+                | Node::UiThinking
+                | Node::UiSkills
+                | Node::UiNotice
         ) && f.wrote
         {
-            let value = String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?;
+            let value = if matches!(f.node, Node::UiSkills) {
+                String::from_utf8(f.write_buf).unwrap_or_default()
+            } else {
+                String::from_utf8(f.write_buf).map_err(|_| ErrorCode::BadRequest)?
+            };
             let (node, record) = match f.node {
+                Node::UiSkills => {
+                    state.ui_skills = surface_state::skill_projection(&value);
+                    (Node::UiSkills, "ui:skills\n")
+                }
+                Node::UiModels => {
+                    state.ui_models = value;
+                    (Node::UiModels, "ui:models\n")
+                }
+                Node::UiQueue => {
+                    state.ui_queue = value;
+                    (Node::UiQueue, "ui:queue\n")
+                }
                 Node::UiActivity => {
                     state.ui_activity = value;
                     (Node::UiActivity, "ui:activity\n")
@@ -843,6 +888,9 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::UiEvents => (FileKind::Stream, "machine/ui/events".into()),
         Node::Status => (FileKind::File, "machine/status".into()),
         Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
+        Node::UiSkills => (FileKind::File, "machine/ui/skills".into()),
+        Node::UiModels => (FileKind::File, "machine/ui/models".into()),
+        Node::UiQueue => (FileKind::File, "machine/ui/queue".into()),
         Node::UiActivity => (FileKind::File, "machine/ui/activity".into()),
         Node::UiPlan => (FileKind::File, "machine/ui/plan".into()),
         Node::UiThinking => (FileKind::File, "machine/ui/thinking".into()),
@@ -866,31 +914,8 @@ fn qid_v0(node: &Node) -> Qid {
     }
 }
 
-/// A request whose decision is final: its fields are frozen against late writes.
 fn is_terminal(status: &str) -> bool {
     matches!(status, "answered" | "closed" | "cancelled")
-}
-
-fn is_writable(node: &Node) -> bool {
-    match node {
-        Node::Input
-        | Node::Output
-        | Node::Tape
-        | Node::MachineCtl
-        | Node::UiActivity
-        | Node::UiPlan
-        | Node::UiThinking
-        | Node::UiNotice
-        | Node::UiEvents
-        | Node::RequestsClone
-        | Node::ActionsClone
-        | Node::ActionField(..) => true,
-        // A request's status is read-only state (set by answering, i.e. writing
-        // `response`); its other fields are writable data. `machine/status` is
-        // read-only too (agent-file-layout-contract).
-        Node::RequestField(_, field) => *field != "status",
-        _ => false,
-    }
 }
 
 fn initial_tape_knowledge() -> (KnowledgeStore, ContentHash) {

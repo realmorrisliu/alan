@@ -588,14 +588,20 @@ async fn interrupting_suspended_input_settles_its_original_identity() {
     );
     let shell = Shell::new(state.environment.root_transport());
     state.machine.accept_submission("origin");
+    let pending = crate::approval::PendingStructuredInputRequest {
+        request_id: "request".into(),
+        title: "question".into(),
+        prompt: "answer".into(),
+        questions: Vec::new(),
+    };
+    let request_id = state
+        .agent_files()
+        .write_structured_input_request(&pending)
+        .await
+        .unwrap();
     state
         .machine
-        .set_structured_input(crate::approval::PendingStructuredInputRequest {
-            request_id: "request".into(),
-            title: "question".into(),
-            prompt: "answer".into(),
-            questions: Vec::new(),
-        });
+        .set_structured_input_for_request(&request_id, pending);
     advance_accepted_submission(
         &mut state,
         Submission::new(Op::Interrupt),

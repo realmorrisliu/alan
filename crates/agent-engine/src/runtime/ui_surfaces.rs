@@ -8,6 +8,53 @@ use anyhow::Result;
 
 use super::transition::NamespaceAgentFiles;
 
+impl super::transition::RuntimeLoopState {
+    pub(crate) async fn publish_ensured_skills(&mut self) -> Result<()> {
+        let mut last = self.prompt_cache.skill_publication.clone();
+        publish_skills(
+            &self.agent_files(),
+            &self.prompt_cache,
+            self.process_path(),
+            &mut last,
+        )
+        .await?;
+        self.prompt_cache.skill_publication = last;
+        Ok(())
+    }
+}
+
+pub(crate) async fn publish_skills(
+    files: &NamespaceAgentFiles,
+    cache: &super::prompt_cache::PromptAssemblyCache,
+    process_path: String,
+    last: &mut alan_agent_protocol::UiSkillSnapshot,
+) -> Result<()> {
+    let (known, mentionable_skill_ids) = cache.skill_observation();
+    let mut next = alan_agent_protocol::UiSkillSnapshot {
+        version: alan_agent_protocol::UI_SURFACE_VERSION,
+        publication_version: last.publication_version,
+        process_path,
+        known,
+        mentionable_skill_ids,
+    };
+    if serde_json::to_vec(&next)?.len() > (1 << 20) {
+        next = next.unknown();
+    }
+    if next == *last {
+        return Ok(());
+    }
+    next.publication_version = last
+        .publication_version
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("Skill publication version exhausted"))?;
+    if serde_json::to_vec(&next)?.len() > (1 << 20) {
+        next = next.unknown();
+    }
+    files.write_ui_skill_snapshot(&next).await?;
+    *last = next;
+    Ok(())
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

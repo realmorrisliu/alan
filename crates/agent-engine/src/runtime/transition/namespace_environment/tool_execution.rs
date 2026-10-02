@@ -134,7 +134,7 @@ impl NamespaceToolExecution {
             _ = cancel.cancelled() => {
                 let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;
                 return Err(NamespaceToolProcessError {
-                    source: anyhow::anyhow!("tool process {pid} cancelled"),
+                    category: super::NamespaceToolObservationFailure::Cancelled,
                     pid,
                 }.into());
             }
@@ -147,7 +147,11 @@ impl NamespaceToolExecution {
                             .write_process_control_for_pid(&pid, "cancel")
                             .await;
                         return Err(NamespaceToolProcessError {
-                            source: err.context(format!("read tool process {pid} result")),
+                            category: if err.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
+                                super::NamespaceToolObservationFailure::Timeout
+                            } else {
+                                super::NamespaceToolObservationFailure::ResultUnavailable
+                            },
                             pid,
                         }.into());
                     }

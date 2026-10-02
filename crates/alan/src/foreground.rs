@@ -1,5 +1,22 @@
 use super::*;
 
+fn interactive_config(
+    root: alan_ap::InProcessTransport,
+    root_model: Option<String>,
+    project_candidate: Option<PathBuf>,
+    store: &alan_os_host::SystemStorePaths,
+) -> Result<alan_tui::FileBackedRunConfig> {
+    let mut config = alan_tui::FileBackedRunConfig::new(root, "/agent/root");
+    config.effective_model = root_model;
+    config.project_candidate = project_candidate;
+    config.history_path = Some(store.service("shell-ui")?.join("composer-history"));
+    Ok(config)
+}
+
+#[cfg(test)]
+#[path = "foreground_tests.rs"]
+mod tests;
+
 pub(super) fn foreground_runtime_dir(channel_id: &str) -> Result<(PathBuf, bool)> {
     if let Some(runtime_dir) = std::env::var_os(cli::host::INSTANCE_RUNTIME_DIR_ENV) {
         return Ok((PathBuf::from(runtime_dir), false));
@@ -53,10 +70,13 @@ pub(super) async fn run_bare_in_foreground_instance(
             let attachment = LocalAttachment::new(paths.clone()).connect().await?;
             match mode {
                 BareRunMode::Interactive => {
-                    let mut config =
-                        alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                    config.effective_model = root_model;
-                    config.project_candidate = std::env::current_dir().ok();
+                    let store = alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
+                    let mut config = interactive_config(
+                        attachment.root,
+                        root_model,
+                        std::env::current_dir().ok(),
+                        &store,
+                    )?;
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {
                         let paths = project_paths.clone();

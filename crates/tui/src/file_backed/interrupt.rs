@@ -23,6 +23,39 @@ pub(super) fn observe_root_agent_completion(
         if !matched {
             return;
         }
+        let settled_local_input = pending_turns.iter().any(|turn| {
+            submission_ids.contains(&turn.submission_id)
+                && app
+                    .local_inputs
+                    .get(&turn.submission_id)
+                    .is_some_and(|input| input.owner == app.queue.owner)
+        });
+        if matches!(
+            event,
+            UiEvent::InputCompleted {
+                status: alan_agent_protocol::UiInputStatus::Completed,
+                ..
+            }
+        ) {
+            for turn in pending_turns
+                .iter()
+                .filter(|turn| submission_ids.contains(&turn.submission_id))
+            {
+                let owner = turn
+                    .submitted_process
+                    .map_or_else(|| app.agent_path.clone(), |pid| format!("/agent/{pid}"));
+                if owner == app.queue.owner {
+                    // Terminal acknowledgement must not publish an intermediate admission hint.
+                    // The final refresh below uses queue.hint ownership to preserve other notices.
+                    if let Some(input) = app.local_inputs.get_mut(&turn.submission_id)
+                        && input.owner == owner
+                    {
+                        input.terminal = true;
+                    }
+                    app.acknowledge_local_input(&turn.submission_id, &owner);
+                }
+            }
+        }
         render_input_completion(event, app);
         if let UiEvent::InputCompleted {
             status: alan_agent_protocol::UiInputStatus::Failed,
@@ -33,7 +66,41 @@ pub(super) fn observe_root_agent_completion(
             // Process emits this terminal error immediately after failed settlement.
             app.expected_terminal_error = Some(format!("Error handling submission: {error}"));
         }
+        let nondispatched = matches!(
+            event,
+            UiEvent::InputCompleted {
+                status: alan_agent_protocol::UiInputStatus::Cancelled
+                    | alan_agent_protocol::UiInputStatus::Failed,
+                ..
+            }
+        );
+        let mut cells: Vec<_> = submission_ids
+            .iter()
+            .filter_map(|id| app.local_inputs.get(id))
+            .filter(|input| input.owner == app.queue.owner && nondispatched && !input.tape_seen)
+            .filter_map(|input| input.cell)
+            .collect();
+        cells.sort_unstable();
+        cells.dedup();
+        for index in cells.into_iter().rev() {
+            app.remove_receipt_cell(index);
+        }
+        for id in submission_ids {
+            if let Some(input) = app.local_inputs.get_mut(id)
+                && input.owner == app.queue.owner
+            {
+                input.terminal = true;
+                input.release_terminal_source();
+            }
+        }
+        app.local_inputs.retain(|_, input| {
+            !(input.terminal && nondispatched && !input.tape_seen && !input.committed)
+        });
         pending_turns.retain(|turn| !submission_ids.contains(&turn.submission_id));
+        if settled_local_input {
+            // Queue observation may precede this receipt, with no later event to retire its hint.
+            app.refresh_queue_hint();
+        }
     }
 }
 

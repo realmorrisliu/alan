@@ -20,7 +20,7 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     let width = area.width as usize;
     if app.modal.active {
         let mut rows = vec![Line::from(format!(
-            "Details {}/{} · arrows select · PgUp/Dn · Esc",
+            "{}/{} · ↔ Action · Space/b page · Esc",
             app.modal.selected + 1,
             app.modal.ids.len()
         ))];
@@ -40,17 +40,57 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     }
     let mut lines = history_lines(app, width);
     let history_height = wrapped_line_count(&lines, width);
-    let (live_lines, prompt_start) = live_region_lines_at(app, width, now_ms);
+    let (mut live_lines, prompt_start) = live_region_lines_at(app, width, now_ms);
+    let menu_start = prompt_start.map(|start| start + app.composer_lines().len());
+    let menu = menu_start
+        .map(|start| live_lines.split_off(start))
+        .unwrap_or_default();
     let prompt_start =
         prompt_start.map(|index| history_height + wrapped_line_count(&live_lines[..index], width));
     lines.extend(live_lines);
 
+    // Menu growth never changes the base input viewport or its scroll offset.
+    let base_height = base_region_height(app, width)
+        .saturating_sub(usize::from(app.form.is_none()))
+        .saturating_add(history_height)
+        .min(
+            area.height
+                .saturating_sub(u16::from(app.form.is_none() && area.height >= 3))
+                as usize,
+        ) as u16;
+    let base_area = Rect::new(area.x, area.y, area.width, base_height);
     let cursor_position = prompt_start.map(|start| composer_cursor_position(app, width, start));
-    let scroll_y = cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(area.height));
+    let scroll_y = cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(base_height));
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    match scroll_y {
-        Some(scroll_y) => frame.render_widget(paragraph.scroll((scroll_y, 0)), area),
-        None => frame.render_widget(paragraph, area),
+    frame.render_widget(
+        paragraph.scroll((scroll_y.unwrap_or_default(), 0)),
+        base_area,
+    );
+    let menu_area = Rect::new(
+        area.x,
+        area.y + base_height,
+        area.width,
+        area.height - base_height,
+    );
+    if menu_area.height > 0 {
+        let selected = app.completion.as_ref().map_or(0, |state| state.selected);
+        let window_start = selected.saturating_sub(MAX_COMPLETION_ROWS - 1);
+        let selected_offset = selected - window_start;
+        let selected_row = crate::history::wrap_styled_lines(
+            menu[..selected_offset.min(menu.len())].to_vec(),
+            width,
+        )
+        .len();
+        let scroll = if selected_row >= menu_area.height as usize {
+            selected_row
+        } else {
+            0
+        };
+        frame.render_widget(
+            Paragraph::new(crate::history::wrap_styled_lines(menu, width))
+                .scroll((scroll as u16, 0)),
+            menu_area,
+        );
     }
     if let Some((x, y)) = cursor_position
         && area.height > 0
@@ -67,6 +107,10 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
     app.styled_history_lines(width)
 }
 
+#[cfg(test)]
+#[path = "history_notice_tests.rs"]
+mod history_notice_tests;
+
 fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
     live_region_lines_at(app, width, super::unix_time_ms())
 }
@@ -80,6 +124,12 @@ fn live_region_lines_at(
     lines.push(app.context_line(width));
     if app.activity_label().is_some() {
         lines.push(activity_line(app, now_ms));
+    }
+    if let Some(notice) = app.composer.history_notice() {
+        lines.push(Line::styled(
+            format!("· {notice}"),
+            Style::default().fg(Color::Yellow),
+        ));
     }
     if let Some(notice) = &app.notice {
         lines.push(Line::styled(
@@ -109,12 +159,25 @@ fn live_region_lines_at(
         }
         (lines, None)
     } else {
+        let prompt_start = lines.len();
+        lines.extend(app.composer_lines());
         if let Some(state) = &app.completion {
-            for (idx, candidate) in state.matches.iter().take(MAX_COMPLETION_ROWS).enumerate() {
-                let trigger = match state.kind {
-                    CompletionKind::Command => "/",
-                    CompletionKind::Skill => "$",
-                    CompletionKind::File => "@",
+            let start = state.selected.saturating_sub(MAX_COMPLETION_ROWS - 1);
+            for (idx, candidate) in state
+                .matches
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(MAX_COMPLETION_ROWS)
+            {
+                let trigger = if app.model_chooser.active {
+                    ""
+                } else {
+                    match state.kind {
+                        CompletionKind::Command => "/",
+                        CompletionKind::Skill => "$",
+                        CompletionKind::File => "@",
+                    }
                 };
                 let mut label = format!("{trigger}{}", candidate.label);
                 if let Some(detail) = &candidate.detail {
@@ -128,11 +191,10 @@ fn live_region_lines_at(
                 } else {
                     Style::default().fg(Color::Cyan)
                 };
-                lines.push(Line::styled(format!("  {label}"), style));
+                let prefix = if idx == state.selected { "▶ " } else { "  " };
+                lines.push(Line::styled(format!("{prefix}{label}"), style));
             }
         }
-        let prompt_start = lines.len();
-        lines.extend(app.composer_lines());
         (lines, Some(prompt_start))
     }
 }
@@ -156,22 +218,50 @@ pub(super) fn history_prefix_to_drain(
 }
 
 pub(super) fn live_region_height(app: &FileBackedApp, width: usize) -> u16 {
+    let (lines, start) = live_region_lines(app, width);
+    let menu_height = start.map_or(0, |start| {
+        wrapped_line_count(&lines[start + app.composer_lines().len()..], width)
+    });
+    base_region_height(app, width)
+        .saturating_add(menu_height.saturating_sub(usize::from(start.is_some())))
+        .min(u16::MAX as usize) as u16
+}
+
+pub(super) fn base_region_height(app: &FileBackedApp, width: usize) -> usize {
     let (lines, prompt_start) = live_region_lines(app, width);
     let Some(prompt_start) = prompt_start else {
-        return wrapped_line_count(&lines, width).max(1) as u16;
+        return wrapped_line_count(&lines, width).max(1);
     };
 
     let before_prompt = wrapped_line_count(&lines[..prompt_start], width);
-    let rendered_composer_height = wrapped_line_count(&lines[prompt_start..], width);
+    let rendered_composer_height = wrapped_line_count(&app.composer_lines(), width);
     let cursor_height = (composer_cursor_position(app, width, before_prompt)
         .1
         .saturating_add(1) as usize)
         .saturating_sub(before_prompt);
+    // One ordinary blank spacing row is stable from first readiness. Menus
+    // reuse it; retention and viewport sizing share this same budget.
     (before_prompt
         + rendered_composer_height
             .max(cursor_height)
-            .min(MAX_COMPOSER_LINES))
-    .max(1) as u16
+            .min(MAX_COMPOSER_LINES)
+        + 1)
+    .max(1)
+}
+
+pub(super) fn base_viewport_height(
+    app: &FileBackedApp,
+    width: usize,
+    terminal_height: usize,
+) -> u16 {
+    // Details are stable full-screen content, never transient candidates.
+    if app.modal.active {
+        return terminal_height.max(1).min(u16::MAX as usize) as u16;
+    }
+    wrapped_line_count(&history_lines(app, width), width)
+        .saturating_add(base_region_height(app, width))
+        .max(1)
+        .min(terminal_height.max(1)) as u16
 }
 
 pub(super) fn inline_viewport_height(
@@ -285,9 +375,11 @@ pub(super) fn frame_needs_redraw(
     now_ms: u64,
     last_drawn_second: Option<u64>,
 ) -> bool {
-    // Only Running content advances quietly; dirty events always draw.
+    // Only Running work without actual user controls advances quietly; dirty events always draw.
     dirty
         || (matches!(app.activity.state, super::UiActivityState::Running)
+            && app.pending_yield.is_none()
+            && app.form.is_none()
             && last_drawn_second != Some(activity_elapsed_second(app, now_ms)))
 }
 
@@ -298,6 +390,21 @@ pub(super) fn activity_elapsed_second(app: &FileBackedApp, now_ms: u64) -> u64 {
 }
 
 fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
+    if app.pending_yield.is_some()
+        || app.form.is_some()
+        || !matches!(app.activity.state, super::UiActivityState::Running)
+    {
+        let cue = if app.form.is_some() {
+            "input form"
+        } else if app.pending_yield.as_ref().is_some_and(|pending| {
+            matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation)
+        }) {
+            "waiting for approval"
+        } else {
+            app.activity_label().unwrap_or("waiting for input")
+        };
+        return Line::styled(format!("· {cue}"), Style::default().fg(Color::Yellow));
+    }
     let elapsed = activity_elapsed_second(app, now_ms);
     let frame_idx = (elapsed as usize) % SPINNER.len();
     Line::from(vec![
@@ -307,7 +414,7 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
         ),
         Span::styled(
             format!("· ctrl+c/esc interrupt · {elapsed}s"),
-            Style::default().fg(Color::DarkGray),
+            Style::default(),
         ),
     ])
 }

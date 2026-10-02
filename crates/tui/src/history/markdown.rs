@@ -1,7 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::{clean_text, wrap_plain_text};
+use super::{clean_text, metadata_style, wrap_plain_text};
 
 // A projected character belongs to a source byte end and, for expanded tabs,
 // a stable sub-character slot. Geometry never participates in this identity.
@@ -40,6 +40,10 @@ pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>,
         if let Some((open, length, diff)) = fence {
             if marker == open && count >= length && trimmed[count..].trim().is_empty() {
                 fence = None;
+                for atom in &mut atoms {
+                    atom.style = metadata_style();
+                }
+                append_rows(&mut rows, atoms, width, cut, row_end, false);
                 continue;
             }
             let style = if diff && source.starts_with('+') {
@@ -57,6 +61,10 @@ pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>,
         }
         if matches!(marker, '`' | '~') && count >= 3 {
             fence = Some((marker, count, trimmed[count..].trim() == "diff"));
+            for atom in &mut atoms {
+                atom.style = metadata_style();
+            }
+            append_rows(&mut rows, atoms, width, cut, row_end, false);
             continue;
         }
         let heading = trimmed.chars().take_while(|ch| *ch == '#').count();

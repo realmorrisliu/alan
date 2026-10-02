@@ -997,4 +997,4 @@ pub(super) async fn run_deferred_runtime_action_with_cancel(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

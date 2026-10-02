@@ -97,9 +97,13 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
 }
 
 pub(crate) fn bounded(text: &str, bytes: usize) -> String {
-    let mut end = text.len().min(bytes);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
+    text.lines()
+        .find(|line| !clean_text(line).trim().is_empty())
+        .map_or_else(String::new, |line| {
+            let mut end = line.len().min(bytes);
+            while !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            line[..end].to_string()
+        })
 }

@@ -71,54 +71,6 @@ impl LlmClientFactory for RecordingFactory {
 }
 
 #[tokio::test]
-async fn boot_rejects_ambient_package_namespace_mounts() {
-    let mut config = ServiceManagerConfig::ephemeral(
-        "test",
-        AgentProcessConfig::default(),
-        ProcessLaunchContext::root(),
-        LlmClient::new(MockLlmProvider::new()),
-        ToolRegistry::new(),
-    );
-    config.launch_context.namespace.mount(
-        "/lib/pkg/ambient",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-        Access::ReadOnly,
-    );
-
-    let error = ServiceManager::boot(config).await.err().unwrap();
-
-    assert!(
-        error
-            .to_string()
-            .contains("namespace mounts overlapping /lib/pkg are not accepted")
-    );
-}
-
-#[tokio::test]
-async fn boot_rejects_root_namespace_mount_covering_package_namespace() {
-    let mut config = ServiceManagerConfig::ephemeral(
-        "test",
-        AgentProcessConfig::default(),
-        ProcessLaunchContext::root(),
-        LlmClient::new(MockLlmProvider::new()),
-        ToolRegistry::new(),
-    );
-    config.launch_context.namespace.mount(
-        "/",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-        Access::ReadOnly,
-    );
-
-    let error = ServiceManager::boot(config).await.err().unwrap();
-
-    assert!(
-        error
-            .to_string()
-            .contains("namespace mounts overlapping /lib/pkg are not accepted")
-    );
-}
-
-#[tokio::test]
 async fn installed_distribution_is_visible_only_after_explicit_process_reference() {
     let service = PackageService::ephemeral("test").unwrap();
     let installed = service
@@ -998,3 +950,7 @@ mod lifecycle_contention;
 
 #[path = "tests/agent_work.rs"]
 mod agent_work;
+mod unavailable_command;
+
+mod boot_namespace;
+mod skill_lifecycle;

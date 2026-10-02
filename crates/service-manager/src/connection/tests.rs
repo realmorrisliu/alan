@@ -1,4 +1,6 @@
 use super::*;
+#[path = "process_binding_tests.rs"]
+mod process_binding_tests;
 use alan_agent_engine::LlmProvider as ProviderId;
 use alan_ap::InProcessTransport;
 use alan_llm::MockLlmProvider;

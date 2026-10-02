@@ -167,6 +167,24 @@ impl NamespaceAgentFiles {
         Ok(Some(response))
     }
 
+    /// Settle only this pinned, service-assigned request and verify owner evidence.
+    pub(crate) async fn cancel_request(&self, request_id: &str) -> Result<()> {
+        validate_agent_file_id(request_id, "request id")?;
+        let client = self.client();
+        let path = format!("{}/requests/{request_id}", self.agent_path);
+        client
+            .write_document(&format!("{path}/ctl"), b"cancel")
+            .await
+            .with_context(|| format!("cancel request {path}"))?;
+        let status = String::from_utf8(client.read_file(&format!("{path}/status")).await?)
+            .context("cancelled request status is not utf8")?;
+        anyhow::ensure!(
+            matches!(status.as_str(), "cancelled" | "answered" | "closed"),
+            "request {path} has no terminal cancellation evidence: {status}"
+        );
+        Ok(())
+    }
+
     pub async fn write_assistant_output(&self, response: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_agent_output(&client, &self.agent_path, response).await
@@ -458,6 +476,45 @@ impl NamespaceAgentFiles {
             })
     }
 
+    pub(crate) async fn write_ui_skill_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiSkillSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(
+            &client,
+            &format!("{}/machine/ui/skills", self.agent_path),
+            snapshot,
+        )
+        .await
+    }
+
+    pub(crate) async fn write_ui_model_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiModelSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(
+            &client,
+            &format!("{}/machine/ui/models", self.agent_path),
+            snapshot,
+        )
+        .await
+    }
+
+    pub(crate) async fn write_ui_queue_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiQueueSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(
+            &client,
+            &format!("{}/machine/ui/queue", self.agent_path),
+            snapshot,
+        )
+        .await
+    }
+
     pub(crate) async fn write_ui_activity_snapshot(
         &self,
         snapshot: &UiActivitySnapshot,
@@ -651,6 +708,16 @@ pub(crate) fn valid_project_directory(path: &str) -> bool {
 mod selector_tests;
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
+    if let Some(model) = command.strip_prefix("select-model ") {
+        let (id, model) = model.split_once(' ')?;
+        return Some(Submission {
+            id: id.into(),
+            intent: alan_agent_protocol::InputIntent::Agent,
+            op: Op::SelectModel {
+                model: model.into(),
+            },
+        });
+    }
     let command = command.trim();
     if let Some(json) = command.strip_prefix("project-cwd-v1 ") {
         #[derive(serde::Deserialize)]

@@ -2,7 +2,8 @@
 use super::app::{FileBackedApp, FileBackedEvent};
 use super::file_surface::{ActionSnapshot, action_snapshot_to_history_cell, read_action_ids};
 use ratatui::text::Line;
-mod reference;
+mod presentation;
+pub(super) mod reference;
 use reference::resolve as resolve_reference;
 
 pub(super) fn start_pending_for_pid(
@@ -54,7 +55,7 @@ pub(super) fn start_pending_at(
         let ids = read_action_ids(&shell, &path)
             .await
             .map_err(|e| e.to_string());
-        let id = selected.or_else(|| ids.as_ref().ok().and_then(|v| v.first().cloned()));
+        let id = selected.or_else(|| ids.as_ref().ok().and_then(|v| v.last().cloned()));
         if tx
             .send(FileBackedEvent::ActionDetails {
                 path: path.clone(),
@@ -89,7 +90,7 @@ async fn field(shell: &alan_shell::Shell, path: &str) -> Result<String, String> 
         .stat(path)
         .await
         .map_err(|e| format!("unavailable: {e:?}"))?;
-    if stat.length > 262144 {
+    if stat.length > reference::DISPLAY_BYTES {
         return Err(
             "display bound: field exceeds 262144 bytes; original remains in AgentFS".into(),
         );
@@ -115,10 +116,8 @@ pub(super) async fn read_detail(
         output: String::new(),
         result: result.clone().unwrap_or_default(),
     };
-    let mut rows = vec![Line::from(format!("Action {id}"))];
-    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
-        rows.extend(crate::history::action_detail(&cell));
-    }
+    let mut rows = Vec::new();
+    let mut readable = false;
     for (label, value) in [
         ("Name", name),
         ("Status", status),
@@ -141,17 +140,31 @@ pub(super) async fn read_detail(
                         ))),
                         Some("evidence_projection") => {
                             rows.push(Line::from("Evidence projection: bounded preview; resolving retained reference"));
-                            rows.extend(resolve_reference(shell, &value, path).await);
+                            let resolved = resolve_reference(shell, &value, path).await;
+                            readable |= resolved.readable;
+                            rows.extend(resolved.rows);
                         }
                         _ => {}
                     }
                 }
-                rows.extend(
-                    text.lines()
-                        .map(|s| Line::from(crate::history::clean_text(s))),
-                );
+                let acquired = presentation::acquired_content(&mut rows, &text);
+                readable |= label == "Original output" && acquired;
             }
         }
     }
-    rows
+    let mut header = vec![Line::from(format!("Action {id}"))];
+    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+        let mut detail = crate::history::action_detail(&cell);
+        if readable {
+            detail.truncate(1);
+        } else if serde_json::from_str::<serde_json::Value>(&snapshot.result)
+            .ok()
+            .is_some_and(|value| value["type"] == "evidence_projection")
+        {
+            detail.insert(1.min(detail.len()), Line::from("Bounded preview"));
+        }
+        header.extend(detail);
+    }
+    header.extend(rows);
+    header
 }

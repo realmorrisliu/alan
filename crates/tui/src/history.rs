@@ -1,4 +1,5 @@
 mod action_summary;
+mod literal;
 mod markdown;
 pub(crate) use action_summary::action_summary;
 
@@ -49,6 +50,12 @@ pub enum HistoryCell {
     },
     User(String),
     Command(String),
+    /// Literal input retains its role and original source after physical drain.
+    InputTail {
+        text: String,
+        command: bool,
+        committed: (usize, usize),
+    },
     Assistant(String),
     /// Completed thinking, collapsed to a one-line summary by default.
     Thinking {
@@ -114,6 +121,32 @@ pub struct PendingYieldCell {
 }
 
 impl HistoryCell {
+    pub(crate) fn input_source(&self) -> Option<(&str, bool, (usize, usize))> {
+        match self {
+            Self::User(text) => Some((text, false, (0, 0))),
+            Self::Command(text) => Some((text, true, (0, 0))),
+            Self::InputTail {
+                text,
+                command,
+                committed,
+            } => Some((text, *command, *committed)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn with_input_cut(mut self, committed: (usize, usize)) -> Self {
+        if committed != (0, 0)
+            && let Some((text, command, _)) = self.input_source()
+        {
+            self = Self::InputTail {
+                text: text.to_owned(),
+                command,
+                committed,
+            };
+        }
+        self
+    }
+
     pub(crate) fn assistant_source(&self) -> Option<&str> {
         match self {
             Self::Assistant(text) | Self::AssistantTail { text, .. } => Some(text),
@@ -141,6 +174,21 @@ impl HistoryCell {
                 .collect();
         }
         let width = opts.width.max(16);
+        if let Some((text, command, committed)) = self.input_source() {
+            return literal::project(
+                text,
+                width,
+                if command {
+                    INLINE_COMMAND_PROMPT_PREFIX
+                } else {
+                    INLINE_PROMPT_PREFIX
+                },
+                committed,
+            )
+            .into_iter()
+            .map(|(line, _)| line.to_string())
+            .collect();
+        }
         if let Self::Rendered(lines) = self {
             return lines
                 .iter()
@@ -172,14 +220,12 @@ impl HistoryCell {
             Self::Rendered(_)
             | Self::Styled(_)
             | Self::AssistantTail { .. }
+            | Self::InputTail { .. }
             | Self::Plan(_)
             | Self::Thinking { .. } => {
                 unreachable!("handled above")
             }
-            Self::User(text) => return wrap_user_prompt(text, width, INLINE_PROMPT_PREFIX),
-            Self::Command(text) => {
-                return wrap_user_prompt(text, width, INLINE_COMMAND_PROMPT_PREFIX);
-            }
+            Self::User(_) | Self::Command(_) => unreachable!("literal inputs handled above"),
             Self::Assistant(text) => return wrap_plain_text(text, width),
             Self::Tool {
                 title,
@@ -254,7 +300,10 @@ impl HistoryCell {
             }
             _ => {
                 let style = match self {
-                    Self::User(_) | Self::Command(_) | Self::PendingYield(_) => Style::default()
+                    Self::User(_)
+                    | Self::Command(_)
+                    | Self::InputTail { .. }
+                    | Self::PendingYield(_) => Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                     Self::Tool { .. } | Self::Plan(_) => Style::default().fg(Color::Cyan),
@@ -275,6 +324,25 @@ impl HistoryCell {
             return true;
         }
 
+        if let Some((text, command, cut)) = self.input_source() {
+            let prefix = if command {
+                INLINE_COMMAND_PROMPT_PREFIX
+            } else {
+                INLINE_PROMPT_PREFIX
+            };
+            let rows = literal::project(text, opts.width.max(16), prefix, cut);
+            let committed = rows
+                .iter()
+                .take(lines_to_trim)
+                .next_back()
+                .map_or(cut, |(_, key)| *key);
+            *self = Self::InputTail {
+                text: text.to_owned(),
+                command,
+                committed,
+            };
+            return true;
+        }
         if let Some(text) = self.assistant_source() {
             let cut = match &*self {
                 Self::AssistantTail { committed, .. } => *committed,
@@ -538,30 +606,6 @@ fn wrap_with_prefix(prefix: &str, body: &str, width: usize) -> Vec<String> {
                 format!("{prefix}> {line}")
             } else {
                 format!("{:width$}  {line}", "", width = prefix.len())
-            }
-        })
-        .collect()
-}
-
-fn wrap_user_prompt(body: &str, width: usize, prefix: &str) -> Vec<String> {
-    let body_width = width
-        .saturating_sub(unicode_width::UnicodeWidthStr::width(prefix))
-        .max(8);
-    body.split('\n')
-        .flat_map(|segment| {
-            let wrapped = textwrap::wrap(segment, body_width);
-            if wrapped.is_empty() {
-                vec![String::new()]
-            } else {
-                wrapped.into_iter().map(Into::into).collect()
-            }
-        })
-        .enumerate()
-        .map(|(idx, line)| {
-            if idx == 0 {
-                format!("{prefix}{line}")
-            } else {
-                format!("{INLINE_PROMPT_CONTINUATION}{line}")
             }
         })
         .collect()

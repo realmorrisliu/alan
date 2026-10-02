@@ -26,6 +26,10 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+#[path = "engine_model_controls.rs"]
+mod model_controls;
+#[path = "engine_model_status.rs"]
+mod model_status;
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
 
@@ -116,6 +120,9 @@ struct RuntimeSubmissionQueues {
     active_turn_broker: TurnInputBroker,
     recorder: Option<crate::rollout::RolloutRecorder>,
     environment: Option<NamespaceRuntimeEnvironment>,
+    deferred_model: Option<alan_agent_protocol::UiModelBinding>,
+    model_process_path: String,
+    model_status: tokio::sync::Mutex<alan_agent_protocol::UiModelSnapshot>,
 }
 
 impl Default for RuntimeSubmissionQueues {
@@ -131,6 +138,9 @@ impl RuntimeSubmissionQueues {
             outer_queue,
             recorder: None,
             environment: None,
+            deferred_model: None,
+            model_process_path: String::new(),
+            model_status: Default::default(),
         }
     }
 
@@ -169,6 +179,15 @@ impl RuntimeSubmissionQueues {
         active_intent: alan_agent_protocol::InputIntent,
         accepts_inband: bool,
     ) {
+        if self
+            .outer_queue
+            .lock()
+            .expect("input queue poisoned")
+            .settled_ids
+            .contains(&incoming.id)
+        {
+            return;
+        }
         // Commands have no Agent generation to steer. Preserve the input as
         // ordinary follow-up work, including while command approval is pending.
         if active_intent == alan_agent_protocol::InputIntent::Command
@@ -182,6 +201,14 @@ impl RuntimeSubmissionQueues {
         if let Err(error) = self.admit_input(&incoming).await {
             self.reject_admission(&incoming, &error).await;
             return;
+        }
+        match self.reject_incompatible_steer(&incoming).await {
+            Ok(true) => return,
+            Err(error) => {
+                self.retain_durable_failure(&incoming, &error).await;
+                return;
+            }
+            Ok(false) => {}
         }
         if accepts_inband
             && is_turn_inband_submission(&incoming)
@@ -509,7 +536,7 @@ fn spawn_with_prepared_runtime_environment(
             agent_path = %state.agent_path(),
             "Agent runtime started"
         );
-        let _ = ready_tx.send(Ok(startup.metadata));
+        // Ready is published only after initial/recovered callable capture succeeds.
 
         // Main event loop with graceful shutdown support and interruptible submissions.
         let mut submissions_closed = false;
@@ -517,11 +544,24 @@ fn spawn_with_prepared_runtime_environment(
 
         let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
         queues.recorder = state.machine.input_recorder();
+        queues.model_process_path = state.process_path();
         queues.environment = Some(state.environment.clone());
+        if let Err(error) = queues.initialize_process_observations(&state).await {
+            let _ = ready_tx.send(Err(format!("{error:#}")));
+            return;
+        }
+        state.prompt_cache.ensure_skills_snapshot().ok();
+        if let Err(error) = state.publish_ensured_skills().await {
+            let _ = ready_tx.send(Err(format!("initialize Skill observation: {error:#}")));
+            return;
+        }
+        let _ = ready_tx.send(Ok(startup.metadata));
 
         let mut namespace_ready = VecDeque::new();
         let mut namespace_batch_admitted = false;
         loop {
+            queues.observe_models().await;
+            super::queue_publication::observe(&queues.outer_queue).await;
             if !shutdown_requested && !namespace_batch_admitted {
                 namespace_ready = match state.agent_files().read_ready_runtime_submissions().await {
                     Ok(ready) => ready.into(),
@@ -638,6 +678,15 @@ fn spawn_with_prepared_runtime_environment(
                         }
                         continue;
                     }
+                    if queues
+                        .outer_queue
+                        .lock()
+                        .expect("input queue poisoned")
+                        .settled_ids
+                        .contains(&submission.id)
+                    {
+                        continue;
+                    }
                     if let Err(error) = queues.admit_input(&submission).await {
                         queues.reject_admission(&submission, &error).await;
                         continue;
@@ -690,6 +739,31 @@ fn spawn_with_prepared_runtime_environment(
                         queues.push_outer_submission(submission);
                         continue;
                     }
+                    if let Err(error) = queues.activate_binding(&submission).await {
+                        queues
+                            .fail_accepted_input(
+                                &submission,
+                                &error,
+                                "Captured callable unavailable; input excluded without execution.",
+                            )
+                            .await;
+                        continue;
+                    }
+                    if matches!(
+                        submission.op,
+                        alan_agent_protocol::Op::Input {
+                            mode: alan_agent_protocol::InputMode::Steer,
+                            ..
+                        }
+                    ) && !state.machine.is_turn_active()
+                    {
+                        queues.fail_accepted_input(
+                            &submission,
+                            &anyhow::anyhow!("orphan steering input"),
+                            "Steer requires active generation-capable work; input excluded without execution.",
+                        ).await;
+                        continue;
+                    }
                     debug!(?submission.id, "Received submission");
                     let accepts_inband = accepts_inband_submissions(&submission.op);
                     let active_intent = submission.intent;
@@ -711,6 +785,8 @@ fn spawn_with_prepared_runtime_environment(
                     let monitor_stop = CancellationToken::new();
                     let observer = async {
                         loop {
+                            queues.observe_models().await;
+                            super::queue_publication::observe(&queues.outer_queue).await;
                             tokio::select! {
                                 _ = monitor_stop.cancelled() => break,
                                 incoming = sub_rx.recv(), if !submissions_closed => {
@@ -820,6 +896,7 @@ fn spawn_with_prepared_runtime_environment(
                         );
                 }
                 QueuedRuntimeItem::Deferred(action) => {
+                    queues.deferred_model_started().await;
                     let action_for_requeue = action.clone();
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
@@ -830,6 +907,7 @@ fn spawn_with_prepared_runtime_environment(
                     let monitor_stop = CancellationToken::new();
                     let observer = async {
                         loop {
+                            queues.observe_models().await;
                             tokio::select! {
                                 _ = monitor_stop.cancelled() => break,
                                 incoming = sub_rx.recv(), if !submissions_closed => {
@@ -886,6 +964,8 @@ fn spawn_with_prepared_runtime_environment(
                     };
                     let exit =
                         monitor::drive_with_monitor(action_fut, observer, &monitor_stop).await;
+                    queues.deferred_model = None;
+                    queues.observe_models().await;
                     if should_requeue_deferred_action(requeue_if_cancelled, exit) {
                         queues.push_outer_deferred(action_for_requeue);
                     }

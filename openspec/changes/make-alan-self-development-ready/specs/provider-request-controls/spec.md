@@ -39,3 +39,15 @@ SHALL be explicit; no secret material SHALL enter these projections.
 - **WHEN** a client inspects status after a confirmed model selection
 - **THEN** it can distinguish the confirmed next-input binding from older admitted work's captured binding
 - **AND** the renderer does not relabel that older work with the newly selected model
+
+#### Scenario: Model selection receipt belongs to one Process input
+- **WHEN** the renderer requests a model selection
+- **THEN** it correlates completion with the pinned Process and the exact selection input ID
+- **AND** successful control-file transport or an unrelated completion does not confirm selection
+- **AND** a response from an earlier Root cannot settle the current request
+
+#### Scenario: Model observation and selection completion arrive separately
+- **WHEN** a model projection update and a selection completion arrive in either order
+- **THEN** the renderer distinguishes the observed selected-next binding from the request's pending or completed disposition
+- **AND** it does not fabricate model controls when the projection cannot be read
+- **AND** losing the owning Process or completion stream leaves the request uncertain without automatic retry

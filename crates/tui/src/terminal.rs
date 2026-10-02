@@ -11,7 +11,94 @@ use std::io::{IsTerminal, Stdout, Write, stdout};
 
 use crate::transcript_ui::wrapped_line_count;
 
+#[cfg(test)]
+#[path = "terminal_accessibility_tests.rs"]
+mod accessibility_tests;
+
 pub type AlanTerminal = Terminal<CrosstermBackend<Stdout>>;
+
+/// Output capability policy owned by the native terminal adapter.
+#[derive(Clone, Copy)]
+pub(crate) struct TerminalStylePolicy {
+    colors: u16,
+    attributes: bool,
+}
+
+impl TerminalStylePolicy {
+    pub(crate) fn from_capabilities(no_color: bool, term: &str, colors: u16) -> Self {
+        Self {
+            colors: if no_color || matches!(term, "dumb" | "vt100" | "vt102" | "vt220") {
+                0
+            } else {
+                colors
+            },
+            attributes: term != "dumb",
+        }
+    }
+
+    fn installed() -> Self {
+        Self::from_capabilities(
+            std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()),
+            &std::env::var("TERM").unwrap_or_default(),
+            crossterm::style::available_color_count(),
+        )
+    }
+
+    pub(crate) fn apply(self, buffer: &mut ratatui::buffer::Buffer) {
+        use ratatui::style::{Color, Modifier};
+        let supported = |color| match color {
+            Color::Reset => true,
+            Color::Rgb(..) => self.colors == u16::MAX,
+            Color::Indexed(index) => u16::from(index) < self.colors,
+            Color::DarkGray
+            | Color::LightRed
+            | Color::LightGreen
+            | Color::LightYellow
+            | Color::LightBlue
+            | Color::LightMagenta
+            | Color::LightCyan
+            | Color::White => self.colors >= 16,
+            _ => self.colors >= 8,
+        };
+        for cell in &mut buffer.content {
+            if !supported(cell.fg) {
+                cell.fg = Color::Reset;
+            }
+            if !supported(cell.bg) {
+                cell.bg = Color::Reset;
+            }
+            if !supported(cell.underline_color) {
+                cell.underline_color = Color::Reset;
+            }
+            if !self.attributes {
+                cell.modifier = Modifier::empty();
+            } else if self.colors < 16 {
+                // Conservative native baseline: do not assume italic, dim or blink.
+                cell.modifier &= Modifier::BOLD | Modifier::UNDERLINED | Modifier::REVERSED;
+            }
+        }
+    }
+}
+
+pub(crate) fn render_frame_with_policy(
+    frame: &mut Frame<'_>,
+    policy: TerminalStylePolicy,
+    draw: impl FnOnce(&mut Frame<'_>),
+) {
+    draw(frame);
+    policy.apply(frame.buffer_mut());
+}
+
+pub(crate) fn render_scrollback_with_policy(
+    buffer: &mut ratatui::buffer::Buffer,
+    lines: Vec<Line<'static>>,
+    policy: TerminalStylePolicy,
+) {
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(buffer.area, buffer);
+    policy.apply(buffer);
+}
 
 pub fn is_interactive_terminal() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
@@ -46,6 +133,7 @@ impl TerminalSession {
         &mut self,
         committed: &[Line<'static>],
         height: u16,
+        base_height: u16,
         draw: F,
     ) -> Result<()>
     where
@@ -56,6 +144,9 @@ impl TerminalSession {
             |session, begin| synchronized_boundary(session.terminal.backend_mut(), begin),
             |session| {
                 session.write_scrollback(committed)?;
+                let screen = session.terminal.size()?.height;
+                let top = session.terminal.get_frame().area().y;
+                let height = anchored_inline_height(base_height, height, screen, top);
                 session.set_inline_height(height)?;
                 session.draw_with(draw)
             },
@@ -66,8 +157,9 @@ impl TerminalSession {
     where
         F: FnOnce(&mut Frame<'_>),
     {
+        let policy = TerminalStylePolicy::installed();
         self.terminal
-            .draw(draw)
+            .draw(|frame| render_frame_with_policy(frame, policy, draw))
             .map(|_| ())
             .context("failed to draw terminal frame")
     }
@@ -137,14 +229,21 @@ impl TerminalSession {
     }
 
     fn insert_scrollback_chunk(&mut self, lines: Vec<Line<'static>>, height: u16) -> Result<()> {
+        let policy = TerminalStylePolicy::installed();
         self.terminal
             .insert_before(height, |buf| {
-                Paragraph::new(lines)
-                    .wrap(Wrap { trim: false })
-                    .render(buf.area, buf);
+                render_scrollback_with_policy(buf, lines, policy);
             })
             .context("failed to append transcript to terminal scrollback")
     }
+}
+
+pub(crate) fn anchored_inline_height(base: u16, desired: u16, screen: u16, top: u16) -> u16 {
+    // Only stable content may require moving the Inline origin upward.
+    // Transient hints consume available rows BELOW the current owner origin.
+    base.max(desired.min(screen.saturating_sub(top)))
+        .min(screen)
+        .max(1)
 }
 
 fn build_inline_terminal(out: Stdout, height: u16) -> Result<AlanTerminal> {

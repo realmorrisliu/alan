@@ -76,6 +76,7 @@ pub(crate) struct PromptAssemblyCache {
     fixed_definition_persona_section: Option<String>,
     memory_store_dir: Option<PathBuf>,
     host_capabilities: SkillHostCapabilities,
+    pub(crate) skill_publication: alan_agent_protocol::UiSkillSnapshot,
     skills_snapshot: Option<CachedSkillsRegistry>,
     definition_persona_snapshot: Option<CachedDefinitionPersona>,
     memory_store_snapshot: Option<CachedMemoryStore>,
@@ -92,6 +93,7 @@ impl PromptAssemblyCache {
             fixed_definition_persona_section: None,
             memory_store_dir: None,
             host_capabilities: SkillHostCapabilities::default(),
+            skill_publication: Default::default(),
             skills_snapshot: None,
             definition_persona_snapshot: None,
             memory_store_snapshot: None,
@@ -126,6 +128,7 @@ impl PromptAssemblyCache {
             fixed_definition_persona_section: None,
             memory_store_dir: None,
             host_capabilities,
+            skill_publication: Default::default(),
             skills_snapshot: None,
             definition_persona_snapshot: None,
             memory_store_snapshot: None,
@@ -328,7 +331,17 @@ impl PromptAssemblyCache {
         )
     }
 
-    fn ensure_skills_snapshot(&mut self) -> Result<bool, crate::skills::SkillsError> {
+    pub(crate) fn skill_observation(&self) -> (bool, Vec<String>) {
+        match self.skills_snapshot.as_ref() {
+            Some(snapshot) => (
+                true,
+                snapshot.mentionable_skill_ids.iter().cloned().collect(),
+            ),
+            None => (false, Vec::new()),
+        }
+    }
+
+    pub(crate) fn ensure_skills_snapshot(&mut self) -> Result<bool, crate::skills::SkillsError> {
         let Some(capability_view) = self.fixed_capability_view.as_ref() else {
             return Ok(true);
         };
@@ -338,6 +351,8 @@ impl PromptAssemblyCache {
             .as_ref()
             .is_some_and(CachedSkillsRegistry::is_current);
         if !cache_hit {
+            // Drop stale authority before attempting a refresh, including failure.
+            self.skills_snapshot = None;
             self.skills_snapshot = Some(CachedSkillsRegistry::load_capability_view(
                 capability_view,
                 &self.skill_overrides,

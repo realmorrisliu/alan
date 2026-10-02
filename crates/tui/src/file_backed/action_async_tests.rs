@@ -124,9 +124,14 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
     assert!(app.action_cells.is_empty());
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     let open = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    app.handle_key(open);
+    action_detail_io::start_pending(&shell, &mut app, &tx);
+    app.dispatch(receive(&mut rx).await);
+    app.dispatch(receive(&mut rx).await);
+    assert_eq!(app.modal.ids[app.modal.selected], second);
     let (reached, resume) =
         slow.pause_read_after_matching_reads(&format!("/actions/{first}/output"), 1);
-    app.handle_key(open);
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
     action_detail_io::start_pending(&shell, &mut app, &tx);
     app.dispatch(receive(&mut rx).await);
     tokio::time::timeout(Duration::from_secs(2), reached)
@@ -181,10 +186,7 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
             action_detail_io::start_pending(&shell, &mut app, &tx);
             app.dispatch(receive(&mut rx).await);
             app.dispatch(receive(&mut rx).await);
-            app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-            action_detail_io::start_pending(&shell, &mut app, &tx);
-            app.dispatch(receive(&mut rx).await);
-            app.dispatch(receive(&mut rx).await);
+            assert_eq!(app.modal.ids[app.modal.selected], second);
         }
     }
 }

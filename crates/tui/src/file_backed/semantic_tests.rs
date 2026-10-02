@@ -19,7 +19,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
-            [": task", "+committed"]
+            [": task", "```diff", "+committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         for id in ["first", "second"] {
@@ -66,7 +66,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
         let expected = app.styled_history_lines(width);
         assert_eq!(
             expected.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["-literal", "+next"]
+            ["-literal", "+next", "```"]
         );
         assert_eq!(expected[0].spans[0].style.fg, Some(Color::Red));
         assert_eq!(expected[1].spans[0].style.fg, Some(Color::Green));
@@ -143,7 +143,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         let drained = app.drain_committed_scrollback(width, 1);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            [": task", "+committed"]
+            [": task", "```diff", "+committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         assert!(app.drain_committed_scrollback(width, 1).is_empty());
@@ -162,7 +162,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
                 .render_styled_lines(crate::history::RenderOpts::new(width, false));
             assert_eq!(
                 lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
-                ["-    **literal**", "+new", "done"]
+                ["-    **literal**", "+new", "```", "done"]
             );
             assert_eq!(lines[0].spans[0].style.fg, Some(Color::Red));
             assert_eq!(lines[1].spans[0].style.fg, Some(Color::Green));
@@ -196,7 +196,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         assert_eq!(buffer.cell((0, 2)).unwrap().fg, Color::Green);
         assert!(
             buffer
-                .cell((0, 3))
+                .cell((0, 4))
                 .unwrap()
                 .modifier
                 .contains(Modifier::BOLD)
@@ -233,7 +233,7 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             let expected = format!(
                 "{}{}: literal! literaltool> literal",
                 "a".repeat(238 - owned),
-                if fenced { "**" } else { "" }
+                if fenced { "**```" } else { "" }
             );
             let check = |app: &FileBackedApp| {
                 assert_eq!(app.transcript.len(), 2);
@@ -298,7 +298,7 @@ fn semantic_idle_hydration_does_not_replay_drained_heading() {
         let source = "# head\n**one**\n**two**";
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(source.into()));
-        let drained = app.drain_committed_scrollback(width, 4);
+        let drained = app.drain_committed_scrollback(width, 5);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["head"]
@@ -357,15 +357,15 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((4, 0)).unwrap().symbol(),
+            buffer.cell((4, 1)).unwrap().symbol(),
             "l",
             "code tab indentation at {width}"
         );
-        assert_eq!(buffer.cell((12, 6)).unwrap().symbol(), "n");
-        assert_eq!(buffer.cell((12, 6)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((12, 7)).unwrap().symbol(), "o");
-        assert_eq!(buffer.cell((12, 7)).unwrap().fg, Color::Red);
-        for row in 1..=3 {
+        assert_eq!(buffer.cell((12, 8)).unwrap().symbol(), "n");
+        assert_eq!(buffer.cell((12, 8)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((12, 9)).unwrap().symbol(), "o");
+        assert_eq!(buffer.cell((12, 9)).unwrap().fg, Color::Red);
+        for row in 3..=5 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }
         assert!(
@@ -383,11 +383,11 @@ fn semantic_second_drain_stream_tape_and_both_merges_keep_fence_context() {
         let source = "# head\n```diff\n+\tone\n-\ttwo\n+\tthree";
         app.transcript.push(HistoryCell::User("task".into()));
         app.push_output(source.into());
-        let first = app.drain_committed_scrollback(width, 5);
+        let first = app.drain_committed_scrollback(width, 6);
         assert!(!first.is_empty());
         let resized = if width == 40 { 120 } else { 40 };
         let before = app.styled_history_lines(resized);
-        let second = app.drain_committed_scrollback(resized, 4);
+        let second = app.drain_committed_scrollback(resized, 5);
         assert_eq!(
             [second.clone(), app.styled_history_lines(resized)].concat(),
             before
@@ -443,12 +443,12 @@ fn semantic_second_drain_stream_tape_and_both_merges_keep_fence_context() {
         assert_eq!(buffer.cell((5, 2)).unwrap().fg, Color::Green);
         assert!(
             buffer
-                .cell((0, 3))
+                .cell((0, 4))
                 .unwrap()
                 .modifier
                 .contains(Modifier::BOLD)
         );
-        for row in 4..=6 {
+        for row in 5..=7 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }
     }

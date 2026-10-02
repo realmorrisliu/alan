@@ -255,8 +255,11 @@ fn reattached_action_indices_follow_removed_error_cells() {
 
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
-    let current_transcript =
-        remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
+    let current_transcript = remove_error_cells_and_remap_actions(
+        current_transcript,
+        &mut reattached.action_cells,
+        &mut reattached.local_inputs,
+    );
 
     assert!(reattached.merge_reconnected_history(current_transcript, "current task", 0));
     assert_eq!(reattached.action_cells.get("action-1"), Some(&3));

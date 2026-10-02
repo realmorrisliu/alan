@@ -24,7 +24,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
 mod tape_lease;
-mod tool_batch;
+pub(crate) mod tool_batch;
 
 async fn maybe_compact_context_for_request<E, F>(
     state: &mut RuntimeLoopState,

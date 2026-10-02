@@ -203,9 +203,14 @@ Use this skill when asked.
 
     let captured_spec = Arc::new(Mutex::new(None));
     let captured_spec_for_spawn = Arc::clone(&captured_spec);
+    let shell = Shell::new(state.environment.root_transport());
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let child_entered = entered.clone();
+    let child_release = release.clone();
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
-    let result = handle_invoke_delegated_skill_with_spawn(
+    let invocation = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -215,6 +220,8 @@ Use this skill when asked.
             let captured_spec = Arc::clone(&captured_spec_for_spawn);
             Box::pin(async move {
                 *captured_spec.lock().unwrap() = Some(spec);
+                child_entered.notify_one();
+                child_release.notified().await;
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
                     process_path: "child-machine".to_string(),
@@ -230,8 +237,28 @@ Use this skill when asked.
                 })
             })
         },
-    )
-    .await;
+    );
+    tokio::pin!(invocation);
+    tokio::select! {
+        _ = entered.notified() => {},
+        result = &mut invocation => panic!("child must remain gated: {result:?}"),
+    }
+    let snapshot: alan_agent_protocol::UiSkillSnapshot =
+        serde_json::from_slice(&shell.cat("/agent/1/machine/ui/skills").await.unwrap()).unwrap();
+    assert!(
+        snapshot.known,
+        "resolved catalog must publish before child completion"
+    );
+    assert_eq!(snapshot.process_path, "/proc/1");
+    assert_eq!(snapshot.publication_version, 1);
+    assert_eq!(snapshot.mentionable_skill_ids, vec!["repo-review"]);
+    assert!(
+        read_shell_utf8(&shell, "/agent/1/events")
+            .await
+            .contains("ui:skills\n")
+    );
+    release.notify_one();
+    let result = invocation.await;
 
     assert!(result.is_ok());
     let spec = captured_spec

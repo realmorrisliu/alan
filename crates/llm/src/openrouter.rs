@@ -4,6 +4,9 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
 #[cfg(test)]
+use tracing::debug;
+
+#[cfg(test)]
 use openrouter_rs::types::UnifiedStreamEvent;
 use openrouter_rs::{
     api::chat::{
@@ -19,12 +22,14 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
-use tracing::debug;
 
 use crate::{
     GenerationRequest, GenerationResponse, LlmProvider, Message, MessageRole, ReasoningEffort,
     StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
 };
+
+#[cfg(test)]
+mod completion_tests;
 
 mod input_projection;
 
@@ -112,22 +117,17 @@ impl OpenRouterClient {
             .send()
             .await
             .context("OpenRouter stream request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| String::from("<failed to read body>"));
-            bail!("OpenRouter stream request failed with status {status}: {body}");
-        }
+        let response = response.error_for_status()?;
 
         let (tx, rx) = mpsc::channel(100);
 
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            consume_openrouter_raw_stream(response, tx).await;
+            let outcome = consume_openrouter_raw_stream(response, tx).await;
+            let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
 
-        Ok(rx)
+        Ok(crate::failure::guard_stream(rx, status_rx))
     }
 
     fn request_builder(&self) -> Result<reqwest::RequestBuilder> {
@@ -420,89 +420,81 @@ async fn consume_openrouter_stream(
         .await;
 }
 
-async fn consume_openrouter_raw_stream(response: reqwest::Response, tx: mpsc::Sender<StreamChunk>) {
+async fn consume_openrouter_raw_stream(
+    response: reqwest::Response,
+    tx: mpsc::Sender<StreamChunk>,
+) -> Result<()> {
+    consume_router_bytes(
+        response.bytes_stream().map(|chunk| {
+            chunk
+                .map(|bytes| bytes.to_vec())
+                .map_err(anyhow::Error::from)
+        }),
+        tx,
+    )
+    .await
+}
+
+async fn consume_router_bytes<S>(mut stream: S, tx: mpsc::Sender<StreamChunk>) -> Result<()>
+where
+    S: futures::Stream<Item = Result<Vec<u8>>> + Unpin,
+{
     let mut emitted_payload = false;
     let mut latest_usage = None;
     let mut latest_response_id = None;
     let mut latest_finish_reason = None;
     let mut parser = crate::SseEventParser::new();
-    let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(error) => {
-                debug!(?error, "OpenRouter stream failed while reading bytes");
-                if emitted_payload {
-                    latest_finish_reason = Some("stream_error".to_string());
-                    break;
-                }
-                return;
-            }
+    let mut completed = false;
+    loop {
+        let chunk = tokio::select! {
+            _ = tx.closed() => return Ok(()),
+            chunk = stream.next() => match chunk { Some(chunk) => chunk, None => break },
         };
-
-        let mut done = false;
-        for event in parser.push(&chunk) {
+        for event in parser.push(&chunk?) {
             if event.trim() == "[DONE]" {
-                done = true;
+                completed = true;
                 break;
             }
-            match serde_json::from_str::<CompletionsResponse>(&event) {
-                Ok(response) => {
-                    emit_openrouter_stream_response(
-                        response,
-                        &tx,
-                        &mut emitted_payload,
-                        &mut latest_response_id,
-                        &mut latest_finish_reason,
-                        &mut latest_usage,
-                    )
-                    .await;
-                }
-                Err(error) => {
-                    debug!(?error, event, "failed to decode OpenRouter stream event");
-                    if emitted_payload {
-                        latest_finish_reason = Some("stream_error".to_string());
-                        done = true;
-                        break;
-                    }
-                    return;
-                }
-            }
+            let response = serde_json::from_str::<CompletionsResponse>(&event)?;
+            emit_openrouter_stream_response(
+                response,
+                &tx,
+                &mut emitted_payload,
+                &mut latest_response_id,
+                &mut latest_finish_reason,
+                &mut latest_usage,
+            )
+            .await;
         }
-        if done {
+        if completed {
             break;
         }
     }
 
-    for event in parser.finish() {
-        if event.trim() == "[DONE]" {
-            break;
-        }
-        match serde_json::from_str::<CompletionsResponse>(&event) {
-            Ok(response) => {
-                emit_openrouter_stream_response(
-                    response,
-                    &tx,
-                    &mut emitted_payload,
-                    &mut latest_response_id,
-                    &mut latest_finish_reason,
-                    &mut latest_usage,
-                )
-                .await;
+    if !completed {
+        for event in parser.finish() {
+            if event.trim() == "[DONE]" {
+                completed = true;
+                break;
             }
-            Err(error) => {
-                debug!(
-                    ?error,
-                    event, "failed to decode trailing OpenRouter stream event"
-                );
-                if emitted_payload {
-                    latest_finish_reason = Some("stream_error".to_string());
-                    break;
-                }
-                return;
-            }
+            let response = serde_json::from_str::<CompletionsResponse>(&event)?;
+            emit_openrouter_stream_response(
+                response,
+                &tx,
+                &mut emitted_payload,
+                &mut latest_response_id,
+                &mut latest_finish_reason,
+                &mut latest_usage,
+            )
+            .await;
         }
+    }
+    if tx.is_closed() {
+        return Ok(());
+    }
+    if !completed {
+        return Err(crate::failure::StreamClosed.into());
     }
 
     let _ = tx
@@ -517,9 +509,10 @@ async fn consume_openrouter_raw_stream(response: reqwest::Response, tx: mpsc::Se
             sequence_number: None,
             tool_call_delta: None,
             is_finished: true,
-            finish_reason: latest_finish_reason,
+            finish_reason: Some(latest_finish_reason.unwrap_or_else(|| "stop".into())),
         })
         .await;
+    Ok(())
 }
 
 async fn emit_openrouter_stream_response(

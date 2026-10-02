@@ -205,6 +205,10 @@ async fn queue_persistence_failure_rejects_admission_and_preserves_pending_remov
     let mut queues = RuntimeSubmissionQueues::new(machine.input_queue());
     queues.recorder = machine.recorder();
     queues.environment = Some(environment);
+    queues
+        .initialize_bindings(&crate::Config::default(), Default::default())
+        .await
+        .unwrap();
     let pending = Submission::new(Op::Turn {
         parts: vec![ContentPart::text("pending")],
         context: None,
@@ -578,6 +582,47 @@ async fn runtime_admission_shutdown_and_explicit_recovery_preserve_paused_inputs
         assert!(queue.paused);
         assert!(queue.active_submission_ids.is_empty());
     }
+    // Recovered Process has a real binding and a live authority owner, but the
+    // current Host Mount projection supplies neither an active grant nor adapter.
+    // This reaches directory validation rather than the missing-environment guard.
+    #[derive(Debug)]
+    struct NoActiveGrant;
+    impl crate::tools::ToolExecutionAuthority for NoActiveGrant {
+        fn reconcile(
+            &self,
+            _: u64,
+            binding: crate::tools::ToolExecutionBinding,
+        ) -> anyhow::Result<crate::tools::ToolExecutionBinding> {
+            assert!(binding.cwd_grant_id.is_none());
+            assert!(!binding.has_adapter());
+            Ok(binding)
+        }
+    }
+    let runner = crate::tools::ToolProcessRunner::from_registry(&crate::tools::ToolRegistry::new());
+    runner.register_process_binding(
+        2,
+        crate::tools::ToolExecutionBinding::awaiting_host_projection(
+            "/mnt/project".into(),
+            temp.path().into(),
+        ),
+    );
+    runner.register_process_authority(2, Arc::new(NoActiveGrant));
+    let recovered_environment = NamespaceRuntimeEnvironment::new(root, "/agent/2", "default")
+        .with_namespace_cwd("/mnt/project")
+        .with_tool_process_context(2, runner.clone());
+    assert_eq!(
+        recovered_environment.tool_execution().default_cwd(),
+        Some("/mnt/project".into())
+    );
+    let preflight_error = recovered_environment
+        .tool_execution()
+        .change_process_directory(std::path::Path::new("/mnt/project"))
+        .unwrap_err();
+    assert!(
+        preflight_error
+            .to_string()
+            .contains("Process has no active Host Mount execution adapter")
+    );
     // Explicitly restart the runtime too, rather than testing only the loader.
     let mut restarted = spawn_with_namespace_environment(
         AgentProcessConfig {
@@ -586,7 +631,7 @@ async fn runtime_admission_shutdown_and_explicit_recovery_preserve_paused_inputs
             recovery_rollout_path: Some(path),
             ..AgentProcessConfig::default()
         },
-        NamespaceRuntimeEnvironment::new(root, "/agent/2", "default"),
+        recovered_environment,
         crate::skills::SkillHostCapabilities::default(),
         capabilities,
     )
@@ -619,7 +664,7 @@ async fn runtime_admission_shutdown_and_explicit_recovery_preserve_paused_inputs
         loop {
             let notice =
                 String::from_utf8(shell.cat("/agent/2/machine/ui/notice").await.unwrap()).unwrap();
-            if notice.contains("recovered input requires current explicit project authority") {
+            if notice.contains("Queue control rejected:") {
                 break;
             }
             tokio::task::yield_now().await;
@@ -641,20 +686,30 @@ async fn runtime_admission_shutdown_and_explicit_recovery_preserve_paused_inputs
     )
     .await
     .unwrap();
-    let queue = after_rejection.input_queue();
-    let queue = queue.lock().unwrap();
-    let ids: Vec<_> = queue
-        .pending
-        .iter()
-        .filter_map(|item| match item {
-            QueuedRuntimeItem::Submission(input) => Some(input.id.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        ids,
-        [second.id, third_id],
-        "rejected continue must retain queued identities and order"
+    {
+        let queue = after_rejection.input_queue();
+        let queue = queue.lock().unwrap();
+        let ids: Vec<_> = queue
+            .pending
+            .iter()
+            .filter_map(|item| match item {
+                QueuedRuntimeItem::Submission(input) => Some(input.id.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            [second.id, third_id],
+            "rejected continue must retain queued identities and order"
+        );
+        assert!(queue.paused);
+        assert!(queue.active_submission_ids.is_empty());
+    }
+    assert!(runner.process_binding(2).unwrap().cwd_grant_id.is_none());
+    assert!(!runner.process_binding(2).unwrap().has_adapter());
+    let notice = String::from_utf8(shell.cat("/agent/2/machine/ui/notice").await.unwrap()).unwrap();
+    assert!(
+        notice.contains("Recovered Process requires current explicit project authority before continuing queued work"),
+        "unauthorized recovered ContinueQueue must give actionable authority guidance: {notice}"
     );
-    assert!(queue.paused);
 }

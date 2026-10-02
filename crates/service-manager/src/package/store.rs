@@ -191,12 +191,26 @@ impl PackageStoreLock {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
-            // SAFETY: file owns a valid descriptor for the lifetime of the lock.
-            // ponytail: serialize store operations; split locks only if contention warrants it.
-            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-            if result != 0 {
+            use std::time::{Duration, Instant};
+            let deadline = Instant::now() + Duration::from_millis(500);
+            loop {
+                // SAFETY: file owns a valid descriptor throughout acquisition.
+                let result =
+                    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if result == 0 {
+                    break;
+                }
                 let error = std::io::Error::last_os_error();
-                return Err(error).context("acquire Package Store lock");
+                if !error.raw_os_error().is_some_and(|code| {
+                    code == libc::EWOULDBLOCK || code == libc::EAGAIN || code == libc::EINTR
+                }) {
+                    return Err(error).context("acquire Package Store lock");
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    bail!("Package Store busy: lock acquisition exceeded 500 ms");
+                }
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
             }
         }
         Ok(Self { file })

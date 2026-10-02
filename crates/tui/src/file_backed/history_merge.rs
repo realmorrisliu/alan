@@ -14,63 +14,108 @@ pub(super) fn merge_reconnected_history(
         .iter()
         .enumerate()
         .filter_map(|(index, cell)| {
-            matches!(cell, HistoryCell::User(text) | HistoryCell::Command(text) if text == submitted_input).then_some(index)
+            (cell
+                .input_source()
+                .is_some_and(|(text, _, _)| text == submitted_input)
+                || app.local_inputs.values().any(|input| {
+                    input.tape_seen && input.cell == Some(index) && input.body == submitted_input
+                }))
+            .then_some(index)
         })
         .nth(prior_matching_turns)
     else {
+        app.action_cells.clear();
+        for input in app.local_inputs.values_mut() {
+            input.cell = None;
+        }
+        app.pending_remote_turn_start = None;
         return false;
     };
 
+    // A canonical local receipt owns its actual retained source at the
+    // submitted boundary, even when fully committed and therefore source-empty.
+    let append_from = boundary
+        + usize::from(
+            !app.local_inputs
+                .values()
+                .any(|input| input.tape_seen && input.cell == Some(boundary)),
+        );
     let mut omitted_current_cell = None;
-    if let Some(previous_boundary) = app
+    if let Some(previous_boundary) = app.transcript.iter().rposition(|cell| {
+        cell.input_source()
+            .is_some_and(|(text, _, _)| text == submitted_input)
+    }) && let Some((previous_answer_index, previous_answer)) = app
         .transcript
         .iter()
-        .rposition(|cell| matches!(cell, HistoryCell::User(text) | HistoryCell::Command(text) if text == submitted_input))
-        && let Some((previous_answer_index, previous_answer)) = app
-            .transcript
-            .iter()
-            .enumerate()
-            .skip(previous_boundary + 1)
-            .rev()
-            .find_map(|(index, cell)| cell.assistant_source().map(|text| (index, text)))
+        .enumerate()
+        .skip(previous_boundary + 1)
+        .rev()
+        .find_map(|(index, cell)| cell.assistant_source().map(|text| (index, text)))
         && let Some((current_answer_index, current_answer)) = current
             .iter()
             .enumerate()
             .skip(boundary + 1)
-            .rev()
-            .find_map(|(index, cell)| match cell {
-                HistoryCell::Assistant(text) => Some((index, text.as_str())),
-                _ => None,
+            .take_while(|(index, cell)| {
+                cell.input_source().is_none()
+                    && !app
+                        .local_inputs
+                        .values()
+                        .any(|input| input.cell == Some(*index))
             })
+            .filter_map(|(index, cell)| cell.assistant_source().map(|text| (index, text)))
+            .last()
         && !previous_answer.is_empty()
         && !current_answer.is_empty()
         && (current_answer.starts_with(previous_answer)
             || previous_answer.starts_with(current_answer))
     {
         if current_answer.starts_with(previous_answer) {
-            app.transcript[previous_answer_index].replace_assistant_source(current_answer.to_string());
+            app.transcript[previous_answer_index]
+                .replace_assistant_source(current_answer.to_string());
         }
         omitted_current_cell = Some(current_answer_index);
     }
 
     let previous_len = app.transcript.len();
+    // A turn start is a boundary between cells, including current.len().
+    // An omitted answer shifts later boundaries, not the boundary before it.
+    app.pending_remote_turn_start = app.pending_remote_turn_start.and_then(|index| {
+        (index >= append_from).then(|| {
+            previous_len + index
+                - append_from
+                - usize::from(omitted_current_cell.is_some_and(|omitted| omitted < index))
+        })
+    });
     app.action_cells = std::mem::take(&mut app.action_cells)
         .into_iter()
         .filter_map(|(action_id, index)| {
-            if index <= boundary {
+            if index < append_from {
                 return None;
             }
             let omitted_before_action =
                 usize::from(omitted_current_cell.is_some_and(|omitted| omitted < index));
             Some((
                 action_id,
-                previous_len + index - boundary - 1 - omitted_before_action,
+                previous_len + index - append_from - omitted_before_action,
             ))
         })
         .collect();
+    for input in app.local_inputs.values_mut() {
+        input.cell = input.cell.and_then(|index| {
+            if index >= append_from && Some(index) != omitted_current_cell {
+                Some(
+                    previous_len + index
+                        - append_from
+                        - usize::from(omitted_current_cell.is_some_and(|omitted| omitted < index)),
+                )
+            } else {
+                None
+            }
+        });
+    }
     app.transcript
         .extend(current.into_iter().enumerate().filter_map(|(index, cell)| {
-            (index > boundary && Some(index) != omitted_current_cell).then_some(cell)
+            (index >= append_from && Some(index) != omitted_current_cell).then_some(cell)
         }));
     true
 }
@@ -90,6 +135,15 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
     if let Some((offset, overlap_len)) = retained_suffix {
         let suffix_start = app.transcript.len() - overlap_len;
         let append_from = offset + overlap_len;
+        app.pending_remote_turn_start = app.pending_remote_turn_start.and_then(|index| {
+            if index >= offset && index < append_from {
+                Some(suffix_start + index - offset)
+            } else if index >= append_from {
+                Some(app.transcript.len() + index - append_from)
+            } else {
+                None
+            }
+        });
         app.action_cells = mem::take(&mut app.action_cells)
             .into_iter()
             .filter_map(|(action_id, index)| {
@@ -103,6 +157,17 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
                 Some((action_id, merged_index))
             })
             .collect();
+        for input in app.local_inputs.values_mut() {
+            input.cell = input.cell.and_then(|index| {
+                if index >= offset && index < append_from {
+                    Some(suffix_start + index - offset)
+                } else if index >= append_from {
+                    Some(app.transcript.len() + index - append_from)
+                } else {
+                    None
+                }
+            });
+        }
         for index in 0..overlap_len {
             let retained = &mut app.transcript[suffix_start + index];
             if let (Some(preview), Some(replacement)) = (
@@ -124,6 +189,13 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
         .take_while(|(previous, replacement)| previous == replacement)
         .count();
     let previous_len = app.transcript.len();
+    app.pending_remote_turn_start = app.pending_remote_turn_start.map(|index| {
+        if index < shared_prefix_len {
+            index
+        } else {
+            previous_len + index - shared_prefix_len
+        }
+    });
     app.action_cells = mem::take(&mut app.action_cells)
         .into_iter()
         .map(|(action_id, index)| {
@@ -135,6 +207,15 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
             (action_id, merged_index)
         })
         .collect();
+    for input in app.local_inputs.values_mut() {
+        input.cell = input.cell.map(|index| {
+            if index < shared_prefix_len {
+                index
+            } else {
+                previous_len + index.saturating_sub(shared_prefix_len)
+            }
+        });
+    }
     app.transcript
         .extend(current.into_iter().skip(shared_prefix_len));
 }

@@ -1,4 +1,3 @@
-
 #[tokio::test]
 async fn reading_requires_a_read_open() {
     let fs = llmfs();
@@ -781,7 +780,8 @@ impl LlmProvider for StreamErrorProvider {
             let _ = tx.send(text_chunk("partial", false)).await;
             let mut err = text_chunk("", true);
             err.text = None;
-            err.finish_reason = Some("stream_error".to_string());
+            err.finish_reason =
+                Some("stream_error:https://private.example/token?account=secret".to_string());
             let _ = tx.send(err).await;
         });
         Ok(rx)
@@ -830,5 +830,10 @@ async fn a_stream_error_finish_reason_is_terminal_error_not_done() {
         !acc.contains("\"done\""),
         "a stream error must not record done: {acc:?}"
     );
+    assert!(
+        !acc.contains("private.example") && !acc.contains("account=secret"),
+        "unsafe reason: {acc}"
+    );
+    assert!(acc.contains("stream_error"));
     assert_eq!(status_of(&fs, &g, Fid(4)).await, "error");
 }

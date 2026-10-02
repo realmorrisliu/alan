@@ -14,6 +14,8 @@ use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod process_binding;
+
 const FILES: &[(&str, bool)] = &[
     ("metadata", false),
     ("profiles", false),

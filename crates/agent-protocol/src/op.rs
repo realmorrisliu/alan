@@ -120,6 +120,9 @@ pub enum Op {
         path: String,
     },
 
+    /// Validate and install a same-profile model for subsequently admitted input.
+    SelectModel { model: String },
+
     /// Continue ordinary input retained after interruption.
     ContinueQueue,
     /// Discard ordinary input retained after interruption without executing it.

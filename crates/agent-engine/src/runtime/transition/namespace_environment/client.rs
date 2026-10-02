@@ -145,7 +145,7 @@ impl NamespaceClient {
         }
     }
 
-    async fn stat(&self, fid: Fid) -> Result<Stat> {
+    pub(super) async fn stat(&self, fid: Fid) -> Result<Stat> {
         match self.fs.call(Request::Stat { fid }).await? {
             Response::Stat { stat } => Ok(stat),
             _ => bail!("unexpected stat response"),

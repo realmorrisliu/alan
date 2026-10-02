@@ -64,6 +64,12 @@ impl FileBackedApp {
                     self.modal.pending = true;
                 }
             }
+            KeyCode::Char(' ') if key.modifiers == KeyModifiers::NONE => {
+                self.modal.scroll = self.modal.scroll.saturating_add(10);
+            }
+            KeyCode::Char('b') if key.modifiers == KeyModifiers::NONE => {
+                self.modal.scroll = self.modal.scroll.saturating_sub(10);
+            }
             KeyCode::PageDown => self.modal.scroll = self.modal.scroll.saturating_add(10),
             KeyCode::PageUp => self.modal.scroll = self.modal.scroll.saturating_sub(10),
             KeyCode::Home => self.modal.scroll = 0,

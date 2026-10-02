@@ -57,18 +57,47 @@ pub(super) async fn restore_tape_history(
     let Some(unseen) = raw.get(consumed_bytes..) else {
         return false;
     };
+    // Recovery runs before replacement hydration: queue.owner is still the
+    // actual detached attachment owner. Keep typed evidence and receipt maps
+    // together so exact IDs use the same cut/commit/index reconciliation as
+    // watcher-delivered Tape, never the anonymous text-only history merge.
+    if app
+        .local_inputs
+        .values()
+        .any(|input| input.owner == app.queue.owner)
+    {
+        let mut offset = consumed_bytes.max(app.tape_consumed_offset);
+        let Some(unseen) = raw.get(offset..) else {
+            return false;
+        };
+        for line in unseen.split_inclusive('\n') {
+            offset += line.len();
+            if let Ok(mut record) = serde_json::from_str::<TapeRecordV1>(line) {
+                record.end_offset = offset;
+                app.apply_tape_record(record);
+            }
+        }
+        return true;
+    }
     let history = super::file_surface::parse_tape_history(unseen);
     // These indices belong to the retained transcript, not freshly hydrated actions.
     let actions = std::mem::take(&mut app.action_cells);
+    let inputs = std::mem::take(&mut app.local_inputs);
+    let boundary = app.pending_remote_turn_start.take();
     app.merge_reconnected_idle_history(history);
+    app.local_inputs = inputs;
+    app.pending_remote_turn_start = boundary;
     app.action_cells = actions;
     true
 }
 
 pub(super) fn restore_answer(app: &mut FileBackedApp, input: &str, answer: String) {
     use crate::history::HistoryCell;
-    // This synthetic turn has no action indices; retain the existing ones.
+    // This synthetic turn has no action or receipt coordinates. Both maps
+    // address the retained transcript, not the two-cell recovery source.
     let actions = std::mem::take(&mut app.action_cells);
+    let inputs = std::mem::take(&mut app.local_inputs);
+    let boundary = app.pending_remote_turn_start.take();
     app.merge_reconnected_history(
         vec![
             HistoryCell::User(input.into()),
@@ -77,6 +106,8 @@ pub(super) fn restore_answer(app: &mut FileBackedApp, input: &str, answer: Strin
         input,
         0,
     );
+    app.local_inputs = inputs;
+    app.pending_remote_turn_start = boundary;
     app.action_cells = actions;
 }
 

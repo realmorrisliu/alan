@@ -3,8 +3,24 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 impl FileBackedApp {
     pub(in crate::file_backed) fn activity_label(&self) -> Option<&str> {
+        if self.pending_yield.is_some() || self.form.is_some() {
+            return Some("waiting for input");
+        }
         match self.activity.state {
             UiActivityState::Idle => None,
+            UiActivityState::Paused
+                if self.activity.waiting_submission_ids.is_empty()
+                    && self.pending_yield.is_none()
+                    && self.form.is_none()
+                    && self.running_tools.is_empty()
+                    && !self
+                        .queue
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|q| !q.active_submission_ids.is_empty()) =>
+            {
+                None
+            }
             UiActivityState::Paused => Some("waiting for input"),
             UiActivityState::Running
                 if matches!(self.thinking.state, UiThinkingState::Streaming) =>
@@ -32,15 +48,37 @@ impl FileBackedApp {
                 UiActivityState::Idle => "ready",
             }
         };
+        let queue_label = self.queue.label();
+        let status = if self.model_chooser.uncertain.is_some() {
+            "model outcome uncertain"
+        } else if self.model_chooser.pending.is_some() {
+            "model pending"
+        } else {
+            status
+        };
+        let status_color = match status {
+            "ready" => Color::Green,
+            "working" | "selecting project" | "model pending" => Color::Cyan,
+            "waiting for approval" | "paused" => Color::Yellow,
+            _ => Color::Red,
+        };
+        let queue_label = if status == "paused" {
+            queue_label
+                .strip_prefix("paused · ")
+                .unwrap_or(&queue_label)
+        } else {
+            &queue_label
+        };
+        let status = if self.queue.owner.is_empty() {
+            status.to_string()
+        } else {
+            format!("{status} · {queue_label}")
+        };
+        let status = status.as_str();
         if width < 32 {
             return Line::styled(
-                status.to_string(),
-                Style::default().fg(match status {
-                    "ready" => Color::Green,
-                    "working" | "selecting project" => Color::Cyan,
-                    "waiting for approval" | "paused" => Color::Yellow,
-                    _ => Color::Red,
-                }),
+                truncate_middle(status, width),
+                Style::default().fg(status_color),
             );
         }
         let location = self.project.as_ref().map_or_else(
@@ -72,13 +110,7 @@ impl FileBackedApp {
         } else {
             status
         };
-        let model = self
-            .effective_model
-            .as_deref()
-            .unwrap_or("unknown")
-            .chars()
-            .filter(|character| !character.is_control())
-            .collect::<String>();
+        let model = self.model.header();
         let model = model.trim();
         let model_width = width.saturating_sub(
             UnicodeWidthStr::width("alan  · model  · ") + UnicodeWidthStr::width(status) + 1,
@@ -90,20 +122,12 @@ impl FileBackedApp {
         );
         let location = truncate_middle(&location, available);
         Line::from(vec![
-            Span::styled("alan ", Style::default().fg(Color::DarkGray)),
+            Span::styled("alan ", Style::default()),
             Span::styled(location, Style::default().fg(Color::Cyan)),
-            Span::styled(" · model ", Style::default().fg(Color::DarkGray)),
-            Span::styled(model, Style::default().fg(Color::DarkGray)),
-            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                status.to_string(),
-                Style::default().fg(match status {
-                    "ready" => Color::Green,
-                    "working" | "selecting" | "selecting project" => Color::Cyan,
-                    "approval" | "waiting for approval" | "paused" => Color::Yellow,
-                    _ => Color::Red,
-                }),
-            ),
+            Span::styled(" · model ", Style::default()),
+            Span::styled(model, Style::default()),
+            Span::styled(" · ", Style::default()),
+            Span::styled(status.to_string(), Style::default()),
         ])
     }
 

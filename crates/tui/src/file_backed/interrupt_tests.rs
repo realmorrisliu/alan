@@ -51,6 +51,10 @@ async fn ctrl_c_routes_accepted_input_before_running_ui_arrives() {
     assert!(!events.contains("ctl:interrupt"));
 
     // The host-local chooser still consumes Ctrl+C, even with an accepted input.
+    app.queue.apply(
+        &format!("/agent/{pid}"),
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
     app.project_candidate = Some(std::path::PathBuf::from("/tmp/fixture"));
     assert!(app.handle_command("/project").is_none());
     assert!(app.project_selection.is_some());

@@ -76,6 +76,7 @@ where
     let (parts, command) = input;
     crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
         &mut state.machine,
+        &state.environment.agent_files(),
         &state.environment.host_mount_requests(),
     )
     .await?;

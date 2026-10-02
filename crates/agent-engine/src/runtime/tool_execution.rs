@@ -228,6 +228,33 @@ where
         tool_timeout_secs,
     )
     .await;
+    // A spawned Process can have effects even when its result cannot be observed.
+    // Record bounded uncertainty before cancellation may reset transition state.
+    if let Err(error) = &tool_result
+        && let Some(process_error) = error.downcast_ref::<NamespaceToolProcessError>()
+        && let (Some(effect), Some(started)) = (effect_lifecycle.as_ref(), effect_start.as_ref())
+    {
+        effect.complete_unknown(
+            runtime.machine,
+            started,
+            &tool_error_payload(error),
+            process_error.category.reason().to_string(),
+        );
+        // On failure the in-memory index and initial durable checkpoint remain Unknown.
+        runtime.machine.flush_recorder().await?;
+    }
+    if let Ok(value) = &tool_result
+        && let (Some(effect), Some(started)) = (effect_lifecycle.as_ref(), effect_start.as_ref())
+    {
+        let success = value.get("success").and_then(Value::as_bool) != Some(false);
+        effect.complete(
+            runtime.machine,
+            started,
+            value,
+            success,
+            (!success).then(|| "tool reported failure in payload".to_string()),
+        );
+    }
     // Preserve the spawned Process before cancellation resets transition state.
     if cancel.is_cancelled() {
         let payload = match &tool_result {
@@ -261,19 +288,6 @@ where
             // `Ok` is only the transport result — the Tool may report a logical
             // failure in its payload. Derive effect and completion status from it.
             let payload_success = value.get("success").and_then(Value::as_bool) != Some(false);
-            if let (Some(effect), Some(effect_start)) =
-                (effect_lifecycle.as_ref(), effect_start.as_ref())
-            {
-                let reason =
-                    (!payload_success).then(|| "tool reported failure in payload".to_string());
-                effect.complete(
-                    runtime.machine,
-                    effect_start,
-                    &value,
-                    payload_success,
-                    reason,
-                );
-            }
             let tape_value = tool_payload_for_tape(&runtime.agent_files, &value).await;
             emit(Event::ToolCallCompleted {
                 presentation: super::tool_presentation::tool_presentation(
@@ -308,8 +322,9 @@ where
         }
         Err(err) => {
             let error_payload = tool_error_payload(&err);
-            if let (Some(effect), Some(effect_start)) =
-                (effect_lifecycle.as_ref(), effect_start.as_ref())
+            if err.downcast_ref::<NamespaceToolProcessError>().is_none()
+                && let (Some(effect), Some(effect_start)) =
+                    (effect_lifecycle.as_ref(), effect_start.as_ref())
             {
                 effect.complete(
                     runtime.machine,
@@ -354,6 +369,8 @@ fn tool_error_payload(error: &anyhow::Error) -> Value {
     let mut payload = json!({"success": false, "error": error.to_string()});
     if let Some(process_error) = error.downcast_ref::<NamespaceToolProcessError>() {
         payload["process"] = json!(format!("/proc/{}", process_error.pid));
+        payload["effect_status"] = json!("unknown");
+        payload["reason"] = json!(process_error.category.reason());
     }
     payload
 }

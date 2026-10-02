@@ -57,6 +57,12 @@ its user-facing summary.
 - **THEN** it remains bounded with a visible detail action
 - **AND** closing details restores the draft and inline transcript position
 
+#### Scenario: Host reserves ordinary page keys
+- **WHEN** details are open in a terminal Host that consumes ordinary PageUp or PageDown for Host scrollback
+- **THEN** unmodified Space and b also page the existing readable detail forward and backward
+- **AND** the detail hint shows these usable aliases while existing page keys and Action selection remain available
+- **AND** closing details restores the draft, and these aliases do not replace normal draft input outside details
+
 #### Scenario: Details were not retained
 - **WHEN** the result is truncated or its evidence is no longer available
 - **THEN** the UI labels the missing portion or unavailable detail truthfully

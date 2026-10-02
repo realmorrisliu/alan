@@ -12,6 +12,9 @@ use super::{
     NamespaceGeneration, NamespaceLlmCapabilities, NamespaceTurnOutput, NamespaceTurnRuntime,
 };
 
+#[path = "generation_cause.rs"]
+mod cause;
+
 #[derive(Deserialize)]
 struct LlmCapabilitiesDoc {
     version: u16,
@@ -214,7 +217,7 @@ impl NamespaceTurnRuntime {
 }
 
 #[derive(serde::Serialize)]
-struct LlmRequestDoc<'a> {
+pub(super) struct LlmRequestDoc<'a> {
     version: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<&'a str>,
@@ -232,7 +235,9 @@ struct LlmRequestDoc<'a> {
 }
 
 impl<'a> LlmRequestDoc<'a> {
-    fn from_generation_request(request: &'a alan_llm::GenerationRequest) -> Result<Self> {
+    pub(super) fn from_generation_request(
+        request: &'a alan_llm::GenerationRequest,
+    ) -> Result<Self> {
         if request.messages.is_empty() {
             bail!("namespace llmfs generation requires at least one message");
         }
@@ -378,7 +383,7 @@ fn assemble_llmfs_tool_calls(
     (tool_calls, warnings)
 }
 
-async fn start_generation(
+pub(super) async fn start_generation(
     client: &NamespaceClient,
     llm_connection: &str,
     request: &[u8],
@@ -389,8 +394,7 @@ async fn start_generation(
         .await
         .context("llmfs clone returned generation id")?;
 
-    let data_path = format!("/mnt/llm/connections/{llm_connection}/{generation_id}/data");
-    client.write_document(&data_path, request).await?;
+    cause::commit_generation(client, llm_connection, &generation_id, request).await?;
     Ok(generation_id)
 }
 
@@ -407,8 +411,7 @@ async fn start_generation_controlled(
         .await
         .context("llmfs clone returned generation id")?;
 
-    let data_path = format!("/mnt/llm/connections/{llm_connection}/{generation_id}/data");
-    let commit = client.write_document(&data_path, request);
+    let commit = cause::commit_generation(client, llm_connection, &generation_id, request);
     let result = run_generation_step_with_controls(
         commit,
         client,
@@ -634,7 +637,9 @@ where
             }
             if let Some(error) = event.error {
                 fid.close().await?;
-                bail!("llmfs generation failed: {error}");
+                return Err(anyhow::Error::new(alan_ap::ErrorCode::Io).context(
+                    crate::retry::GenerationCause::new(cause::safe_cause(&error)),
+                ));
             }
             if event.rejected == Some(true) {
                 fid.close().await?;

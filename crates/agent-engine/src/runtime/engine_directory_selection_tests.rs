@@ -7,7 +7,7 @@ use crate::tools::{
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
-struct SelectionAdapter(PathBuf);
+pub(super) struct SelectionAdapter(pub(super) PathBuf);
 impl ToolExecutionAdapter for SelectionAdapter {
     fn namespace_cwd(&self) -> PathBuf {
         self.0.clone()
@@ -33,7 +33,7 @@ impl ToolExecutionAdapter for SelectionAdapter {
     }
 }
 #[derive(Debug)]
-struct SelectionAuthority;
+pub(super) struct SelectionAuthority;
 impl ToolExecutionAuthority for SelectionAuthority {
     fn reconcile(
         &self,
@@ -266,6 +266,17 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(api:
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
     let selected = runner.process_binding(2).unwrap().namespace_cwd;
+    let queue: alan_agent_protocol::UiQueueSnapshot =
+        serde_json::from_slice(&shell.cat("/agent/2/machine/ui/queue").await.unwrap()).unwrap();
+    assert!(queue.known && queue.paused);
+    assert_eq!(
+        queue.pending_submission_ids,
+        inputs
+            .iter()
+            .map(|input| input.id.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(queue.active_submission_ids.is_empty());
     let paused: alan_agent_protocol::UiActivitySnapshot =
         serde_json::from_slice(&shell.cat("/agent/2/machine/ui/activity").await.unwrap()).unwrap();
     assert_eq!(paused.state, alan_agent_protocol::UiActivityState::Paused);

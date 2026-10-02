@@ -383,7 +383,11 @@ impl FileServer for ScriptedReadFs {
 
 mod agent_files;
 mod client_io;
+mod generation_failure;
+mod generation_http_failure;
+mod generation_http_runtime_failure;
 mod process_actions;
+mod process_observation;
 mod submissions;
 mod tape;
 

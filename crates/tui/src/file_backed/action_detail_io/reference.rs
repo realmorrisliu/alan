@@ -4,15 +4,25 @@ use serde_json::Value;
 
 pub(super) const DISPLAY_BYTES: u64 = 262144;
 
-pub(super) async fn range(
+pub(in crate::file_backed) async fn range(
     shell: &alan_shell::Shell,
     path: &str,
     offset: u64,
     length: u64,
 ) -> Result<String, String> {
-    if length > DISPLAY_BYTES {
+    range_with_budget(shell, path, offset, length, DISPLAY_BYTES).await
+}
+
+pub(in crate::file_backed) async fn range_with_budget(
+    shell: &alan_shell::Shell,
+    path: &str,
+    offset: u64,
+    length: u64,
+    budget: u64,
+) -> Result<String, String> {
+    if length > budget {
         return Err(format!(
-            "display bound: requested {length} bytes exceeds {DISPLAY_BYTES}; original remains in AgentFS"
+            "display bound: requested {length} bytes exceeds {budget}; original remains in AgentFS"
         ));
     }
     let end = offset.checked_add(length).ok_or("invalid range")?;
@@ -52,15 +62,29 @@ pub(super) async fn range(
     result
 }
 
+pub(super) struct Resolved {
+    pub rows: Vec<Line<'static>>,
+    pub readable: bool,
+}
+impl From<Vec<Line<'static>>> for Resolved {
+    fn from(rows: Vec<Line<'static>>) -> Self {
+        Self {
+            rows,
+            readable: false,
+        }
+    }
+}
+
 pub(super) async fn resolve(
     shell: &alan_shell::Shell,
     value: &Value,
     owner_path: &str,
-) -> Vec<Line<'static>> {
-    let unavailable = |reason: &str| {
+) -> Resolved {
+    let unavailable = |reason: &str| -> Resolved {
         vec![Line::from(format!(
             "Truncated evidence unavailable: {reason}"
         ))]
+        .into()
     };
     let truncation = &value["truncation"];
     let original = truncation["original_bytes"].as_u64();
@@ -72,12 +96,15 @@ pub(super) async fn resolve(
         rows.push(Line::from(format!("Evidence fallback reason: {reason}")));
     }
     if truncation["full_content_recoverable"].as_bool() != Some(true) {
-        rows.extend(unavailable(
-            truncation["fallback_reason"]
-                .as_str()
-                .unwrap_or("full content not recoverable"),
-        ));
-        return rows;
+        rows.extend(
+            unavailable(
+                truncation["fallback_reason"]
+                    .as_str()
+                    .unwrap_or("full content not recoverable"),
+            )
+            .rows,
+        );
+        return rows.into();
     }
     if let (Some(original), Some(preview)) = (original, preview)
         && (preview > original
@@ -109,7 +136,8 @@ pub(super) async fn resolve(
     {
         return vec![Line::from(
             "Evidence retention expired: referenced original is no longer retained",
-        )];
+        )]
+        .into();
     }
     let offset = reference["offset"].as_u64().unwrap_or(0);
     let length = reference["length"]
@@ -124,20 +152,20 @@ pub(super) async fn resolve(
         Ok(text) => text,
         Err(e) => return unavailable(&e),
     };
-    rows.push(Line::from(if original == Some(length) {
-        "Recovered reference (retained original)"
-    } else {
-        "Recovered reference range only; full original length not verified"
-    }));
+    rows.push(Line::from(
+        if offset == 0 && original == Some(length) && length == stat.length {
+            "Recovered reference (retained original)"
+        } else {
+            "Recovered reference range only; full original length not verified"
+        },
+    ));
     if text.is_empty() {
         rows.push(Line::from("(empty)"));
     }
     if text.contains("[REDACTED reason=") {
         rows.push(Line::from("Redacted evidence (not truncation)"));
     }
-    rows.extend(
-        text.lines()
-            .map(|s| Line::from(crate::history::clean_text(s))),
-    );
-    rows
+    let full = offset == 0 && original == Some(length) && length == stat.length;
+    let readable = super::presentation::acquired_content(&mut rows, &text) && full;
+    Resolved { rows, readable }
 }

@@ -432,8 +432,20 @@ impl LlmProvider for GatedFirstGeneration {
     }
 }
 
+#[path = "engine_skill_lifecycle_tests.rs"]
+mod skill_lifecycle;
+#[path = "engine_skill_qualification_tests.rs"]
+mod skill_qualification;
+
 #[path = "engine_directory_selection_tests.rs"]
 mod directory_selection;
+#[path = "engine_model_failure_tests.rs"]
+mod model_failure;
+#[path = "engine_queue_projection_tests.rs"]
+mod queue_projection;
+
+#[path = "engine_model_binding_tests.rs"]
+mod model_binding;
 #[path = "engine_mount_cancellation_tests.rs"]
 mod mount_cancellation;
 #[path = "engine_recovery_boundary_tests.rs"]

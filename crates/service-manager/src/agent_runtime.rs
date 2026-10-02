@@ -423,6 +423,13 @@ impl AgentRuntimeService {
             format!("/agent/{}", pid.0),
             launch.template.llm_connection.clone(),
         )
+        .with_connection_authority(Arc::new(
+            crate::connection::process_binding::ProcessConnection {
+                service: self.connection.clone(),
+                profile: launch.template.llm_connection.clone(),
+                namespace: launch.namespace.clone(),
+            },
+        ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
         .with_tool_process_context(pid.0, self.tool_runner.clone());
         let mut controller = spawn_with_namespace_environment(

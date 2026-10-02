@@ -100,6 +100,11 @@ and input wrapping remain unchanged. Count composer rows and candidate rows
 separately in the existing shared inline layout so candidate rows do not consume
 the composer limit. Preserve usable bounded disclosure near the terminal edge;
 no permanent reserved panel or separate completion viewport owner is introduced.
+One row of ordinary blank input spacing is budgeted from initial Ready, together
+with retained history, so the input does not consume the terminal's final row
+before completion appears. A short menu uses that row for the selected item;
+this is not a permanent six-row panel. Candidate-only origin limits do not
+constrain forms or the full-terminal Action details view.
 
 Tab inserts a highlighted completion. Enter on a slash-command candidate executes
 that command once; a complete slash command does not require a second Enter.
@@ -263,3 +268,72 @@ formats remain backward-readable; history failure is visible and non-fatal.
 Do not migrate stable credentials/stores as part of UI testing. Sync only merged,
 verified deltas into canonical specs and archive only after all owned work is
 complete or explicitly handed to an active successor.
+
+
+### Implementation handoff: truthful queue and model projection
+
+Keep durable accepted queue truth separate from `UiActivitySnapshot`:
+`waiting_submission_ids` owns interactive response waiting, not queue admission.
+Project-boundary UI must classify transport delivery as unknown until exact
+IDs appear in the MachineInputQueue-derived accepted projection. Reuse existing
+admitted/settled/active IDs, pause and uncertain-removal state, publish after
+durable acknowledgement and preserve monotonic per-Process observation across
+snapshot/watch races. Independent activity/heartbeat writers must not overwrite
+queue receipts. Missing/legacy/unreadable state stays unknown. The final Runtime
+cwd authority still guards project selection; acknowledged Paused accepted work
+may change project without execution or implicit continue. Publication failures
+must never trigger replay or change durable disposition.
+
+Model projection distinguishes selected-next from actual-active binding and
+uses resolver-owned request controls. Read active truth from the existing
+independent binding snapshot; contention cannot fall back to launch metadata.
+Connection Service remains catalog/validation authority for the authorized
+profile, with only callable models selectable: an injected fallback supports
+only its original callable, not every model listed by its provider. Selection
+is confirmed after validated capture and durable publication, never resumes the
+queue, and does not write profile/default configuration. Safe typed projection
+excludes credential references, revisions, configs and provider error chains.
+TUI hydration/watch and exact selection receipts remain pinned to one Process;
+unknown/unavailable is explicit and old Root responses cannot install state. Selection settlement uses the existing same-Process InputCompleted event
+for the exact input ID, not an Action result or control-write completion. The
+model document has no selection ID: it supplies binding facts independently of
+request disposition. A projection update cannot acknowledge an unrelated pending
+request; successful receipt plus an unreadable projection cannot fabricate the
+new binding's controls. Lost owner/event stream leaves uncertain disposition
+without retry.
+
+
+### Implementation handoff: Process Skill observation
+
+Reuse PromptAssemblyCache mentionable_skill_ids, not listed_skills or the global
+Package catalog. Explicit-only enabled available Skills remain mentionable.
+Publish only canonical IDs plus safe Process identity/version/known state through
+the existing AgentFS machine/ui projection and per-Agent invalidation pattern.
+Initialize before Ready; update after actual ensure on prompt build/resolve.
+Ensure failure clears old observation, valid empty cache is known-empty. Old
+Process immutable leased references and fresh Process explicit references remain
+distinct; neither display failure nor display overflow changes execution authority.
+
+Reuse AgentFS MAX_DOC_BYTES (1 MiB) for the whole serialized document, checking
+before publication and replacing overflow with a small unknown observation.
+Do not add unrelated loader2000 or per-ID256 thresholds, duplicate canonical
+normalization in Protocol, or rely on oversized-write rejection to clear stale
+state. TUI Root-pinned hydration/watch must invalidate both sources and an open
+popup; stale Tab must not insert, selection never submits the task. Backend
+qualification precedes the separate consumer slice and native acceptance.
+
+### Cancellation handoff: AgentFS request terminal state
+
+Actual G3 cancellation of a pending bash escalation clears the Machine wait but
+leaves AgentFS request pending, so the watcher retains the approval composer and
+interprets `/quit` as an answer. Repair the shared reset boundary, not the UI.
+AgentFS owns request cancellation through the request object's `ctl`; status
+remains read-only and no fake answer is written. NamespaceAgentFiles carries the
+owner operation through aP using actual service request IDs under the pinned
+Agent Process. Settle exact confirmation/structured waits before reset, preserve
+unsettled associations on failure, and keep Host Mount terminal evidence intact.
+Response and cancellation use the same state lock; late response clunk must
+recheck terminal state. Idempotent cancellation preserves existing answered or
+closed truth and unrelated requests. Existing request events invalidate the TUI.
+The new file-layout delta and focused lifecycle/Engine/watch regressions qualify
+this slice; whole CLI quality and a fresh actual G3 remain separate acceptance.

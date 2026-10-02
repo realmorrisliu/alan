@@ -28,7 +28,7 @@ async fn machine_ui_subtree_exposes_default_snapshots() {
     entries.sort();
     assert_eq!(
         entries,
-        vec!["activity", "events", "notice", "plan", "thinking"]
+        vec!["activity", "events", "models", "notice", "plan", "queue", "skills", "thinking"]
     );
 
     assert!(

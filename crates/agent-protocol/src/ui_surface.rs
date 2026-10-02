@@ -2,6 +2,50 @@ use serde::{Deserialize, Serialize};
 
 use crate::PlanItem;
 
+/// Payload-free authoritative admission receipt. Missing or invalid documents are unknown.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UiQueueSnapshot {
+    pub version: u16,
+    pub revision: u64,
+    pub known: bool,
+    pub pending_submission_ids: Vec<String>,
+    pub active_submission_ids: Vec<String>,
+    pub paused: bool,
+    pub deferred: bool,
+    pub uncertain_submission_ids: Vec<String>,
+}
+
+impl Default for UiQueueSnapshot {
+    fn default() -> Self {
+        Self {
+            version: UI_SURFACE_VERSION,
+            revision: 0,
+            known: false,
+            pending_submission_ids: Vec::new(),
+            active_submission_ids: Vec::new(),
+            paused: false,
+            deferred: false,
+            uncertain_submission_ids: Vec::new(),
+        }
+    }
+}
+
+impl UiQueueSnapshot {
+    pub fn is_valid(&self) -> bool {
+        self.version == UI_SURFACE_VERSION
+            && if self.known {
+                self.revision > 0
+            } else {
+                self.pending_submission_ids.is_empty()
+                    && self.active_submission_ids.is_empty()
+                    && self.uncertain_submission_ids.is_empty()
+                    && !self.paused
+                    && !self.deferred
+            }
+    }
+}
+
 pub const UI_SURFACE_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

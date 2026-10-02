@@ -1,5 +1,4 @@
 //! File-backed TUI input handling and application state transitions.
-
 use std::collections::BTreeMap;
 
 use alan_agent_protocol::{
@@ -23,56 +22,15 @@ use super::file_surface::{ActionSnapshot, TapeRecordV1, response_text_from_conte
 use super::{ProjectAccess, ProjectControl, ProjectMountReceipt};
 
 mod action_modal;
+mod attachment;
 mod history;
+mod model_control;
 mod presentation;
 mod project;
-fn default_commands() -> Vec<CompletionCandidate> {
-    [
-        ("project", "select or revoke a project directory"),
-        ("compact", "summarize context"),
-        ("rollback", "undo the last turn"),
-        ("continue", "continue paused input"),
-        ("discard", "discard paused input"),
-        ("clear", "clear the transcript"),
-        ("help", "show key bindings"),
-        ("quit", "exit alan"),
-    ]
-    .into_iter()
-    .map(|(value, detail)| CompletionCandidate::new(value, Some(detail.to_string())))
-    .collect()
-}
+use project::default_commands;
 
-pub(super) enum FileBackedEvent {
-    ActionDetails {
-        path: String,
-        generation: u64,
-        ids: Result<Vec<String>, String>,
-        id: Option<String>,
-        rows: Vec<Line<'static>>,
-    },
-    Terminal(TerminalEvent),
-    Output(String),
-    ResumeWriteCompleted {
-        request_id: String,
-        retry_input: String,
-        result: Result<(), String>,
-    },
-    ControlWriteCompleted {
-        success_notice: String,
-        error_prefix: String,
-        result: Result<(), String>,
-    },
-    RootAgentPidRefresh(Result<Option<u64>, String>),
-    RequestsChanged,
-    ActionsChanged {
-        agent_path: String,
-        action_id: String,
-    },
-    Ui(UiEvent),
-    Tape(TapeRecordV1),
-    Error(String),
-    TerminalError(String),
-}
+mod events;
+pub(super) use events::FileBackedEvent;
 
 #[derive(Debug)]
 pub(super) enum FileBackedAction {
@@ -86,6 +44,11 @@ pub(super) enum FileBackedAction {
         command: String,
         success_notice: String,
     },
+    SelectModel {
+        owner: String,
+        id: String,
+        op: alan_agent_protocol::Op,
+    },
     Project(ProjectControl),
     Interrupt,
     Quit,
@@ -95,6 +58,8 @@ pub(super) enum FileBackedAction {
 pub(super) struct FileBackedApp {
     pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
+    pub(super) model_chooser: model_control::ModelChooser,
+    pub(super) model: super::model::ModelProjection,
     pub(super) effective_model: Option<String>,
     pub(super) composer: Composer,
     pub(super) input_intent: InputIntent,
@@ -103,6 +68,9 @@ pub(super) struct FileBackedApp {
     pub(super) action_cells: BTreeMap<String, usize>,
     pub(super) projected_actions: BTreeMap<(String, String), u64>,
     pub(super) modal: action_modal::ActionModal,
+    pub(super) local_inputs: BTreeMap<String, super::queue::LocalInput>,
+    pub(super) skills: super::skills::SkillProjection,
+    pub(super) queue: super::queue::QueueProjection,
     pub(super) activity: UiActivitySnapshot,
     pub(super) plan: UiPlanSnapshot,
     pub(super) thinking: UiThinkingSnapshot,
@@ -117,8 +85,9 @@ pub(super) struct FileBackedApp {
     pub(super) project: Option<ProjectMountReceipt>,
     pub(super) namespace_cwd: std::path::PathBuf,
     pub(super) pending_project_cwd: Option<String>,
-    pending_project_cwd_submission_id: Option<String>,
-    pending_project_revoke: Option<(String, String)>,
+    pub(super) project_action_ids: Vec<String>,
+    pub(super) pending_project_control: Option<project::PendingProjectControl>,
+    pub(super) project_cleanup: Option<String>,
     ready_project_revoke: Option<String>,
     pub(super) last_input_failed: bool,
     pub(super) expand_thinking: bool,
@@ -145,6 +114,8 @@ impl FileBackedApp {
             notice: None,
             expected_terminal_error: None,
             agent_path,
+            model_chooser: model_control::ModelChooser::default(),
+            model: super::model::ModelProjection::default(),
             effective_model: None,
             composer: Composer::default(),
             input_intent: InputIntent::Agent,
@@ -153,6 +124,9 @@ impl FileBackedApp {
             action_cells: BTreeMap::new(),
             projected_actions: BTreeMap::new(),
             modal: action_modal::ActionModal::default(),
+            local_inputs: BTreeMap::new(),
+            skills: super::skills::SkillProjection::default(),
+            queue: super::queue::QueueProjection::default(),
             activity: UiActivitySnapshot::idle(),
             plan: UiPlanSnapshot::empty(),
             thinking: UiThinkingSnapshot::idle(),
@@ -170,8 +144,9 @@ impl FileBackedApp {
             project: None,
             namespace_cwd: std::path::PathBuf::from("/"),
             pending_project_cwd: None,
-            pending_project_cwd_submission_id: None,
-            pending_project_revoke: None,
+            project_action_ids: Vec::new(),
+            pending_project_control: None,
+            project_cleanup: None,
             ready_project_revoke: None,
             last_input_failed: false,
             expand_thinking: false,
@@ -180,10 +155,6 @@ impl FileBackedApp {
             pending_remote_turn_start: None,
             scrollback_front_is_partial: false,
         }
-    }
-
-    pub(super) fn set_skill_candidates(&mut self, skills: Vec<CompletionCandidate>) {
-        self.completion_sources.skills = skills;
     }
 
     pub(super) fn set_effective_model(&mut self, model: Option<String>) {
@@ -278,6 +249,14 @@ impl FileBackedApp {
                 }
                 None
             }
+            FileBackedEvent::ModelReceiptsUnavailable { owner } => {
+                self.lose_model_receipts(&owner);
+                None
+            }
+            FileBackedEvent::ModelReceipt { owner, event } => {
+                self.observe_model_receipt(&owner, &event);
+                None
+            }
             FileBackedEvent::Ui(event) => {
                 self.apply_ui_event(event);
                 None
@@ -286,7 +265,13 @@ impl FileBackedApp {
                 self.apply_tape_record(record);
                 None
             }
-            FileBackedEvent::RootAgentPidRefresh(_)
+            FileBackedEvent::QueueChanged { .. }
+            | FileBackedEvent::QueueUnavailable { .. }
+            | FileBackedEvent::RootAgentPidRefresh(_)
+            | FileBackedEvent::ModelChanged { .. }
+            | FileBackedEvent::ModelUnavailable { .. }
+            | FileBackedEvent::SkillsChanged { .. }
+            | FileBackedEvent::SkillsUnavailable { .. }
             | FileBackedEvent::RequestsChanged
             | FileBackedEvent::ActionsChanged { .. } => None,
             FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
@@ -306,6 +291,9 @@ impl FileBackedApp {
         key: KeyEvent,
         has_pending_submission: bool,
     ) -> Option<FileBackedAction> {
+        if self.model_chooser.active {
+            return self.model_key(key, has_pending_submission);
+        }
         if self.modal_key(key, has_pending_submission) {
             return None;
         }
@@ -470,7 +458,7 @@ impl FileBackedApp {
                 true
             }
             KeyCode::Esc => {
-                if self.turn_active() || self.pending_yield.is_some() {
+                if !self.project_boundary_available(false) {
                     false
                 } else {
                     self.completion = None;
@@ -550,6 +538,11 @@ impl FileBackedApp {
     }
 
     pub(super) fn submit_form(&mut self) -> Option<FileBackedAction> {
+        if self.pending_project_control.is_some() {
+            self.notice =
+                Some("project cwd selection is pending; wait for terminal Action evidence".into());
+            return None;
+        }
         if self.response_in_flight.is_some() {
             self.notice = Some("request response is still being sent".into());
             return None;
@@ -601,6 +594,9 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
+        if self.model_submit_command() {
+            return self.model_command("");
+        }
         if self.response_in_flight.is_some() {
             self.notice = Some("request response is still being sent".into());
             return None;
@@ -722,8 +718,10 @@ impl FileBackedApp {
         let command = text.strip_prefix('/')?;
         let name = command.split_whitespace().next().unwrap_or("");
         match name {
+            "status" => self.model_status_command(),
+            "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
             "project" if command.trim() == "project" => {
-                if self.turn_active() || self.pending_yield.is_some() {
+                if !self.project_boundary_available(false) {
                     self.notice =
                         Some("wait for the current Agent turn before selecting a project".into());
                 } else if self.project.is_some() {
@@ -745,7 +743,7 @@ impl FileBackedApp {
                 None
             }
             "project" if command.trim() == "project revoke" => {
-                if self.turn_active() || self.pending_yield.is_some() {
+                if !self.project_boundary_available(false) {
                     self.notice =
                         Some("wait for the current Agent turn before revoking a project".into());
                     None
@@ -781,6 +779,7 @@ impl FileBackedApp {
                 })
             }
             "clear" => {
+                self.clear_local_receipts();
                 self.transcript.clear();
                 self.action_cells.clear();
                 self.pending_remote_turn_start = None;
@@ -912,8 +911,8 @@ impl FileBackedApp {
             return Vec::new();
         }
         let opts = self.render_opts(viewport_width);
-        let max_lines = viewport_height
-            .saturating_sub(super::live_region_height(self, viewport_width) as usize);
+        let max_lines =
+            viewport_height.saturating_sub(super::layout::base_region_height(self, viewport_width));
         let lines = self.styled_history_lines(viewport_width);
         let drain_count = super::history_prefix_to_drain(&lines, viewport_width, max_lines);
         if drain_count == 0 {
@@ -921,46 +920,6 @@ impl FileBackedApp {
         }
         let pruned_count = self.prune_rendered_prefix(opts, drain_count);
         lines.into_iter().take(pruned_count).collect()
-    }
-
-    pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
-        for index in self.action_cells.values_mut() {
-            if *index >= inserted_at {
-                *index += 1;
-            }
-        }
-    }
-
-    pub(super) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
-        self.reconciler = StreamReconciler::new();
-        self.pending_remote_turn_start = None;
-        for line in raw.lines() {
-            let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
-                continue;
-            };
-            if record.kind == "message" {
-                self.reconciler.on_hydrated_message_record(&record.role);
-            }
-        }
-    }
-
-    pub(super) fn reset_for_root_process_change(&mut self) {
-        self.tape_consumed_offset = 0;
-        self.action_cells.clear();
-        self.modal.active = false;
-        self.modal.generation += 1;
-        self.modal.rows.clear();
-        self.modal.ids.clear();
-        self.activity = UiActivitySnapshot::idle();
-        self.plan = UiPlanSnapshot::empty();
-        self.thinking = UiThinkingSnapshot::idle();
-        self.running_tools.clear();
-        self.pending_yield = None;
-        self.form = None;
-        self.completion = None;
-        self.notice = None;
-        self.reconciler = StreamReconciler::new();
-        self.pending_remote_turn_start = None;
     }
 
     /// Keep this renderer's earlier transcript while adding the current turn
@@ -983,7 +942,6 @@ impl FileBackedApp {
     pub(super) fn merge_reconnected_idle_history(&mut self, current: Vec<HistoryCell>) {
         super::history_merge::merge_idle_history(self, current);
     }
-
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
         RenderOpts::new(width, self.expand_thinking)
     }

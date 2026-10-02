@@ -99,8 +99,21 @@ pub(super) async fn record_host_mount_terminal(
 
 pub(super) async fn reset_turn_after_cancelling_host_mounts(
     machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     host_mount_requests: &NamespaceHostMountRequests,
 ) -> Result<()> {
+    for request_id in machine.pending_request_ids() {
+        if matches!(
+            machine.pending_yield(&request_id),
+            Some(
+                crate::agent_machine::PendingYield::Confirmation(_)
+                    | crate::agent_machine::PendingYield::StructuredInput(_)
+            )
+        ) {
+            agent_files.cancel_request(&request_id).await?;
+            machine.take_pending(&request_id);
+        }
+    }
     let pending_host_mounts = machine
         .pending_request_ids()
         .into_iter()
@@ -131,7 +144,7 @@ where
     warn!("Cancelling current task");
     // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
-    reset_turn_after_cancelling_host_mounts(machine, host_mount_requests).await?;
+    reset_turn_after_cancelling_host_mounts(machine, agent_files, host_mount_requests).await?;
     machine.mark_submission_cancelled();
     machine.clear_plan_snapshot();
     machine.clear_active_task();

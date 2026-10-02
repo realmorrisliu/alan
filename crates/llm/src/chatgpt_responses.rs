@@ -405,10 +405,12 @@ impl LlmProvider for ChatgptResponsesClient {
         let response_request = self.build_openai_responses_request(request, true)?;
         let response = self.execute_with_auth_retry(response_request, true).await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let _ = streaming::consume_openai_responses_stream(response, tx).await;
+            let outcome = streaming::consume_openai_responses_stream(response, tx).await;
+            let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
-        Ok(rx)
+        Ok(crate::failure::guard_stream(rx, status_rx))
     }
 
     fn provider_name(&self) -> &'static str {
@@ -422,10 +424,7 @@ async fn check_chatgpt_response_status(response: reqwest::Response) -> Result<re
         let body = response.text().await.unwrap_or_default();
         return Err(ChatgptAuthError::UnauthorizedAfterRefresh(body).into());
     }
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("ChatGPT Responses API error ({}): {}", status, body);
-    }
+    let response = response.error_for_status()?;
     Ok(response)
 }
 

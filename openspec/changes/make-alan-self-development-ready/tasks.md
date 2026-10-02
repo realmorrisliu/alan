@@ -6,7 +6,776 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
-## Current status — 2026-09-30
+## Current status — 2026-10-02
+
+- Terminal-hint correctiveNative79264 finalReady/normalquit independentlyexit0,
+  NativecompiledRED101/full308unit10integration/fmt/canonicalcap/strictClippy0;
+  frozen40583bd076c432c18af5f54fa6d1086d75f9a7ec3028eb6363ed8008e3b99fc6,
+  onlyinterrupt.rs/testsrelative20f242; previouslyNOT_PASS retained. BothfinalaxesPASS,
+  independent308+10/fmt/canonicalcap/wholequality/release0; binary9fa4cb0907501a81c36eb39168d07703c21e0f3e6d4ed286fc8a834dfa28fe0a.
+  FreshNative88692 owningmedium/explicitROcwd: fastliteralcat exactCompleted/no staleunknown,
+  directHerdr20x69 Space/b Line200/Esc exactdraft, clientdetach0, Native naturalquitexit0/norescue.
+  Final9fa4 actualG3 rerun6e6t44ap PASS_RUNTIME_SEQUENCE, nonce42eefec9065040418c4474162763b6f8;
+  E/Qonce,Dzero/four naturalexits/norescue/live[]; independentjoinedSpecPASS from actualowners/durable/effects/approval/children/exits.
+  FinallocalUI qualified; UIcredit30/30 and aggregate90/100, delivery0/10 stillreserved.
+  FXstyle/font/all-client-detach limits remain explicit; no currentheadCI/release/merge claim.
+
+- Final UI pager Native57909 qualified manifestf7244cf1aa41e14c18fe4020b3a9a94fdab5002909c670b5f069058c52d5375e:
+  3files only/604Rust26build; NativecompiledRED101, independent305+10/fmt/cap/wholequality/release0,
+  bothaxesPASS, binarye39d3a295a5f14204c2848ae016e5f9062aaba72113e9d3df38fe311fd032fd0.
+  OrdinaryHerdr directattach Native70033: Space/b page readableLine200, Esc exactdraft restored,
+  client naturaldetach0, Native naturalquit withoutrescue. Actualfx0.0.12/Alan same69x20 model
+  gpt-6.1-sol medium Markdown captures and owningprojection retained in final-fx-comparison.
+  Graphicalfont/theme qualification is not inferred; remaining style gaps nonblocking.
+  Fastliteralcommand discovered staleunknownhint with actualCompleted receipt. Native70857
+  compiledRED/firstattempt2fail/final3focused307+10/fmt/clippy0 retained; frozen20f242...2484e,
+  independent307+10/fmt/canonicalcap/wholequality/release0, binarya0dbeaed...5be10. ActualNative78913
+  fastliteralcommand no staleunknown, naturalquit independentlyexit0/norescue. Resizebridgeattempt
+  retained but no visual acceptance inferred from bridgeframes. StandardsPASS; SPECNOT_PASS for
+  previously-unacknowledged Completed overwriting unrelatednotice. Candidate is NOT promoted.
+  FreshNative79264/boot61eecd26-71d7-4993-a155-bcd6485f0763/Root8, qualifiedpagere39d binary,
+  Ready/explicitRWcwd/604Rust26buildpins admitted ONE corrective terminalacknowledgement task.
+  Scopeexistinginterrupt.rs/queue.rs/queue_removed_hint_tests.rs, compiledREDfirst; working,
+  no commit/push. Score85 unchanged; currentPR1026 stilldraft7f0067ec old16greensnotcurrentWIP.
+
+- Local supervised G3 PASS after independent joined-evidence review. Corrected
+  Native24295→36727 presentation task is separate from the original G2 task;
+  real compiled request-before-Paused RED then Native-authored correction,
+  independent304unit10integration/fmt/cap0/bothsourceaxesPASS/unchangedwholequality0.
+  Finalmanifestc6373cf2009728520936dc2d30a80bc776d35cc91379ca01d37ed19c891d0491;
+  releaseSHA14c76fdcf055dfe31c733b1089accc3ab67dfd948a932ada18d4af19acae04ca.
+  All604Rust26build/2091quality-input pins unchanged. Root snapshot-only missing
+  git/base metadata failures remain retained; final declared git/base env qualifies.
+  Actual recovery run `20261002-g3-bounded-driver/working/runs/alan-g3-native-20260930-lkfo_lmj`:
+  33steps/four naturalquit0/manualrescuefalse/live[]; exactE/Qonce,Dzero; no grant
+  inheritance/replay; freshRW whilepaused; one correlated r0 TUIapprove/policy/Tool
+  receipt; exactownedchildren terminate; discard actualremoval/CancelledCompletion.
+  Herdr directviewdetach `20261002-herdr-direct-detach/`: no-takeoverclients27662/88918
+  actualCtrl+Bq/exit0, reattachsameNative52474 PID/start/boot/Root/grant/cwd/knownempty
+  queue/models/skills/20x69 geometry/emptycomposer, thenNative normalquit0.
+  MainHerdrclient remained; all-clients-disconnected behavior is NOT qualified.
+  No unattended-self-bootstrap or release claim. HistoricalFAILs preserved.
+  At prior paused-status acceptance the estimate was85/100: G1 15/15,G2 15/15,UI25/30,ModelSkill15/15,G3 15/15,
+  finaldelivery0/10. FinalUI/fx comparison,currentheadCI/merge/specsync/archive remain.
+
+- Paused-status firstNative24295 patch frozen manifest0a1153d42b45835fba61795296324bbdab554b382b95794ff985f3864c51edda:
+  exactly4TUIpaths2prod2tests,604Rust26build. Native4focused/303unit10integration/fmt/cap/strictClippy0;
+  RootindependentTUI0/fmt0. Root external-snapshot cap/wholequality1 omitted explicit
+  ALAN_QUALITY_GIT_DIR/base; original configuration failure retained, no cap violation.
+  StandardsPASS but specNOT_PASS: actual request invalidation may precede Paused
+  activity, so laggingRunning still shows work clock. No runtime acceptance.
+  Native24295 naturally quit0. FreshNative36727/boot485d3dd8-7171-41d7-8802-a14c94fb4092/Root8
+  after no-inherited-authority inspection, explicitRW/cwd, Ready/full60426/binary25ae pins
+  owns one narrow projection-order correction with compiledRED first; same4files only.
+  Evidence20261002-ui-paused-status/. G3boundeddriver offlinechecks0/bothsourceaxesPASS,
+  manifest850a driverpin; originalc45a unchanged; liveapproval/G3NOT_RUN, score70.
+
+- Fresh Native24295/boot472c1e3b-3855-4b31-95e5-59f43ed568db/Root8 now owns
+  one bounded presentation-only task in p7, after explicit RW/cwd and natural Ready;
+  all604Rust26build/binary25ae pins verified. Task/spec copies and before/after
+  authority retained in `20261002-ui-paused-status/`. No old failed author recovery.
+  Actual selected-next model gpt-6.1-sol medium. UI qualification and fullG3 pending.
+
+- Corrected request-owner candidate independently qualifies: manifest
+  571472c654839e28a0cbaa3a8eb7685b6586453c4bed6bf71ebcdff4ed4e4f5e,
+  patch3ea0bcc640a751619e535d755f7ac2500e5f9ab7c680b5fa421fb59ac146da97;
+  604Rust26build, thirteen scoped paths. Engine1306unit+20integration0/1ignored,
+  AgentFS0/fmt0/sourcecap0/strictClippy0/both source axesPASS; full unchanged
+  CLIquality0, all quality-input and author source/build pins unchanged.
+  Release binarySHA25ae6dbf6fcd494681a738a41747d5f4cd80e6fc0d49292817bfd224fea82eed.
+  Fresh actual cancellation smoke Native20500/bootb4a4c611-6d14-4538-922f-ebfc71a39bfb
+  /Root8: visible explicitRW/cwd, exact pending bash escalationr0/activeID,
+  Ctrl-C→actualrequest cancelled/noPending/knownPausedEmptyQueue/exactcancelled
+  completion, pending approval cleared/colon composer, normal /quit exit0.
+  No fake response or manual rescue; original G3 failures retained. Full G3 pending.
+  Native99103 completed correction and naturally quit; original20741 still preserved.
+  Read-only UI audit then identified duplicate paused header and a static busy glyph
+  on settled queue-only pause. It is not proven to be an animating spinner.
+  The next narrow TUI refinement will remove misleading busy/time cues, merge
+  duplicated status, preserve actual waiting/model cues and Machine semantics;
+  active rust-inline-tui scenarios updated. Existing notice authority is retained.
+
+- Cancellation-owner Native task terminated with visible Namespace LLM write
+  failure `/mnt/llm/connections/chatgpt-main/g1854/data`; author20741 remains intact
+  and receives no more input. Public Host status metadata was unavailable to the
+  qualified inspector; this does not prove Root exit or authorize invented state.
+  Frozen unfinished `20261002-request-cancellation-owner/interrupted-candidate/`
+  manifest353480fb065066702e158becdc5dcf6466590ff255156e52660ba00c9427ca83,
+  patcha4063ea8b02579b2a5b10458f1725517b23514a869553f6d6ca010cfb1ce2341;
+  604Rust/26build, eleven scoped changed paths and no removals. Both functional
+  source axes accept ownership/race handling but qualification stays NOT_PASS.
+  Independent full Engine101:1304passed/2failed/1ignored, legacy cancellation
+  fixtures had logical-only request IDs absent from actual AgentFS. AgentFS0;
+  fmt1; cap1 (lib1002lines). No production behavior was waived to satisfy fixtures.
+  Original failed G3wznzqebi was safely rejected for manual cleanup after exact
+  cancelled/paused/empty-queue correlation; actual answered `choice:reject` was
+  inspected0 and normal `/quit` exited naturally. Runner final FAIL retained,
+  manual_process_rescue:true/live_process_ids:[], E/Q effects unchanged.
+  Owned p7 shell then started a separate fresh bare qualified invocation Native99103
+  from explicit author cwd, without rollout resume. Old author20741, previewp6 and
+  foreign/orphan processes remain preserved. Fresh actual boot76d1d697-4f77-4c15-9aca-7393c720aa35,
+  Root8, no inherited grants/requests, selected gpt-6.1-sol medium were inspected;
+  visible read-write chooser and actual cwd were correlated before fresh Ready.
+  One bounded corrective task now owns p7: two real-request legacy fixtures plus
+  formatting/source cap using existing request-control helper, relevant checks.
+  Before admission all604Rust26build/binary pins matched frozen unfinished source.
+  Setup command followed the cwd shell prompt hook; actual bare Ready/identity
+  and namespace authority were subsequently reverified before any product task.
+  This is source-task continuation through a new invocation, not completed G3.
+  Herdr detach preparation corrected its observer claim: `session observe` is
+  NDJSON bridge stream, whose closure does not qualify interactive detach.
+  Direct `terminal attach` requires separate no-takeover/size acceptance; still open.
+
+- Native cancellation-owner task has captured genuine compiled behavioral RED:
+  `interrupt_while_command_awaits_approval_publishes_correlated_failure` compiled,
+  then failed 0pass/1fail/1304filtered on actual `pending` versus required `cancelled`.
+  Native pre-production hashes and log were retained; Root copied observed logs
+  and current test into `20261002-request-cancellation-owner/observed-compiled-red/`.
+  This observed capture is not claimed as an independently frozen full build.
+  Native is now implementing scoped owner control/shared reset. No GREEN or G3
+  credit yet. Future fixture-specific pure approval verifier preparation passes
+  offline identity/request/queue/durable/disposition mutations and rejects the
+  actual cancelled capture; it is not integrated or used for live approval.
+
+- Corrected request-reader freeze `20261002-g3-request-inspector/schema-corrected/`
+  qualifies: manifest e5c7454d3036150b3c34fe995597bd75c134ea55fe39ddcd57747beda7a76a62,
+  main92110086ea133a3d33ff548c00d4753c86c5b67fb2c4fdf93f0f2059b78b9d58;
+  build/selfcheck/fmt/strict Clippy all exit0, both source reviews PASS;
+  product603/build26 before/after unchanged. BinarySHA
+  b17336791b4cbf6d372b60e3e40a19abcc39cce496fb4e0c4ba344aa0316cf65.
+  Actual read-only inspection exit0 of original Native46704, same boot/Root8,
+  proves paused known-empty queue and still-pending r0 for cancelled exact bash
+  call86e9a83e-539a-4258-b146-67916d28c2dc. The fifth G3 remains FAIL.
+  After fresh Ready/Native20741/binary/product pins, one bounded cancellation-owner
+  production task was admitted; it requires compiled behavioral RED first, exact
+  request ctl terminalization via aP, shared reset, race/structured/failure tests.
+  Canonical spec exact copy bbc239f3695aa8b8873e52970731232f948be00e9fe8d562fefc4ad643f76a1a
+  was provided under ignored target; no Root-authored Rust or UI shortcut.
+
+- Request inspector whitelist freeze `20261002-g3-request-inspector/qualified/`
+  is NOT_PASS: both independent reviews found fabricated answered-response schema
+  (`checkpoint_id`/`approved`) instead of the actual TUI `choice` payload.
+  Independent build/selfcheck/fmt returned 0; strict Clippy returned 101
+  (`needless_question_mark`). The selfcheck's fabricated fixture cannot qualify
+  the actual response boundary. No Runtime attachment or G3 credit was taken.
+  Earlier whitelist admission returned Ready after degraded compaction with an
+  unrelated old summary and unchanged source; that admission remains unfinished.
+  A concise follow-up produced f7255a8b5d2de65bcfd2226f5b9b5f8283b9a57620544cd0a9044649b258bc52;
+  Root has now admitted one bounded schema/lint correction to the same Ready
+  Native 20741, limited to the ignored diagnostic main. Product603/build26 pins
+  were reverified before admission. Original failed Native46704 remains live.
+  Cancellation-owner pre-review requires actual terminal status evidence before
+  clearing each logical wait and explicit structured-input/read-failure regressions.
+
+- Recovery-authority final correction independently qualifies: source603Rust26build,
+  1460allotherfiles (broader than earlier1234inputsubset) unchanged; manifestSHA
+  0f38e4b63b7d5a3f703b785e9380fbce7c68feb94e65bac5cf6f5792ecaa22ae;
+  patchSHA34be53763af85a0811ccd2fa50721f3cfdc69dbd3feee5e0e2eff191fb5eb5ce.
+  Engine1304unit+20integration0/1ignored; fmt0; full unchangedCLIquality0 including
+  strictworkspaceClippy/docs/build/architecture/OpenSpec/standalone/distribution.
+  BothaxesPASS. BinarySHA9c3ba4a0b462c4eb29deabda359e949ad5db3e0fc01c607f9353b23bcab18de0;
+  qualitylogSHA438cd9635d5893b04a7466371064467626c0991db9e8a471f9636b270c6f6f3d.
+  Evidence20261002-recovery-authority-final/. Fourth actual0zid4o4m FAIL on wrapped
+  correctguidance literal-space observer, original45772 inspected0 and naturally
+  quit, sticky manualrescueFAIL. One-line current-frame whitespace normalization
+  qualifies bothofflinechecks0/bothaxesPASS; originalstrictgates unchanged.
+  Fifth actualwznzqebi passes explicitRW/cwd, Eonce/Qdurable/Ctrl-C/childtermination,
+  naturalquit0/explicitresume paused/noGrants/noReplay, deniedunauthorizedContinue,
+  newRW/cwd whilepaused withoutdispatch, explicitContinue Q exactlyonce/knownempty.
+  It FAILS at busy sleep45 unknowncap approval beforediscard. No genericapproval,
+  classifier change or dummywrites to avoid policy; exactcurrent Namespace request
+  must be independently correlated to durable escalation/call/expectedcommand.
+  Native authors ignoredread-onlyinspector requests projection; firstdiag source
+  41cba78469019fbd6a38632986984817956540b1bddf82bf491a5b8a4678ae60 fmt0,
+  follow-on whitelist correction Working; no compile/runtimequalification yet.
+  Root Ctrl-C on original46704 yields Toolcancelled/InputCancelled but approval UI
+  remains and /quit routes to pendinganswer. Original liveprocess preserved, no
+  approve/kill/restart. Read-only diagnosis finds Machine reset clears logicalwait
+  while AgentFS request stayspending; status readonly, no fake reject/approve fix.
+  Need owned request terminalization at shared cancellation/reset boundary before
+  logicalwait removal, then watcher clears prompt; architecture mapping pending.
+  FinalG3/Herdrdetach/UIcomparison/currentCI/delivery remainopen; score70.
+
+- [x] Close actual confirmation cancellation lifecycle: terminalize exactly the
+  Machine-owned AgentFS requests through owner operation, invalidate watchers,
+  preserve response truth/late-response rejection and unrelated requests; verify
+  paused queue/cancelled input/no Tool spawn or grant sideeffect and natural quit.
+- [x] Independently qualify Native read-only request whitelist, then correlate
+  current unique pending request/call/busy ID/Root/grant/cwd before one explicit
+  supervised busy-command confirmation; preserve prior actual FAIL records.
+
+- Native recovery authority correction reached Ready, compiled behavioralRED101
+  captured before production edit; final targetedGREEN1/recovery5 pass. Production
+  only wraps real directory-preflight error with actionable current-authority context;
+  no bypass or lifecycle/grant mutation. First postchange test101 wording mismatch
+  retained as failed invocation; final predicate targets actionable production context.
+  Independent firstfreeze fmt1 corrected by Native singlefile styleedition2024 then0.
+  Qualified freeze603Rust26build, exactly2Enginefiles, manifestSHA
+  ae2125934a419a7ca39ba876bed83f1344eca544175f6b5fc6928a6054121462;
+  patchSHA3659399ad53f04ec178e3f59c047cf8635e21797f472c2b9622ebfec626af6bf.
+  Both source review axesPASS. Independent fullEngine1304unit+20integration0,
+  1ignored; fmt0. Unchanged wholeCLIquality101 at clippy::await_holding_lock in new
+  regression: final durable queue guard crosses new notice read await. Native p1
+  received only testfile lexical-scope corrective task at naturalReady/fullpins,
+  preserving all assertions and production. Evidence20261002-recovery-authority-notice/.
+  This follow-on still needs finalfreeze, strictquality and actualG3 rerun; score70.
+
+- Current-frame operational observer qualified: original selfcheck and split-query /
+  real queue-suffix status checks0, both review axesPASS. RunnerSHAc393c6a055e9145fa95e6ba2c053c86708236d561d44979dca6033a5cc3575d6;
+  evidence20261002-g3-herdr-frame/. Third actual G3 case5rn1h0p_ completed fresh
+  explicitRW/cwd correlation, E once, durable queued Q, Ctrl-C paused/child termination,
+  naturalquit0, explicit --resume noGrants/paused/exactpending/noReplay. FAIL at
+  unauthorized Continue notice: actual adapter error lacks current project authority
+  guidance; samePID91900 read-only inspection0 preserves paused Q and noGrants/effects.
+  Root sent /quit after failure; manualrescue remains stickyFAIL, not G3 acceptance.
+  Native p1 Ready/full603Rust26build equality then received bounded shared preflight
+  correction plus genuine regression, only engine_queue_controls.rs and
+  engine_recovery_boundary_tests.rs; taskSHA13497bd7696f437f78a5b03821aaa3a17043bafe61989a8fcb0fd92b8873a3ce.
+  Evidence20261002-recovery-authority-notice/. Previous joinedqualityPASS remains
+  evidence for old exact pin only; correction requires independent qualification,
+  fresh joined checks and complete actual rerun. Score70 unchanged.
+
+- Follow-on observation checkpoint: Native ignored read-only inspector empty-events
+  correction independently qualifies (build/selfcheck/fmt/strictClippy0, bothaxesPASS);
+  product603Rust26build unchanged. Evidence20261002-inspector-empty-events-independent/,
+  manifestSHA2c3b91f720edcf6f97a185658df065ada185319110c881d5653d25d95eb718e3,
+  binarySHA373d8d2bc070b5e063eea9d02f54798e5cfb13da6e9aa99e754049ba673e03c7.
+  Same original PID69310 read-only inspection0 confirms idle/noProject/noGrants,
+  unknown empty queue and selected-next gpt-6.1-sol medium; not G3 sequence evidence.
+  Second actual attempt1leuoxu1 FAIL at RW chooser observation before grant/effects;
+  read-only-to-read-write partial repaint exposed transcript matching limitation.
+  Root manually Esc then /quit; original87108 natural exit, rescue remains stickyFAIL.
+  Owned Herdr pane w5E:p7 fish86869 Ready; original69310 preserved, no signals/restart.
+  Superseding operational observer uses owned Herdr current rendered frame;
+  initial two-axis review NOT_PASS identified harness-log contamination, offline
+  host dependence and split cursor-query mirroring. Corrected draft routes progress
+  to artifact, anchors state on current Alan header and uses one query-carry path.
+  Original selfcheck plus current-frame/split-query check0, no Alan launched;
+  follow-on independent reviews pending. Source/Runtime/Herdrdetach/currentCI/delivery
+  still open; acceptance score70 unchanged.
+
+- Fresh joined candidate full unchanged scripts/check-quality.sh exits0, including
+  wholeRustquality/docs/build/architecture/currentOpenSpec/standalone/distribution.
+  Source603Rust26build1234otherinputs unchanged afterrun;
+  manifestSHAb29766d8ac9d6a6e5fbbf1171f2f08392f596cfaec238db2dd82f56602564a21.
+  Evidence20261002-joined-model-owner-final/; devbinarySHA
+  e5590973ec0ad3ebda3a92229514601fa038a26e5160a9185203415da156783b.
+  Rebuilt Native-authored inspector on same dependencies build/selfcheck0,
+  SHA3775e654be5cd7d83233ff4cc68c1b8eaf3dc245a7bf9d81af7c587acb1cef99.
+  First actual G3 run FAIL at initial Ready/noProject text observation, before
+  project/admission/effects/recovery sequence. Artifact20261002-g3-preparation-restored/
+  working/runs/alan-g3-native-20260930-vwy_5h7u/, exec16023 originalPID69310 remains
+  live under original PTY, no restart/kill/grant/submission or rescue claimed.
+  Actual ANSI shows Ready/noProject; CSI stripping removed cursor-generated
+  spaces, producing false-negative text matching. Separate samePID read-only
+  inspector first invocation1 wrongruntimeparent retained; correctparent invocation1
+  rejects legitimate zero-length fresh UI events, before full inspection can return.
+  No full snapshot/RuntimeSequence/G3 success inferred.
+  Root-only operational recognition correction retains actual captured ANSI,
+  originalmatcherRED/newmatcherGREEN and originalharnessselfcheck0; bothaxesPASS.
+  Evidence20261002-g3-observation-correction/; runnerSHAdc31b3b27857827053e891d57534db25bba3cfdd91a4fdd532d8556d01b78af4.
+  It also marks forwarded failure keys as manualrescue; no newNative run yet.
+  Native p1 received only ignored diagnosticmain.rs empty-event corrective task
+  after freshReady/full603Rust26build equality. TaskSHA
+  9a0fac024c6089cc06e9c225abf70b0dc093ab9b682ece859fd23a63e88a80f4,
+  bodySHA27f437ee1758de7a3b12cfdf42601869fc9c0452cab2f5d3212732bd81fe6a91;
+  ledger20261002-joined-model-owner-final/inspector-empty-events-controller-ledger.json.
+  SamePID20741 Working, no productsource change authorized. FinalRuntime/Herdrdetach/
+  UIcomparison/currentCI/delivery still open; score70 unchanged.
+
+- Native Model owner corrective task reached natural Ready on PID20741;
+  independent freeze603Rust/82TUI/26build, exactly3authorized files model.rs,
+  watchers.rs, model_transport_tests.rs; other600Rust/build unchanged.
+  ManifestSHAa617af0af42649736561bf4bf0286d65a4c2e692214da4e430b20c135e6f587f;
+  patchSHA1080c6dd042bc841879909dfbe7e17c7fb915ca60b6413d5be6c2ecafb5e4a1a.
+  Evidence20261002-model-owner-independent/. Independent TUI299unit+10integration,
+  canonical extra-lint Clippy, fmt/configuredsourcecap/authorDiff each0, full
+  snapshot/author603Rust26build drift0. Spec review PASS closes joined P1;
+  Standards follow-on PASS. Actual attachment failure paths already revoke
+  upstream and hydrate clones; no additional attachment.rs edit needed.
+  Genuine Native preproduction RED retained, focusedGREEN1 and full299+10 pass.
+  No final joinedquality/nativeG3/currentCI credit; score70 unchanged.
+
+- Native Model authority regression compiled and failed before production edits:
+  exact focused test root_loss_revokes_model_events_and_prewrite_until_descriptor_repin
+  exits101,0pass/1fail/298filtered at assertion Root loss must prevent ctl write.
+  Root captured intermediate full603Rust/26build checkpoint; only existing
+  model_transport_tests.rs differs from joined base, production/build unchanged.
+  BehaviorRED logSHA03755db1540e5f50b38f6bfa42e88cbdc1afcaf793501e1a9f14602c3ec55b83.
+  Evidence20261002-joined-final-quality/native-model-owner-red-checkpoint.json.
+  This is intermediate evidence, not final frozen correction or qualification.
+  Configured distribution retry on pre-correction frozen candidate exits0 with
+  existing ALAN_RELEASE_VERSION=local-74b070359475 and host CARGO_BUILD_TARGET.
+  Initial version-discovery128 and separate target-context1 are retained;
+  explicit supported parameters required no script/source/lint bypass.
+  Distribution-only pass does not close sourceSpecP1 or final joined quality/nativeG3.
+
+- First joined source audit is NOT_PASS: Standards PASS, Spec P1 at watcher
+  Root missing/error paths retaining Model owner. Old-owner actual ui:models
+  can resurrect catalog; retained queueowner enables chooser and ctl checks
+  Root only after write. This source finding is not a native reproduction.
+  Root submitted one bounded TUI-only corrective task to same p1/PID20741 after
+  fresh Ready/full603Rust/26build equality and unchanged binary pin.
+  TaskSHA6ec7d387fc5f81079e684c4d795369c4feeaadce737bcd7064eb2988f340d1f4;
+  bodySHA6150a3ad59e4b50c86dfd07a3213b4efb54c29c567cac3a5bb73cea06d338fc2.
+  Evidence20261002-joined-final-quality/model-owner-controller-submit-ledger.json;
+  actual pane run exit0, samePID Working. Source fix/test authored only Native.
+  Actual admission record6952 at2026-10-01T20:15:17.642271+00:00, SHA
+  48d7e1a3ae9c72ecd9a9dac281689b46af496b8a525a433512d5394dbcefa0ec;
+  actual user message6954 SHA0f1885fcba845fdd15c15c98a7ddc34295b5f6ac6d7d7dc313c696028b0ea318.
+  First full joined check-quality exits128 at assemble-cli-release Git version
+  discovery in snapshot lacking.git, after sourcecap/architecture/Rustquality/
+  build/host boundaries/currentOpenSpec/CLI checks passed. No full PASS claimed.
+  Preserve quality.log/result; next fresh candidate uses existing
+  ALAN_RELEASE_VERSION explicit local candidate identity, no script change or waiver.
+  Fresh dependency-built read-only inspector build0; first Root --self-check
+  invocation1 is retained, correct existing --selfcheck0; binarySHA
+  8249c6fa226506d2ea8cff21a098d2b46cd1e412c1fc45dfd14fa4154314bae6.
+  No attachment/nativeG3 yet; this candidate cannot be promoted until P1 closes.
+
+- Engine ownership correction reached natural Ready on the same native PID20741.
+  Independent freeze603Rust/82TUI/26build confirms exactly engine.rs:547 removes
+  redundant .to_owned(); all other602 Rust and26build inputs remain unchanged.
+  Evidence: /Users/morris/Library/Caches/Alan/ui-previews/20261002-engine-quality-independent/.
+  ManifestSHA968e1dc2982e9d17cc28e90afeaa78238f0e5002a4031a6bc7fdb7204e10f86f;
+  patchSHA2d335981a85c28a6672a7860aedf94bef5025c0442b6e76447bc2e521b59c804.
+  Both independent source axes PASS; owning canonical extra-lint Clippy exit0.
+  Native unchanged complete Rust-quality script exit0. Native Engine test run
+  exits101:1288pass/16failed/1ignored, sandbox_apply and localHTTP permissions;
+  failures remain retained, not waived. Independent Engine suite exits0:1304unit+20integration/1ignored.
+  Independent fmt0, configured sourcecap0, authorDiff0, full603Rust/26build
+  inventory unchanged. Initial sourcecap1 (snapshot lacksGit HEAD) is retained
+  in independent-cap.log; supported read-only Git context yields configured0.
+  Joined CLI quality is RUNNING on a new frozen source with current Root OpenSpec;
+  manifestSHA74b0703594752441b6edff6a4b118c385015eeb0f64d57d5239b776a837b9cc9,
+  evidence20261002-joined-final-quality/. Source/build remains exact Native603/26;
+  unchanged complete scripts/check-quality.sh uses supported read-only Git context.
+  Native model/Skills/FX/G3/current-head CI remain NOT_RUN.
+  Quantified goal remains70/100; lint correction adds no acceptance points.
+
+- Skills TUI source/test qualification is now PASS on both axes. Final freeze
+  603Rust/82TUI/26build, manifestSHAa0241b5e52762f2c07bd23693fe496bcc066630b90f08e0b99a68cb7fcadf6e8;
+  patchSHA0af4fbc346f78444a26dfa5e0511d181d07a19f15b9af6c4260bb0f23c6cdc0c.
+  Last delta is exactly one private test file, zero production/non-TUI/build drift.
+  Independent all-feature298unit+10integration, strictalltargetallfeatureClippy,
+  canonicalfmt/configuredsourcecap/authorDiff each exit0. Real model menu/index
+  preservation closes the final gap. Evidence20261002-tui-skills-popup-independent/.
+  Native Skills Tab/Runtime, final joined quality/G3/CI remain NOT_RUN.
+  Canonical extra-lint check separately exits101 on model_tests.rs:166 redundant_clone;
+  prior protocol ui_models.rs:18 has the same quality finding. Neither is waived.
+  Root submitted one bounded two-test-only correction to p1/PID20741 after fresh
+  Ready/full603Rust/26build equality and binarySHA5cd3ef1a9f3919e9c52ee0b9ebc2bd7e89cf4cde219b07a71ce62b0198d81dd1.
+  Actual pane run exit0, samePID Working; ledger20261002-delivery-preflight/
+  two-test-quality-controller-submit-ledger.json. This supersedes the unsubmitted
+  one-file preparation; p2 stays Ready, no concurrent source authoring.
+  Actual published admissionf199377c-41de-4801-908b-5ce4c6c8285f is record6638
+  at2026-10-01T19:30:14.759298+00:00, SHA
+  b0aabeac11b68beb59161a7177ac1ac0b339a9071e09231f518ef67c0fedb082;
+  actual user message6640 SHAe242fb6f0fa899957e8f76f3816c55f26fd78463e80c35db7ce893cef27c840f.
+  Native whole Rust-quality subsequently exits101 at engine.rs:547 redundant_clone
+  on process_path().to_owned(), outside the allowed two-test scope. The author
+  leaves it untouched and reports the failure. Persistent logSHA
+  07ec12990335becc2c85e4068361c46e4b2850e7276bcb6a072235dd923aa517;
+  source correction must wait for this task's Ready/freeze and owning reviews.
+  Two-test task subsequently reached Ready. Independent freeze603Rust/82TUI/26build
+  exactly2test lines, manifestSHA597f84afd0107d07242d28a04a3091dfe0e0fa7e00626f5a4354cb508f357029;
+  patchSHA6a5c2f5f9faa1bc17506ee1fead6e97b1a2d7ea178bd8b5361240fe706c9f243.
+  Protocol55unit+7integration and TUI298unit+10integration all-feature exit0;
+  combined canonical extra-lint Clippy, fmt/configuredcap/authorDiff each exit0,
+  both source axes PASS, full603Rust/26build drift0. Assertions unchanged.
+  Root then submitted exactly one engine.rs-only quality correction after fresh
+  samePID20741 Ready/full source-build equality; p2 remains Ready. Ledger under
+  20261002-two-test-quality-independent/. Actual admission
+  361e196d-d2c6-42a0-93ff-68de9539d1b0 record6813 at2026-10-01T19:45:52.424172+00:00,
+  SHA675d6a94f3caacdabac617f49ef01a12054aa6b886c436d08d6b47e3d1bdae6d;
+  user message6815 SHA5afe1b38e5a1390e9d878f7a3f15b343b190e75aa46a8a8ead464c1e519eb2ef.
+  Same nativePID is Working. This is lint-only correction, not behavioral RED
+  or final joined quality/native/G3/CI qualification. Score70 remains unchanged.
+- Model TUI consumer is locally qualified: fresh598Rust/77TUI/26build freeze,
+  full293unit+10integration all-features, strictalltargetallfeatureClippy,
+  canonicalfmt/configuredcanonicalcap/diff each exit0, and both source axes PASS.
+  Last correction is exactly three private test/fixture files; production/build
+  unchanged. It closes actual models IO failure after successful receipt and
+  captured awaited teardown. ManifestSHA30eb7a2f927c8b2046507bab76a219220df29afae31ff69c422f0fff66ed551c;
+  patchSHAe720f3a6d6b5ad41f278e3940d7b5577ffb6d9231a2183166190940e90640946.
+  Evidence: /Users/morris/Library/Caches/Alan/ui-previews/20261002-tui-model-test-gap-independent/.
+  Native first focused26pass1fail was an incorrect test comparison including
+  normal ui:models notification; no production RED claimed. Native first fmt1
+  is retained separately from final fmt0. Sandbox-denied Python/xargs inventory
+  did not execute and remains unavailable, not bypassed.
+- Skills corrective candidate reached natural Ready and was independently frozen
+  at603Rust/82TUI/26build,8TUI delta, non-TUI/build drift0. All-feature298unit+10integration,
+  strictalltargetallfeatureClippy, canonicalfmt/configuredcap/authorDiff each exit0.
+  ManifestSHAd9cb82b6798080532b177be59becae48b29dc3a1f0b037e3965b04f200915dde;
+  patchSHAed44b56f9c90439ce5cac2f2792ae00a55710a9ca757c3241c07e94ac4cf45fc.
+  StandardsPASS; Spec confirms Root-loss/error/old-owner notification/same-Root
+  recovery and descriptor1MiB/oversize/staleTab/width/intent boundaries closed.
+  One test-only gap remains: model-popup preservation forces active without a
+  known catalog, so actual chooser rows/index were never proven preserved.
+  No production defect or new behavioral RED is inferred. A bounded test-only
+  correction is prepared under20261002-tui-skills-review-independent/; solep2
+  controller must recheck Ready/full equality before submission. Protocol clone
+  correction remains deferred to preserve active task's non-TUI pins. Score67.5.
+  Solep2controller subsequently verified full603Rust/82TUI/26build against both
+  freezes with zero drift and submitted exactly one test-only correction;
+  samePID53200 is Working. test-popup-controller-submit-ledger.json preserves
+  fileSHA32d0be3e14cb4c9ee0a151bfff507cc214f113b35d7c1a293cdd9caef727fbe5
+  and bodySHAe6ab6f3034cde1698b24fd0888f3383721474b0e14a056dab4cef317d723e2f8.
+  Actual legacy owning message17705 at2026-10-01T19:07:00.623317+00:00 is preserved,
+  recordSHA64140f71c1b01f90cf62cde6970ca7882de3c633759bcda0b03e5fda86f6841a.
+  No typed admission UUID was published or inferred.
+- Earlier Skills consumer first candidate reached natural Ready and was independently
+  frozen:601Rust/80TUI/26build, exactly9TUI delta files; non-TUI/build drift0.
+  All-feature296unit+10integration, strictalltargetallfeatureClippy,
+  canonicalfmt/configuredsourcecap/authorDiff each independently exit0.
+  ManifestSHAe993a2e315e6418e648b5095e7dd577762bc4a3f7ed020a43ccd87102df27088;
+  patchSHAf1b05301cd3a2c99f2956d4109dd252f6ccf6bc511323bf1773f3b921d3e2880.
+  Both source review axes are NOT_PASS: Root loss/error retains acceptable old
+  Skill owner, so a later higher-publication old-owner notification can restore
+  candidates before actual Root re-pin; explicit descriptor budget/staleTab/
+  non-Skill-popup/intent/anchor/known-empty boundary assertions are also missing.
+  No Skills qualification credit. Persistent evidence and bounded corrective
+  task are under20261002-tui-skills-independent/. The solep2controller must
+  recheck naturalReady/full equality before one corrective submission.
+  The controller subsequently verified samePID53200 naturalReady and full
+  601Rust/80TUI/26build equality, then submitted exactly one correction: actual
+  pane run exit0 and samePID Working. correction-controller-submit-ledger.json
+  preserves task fileSHA4ff15eaa5f344625b3d6809be8b0bd311300b272457db833cca1be56415b8590
+  and flattenedbodySHAbc8ae66115eac6168d0b15d861f38533e62f153490d73f4f09d3cd02d6d10fd3.
+  Native admission record and compiled Root-loss RED remain to be captured.
+  Correction actual legacy17302 at2026-10-01T18:42:32.934639+00:00,
+  recordSHA0cc988e520196fcaac37d1a8a4cf58b136c6b5ada0e43c83d41f880e52aaba38
+  is now preserved in the controller ledger; samePID remains Working.
+  Root-loss correction genuine compiled behavioral RED a2373/event17399/tool17401
+  directcargo101: skill_consumer_root_loss_rejects_old_watch_and_recovers_same_root
+  0pass1fail296filtered, old-watch notification restores nonempty Skill candidates.
+  Persistent skill-review-behavioral-red.log SHA
+  7677cfcdd10ff105bb85c590b57f2cb497f3c7975bf0a1e9cda0617e84948f1b.
+  Earlier a2370/event17378/tool17380 is E0433 missing InputIntent import, not
+  behavioral RED; separate skill-review-red.log SHA
+  dbca5c556784342132d3760d0153d3880ed416e4721f93d925c123ef5fd1c13f.
+  Controller source checkpoint was captured after production editing began,
+  so no exact before-production checkpoint hash is inferred from it.
+  Subsequent focused a2394/event17564/tool17566 directcargo101 reports4pass1fail
+  293filtered: Root-loss regression is GREEN; descriptor popup-isolation fixture
+  fails at its non-Skill-popup prerequisite (line74), before preservation is
+  exercised. This is not evidence of a production popup-isolation defect.
+  focused-first-boundary-failure.log SHA
+  410b93a8700535d48e9a4bc117b19c9b0b26c6523a6284a333e587868388e223 is retained.
+  Whole boundary/consumer qualification remains open; same task is Working.
+- Pre-join checks on the immutable first Skills candidate: canonical architecture
+  dependency and Host source-boundary scripts each exit0. Canonical Rust quality
+  script exits101 at redundant_clone in crates/agent-protocol/tests/ui_models.rs:18.
+  LogSHAf927a1361b7b8c8447d8bcbeba7fe0f578c234118250760fd4cf522c4014c5be
+  and prejoin-static-gates.json are retained under20261002-tui-skills-independent/.
+  This is not final joined qualification. Defer the native one-file protocol
+  test correction until the active Skills task reaches Ready and is frozen;
+  its pinned non-TUI sources must remain unchanged during that task.
+- Earlier, solep2controller submitted exactly one Skills consumer after fresh Ready,
+  samePID53200/full598Rust77TUI26build hash/inventory0drift; same nativePID is
+  Working. Persistent task/ledger: 20261002-skills-consumer-preparation/ under
+  /Users/morris/Library/Caches/Alan/ui-previews/.
+  FileSHAa4eee6d3dc02ac88ccc391aa47068c816810c5706fe0a1a83c2cf8e3d324b8a4;
+  bodySHA4fb76d4ed60c532ddf23fdf42972eb1d6cf51261ee6c5968228271ca5d70530d.
+  Actual legacy16839 at2026-10-01T18:03:51.000597Z,
+  recordSHAc639858ab03aa2ee193e0b0cf79a27846a2f44bb24c6834b62596e553eefffba.
+  Only TUI/adjacent tests; existing broader Root cleanup retained, Skill updates
+  themselves invalidate only Skill menus. No FIFO/restart/grant/next task.
+  First compiled Skill hydration RED a2303/event16892/tool16894 directcargo101:
+  0pass1fail293filtered, startup still host-fake rather than projected explicit
+  IDs. Persistent logSHA4ae48dbc66ef426612113005b44c14773ba8c1fa5bad31ec52681651dce0b201
+  under skills-consumer-preparation/. This proves initial hydration only, not
+  update/owner/staleTab coverage; same task remains Working.
+  Subsequent first-hydration compiled GREEN a2329/event17075/tool17077
+  directcargo0: 1pass293filtered (lib focused, not all-features/full suite).
+  Persistent skill-consumer-green.log SHA
+  f98d48b4d3bc3c18c97f07c15c14da93a740df4f8dd525dbc75e1dba60f655f8.
+  Adverse/update coverage remains in progress; no consumer qualification credit.
+  Intermediate native suite a2339/event17149/tool17151 reports296unit+10integration
+  exit0 without all-features. Focused suite reports3pass. The following compound
+  fmt/diff command returned outer0 despite a format diff; no direct fmt PASS or
+  direct fmt exit1 is inferred. Its retained log SHA is
+  03a2f2a2bd9a9ef4b03c33551ab0b10a4017e0f4ddbfc4d0e0c4e873b6ab8579.
+  Compound Clippy output likewise does not qualify strict all-features Clippy.
+- p1 diagnostic extension is Ready and independently qualified for read-only
+  model/Skill observation: build/selfcheck/strictClippy/scopedfmt/diff and both
+  source axes PASS. It has not attached to the final candidate. Restored/migrated
+  G3 operational scripts have exact historical provenance, both preparation
+  reviews and selfcheck PASS; candidate NOT_PINNED, G3/recovery/Herdrdetach NOT_RUN.
+  Fresh installed Herdr 0.9.1 preparation confirms no configured prefix/detach
+  override, default ctrl+b then q, and the existing running default session.
+  Persistent fresh-herdr-detach-preparation.json pins binary/default-config and
+  session identity; no secondary client, detach or Alan invocation was started.
+- G1/G2 remain historical pinned-build local acceptance. Current local progress
+  is70/100 with unchanged weights: backend10 plus modelconsumer2.5 and
+  Skillconsumer2.5 of the model/Skill15 bucket. Final joined quality,
+  native UI/FX acceptance, G3, current-head CI/merge/spec sync/archive remain open.
+  Fresh GitHub1026 snapshot remains OPEN/DRAFT/BLOCKED at7f0067ec75fe43b96cd85ed9a20b834a32a050f4,
+  base660253fa1ff0557dc1f2ef40fb0acefdcb5d1ae2;16completedSUCCESS checks cover
+  that published checkpoint only. Current uncommitted Native slices are not
+  covered. Read-only delivery inventory is persistent20261002-delivery-preflight/;
+  operational untracked logs/scripts must not be blanket staged.
+
+### Earlier local checkpoints
+
+- Previous model consumer correction reached natural Ready at nativePID53200.
+  Initial temporary evidence files disappeared before final hash verification;
+  cause is unconfirmed. The old after-check is not claimed. Root freshly re-froze
+  all596Rust/75TUI plus26build inputs(23core plus format/config pins) after verifying
+  exact current-author equality. Persistent evidence is under
+  `/Users/morris/Library/Caches/Alan/ui-previews/20261002-tui-model-remaining-refreeze/`.
+  ManifestSHA91bb338894ba00d35eeca3f21df3786ad184b4f8060c7847d6b6ed1c16da3654;
+  owning patch retains originalSHAf68678b879dd6aa2696c85964698f418c31fb681a5cabfcfb44f197a67cea92a.
+  Fresh independent287unit+10integration/strictClippy/canonicalfmt/authorDiffCheck
+  each exit0, zero full drift. Source cap FAIL:app.rs1003>1000. Both axes verify
+  persistent before/after stability and remain NOT_PASS: awaited teardown before
+  failed-test propagation and explicit public TUI projection/receipt/Root-write
+  race matrix remain incomplete. Active/admitted choice, valid1MiB model document
+  budget with unchanged Tool256KiB display cap, catalog availability and actual
+  chooser→ctl→watcher receipt transport are locally closed. Fixture backend events
+  are not native Runtime qualification. The bounded final qualification correction
+  is now submitted and Working at the same PID53200: legacy record16260 at
+  2026-10-01T17:00:54.077547Z, recordSHAca8cbefb3b2dd52d0c6d85a2b87e90682d65ef1837d6c9baa0175e8abe1fd1ec.
+  Its actual compiled public Root-replacement-during-write RED is direct cargo101,
+  0pass1fail288filtered, a2228/event16340/tool16342; persistent logSHA
+  f85ad8da9a3067beb246c4a05f077c562c05cee7301f380e61438f000fff35e5.
+  This proves that one race, not the entire remaining matrix. No additional
+  Skills input, restart or hidden grant. Final progress remains65/100.
+
+- Idle p1 was independently rechecked natural Ready/PID20741 and unchanged
+  non-TUI Rust/build inputs, then received one diagnostic-only inspector task.
+  Existing Native-authored inspector main/Cargo files were restored byte-for-byte
+  from the qualified persistent cache into ignored target/g3-read-only-inspector;
+  no new Root-authored Rust. The task adds owner-checked bounded models/skills
+  observations for later native acceptance, reusing protocol types and existing
+  read-only attachment. It is Working; production remains outside its scope.
+  Persistent task/restore/submit ledger:
+  /Users/morris/Library/Caches/Alan/ui-previews/20261002-inspector-model-skill-preparation/.
+  BodySHAbe977a8c505b11404671412874259e45820e487bf63c0f4ae776fe9cbb61e862.
+  No attachment or G3 run is authorized in this authoring turn.
+  Initial isolated --locked build exits101 before compilation because restored
+  diagnostic Cargo.lock needs regeneration for current dependencies. Native
+  author preserves lockfile scope and records this as unavailable, not compiled
+  behavioral RED; Root will build only a frozen independent copy after Ready.
+  Actual Process admission9a714f81-b18e-49a7-bd11-c7d4d629251c, record6503 at
+  2026-10-01T17:12:12.711643Z, recordSHA634cb52b04a63adf0251f1db474a33158c625bd875d57f9ca5f500cd77110395.
+- Final model correction is natural Ready at PID53200 and Root froze598Rust,
+  77TUI,26build (max1000) independently. All-features full292unit+10integration,
+  strictalltargetallfeatureClippy, canonicalfmt, configured sourcecap and diff each
+  exit0. Persistent evidence:
+  /Users/morris/Library/Caches/Alan/ui-previews/20261002-tui-model-final-independent/.
+  ManifestSHAc595ece1da1e6b0f2650de18ab2a7134bc8b01a24f160d623de26dc5f23cd0b1.
+  Canonicalcap first lacked Git HEAD in the frozen copy(exit1), then used existing
+  read-only ALAN_QUALITY_GIT_DIR/BASE_REF options with exact7f0067 baseline(exit0);
+  no source or ratchet weakening. Controller owning patch is a broad remote/base
+  diff, retained as such; actual ten-file prior-refreeze slice is
+  exact-correction.patch SHA58306153c21bacf883d3c3bb6fe34058596aaf03828027eff93720cc9de05dbf.
+  Both reviews close the previous production findings and all other exact public
+  boundaries, but remain NOT_PASS for two fixture gaps: open_paths assertion after
+  watcher start lies outside captured cleanup; success-unreadable covers malformed
+  JSON before receipt, not actual models IO failure after successful settlement.
+  One test-only correction was submitted exactly once by solep2controller after
+  fresh naturalReady/PID53200/full598Rust26build77TUI hash/inventory0drift, and
+  same nativePID is Working. Production changes are prohibited. Persistent
+  test-only-controller-submit-ledger.json records fileSHAb1b6215d22d046f6ea54755752658a3a0eb5c41f9a37ca8a11abd014895809f7
+  and bodySHAec4285fff47b5de351cabb83eefcf10d2e91c9f977a9a3720707d8edc2fc8319.
+  Actual legacyrecord16605 at2026-10-01T17:34:30.409318Z
+  SHA2862342da0f06e1dce0c49fc9a5346a2054847aa41a4ebf3c709db575f0e7cbc.
+  Skills remains NOT_SUBMITTED and score65; no Runtime/G3 claim.
+- The p1 diagnostic extension is now natural Ready, frozen and both-source-axis
+  PASS; independent build/selfcheck/scopedfmt/authorDiffCheck each exit0. Isolated
+  strictClippy exits0. Persistent evidence:
+  /Users/morris/Library/Caches/Alan/ui-previews/20261002-inspector-model-skill-independent/.
+  mainSHAd407bb312b6bd61e93bc928fe7750ffb02c136620a04ee3d4d7ce52af41a0a82;
+  patchSHA4cfd20812968d7ddba7c1c06b77f82ed0a0214b6f8010a10bceeeac3bfc86be6.
+  Independent offline build regenerated only its diagnostic Cargo.lock in the
+  frozen copy: original d7879905255b47b3589f082c503b8d39305bf530b79b54f058b70730fe17efc1,
+  derived796822c2e8ba182de127c3ecb3c2a40e0002e3ff3db4a44666c88e57ab9ef4d3.
+  BinarySHA8cbeca2c447b7e15d45003facdbc00447aecc9cd0d41b33d87535d4bc309db13.
+  No native behavioral RED, new attachment, whole-TUI or G3 qualification is
+  inferred. All frozen596Rust/26build and currentauthor521non-TUI plus diagnostic
+  main/manifest originals remain exact; concurrent p2 TUI is excluded from that
+  currentauthor claim.
+- Missing /tmp G3 preparation was recovered exactly from executed author/Root
+  history into persistent 20261002-g3-preparation-restored/restore-originals.
+  FinalrunnerSHA007742630f40546fafc26428d2e78450b54acb33616bc75230ede6e0b302037e
+  andhelperSHAce19d70608d18c4a7a661e6931622d8318479573047a13c83bc7ef982a920b9c
+  match historical actual output ordinal41906. Working copy changes only three
+  evidence/selfcheck directory locations and helper neighboring import; both
+  review axes/compile/selfcheck pass. WorkingrunnerSHA18d6f2c2b7cc9b0d1ce9e8bba8672ed720d7e50cb5c040f13f21345d0db0ab17,
+  helperSHAd9e0ee1fad5d3c55d31990b58de0d9e8f332b5c7ad383d3373446dbda1f0d1da.
+  Selector/native runtime discovery/noReplay/Discard/stickyFAIL/norescue unchanged.
+  Nativecandidate NOT_PINNED, execution/attachment/Herdrdetach NOT_RUN; final
+  current dependencies, binary, keys/config and stable-selector window must be
+  verified after all consumer qualification. This is preparation, no G3 credit.
+- Next Skills consumer contract has both-axis pre-review PASS, NOT_SUBMITTED:
+  /Users/morris/Library/Caches/Alan/ui-previews/20261002-skills-consumer-preparation/.
+  Reuses typed Process-owned observation and existing completion/watch seams;
+  valid publication refreshes an open Skill popup, invalid/Root-loss clears stale
+  candidates without disturbing other menus/draft/anchor. No source qualification
+  follows from task review. Model consumer qualification remains prerequisite.
+
+- G1 and G2 have historical local live acceptance on the pinned builds below;
+  G3 and final joined acceptance remain NOT_RUN. No final self-development or
+  shipped UI claim follows from those earlier builds.
+- Native authors remain in Herdr p1/PID20741 and p2/PID53200. Root supplies no
+  original Rust production/tests. Each new input follows natural Ready, frozen
+  independent checks and review; no FIFO or observation-timeout restart.
+- Skill lifecycle recovery assertion correction is now natural Ready and frozen
+  589Rust/23build/2testdelta on the checked hint TUI base. Both reviews close the
+  exact present IDs, known-empty absent references and pre-request zero provider
+  requests assertion gap; production unchanged. Independent focusedEngine2,
+  fullServiceManager129unit+2integration, canonicalfmt/sourcecap pass. Strict
+  owningClippy also passes. Previous independent Engine1304unit+20integration/
+  1ignored, Protocol55unit+7integration, AgentFS1unit+73integration and four-owner
+  gates are retained for unchanged production. Earlier full SM failures128pass1fail
+  twice remain NOT_REPRODUCED/NOT_FIXED: new diagnostic has not seen a failed reply,
+  and 500ms bounded-lock contention is an unproven hypothesis. Native focusedSM
+  compilation101 missing target artifacts and original native Engine16fail remain
+  separate; no retry, timeout increase, test weakening, grant or restart.
+- TUI queue/source/coordinate seam now naturally Ready/frozen590Rust/23build/69TUI.
+  Independent268unit+10integration/strictalltargetallfeatureClippy/canonicalfmt/
+  sourcecap pass, zero drift; both reviews close shared detached typed restore,
+  public Root singleton/repeated/fresh watcher/failurecleanup, and submitted
+  samebody distinct pending-ID prefix/source/answer/anchor preservation. Raw Tape
+  and byte offsets remain unchanged. This is mounted TUI seam qualification,
+  not final native Supervisor/recovery/G3. Solep2controller submitted one
+  modelconsumer after fresh Ready/PID/all69/all7dependency recheck; original
+  PID53200 is now naturally Ready; the model consumer is frozen as described below. Its first compiled behavioral RED confirms the old
+  header incorrectly treats launch config as model truth (0pass1fail268filtered,
+  actual cargo101, action a1958/record14330); this proves only the launch-fallback
+  defect, not model owner/selection-ack boundaries. Same-task compiled GREEN
+  now passes that one test (1pass268filtered, a2001/record14638 actual0; log
+  2f00d9543302b291702afe440fee6f5a031d304f76bdd0a0e1af05ab0686c198).
+  First expanded focused run a2003/record14654 actual101 compiles, 4pass3fail/
+  266filtered: real AgentFS model fixture NotFound plus old inline/accessibility
+  launch-label expectations. Failure log SHA
+  a06c0bd3e17ff04a26eb0c389c7a63d91246aabda549716eed87b77854ccf47c
+  is preserved; later cat-log action0 is not test success. Actual model path/watch/
+  owner/selection tests and unchanged width/accessibility strength plus full gates
+  remain required. Subsequent same-task full TUI unit run is269pass4fail
+  (integration not reached): actual file-backed NotFound, 40-column model
+  visibility and two completion ordering expectations. Log SHA
+  f659c68b05f66a361085104726cb5d58e85d7f066a77ce01e79e717065f9c5b3
+  is preserved by the sole controller; it is not whole GREEN. Later a2037/
+  event14919/toolcall14921 unit log is272pass1fail, integration not reached;
+  old completion line-position expectation remains. Log SHA
+  74c1b929afebafe82d555a1d2b66893598a6fccb8ac686ec49c7d89b2e62ddd1
+  is separately retained. This chained shell returned0 from its final diff check;
+  it does not prove tests pass, and no independent cargo exit was captured for
+  that chain. The original PID53200 subsequently reached natural Ready.
+  Root frozen model consumer is595Rust/23build/74TUI (max994lines), task-only
+  patch bb6ec62dd1a95b48c38fb32610c8df3af4eb47a964bd276df82db3457cf90520.
+  Independent275unit+10integration, strict owningClippy and canonicalfmt pass;
+  full frozen Rust/build hashes have zero drift. Both independent reviews are
+  NOT_PASS: bare Enter selects row0; catalog refresh can mismatch visible choice;
+  receipt-stream/Root loss does not retain truthful uncertainty; model document
+  read is unbounded; transport failure leaks arbitrary error details. Actual
+  Runtime settlement/Root replacement/race coverage and panic-safe watcher
+  teardown remain required. One bounded native TUI correction was submitted
+  after naturalReady/PID53200/full595Rust23build zero-drift preflight, and the
+  same native PID is now Working. FileSHA12099c823068571a541c41c2fd797b95e87c750e8688cedbc543ad8b516ca7aa;
+  flattened bodySHA3f410ad452d0f179511552744d3c61ad996283007a95c7e14df97e20a93e439a.
+  Actual legacy user record15265 at2026-10-01T13:39:49.515997Z matches the
+  submitted body SHA exactly; recordSHA2eb01a51ac5f55f3cd5b0121a98c0d3f78c4b22dd9c86b8c3218b2585eca582f.
+  No published admission UUID is available; do not fabricate one. Native action
+  a2083/record15286 baseline shell scan was denied by host_mount_path_guard for
+  expansion syntax; this is not compiled behavioral RED or a Cargo failure.
+  Additional find-exec/opaque interpreter/xargs baseline commands were rejected
+  separately; a2090/record15339 and a2091/record15347 then successfully recorded
+  baseline hashes/path inventory using literal authorized paths and git
+  hash-object stdin-paths. Same PID remains Working; no manual rescue or
+  additional grant. Native a2094/record15371 now compiles and returns actual
+  cargo101:0pass3fail275filtered, reproducing bare Enter row0 selection,
+  catalog reorder/display mismatch and Root reset erasing uncertainty.
+  Root retained logSHA826834a1821ceec1fc789480fbb485326687babdbe27cd30ffdd20294b6c436a.
+  First post-fix model run a2139/record15700 actual101 fails compilation(E0603
+  bounded-reader visibility), no behavior tests ran; retained logSHA
+  a914e3aed703bb9cf907d52bcf6a78d807a94a48e6dcc62b0c1e8a15feb3f459.
+  Next a2142/record15721 actual101 compiles:11pass1fail266filtered. All three
+  new review regressions pass, but model_layout_tests.rs66 unwrap None fails;
+  retained logSHA54e28197d2e817757e51ad02241db0a58ed57bac04bf36bc7f170aa4e993c4f2. Not whole GREEN.
+  Subsequent a2152/record15789 fullTUI actual0 passes280unit+10integration;
+  retained first fullGREEN logSHAf11e1d5e5dc179ee801ed3d95c349c47293beaf0722262b5e4222a96859c4f9f.
+  Later a2160/record15847 has cargo as final shell command, actual0:6 review
+  tests pass275filtered, including real mounted malformed-receipt uncertainty;
+  retained logSHAc9fd56ea9b1dfcb2cb37b1674936c0b3bc7104d6c7d59fd884f52726eca71c39.
+  Oversized-document test was added after that run and is not covered by it.
+  Author subsequently reached naturalReady; corrected source is596Rust23build75TUI,
+  max1000lines,13correction files with zero non-TUI/build drift. Independent
+  fullTUI282unit+10integration, strictClippy and canonicalfmt pass; final full
+  frozen hashes remain unchanged. Both review axes still NOT_PASS: active/admitted
+  A selection remains blocked; legal262145-1048576-byte model observations are
+  rejected by Tool256KiB display cap; status lacks field-level catalog availability.
+  Watcher panic teardown and actual control/settlement/Root-race tests remain
+  incomplete. DefaultEnter/catalog invalidation/owner uncertainty/safe ctl errors
+  are locally closed by review; no final model consumer or Skills acceptance.
+  One remaining TUI correction was subsequently submitted after fresh naturalReady/
+  PID53200/full596Rust23build75TUI inventory/hash zero-drift recheck. Native remains
+  the sole Rust author and is now Working. Exact taskfileSHA
+  134687861caccaa97706b02069a9951f8b0871ce2e8f927c12e20af46835a34e,
+  flattenedbodySHA66cfcf18f2fe83ea5b0c6e4f4a5cb989c7cb966aadf9ba427abd4b070a4d7d8a.
+  It requires all active/admitted model-control callers, valid1MiB document budget
+  with unchanged Tool display budget, catalog availability, panic-safe watchers
+  and actual public TUI control-writer/receipt tests. TUI fixtures do not prove
+  Engine Runtime; fresh native Runtime acceptance remains a separate required
+  end-to-end check after reviewed rebuild. Actual legacy record15882 at
+  2026-10-01T14:40:52.155718Z matches submittedbody exactly; recordSHA
+  3c0cf2590fab8f858d5a86c4f8353df01eb39412a238eb98281bd9002070614f.
+  Native a2174/event15945/tool15947 compiled RED actualcargo101:5pass2fail277filtered;
+  active-selection public dispatch blocked and legal>256KiB projection readNone
+  are the two actual failures, not seven RED cases. Retained logSHA
+  176ccef9df0a277ce7f8afeef520ee2f7d5b8f32a0a4f94c8d92ab6a93de557b.
+  No Skills task/FIFO/restart/grant.
+  This RED proves those helper defects only, not real Runtime settlement,
+  active-A selection or receipt-stream/Root races. The frozen
+  model_control guard also blocks selection during active/admitted work by
+  reusing project_boundary_available; design explicitly excludes an idle-only
+  picker. This exact requirement remains a mandatory final review check;
+  no additional Working/FIFO input was sent when that observation arrived.
+  No Skills successor input, restart or final qualification.
+  Skill consumer remains NOT_SUBMITTED. Its prepared successor task now pins
+  UiSkillSnapshot and existing machine/ui/skills + ui:skills event contract,
+  exact /proc/<pinned Root> ownership, structural validation, monotonic versions,
+  producer1MiB bounded observation and stale open-popup invalidation. Read-only
+  task pre-review matches the typed contract and is complete. Its amended
+  NOT_SUBMITTED task requires firstReady-frame hydration, accepts valid <=1MiB
+  without candidate-count/ID-length truncation, invalidates only Skill popup,
+  and requires real compiled RED/public Root watcher qualification. This
+  preparation earns no consumer/G3 credit.
+- Below-input fixed-anchor layout has a fresh UI-only preview w5E:p6/PID53510
+  (binary c76ae419cb26bab13bf7806e06bd7c40e843076bf498c48f6579d36575bd9cee).
+  Live empty/slash/matching-prefix rows are stable; human feedback is pending.
+  This preview has no project grant/task and is not the joined candidate/G3.
+- PR1026 remains draft at 7f0067ec75fe43b96cd85ed9a20b834a32a050f4 with16
+  completed SUCCESS checks from the last live read. That remote-head evidence
+  does not cover uncommitted corrections. Final quality/review/native UI tests,
+  G3, current-head CI/merge/spec sync/archive remain required.
+
+## Quantitative reporting estimate — 2026-10-02
+
+This is a weighted engineering estimate of locally evidenced progress, not a
+shipped percentage, elapsed-time forecast or replacement for acceptance gates.
+G1/G2 credit is historical pinned-build local acceptance; current joined-build
+revalidation remains in final acceptance. Keep these weights stable when reporting.
+
+| Bucket | Weight | Earned local progress |
+| --- | ---: | ---: |
+| G1 ordinary agent operation | 15 | 15 |
+| G2 supervised native self-development | 15 | 15 |
+| Core terminal UI/UX and FX comparison | 30 | 30 |
+| Model and Skill backend plus TUI consumers | 15 | 15 |
+| G3 repeatability, explicit recovery and Herdr detach | 15 | 15 |
+| Joined quality, native final acceptance, current-head CI, merge and spec closure | 10 | 0 |
+| Total | 100 | 90 |
+
+Core UI credit includes final paired semantic presentation, native pager, receipt
+closure and matched viewport evidence; graphical font/theme identity is not inferred. Model/Skill credit is backend10 plus qualified modelconsumer2.5 and
+Skillconsumer2.5. G3 has local supervised acceptance from the joined second-task,
+actual recovery/no-replay/cancellation and retained-process Herdr view detach evidence.
+Final UI qualification and shipment remain reserved. The remaining10 delivery points are not a time estimate.
+
+## Historical status — 2026-09-30
 
 - G1 live acceptance now passes on the diagnostic-free candidate with SHA-256
   `3a8bc9d68f96d52c75d05d289e390af3975724f279152b4e1db0f1c1e6ea945d`.
@@ -290,18 +1059,18 @@ not a second implementation owner.
 
 ## 1. P0 — Make project entry usable
 
-- [ ] 1.1 Connect `/project` and Agent mount requests to a host-local chooser using the current invocation and existing Host Mount Service; verify approve/read-only/read-write/cancel/revoke in the bare CLI without a manually supplied runtime directory, and document the visible flow.
-- [ ] 1.2 Select the Process cwd after approval and project truthful project-relative status; verify fresh launch without approval cannot access the project, revoked grants fail closed, and `!pwd` plus Agent `read_file` agree on an authorized disposable project.
-- [ ] 1.3 Replace missing-project internal errors with an actionable authorization summary; verify both explicit commands and Agent Tools reach the same explanation and retain diagnostics in details.
-- [ ] 1.4 Reproduce the recorded cancel → queued follow-up → continue → unresponsive-control sequence against exact HEAD, preserving submission/Action identifiers and process evidence; if reproduced, fix the shared cause under the unified-input owner and add the smallest regression that fails before the fix. If not reproduced, retain the uncertainty and run the G1 interruption cases rather than claiming it fixed.
+- [x] 1.1 Connect `/project` and Agent mount requests to a host-local chooser using the current invocation and existing Host Mount Service; verify approve/read-only/read-write/cancel/revoke in the bare CLI without a manually supplied runtime directory, and document the visible flow.
+- [x] 1.2 Select the Process cwd after approval and project truthful project-relative status; verify fresh launch without approval cannot access the project, revoked grants fail closed, and `!pwd` plus Agent `read_file` agree on an authorized disposable project.
+- [x] 1.3 Replace missing-project internal errors with an actionable authorization summary; verify both explicit commands and Agent Tools reach the same explanation and retain diagnostics in details.
+- [x] 1.4 Reproduce the recorded cancel → queued follow-up → continue → unresponsive-control sequence against exact HEAD, preserving submission/Action identifiers and process evidence; if reproduced, fix the shared cause under the unified-input owner and add the smallest regression that fails before the fix. If not reproduced, retain the uncertainty and run the G1 interruption cases rather than claiming it fixed.
 - [ ] 1.5 Review the P0 slice, resolve findings, pass focused Host/CLI tests and required current-head CI; record actual ordinary-terminal and Herdr results here.
 
 ## 2. P1 — Complete the everyday task loop and G1
 
-- [ ] 2.1 Render immediate authoritative admission receipts, queued previews/counts and paused choices; verify no lost or duplicate input across normal admission, rejection, cancellation and Tape reconciliation. Keep scheduling changes with the unified-input owner.
-- [ ] 2.2 Wire existing channel history, authorized file candidates and installed/descriptor Skill sources at the real entrypoint; verify recall after restart, dev/stable separation, correct recalled intent and candidate removal on revocation.
-- [ ] 2.3 Implement one-Enter slash execution, Tab insertion and idle Ctrl+C draft clearing with help text; place temporary candidates below the composer and keep the input/cursor anchor stable across candidate count/wrapping changes. Verify paste/Enter, multiline input, active interruption, rejected drafts, UTF-8 cursor editing, bounded menu at terminal edges and per-key anchor stability at 40/60/73/80/120 columns through focused composer tests and Herdr.
-- [ ] 2.4 Add the two-line Agent prompt with actual project/cwd, model or unknown, and distinct ready/working/approval/paused/failure states; verify 40/60/80/120-column layouts, Chinese/emoji input and no fixed bottom panel or lost host scrollback.
+- [x] 2.1 Render immediate authoritative admission receipts, queued previews/counts and paused choices; verify no lost or duplicate input across normal admission, rejection, cancellation and Tape reconciliation. Keep scheduling changes with the unified-input owner.
+- [x] 2.2 Wire existing channel history, authorized file candidates and installed/descriptor Skill sources at the real entrypoint; verify recall after restart, dev/stable separation, correct recalled intent and candidate removal on revocation.
+- [x] 2.3 Implement one-Enter slash execution, Tab insertion and idle Ctrl+C draft clearing with help text; place temporary candidates below the composer and keep the input/cursor anchor stable across candidate count/wrapping changes. Verify paste/Enter, multiline input, active interruption, rejected drafts, UTF-8 cursor editing, bounded menu at terminal edges and per-key anchor stability at 40/60/73/80/120 columns through focused composer tests and Herdr.
+- [x] 2.4 Add the two-line Agent prompt with actual project/cwd, model or unknown, and distinct ready/working/approval/paused/failure states; verify 40/60/80/120-column layouts, Chinese/emoji input and no fixed bottom panel or lost host scrollback.
 - [x] 2.5 Pass G1 through ordinary terminal and Herdr on the same build: explicitly approve a disposable project, have Alan read/edit a small fixture, run a focused check, show the real diff, cancel a bounded task and successfully submit a correction; record toolchain/cache/network restrictions and resolve them through existing scoped policy rather than disabling sandboxing.
 - [ ] 2.6 Review and merge the P1 slice after focused checks, `just quality` and required current-head CI; record G1 as passed only with the complete live transcript and no hidden operator wiring.
 
@@ -315,13 +1084,13 @@ not a second implementation owner.
 
 ## 4. P3 — Refine terminal presentation and repeatability
 
-- [ ] 4.1 Preserve existing typed Tool titles/presentations through Action file projection for both user commands and Agent Tools; verify read/edit/bash results use semantic summaries rather than escaped JSON and add one end-to-end projection regression.
-- [ ] 4.2 Bound summaries by physical rows/bytes and implement retained Action details with Ctrl+O, action selection and return-to-draft; verify long one-line output, true evidence truncation, missing detail and no duplicate scrollback. Update help alongside the feature.
-- [ ] 4.3 Carry semantic spans through the existing history/layout path and apply the design's spacing and color roles; verify headings/lists/code/diffs, copyable indentation, light/dark/low-color terminals and resize snapshots at 40/60/80/120 columns.
-- [ ] 4.4 Wire `/status` and `/model` to Connection-owned catalog/effective binding, adding any required owning provider/Connection delta before implementation; verify successful next-input binding, unavailable catalog, selection failure and unchanged in-flight bindings without hardcoded model choices.
-- [ ] 4.5 Verify chosen durable recovery and paused/no-replay behavior with the active unified-input owner; keep the parked history-browser project inactive. Run a second independent Alan-authored task through Herdr and record G3, including whether any manual process rescue was needed.
+- [x] 4.1 Preserve existing typed Tool titles/presentations through Action file projection for both user commands and Agent Tools; verify read/edit/bash results use semantic summaries rather than escaped JSON and add one end-to-end projection regression.
+- [x] 4.2 Bound summaries by physical rows/bytes and implement retained Action details with Ctrl+O, action selection and return-to-draft; verify long one-line output, true evidence truncation, missing detail and no duplicate scrollback. Update help alongside the feature.
+- [x] 4.3 Carry semantic spans through the existing history/layout path and apply the design's spacing and color roles; verify headings/lists/code/diffs, copyable indentation, light/dark/low-color terminals and resize snapshots at 40/60/80/120 columns.
+- [x] 4.4 Wire `/status` and `/model` to Connection-owned catalog/effective binding, adding any required owning provider/Connection delta before implementation; verify successful next-input binding, unavailable catalog, selection failure and unchanged in-flight bindings without hardcoded model choices.
+- [x] 4.5 Verify chosen durable recovery and paused/no-replay behavior with the active unified-input owner; keep the parked history-browser project inactive. Run a second independent Alan-authored task through Herdr and record G3, including whether any manual process rescue was needed.
 - [ ] 4.6 Re-run the fixed fx/Alan comparison scenarios with exact versions and matched viewport widths; preserve visual/ANSI evidence and separate model-dependent timing from interaction quality. Review, pass `just quality` and required current-head CI for each delivered P3 slice.
-- [ ] 4.7 Preserve a bounded safe provider startup reason through the existing LLMFS terminal error event and namespace/Engine failure projection. Reuse typed auth and HTTP/transport classification behind provider adapters; never publish unrestricted HTTP bodies, credentials, URLs or account identifiers. Verify startup cause propagation and unknown-sensitive-error fallback through existing failure suites. Distinguish local connection configuration validation from a real successful provider request. Cover both direct startup failures and background streaming adapters through existing terminal StreamChunk conventions. Preserve failed commit ErrorCode::Io and abort/single-terminal semantics; after failed data commit, read only the bounded terminal cause from the already-created generation instead of formatting the write error chain. Verify real local HTTP status/transport stubs through LLMFS and namespace projection; no new error framework is needed.
+- [x] 4.7 Preserve a bounded safe provider startup reason through the existing LLMFS terminal error event and namespace/Engine failure projection. Reuse typed auth and HTTP/transport classification behind provider adapters; never publish unrestricted HTTP bodies, credentials, URLs or account identifiers. Verify startup cause propagation and unknown-sensitive-error fallback through existing failure suites. Distinguish local connection configuration validation from a real successful provider request. Cover both direct startup failures and background streaming adapters through existing terminal StreamChunk conventions. Preserve failed commit ErrorCode::Io and abort/single-terminal semantics; after failed data commit, read only the bounded terminal cause from the already-created generation instead of formatting the write error chain. Verify real local HTTP status/transport stubs through LLMFS and namespace projection; no new error framework is needed.
 
 ## 5. Delivery and archive readiness
 
@@ -1227,3 +1996,2943 @@ normally quit with exit 0 and used no Tools or grants. Evidence:
 `/tmp/alan-completion-anchor-preliminary-bottom-20261001-73/metrics.json`.
 This proves the captured layout still needs actual Inline-origin correction;
 it is not the evolving author's final snapshot or a completed task 2.3.
+
+### Reviewed checkpoint publication (2026-10-01)
+
+Root staged the exact prior author-owned Rust snapshot using a separate Git
+index, verified all 509 hashes against the passing post-format quality evidence,
+and committed it as `7f0067ec75fe43b96cd85ed9a20b834a32a050f4` (tree
+`63f3da674d304a87da0bf88496f5ef36bddad8d9`). The ordinary pre-commit hook
+validated its staged snapshot and passed the complete quality/standalone gate;
+no hook bypass or original worktree Rust write occurred. Current model and
+completion corrections remain outside that commit. The commit was pushed to
+the existing draft PR #1026; CI started for that exact head, so pending checks
+are not yet passing evidence. Artifact:
+`/tmp/alan-reviewed-checkpoint-committed-20261001.json` and commit log.
+
+The latest frozen model settlement correction independently closed the
+acknowledged-removal/local-requeue mismatch in standards review, with no further
+actionable findings in that slice. The independent focused run is pending.
+The author then received a bounded startup correction for explicit injected
+Connection classification and Ready only after successful binding capture.
+Actual A/B dispatch and full model status/recovery remain open.
+
+The UI anchor correction reproduced both actual Inline cursor displacement
+and transient-menu-driven permanent history draining, then passed those two
+focused tests. At its next natural Ready the author froze 200 unit plus 4
+integration results; another narrow review confirmed modal near-bottom height
+was unintentionally limited and zero spare rows still hid the menu. One bounded
+correction now preserves full Action details height and budgets one ordinary
+blank row from Ready/history retention so a selected candidate can remain below
+the input without moving it. This is not a permanent reserved candidate panel.
+The author/controller preserves the user-owned preview; final native and frozen
+source qualification still remain required.
+
+The focused independent settlement run now passed all five regressions with
+cargo exit 0 and captured backend hashes unchanged:
+`/tmp/alan-model-settlement-independent-20261001.log` and JSON. This confirms
+the reviewed failure boundary only; the startup correction remains active.
+
+Published-head CI at `7f0067ec75fe43b96cd85ed9a20b834a32a050f4` currently has
+16 successful checks, including Rust analysis and CodeQL (16 total).
+Both Linux and macOS workspace test jobs, repository quality, standalone release
+builds and the blocking harness jobs succeeded. This covers the published
+checkpoint only, not the newer model or completion-layout work.
+Snapshot: `/tmp/alan-pr1026-live-goal-continuation.json`. PR #1026 remains
+draft and unmerged.
+
+The single-row-spacing/modal correction independently reached two compiled
+author failures (Action a650, cargo/Tool 101, 0 passed, 2 failed, 200 filtered):
+`/tmp/alan-ui-completion-spacing-modal-author-red-20261001.json` and ANSI.
+These are actual Inline first-Ready selected-row and near-bottom Details height
+regressions. Both owned native authors are still live and working; no new FIFO
+work, process rescue or user-preview input was issued.
+
+Root verified the author returned to Ready after the spacing/modal correction.
+The frozen TUI slice contains all 49 Rust files at base `7f0067ec75fe43b96cd85ed9a20b834a32a050f4`, patch SHA-256 `3407d5f1ec5f315cd9adcda5ea57f406228d764fd007da4cb31c3784e456103d`.
+Author checks passed 202 unit and 4 integration tests, all-target Clippy, scoped
+format and diff checks. Independent native qualification remains open; Root
+created an isolated UI-only source snapshot matching every frozen TUI hash,
+over the earlier immutable backend, and started independent tests/build.
+The newer model work is excluded. Root retained sole normative-document
+ownership and replaced the author out-of-scope task append with this record.
+
+Independent completion native qualification now passes at 73x22 from top and
+at 40/60/73/80/120x22 near the terminal bottom. Initial bottom cursor row 20
+remains row 20 through appearance, filtering, arrow selection and Tab; selected
+slash candidates are visible below it. Each invocation exited normally without
+rescue. Evidence: `/tmp/alan-completion-spacing-final-native-qualification-20261001.json`.
+The UI-only binary SHA-256 is `c76ae419cb26bab13bf7806e06bd7c40e843076bf498c48f6579d36575bd9cee`; final frozen review found no actionable issue.
+The new user preview is w5E:p5 (native PID 36143, 72x22), initially Ready with
+no project authority. The user-owned p4 draft and p2 author are preserved.
+This evidence does not qualify model WIP, themes, G3 or the full final candidate.
+
+Runtime unavailable-command follow-up reproduced a real compiled failure in
+Action a946: unavailable managed default caused direct `cd /` to settle Failed
+before its handler. The owning author is fixing only Command+Input capture and
+activation; Agent Input/Turn remains fail closed. Focused moving-source review
+found no additional issue in that seam; full checks and freezing remain open.
+Evidence: `/tmp/alan-unavailable-command-author-red-20261001.ansi` and
+`/tmp/alan-startup-unavailable-command-review-20261001.md`.
+
+The next bounded TUI author task addresses the existing terminal owner color
+capability path, default-foreground critical metadata, non-color selected-candidate
+cue within the existing prefix, and fenced-code distinction through the existing
+Markdown parser. It adds no theme framework or dependency and preserves the
+qualified completion geometry. Theme/native acceptance is not yet established.
+
+Accessibility author regressions compiled red through Action a692 (cargo/Tool
+101, 0 passed, 4 failed, 202 filtered): terminal color policy across live/details/
+scrollback, default-foreground critical metadata, ordinary fenced-code literal
+source/cutoffs, and selected textual cue with stable two-cell prefix/anchor.
+Evidence: `/tmp/alan-ui-accessibility-author-red-20261001.json` and ANSI.
+The same bounded author task continues; no theme acceptance is claimed.
+
+Independent model-flow review found reachable contention fallback: the actual
+monitor runs active work concurrently with model selection, which holds the
+ProcessBindings mutex across capture/persistence awaits. Namespace generation
+uses try_lock and falls back to launch callable when that lock is held. The next
+bounded runtime task must reproduce active A / gated selection B / untouched
+launch L through actual observer/generation paths and remove this fallback;
+A/B dispatch, compatible and incompatible steering, exact restoration and status
+still remain open. The shared admission rejection UI also formats an unbounded
+error; its source is currently resolver/persistence, not a proven provider error.
+It requires a safe bounded correlated Failed projection without losing diagnostic
+logging or durable disposition. The current command correction task is still
+active; no later author task has been queued.
+
+The frozen accessibility slice independently passed 207 unit and 4 integration
+tests with all 51 TUI source hashes unchanged, and scoped frozen review found
+no actionable issue. Native NO_COLOR=1 and TERM=vt100 runs at 73x22 near the
+bottom each retain absolute cursor row 20, selected textual cue below input,
+no explicit color SGR and normal exit without rescue. Binary SHA-256
+`5cd3ef1a9f3919e9c52ee0b9ebc2bd7e89cf4cde219b07a71ce62b0198d81dd1`;
+evidence `/tmp/alan-accessibility-native-qualification-20261001.json`. Native
+light/dark host palettes, Tool Details/Markdown comparison remain open.
+
+The unavailable-command owning author returned Ready after 44 focused Engine
+tests and 122 ServiceManager unit tests passed. Root froze 369 backend Rust
+files in `20261001-model-command-independent`, then independently passed
+Engine 1263+20 (1 ignored), protocol 55+3, AgentFS 1+68, LLMFS 3+41 and
+ServiceManager 122 with all captured hashes unchanged. Source-size gate fails
+because `crates/service-manager/src/runtime/tests.rs` is 1001 lines; this must
+be corrected at the next settled author boundary, without raising the limit.
+This is not final model qualification. Root submitted the next single task
+through the now-Ready p1: real gated guardian generation during Select B, with
+active A preserved and launch L unused, plus actual old-A/new-B dispatch.
+
+The Ready p2 author now owns the disjoint LLM/LLMFS safe provider failure slice:
+typed bounded startup/background terminal causes, local HTTP failure fixtures,
+reason allowlisting and unchanged Io/abort/single-terminal semantics. Engine
+failed-commit bounded-cause projection remains with p1. No new dependency or
+error framework is authorized. User previews p4 and p5 remain untouched.
+
+The provider author stopped naturally at a test-only checkpoint after real
+LLMFS sensitive finish-reason leakage red (a729, cargo101). Its HTTP fixture
+compiled but loopback bind was denied by the author sandbox, so that result is
+not a provider behavior failure. Root froze all 40 provider Rust files and ran
+the unchanged local HTTP fixture independently on the operator host: cargo101,
+0 passed/1 failed, 173 filtered; OpenAI chat local401 closed the stream before
+any terminal chunk. Later statuses/adapters were not reached before the first
+failure. Evidence: `20261001-provider-failure-independent/local-http-red-result.json`
+and log. All captured hashes stayed unchanged; no author authority was expanded.
+The now-Ready p2 received one bounded owning continuation to fix production
+LLM/LLMFS paths against these actual failures. Real local transport fixtures
+remain intact and final full/HTTP qualification will be independent; author
+sandbox-denied native checks must not be labeled passed or replaced with mocks.
+
+
+The real same-model native UI comparison used 73x22 PTYs, gpt-6.1-sol medium,
+identical fixed Markdown and a disposable 200-line fixture. Both Alan and fx
+returned line-200 and exited normally through /quit, without process rescue.
+Alan preserved Unicode, four-space code indentation, list/diff semantics and an
+unsent draft after Details. Concrete UI gaps remain: fenced-code language labels
+and block boundaries; read_file physical lines are concatenated in its compact
+summary, and Details initially shows a truncated preview before escaped JSON
+original output. Improve existing presentation owners rather than adding a UI
+framework. Evidence: `/Users/morris/Library/Caches/Alan/fx-comparison/20261001-native/qualification.json`.
+Actual running fx was 0.0.11; its own updater replaced the disk executable with
+0.0.12 during startup, but no reload was performed. Timing, light/dark palette,
+clipboard and resize qualification are excluded. User-owned p4/p5 were untouched.
+
+The real Runtime contention author returned Ready: reproduced red a995 with
+active A guardian incorrectly using launch L while Select B held the mutex,
+then green a1024 for actual A/B dispatch and reasoning controls. The independent
+active callable snapshot removes this mutex fallback. Author runtime owning
+44 tests passed; full Engine lib attempt hit sandbox-exec permission denial
+and is not a full green. Root froze 331 backend Rust files in
+`20261001-model-contention-independent` and is running independent owning suites.
+Settled binding retention, the 1001-line ServiceManager test, exact recovery,
+steering and final model/status/catalog remain open. This is not whole-model
+qualification.
+
+The p2 provider first production fix returned Ready and froze all 42 provider
+Rust files, patch SHA-256
+`4e81888fc4e0d730e0a943ab1ff977d085f162e93339fcd5ac9fe7979da4fe7f`.
+Author non-socket classifier 6 tests, LLMFS 3+41 and strict scoped clippy passed.
+Its LLM attempt had 167 passes, 6 loopback permission-denied failures and 1
+filtered test; this does not qualify native HTTP behavior. Root froze the exact
+provider bytes in `20261001-provider-failure-first-fix-independent` and is running
+full LLM/LLMFS suites plus independent review. Adapter malformed stream, cancel,
+single-terminal and Engine failed-commit UI cause projection remain open.
+
+
+Root independent contention owning suites completed with cargo0 and all331
+frozen hashes stable: Engine1264+20 (1 ignored), Protocol55+3, AgentFS1+68,
+ServiceManager122 plus doc checks. Independent frozen review confirms the
+contention correction and actual A/B controls without new ownership findings.
+It still identifies captured/queue binding retention and no recovered Steer
+active relationship. Exact recovery/steering remain unqualified. Evidence:
+`20261001-model-contention-independent/owning-test-result.json`.
+The now-Ready p1 received ONE bounded lifecycle follow-up to reproduce and fix
+settled transient/durable binding retention through existing disposition owners,
+preserving pending/paused/deferred work and dedup evidence. The existing 1001-line
+ServiceManager test must use minimal adjacent extraction rather than a raised
+limit. No other model/catalog/UI/provider work is authorized in this task.
+
+Root independent provider owning suites completed cargo0 with all42 frozen
+hashes stable: LLM180 plus integration3+5, LLMFS3+41; live external suites remain
+6+2 ignored. The unchanged local HTTP test now reaches OpenAI chat and Anthropic
+401/429/503, each safe terminal before payload and no duplicate terminal.
+Evidence: `20261001-provider-failure-first-fix-independent/owning-test-result.json`.
+This does not establish malformed stream/after-delta/cancellation coverage or
+Engine bounded UI cause projection. Independent adapter review is still ongoing;
+p2 remains Ready without a queued continuation.
+
+
+Frozen provider review found two actual remaining false-success paths:
+OpenRouter discards producer/byte failures and emits a terminal with no reason
+on premature HTTP200 EOF; OpenAI chat logs malformed JSON and continues, retaining
+stop after a finish-bearing chunk. Existing consumer completion/error owners must
+propagate safe failures, preserve preceding deltas and publish one terminal.
+Root delegated the next SINGLE bounded continuation to the p2 controller after
+Ready: these two adapter omissions, real local HTTP truncation/malformed fixtures
+before/after delta through LLMFS, and relevant cancellation/abort/single-terminal
+checks. No Engine/TUI/docs/config/store changes or new error framework. Author
+sandbox restrictions remain unchanged; Root independently runs real fixtures.
+Task4.7 remains open despite the first-fix owning pass.
+
+
+### Owning follow-up preparation (2026-10-01)
+
+The preceding goal turn changed authoritative evidence and started bounded
+owning corrections; it is progress, not a no-progress wait. Current p1 is
+naturally working on settled model-binding retention; p2 is naturally working
+on the two provider false-success consumer omissions. Neither is restarted or
+sent another queued task.
+
+Read-only UI trace found the smallest shared cause: action_summary calls
+clean_text on a multi-line child, deleting boundaries; Details constructs an
+empty-output snapshot and displays truncated preview before raw JSON. Existing
+read_file evidence already has type/text/path/content/start/end/total/truncated.
+The next bounded TUI-only slice should project readable content from this
+existing direct/retained evidence shape, retain separately accessible original
+raw output, distinguish display limits/ranges/redaction/expiry/unavailable, and
+add fence language/boundary cues using existing source-byte/slot identity.
+No Tool-name guess, Host re-read, new presentation protocol or dependency is
+needed. Actual 200-line Action and streaming/drain/resize source preservation
+regressions must fail before the fix. This task is prepared, not queued while
+p2 owns provider correction.
+
+Read-only admission trace confirms the existing Machine durable admit event
+precedes admitted_ids; engine_queue_controls is the shared AgentFS publication
+seam. Current activity waiting_submission_ids are interaction waiting, not
+queued accepted work. Existing Machine UI snapshot/events must carry exact-ID
+admission and pending queue disposition; historical admitted_ids cannot be used
+as pending IDs. TUI must separate delivered-unconfirmed from observed-admitted,
+permit project control only with trustworthy Paused accepted queue evidence,
+and clear observation authority when pinned Root changes. Missing/stale reads
+remain unknown with no timer replay. Runtime file/API/actual directory-control
+and TUI production/reattach regressions are required before G3 native recovery.
+This backend/TUI handshake is prepared, not added to the current p1 task.
+
+
+Independent Root source-size gate on the unchanged contention freeze still
+fails exactly at ServiceManager runtime/tests.rs1001; evidence
+`20261001-model-contention-independent/source-size-check.log`. No limit or
+baseline change is authorized. PR1026 remains OPEN/DRAFT at7f0067ec, with16
+SUCCESS checks on that older published checkpoint, not newer WIP.
+
+G3 harness precondition audit traced the sole production selector publication
+to agent_runtime.rs after successful Root startup; ordinary turns, Tool
+completion, cancellation and child launches do not publish it. Requiring every
+other dev invocation to exit was stronger than necessary. Root preserved the
+old preparation and created `/tmp/alan-g3-native-pty-20261001.py` plus matching
+operational checklist. Stable-selector-window guards the exact filename during
+each stage and before each resume, including repeat/fresh post-quit checks.
+Unexpected drift fails the original attempt and preserves its live PTY; only
+post-FAIL operator observation drops the drift guard, never the FAIL verdict.
+User-owned p4/p5 remain untouched. New harness SHA-256
+`43062a78579f81d4390465255afc67ed0650e9770c1678f6d5b3b9d395886672`;
+preparation selfcheck/pycompile passed, independent review pending. This is
+preparation only: G3 is NOT_RUN and the actual queued acceptance/paused project
+reauthorization candidate is still required.
+
+The provider continuation reproduced actual byte-consumer behavior red a790,
+record5875, cargo101:2passed/2failed/180filtered for OpenAI and OpenRouter
+malformed/premature EOF completion. Evidence
+`/tmp/alan-provider-completion-owner-author-red-20261001.json` and ANSI. The
+single owning author task continues; this is not native HTTP/LLMFS qualification.
+
+
+The retention author returned naturally Ready at a test-only checkpoint: first
+attempt failed on an incorrect recovery Process path and was not valid retention
+red; corrected test was blocked by concurrent LLM WIP missing StreamClosed.
+No production cleanup/source-cap correction was claimed. Root froze all332
+backend files and ran the unchanged corrected actual Runtime/recovery test over
+the preceding immutable compiling LLM baseline, without touching provider WIP.
+Valid compiled red: cargo101,0passed/1failed/1265filtered; recovery retained3
+binding IDs instead of only the pending1. All332 frozen hashes unchanged.
+Evidence: `20261001-model-retention-red-independent/retention-red-result.json`
+and log. The now-Ready p1 received one bounded continuation of the same lifecycle
+fix with this evidence; previous scopes/authority and source-cap requirement are
+unchanged. Final shared-checkout build eligibility waits for the owning provider
+correction, never an out-of-scope dependency edit.
+
+Independent selector-harness review preserved all recovery proofs but found
+pre-existing constructor/FAIL-observation resource gaps. Only the temporary
+Python preparation harness was corrected: pre-spawn registration/resource cleanup,
+live handle preservation and sticky final FAIL manifest when observation errors
+occur, explicit stdin EOF while retaining the original native handle. Root
+independent selfcheck/pycompile passed without launching Alan. Bounded duplicate
+observation diagnostics and interrupt-to-normal-quit forwarding are still being
+checked; G3 remains NOT_RUN. No user preview was interrupted.
+
+
+Final preparation-only G3 harness SHA-256
+`6d6b7f5b7face5fc7422ab9fc95bd854a113191f34f25a00a7313b70784d083b`:
+Root independently read both lifecycle/observation diffs and reran selfcheck and
+pycompile successfully. Spawn-failure selfcheck registers/cleans PTY/log without
+launching Alan; observation errors are deduplicated and bounded16, keyboard
+interrupt retains forwarding, stdinEOF explicitly keeps the live original native
+handle under observation. Old20260930 artifact is preserved. No runtime sequence
+has executed; G3 remains NOT_RUN.
+
+Provider author now reports actual focused green4completion-owner tests after
+its compiled red: OpenAI malformed/EOF and DONE/receivercancel, OpenRouter
+malformed/EOF and DONE, 4passed/0failed/180filtered, Tool0. Shared llm dependency
+is compiling again. This is not the final frozen/nativeHTTP/LLMFS review gate;
+the same single provider task remains working. The retention continuation is
+also live and has started its owning production edits, without touching provider
+scope or user preview panes.
+
+
+### Cancellation transport review and next ownership handoff (2026-10-01)
+
+Read-only review of the immutable provider first-fix finds a distinct reachable
+cancellation gap: LLMFS appends Aborted and drops the receiver, but guard_stream,
+Anthropic projection, OpenAI collector and HTTP byte producers await the next
+upstream item without racing downstream Sender closure. A body left open silently
+before/after a delta can keep transport work alive after visible cancellation.
+The smallest fix propagates downstream closure through existing forwarding and
+producer awaits; no cancellation manager is needed. Actual local HTTP must hold
+the body open and observe client release before server closure, alongside one
+aborted event and no post-abort chunks/done. State-only Aborted is insufficient.
+This is an independent source finding, not an executed transport regression.
+
+To retain two disjoint productive author lines, the prepared next handoff is:
+after the p2 completion correction is naturally Ready/frozen/independently
+qualified, give p2 ONE TUI-only readable evidence/fence polish task. After p1
+retention is naturally Ready/frozen, transfer LLM/LLMFS cancellation ownership
+exclusively to p1. Until both boundaries occur, neither new task is queued and
+p2 continues the current provider correction. Engine failed-commit safe cause,
+admission/queue receipt and model catalog/status remain their owning pending
+requirements. Original Rust must still be authored by Alan, never the operator.
+
+
+Read-only model handshake trace confirms ConnectionAuthority.catalog already
+supplies authorized Process profile model entries; initialize/model_control/
+activate_binding own confirmed startup/serialized selected/actual active binding.
+Next projection must expose safe confirmed next versus active/admitted canonical
+controls, reuse AgentFS UI snapshot/watch, and show unavailable/unknown rather
+than Host-config defaults. TUI must submit existing SelectModel and wait for its
+exact-ID observation before changing display. Private callable config/handles/
+credential refs must not enter renderer files. Actual recovery-A availability
+and compatible/incompatible Steer remain separate required real Runtime tests.
+No catalog/status implementation or native acceptance is claimed by this trace.
+
+Read-only2.2 entrypoint audit confirms foreground only passes model/project;
+history_path/skill_candidates remain defaultempty. Existing typed Composer
+history can retain body+intent with the1000-entry bound; use its owning
+channel-scoped Shell user-state path rather than inventing a history manager or
+putting it in credential/auth stores. Resolved active installed/descriptor Skills
+must be projected by existing Runtime/AgentFS owners; cwd scanning or all Package
+exports is not an authorized source. File candidates already index explicit
+approved project and clear on UI revoke, but lack external Host revoke observation;
+refresh/accept must invalidate against current authority. Actual same-channel
+restart/no automatic execution, dev/stable isolation, active Skill sources and
+external revoke regressions remain mandatory. Large991/990-line TUI owners should
+use their existing adjacent modules rather than expand past source-size limits.
+
+
+Retention continuation has actual focused green3 model tests including the
+unchanged Runtime/recovery retention regression. Its full Engine lib attempt
+reports1250passes/15failures/1ignored under author sandbox; this is not a full
+green and independent final owning checks await the naturally Ready freeze.
+ServiceManager source-cap1001 remained during this observation, so that task is
+not yet qualified. Native p1/p2 PID44196/53200 remain live without restart.
+
+Provider continuation now has actual focused7completion tests green, including
+typed byte-error propagation and changed OpenAIChat/OpenRouter byte-consumer
+pending-transport-cancel checks. This does not establish silent body release
+through the whole guard/collector/HTTP/LLMFS chain. Actual local HTTP completion
+fixture was added under the owning LLMFS adjacent test suite; final frozen/native
+execution is still pending. Neither focused result is extended to full gates.
+
+
+### Independent retention and HTTP completion checks, 2026-10-01
+
+The retention production freeze `20261001-model-retention-final-independent`
+passed independent Engine 1265 unit + 20 integration (1 ignored), Protocol
+55 + 3, AgentFS 1 + 68, and Service Manager 122 + 1 + 1 tests. All 333
+source hashes remained unchanged; the scoped independent review found no
+actionable retention defect. This is owning-slice evidence, not whole-current
+quality, native G3, merge or release qualification. The author is correcting
+test placement only: undo the unnecessary agent_runtime test extraction and
+fix the actual runtime/tests.rs 1001-line cap. The immutable reference is
+outside the author delegated mount; its unchanged test module can be read
+from the approved project HEAD without widening authority.
+
+The HTTP fixture correction freezes 46 provider sources, changing only the
+230-line HTTP test. Review confirms typed terminal ends live tailing and
+stat-bounded remaining reads preserve all 16 real HTTP scenarios. Independent
+full execution in `20261001-provider-terminal-read-independent` passes LLM
+188 unit + 3 + 5 integration and LLMFS 3 unit + 41 prior generation tests,
+but the new HTTP test fails: OpenAI Chat short Content-Length without delta
+expects bounded body category and observes bounded unknown instead. All 46
+hashes remain unchanged. The previous EOF timeout was a fixture error; this
+new category mismatch still requires an owning author correction, without
+weakening assertions. Provider completion is not fully qualified.
+
+Candidate-below-input layout remains independently qualified across 40, 60,
+73, 80 and 120 columns, preserving input cursor position through candidate
+filtering, selection, completion and dismissal. User-owned previews remain
+untouched. Next TUI result/Markdown polish has not been submitted while the
+single provider correction owns p2. Native G3 remains NOT_RUN.
+
+
+### Author continuation after bounded wait, 2026-10-01
+
+The p1 test-placement author requested an unnecessary external reference mount
+and waited with the current input active. The approved project HEAD contains the
+same original test module, so Root cancelled this wait through native Ctrl+C
+(no signal kill, restart or hidden request write), then explicitly continued the
+already queued correction. That generation failed before edits with a namespace
+LLM commit error. Root submitted one scoped retry in the same native invocation
+using relative paths in its approved project. This is ordinary correction evidence,
+not G3 success or an automatic retry/replay policy.
+
+The p2 body-category task remains live. Its typed response-body regression uses
+existing reqwest facilities; a compilation failure during test construction is
+not counted as a behavioral red. Real short Content-Length HTTP remains the
+Root-observed category failure until the corrected immutable rerun proves it.
+The prepared next TUI-only task is `/tmp/alan-tool-markdown-polish-next-20261001.txt`
+(summary multiline handling, readable direct/retained results with original data
+available, modest fenced language/boundaries). It is not queued to either author.
+
+
+### Recovery steering scope review, 2026-10-01
+
+Read-only review corrected an initially proposed recovery shortcut: a recovered
+Steer without reliable active-turn causality must not be converted to FollowUp
+or start a new generation merely because its captured model A is available.
+Existing recovery creates a new Machine and does not restore turn_activity or
+submission relationships from textual Tape. Preserve exact ID/mode/binding and
+controls while paused; on explicit continuation, exact restoration unavailable
+must fail without launch/B fallback. If A restores but its steering relationship
+is absent, reject durably before dispatched evidence and release binding via
+the existing acknowledged removal owner. A recovered ordinary FollowUp remains
+a separate positive exact-A continuation regression; valid live Steer semantics
+remain unchanged. This is prepared owner analysis, not implementation evidence.
+
+
+### Real HTTP completion qualification and next author handoff, 2026-10-01
+
+The body-category freeze `20261001-provider-body-category-independent` passes
+independent full LLM 189 unit + 3 + 5 integration and LLMFS 3 unit + 42 generation
+tests, including all 16 unchanged real HTTP completion scenarios. Cargo exits0;
+all46 source hashes remain unchanged; original HTTP fixture hash remains
+4bf23902bd7b95911673d3c30589bd0008fd9c1c7d199ef2e0fa59cbc26c3e9f.
+Scoped review finds no actionable issue in the two-file classification delta.
+The JSON Decode author test demonstrates typed classification, not actual
+Content-Length truncation; the independent HTTP suite supplies that evidence.
+External live suites remain ignored; silent-body cancellation and Engine safe
+failed-commit cause remain incomplete. This is not G3 or whole-current quality.
+
+p2 returned naturally Ready and now owns one TUI-only polish task. Its actual
+author behavior red is Action a885/durable6594, 0pass3fail207filtered, covering
+multiline summary, readable direct/retained full200line result with original
+shape, and source-keyed fenced language/boundary streaming/resize/drain.
+No subsequent provider edits or extra queued tasks are authorized in p2.
+
+p1 remained terminalFailed after two model commit failures before edits. A
+PID/boot-pinned global attachment read returned typedNotFound for the requested
+generation fields, so no cause is inferred. The Process-bound LLM mount is not
+proved accessible through this global attachment. Root used native /quit,
+verified native44196 exited and its shell returned, then started a fresh bare
+invocation in the same owned pane with previously UI-qualified accessibility
+preview (SHA5cd3ef1a9f3919e9c52ee0b9ebc2bd7e89cf4cde219b07a71ce62b0198d81dd1),
+same explicit config (gpt-6.1-sol medium), native18814. This is fresh supervised
+author continuity through existing project files; it is not selected durable
+recovery, candidate backend qualification, or a passed G3/no-rescue claim.
+No user-owned preview was touched. Explicit visible project reauthorization
+precedes the one placement-only task.
+
+
+### Mislaunch correction and startup cancellation gap, 2026-10-01
+
+Correction to the preceding fresh-author entry: native18814 omitted the
+ALAN_INSTALL_CHANNEL=dev launch marker and therefore started in stable, not dev.
+It never entered TUI or executed the placement task. Its stack sample confirms
+Service Manager boot -> PackageStoreLock::acquire -> blocking flock; native
+Ctrl+C did not settle. Existing stable alan-os-host50108 held the same store
+lock and remained untouched. Root revalidated18814's exact executable and blocked
+stack, then force-cancelled only that own partial startup with SIGKILL. The
+cleanup artifact `/tmp/alan-p1-mislaunch-cleanup-20261001.json` explicitly records
+manual rescue of an operator mislaunch. This is not G3/no-rescue acceptance or
+proof of interruption during normal Task work. Preserve stable state; do not
+stop the foreign owner or remove its locks.
+
+The replacement launch explicitly sets ALAN_INSTALL_CHANNEL=dev and the approved
+ALAN_CONFIG_PATH, reuses the same owned pane and qualified UI binary, and requires
+visible project authorization before its task. Startup lock wait cancellation
+remains an observed gap needing an owning fix/regression before claiming full
+responsive lifecycle acceptance; no original Rust was edited by Root.
+
+
+Replacement author native20741 entered dev correctly, ready/no project initially.
+Root used visible /project with exact worktree default path, Tab read-write and
+Enter approval; correlated directory Action confirms /mnt/project-request-1/.
+Rollout `rollout-20261001-063040-7566f40f-44ef-47ff-8b1d-91c8ee114557.jsonl`
+owns this fresh Agent Process. Root submitted ONE test-placement-only task in
+the approved project after that confirmation; p2 remains disjoint TUI owner.
+This is explicit fresh-author continuity, not resume/recovery acceptance.
+
+
+### Service Manager placement closure and cancellation ownership, 2026-10-01
+
+Fresh author20741 completed placement naturally Ready. AgentRuntime production
+prefix remains identical to retentionfinal; restored inline tests equal7fHEAD.
+Two existing namespace boot rejection tests moved intact to adjacent
+`runtime/tests/boot_namespace.rs`49lines; runtime/tests955, agent_runtime984.
+Source-size/debt limits unchanged. Root independent snapshot
+`20261001-service-test-placement-independent` passes122unit +1+1integration
+tests (cargo0), all40hashes stable and full snapshot source-size gate0 against
+published7fbase. Scoped review finds no actionable issue. Author actions:
+a13size/a15tests/a16clippy/a17fmt. Wholecurrent quality/CI/G3 remain open.
+
+After this verified Ready/closure, p1 owns one LLM/LLMFS cancellation task:
+remaining Anthropic/Gemini projector and HTTP awaits, common Responses byte
+consumer; reuse downstream sender closure, preserve already fixedguard/chat/
+OpenRouter owners. Require actual abort -> held-open HTTP client release
+qualification, not just a directconsumer receiver-drop test. p2 stays TUI-only.
+Prepared prompt transferred in full through native pane; no extra FIFO task.
+
+
+### UI polish and silent HTTP abort native qualification, 2026-10-01
+
+UI53 polish freeze passes independent212unit+4integration, strictscopedclippy,
+releasebuild and snapshot source-size against7fbase; all53hashes stable. Two
+independent reviews find no actionable data/rendering defect and confirm prior
+loss/duplicate/indent/tab/Unicode/drain/Tape merge assertions were preserved.
+BinarySHA8516f286976900a16c23e9af8a6a7ea6dbfc58e90675984aa350bc7a7872b6f0.
+Actual73x22 nativePID54316 usesdev/gpt-6.1-solmedium, visibleprojectRO approval,
+Read200lines and Details; line200 remains readable, original data accessible,
+Esc restores draft. FixedMarkdown rust/diff labels/boundaries preserve4space
+indentation/Chineseemoji. Normal/quit exits0, no rescue. Evidence
+`fx-comparison/20261001-native/polish-capture/qualification.json`. This supports
+owningUI behavior, not fullcurrentCI/G3/all-theme/clipboard/resize acceptance.
+Native inspection finds remaining clutter: bounded18line preview duplicated
+before complete readable content; raw labels repeated forName/Status/Original
+output; initialDetails selectsoldest Action. Use existing acquired-result and
+Action selection owners for a small follow-up, without a new UIframework.
+MountedReady project notice also unconditionally mentionspausedwork; connect
+this to actualfuturequeue snapshot instead of inferringpause. Userpreviews remain
+untouched; previousfx evidence is explicitly0.0.11, currentdisk0.0.12 not rerun.
+
+Provider cancellation49freeze passes independentLLM191+3+5 andLLMFS3+43 tests,
+all49hashes stable and scopedreviewnone. Same authoractualHTTPfixture is red on
+oldbody46 (Anthropic no payload retainsheldbody afterabort, timeout2sec), green
+on new49 forAnthropic/Responses before and afteractualpartialpayload. Client
+releases beforefixture closesbody; oneaborted/noDone/Error/latepayload. Gemini
+projector unitcoverage is not actualGoogleHTTP proof; externallive ignored.
+Evidence `20261001-provider-cancel-{native-red-independent,independent}`.
+
+After naturalReady providerhandoff, p1 ownsONE Engine safe failed-commit cause
+task scopedto namespace generation/helper/adjacentclientIO tests; no further
+provider/TUI/ServiceManager edits. After UIReady/independentqualification p2
+ownsONE separateRuntime None-admission/orphanSteer correction, preservingmode/
+ID/exactA and nofakeactive/remap/auto dispatch. Authors must showrealred before
+owningproduction where executable; finalqualifiedfreeze/nativeproof remains
+Root-owned. G3 remainsNOT_RUN, currentPRhead stilloldercheckpoint.
+
+
+### Current qualification checkpoint: Engine cause / Runtime admission
+
+The p1 Engine safe-cause slice returned naturally Ready on native PID20741.
+Root froze the six owning files before issuing a continuation of the same task:
+`/tmp/alan-engine-safe-cause-first-ready-20261001/manifest.json`. Independent
+read-only review found no concrete introduced defect, but acceptance remains
+incomplete: the synthetic provider covers two controlled APIs, not actual
+OpenRouter HTTP401, the plain startup path, counted bounded IO failures,
+cancellation while cause-reading, or Runtime exact-ID Failed projection. Root
+requested those adjacent checks without widening production ownership. The
+first frozen snapshot is being tested separately from p2 Runtime WIP; no full
+Engine qualification is claimed from the author's transient missing-test-file
+compiler failure. No new provider or TUI authoring is authorized in this task.
+
+The live p2 Runtime author has actual compiled behavioral red evidence:
+`/tmp/alan-runtime-admission-recovery-author-red-20261001.json` (a968,
+durable rollout7170), two failed assertions for None-confirmed admission and
+orphan Steer before-dispatch, two passing tests, cargo101. The earlier E0615
+compile error is excluded. Shared-owner fixes and compatibility checks remain
+working; no final green or new frozen Runtime qualification is claimed.
+
+Root re-read user preview w5E:p5 and verified live PID36143 still runs the
+completion-spacing candidate. Existing native width-grid evidence proves
+candidates below the fixed input anchor at widths40/60/73/80/120. This does not
+substitute for the pending human acceptance or G3. User preview panes were not
+sent input, restarted, or stopped. G3 remains NOT_RUN; the published PR head
+continues to cover only its earlier reviewed checkpoint.
+
+
+Read-only Details follow-up review identifies existing owners rather than a new
+UI layer: `action_detail_io::read_detail` handles acquired presentation;
+`presentation::structured_text` provides its success signal; direct/reference
+fallbacks must retain bounded previews and causes when acquired readable content
+is unavailable. Name/Status need one display each, while original output and
+result metadata stay accessible. `start_pending_at` may default to `last()` in
+the already numeric-ascending Action catalog, preserving explicit selection and
+async owner/generation guards. The bounded next-task draft is
+`/tmp/alan-ui-details-cleanup-next-task-20261001.txt`; it is not submitted while
+p2 Runtime authoring remains active. These observed issues remain incomplete.
+
+
+Independent first-Ready Engine snapshot evidence: the synthetic failed-commit
+regression passes, and `cargo test -p alan-agent-engine namespace_environment::`
+passes30 tests, exit0, all six frozen owning hashes stable. Evidence:
+`20261001-engine-safe-cause-first-independent/first-ready-test-result.json` and
+its namespace log. This is not actualHTTP/IO-edge/fullEngine qualification;
+p1 continues that same bounded acceptance task.
+
+Moving Runtime review distinguishes the late Steer boundary from true inband
+compatibility: admission persistence precedes broker push, and an A response
+with no Tool continuation can legitimately settle before consuming Steer.
+Retain that late-boundary test and separately prove actual next A generation
+contains compatible Steer text via the existing gated Tool continuation path,
+with exact-ID correlation and zero independent dispatch. Root sent this gap to
+the p2 controller; no moving-source final qualification is claimed.
+
+
+Runtime first-Ready independent review matches all eight owning hashes and
+finds no introduced actionable defects. Initial execution reported51 focused
+and1271unit+20integration tests passing, but Root subsequently found a shared
+Cargo target could reuse an artifact when copied old sources retain timestamps.
+The attempted old-production replay returned green without recompilation and
+is explicitly invalidated; its output is preserved as invalid-reused-artifact,
+not red evidence. Exact-source qualification is pending forced source rebuild
+for both old production and the frozen current snapshot. No full Runtime gate
+is claimed from the initial shared-target run. Final whole-candidate checks
+must use verifiably rebuilt exact sources.
+
+Read-only queue-projection prep confirms local PendingRootAgentTurn means
+transport delivery pending; it is not durable admission truth. Interactivity
+waiting_submission_ids cannot substitute for accepted pending IDs. The smallest
+file-native MachineInputQueue projection must remain separate from independently
+written activity snapshots, publish after durable acknowledgement, preserve
+unknown/removal uncertainty, pin Root identity and prevent stale updates. The
+TUI may permit project selection during settled Paused accepted work only when
+all local delivery IDs have authoritative receipts and there is no active,
+deferred, yield or uncertain transition. Unknown delivery and Running remain
+blocked. This backend/frontend task is not yet submitted to either live author.
+
+
+Runtime first-Ready forced-source qualification now succeeds:
+`20261001-runtime-admission-first-independent/forced-source-owning-test-result.json`
+reports actual Engine recompilation,1271unit+20integration passing, one ignored,
+exit0 and all529 snapshot Rust hashes stable. The unchanged new adjacent tests
+on old retention production, with the shared directory-selection fixture,
+produce actual compiled red:4pass2fail, false None admission and orphan available
+Steer dispatch evidence1 instead of0. Evidence:
+`20261001-runtime-admission-red-independent/native-red-result.json`. The earlier
+shared-artifact reuse and E0603 test-fixture visibility compile error remain
+separate invalid evidence and are not counted. Eight-file read-only review is
+clean and hash-matched. This closes the first-slice red/green proof; actual
+live Tool-gated compatible Steer remains under the single p2 test-continuation
+task. G3/full candidate/current-head CI/merge/archive remain unqualified.
+
+
+Next backend queue task draft saved at
+`/tmp/alan-queue-projection-next-task-20261001.txt`, not submitted while p1 cause
+acceptance remains active. Read-only model/catalog call-chain review identifies
+Connection authority's authorized-profile provider catalog and an injected
+fallback mismatch: fallback can install only the original model, so eventual
+picker must not offer all provider models as callable. Static foreground boot
+model remains insufficient for active-A/next-B display. Existing controls,
+Connection validation, AgentFS typed projection and pinned TUI hydration/watch
+are the required owners; no Host profile writes or launch fallback are allowed.
+These are remaining implementation tasks, not qualified current behavior.
+
+
+Engine cause second Ready freeze has eight exact namespace owning files:
+`/tmp/alan-engine-safe-cause-second-ready-20261001/manifest.json`. Root forced
+source recompilation and ran unchanged direct/controlled OpenRouter401 plus
+counted missing/oversized/short/error/timeout/cancel IO tests:34namespace tests
+pass, exit0, all543 source hashes stable. Full Engine then passes1277unit+
+20integration, oneignored; strictclippy completion remains separately tracked.
+Read-only review matches all eight hashes with no introduced finding. Guarded
+stat/read now share one fid. Native author denied loopback is not counted as
+HTTP qualification. Exact accepted Runtime ID→Failed for this startup cause
+still lacks evidence; after naturalReady Root issued one adjacent same-task
+completion, avoiding p2 Runtime owning files.
+
+True Tool-gated compatible Steer author test compiles and passes once, validating
+consumption in next actual A request. The complete related suite exposed a
+late-boundary fixture race: the same exact input can be rejected by existing
+late-turn owner or the safe no-active-work owner depending observer intake
+ordering. Preserve both exact safe outcomes and actual nonexecution/removal;
+retain separate true inband proof. Do not force production phrasing or treat
+fixture ordering failure as a product red. Final p2 freeze remains pending.
+
+Startup lock review confirms shared `PackageStoreLock::acquire` still blocks
+open and transaction with infinite flock. Required bounded nonblocking retry
+must preserve short-contention success, RAII/catalog safety and existing lock
+validation. Real disposable-store short/long-holder tests must demonstrate
+bounded busy exit, holder untouched, recovery after normal release. Bounded
+waiting alone does not prove instant foreground Ctrl+C during boot; partial
+boot cleanup is a separate contract. Mislaunch18814 forced cleanup remains
+explicitly outside G3/no-rescue evidence; foreignstable50108 remains protected.
+
+
+Second-Ready cause strict all-target Engine clippy finishes exit0; combined
+`20261001-engine-safe-cause-second-independent/owning-test-result.json` confirms
+1277unit+20integration and strictclippy0 with all543 hashes stable. The exact
+HTTP Runtime Failed-ID boundary remains the sole same-task continuation; no
+fulltask/gate completion is inferred. Current PR1026 live refresh still shows
+OPEN/DRAFT head7f0067ec75fe43b96cd85ed9a20b834a32a050f4,16checksSUCCESS,
+mergeStateBLOCKED. `/tmp/alan-pr1026-current-20261001-runtime-proof.json` records
+that result; its CI covers the earlier checkpoint only, not current WIP slices.
+
+
+Final p2 Runtime compatibility nine-file freeze is independently qualified:
+`20261001-runtime-admission-live-final-independent/owning-test-result.json`
+records actual recompile,1278unit+20integration passing, oneignored, all544
+snapshot Rust hashes stable. True Tool-gated inband and late boundary each pass
+10 repeated executions. New exact test IDs prove next actual A request contains
+Steer text once, one shared active-A/Steer settlement, and only later standalone
+input calls B; durable dispatch evidence records inband consumption rather than
+an independent Steer Turn. Production hashes remain first-Ready identical and
+read-only completion review finds no actionable defect. Request-controls are
+not separately asserted by this new live test; prior qualified distinct A3Low/
+B1High controls coverage remains separate and must not be conflated.
+
+Correction to interim late-race description: final test keeps the one exact
+existing late-turn reason. A later rejected SelectModel serves as an actual
+serialized observer barrier, proving broker.push completed before response
+release. It does not broaden accepted error strings. The former race output
+was a fixture ordering issue, not a product red. Root authorized ONE next
+Details-owner task via sole p2 controller after naturalReady/freeze/independent
+qualification; no future FIFO and no Runtime/provider edits in that task.
+
+
+Final frozen p2 completion also passes independent all-target strict Engine
+Clippy, actual immutable source Checking, exit0 (exec21943); all544 hashes remain
+stable afterward. Result appended to final owning-test-result. Sole p2 controller
+submitted ONE bounded Details task from the prepared draft and observed working;
+no Runtime/provider edits, extra FIFO or user-preview input. p1 remains live
+working on exact Runtime Failed-ID HTTP fixture. Neither gate completion nor
+latest-WIP CI/merge/archive is claimed.
+
+
+Final Runtime failure fixture now has actual Root product RED evidence:
+`20261001-engine-safe-cause-runtime-final-independent/native-http-test-result.json`,
+forced Engine recompile, all545 source hashes stable, direct startup HTTP test
+passes while exact public Runtime case fails actual HTTP request count4 vs1.
+All earlier correlation/safe/durable/normal-shutdown assertions reach that final
+count. This differs from author loopback denial, which executed no assertions.
+`retry::is_retryable` matches generic stream before permanent categories; both
+namespace retry entry points share the helper. Root authorized ONE same-task
+minimal safe typed cause + shared retry correction, including normal event.error
+sibling, preserving Io downcast/current safe Display and established transient
+behavior. Unknown/parse compatibility must not change incidentally. No providers,
+p2 model/queue, TUI or dependencies; queue-projection handoff remains pending.
+
+Details author has actual compiled three-case red before its production change:
+a1049/rollout7739,0pass3fail212filtered,cargo101. Evidence
+`/tmp/alan-ui-details-cleanup-author-red-20261001.json`; verifies duplicate acquired
+preview/labels, labelled fallback reason and latest numeric Action selection
+with navigation/refresh preservation. Same one task remains working, no final
+UI qualification claimed and user previews remain untouched.
+
+### Permanent cause retry qualification and Details freeze, 2026-10-01
+
+Root independently qualified the exact natural-Ready eleven-owner Engine slice:
+unchanged direct and public Runtime HTTP401 fixtures pass2; full Engine passes
+1283unit +20integration with oneignored; all-target strictclippy exits0. All546
+Rust source hashes remain stable. Both typed cause boundaries preserve static
+Display and Io downcast; permanent authentication/http/safety/recitation causes
+override generic transient string context, while unknown/parse compatibility
+and existing transient retries remain bounded as before. Evidence:
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-engine-safe-cause-permanent-retry-independent/{manifest.json,native-http-test-result.json,owning-test-result.json}`.
+Independent eleven-owner review has no actionable findings. Root's initially
+omitted adjacent retry_tests.rs compilefailure is retained separately as an
+incomplete-snapshot artifact, not behavioral product red. The unchanged
+pre-fix Runtime fixture's actual4-versus1 HTTP request red remains valid.
+
+Root submitted ONE next accepted-queue projection backend task to naturally
+Ready p1; delivery is observed Working, not accepted-queue completion evidence.
+P2 Details cleanup is naturally Ready with six-path delta/all54TUI source frozen:
+`/tmp/alan-ui-details-cleanup-frozen-20261001.json`, patchSHA
+400680e14f8a2366c35af8f0aa5237ea021c2b57db616ce70de8a31fb4b762ce.
+Actual author red a1049/7739 is3fail/exit101; final a1076 reports215unit
++4integration green, a1077strictclippy0/a1078fmt0. Root owning/native acceptance
+is running; no user preview restart, G3, whole-candidate, current-head CI or
+merge/spec/archive completion is inferred.
+
+### Details independent/native acceptance exposes sibling label gap, 2026-10-01
+
+Exact frozen54TUI snapshot independently passes215unit+4integration, strict
+all-targetclippy0 and releasebuild0; all538 snapshot Rust hashes are stable.
+BinarySHA69c6eabef51d931bc682c42aa56236374d50a12b2a408201270522e7eab735d5
+fresh dev native PID78620 at73x22 correctly defaults to newest Actiona1,
+suppresses duplicate acquired summary, presents readable1–200 and original
+raw data, restores draft onEscape, and exits normally via/quit0/norescue.
+But actual native frame19 still shows `Original raw Original output` on direct
+structured output: reference labels were corrected while the direct sibling
+retained format!(Original raw {label}). This is a native acceptance RED, so
+Details is NOT fully qualified despite owning tests/review. Evidence:
+`/Users/morris/Library/Caches/Alan/fx-comparison/20261001-native/details-cleanup-capture/qualification.json`.
+Root sent the sole p2 controller ONE bounded corrective author task, direct
+structured regression first then minimal shared label correction, no frontend
+queue/model scope expansion. Root never edits original Rust.
+
+Read-only Herdr refresh finds onlyw5E:p1/p2 currently live; prior user previews
+p4/p5 are absent. Their historical confirmation/geometry evidence is retained,
+but no current preview liveness or new user acceptance is claimed; Root did
+not recreate or disturb user panes. G3/fullcandidate/currentCI/merge remain open.
+
+### Direct structured label regression and history ownership handoff, 2026-10-01
+
+P2 corrective task has actual compiled regression red: a1088/rollout8012,
+0pass1fail215filtered, exit101 at assertion rejecting
+`Original raw Original output`; `/tmp/alan-ui-details-direct-label-author-red-20261001.json`.
+The shared acquired_content owner now forms one static Original raw bytes
+heading for both direct and retained-reference callsites; author still Working,
+so this is not a frozen/independently qualified final result. Root retained prior
+fullowninggreen and actual native red separately, rather than overwriting them.
+
+Read-only next-slice audit confirms foreground FileBackedRunConfig currently
+leaves history_path empty; existing Composer typed .v2.jsonl/history limit/intent
+owners already handle persistence and recall. Accepted design owns channel
+System Store history, and SystemStorePaths::detect/service is the existing adapter;
+HostStorePaths owns credentials/auth and must not be repurposed. Draft ONE
+foregroundhistory task is `/tmp/alan-foreground-history-next-task-20261001.txt`,
+not yet submitted. Skill sources must come from Root resolved capability view,
+with existing enabled/available policy, through safe typed AgentFS projection:
+foreground must not scan project directories or expose all installed packages.
+History wiring and authorized Skill projection remain distinct owning slices.
+
+### Details correction independently and natively qualified, 2026-10-01
+
+Natural-Ready four-owner correction freeze:
+`/tmp/alan-ui-details-direct-label-frozen-20261001.json`, inclusive patchSHA
+3833d3c7ef6019cb532c635714091eba6949c870ee178c8621d7b813d1c4ad7b.
+All54TUI sources|max991. Actual a1088 direct label red remains retained;
+a1097Details30green/a1098TUI216unit+4integration/a1099clippy0/a1100fmt0.
+Root independent snapshot actual recompiles TUI and independently passes
+216unit+4integration/all-targetstrictclippy/release0, all538 Rust hashesstable.
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-ui-details-direct-label-independent/qualification.json`.
+Four-owner read-only review finds no actionable defect; both callers now use
+shared staticOriginal raw bytes without changing raw/bounds/errors/sanitization.
+
+Fresh native PID86053/dev/gpt6.1solmedium/73x22 binarySHA
+8f1b69b8d5778cc2065bbd20c497fc6b7ba7007eb4ae8beb5c39315374038f4d
+passes defaultlatesta1/no duplicatepreview/readable1–200/Originalrawbytes
+heading/draftrestoration/naturalquit0/norescue. Evidence:
+`/Users/morris/Library/Caches/Alan/fx-comparison/20261001-native/details-direct-label-capture/qualification.json`.
+Prior first candidate native red remains independently retained. This scopes
+UI acceptance only: model/history/queue/themes/fullcandidate/G3/CI/merge remain
+open. Root authorized solep2controller ONE next realforegroundhistory draft
+after this qualification; dispatch must be observed separately, never FIFO.
+
+### Reviewed-slice integration quality identifies pending formatting, 2026-10-01
+
+Root combined already frozen Engine/permanentcause+Runtime, provider, corrected
+54TUI and40ServiceManager testplacement sources without currentqueue/history WIP.
+All550 combined Rust source hashes remain stable. Source-size1000line ratchet
+and dependency architecture gate pass; ordinary justquality exits1 on existing
+formatting in engine_model_contention_tests.rs, engine_model_retention_tests.rs,
+namespace_environment/agent_files.rs and transition/turn_execution.rs.
+This is not fullquality pass; Root does not mutate original Rust or replace
+source hashes with formatted operator copies. Evidence
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-reviewed-integration-first/{manifest.json,quality-result.json,format-findings.json}`.
+Formatting must be authored by Alan after current p1 task naturallyReady/frozen,
+not injected as another FIFO item or applied concurrently to p2 history.
+Workspace allfeatures canonicalwarning clippy runs separately to discover any
+remaining cross-slice failure, while preserving the actual fullgate fmt failure.
+
+Combined550Rust reviewed snapshot independently passes locked workspace/all-target/
+allfeature clippy with the canonical warnings/allow-attribute/unsafe/redundant-clone
+denials; all550hashstable. `/Users/morris/Library/Caches/Alan/ui-previews/20261001-reviewed-integration-first/workspace-clippy-result.json`.
+This does not override actual justquality fmt failure; locked workspace tests
+are now separately running for cross-module evidence. Latest PR1026 liveAPI
+refresh `/tmp/alan-pr1026-current-integration-20261001.json` stillhead7f0067ec,
+OPEN/DRAFT/BLOCKED with16SUCCESS, exclusively oldercheckpoint evidence.
+No fresh CI/head/merge qualification claimed.
+
+Reviewed-slice combined snapshot now also passes locked cargo test--workspace,
+exit0 with all550 source hashes stable. Actual suite summary and logs:
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-reviewed-integration-first/{workspace-test-result.json,workspace-test.log}`.
+This independently closes cross-module test uncertainty for that frozen
+composition only, excluding still-active queue/history work. justquality
+fmtfailure/G3/latestheadCI/merge/specarchive remain open.
+
+Workspace log summary for exact550source composition:86 completed test suites,
+2531passed/0failed/10ignored, exit0. Ignored coverage remains explicitly ignored;
+this is not G3 or newest WIP qualification.
+
+P2 history task now has actualcompiled red records:
+`/tmp/alan-foreground-composer-history-author-red-20261001.json`: a1113/8186
+realforegroundconstructor channel+restarttyped red0pass1fail25filtered/101;
+a1119/8231 safe nonfatalhistoryunavailable feedback1pass1fail216filtered/101.
+Existing typed canonicalCommand/legacy-limit controls pass, so only actual
+failed assertions are red evidence. Sameauthor now applies the minimal shared
+entry/persistence-owner fix; final freeze/independent/native still pending.
+
+### Queue test preparation stopped incomplete; diagnosed fixture and valid red, 2026-10-01
+
+P1 naturallyReady but explicitly incomplete: only new queue_projection tests
+and engine_tests module registration, no queue/protocol/AgentFS production.
+Actual a146 is Shellgeneric compilationfailure corrected a147, not behavioral
+red. Two subsequent attempts time out300s with readtoolprocess156/158result;
+exactrecords `/tmp/alan-queue-projection-author-test-attempts-20261001.json`.
+Read-only review and Root reproduction identify a fixture deadlock:
+confirmed=None rejects Turn in capture_input NoConfirmedCallable before writer
+probe, while observed.recv awaits indefinitely. No claim of productionexecution
+backend defect is inferred from those generic toolerrors.
+
+Root exact551source snapshot compiles; recoverycase actually fails missing
+queue projection after normal Runtime.shutdown. The combined2test diagnosis
+was interrupted withSIGINT ONLY exact Root-owned cargo16476/child16959 group
+after verified fixturedeadlock; nativeauthors untouched. That interrupted
+combined attempt is not fullred/G3/native qualification. Separately running
+recovery case alone exits101/0pass1fail1285filtered with sameactualNotFound
+assertion, all551Rusthashstable;
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-queue-projection-regression-first/recovery-red-result.json`.
+Root submitted ONE continuation of the SAME queue task only after p1 Ready:
+legitimate callable/controls fixture, specificwriterfailure assertion, bounded
+probe and cleanup, then originalbackendprojection scope. ObservedWorking.
+No model/history/format FIFO task, None-admission bypass, fakepublishedqueue,
+production modification by Root or G3claim.
+
+### Foreground history independent and native qualification, 2026-10-01
+
+Frozen eight-owner history candidate passes independent full CLI tests (72 passed,
+one ignored), TUI (219 unit and four integration), strict clippy and release build.
+All 554 Rust hashes remain unchanged. Evidence:
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-foreground-history-independent/qualification.json`.
+Author-environment five CLI host failures did not reproduce independently.
+
+Two fresh native invocations (41664 and 47284), binary SHA256
+`3d14d7b8f6045694368d0582e113c56da0dd34bf0025feee9d3d0e3ce3a65ed3`,
+normally exited zero without rescue. Second invocation frames 3/4 recall typed
+Command and ForceAgent with unchanged bodies and no submission on recall.
+Evidence: `history-native-qualification.json` under the native comparison capture.
+Later operator Ctrl+U plus /quit was submitted as ForceAgent and generated Goodbye;
+next fresh /quit exited normally. Exclude this later explicit admission from the
+recall-only no-autosubmit observation. This is not G3 recovery qualification.
+
+Execution semantics remain NOT_PASS: first invocation admitted ForceAgent,
+preserved literal leading ! in user Tape, yet the model generated Bash. Read-only
+trace identifies obsolete `prompts/system.md` rule reparsing model-visible ! text.
+Runtime itself routes only typed Command deterministically. Sole p2 controller
+receives one bounded native-author correction of the existing prompt/test owners;
+no queue/effect/model/foreground owner overlap is authorized. Native repeat must
+prove requested DONE and no Tool Action before claiming this gap closed.
+
+Read-only Tool effect audit separately finds post-spawn result-observation failure
+classified Failed and eligible for automatic retry despite unknown effects.
+Cancellation does not establish side-effect absence. Keep this required shared
+effect-boundary correction open; queue author is still working, so no overlapping
+FIFO task has been submitted. Add counted partial-effect/no-replay regression
+through the existing lifecycle owner when its bounded task is authorized.
+
+### Fresh matched fx/Alan Markdown observation, 2026-10-01
+
+Fresh fx v0.0.12 (binary SHA256 f4f408e212b87762fe7e4027245dd684b6e5c67630902d4a2426b51504408dc1)
+and Alan 3d14d7b8f6045694368d0582e113c56da0dd34bf0025feee9d3d0e3ce3a65ed3
+ran the identical no-Tool Chinese Markdown prompt at 73x22 in the same VT100
+capture host. Both visible model labels report gpt-6.1-sol/medium; fx session-only
+provider/model/effort overrides and --no-additional-dirs were used. Both preserve
+heading/list, literal Rust indentation/emoji and diff minus/plus lines. FX frame71
+uses labeled horizontal code separators and inset whitespace; Alan frame8 retains
+fenced labels and plain spacing. These are observed presentation differences,
+not proof of graphical contrast or a mandate to reproduce FX topology.
+
+Both native processes (fx50396, Alan51000) normally /quit exited0, no rescue.
+Evidence: `fresh-matched-markdown-73-qualification.json` under the native comparison
+capture, including full ANSI and final frame links. Initial FX bracketed paste
+plus Enter in one chunk was rejected without submission; separate paste/Enter
+then worked. FX had an actual network interruption/retry, so model timing is
+excluded. Skills discovery warning is environment-specific. Actual graphical
+font/theme, fresh other-width grid, Tool comparison and final model/queue UI remain
+unqualified; task4.6 is not checked complete.
+
+### Independent AgentFS queue stage and Skill integration boundaries, 2026-10-01
+
+The frozen AgentFS/Protocol queue stage (seven owner deltas over qualified history
+source) passes full focused owning tests and strict all-target/all-feature clippy;
+all555 Rust source hashes are stable. Evidence:
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-agentfs-queue-stage-independent/qualification.json`.
+This excludes live Runtime queue-publication edits. Explicit Runtime recovery
+publication was still behavioral RED at the AgentFS-stage natural Ready. Root
+submitted ONE Runtime-production continuation and verified native PID20741 Working;
+`queue_publication.rs` now exists as Alan-authored implementation, not yet frozen
+or qualified. No queue/G3/full-candidate PASS is inferred. Independent stage
+review is pending; p2 literal-input prompt correction remains separately Working.
+
+Read-only Skill integration audit finds no existing AgentFS Skill availability
+projection and real foreground still supplies empty candidates. Authoritative
+Process-scoped `mentionable_skill_ids` already exists in PromptAssemblyCache
+resolved capability snapshot. It includes explicit-only Skills that implicit
+`listed_skills` omits. Reuse this owner and retained Package revision leases;
+never scan cwd or infer global installed/preinstalled authority. Next backend/UI
+slice draft `/tmp/alan-skills-projection-next-task-20261001.txt` is not submitted.
+Descriptor/referenced positives, unreferenced/disabled/unavailable/cwd-shadow
+negatives, explicit-only mention, Root isolation and non-submitting Tab behavior
+remain required.
+
+Frozen AgentFS/Protocol stage independent review finds no actionable defect;
+seven-owner manifest digest c87ab751d4803ea9ddc32282c141a0e5bc45c5221fa51a8b64453879fed093e1,
+all555 Rust hashes stable before/after. Actual suite totals are129 passed/zero
+failed. Non-mutating owning `cargo fmt --check -p alan-agentfs -p alan-agent-protocol`
+returns1; exact formatter findings are retained in stage `fmt.log` and manifest.
+Therefore focused tests/clippy/review pass but stage quality gate is NOT_PASS.
+Root did not format original or frozen Rust; native author must perform in-scope
+format cleanup before final candidate quality.
+
+### Literal input native qualification and Runtime queue owning completion, 2026-10-01
+
+Native Alan p2 corrected only four prompt/test owners, frozen manifest
+`/tmp/alan-force-agent-literal-prompt-frozen-20261001.json`, inclusive patch SHA
+329a23fbb057484bc26ddef873edbbef98d967af848141a6438dd33bc262407e.
+Actual obsolete-rule PromptLoader compiled RED a1161/8533 is retained separately
+from concurrent foreign queue compilation a1175/8612 and text-only rich-parts
+fixture assumption a1181/8654. Empty rich parts are canonical for text-only
+messages; exact provider `content` carries the original bytes. Native author
+PromptLoader11 and binding11 checks, clippy/fmt pass; independent four-owner
+review finds no actionable defect.
+
+Root isolated four-owner overlay over qualified history source passes full Engine
+1284unit+20integration/oneignored, strict clippy and release build. All555 Rust
+files and11 prompt assets remain unchanged. Binary SHA256
+5f5c42579b91671d33ce30e736c72d5883420d25d51f31c20dd3d8a8a9b259ca.
+Fresh native PID83117, visible read-only project approval, repeats original leading
+space+! and exact leading! ForceAgent bodies: both responses DONE, both durable
+intent/body exact, assistant parts are text only and no model Tool request.
+Explicit !printf independently produces the expected stdout nonce and exit0,
+Ctrl+O frame16 retains command evidence; /quit normally exits0 without rescue.
+Evidence: `force-agent-literal-capture/qualification.json` under the native
+comparison capture. CD fixture remains a CWD/no-generation control, not an exact
+Bash proof; unchanged full Engine explicit-command suites and native printf provide
+separate evidence. Compliance is proved for the two actual requests, not every
+future model response. This closes the observed literal-prefix execution gap
+within the slice; it does not qualify G3 or the changing full candidate.
+
+P1 queue production now ends naturalReady. Root freezes20 deltas (16 queue plus
+four already-reviewed literal owners) over qualified history source in
+`/tmp/alan-runtime-queue-and-literal-ready-20261001.json`. Independent full Engine
+1287unit+20integration/oneignored, Protocol58, AgentFS71 and strict clippy pass;
+all558 Rust files/11 prompt assets stable. Sixteen-owner independent review finds
+no actionable defect, digest5e93d6d2c3e1fc7c37b4155798feb2b02bfa21e55f1a14545a3db4e7673240aa.
+Author fullEngine1271pass16fail/oneignored was denied host fixture binds/execution;
+those16 failures did not reproduce outside its sandbox. Frozen owning evidence:
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-runtime-queue-independent/qualification.json`.
+Public Runtime/AgentFS paused directory selection preserves queue and pause; native
+TUI queue hydration and G3 remain open. No CI/merge/canonical spec promotion.
+
+After these frozen owning checks, Root submits ONE p1 Tool-unknown-effect task
+(`/tmp/alan-tool-unknown-effect-author-submit-20261001.json`), verified Working.
+Existing Unknown/reconciliation owner correction and real partial-effect counted
+nonreplay regression are required. Precisely named prior formatter findings may
+receive rustfmt-only cleanup; no queue/model semantic changes or p2 edits.
+P2 sole controller submits ONE shared TUI Markdown style task: terminal-default
+code body, muted fence/language metadata, preserved diff signs/indentation/inline
+code/source keys/streaming/drain/resize. No new renderer or frame topology. Both
+remain active; no FIFO tasks or automatic native restarts were submitted.
+
+Live PR1026 refresh `/tmp/alan-pr1026-live-20261001-queue-phase.json` confirms
+draft/open head7f0067ec,16success,mergeStateStatusBLOCKED (cause not inferred).
+Latest WIP is still excluded from this CI evidence.
+
+Frozen Runtime queue candidate `just quality` exits1: source-size1000 and
+architecture dependency gates pass, fmt fails exactly five owner files:
+model-contention/retention tests, engine_tests registration, turn_execution,
+and Protocol ui_surface. Exact findings remain in `quality.log` and
+`qualification.json`. Four are already covered by current p1 precise fmt-only
+authorization; engine_tests registration cleanup must be included in a later
+owning task if not corrected naturally. No Rust source was formatted by Root.
+Source review/owning tests/clippy do not replace this unresolved full gate.
+
+The literal-prefix correction also supplies locally reviewed evidence for a
+second independent self-development task: native p2 authored compiled product
+prompt plus exact Runtime regression, retained true RED/green and actual diff,
+Root independently built and relaunched the candidate and observed the repaired
+behavior. `qualified-base-delta.patch` in the literal independent snapshot
+separates this actual four-owner delta from older uncommitted model work included
+in the base7f patch. This is second-task candidate evidence only; explicit chosen
+recovery, native queue/authorization/no-replay, Herdr detach, final candidate
+quality/current-headCI/merge remain unproved. G3 stays NOT_PASS.
+
+
+### 2026-10-01 independent Markdown style and Tool uncertainty qualification
+
+The native p2 author reached natural Ready and froze all 58 TUI source hashes in
+`/tmp/alan-markdown-code-style-frozen-20261001.json`. Root prepared the qualified
+Runtime queue base plus exactly four Markdown style deltas in
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-markdown-code-style-independent`.
+Independent full TUI tests passed (219 unit + 6 integration), strict all-target,
+all-feature clippy and release build passed, and all 559 Rust source hashes
+remained stable. Binary SHA256 is
+`b032c388bbee5a19a6d9a2d9ffab62c6b5de23add9c6c07ff3f8a0367fe3b230`.
+Independent read-only review found no actionable introduced defects: fenced
+bodies use default foreground without underline, metadata is dim, inline code
+retains underline, and source bytes/indentation/diff markers/atom keys/cutoff
+semantics are preserved. Native same-prompt comparison is currently running;
+this entry does not establish graphical theme/font acceptance or final G3.
+
+The p1 Tool uncertainty author reached natural Ready, confirmed through Herdr
+with the existing PID20741, and froze 13 changed owners in
+`/tmp/alan-tool-unknown-effect-frozen-20261001.json`. Root copied exactly that
+slice over the qualified Runtime queue base into
+`/Users/morris/Library/Caches/Alan/ui-previews/20261001-tool-unknown-effect-independent`;
+all 560 Rust source hashes are retained. Actual compiled counted-effect RED and
+native author logs are retained beside the independent candidate. Independent
+review found no actionable defect: post-spawn observation/cancellation failures
+retain Unknown, flush before cancellation reset and suppress matching replay,
+including recovery; observed complete logical results remain distinct. Initial
+checkpoint acknowledgement failure conservatively retains the existing Unknown
+barrier without claiming successful execution. Review digest:
+`8c64e6cf2e72faeb0b0e526616181b324a0ab242f27706ec6431103b6be2463e`.
+Independent owning tests are running. The author full Engine run still reports
+16 environment-related failures and quality still stops at formatting-only
+`runtime/engine_tests.rs`, which was outside the explicit cleanup list. No full
+quality/G3/current-head CI/delivery claim is made.
+
+A bounded TUI queue-consumer draft is prepared at
+`/tmp/alan-tui-queue-hydration-next-task-20261001.txt`, not submitted. It requires
+Root-pinned authoritative hydration and revision handling, truthful admission
+and queue counts, and paused pending-only project selection without implicit
+Continue or queue mutation. Runtime remains the final authority. Native Markdown
+qualification precedes this next author task.
+
+
+Follow-up evidence: both fresh Markdown invocations exited normally without
+manual rescue. The inherited NO_COLOR=1 capture PID10013 and explicit
+NO_COLOR-unset color capture PID11804 retain four-space Rust indentation,
+heading/list/inline code and exact diff marker text. Colored native SGR verifies
+dim boundaries, default non-underlined block body, inline-code underline and
+red/green diff styling. Artifact:
+`/Users/morris/Library/Caches/Alan/fx-comparison/20261001-native/markdown-code-style-native-qualification.json`.
+Graphical font/theme/contrast and perceived flicker remain unqualified. This
+minimum fix closes the observed whole-code-block underline issue; it does not
+claim FX's inset/border presentation parity.
+
+Tool uncertainty independent owning qualification also passed: Engine1291unit
++20integration/1ignored, Protocol58 and AgentFS71; strict all-target/all-feature
+clippy passed and all560Rust hashes are stable. The author environment's 16
+failures did not reproduce independently. Production review remains clean.
+The next p1 model/status backend task was submitted only after natural Ready and
+freeze/qualification, with exact fmt-only authorization for engine_tests.rs.
+The initial multiline Herdr draft rendered newline characters incorrectly and
+was cleared without Enter; one flattened task was then submitted with one Enter.
+No duplicate author task or FIFO submission occurred. p2 now owns the next
+TUI-only queue hydration task; it must preserve current shared protocol/backend
+owners and reuse AgentFS per-Agent ui:queue notification.
+
+
+### 2026-10-01 G3 harness verification and current native author boundaries
+
+Root independently re-ran `just quality` on the frozen Tool uncertainty snapshot:
+source-size and architecture gates pass; the only observed formatting failure is
+`crates/agent-engine/src/runtime/engine_tests.rs` queue module registration order.
+No frozen or original Rust was formatted by Root. The next native model task
+owns explicit fmt-only authorization for that file; full quality remains unpassed.
+
+The model author identified ProcessConnection catalog ownership in
+`crates/service-manager/src/connection/process_binding.rs`. Root verified the
+existing provider-static catalog/injected-original-only capture mismatch and
+clarified the same task's scope: this exact Process Connection adapter and
+adjacent catalog tests may change; Service Manager lifecycle/boot/package and
+profile/default/credential/provider behavior remain excluded. One clarification
+was submitted after natural Ready, not an additional queued task. The exact live
+PID20741 is confirmed Working again. p2 PID53200 independently remains Working
+on the TUI-only queue task; its actual compiled pinned AgentFS hydration RED is
+retained in `/tmp/alan-tui-queue-hydration-author-red-20261001.json` (a1230/8981,
+0pass1fail219filtered, exit101). No full TUI queue qualification yet.
+
+Independent harness review found text-only Command matches, missing authoritative
+queue assertions, and an unbounded inspector subprocess. Root corrected the
+external Python harness to require Command intent, Input/FollowUp and exact
+canonical body; settled queue boundaries now assert exact Q pending identity,
+paused state and absence of active/deferred/uncertain IDs. Inspector calls have
+a six-second deadline and retain the original live handle on failure. Fresh
+invocation checks permit a valid unknown queue with no admission evidence without
+calling it known-empty. Pure Python self-check and byte compilation pass, no Alan
+was launched. Updated hashes and missing prerequisites are retained in
+`/tmp/alan-g3-preparation-audit-20261001.json`.
+
+The pinned read-only inspector lacks the queue field and must be extended through
+its existing pinned adapter, rebuilt/reviewed/re-pinned before execution; the
+updated runner fails closed. Actual Herdr view detach is explicitly separate from
+OS-exit/--resume; its checklist requires unchanged native PID/start, Host boot and
+Root identity in a secondary owned client. No detach was executed. Native discard
+and Unknown reconciliation are not proved by the Continue sequence; counted-effect
+Unknown/recovery owning tests remain separate evidence. All G3 claims stay open.
+
+A bounded Package Store contention task is drafted at
+`/tmp/alan-package-lock-bounded-next-task-20261001.txt`, not submitted. Read-only
+trace confirms open and transaction share the blocking flock helper, including
+catalog refresh. Proposed owning qualification uses disposable, explicitly released
+child lock fixtures, short contention success and long contention bounded busy
+failure. The protected foreign stable Process is never used or interrupted.
+No Package Store production edit or native boot contention qualification occurred.
+
+
+### 2026-10-01 Markdown native width grid and queue compatibility continuation
+
+The same independently qualified Markdown binary SHA256
+`b032c388bbee5a19a6d9a2d9ffab62c6b5de23add9c6c07ff3f8a0367fe3b230`
+passed fresh color-native fixed widths 40/60/73/80/120 at height22, using the
+same no-Tool Markdown prompt and gpt-6.1-sol medium. Actual PIDs are26827,
+30554,11804,34463,39262 respectively; all `/quit` exits are0 with no rescue.
+Each capture preserves headings/list/inline code, four-space Rust indentation,
+exact diff +/-text, dim-boundary SGR and red/green diff SGR, without block
+underline. Artifact:
+`/Users/morris/Library/Caches/Alan/fx-comparison/20261001-native/markdown-code-style-native-width-grid.json`.
+This fixed-width grid is not live-window-resize, graphical theme/font/contrast,
+full FX width parity, model/queue WIP or G3 qualification.
+
+The queue TUI author ended the first input at natural terminal Ready while
+explicitly reporting implementation incomplete. Its initial paused AgentFS
+hydration regression had turned green, but full compile hit three new
+UiEvent::Models exhaustive matches and a watcher-private-field issue. The latter
+was authored but not rechecked; neither compiler failure is a product behavioral
+RED. WIP checkpoint:
+`/tmp/alan-tui-queue-hydration-incomplete-checkpoint-20261001.json`, patchSHA
+`ad1396a0661072928d4cfd4deb91747a7e5cb50441d824619739a47878b4ec63`,
+all61TUI sources, maximum996lines. This is incomplete, not qualified.
+
+Root authorized ONE bounded continuation of the same unfinished queue task,
+only after that natural Ready/checkpoint: minimal ignored/deferred Models arms
+in existing TUI consumers, no model chooser or invented binding/catalog, and
+completion of the original notification/pinning/revision/admission/unknown/fresh
+project/paused-boundary tests and full gates. Protocol model dependency hashes
+must be recorded and qualified after p1 freeze. The p2 controller confirmed the
+continuation Working. No additional queued task, restart or Root Rust edit.
+The previously frozen Tool candidate's one remaining fmt failure must not be
+presented as the latest moving model/queue candidate's complete gate result.
+
+
+The next TUI model/status consumer is drafted at
+`/tmp/alan-tui-model-status-next-task-20261001.txt`, not submitted. It requires
+both current owning slices to be frozen and independently qualified, then uses
+the final safe Process model projection for /status, /model and active-versus-next
+header truth. It must retain exact selection acknowledgement, captured pending
+bindings, draft/intent, paused no-resume and unknown/owner-switch behavior. This
+draft is not model UI implementation or acceptance evidence.
+
+
+### 2026-10-01 supplemental discard harness and exact fresh-unknown regression
+
+The existing external native runner now includes a same-owner supplemental
+Discard stage after Q continuation: exact busy/D Command admissions, captured
+child start/termination, settled paused D projection, single /discard, durable D
+removal plus correlated Cancelled completion, no D effect, then non-resurrection
+in repeat recovery and fresh invocation isolation. Pure self-check and Python
+compilation pass; the sequence is NOT_RUN. Updated preparation hashes are in
+`/tmp/alan-g3-preparation-audit-20261001.json`; actual Herdr detach and Unknown
+reconciliation remain separate evidence requirements.
+
+The old read-only inspector source was copied unchanged into ignored
+`target/g3-read-only-inspector` in the author checkout; an isolated diagnostic
+manifest points at existing own-project adapters. No production Rust was edited.
+Its queue/input-completion extension is drafted at
+`/tmp/alan-g3-inspector-next-task-20261001.txt`, not submitted. Root will require
+native authorship, frozen source, independent build/review and re-pinning before
+G3. There were no selector/grant/control writes or native G3 launches.
+
+The queue author obtained a second actual behavioral RED at the fresh, valid
+unknown boundary: `/tmp/alan-tui-queue-fresh-unknown-author-red-20261001.json`,
+a1286/9413, exit101,5pass1fail217filtered. This proves the strict unknown guard
+incorrectly blocked the ordinary initial chooser while the actual AgentFS
+projection was valid known=false with no admission evidence. It does not imply
+missing/invalid queue files are known-empty. The native author is fixing the
+owning TUI gate; Runtime remains final directory authority. This is still an
+unfinished queue task, not whole-candidate/G3 qualification.
+
+
+### 2026-10-01 discard evidence review correction
+
+Independent harness review found that the shared exclusion set alone could
+accept dispatch as if it proved discard. The prepared native runner now requires
+actual singular/plural durable removal records for D and rejects any D dispatch,
+immediately after discard and again after repeat recovery. Negative self-checks
+cover missing removal, dispatch-only and removal-plus-dispatch. The default
+self-check passes without launching Alan; preparation hashes were refreshed.
+G3 remains NOT_RUN, awaiting native-authored inspector fields and a jointly
+frozen, independently qualified candidate.
+
+
+### 2026-10-01 first frozen model projection candidate
+
+p1 completed its bounded backend model slice at natural Ready. Root froze the
+16-file delta onto the qualified Tool-uncertainty base at
+`20261001-model-projection-independent/source`; all564 Rust hashes remain stable.
+Original compiled RED logs show missing Runtime models file and unavailable
+injected catalog. Independent full owning tests pass: Engine1291+20/1ignored,
+Protocol55+4, AgentFS1+71, Service Manager122+2. Independent four-crate
+all-target/all-feature strict Clippy also passes (exec18925); all564 hashes remain
+stable afterward. Independent reviews are pending. Source-size gate fails
+engine.rs1003 vs1000; no candidate
+qualification is claimed until Alan corrects it. Model projection test coverage
+for distinct active/next, paused and recovered captured bindings is under review.
+The queue TUI author remains Working; no model UI task or G3 run was submitted.
+
+
+### 2026-10-01 model projection review correction admitted
+
+Independent reviews require changes despite green suites. The new projection
+loses active binding after accepted submission clears active IDs while deferred
+TurnMemoryPromotion still generates through the retained callable. Reusing
+actual deferred execution ownership is required; retained callable alone does
+not prove activity. Existing regression covers only A/A/A and cannot qualify
+active A/next B, exact queued controls, paused selection, recovered B/pending A,
+persistence failure versus publication failure, or catalog failure safety.
+The source-cap failure engine.rs1003 remains open.
+
+After observing natural Ready on the same live p1, Root submitted ONE bounded
+same-task correction via Herdr: admission
+7e0e2391-4675-4d6b-a02f-24b6cd619c94 at03:30:10Z, with exact durable dispatch
+and Working observed. It authorizes minimal existing deferred model observation
+hooks, existing adjacent fixture extensions and proper source-size correction,
+without changing scheduling, memory, queue, Tool or provider behavior. Task and
+submission ledger: `/tmp/alan-model-projection-review-correction-20261001.txt`
+and `/tmp/alan-model-projection-review-submit-20261001.json`. No subsequent
+FIFO/inspector/model-UI task or G3 was submitted. p2 queue task remains Working.
+
+
+### 2026-10-01 read-only recovery inspector preparation review
+
+Independent review of the unsent native inspector draft found finite-event
+snapshot and output-boundary requirements: machine/ui/events is a live stream,
+so the existing EOF reader would wait at its edge. The draft now requires a
+bounded captured-length snapshot and canonical existing Protocol decoding,
+allowlisted cwd/grant siblings and final native PID plus boot/Root checks. It
+also distinguishes explicit ordinary Tail closure from cancellation cleanup
+through the existing attachment teardown. No inspector Rust/manifest was edited,
+no dependency installed and no attachment or G3 run occurred. This preparation
+draft remains NOT_SUBMITTED until the bounded backend task qualifies.
+
+
+### 2026-10-01 final queue UI frozen for independent review
+
+p2 ended naturally Ready with all61 TUI Rust files frozen; its latest author
+checks report225 unit+6integration, strict all-feature/all-target Clippy, scoped
+fmt and diff checks. Root copied all61 onto first frozen model backend at
+`20261001-tui-queue-independent/source` and independently ran full TUI tests:
+225+6 pass (exec40037), all568 snapshot Rust hashes remain stable. Independent
+Clippy and reviews remain in progress. Layout/terminal bytes match qualified
+style freeze, preserving below-candidate and input anchoring. Original compiled
+paused, fresh-unknown and completion-before-refresh RED artifacts are preserved.
+This is a scoped queue snapshot; backend model review/cap defects remain, so
+there is no joint candidate, model UI or G3 qualification. Preliminary review
+found actual project dispatch still unconditionally blocks local pending turns
+although acknowledged paused queue can be safe; real dispatch coverage is being
+checked before one same-task correction. No new p2 input was submitted.
+
+
+### 2026-10-01 frozen queue UI review requires correction
+
+Independent full TUI225+6 and strict all-target/all-feature Clippy (exec34094)
+pass with all568 source hashes stable. Both reviews nevertheless require a
+shared-boundary correction: actual project dispatch still rejects acknowledged
+paused local Q; accepted queued text vanishes without visible correlated queued
+disposition; delayed/repeated receipt can consume a later identical draft and
+its current intent, so original intent plus one-shot submitted draft identity
+must be retained; queue-appended narrow status falls through Red; fresh unknown
+must require snapshot revision0. Original layout/terminal remain byte-identical
+to the qualified style base.
+
+Root prepared `/tmp/alan-tui-queue-review-correction-20261001.txt` and asked sole
+p2 controller to submit ONE same-task correction after Ready verification, with
+actual dispatch/receipt RED regressions and full focused gates. Controller confirmed Ready then successful single flattened submission; Root
+independently observed Working39s and actual source-search Tool progress. Ledger:
+`/tmp/alan-tui-queue-review-correction-submit-ledger-20261001.json`. The old live p2 binary lacks machine_input_admitted/dispatched_v1 records, so
+exact durable admission IDs cannot be extracted or inferred. Controller instead
+pinned the unique rollout user-message record9807 at03:44:03.705363Z and its
+body hash, alongside successful submission, live Working and actual Tools; the
+ledger records this limitation explicitly. This is author task evidence, not
+new candidate durable queue/recovery qualification. It authorizes only TUI
+owners/adjacent tests, preserving Runtime final authority, no implicit Continue
+and existing input/Markdown/Tool/layout behavior. No final joint qualification,
+G3, merge or archive is claimed.
+
+
+### 2026-10-01 actual deferred model projection RED
+
+The same p1 correction produced a compiled behavioral RED before its production
+change: Tool a392 at03:39:31Z, cargo exit101, test
+`deferred_generation_observes_actual_a_while_next_b_and_clears_on_idle`,
+0pass/1fail/1292filtered. This directly exercises actual deferred generation and
+AgentFS status, rather than fake labels. Safe observation artifact:
+`/tmp/alan-model-projection-correction-test-observations-20261001.json`.
+Subsequent live pane observations show edits in Engine/model-status owners and
+Working on the same invocation; no final green/freeze claim is made. p2 remains
+Working on the same independently reviewed receipt/project/intent/color correction.
+
+
+### 2026-10-01 explicit Skill projection preparation review
+
+The unsent Skill draft now specifies same-cache Ready initialization and actual
+revalidation publication, invalidation of an already-open stale popup, immutable
+old Process Package lease versus fresh references, and proposed bounded display
+limits with honest oversize unknown. Existing mentionable_skill_ids remains
+authority, including explicit-only Skills; no global catalog/cwd overlay was
+introduced. Bounds are preparation proposals, not shipped behavior or new
+canonical spec. No production Rust, dependencies or native task submission.
+
+
+### 2026-10-01 deferred model projection local GREEN
+
+The same exact compiled deferred-generation regression now passes in native
+author Tool a402 at03:46:34Z: exit0,1pass/0fail/1292filtered. It follows the
+a392 behavioral RED and existing Engine/model-status edits. Safe observation
+artifact now retains both original result hashes and exact test identity. This
+is local author progress only: p1 is still Working on remaining distinct A/B,
+paused/recovery and failure projections, so no final freeze, independent new
+suite qualification or native model UI claim is made. Original invocation
+PID20741 remains alive; p2PID53200 also remains live and Working, without any
+restart or additional FIFO task.
+
+
+### 2026-10-01 actual queue boundary RED and bounded lock draft review
+
+p2 same-task correction has a compiled behavioral RED in Action a1343 / owning
+rollout record9857 at03:50:21.720114Z: exit101,4pass/5fail/221filtered. Actual
+failures cover paused local-Q dispatch, nonzero fresh-unknown revision, opposite
+route delayed receipt, missing visible queued entry and hydrated narrow color.
+The combined visible-entry/repeated-draft test stops at its first missing-entry
+assertion; it does NOT yet prove execution of later repeated-receipt assertions.
+Final green must reach one-shot/draft/completion/duplicate-ID/Tape boundaries.
+Exact artifact: `/tmp/alan-tui-queue-review-correction-author-red-20261001.json`.
+
+Independent Package lock draft review confirmed the shared acquire owner and
+existing boot/error propagation. Unsent draft now narrows retry errno, monotonic
+wait-only deadline, unowned File closure and normal unconditional fixture release
+before assertions, with actual transaction/lease-drop characterization. It does
+not promise bounded operation Mutex/file IO/recovery or invented lease cleanup.
+No production lock changes, extra author input or native boot test occurred.
+
+
+### 2026-10-01 full retained author Action evidence, not masked exit
+
+Root inspected retained agent_action_v1 output rather than truncated model Tool
+results: a421 model-binding14 pass, a422 queue59 pass, and a424 two focused
+integration tests pass. Action a425 contains actual Engine library1278pass,
+16fail,1ignored although its compound cargo-test/format command exits0 and
+Action says completed. The failed suite is NOT qualified by that final exit.
+Failures include real HTTP bind fixtures and native sandbox/seatbelt cases;
+current causes need independent verification after final freeze rather than
+automatic environmental dismissal. Safe count/name/hash evidence:
+`/tmp/alan-model-projection-correction-full-action-tests-20261001.json`.
+No failed suite output was repaired or failure waived. p1 remains Working; its
+Host Read attempts at AgentFS Action paths were rejected, not bypassed.
+
+
+### 2026-10-01 corrected model snapshot independently verified, coverage continuation
+
+p1 ended natural Ready and Root froze six-file correction onto first model base
+at `20261001-model-projection-correction-independent/source` (567Rust). Independent
+full Engine1294+20/1ignored, Protocol55+4, AgentFS1+71, ServiceManager122+2
+pass (exec9121), strict owning all-target/all-feature Clippy passes(exec17902),
+all567 hashes stable and actual source cap passes(engine989). Both production
+reviews find no new correctness/ownership issue; actual deferred A controls and
+settled idle clearance now match real requests. Author environment16 failures
+were not reproduced by independent full suites; original failed results remain.
+
+Qualification still needs recovered selectedB/pendingA initial projection/new
+Process identity, actual selection recorder persistence failure, and unavailable
+catalog with retained binding. The full frozen fmt check still fails only
+engine_tests module registration ordering. Root submitted ONE same-task bounded
+coverage/format continuation after Ready/freeze/review: ID 728e895b-0f8d-4006-ad2a-94c68909ca5e
+at04:03:35Z, with exact durable admission/dispatch retained in
+`/tmp/alan-model-projection-qualification-submit-20261001.json`. It preserves
+existing assertions and asks independent cargo exits plus own-project complete
+logs, avoiding inaccessible AgentFS Host paths. No modelUI/inspector/newtaskFIFO
+or G3 was submitted; p2 remains Working.
+
+
+### 2026-10-01 current-head CI and documented detach preparation
+
+Read-only GitHub refresh confirms PR1026 remains OPEN/DRAFT at7f0067ec with
+16SUCCESS checks and mergeStateBLOCKED; these checks do not cover uncommitted
+model/queue WIP. Current author HEAD also remains7f. Exact provider capture:
+`/tmp/alan-pr1026-live-20261001-model-correction-phase.json`.
+
+Installed Herdr0.9.1 `--default-config` documents ctrl+b prefix and prefix+q
+detach; actual config currently has no keys overrides. The binary/config evidence
+is pinned in `/tmp/alan-g3-herdr-detach-preparation-20261001.json`, with execution
+recheck required. Checklist/preparation hashes refreshed; Python runner selfcheck
+passes and launches no Alan. No session/client was started or detached, no pane
+closed and no signal sent. Actual same-native/boot/Root/queue retention remains
+NOT_RUN and cannot be inferred from documented control discovery.
+
+
+### 2026-10-01 model qualification freeze and queue chronology continuation
+
+p1 reached natural Ready; three test-file delta frozen onto corrected model
+base at `20261001-model-projection-qualification-independent/source` (568Rust).
+Independent full Engine1296+20/1ignored, Protocol55+4, AgentFS1+71 and
+ServiceManager122+2 pass (exec32951); source-size ratchet passes. Whole frozen
+fmt still fails the same engine_tests module ordering (exec47406). Strict
+Clippy and both independent qualification reviews remain pending. Native full
+1280pass16fail1ignored exit101 is preserved, not waived or substituted by an
+action exit; focused native61 pass is only its focused scope.
+Exact snapshot: `/tmp/alan-model-projection-qualification-frozen-20261001.json`.
+
+p2 controller verified natural Ready and all62 previous frozen TUI hashes,
+then submitted ONE chronology/lifetime same-task continuation at04:24:56Z,
+observing actual Working. Legacy owning user-message record10208 timestamp
+04:25:26Z is captured, with no invented durable admission/dispatch ID:
+`/tmp/alan-tui-queue-chronology-submit-ledger-20261001.json`. Scope is actual
+active-answer ordering, full Tape/reconnect ID reconciliation, exact queued
+disposition and terminal reconciled receipt-body retirement using existing
+owners. Layout/terminal frozen bytes preserve below-input stable candidates;
+no user preview pane was recreated and no author input was queued while busy.
+G3, joined release/native relaunch and latest-head CI remain unqualified.
+
+
+### 2026-10-01 model coverage review closed; final bounded cleanup submitted
+
+Both independent reviews close recoveredB/pendingA, actual recorder persistence
+failure and retainedA/catalog-unavailable coverage. All568 frozen hashes remain
+stable; four-owner strict Clippy passes(exec12572). Production is unchanged.
+Only engine_tests module-order format and one unbounded recorder-probe receive
+remain. Root rechecked natural Ready and frozen authored delta then submitted
+ONE same-task exact two-edit continuation, ID95a2b8cf-f0ec-4450-b2a2-2cc1c14fd935
+with actual admission/dispatch at04:28:53Z and observed Working. Exact capture:
+`/tmp/alan-model-projection-final-small-submit-20261001.json`. No new model UI,
+inspector, G3 or other author task was queued. Full native failures remain visible;
+independent passing tests establish only this frozen scope.
+
+
+### 2026-10-01 actual inspector adapter preparation checked
+
+Independent read-only review traced actual UiEvents stat/Tail semantics, typed
+InputCompleted snake_case, harness correlated cwd/grants shapes and attachment
+teardown. The existing draft covers finite snapshot bytes instead of live EOF,
+nativePID+boot+Root pinning and five-second timeout cleanup; no new speculative
+owner/parser requirement was added. Exact draft/helper/harness hashes and scope:
+`/tmp/alan-g3-inspector-preparation-review-20261001.json`. Still NOT_SUBMITTED
+and NOT_RUN; the old helper lacks queue/completions and cannot prove G3. p1 and
+p2 original native PIDs remain live and Working on their current tasks.
+
+
+### 2026-10-01 final model slice locally qualified; read-only inspector author task
+
+p1 completed natural Ready with two exact final edits. Root froze
+`20261001-model-projection-final-independent/source` (568Rust), verified all
+hashes, independent focused2pass(exec20724), whole-workspace fmt0(exec95370),
+source-cap0, strict owning-engine alltarget/allfeature Clippy0(exec73556), and
+small-delta review with no findings. Prior qualified four-owner full suites
+remain inherited unchanged production evidence. Original native full1280pass
+16fail1ignored exit101 remains preserved; no joint quality/CI/G3 claim.
+
+After Ready/freeze/check/review Root submitted ONE previously reviewed read-only
+inspector task, exact ledger `/tmp/alan-g3-inspector-submit-20261001.json`,
+with actual durable admission/dispatch. It changes only ignored diagnostic
+source/manifest, adding typed queue/completion reads, safe evidence allowlists
+and exact owner pins; no production semantics, foreign attachment, grant/control
+writes or G3 execution is authorized. p2 continues its current chronology task.
+
+Actual compiled queue RED a1399/record10275 has9pass3fail221filtered (stream
+boundary, full hydration receipt, terminal+Tape payload retirement). Its outer
+Tool exit0 is retained and is not claimed as cargo101 or behavioral green:
+`/tmp/alan-tui-queue-chronology-author-red-20261001.json`.
+
+
+### 2026-10-01 chronology partial independently verified; remaining shared owners
+
+Root rechecked actual p2 natural Ready and froze all62 TUI onto final-model
+base at `20261001-tui-queue-chronology-independent/source` (573Rust). Five
+TUI-file delta, max994; layout/terminal bytes unchanged. Independent allfeature
+233unit+6integration(exec4163), whole-workspace fmt(exec65480), strict TUI
+alltarget/allfeature Clippy(exec90628), cap0 and all573 hash stability pass.
+Controller checkpoint/patch/ANSI: `/tmp/alan-tui-queue-chronology-incomplete-frozen-20261001.json`.
+Retained-cell stream continuity and single same-owner hydration are verified;
+full task remains CHANGES_REQUIRED after two independent reviews.
+
+Remaining shared defects: physical drain→exact Tape duplicate body; hydration
+owner/admission ordering and wrong receipt cell indices after final merge;
+terminal-no-Tape cancelled/rejected bodies never retired; generic disposition;
+actual persisted original-intent history reload/recall coverage. A single
+same-task continuation draft `/tmp/alan-tui-queue-reconnect-continuation-20261001.txt`
+was handed to sole p2 controller for Ready/freeze recheck then one submission,
+with explicit direct-parent execution and no native-worker retry or new grant.
+Submission is not claimed until its exact controller ledger is observed.
+
+The apparent new p2 Working came from a native child blocked report, not an
+extra controller prompt. Parent answer10394 and worker report10395 plus parent
+answer10407 are preserved in `/tmp/alan-tui-queue-native-child-boundary-20261001.json`.
+Worker lacked inherited authorized Host adapter, performed no edits/tests, and
+is not a second self-development success. Parent actual pwd/project-read worked;
+no context path was substituted for authorization. G3 remains NOT_RUN.
+
+
+### 2026-10-01 reconnect continuation submitted; diagnostic protocol review
+
+Sole p2 controller rechecked naturalReady/all62 no drift and submitted one
+direct-parent continuation. Exact legacy owning user-message10408 at04:49:30Z
+and Working observation: `/tmp/alan-tui-queue-reconnect-submit-ledger-20261001.json`;
+no durable admissionID was fabricated, native worker retry/newgrant are excluded.
+
+p1 ended naturally Ready for its ignored diagnostic source. Root froze
+`20261001-g3-inspector-independent/source` with three auxiliary assets and
+production568Rust byte-identical, then independently built offline(exec12097,0).
+Actual source review finds two real protocol mismatches: valid initial known:false
+queue must remain unknown evidence, not fail as missing; cd Action aN identity
+is distinct from result.call_id control-submissionUUID, which must be preserved
+for harness correlation. The helper's generated selfcheck used equal IDs and
+cannot prove the real path. ui:queue/ui:models invalidations are in AgentFS events,
+not machine/ui/events; that suspicion was rejected after source trace. No foreign
+attachment or G3 has run. Exact snapshot `/tmp/alan-g3-inspector-frozen-20261001.json`.
+
+
+### 2026-10-01 diagnostic correction submitted after real contract review
+
+Frozen diagnostic independent offline build0(exec12097) and no-attachment
+selfcheck0(exec85046) passed, but selfcheck did not cover actual call namespaces.
+Two reviews confirm fresh valid unknown queue acceptance and distinct Action/
+control-request IDs; additional raw activity output requires existing typed
+UiActivitySnapshot validity, bounded IDs and allowlisted fields. Root rechecked
+natural Ready and all three asset hashes, then submitted ONE same-helper bounded
+continuation for these three issues with real no-attachment RED before fixes.
+Exact actual admission/dispatch are retained in
+`/tmp/alan-g3-inspector-review-submit-20261001.json`. Scope stays ignored
+diagnostic only; no production/attachment/G3 or new author task FIFO.
+
+
+### 2026-10-01 frozen model owner gates verified while authors continue
+
+Frozen final model architecture dependency ratchet passes(exec86683) against
+explicit canonical git-dir and exact7f0067ec base; Host source-boundary check
+passes. Snapshot lacks its own git identity, so the initial bare HEAD check was
+an invocation failure, not a production architecture finding. Exact evidence:
+`/tmp/alan-model-projection-final-owner-gates-20261001.json`. These non-mutating
+checks do not replace joined just-quality or current-head CI. Both original
+author PIDs remain live on same helper/reconnect tasks; no restart, bypass,
+FIFO or new native author task was used.
+
+
+### 2026-10-01 second queue partial freeze, source-cutoff continuation prepared
+
+p2 naturally ended explicit incomplete; sole controller frozen patch8efe5f39
+and all62 are in `/tmp/alan-tui-queue-reconnect-incomplete-frozen-20261001.json`.
+Root froze four-file TUI delta onto previous chronology candidate at
+`20261001-tui-queue-reconnect-independent/source` (573Rust), with layout/terminal
+unchanged and max994. Independent239unit+6integration allfeatures(exec61893),
+wholefmt(exec46943), strictClippy(exec69243), cap and all573 stability pass.
+Actual compiledRED a1428/record10477 is13pass5fail cargo101 before production;
+intermediate a1433 compile failure is not behavior RED. ExactRED artifact:
+`/tmp/alan-tui-queue-reconnect-author-red-20261001.json`.
+
+Reviews close whole-cell drain dedup, ordered owner-qualified hydration,
+Cancelled/Failed noTape retirement, paused exactID hints and actual three-intent
+history reload. Remaining actual partial-drain source replay, final bothmerge/
+realreattach qualification, Completed/committed/clear/oldowner payload lifetime
+and live queued/running updates are not hidden by green suites. Owner filtering
+has fixed earlier differentPID stale-index case; do not reassert it unchanged.
+One direct-parent same-task source-cutoff continuation draft was handed to
+controller for Ready/hash recheck and one submission; its ledger is required
+before claiming admission. No worker/newgrant or Working FIFO is authorized.
+
+Inspector correction produced real compiled no-attachment selfcheck failures
+in all three protocol cases (a519/record3764), but outer Tool exit0 is preserved
+and is not claimed as the inner exit: exact safe evidence
+`/tmp/alan-g3-inspector-review-correction-author-red-20261001.json`. Original
+p1 remains Working; no inspection attachment or G3 has run.
+
+
+### 2026-10-01 exact source-cutoff continuation submitted
+
+Sole p2 controller verified naturalReady/all62 unchanged, then submitted one
+direct-parent same-task continuation with actualWorking0s. Legacy owning
+user-message10615 at05:06:25Z is captured in
+`/tmp/alan-tui-queue-source-cutoff-submit-ledger-20261001.json`; no durable
+admissionID was invented. Earlier differentPID owner fix is preserved; scope
+stays current cutoff/finalmerge/lifetime/disposition defects. Original p1/p2
+native PIDs20741/53200 remain live, with no restart or process rescue.
+
+
+### 2026-10-01 inspector correction locally qualified; Package lock task admitted
+
+p1 naturally ended Ready after only ignored helper main source correction. Root
+froze `/tmp/alan-g3-inspector-correction-frozen-20261001.json`, independently
+built offline0(exec61681), ran no-attachment selfcheck0 and obtained both reviews
+with all three real protocol defects closed. Manifest/lock unchanged, all568
+production hashes stable, exact helper SHA2a3f31f9. Independent binary copied to
+immutable candidate path and pinnedSHA703b860c in
+`/tmp/alan-g3-inspector-correction-qualification-20261001.json`. No attachment/G3
+claim: rebuild/re-pin against final joined candidate dependencies if changed and
+perform fresh owned native adapter acceptance before G3. Preparation audit
+reflects this local qualification but retains overall NOT_RUN.
+
+After Ready/freeze/check/review and actual unchanged ServiceManager owners, Root
+submitted ONE previously reviewed Package Store bounded-lock task with actual
+durable admission/dispatch captured in
+`/tmp/alan-package-lock-bounded-submit-20261001.json`. Scope is shared flock
+wait deadline and existing adjacent owned disposable-process fixtures, with
+unconditional normal holder release/join before assertions; no foreign/stable
+Store or Process, no kill/rescue, no new manager/dependency/lease semantics. It
+does not promise bounded file IO/operationMutex or entire boot cancellation.
+p2 continues its already admitted source-cutoff task; no Working FIFO.
+
+
+### 2026-10-01 explicit Skill preparation corrected against actual owner
+
+Independent source review confirms mentionable_skill_ids includes available
+explicit-only Skills; listed_skills would wrongly omit them. Future work is
+separated into backend Engine/Protocol/AgentFS projection and a later frozen
+contract TUI watcher/popup/Tab consumer. Existing ensure_skills_snapshot refresh
+is prompt-build/resolve fingerprint revalidation, not idle global scanning or
+production dynamic Host-capability changes (setter is test-only). Ensure failure
+must publish unknown, not stale old snapshot IDs. Immutable Process Package
+leases remain authority across global upgrade/uninstall.
+
+Proposed64KiB/2000IDs/256UTF8-byte budgets are NEW display bounds: existing
+loader2000 is scanned directories per root and canonical validator has no256
+byte cap. They must not silently truncate or revoke Runtime authority. Exact
+reviewed preparation corrections and separate prompt hashes are retained in
+`/tmp/alan-skills-projection-preparation-review-20261001.json`. Both drafts
+remain NOT_SUBMITTED; live Package/queue tasks were not expanded or interrupted.
+
+
+### 2026-10-01 failed TUI hint checkpoint and bounded literal continuation
+
+Natural Ready frozen hint checkpoint remains FAILED_UNQUALIFIED: independent
+all-feature TUI tests exit101, 240 unit pass/3 fail, integrations NOT_REACHED.
+Whole-workspace fmt0, strict TUI Clippy0(session10237), source cap0/max994, all573
+Rust hashes stable. Reviews confirm three regressions: partial physical drain
+then exact Tape prefix replay, hydrate/resize prefix replay, and sameowner final
+reattach deleting the active assistant through stale receipt index. QueueChanged
+hint updates do not close QueueUnavailable stale notices or prove Running from
+active admission IDs. Exact qualification is retained under
+20261001-tui-queue-hint-failed-independent/qualification.json.
+
+Sole p2 controller rechecked naturalReady/all62 zero drift and submitted ONE
+direct-parent same-task literal User/Command source-cutoff continuation. Actual
+Working is observed; /tmp/alan-tui-queue-literal-cutoff-submit-ledger-20261001.json
+retains submission hash/time. Legacy owning rollout message must be captured
+before claiming its identifier; no durable admission UUID is invented. Final
+reattach, unavailable/active hint and lifetime remain explicit later corrections.
+User requires below-input candidates with a fixed input anchor; previously
+qualified layout/terminal are preserved, no author restart/Working FIFO/worker.
+
+### 2026-10-01 Package lock candidate frozen for independent checks
+
+p1 naturally Ready after only shared PackageStoreLock helper, adjacent test
+registration and owned cross-process fixture. Frozen three-file delta and all569
+Rust manifest: /tmp/alan-package-lock-frozen-20261001.json. Native actual RED is
+open=true only, 902.859209ms while holder alive/owning then normal stdin release;
+first failed assertion means transaction RED NOT_EXECUTED. Earlier BrokenPipe
+was a fixture failure, not product RED. Exact safe evidence:
+/tmp/alan-package-lock-author-red-20261001.json. Native focused GREEN covers
+open and transaction errors at503.204458/500.367791ms and reopen after normal
+release. Native full124+2/clippy/fmt reported green; independent full suite,
+checks and both reviews are pending, not inferred from author report. No G3,
+attachment, relaunch, commit or publication is claimed.
+
+
+### 2026-10-01 Package checks green; qualification continuation actually admitted
+
+Frozen Package independent full suite124 unit+2 integration exit0(session62453),
+whole-workspace fmt0(99344), strict Clippy0(99911), source cap0 and architecture0
+(96121), all569 hashes stable. Both reviews find no production ownership defect,
+but qualification remains incomplete: errno-specific holder proof, deterministic
+short-contention release/success in both callers, transaction baseline RED,
+public mutation busy unchanged state, busy lease-drop/reclaim boundaries. Existing
+barrier-started concurrent installs already cover catalog serialization and are
+not misreported as sequential-only. qualification.json records incomplete state.
+
+After naturalReady/exact three-file hash recheck, Root submitted ONE same-task
+qualification continuation. Actual admitted/dispatched ID
+0e13421c-43e7-464c-bfcd-8e334cfc36ae at05:44:33Z, records4086/4087, captured in
+/tmp/alan-package-lock-qualification-submit-20261001.json; actual Working observed.
+No extra FIFO/worker/foreign Store/rescue. p2 legacy continuation owning message
+10773 at05:39:30Z/hash d9219f913b6d397b captured in its ledger, no invented durable
+ID. Both native authors remain active on separate existing owner slices.
+
+
+### 2026-10-01 Skill contract reviewed and minimal bounds accepted
+
+Both independent preparation reviews identified the missing safe Process-owned
+Skill observation contract in the active delta. Added its current-cache IDs,
+explicit-only eligibility, initialization/actual ensure lifecycle, safe fields,
+unknown versus known-empty, stale open-popup/Tab invalidation and immutable
+Process lease scenarios to rust-inline-tui/design. AgentFS lib.rs54/633 confirms
+existing1MiB MAX_DOC_BYTES covers ordinary UI documents. Reuse that single
+whole serialized-document bound, precheck before known publication and publish
+small unknown on overflow. Speculative64KiB/2000-count/256-per-ID limits are
+superseded and removed from backend draft; canonical authority remains unchanged.
+
+Exact reviewed backend draft SHAaa8b0a155d5ce9b4 and preparation ledger
+/tmp/alan-skills-projection-contract-review-20261001.json remain NOT_SUBMITTED.
+No native owner work is interrupted or expanded; qualification of the current
+Package task must precede Skill backend authoring, which precedes TUI consumer.
+Strict OpenSpec validation passes. No implementation or user-facing acceptance
+is inferred from this normative preparation.
+
+
+### 2026-10-01 live qualification results before Ready
+
+Native Package correction focused boundary checks actually ran6pass0fail;
+full candidate remains unqualified while author Working. Interim exact log hash
+is retained in /tmp/alan-package-lock-qualification-interim-20261001.json.
+Transaction behavioral RED now actually compiled and ran separately on the
+native author's owned copied previous helper:0pass1fail/cargo101, observed
+904.675833ms while owned holder alive/contending, normal stdin release/exit.
+Baseline helper matches retained previous SHA6f8f1d11; current production
+500ms helper unchanged SHAda974236. Exact log/test/helper hashes:
+/tmp/alan-package-lock-transaction-author-red-20261001.json. No source rescue
+or foreign Store; no whole candidate/final suite qualification inferred.
+
+Sole p2 controller reports current literal-cutoff actual focused1pass1fail:
+partial hydrate/resize passes, partial exactTape remains RED. Author still
+Working, so this is interim observation, not a Ready freeze or final suite.
+No additional prompt or grant has been submitted; finalreattach/hint/lifetime
+remain outstanding independently.
+
+
+### 2026-10-01 Package lock locally qualified; Skill backend actually admitted
+
+Package author naturallyReady; frozen3-test delta/helperunchanged all570Rust.
+Independent fullSM128unit+2integration exit0(session17995), strictClippy0(78623),
+whole-workspacefmt0(92020), cap0(31855), architecture0(21559); all570 stable. Both
+reviews close errno ownership, separate compiled open/transaction RED, short
+release successful serialization, publicbusy mutation unchanged state and busy
+leaseRAII/refresh preserving unrelated live revision. Exact qualification:
+20261001-package-lock-qualification-independent/qualification.json. Native
+workspacefmt failure from concurrentTUI remains preserved, not a joint gate
+waiver. Short fixture elapsed is BEFORErelease; do not call it total acquisition
+time bound. LatestReady transactionRED910.381084ms uses same finala60895f7
+fixture; earlier904ms artifact remains historical. OpenRED900.559334ms retained.
+Nativeboot contention acceptance remains separate; noG3/detach/publish claim.
+
+Root verified p1Ready, frozenPackage delta and actualEngine/Protocol/AgentFS
+owner hashes before ONE new reviewed Skillbackend task. Actualadmission/dispatch
+926e10ec-cede-45b6-b252-a5f73d1701dc records4306/4307 at06:02:47Z, observedWorking,
+/tmp/alan-skills-projection-backend-submit-20261001.json. Scope backend safe
+Process/cache IDs and existingAgentFS projection only; noTUI/foreground/model/
+queue/Packageproduction changes or worker/FIFO. Whole1MiB bounds/prepublish
+unknown/staleclear follow newly acceptedactive contract. p2 continues original
+literalcutoff task; finalreattach/lifetime/hint preparation is NOT_SUBMITTED:
+/tmp/alan-tui-queue-lifetime-hint-preparation-20261001.json. Its nexttask must
+re-pin literal interfaces after naturalReady/freeze/check/review, never assume
+fields or modify currentWorking author.
+
+
+### 2026-10-01 Skill draft-only response corrected before execution
+
+Admission926e10ec completed with only reformatted draft(record4310); author
+interpreted DRAFTONLY literally. Actual backend Engine/Protocol/AgentFS Rust
+changes compared with qualifiedPackage snapshot are zero. Do not count that
+response as development progress. Root rechecked naturalReady/zeroDelta and
+submitted ONE same-scope explicit IMPLEMENTNOW task, no broader scope/newgrant.
+Actualadmission/dispatch d3df8d32-dfe5-48fc-88d7-a1dea04e6393 records4311/4312
+at2026-10-01T06:05:05.066194+00:00; Working observed with actual readTools.
+/tmp/alan-skills-projection-backend-execute-submit-20261001.json retains exact
+execute promptSHA1660d717 and earlier ledger corrected. Current p2literal
+continues Working; its integration sourcecut/resize1pass is interim, not final
+qualification. Future preparation drafts must strip draft-only markers before
+actual approved dispatch, never while an author is Working.
+
+
+### 2026-10-01 literal cutoff independently green but both review axes open
+
+p2 naturallyReady frozenpatchSHA d593118f, all63TUI/max994; Root independent
+copy of6deltas over qualified prior dependencies has574Rust, controller63
+hashes match and all574 stable. FullTUI243unit+7integration exit0(session36616),
+wholeworkspacefmt0(96787), cap0(24654), strictClippy0(28392). Exactqualification
+20261001-tui-queue-literal-cutoff-independent/qualification.json remains
+TESTS_GREEN_REVIEW_FINDINGS_UNQUALIFIED. Shared sourcecut closes two prior
+cutoff reds and idle thirdreattach regression, not all finalreattach branches.
+
+Standards findings: new literal per-row from-beginning keyscans are quadratic;
+old user wrapping path is semantically dead duplication; actual grapheme at
+wrap boundary not tested. Spec findings: submittedreattach appends already
+retained Q receipt, idle textoverlap confuses oldU/newQ equalbody IDs, error
+filter and nomatch/fallback must preserve exact receipt indexlineage/cutoff.
+Current thirdgreen passes&[] only, not submitted boundary. Bothreviews match
+all63. Native moving Skillbackend dependencies do not prove finaljoined gate;
+independent TUI snapshot intentionally retains prior qualified deps.
+
+ONE same-task review correction IMPLEMENTNOW draft handed to solep2controller
+for freshReady/all63 recheck; no automatic FIFO or child. ExactdraftSHA5b9d3310
+at /tmp/alan-tui-queue-literal-review-correction-execute-20261001.txt. Earlier
+finalreattach preparation is superseded, not submitted as a secondtask. Actual
+controller submission ledger required before admission claim. Lifetime/hint
+remain separate actual pending boundaries.
+
+Skill backend initial test exit101 was unresolvedserde_json compilation failure,
+not behaviorRED: /tmp/alan-skill-backend-first-check-20261001.json. Author still
+Working; production has begun but actual compiled preproductionRED not yet
+observed by Root. Preserve this verification gap for Ready review rather than
+interrupting Working or claiming compilation proves feature failure.
+
+
+### 2026-10-01 literal review correction actually submitted
+
+Solep2controller rechecked naturalReady/all63literal hashes unchanged then
+submitted ONE explicitIMPLEMENTNOW review correction, observedWorking0s.
+/tmp/alan-tui-queue-literal-review-submit-ledger-20261001.json retains exact
+draftfileSHA5b9d3310, actual flattened submittedbodySHAf420ed304/scope/exit0.
+Owning legacy message awaits rollout observation;
+no invented durableID. Supersededreattach draft not submitted. Bothnative
+authors Working on disjoint backend/TUI owners, noFIFO/child/restart/newgrant.
+
+
+### 2026-10-01 queue review correction correlated; Skill interim surface green
+
+Solep2controller actual legacy owning message11165 at06:22:59Z/hashd86d6aba
+correlates exact flattenedtaskSHAf420ed304 (draftfile5b9d3310); no admissionUUID
+was emitted or invented. Ledger distinguishes these hashes and transformation.
+Author stillWorking; no additional input.
+
+Skill author has actual publicAgentFS skill_projection1pass0fail/cargo0 after
+initial unresolvedserde_json compilation failure. Engine cargo check0 is only
+compilation, not cache/lease behavior proof. Exact interim logs/hashes retained
+in /tmp/alan-skill-backend-interim-green-20261001.json. Actual compiled
+preproductionRED remains unobserved, fullcache/lease/publicbound qualifications
+pending. No Ready/freeze/consumer/foregroundG3 claim; author stillWorking.
+
+
+### 2026-10-01 Skill actual test exits preserved
+
+Actual PromptAssemblyCache focused skill_observation2pass0fail, integration
+filtered, /tmp/alan-skill-backend-owner-interim-20261001.json. Compoundnative
+command(record4686/call_l3gxDu0N1PKY2SmnOD7ZdDXu) runs Protocol+AgentFS tests
+then Engine focused tests withsemicolon: outer0 belongs lastcommand and masks
+firstcargo101. AgentFS agent_files actual36pass1fail expectedUI listing missing
+newskills remains failed; do not label fullsurfacegreen. Safe evidence
+/tmp/alan-skill-backend-masked-surface-check-20261001.json. Author stillWorking,
+not a completedfailedReady or instruction to addFIFO. Existing contracttest
+failure is postimplementation, not initialcompiledfeatureRED.
+
+Solep2controller confirms currentqueue review firstcargo101 was testprivate
+method E0624 compilation failure, not behaviorRED; author remainsWorking on
+fixture correction. Preserve distinct compilation/behavior classifications.
+
+
+### 2026-10-01 queue review regressions now actual compiled RED
+
+Solep2controller captured exact compiled behaviorlogSHAc53964c7 at
+/tmp/alan-tui-queue-literal-review-author-red-20261001.{json,log}. Root read
+retainedlog:10pass3fail234filtered; failures are review_submitted_receipt_lineage,
+review_submitted_interposed_error_omission, review_no_prompt_fallback. Actual
+duplicate receipts/index-to-assistant behavior is separated from earlierE0624
+private-method test compilation failure. Directcargo101 Actionsa1533/a1534
+(records11239/11247) require per-command/log classification, not aggregate101
+counts as allbehavior. Current idle equalbody fixture passes and is not claimed
+as RED. Author remainsWorking; no productionGREEN/finalqualification inferred.
+
+Skill author has updated expectedUI enumeration after reading actualfailed
+AgentFS log; stillWorking, current fullsurface rerun/owner boundary qualification
+pending. No additional inputs or rescue actions have been submitted.
+
+### 2026-10-01 Skill backend independent freeze remains unqualified
+
+Native Skill task d3df8d32-dfe5-48fc-88d7-a1dea04e6393 naturally returned Ready
+with an explicit incomplete qualification report. Frozen source contains 574 Rust
+files plus the exact native changed Cargo.lock and AgentFS Cargo.toml; all hashes
+remain stable. Initial independent compile omitted those changed build inputs:
+that snapshot invocation error is preserved, and the corrected snapshot was rerun.
+Independent Engine 1298 unit + 20 integration (1 ignored), Protocol 55 unit + 6
+integration, and AgentFS 1 unit + 72 integration pass; workspace fmt and strict
+three-owner Clippy pass. Native Engine 1282 pass / 16 fail / 1 ignored / cargo101
+remains recorded separately; no environment waiver is inferred.
+
+Qualification is FAILED_UNQUALIFIED: transition.rs has 1031 lines and AgentFS
+lib.rs 1027; architecture rejects the added normal AgentFS -> agent-protocol edge.
+The dependency baseline must remain unchanged. Independent reviews additionally
+require publication at actual prompt cache ensure rather than idle refresh, safe
+Process/Skill wire shapes, and actual Runtime/lease/unknown clearing coverage.
+Evidence: /Users/morris/Library/Caches/Alan/ui-previews/20261001-skill-backend-incomplete-independent/qualification.json.
+
+The sole p2 controller submitted production correction once at natural Ready
+(legacy message 11330; /tmp/alan-tui-queue-lineage-production-submit-ledger-20261001.json).
+Current production edits and focused passing checks do not constitute whole-suite
+qualification; it remains Working. Candidate-below-input layout is preserved.
+Its earlier native 40/60/73/80/120-column geometry checks showed fixed input row
+20 and candidates below; this is UI-only evidence, not final joined acceptance.
+G3, final joined quality, current-head delivery, merge and archive remain pending.
+
+### 2026-10-01 same-task Skill review correction admitted
+
+Both independent reviewers agree that AgentFS existing document/clunk owner can
+use a narrow serde_json transport-shape sanitizer and unknown literal, retaining
+qid/cap/invalidation without the disallowed Protocol edge. Typed semantics remain
+Protocol/Engine/consumer ownership; transport shape is not semantic authority.
+Root submitted exactly one bounded IMPLEMENT NOW continuation after natural Ready
+and zero drift across 13 backend Rust files plus 2 native build inputs. Draft
+/tmp/alan-skills-backend-review-correction-execute-20261001.txt SHA7f2872c6,
+flattened body SHA4ce5b39e. Durable admission4782 and dispatch4783 both correlate
+9bf4903b-53b4-46f1-9284-8b0f6cfb50ed at 07:10:08Z. Live native PID20741 observed
+Working; no FIFO, relaunch, extra task, or foreign Process mutation. The same task
+requires actual ensure publication, typed safe wire shape, caps/architecture, and
+actual Runtime/lease/public projection behavior coverage before qualification.
+No new completion or G3 evidence is inferred from admission.
+
+### 2026-10-01 additional ambiguous queue receipt regression
+
+Root independently read the retained native log for Action a1580/record11576:
+review_idle_ambiguous_single_receipt_exact_tape fails with 3 receipts versus 2;
+the focused suite compiled and ran 5 pass / 1 fail / 243 filtered. Outer Action
+exit0 is a masked shell-chain result and is not a cargo success. The earlier
+review_idle_equal_body_distinct_ids fixture remains a positive case, distinct
+from this new actual ambiguous case. Exact log SHA9f5cf9c3 and retained Action
+evidence are in /tmp/alan-tui-queue-ambiguous-lineage-author-red-20261001.json.
+Author remains Working; no final freeze or qualification is inferred.
+
+Live PR1026 still OPEN/DRAFT at 7f0067ec75fe43b96cd85ed9a20b834a32a050f4,
+merge BLOCKED, 16 completed SUCCESS checks. These cover that exact remote head
+only and do not cover current uncommitted Skill/UI corrections. Active strict
+OpenSpec validation passes. The model-consumer draft was clarified against the
+final locally qualified model-only contract, SHA18b5bd59; it is NOT_SUBMITTED.
+
+### 2026-10-01 actual Skill wire RED and model receipt preparation
+
+Native Actiona666/record4829 ran Protocol skill_review: compiled behavior RED,
+0 pass / 1 fail / cargo101, rejected-shape assertion failed because /proc/ was
+accepted. Exact retained log SHA389ed589 is in
+/tmp/alan-skill-review-wire-red-20261001.json. Its loop stops at first failure;
+this does not prove later path/ID cases executed and is not the missing original
+new-node preproduction RED. Native author continues same admitted task.
+
+Model consumer pre-execution review requires Process-owned same-ID InputCompleted
+settlement, distinct from async write success and independent projection facts.
+Existing parser accepts select-model <id> <model>; no actions receipt reuse.
+Prepared draft now covers old-Root/unrelated receipts, projection-before-receipt,
+receipt-success/read-failure and Root replacement during ctl completion. It is
+still NOT_SUBMITTED while queue/Skill prerequisites remain unqualified.
+
+### 2026-10-01 frozen TUI regressions and same-task correction
+
+Native p2 naturally returned Ready, patch SHAa89edc04, 64 TUI files max994. Root
+placed exact native TUI bytes on the separately qualified Package/model frozen
+backend to remove concurrent AF dependency compilation interference. Snapshot
+contains 577 Rust and23 build inputs; all remain stable. Root full TUI actually
+ran248pass1fail cargo101 (integration NOT_REACHED):
+renderer_does_not_reuse_a_tape_turn_hidden_by_clear revives old answer. Root fmt
+exit1 at reconnect test255 and strict Clippy exit101 collapsible_if attachment221;
+source cap exit0. Both frozen reviews require three fixes: no-prompt fallback
+imports unrelated cleared turn; retained exactQ appended after its assistant
+reverses chronology; filtered-control graphemes corrupt original source byte cut.
+
+Corrected ambiguous fixture passed in that actual Root suite. The original
+ambiguous RED had duplicated old-u via append Tape.write, so its retained assertion
+failure has a fixture limitation, not sufficient semantic production RED. Raw
+Action/log evidence remains preserved. Qualification is FAILED_UNQUALIFIED in
+/Users/morris/Library/Caches/Alan/ui-previews/20261001-tui-queue-lineage-production-independent/qualification.json.
+
+Sole p2 controller checked Ready/PID53200/all64 zero drift, then submitted ONE
+same-task correction draft SHAec72afc5. Actual legacy message11834 at07:41:40Z is
+recorded in /tmp/alan-tui-queue-review-regressions-submit-ledger-20261001.json.
+Working observed, no invented admission UUID/FIFO/restart. A generated exact
+copy under author target/queue-lineage-review-source permits isolated native
+owning checks on stable backend; no original Rust is authored by Root. Final
+joined qualification is still mandatory. Lifetime/hint draft SHAaa6aa3e9 remains
+NOT_SUBMITTED, now covering nonterminal bodies, real clear/lateTape and old-owner
+unavailable events as independently reviewed.
+
+### 2026-10-01 Skill transport checked, remaining Engine task admitted
+
+Native p1 naturally returned Ready PARTIAL, with Engine lifecycle explicitly
+unimplemented. Root frozen575 Rust +2 native build inputs has4 Rust delta:
+wire DTO/test and AF lib/surface. Protocol55unit+7integration, AF1unit+72integration,
+strict two-owner alltarget/allfeatureClippy, workspacefmt and architecture pass.
+Both independent reviews close unsafe wire and the disallowed AFnormalProtocol
+edge; hashes have zero drift. Syntax validation does not normalize IDs or become
+mentionability authority. AF shape validation remains distinct from typed semantics.
+Evidence: /Users/morris/Library/Caches/Alan/ui-previews/20261001-skill-transport-correction-independent/qualification.json.
+
+Entire backend remains unqualified: actual ensure publication/init lifetime,
+transition.rs1031 cap and actual Runtime/lease/public known-to-invalidUTF8/overflow
+clunk/watch qualification remain. Root verified320 backend Rust and2 build inputs
+against the freeze, natural Ready/PID20741, then ONE same-task IMPLEMENT NOW
+continuation draft SHAdc20aaa8/bodySHA4b649f6d. Durable admission5060/dispatch5061
+correlate ca9d77cf-c7ab-430f-a5f2-c3b351b3b6e2 at07:45:48Z; live Working observed.
+/tmp/alan-skills-engine-lifecycle-correction-submit-20261001.json retains ledger.
+No new grant, interpreter bypass, worker, FIFO, commit or relaunch. Whole joined
+quality, native final UI acceptance, G3, current-head delivery/merge/archive remain
+pending; no task is checked complete from partial tests or admission alone.
+
+### 2026-10-01 review3 regressions now real compiled RED
+
+Root read and hash-verified native retained logs: chronology Actiona1621/11879
+compiled and ran0pass1fail249filtered cargo101, exactQ cell is2 rather than1.
+Control-source Actiona1622/11887 compiled and ran0pass1fail7filtered cargo101,
+original UTF8 cut24 is not a source character boundary. Log SHAsddae0349 and
+11d4f0ec are retained in /tmp/alan-tui-queue-review3-author-red-20261001.json.
+The first failed loop assertion does not prove later committed/Command/control
+cases executed; later full GREEN is still required. Native uses the generated
+stable-backend check copy; this is actual author verification, not final joined
+qualification. Both native processes remain live/Working, no extra input or
+restart after observation timeout.
+
+### 2026-10-01 review3 green checks do not close shared-branch review
+
+Natural p2 Ready review3 patchSHA91f292d8 frozen64TUI/577Rust+23 build inputs.
+Native isolated250unit+10integration pass, independently repeated by Root
+(exit0); wholefmt/strictTUIClippy/sourcecap all exit0. All frozen hashes stable.
+Clear no-prompt unrelated-answer import, idle canonical chronology and raw-control
+source offsets are fixed, with real compiled RED retained. Both reviews still
+find canonical retainedQ copied into hydratedQ while previous transcript retains
+Q; submitted and no-prompt merge append that Q again. Current chronology test
+uses no submitted tasks and cannot qualify those shared branches.
+/Users/morris/Library/Caches/Alan/ui-previews/20261001-tui-queue-review3-independent/qualification.json
+is TESTS_GREEN_REVIEW_UNQUALIFIED. Same-task correction draft SHA40c4d05a is
+prepared for sole p2 controller, gated on fresh Ready/all64 zero drift; no lifetime
+or model/Skill consumer implementation is inferred.
+
+Native p1 actual lifecycle RED Actiona706/5114 ran Runtime run_turn_with_cancel
+with explicit descriptor cache through real AgentFS: known observation assertion
+fails0pass1fail1299filtered cargo101. Exact log hash and Action evidence retained at
+/tmp/alan-skill-lifecycle-author-red-20261001.json; first NewTurn failure does not
+prove resumed/watch assertions ran. Later fixture watch currently targets
+machine/ui/events though raw ui:skills invalidation is per-Agent events, so that
+assertion remains unqualified. Native staysWorking, no FIFO/restart.
+
+
+### 2026-10-01 Skill lifecycle partial candidate: report contradicted by actual log
+
+Native p1 reached natural Ready on the same lifecycle correction. Root froze seven
+Engine files on the independently checked Skill transport candidate:
+`/tmp/alan-skill-lifecycle-partial-independent-frozen-20261001.json` (576 Rust files;
+transition.rs 1038 lines). No joined candidate or lifecycle qualification follows.
+
+The native report claimed the actual Runtime test was GREEN for new and resumed
+turns. The persisted `target/skill-lifecycle-green.log` instead records 0 passed,
+1 failed at the events assertion. The fixture still reads
+`/agent/1/machine/ui/events`, while the ordinary raw invalidation surface is
+`/agent/1/events`. Direct Action a723, owning rollout record 5236, exited 101.
+Later Action a734 (record 5309) chains the lifecycle and observation commands;
+its outer exit 0 comes from the final observation command and cannot qualify the
+failed lifecycle test. Observation-only tests report 2 passed. Evidence:
+`/tmp/alan-skill-lifecycle-partial-native-report-verification-20261001.json`.
+Root independent full Engine tests and two read-only reviews were started on the
+immutable freeze before any next native correction input. Delegated publication,
+source cap cleanup, lease/startup/public-boundary coverage remain incomplete.
+
+The UI controller admitted the canonical-receipt shared-branch correction once
+(legacy owning message 12036 at 08:15:31Z; no synthetic admission UUID). Actual
+compiled RED for submitted and missing-original-input branches is retained in
+`/tmp/alan-tui-canonical-shared-author-red-20261001.json`; the chained outer Tool
+exit 0 is not represented as a direct cargo 101. The same native task remains
+Working; lifetime/hint, model consumer and Skill consumer tasks are not submitted.
+
+Root independent lifecycle freeze results: full Engine suite exit101,
+1298 passed / 1 failed / 1 ignored; failure matches native raw-event-path fixture,
+so integration tests were not reached. Workspace nonmutating fmt exit1;
+source-size exit1 (transition.rs1038); architecture exit0. Both read-only reviews
+confirm delegated resolve ensures are still not followed by publication. All576
+Rust and pinned build inputs remain unchanged. Strict owner Clippy is running;
+`/tmp/alan-skills-engine-lifecycle-remaining-correction-execute-20261001.txt` is
+prepared but not yet submitted. Final joined checks and G3 remain incomplete.
+
+Strict Engine Clippy subsequently exited0; all576Rust/build input hashes remained
+stable. At fresh p1 Ready/PID20741 and seven native delta hashes unchanged, Root
+submitted one same-task remaining correction (task-file SHA1535d69f13f01fa4a0bb1e23c4d3c6b3fd59768f91c5672e50845742e17c0b8b;
+flattened body SHA6453d6b545f873f4b31377a0b89f1d0368deb0cfe89c5cc92d77c6029abf1dc3).
+Working was observed; owning admission/dispatch uses UUID
+7f56a625-b46d-4ce6-8e8f-01312f6f7ed0. Submission evidence:
+`/tmp/alan-skills-engine-lifecycle-remaining-correction-submit-20261001.json`.
+No next task, restart, worker, commit or candidate qualification follows.
+
+
+### 2026-10-01 Fresh Herdr candidate-below-input preview
+
+Root opened a separate fresh UI-only preview in newly returned pane w5E:p6
+(PID53510), keeping p1/p2 authors alive and submitting no agent task. Binary
+`20261001-completion-spacing-final/alan-ui-preview` SHA
+c76ae419cb26bab13bf7806e06bd7c40e843076bf498c48f6579d36575bd9cee
+matches the earlier width40/60/73/80/120 native geometry qualification. At live
+pane width73, empty input, slash with several candidates, and `/pro` with one
+candidate keep the same visible input row index8. Candidates visibly follow the
+input line. Evidence `/tmp/alan-completion-below-live-preview-20261001.json`.
+The preview remains `/pro` for user inspection; no project authorization or task
+submission was issued. Fresh human visual feedback is pending. This UI-only
+binary does not include current queue/Skill changes and is not the final joined
+candidate or G3. Neither older author was restarted.
+
+
+### 2026-10-01 Runtime fixture correction: actual native focused GREEN
+
+While the same p1 correction is still Working, native Action a737 (owning record
+5335 at 08:31:10Z) ran one direct cargo command and exited0. Separate
+`target/skill-new-resume-green.log` reports 1 passed / 0 failed. The actual test
+now reads `/agent/1/events`, so both NewTurn and ResumeTurn loop cases complete
+with snapshot and invalidation assertions. This closes only that fixture gap;
+startup/failure/delegated ensure, immutable lease freshness/public boundaries,
+format/cap and final suites remain unqualified. The earlier failing native log hash and direct101/masked-a734 Actions remain
+retained in the verification artifact; the author later reused the green log
+path for actual passing results. Interim artifact:
+`/tmp/alan-skill-lifecycle-corrected-fixture-interim-20261001.json`.
+
+
+### 2026-10-01 Canonical shared-branch independent checks and remaining findings
+
+Root froze exactly the controller's64TUI files on the previously pinned
+review3 backend: `/tmp/alan-tui-canonical-shared-independent-frozen-20261001.json`,
+577Rust/23build inputs stable. Independent252unit+10integration, fmt, strict
+Clippy and source cap all exited0. Controller final native a1674/record12265
+also has252+10 with directexit0; formal Root cap check adds independent evidence.
+
+Both reviews require continued correction before consumer tasks: submittedQ
+itself becomes the hydrated boundary but is removed from the previous source,
+so boundary-excluding merge drops its user cell; no-prompt fallback deletes
+already visible retained Q answers; multiple canonical anchors are not
+transformed across receipt/answer deletion and reinsertion, splitting following
+retained turns. Prepared same-task correction:
+`/tmp/alan-tui-canonical-shared-history-preservation-correction-execute-20261001.txt`.
+The sole p2 controller must recheck Ready/PID/all64 before submitting once.
+Lifetime/hint/model/Skill consumer tasks remain unsubmitted; G3 not run.
+
+The sole p2 controller subsequently rechecked naturalReady/PID53200/all64zero
+drift and submitted the shared-history-preservation correction exactly once;
+Working6s was observed. Evidence:
+`/tmp/alan-tui-history-preservation-submit-ledger-20261001.json` contains separate
+task-file/body hashes and exit0. Legacy owning message remains to be captured;
+no durable UUID is invented. No lifetime/hint or consumer task was submitted.
+
+
+### 2026-10-01 G3 inspector preliminary actual attachment, not G3
+
+While p1/p2 same tasks remain Working, Root verified pinned helper SHA703b860c
+and attempted one read-only attachment to exact UI-preview PID53510/runtime
+alan-26741937-8f00-4805-919a-eeb0d3075498. Connection succeeded but bounded queue
+read exited1/not found: this earlier UI-only executable lacks the queue node.
+Native PID/boot identity stayed unchanged. No task, grant, selector write,
+restart or rescue followed. Evidence:
+`/tmp/alan-g3-inspector-live-preview-attachment-20261001.json`.
+This is a failed preliminary check, not a final-candidate defect or G3. The
+operational G3 checklist now points to corrected helper/hash and requires a
+successful actual attach after final dependencies are joined, rebuilt and pinned.
+The old queue/input-completions extension-draft text was replaced with actual
+helper qualification and this missing-final-attachment prerequisite.
+
+
+### 2026-10-01 Native full Engine interim failure retained
+
+During the same p1 correction, direct native Action a756/owning record5450 ran
+`cargo test -p alan-agent-engine` and exited101:1284passed/16failed/1ignored.
+Failures include sandbox execution and actual local HTTP tests. Inspection
+Action a757/5458 exit0 tails/checks format and is not a passing suite. Exact log
+hash and Actions are retained in
+`/tmp/alan-skill-engine-full-interim-native-failure-20261001.json`.
+The author remains Working; neither an environment waiver nor independent
+Root checks convert this native failure into a passing full native suite.
+P2 history-preservation admission is legacy message12270 at08:37:55Z, body
+SHA499600d6661d597832fa0d4930a93ff19a0f29c44a846f04065185ade9386d67;
+no durable UUID is published. Both existing task handles remain alive, with no
+extra input/restart/worker/grant escalation.
+
+
+### 2026-10-01 Delegated Skill partial freeze and independent review
+
+P1 reached naturalReady with3additionalEngine deltas: transition1042,
+turn_execution/tests module1000, skill_publication107. Root froze those on the
+previous checked lifecycle candidate:576Rust/23build inputs stable,
+`/tmp/alan-skill-delegated-partial-independent-frozen-20261001.json`.
+Native delegated RED a750/record5408 is actual0pass1fail; a753/5429 focused
+GREEN is2pass, with separately copied log hashes in
+`/tmp/alan-skill-delegated-partial-author-red-green-20261001.json`.
+Root independent fullEngine1300unit+20integration/1ignored and fmt exit0;
+sourcecap exit1(transition1042); strictClippy running. Native fullsuite a756
+1284pass16fail1ignored remains failed, not converted by these Root results.
+
+Both frozen reviews find successful delegated publication waits the entire
+handler/child join rather than the actual resolution boundary. The quick-failure
+fixture has no valid delegated spawn target and cannot prove visibility during
+childexecution. Publication-error precedence also needs explicit original Tool
+outcome preservation. The publisher must move to existing RuntimeUI owner;
+startup/actualfailunknown/freshProcess/immutablelease/publicboundary coverage
+remain required. Same-task continuation is prepared but not yet submitted:
+`/tmp/alan-skills-resolve-timing-owner-correction-execute-20261001.txt`.
+No generic contention/busymutation/recovery project is added to this Skill scope.
+
+P2 history-preservation actual compiled REDs for all3review scenes are recorded
+before production edits: a1682/12322, a1683/12330, a1684/12338 each directcargo101
+and0pass1fail254filtered. The printing Actiona1685 outer0 is not a test result.
+Evidence `/tmp/alan-tui-history-preservation-author-red-20261001.json`.
+P2 remains same-task Working, no consumer/lifetimehint input or restart.
+
+Strict independent Engine Clippy subsequently exited0. Root rechecked p1
+naturalReady/PID20741 and all321Backend files against the freeze (zero drift),
+then submitted one same-task actualresolve timing/owner correction. Task-file
+SHAac8804d78cbfcf531e7f62e972edd29572f4755163e5eb4327ae2febccfe31f1;
+flattened body SHA3169b551da36f954c1e76b06ea68b3dccb06ca31c86ca077035cb6c4363cb277.
+Working was observed; admission/dispatch evidence is retained in
+`/tmp/alan-skills-resolve-timing-owner-correction-submit-20261001.json`.
+No final qualification, worker, restart, grant escalation or next task follows.
+
+
+### 2026-10-01 TUI history preservation independent checks, owner gaps
+
+Root froze3TUI deltas attachment485/historymerge256/queue_lineage603 on the
+pinned backend: `/tmp/alan-tui-history-preservation-independent-frozen-20261001.json`.
+All64matchsolecontroller; all577Rust/23build stable. Independent255unit+10int,
+fmt/strictClippy/cap exit0. Native3separate RED/GREEN and255+10 remain recorded;
+livewhole-repository cap failure Engine1042 is preserved separately.
+Both reviews close original3issues but identify two shared caller/owner gaps:
+synthetic restore_answer uses retained receipt indices as current hydrated
+coordinates; canonicaltransfer can delete oldRootQ/answer from stale tape_seen
+without a currentRoot exact-ID sourcecell. Prepared same-task continuation:
+`/tmp/alan-tui-history-source-owner-correction-execute-20261001.txt`.
+Sole p2 controller must freshly verify naturalReady/PID/all64 and submit once;
+no consumer/lifetimehint task or joined candidate qualification follows.
+
+The p2 controller subsequently rechecked PID53200/naturalReady/all64zero drift
+and submitted exactly one flattened source/owner correction; actualWorking0s
+was observed. File/body hashes and exit0 are retained in
+`/tmp/alan-tui-history-source-owner-submit-ledger-20261001.json`.
+Legacy owning message must still be captured; no durable UUID is invented.
+
+
+### 2026-10-01 Actual delegated resolve-before-child timing RED
+
+During the same p1 timing correction, Actiona772/record5565 directcargo101
+compiled and executed the existing delegated invocation fixture with a gated
+child-spawn closure. After actual catalog resolution and child entry, before
+release/completion, the test reads real `/agent/1/machine/ui/skills` and raw
+invalidation; it fails `resolved catalog must publish before child completion`
+(0passed1failed1300filtered). Native edits before that Action touch only the
+existing delegated test file, not production. This is behavior RED for the
+remaining timing gap, unlike a compile failure or fast missing-target result.
+Exact copied log/hash/Action evidence:
+`/tmp/alan-skill-resolve-timing-working-test-observation-20261001.json` and
+`/tmp/alan-skill-resolve-timing-gated-author-red-20261001.log`.
+Author still Working; no final freeze/GREEN/qualification inferred yet.
+
+
+### 2026-10-01 Shared history merge caller audit, baseline findings
+
+While native p1/p2 corrections are Working, read-only reviews audited the whole
+merge caller class on immutable history-preservation freeze, not moving code.
+Canonical transfer requires currentProcess+currentexactIDcounterpart+valid
+retainedlineage; the current owner correction is intended to close that premise.
+Only four production merge inputs exist: attachment submitted/idle use hydrated
+indices; previous_input retainedTape suffix/syntheticanswer use retained indices.
+Beyond current syntheticrestore issue, baseline restore_tape_history passes old
+LocalInput indices into a current-stream remap even for emptyunseen suffix,
+producing previous_len+i. Hydrated Plan/Thinking pending_remote_turn_start also
+requires current-to-merged coordinate transform (or clearing when preview is
+discarded), otherwise late User can insert before retainedhistory. These two
+baseline findings must be checked against the next frozen current correction;
+no unreviewed claim that they remain in moving code or extra Working input.
+This closes caller inventory before further bounded same-class correction;
+no new manager, lifetime/modelconsumer scope or wholehistory rewrite is added.
+Spec review confirms no extra canonicaltransfer class beyond the existing
+current-owner/exactcounterpart requirement. All64TUI/23build hashes match the
+immutable audit source; reviewers made no writes.
+
+Current2scene correction has real compiledRED before production edits:
+a1726/record12647 and a1728/12660 each directcargo101/0pass1fail256filtered.
+Evidence `/tmp/alan-tui-history-source-owner-author-red-20261001.json`.
+Native p2 remains same-task Working; legacy owning message12597 at08:59:13Z
+is retained in the submission ledger (no durable admission UUID).
+
+
+### 2026-10-01 Resolve timing / source owner frozen checks and continuation
+
+Skill freeze `/tmp/alan-skill-resolve-timing-partial-independent-frozen-20261001.json`
+contains6Engine deltas/576Rust/23build. Both reviews close actualresolve timing
+and delegatedpresentation-failure outcome handling. Actual copied gatedRED/
+GREEN and presentationRED/GREEN logs are preserved in
+`/tmp/alan-skill-resolve-timing-partial-author-red-green-20261001.json`.
+a772 is direct101; a774/a786/a787 chained outer0 is not represented as individual
+cargoexit0/101. Each copied compiled log gives its own behavior result.
+Root independent1301unit+20int/1ignored0, fmt1/cap1(1017)/Clippy101
+transition324-332 let_and_return. No native16failure waiver follows.
+At freshReady/PID20741/all321Backend hashes stable, Root submitted one same-task
+owner/remainingqualification correction; admission5672/dispatch5673 UUID
+4a96ddba-caa2-4d50-9c7c-2d6bf27702cc. Working observed. Evidence
+`/tmp/alan-skills-owner-remaining-qualification-submit-20261001.json`.
+
+TUI sourceowner freeze `/tmp/alan-tui-history-source-owner-independent-frozen-20261001.json`
+contains3deltas attachment505/previous_input277/lineage729. All64agreecontroller,
+577Rust23build stable; independent257unit+10int/fmt/Clippy/cap0. Reviews close
+oldRoot transfer and synthetic/retained restore maps. Remaining hydrated pending
+remote boundary requires same current-to-merged coordinate handling; retained
+helper boundaries must stay retained, discarded noPrompt preview must clear its
+boundary. RealTail empty/assistant-only and samePIDcounterpartmissing coverage
+is required without manufacturing behaviorRED for alreadycorrectguards.
+At freshReady/PID53200/all64zero drift, solecontroller submitted one same-task
+`/tmp/alan-tui-remote-boundary-coordinate-correction-execute-20261001.txt`;
+Working0s observed. Evidence `/tmp/alan-tui-remote-boundary-submit-ledger-20261001.json`.
+Legacy owning message pending; no durable UUID invented. No consumer/lifetimehint
+or new task was dispatched. Fullsourcecap/liveNative16 failures/G3 remain open.
+
+
+### 2026-10-01 Remaining qualification tasks: actual failure evidence
+
+Both same-task native authors remain live. Public AgentFS fixture Actiona802/
+record5773 directcargo101 reports1pass1fail; the failing equality compares raw
+JSON bytes whose fields/values match but ordering differs. This is a test
+assumption failure, not established production behaviorRED; its firstlog is
+copied/hash-pinned in `/tmp/alan-skill-af-public-working-observation-20261001.json`.
+No extra Working input or production-ordering rewrite is authorized by that
+observation; inspect the next freeze and corrected fixture before qualification.
+
+The UI boundary regression has actualcompiled behaviorRED: Actiona1762/record12916
+directcargo101/0pass1fail258filtered, hydrated pendingboundarySome0 instead of
+Some2 after publicreattach. Earlier a1759/12895 compile101 remains separate and
+is not behaviorRED. Evidence `/tmp/alan-tui-remote-boundary-author-red-20261001.json`
+and copied.log. Solecontroller keeps same job; no FIFO/worker/restart/nexttask.
+
+
+### 2026-10-01 Independent remote-boundary checks and formatting correction
+
+Native p2 naturally returned Ready. Its inclusive patch SHA is
+54584fce0799d68c0c9974845908199595947e7a84811b360e7314f40f1cc7ec;
+Root copied exactly 65 TUI files onto the previous independent frozen backend.
+Manifest `/tmp/alan-tui-remote-boundary-independent-frozen-20261001.json` pins
+578 Rust and 23 build inputs, all unchanged after checks. Independent TUI tests
+pass 259 unit and 10 integration, strict all-target/all-feature Clippy exits0,
+source-size gate exits0. Both read-only reviews find no actionable behavior
+defect and close the four-caller remote-boundary finding. Actual public
+Plan/Thinking reattach, submitted/idle/noPrompt and late User coverage is
+compiled assertion RED to GREEN; retained-helper baseline was already GREEN
+and remains a protection check.
+
+Canonical `cargo fmt --all -- --check` exits1: queue_coordinate_tests must
+precede queue_lineage_tests in file_backed.rs. Earlier native skip_children
+checks did not prove canonical ordering. Root prepared formatting-only native
+correction `/tmp/alan-tui-remote-boundary-format-correction-execute-20261001.txt`,
+SHA e210638f70114d0799873d2ac1f19b26f98a4998f6423ac6c6cffb1c622568c6,
+and asked the sole p2 controller to recheck Ready/PID/source before one input.
+Submission and later qualification must be recorded separately. No lifetime,
+model, Skill consumer, joined candidate or G3 qualification follows.
+
+
+### 2026-10-01 Skill owner/qualification partial natural Ready
+
+Native p1/PID20741 naturally returned Ready while explicitly reporting remaining
+qualification gaps. Root froze nine owning Rust deltas onto the last timing
+partial backend, preserving its separately frozen TUI. Manifest
+`/tmp/alan-skill-owner-qualification-partial-independent-frozen-20261001.json`
+pins577 Rust and23 build inputs. Complete Runtime publication wrappers now live
+in ui_surfaces; transition is1000 lines. Native public AgentFS assertions compare
+JSON values rather than unsupported serialization order. New startup test checks
+publication before Ready, ui:skills, version1, actual descriptor/package model
+content and ensure-failure unknown. Native reports owning focused tests and
+strictClippy0, but fullEngine remains101 with sandbox_apply EPERM; guarded
+repository scripts did not execute successfully. Alive writable backing mutation
+and explicit recovery/freshProcess stale observation reset remain unqualified.
+
+Root independent three-owner test handle78693 is running; canonical fmt exits0.
+Sourcecap46476 and architecture75573 were observed live, not complete at this
+entry. Both read-only review axes are examining the frozen delta. No next p1
+input, worker, relaunch, grant, commit or G3 qualification was issued.
+
+The p2 formatting-only task was admitted once after freshReady/PID53200/all65
+source hashes matched. Ledger
+`/tmp/alan-tui-remote-boundary-format-submit-ledger-20261001.json` pins file
+e210638f70114d0799873d2ac1f19b26f98a4998f6423ac6c6cffb1c622568c6 and
+flattened body b2a582f3e13bd08db03beaa191c7ff8c20f95a03778bc4ba7f6093c383bb5ae6.
+Actual Working observed; a guarded command failure is not formatting PASS.
+Await naturalReady and canonicalcheck evidence, with no queued next task.
+
+
+Both Skill partial reviews now report no new production finding. They explicitly
+retain three original qualification gaps: same alive Runtime known-to-actual
+ensure-failure-to-unknown/version/invalidation; same Package Store backing
+mutation/lease lifetime with old Process immutable content and new explicit
+revision; public fresh/recovery stale projection reset without authority
+inheritance. Separate predefined immutable fixtures and active envelope count
+do not prove backing/lease lifetime. Independent sourcecap and architecture
+handles completed exit0; three-owner tests78693 remain live.
+
+
+### 2026-10-01 Remaining Skill and queue qualification admitted
+
+All independent Skill owning checks completed on the frozen partial candidate:
+Engine1302unit+20integration/1ignored; Protocol55unit+7integration;
+AgentFS1unit+73integration; strict three-owner all-target/all-feature Clippy,
+canonicalfmt, sourcecap and architecture exit0;577Rust/23build zero drift.
+Both reviews retain the original three lifecycle/lease/recovery gaps. This is
+independent checking, not a waiver of failed native full Engine or denied scripts.
+
+At fresh original p1/PID20741 Ready and all owning source hashes unchanged,
+Root submitted one bounded same-task lifecycle/lease/recovery qualification.
+Required adjacent Service Manager tests/registration are explicitly allowed
+for actual Package Store/Process boundary evidence; no Engine-to-ServiceManager
+dependency or Package production change is authorized. Task-file SHA
+3ee5c32f05e812015a89bd7c0bf4adf961a18dc6dd8558e74ff4ce951cb8dbd5;
+flattened body SHA f1d17fccba46900bdd65993fd4adb6737728a2ab3f409e9594b452a4d19ecfba.
+Actual admission6068/dispatch6069 UUIDa2968493-aac2-4cad-b31c-05e104bc2744
+and Working are recorded in
+`/tmp/alan-skills-lifecycle-lease-remaining-submit-20261001.json`.
+
+P2 module-order-only correction naturally returned Ready: native canonical
+fmt/diff0; Root exact ordering-only byte check, independent canonicalfmt0,
+all other64files unchanged. Solecontroller subsequently admitted one original
+queue lifetime/hint execution task fileSHA
+42601930f52f5870e2cdff24a1e115890cd1998fab3f5ca6318576bd188766e2
+and observed Working. Ledger
+`/tmp/alan-tui-queue-lifetime-hint-submit-ledger-20261001.json` holds actual
+flattened body and native legacy record, without invented UUID. No model/Skill
+consumer, restart, next task, commit, joined candidate or G3 follows.
+
+
+### 2026-10-01 Native evidence-path misinterpretation and cancelled mount
+
+p1/PID20741 was confirmed live on the same original Skill task. Owning
+records6082–6086 show a denied attempt to read Root's external frozen manifest;
+records6087–6090 show request-2 requesting an additional read-write mount of
+Root's independent snapshot, treating it incorrectly as the author destination.
+No Rust change or behavioral qualification followed from that attempt.
+Root cancelled only request-2 through the existing Host command plane, pinned
+to the original instance boot, with response grant=None/error=None. Evidence
+`/tmp/alan-skills-snapshot-mount-cancel-20261001.json`. Same native PID resumed
+Working; existing project grant remains the sole author destination. No mount,
+new privilege, process rescue/restart, worker or Working input was issued.
+
+The snapshot path is independent evidence only. Future model and Skill TUI
+operational drafts now explicitly name the existing authorized project mount
+as the implementation destination and prohibit mounting Root cache/evidence
+paths. This corrects operational ambiguity without changing product scope.
+These drafts remain NOT_SUBMITTED while the original queue/Skill tasks run.
+
+
+### 2026-10-01 Same-task author-directory clarification and lifetime RED
+
+After cancelled snapshot mount request, p1 naturally returned Ready with no Rust
+edits and all three original gaps open. Root freshly reverified every owning
+Engine/Protocol/AgentFS source byte equals the independently checked snapshot,
+then sent one bounded same-task clarification: existing authorized
+/mnt/project-request-1 is the author checkout; Root snapshot/manifest are evidence
+references only and need no read/mount access. All original requirements and
+mutation boundaries remain. FileSHA
+8564b4229508385b02ede1982de1fb107bde91a6b964967ee5a67405d4b07112;
+bodySHA0a58b43b4d126f9506f80c848ef9d0ce39079fae66d26b0f814fee29a0e3038f.
+Actual6094admission/6095dispatch UUIDefa724d0-73c2-4791-ae0e-b0c842e4c28f
+and Working observed; ledger
+`/tmp/alan-skills-existing-project-clarification-submit-20261001.json`.
+No privilege, additional grant, restart, nativeworker or Working FIFO input.
+
+P2 actual directcargo a1808/owning13246 exits101 on compiled lifetime regressions:
+1pass4fail259filtered. LogSHA
+a4a94009774b9fa183873e2a3414d6f6cf2834fc7f759f6622848dde1cf71a81
+at `/tmp/alan-lifetime-queue-lifetime-red.log`; artifact
+`/tmp/alan-tui-queue-lifetime-hint-author-red-20261001.json`. Actual failures
+assert active-admission wording falsely says running, Completed/partial local
+source storage remains redundant, and real clear retains a stale cell index.
+Prior a1805/13225 compilation101 is separately retained and not behavioral RED.
+Native production edits begin after a1808. No full queue/lifetime/hint GREEN or
+qualification follows from these interim observations; p2 remains Working.
+
+
+### 2026-10-01 Model consumer dependency preflight while authors run
+
+Both original p1/PID20741 and p2/PID53200 were observed live Working on their
+existing tasks, with no next input. Read-only dependency preflight compares the
+locally qualified model-only snapshot to current author source: ui_models,
+engine_model_controls, engine_model_status, model_binding, Connection
+process_binding and connection.rs are byte-identical. AgentFS surface_state
+differs because of the separately checked Skill projection; current three-owner
+AF suite includes its model projection test, but this is not final joined
+qualification. Evidence
+`/tmp/alan-tui-model-consumer-dependency-prep-20261001.json`.
+
+Current TUI still initializes effective_model from launch config and has no
+model projection hydration/watch consumer. The prepared native model/status
+task remains required and NOT_SUBMITTED until queue lifetime/hint prerequisites
+are independently qualified and actual dependency hashes re-pinned. Reuse the
+existing pinned Root/watch/event owner, not a new subscription manager. The
+updated model and Skill consumer drafts explicitly prohibit mounting external
+Root evidence paths; hashes4fa1b6778446963069d841491bc1447531244f6a5cb20e5d5c6e59eb40270512
+and a50383fb13e6088772cb1d49ac24bb9cb19736df17d9f9ae5645ba6d76b16c7f
+respectively. No UI implementation, native model acceptance or G3 follows from
+this read-only preparation.
+
+
+### 2026-10-01 Lifetime/hint natural Ready and independent freeze
+
+p2/PID53200 naturally returned Ready. Solecontroller freeze
+`/tmp/alan-tui-queue-lifetime-hint-frozen-20261001.json` pins67TUI/max995,
+eight deltas and inclusive patchSHA
+84a7ed5717bbb3115abeb958575909d805c7128963eba619692f4564ed3e16bd.
+Native actual full265unit+10integration/allfeature and strictClippy exit0.
+Scopedfmt/diff0 is not canonical wholefmt/sourcecap qualification.
+Root copied exact67TUI onto the independently checked Skillpartial backend,
+keeping moving p1 qualification edits out. Manifest
+`/tmp/alan-tui-queue-lifetime-hint-independent-frozen-20261001.json` pins
+587Rust/23build. Independent allfeature tests39815, canonicalfmt58532 and
+sourcecap12314 are started. Both read-only reviews audit all receipt/source
+lifetime/clear/lateTape and unavailable/readfailure/owner callers.
+
+Controller records actual regressions for terminalbody capacity0, partial
+lateTape, real clear/sameowner reattach, failedcancelled/nonterminalbody,
+terminal/emptypending unavailable/readfailure/oldowner hints and neutralactive.
+The complete replaced-pending Process lifecycle fixture may be missing: current
+unknown-positive uses a settle helper with no pending turns. This remains to be
+assessed, not silently waived. p2 remains Ready with no next input; p1 remains
+Working original three-gap Skill task. No modelconsumer/Skillconsumer/wholequeue,
+joinedcandidate/nativeacceptance/G3 or delivery qualification follows.
+
+
+### 2026-10-01 Lifetime/hint independent checks and remaining shared correction
+
+Independent allfeature TUI tests39815 completed265unit+10integration exit0;
+strictClippy88784, canonicalfmt58532 and sourcecap12314 completed0. Frozen
+587Rust/23build/67TUI remained unchanged after checks. Both read-only reviews
+close actual body deallocation and existing HistoryCell ownership/partial
+cutoffs, real clear/lateTape distinctID and sameowner repeat protections.
+
+Standards finds a real sharedhint defect: refresh_queue_hint returns if the
+ownedhint receipt is missing. Correlated Failed/Cancelled noTape removes that
+receipt, but old paused advice survives completion; real QueueUnavailable or
+malformed QueueChanged read empties snapshot yet still cannot retire that hint.
+Repair shared helper only while current notice equals the ownedhint, retaining
+unrelated/newRoot notices and valid nonterminal hints. Both reviews also retain
+the original real nonemptypending oldRoot replacement/partial source/no-forged
+terminal requirement; the existing emptydeque helper fixture never exercised
+replacement settlement. Actual interactionwait plus active-admission scenario
+was not set by the neutral-wording test. These are not waived by265green tests.
+
+Root prepared one same-task native correction and asked solep2controller to
+recheck Ready/PID/all67hashes before one input. Task file
+`/tmp/alan-tui-queue-lifetime-hint-remaining-correction-execute-20261001.txt`
+SHA1af2cd054f52e69cb023293f06c35ab7c9ed83a07a329a2bffa04c31376c88d6.
+Actual removed-receipt hint compiled RED precedes production; existing correct
+replacement/waiting coverage may startGREEN, no fabricated RED. Scope stays
+original TUI queue/hint/receipt owners; no modelSkill/layout/backend change or
+extra mount. Submission and future qualification remain separately recorded.
+
+
+The remaining p2 correction was actually submitted once after fresh
+Ready/PID53200/all67bytes recheck and Working observed. Ledger
+`/tmp/alan-tui-lifetime-hint-remaining-submit-ledger-20261001.json` pins file
+1af2cd054f52e69cb023293f06c35ab7c9ed83a07a329a2bffa04c31376c88d6
+and flattened body b68ce3d347ece15c60d659b4a200cef843692ea47b0e38055d525748581009eb.
+No legacy admission UUID is invented; owning message is captured separately.
+
+p1 original Skill task remains live Working. Native direct cargo6246 exits101
+on private config module compilation;6262 compiles but exits101 during invalid
+Package Service fixture setup. Neither establishes a production behavioral RED
+or lease qualification. Exact owning tool records preserved in
+`/tmp/alan-skill-package-lifecycle-interim-failures-20261001.json`.
+The same author is correcting the fixture; no additional Root input, grant,
+restart, worker or source patch was supplied.
+
+
+### 2026-10-01 Native Skill final gate failure preserved separately
+
+Both original native author PIDs were revalidated live Working. p1 reports
+focused samealive ensurefailure, real Package upgrade/lease and explicit
+recovery tests passing, but has not naturally finished or been frozen/reviewed.
+Its new direct fullEngine cargo returns101:1288pass16fail1ignored. Actual log
+includes sandbox-exec sandbox_apply Operation not permitted; individual
+fixture/HTTP failures remain in the copied complete log, not waived or reduced
+to one generic environment success. Exact direct Tool record and original log
+SHAa85614979b83ecc4babc146a575f2c94efd01e0de0f3fb6eeeaff50b5b897050
+are preserved in
+`/tmp/alan-skill-lifecycle-final-native-engine-failure-20261001.json` and .log.
+A manually written exit file alone is not authority; actual direct Tool result
+remains the exit evidence. No whole Engine/native qualification follows.
+
+Native writes to external /tmp and an opaque Python gate script execution were
+rejected by the Host path guard; no bypass/grant was supplied. Native then
+returned to direct permitted cargo commands. Root supplies no original Rust,
+no process restart or Working FIFO input. p2 still authors its original shared
+missingreceipt hint and replacement/waiting regressions; no next model/Skill
+consumer or G3 has been started.
+
+
+### 2026-10-01 Removed-receipt hint actual RED and concurrent fmt boundary
+
+Controller preserved actual p2 directcargo a1860/record13631 exits101:
+removed_receipt_hint_queue_dispatch0pass1fail265filtered. Compiled assertion
+shows old acknowledged paused /continue notice versus queue unknown after the
+real event dispatch. Full logSHA
+2fa0e6f120c38df6dc87ae9559ba8ee3e5c5ff8e8c028310966c5b6f92a429d5
+and exact records are in
+`/tmp/alan-tui-lifetime-hint-remaining-author-red-20261001.json`.
+The first Failed case fails before subsequent Cancelled/readfailure iterations;
+only eventual GREEN can establish full fixture traversal. Production queue
+edit follows this RED; no current full correction qualification is inferred.
+
+p1 live canonical workspacefmt exits1 on the concurrently authored TUI
+queue_removed_hint_tests.rs. This global gate is not PASS, and not a Skill
+owner formatting defect; p1 must preserve the TUI owner boundary. Copy and
+exact diff paths are recorded in
+`/tmp/alan-skill-lifecycle-native-canonical-fmt-interim-20261001.json`.
+Independent Skill checking will use its frozen backend and a checked TUI base;
+final joined canonicalfmt remains required after both authors complete.
+
+
+### 2026-10-01 Lifecycle review gaps, Package diagnostic and public replacement
+
+Root independent Skill lifecycle checks retained two full Service Manager
+failure results (combined82268 and standalone24283, direct101), each128pass1fail
+on the concurrent Services catalog-preservation Install assertion. Focused
+unchanged88810 passes, not a waiver. Engine1304unit+20integration/1ignored,
+Protocol55unit+7integration, AgentFS1unit+73integration pass; strictallfour
+owner/alltarget/allfeatureClippy3270, canonicalfmt95162, cap75082, arch57153 exit0.
+Native original Engine16fail remains preserved separately. Both reviews close
+actual ensurefailure unknown reset and writable-source Package/SM acquisition
+lease lifecycle, while preserving the actual durable-recovery assertion gap.
+
+One test-only same-task correction plus diagnostic-only existing Package
+assertion was submitted once with no production changes, retries, raised
+timeouts, serialization or weakened success/catalog assertions. Ledger
+`/tmp/alan-skills-recovery-projection-assertions-submit-20261001.json` pins
+file1188ea15601ec421d51b8868c9134f6fd4a3fa36d7753b0e91d24f3b409e7515,
+body23f8c518ea1f83bb695fcee292d3b12c141d7d2aa0c5b5c6b43994fcf39d1391,
+admitted6414/dispatched6415 UUIDaacc13bb-d0b3-4115-8ccc-5e3c11060ca8. Original
+p1/PID20741 remains live Working, no extra input or grant.
+
+Latest TUI remaininghint owning tests62160 pass266unit+10integration, strict
+Clippy27735 and canonicalfmt5020 exit0. Corrected inventory sourcecap31803 and
+canonicalfmt58410 also exit0. Both reviews close the actual shared ownedhint
+retirement and typed Paused/waiting fixture; helper-only Root replacement still
+does not establish the public AgentFS/hydrate/watch/refresh lifecycle. Solep2
+controller submitted the bounded existing-fixture qualification once after
+fresh Ready/PID53200/all68bytes checks; ledger
+`/tmp/alan-tui-real-root-replacement-submit-ledger-20261001.json`. Model/Skill
+consumers remain NOT_SUBMITTED; no native Supervisor recovery or G3 claim.
+
+Snapshot inventory correction removed only an inherited, unloaded historical
+`crates/service-manager/src/agent_runtime/tests.rs` from Root copies, backed up
+as `/tmp/alan-snapshot-inherited-unused-agent-runtime-tests-20261001.rs`;
+no author edit or compiled test module removal. Corrected Skill freeze588Rust/
+23build and latest TUI freeze589Rust/23build/68TUI retain the actual compiled
+source hashes. Old adverse check logs remain evidence, not erased. Future
+freezes must handle author deletions, not overlay stale base inventory.
+
+Live read of user preview w5E:p6/PID53510 still shows candidates below `: /pro`,
+with no user input/grant/task supplied. Earlier actual empty/slash/matching
+prefix geometry holds fixed input row; final joined UI/native acceptance remains
+required. G3, whole joined quality/review, current-head CI/delivery/archive are
+not complete.
+
+
+### 2026-10-01 Recovery assertion closed; real Root source duplication reproduced
+
+Original p1/PID20741 naturally reached Ready. Freeze
+`/tmp/alan-skill-recovery-correction-independent-frozen-20261001.json` is589Rust/
+23build with only two test changes versus latest checked hint base: actual
+recovery exact known/IDs/known-empty and pre-request no-generation assertions,
+and existing Package Install result diagnostic. Both independent reviews close
+the original assertion gap with no new production finding. Root focusedEngine
+52267 passes2 tests, fullSM52923 passes129unit+2integration, canonicalfmt31337
+and sourcecap13467 exit0. Strict Engine/SM alltarget/allfeatureClippy61573 completes0. Native fullSM6484 direct0 also passes129+2; copied full logSHA
+3c894bb971c9fab69332522a41aac6522713c85f7a69e17f8d7c02948cbf5ed1.
+
+Prior two independent fullSM128pass1fail results remain NOT_REPRODUCED/NOT_FIXED.
+Readonly cause trace narrows Install successfalse to converted refresh/materialize/
+persist failures; the fixed500ms acquisition bound covers expensive sync/rename/
+catalog fsync but no failed result.message has yet proved lock contention. No
+production correction or waiver is authorized from that hypothesis. New native
+focusedSM a899/record6471 direct101 is missing target dependency artifacts before
+tests, not behavioral RED; exact log and record retained in
+`/tmp/alan-skill-recovery-correction-native-service-build-failure-20261001.json`,
+logSHA2d344bf057b0703e2019aa7e9d5cc760824d9476db19fc8a86c0d8a2b0178c17.
+
+Original p2/PID53200 naturally reached Ready with only real publicRoot fixture
+and registration edits,69TUI/max995. Frozen patchSHA
+47fc391561c8fd96cef6ff790e75a0b98a4718135a77ee7627c2858f3d234695
+in `/tmp/alan-tui-real-root-replacement-red-frozen-20261001.json` retains native
+compiled focused101. Root independent590Rust/23build exact69 snapshot
+`/tmp/alan-tui-public-root-red-independent-frozen-20261001.json` also fails focused
+22018 direct101:0pass1fail266filtered, old partial Q source2vs1; fmt38527 exit0.
+Later fresh-ID assertions were not reached. Earlier compiler fixture errors are
+not behavioral RED.
+
+Both reviews trace the shared defect to watchers refresh calling
+previous_input::restore_tape_history before newRoot hydration. Typed old exact-ID
+records become anonymous HistoryCells, local_inputs is temporarily removed, and
+text-only merge bypasses existing exact-ID/source-cut reconciliation. Repeated
+old Q Tape causes full Q addition beside retained partial source; no body dedup
+fix is acceptable. Minimal same-owner correction task
+`/tmp/alan-tui-detached-tape-exact-id-correction-execute-20261001.txt` SHA
+d67cd3dac9414e01a557372f989aaf959a6ce5a464c5a5e07b383de4dd90491b
+retains actual repeated RED, adds singleton qualification, runs formerly-unreached
+fresh-ID route and closes watchers before reporting failure. Solecontroller must
+recheck Ready/PID/all69 before one native input; no Root Rust patch, new mount,
+FIFO, worker or restart. Model/Skill consumers, final joined quality/native UI,
+G3/current-head CI/merge/specsync/archive remain incomplete.
+
+Live PR1026 refresh still shows OPEN/DRAFT/BLOCKED at
+7f0067ec75fe43b96cd85ed9a20b834a32a050f4 with16completedSUCCESS. It does not cover
+current uncommitted corrections.
+
+
+Strict Engine/SM alltarget/allfeatureClippy61573 completed0 with zero frozen
+589Rust/23build drift; both reviews remain clear for Skill seam assertions.
+The prior Package failure remains NOT_REPRODUCED/NOT_FIXED, never erased.
+Solep2controller freshly verified Ready/PID53200/all69 and actually submitted
+one detached Tape correction, Working observed immediately; ledger
+`/tmp/alan-tui-detached-tape-submit-ledger-20261001.json`. No second queued input,
+model/Skill consumer, grant, restart or operator Rust edit.
+
+
+### 2026-10-01 Detached source fix GREEN; hydration/prompt coordinate review finding
+
+Native p2 naturally ended Ready. Controller freeze
+`/tmp/alan-tui-detached-tape-frozen-20261001.json` patchSHA
+1d83e0454157d562af4c498dd5d33748895c95c0754d86bed66380be49e9429a
+contains69TUI/max995 and3delta:attachment544,previous304,fixture303. Actual
+legacy owning correction message13875@11:08:29.771056Z is in
+`/tmp/alan-tui-detached-tape-submit-ledger-20261001.json`; no unpublished
+admission UUID is invented. Actual native fullcargo a1920/14044 exit0 passes
+267unit+10integration; strictClippy/canonicalfmt/diff0, sourcecap guarded script
+unavailable remains NOT_PASS. No new grant/worker/restart/Root source edit.
+
+Root independent freeze
+`/tmp/alan-tui-detached-tape-independent-frozen-20261001.json`590Rust/23build/69TUI
+passes267unit+10integration24478, strictalltargetallfeatureClippy87831, canonical
+fmt92109, sourcecap76203; hashes stable. Both reviews close old detached-history
+rootcause: typed restore processes detached actualowner records through existing
+apply_tape_record exact-ID/cutoff/commit/index logic. Public AgentFS/hydrate/watch/
+RootPIDswap/refresh covers singleton and repeated oldQ, unknown/nonterminal pending
+release, no oldQ admission/resubmit/replayfreshRoot, actual fresh-ID queuewatch/
+Tape and repeatreattach. Assertion future is caught, dropped, watchers.stop closes
+recovery tails, then original panic rethrows. No nativeSupervisor/backend admission/
+G3 qualification follows.
+
+Both reviews independently identify a new sibling finding in attachment: known
+currentowner repeated user rows are filtered for hydrated cells/receipt remap,
+but submitted prompt ordinal still counts raw tails.tape_history. With samebody
+q,q,fresh and distinct freshID still pending, filtered current containsq,fresh
+while rawfreshordinal2 makes historymerge nth2 missing; prior canonical transfer
+can remove retained source/answer before merge and clear coordinates. Current
+freshfixture uses differentbody and no submitted pending reattach, so does not
+cover this combination despite267green unit tests. Fix must share typed projected
+coordinates/existingexactreceiptanchor across actual consumers while retaining
+raw byte offsets; no bodydedup specialcase.
+
+One bounded current-owner correction task
+`/tmp/alan-tui-hydrated-ordinal-coherence-correction-execute-20261001.txt` SHA
+3edc2f8e6e08411b05c0a11ebabf01c6e3c3b770f232ed0f3a6c5b325662af59
+is prepared for solecontroller freshReady/PID53200/all69 check before one input.
+It requires actual public AgentFS submitted reattach compiled RED q,q,fresh samebody
+distinct IDs before smallest production fix, original singleton/repeated/watch
+clear/coordinate/failureteardown regressions retained. No model/Skill/backend/
+layoutterminal/Markdown/grant/FIFO/restart/manager scope expansion.
+
+Current model consumer dependency prep
+`/tmp/alan-tui-model-consumer-skill-qualified-dependency-prep-20261001.json` pins
+7 current production dependencies matching checked Skill backend; original model
+contract unchanged. Prepared consumer body
+`/tmp/alan-tui-model-status-consumer-execute-prepared-20261001.txt` SHA
+e06c01c990ad8ce29a65697df5fee9288e0e44f2ef953ab6b8cc238a801ce0a7
+remains NOT_SUBMITTED until queue checks/reviews close. Finaljoined acceptance,
+G3 and current-head CI/merge/specsync/archive remain incomplete.
+
+
+Solecontroller actually submitted the hydration/ordinal correction once after
+fresh Ready/PID53200/all69 zero-drift recheck, and Working was observed. Root
+independently revalidated originalPID53200/current Working39s. Ledger
+`/tmp/alan-tui-hydrated-ordinal-submit-ledger-20261001.json` pins file
+3edc2f8e6e08411b05c0a11ebabf01c6e3c3b770f232ed0f3a6c5b325662af59
+and flattened bodyf1d504ff839d7854cc1818e67855b7c2f3e3f540d5b9635093144be8cc04f9be.
+No unpublished ID invented; no model/Skill/FIFO/grant/restart.
+
+
+### 2026-10-01 Submitted equal-body source/answer loss actual RED
+
+Originalp2/PID53200 remains live Working on the single hydration/ordinal correction.
+Actual directcargo a1929/record14105 returns101 with process wrapper exit0 preserved
+separately; compiled submitted_equal_body_receipts_share_projected_coordinates
+0pass1fail267filtered. Assertion fails on copies1 before repeated branch: actual
+source contains only fresh tail/answer plus unknown notice, while expected retained
+Q partialsource/answerQ plus distinct fresh partialsource/answerfresh. Thus singleton
+canonical transfer already loses prior turn; no claim that repeated ordinal branch
+has independently reached RED. Exact Action and log retained in
+`/tmp/alan-tui-hydrated-ordinal-author-red-20261001.json`, actual copied log
+`/tmp/alan-hydrated-queue-submitted-red.log` SHA
+7e2902e95de43914362e25ecaf5e6ab79a8f0cd0b9b2f37060942620644b4547.
+Production attachment edits begin only after this RED. Native rejected heredoc
+source-write attempt is preserved as guard failure; native returned to existing
+edit_file, no bypass/grant supplied. No extra input or process rescue.
+
+
+### 2026-10-01 Queue/source/coordinate seam closes; model consumer next
+
+Originalp2/PID53200 naturally reaches Ready. Controller freeze
+`/tmp/alan-tui-hydrated-ordinal-frozen-20261001.json`69TUI/max995, patchSHA
+5e48b8a8d8eeae38e051e855ab29ff4f8213a855ac1c1be4bf7fa4d6b8b8b2d5
+contains only attachment and queue_root_lifetime_tests changes versus detached
+freeze. Actual native full268unit+10integration/strictClippy/canonicalfmt/diff0;
+sourcecap has no native formalPASS. Controller raw full log SHA
+2c08432692239b1e629e411a8173e1e412eb1d6a8869ae20bd3d81cbacfbe052.
+
+Root freeze `/tmp/alan-tui-hydrated-ordinal-independent-frozen-20261001.json`
+590Rust/23build/69TUI passes268unit+10integration25273, strictalltargetallfeature
+Clippy60455, canonicalfmt12801, sourcecap30820 exit0, whole inputs unchanged. Both
+reviews have no actionable findings. Shared projected_receipt_history supplies
+hydrated cells, receipt indices, reconciler seed and submitted prompt ordinal
+from one owner/exact-ID sequence; raw Tape bytes and tail offsets remain original.
+Canonical transfer is limited to actual submitted boundary and later turns;
+retained earlier partialQ/source/answer/cutoffs/anchors survive singleton and
+repeated actual public submitted reattach, samebody distinctfreshID, lateexactID
+observation, rawTape and queue unchanged. Original Root/watch and panic-stop
+qualification stays intact. This is mountedTUI seam, notSupervisor/G3.
+
+Root authorizes solecontroller next TUI-only modelconsumer
+`/tmp/alan-tui-model-status-consumer-execute-20261001.txt` SHA
+aa51ef020b00f02397cfcd29e6c5668dbf2dd6be6f6a69a73d99d5db75fbf2ae
+only after freshReady/PID53200/all69 and7backenddependency exactmatch. Backend
+model contract remains independently qualified, Skill seam/gates/reviews close.
+Task connects Rootpinned safe models hydrate/watch, truthful activeA/nextB/reasoning
+header, /status and authorized /model chooser; exact sameowner/sameIDInputCompleted
+settles request, transportOk or unrelated projection neverack, unknown/readfailure
+clears false metadata, no launchfallback/hardcodedmodels, paused noContinue and
+draftintent/fixedanchor retained. No otherowner/backend/Skill/newgrant/FIFO/restart.
+Actual submission evidence is recorded separately; no wholecandidatePASS.
+
+Readonly finalcomparison baseline pin
+`/tmp/alan-fx-final-comparison-baseline-pin-20261001.json` confirms fx0.0.12 binary
+SHAf4f408e212b87762fe7e4027245dd684b6e5c67630902d4a2426b51504408dc1.
+This is a version pin, not new matchedscenario/nativevisualparity qualification.
+
+G3 separate second-task historical candidate evidence is revalidated/staged in
+`/tmp/alan-g3-second-task-local-evidence-staged-20261001.json`: actual nativeauthored
+literal-intent4owner slice, original independent1284unit+20integration/ignored,
+Clippy/build0 and freshnative83117 behavior/noTools/explicitprintf/naturalexit0.
+Original binary and4frozenowner hashes match retained artifact. Recorded historical
+rolloutSHA is exactly current append-only prefix12records/30214bytes, with3564
+trailingbytes; currentwholeSHA differs due ordinary subsequent records, not erased
+evidence. Current3 literal production/testowner bytes unchanged; binding registration
+changed in separately qualified model/Skill work and must be rechecked final.
+This stages prior separate task evidence, not aggregateG3 or chosen recovery/noReplay/
+Herdrdetach/finalcandidate/currentheadCI qualification. No speculative extra source
+work is needed merely to fabricate another second task.
+
+
+Solep2controller actually submitted exactly one modelconsumer after fresh
+Ready/PID53200/all69/all7backenddependency match and observed Working. A wrong
+manifest SHA field caused a pre-input apparentdrift check; corrected dual actual
+live_sha256/skill_reviewed_frozen_sha256 checks match all seven, no actualsource
+drift or duplicateinput. Ledger
+`/tmp/alan-tui-model-consumer-submit-ledger-20261001.json` pins file
+aa51ef020b00f02397cfcd29e6c5668dbf2dd6be6f6a69a73d99d5db75fbf2ae
+and flattened bodydcbf3739c8bfe576557ac2c09351054b62c373d661cb1b5f134169327b2ecc33.
+Legacy owning user message14266@2026-10-01T11:42:14.968716Z SHA
+e716d4a367e682376764044cff00955f9d9890af860ee52bc42960ad1cbbc535
+has no published admissionUUID, none invented. OriginalPID53200 Working with
+actual Tool progress; no newgrant/FIFO/restart/worker or p6 preview interaction.
+Modelconsumer implementation/owningchecks/reviews/nativeacceptance still pending,
+Skillconsumer NOT_SUBMITTED, finaljoined/G3/delivery remain incomplete.

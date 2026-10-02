@@ -1,3 +1,7 @@
+#[path = "action_detail_polish_tests.rs"]
+mod detail_polish_tests;
+#[path = "action_polish_tests.rs"]
+mod polish_tests;
 use super::*;
 use std::time::Duration;
 #[path = "action_acceptance_tests.rs"]
@@ -41,6 +45,148 @@ async fn action_fixture(output: &str, result: &str) -> (alan_shell::Shell, Strin
             .unwrap();
     }
     (shell, path, id)
+}
+
+#[test]
+fn details_plain_pager_aliases_preserve_draft_and_page_saturating() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.composer.set_text("界 draft");
+    for code in [KeyCode::Char(' '), KeyCode::Char('b')] {
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+    assert_eq!(app.composer.text(), "界 draft b");
+    let saved = (
+        app.composer.text().to_string(),
+        app.composer.cursor(),
+        app.input_intent,
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    assert_eq!(
+        app.modal.scroll, 10,
+        "plain Space must page details forward"
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 10, "plain b must page details backward");
+    for modifiers in [
+        KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+    ] {
+        for code in [KeyCode::Char(' '), KeyCode::Char('b')] {
+            app.handle_key(KeyEvent::new(code, modifiers));
+            assert_eq!(app.modal.scroll, 10, "modified alias must not page");
+        }
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 0);
+    app.modal.scroll = usize::MAX - 5;
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, usize::MAX);
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    assert_eq!(app.modal.scroll, 0);
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(!app.modal.active);
+    assert_eq!(
+        (
+            app.composer.text().to_string(),
+            app.composer.cursor(),
+            app.input_intent
+        ),
+        saved
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+    assert_eq!(app.composer.text(), "界 draft b b");
+}
+
+#[tokio::test]
+async fn actual_inline_near_bottom_retained_modal_uses_full_viewport() {
+    use ratatui::{
+        Terminal, TerminalOptions, Viewport,
+        backend::{Backend, TestBackend},
+    };
+    let output = (0..60)
+        .map(|i| format!("retained row {i}\n"))
+        .collect::<String>();
+    let (shell, path, id) = action_fixture(&output, "retained result").await;
+    for width in [40, 60, 73, 80, 120] {
+        let mut app = FileBackedApp::new(path.clone());
+        file_surface::sync_action_from_file(&shell, &path, &id, &mut app)
+            .await
+            .unwrap();
+        app.drain_committed_scrollback(width, 1);
+        app.dispatch(FileBackedEvent::Terminal(crossterm::event::Event::Paste(
+            ": 界🙂 draft".into(),
+        )));
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        let saved = (
+            app.composer.text().to_string(),
+            app.composer.cursor(),
+            app.input_intent,
+        );
+        let mut backend = TestBackend::new(width as u16, 22);
+        backend.set_cursor_position((0, 20)).unwrap();
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(2),
+            },
+        )
+        .unwrap();
+        let anchor = super::completion_anchor_tests::frame(&mut terminal, &app);
+        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        action_detail_io::start_pending(&shell, &mut app, &tx);
+        app.dispatch(rx.recv().await.unwrap());
+        app.dispatch(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        super::completion_anchor_tests::frame(&mut terminal, &app);
+        assert_eq!(
+            terminal.get_frame().area().height,
+            22,
+            "full retained modal clipped"
+        );
+        assert_eq!(terminal.get_frame().area().y, 0);
+        let before = terminal.backend().buffer().clone();
+        let hint = (0..width as u16)
+            .map(|x| before.cell((x, 0)).unwrap().symbol())
+            .collect::<String>();
+        for label in ["↔ Action", "Space/b page", "Esc"] {
+            assert!(hint.contains(label), "hint clipped at {width}: {hint}");
+        }
+        for (forward, backward) in [
+            (KeyCode::PageDown, KeyCode::PageUp),
+            (KeyCode::Char(' '), KeyCode::Char('b')),
+        ] {
+            app.handle_key(KeyEvent::new(forward, KeyModifiers::NONE));
+            super::completion_anchor_tests::frame(&mut terminal, &app);
+            assert_eq!(app.modal.scroll, 10);
+            assert_ne!(terminal.backend().buffer(), &before);
+            app.handle_key(KeyEvent::new(backward, KeyModifiers::NONE));
+            super::completion_anchor_tests::frame(&mut terminal, &app);
+            assert_eq!(terminal.backend().buffer(), &before);
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        super::completion_anchor_tests::frame(&mut terminal, &app);
+        assert!(!app.modal.active);
+        assert_eq!(
+            (
+                app.composer.text().to_string(),
+                app.composer.cursor(),
+                app.input_intent
+            ),
+            saved
+        );
+        // Full-screen details can relocate Inline, but the restored draft's caret is exact.
+        assert!(terminal.backend().cursor_position().y <= anchor);
+    }
 }
 
 #[tokio::test]

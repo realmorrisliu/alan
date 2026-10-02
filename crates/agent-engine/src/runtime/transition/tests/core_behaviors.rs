@@ -140,14 +140,14 @@ fn test_split_text_for_typing_long_text_chunks_preserve_content() {
 #[tokio::test]
 async fn test_cancel_current_task() {
     let config = Config::default();
-    let mut machine = AgentMachine::new();
-    machine.set_confirmation(PendingConfirmation {
+    let machine = AgentMachine::new();
+    let pending = PendingConfirmation {
         checkpoint_id: "cp_123".to_string(),
         checkpoint_type: "test_checkpoint".to_string(),
         summary: "Test".to_string(),
         details: json!({}),
         options: vec!["approve".to_string()],
-    });
+    };
     let runtime_config = super::RuntimeConfig::default();
 
     let mut state = RuntimeLoopState {
@@ -170,6 +170,13 @@ async fn test_cancel_current_task() {
     };
 
     let agent_files = state.agent_files();
+    let request_id = agent_files
+        .write_confirmation_request(&pending)
+        .await
+        .unwrap();
+    state
+        .machine
+        .set_confirmation_for_request(&request_id, pending);
     let host_mount_requests = state.environment.host_mount_requests();
     let result = cancel_current_task(
         &mut state.machine,
@@ -270,7 +277,9 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_bat
             id: "call-1".to_string(),
             name: "request_confirmation".to_string(),
             arguments: json!({}),
-        }], true);
+        }],
+        true,
+    );
 
     let mut state = create_replay_memory_test_state(memory_dir.clone(), machine);
     let cancel = CancellationToken::new();

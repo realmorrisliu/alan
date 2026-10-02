@@ -85,6 +85,10 @@ pub(crate) fn advance_accepted_submission<'a>(
                     deferred_actions: Default::default(),
                 };
             }
+            state
+                .environment
+                .reconcile_input_captures(&state.machine.input_queue())
+                .await;
         }
         if reject_compaction {
             return AcceptedSubmissionOutcome {
@@ -127,6 +131,10 @@ pub(crate) fn advance_accepted_submission<'a>(
                 .machine
                 .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
         }
+        state
+            .environment
+            .reconcile_input_captures(&state.machine.input_queue())
+            .await;
         if (completes_input || cancelled_before_start || state.machine.submission_was_cancelled())
             && !state.machine.has_pending_interaction()
             && state.machine.current_submission_id().is_some()
@@ -153,6 +161,7 @@ pub(crate) fn advance_accepted_submission<'a>(
 
         let deferred_actions = state.machine.drain_deferred_runtime_actions();
         state.machine.finish_submission();
+        crate::runtime::queue_publication::observe(&state.machine.input_queue()).await;
 
         AcceptedSubmissionOutcome {
             result,
@@ -243,6 +252,10 @@ where
             && !state.machine.has_pending_interaction()
         {
             state.machine.remove_input(&next_submission).await?;
+            state
+                .environment
+                .reconcile_input_captures(&state.machine.input_queue())
+                .await;
             let (status, message) = if cancel.is_cancelled() {
                 (
                     UiInputStatus::Cancelled,
@@ -267,14 +280,11 @@ where
             continue;
         }
         if matches!(next_submission.op, Op::Turn { .. } | Op::Input { .. }) {
-            state.machine.admit_input(&next_submission).await?;
+            state.machine.dispatch_input(&next_submission).await?;
             state
-                .machine
-                .persist_input_event(
-                    "machine_input_dispatched_v1",
-                    serde_json::json!({"submission_id": next_submission.id}),
-                )
-                .await?;
+                .environment
+                .reconcile_input_captures(&state.machine.input_queue())
+                .await;
         }
         // A request response continues the accepted input; its control ID is
         // not the identity of the Agent answer produced after approval.

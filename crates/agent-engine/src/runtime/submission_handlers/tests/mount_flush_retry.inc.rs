@@ -30,6 +30,7 @@ async fn failed_real_flush_retry_preserves_single_mount_tool_pair() {
         assert!(
             super::super::turn_support::reset_turn_after_cancelling_host_mounts(
                 &mut state.machine,
+                &state.environment.agent_files(),
                 &state.environment.host_mount_requests(),
             )
             .await

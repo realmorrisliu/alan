@@ -6,6 +6,10 @@ use std::fs::File;
 
 mod concurrency;
 mod file_surface;
+#[cfg(unix)]
+mod lock_boundaries;
+#[cfg(unix)]
+mod lock_contention;
 
 fn native_snapshot(name: &str, body: &str) -> PackageSnapshot {
     PackageSnapshot {

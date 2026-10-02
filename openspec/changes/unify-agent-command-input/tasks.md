@@ -2,6 +2,22 @@
 
 ## Current product acceptance coordination
 
+2026-10-02 current local qualification: linked readiness G1/G2/G3 are locally
+accepted through supervised native Alan-authored tasks and independent frozen-source
+review. Final604Rust26build candidate40583bd...b99fc6/binary9fa4cb...8fe0a passed
+308TUI+10integration/fullquality/release; actualG3 sequence6e6t44ap preserves exact
+E/Qonce,Dzero, fresh authority on explicit recovery, precise busy approval and
+owned cancellation, natural exits and no process rescue. Ordinary Herdr view
+detach preserves the process while another main client remains; all-client
+disconnection/server-stop semantics are not qualified. This does not close the
+entire change or imply unattended self-bootstrap. Required new-head CI/merge remain.
+
+Remaining broad runtime matrices retain this active owner: same Agent multi-client
+result/cwd ordering, end-to-end fault/unknown-outcome acceptance in2.13.2, and the
+complete cross-grant/sandbox/path matrix. No parent checkbox or automatic-routing
+qualification is inferred from the bounded G3 sequence. Linked readiness may close
+its own terminal/supervised-bootstrap tasks after delivery while these remain active.
+
 2026-09-30 local runtime follow-up: the self-development G1 retest identified a
 FIFO mutex scheduling deadlock in Engine execution supervision. The execution
 future remained queued for AgentFS state while a selected observer branch awaited

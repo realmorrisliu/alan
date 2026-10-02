@@ -308,6 +308,7 @@ where
         user_input_for_skills.as_deref(),
         resumed_active_skills.as_deref(),
     );
+    state.publish_ensured_skills().await?;
     debug!(
         elapsed_ms = prompt_build.elapsed_ms,
         skills_cache_hit = prompt_build.skills_cache_hit,
@@ -337,13 +338,26 @@ where
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>();
     let initial_provider_capabilities = generation.capabilities();
-    let turn_request_controls = crate::resolve_turn_request_controls(
-        &state.core_config,
-        initial_provider_capabilities,
-        state.runtime_config.request_control_intent,
-        state.machine.active_turn_request_control_intent(),
-    )?;
-    let model = state.core_config.effective_model().to_string();
+    let captured = state
+        .environment
+        .active_binding
+        .read()
+        .expect("active binding snapshot")
+        .clone();
+    let turn_request_controls = if let Some((binding, _)) = &captured {
+        binding.request_controls.clone()
+    } else {
+        crate::resolve_turn_request_controls(
+            &state.core_config,
+            initial_provider_capabilities,
+            state.runtime_config.request_control_intent,
+            state.machine.active_turn_request_control_intent(),
+        )?
+    };
+    let model = captured
+        .as_ref()
+        .map(|(_, callable)| callable.identity.model.clone())
+        .unwrap_or_else(|| state.core_config.effective_model().to_string());
     let memory_enabled = state.core_config.memory.enabled;
     let context_items = state.machine.context_items().to_vec();
     let context_delta = state.machine.last_context_delta().clone();

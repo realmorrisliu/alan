@@ -162,6 +162,10 @@ fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     let mut app = FileBackedApp::new("/agent/root".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
     app.project_candidate = Some(std::path::PathBuf::from("/tmp/fixture"));
     assert!(app.handle_command("/project").is_none());
     assert_eq!(app.composer.text(), "/tmp/fixture");
@@ -197,6 +201,28 @@ fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
 }
 
 #[test]
+fn settled_paused_project_picker_is_available_without_continuing_queue() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: true,
+            pending_submission_ids: vec!["queued".into()],
+            ..Default::default()
+        }),
+    );
+    app.activity.state = alan_agent_protocol::UiActivityState::Paused;
+    app.handle_command("/project");
+    assert_eq!(app.project_selection, Some(ProjectAccess::ReadOnly));
+    assert_eq!(
+        app.activity.state,
+        alan_agent_protocol::UiActivityState::Paused
+    );
+}
+
+#[test]
 fn project_cwd_observation_accepts_normalized_trailing_separator() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     let receipt = ProjectMountReceipt {
@@ -205,14 +231,19 @@ fn project_cwd_observation_accepts_normalized_trailing_separator() {
         label: "fixture".into(),
         access: ProjectAccess::ReadWrite,
     };
-    app.project_mounted(receipt, "mount-input".into());
+    app.stage_project_control(
+        "/agent/root".into(),
+        "mount-input".into(),
+        Some((receipt, "/tmp".into())),
+        None,
+    );
 
-    app.observe_action_cwd(&super::ActionSnapshot {
+    app.observe_project_action("/agent/root", &super::ActionSnapshot {
         id: "action-1".into(),
         name: "cd".into(),
         status: "completed".into(),
         output: String::new(),
-        result: r#"{"call_id":"mount-input","outcome":{"cwd":"/mnt/project-1/","success":true}}"#
+        result: r#"{"call_id":"mount-input","exit_code":0,"outcome":{"cwd":"/mnt/project-1/","success":true}}"#
             .into(),
     });
 
@@ -221,24 +252,42 @@ fn project_cwd_observation_accepts_normalized_trailing_separator() {
         std::path::PathBuf::from("/mnt/project-1/")
     );
     assert_eq!(app.pending_project_cwd, None);
-    assert_eq!(app.notice.as_deref(), Some("project cwd: /mnt/project-1/"));
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .starts_with("project cwd: /mnt/project-1/")
+    );
 
-    app.begin_project_revoke("grant-1".into(), "revoke-input".into());
-    app.observe_action_cwd(&super::ActionSnapshot {
-        id: "action-2".into(),
-        name: "cd".into(),
-        status: "completed".into(),
-        output: String::new(),
-        result: r#"{"call_id":"another-input","outcome":{"cwd":"/","success":true}}"#.into(),
-    });
+    app.stage_project_control(
+        "/agent/root".into(),
+        "revoke-input".into(),
+        None,
+        Some("grant-1".into()),
+    );
+    app.observe_project_action(
+        "/agent/root",
+        &super::ActionSnapshot {
+            id: "action-2".into(),
+            name: "cd".into(),
+            status: "completed".into(),
+            output: String::new(),
+            result: r#"{"call_id":"another-input","outcome":{"cwd":"/","success":true}}"#.into(),
+        },
+    );
     assert_eq!(app.take_ready_project_revoke(), None);
-    app.observe_action_cwd(&super::ActionSnapshot {
-        id: "action-3".into(),
-        name: "cd".into(),
-        status: "completed".into(),
-        output: String::new(),
-        result: r#"{"call_id":"revoke-input","outcome":{"cwd":"/","success":true}}"#.into(),
-    });
+    app.observe_project_action(
+        "/agent/root",
+        &super::ActionSnapshot {
+            id: "action-3".into(),
+            name: "cd".into(),
+            status: "completed".into(),
+            output: String::new(),
+            result:
+                r#"{"call_id":"revoke-input","exit_code":0,"outcome":{"cwd":"/","success":true}}"#
+                    .into(),
+        },
+    );
     assert_eq!(app.take_ready_project_revoke().as_deref(), Some("grant-1"));
     assert!(app.project.is_some());
 }

@@ -47,6 +47,7 @@ pub(super) async fn sync_action_from_file(
     app: &mut FileBackedApp,
 ) -> Result<()> {
     let snapshot = read_action_snapshot(shell, agent_path, action_id).await?;
+    app.observe_project_action(agent_path, &snapshot);
     sync_action_snapshot(app, snapshot);
     Ok(())
 }
@@ -54,6 +55,7 @@ pub(super) async fn sync_action_from_file(
 /// Live streams and history from one file-backed renderer attachment.
 pub(super) struct WatchTails {
     pub(super) root_agent_pid: Option<u64>,
+    pub(super) queue_events: alan_shell::Tail,
     pub(super) output: alan_shell::Tail,
     pub(super) requests: alan_shell::Tail,
     pub(super) actions: alan_shell::Tail,
@@ -272,6 +274,7 @@ pub(super) async fn spawn_action_watch(
 
 pub(super) async fn spawn_ui_watch(
     mut tail: alan_shell::Tail,
+    owner: String,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
@@ -296,6 +299,7 @@ pub(super) async fn spawn_ui_watch(
                             }
                             match serde_json::from_slice::<UiEvent>(line) {
                                 Ok(event) => {
+                                    if matches!(event, UiEvent::InputCompleted { .. }) && !send_event_or_shutdown(&tx, &mut shutdown_rx, FileBackedEvent::ModelReceipt { owner: owner.clone(), event: event.clone() }).await { break 'watch; }
                                     if !send_event_or_shutdown(
                                         &tx,
                                         &mut shutdown_rx,
@@ -308,6 +312,7 @@ pub(super) async fn spawn_ui_watch(
                                     }
                                 }
                                 Err(err) => {
+                                    if !send_event_or_shutdown(&tx, &mut shutdown_rx, FileBackedEvent::ModelReceiptsUnavailable { owner: owner.clone() }).await { break 'watch; }
                                     if !send_event_or_shutdown(
                                         &tx,
                                         &mut shutdown_rx,
@@ -335,6 +340,14 @@ pub(super) async fn spawn_ui_watch(
         }
     }
 
+    if !*shutdown_rx.borrow() {
+        let _ = send_event_or_shutdown(
+            &tx,
+            &mut shutdown_rx,
+            FileBackedEvent::ModelReceiptsUnavailable { owner },
+        )
+        .await;
+    }
     tail.close()
         .await
         .map_err(|err| anyhow!("failed to close ui watch: {err:?}"))?;

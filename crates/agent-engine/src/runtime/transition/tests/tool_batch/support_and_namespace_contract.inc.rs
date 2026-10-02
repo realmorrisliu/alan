@@ -335,10 +335,10 @@ impl ProcessRunner for RegistryToolRunner {
     }
 }
 
-struct CountingEffectTool {
-    name: &'static str,
-    capability: ToolCapability,
-    counter: Arc<AtomicUsize>,
+pub(crate) struct CountingEffectTool {
+    pub(crate) name: &'static str,
+    pub(crate) capability: ToolCapability,
+    pub(crate) counter: Arc<AtomicUsize>,
 }
 
 impl Tool for CountingEffectTool {
@@ -481,7 +481,7 @@ async fn create_namespace_test_state_and_shell_with_package(
     (state, shell)
 }
 
-fn reviewer_response(decision: &str) -> alan_llm::GenerationResponse {
+pub(crate) fn reviewer_response(decision: &str) -> alan_llm::GenerationResponse {
     alan_llm::GenerationResponse {
         content: format!("{{\"decision\":\"{decision}\",\"rationale\":\"test\"}}"),
         thinking: None,
@@ -570,7 +570,7 @@ async fn create_test_state_with_machine_and_tools(
     create_test_state_with_machine_tools_and_provider(machine, tools, SimpleMockProvider).await
 }
 
-async fn create_test_state_with_machine_tools_and_provider<P: LlmProvider + 'static>(
+pub(crate) async fn create_test_state_with_machine_tools_and_provider<P: LlmProvider + 'static>(
     machine: AgentMachine,
     tools: ToolRegistry,
     provider: P,

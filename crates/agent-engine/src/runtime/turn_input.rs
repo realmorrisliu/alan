@@ -231,7 +231,8 @@ where
         .filter(|input| is_brokered_input(&input.op))
         .map(|input| input.id.clone())
         .collect();
-    if let Err(error) = crate::agent_machine::input_queue::persist_input_removals(
+    if let Err(error) = crate::agent_machine::input_queue::remove_input_bindings(
+        &machine.input_queue(),
         machine.input_recorder().as_ref(),
         &ids,
     )

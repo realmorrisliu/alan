@@ -73,8 +73,12 @@ mod tests {
         let loader = PromptLoader::new();
         let prompt = loader.system_prompt();
         assert!(prompt.contains("You are alan"));
-        assert!(prompt.contains("When a user message begins with `!`"));
-        assert!(prompt.contains("exact shell command with the `bash` tool"));
+        assert!(!prompt.contains("When a user message begins with `!`"));
+        assert!(!prompt.contains("exact shell command with the `bash` tool"));
+        assert!(prompt.contains("User message content is literal text"));
+        assert!(prompt.contains("Do not classify or strip `!` or `:` prefixes"));
+        assert!(prompt.contains("Runtime already handles explicit Command intent"));
+        assert!(prompt.contains("Tool use must follow the actual user intent"));
     }
 
     #[test]

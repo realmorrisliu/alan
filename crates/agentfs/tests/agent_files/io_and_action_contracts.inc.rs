@@ -550,3 +550,110 @@ async fn clone_allocation_requires_write_intent() {
     entries.sort();
     assert_eq!(entries, vec!["clone", "events"], "no rN entry leaked");
 }
+
+#[tokio::test]
+async fn request_cancel_owner_descriptor_races_and_rights() {
+    let fs = AgentFs::new();
+    for fid in [Fid(80), Fid(81)] {
+        fs.walk(Fid::ROOT, fid, &["requests".into(), "clone".into()])
+            .await
+            .unwrap();
+        fs.open(fid, OpenMode::ReadWrite).await.unwrap();
+        fs.clunk(fid).await.unwrap();
+    }
+    assert!(
+        read_text(&fs, &["requests", "r0"], Fid(82))
+            .await
+            .lines()
+            .any(|line| line == "ctl")
+    );
+    let ctl = vec!["requests".into(), "r0".into(), "ctl".into()];
+    fs.walk(Fid::ROOT, Fid(83), &ctl).await.unwrap();
+    assert!(fs.stat(Fid(83)).await.unwrap().writable);
+    fs.open(Fid(83), OpenMode::Read).await.unwrap();
+    assert_eq!(fs.read(Fid(83), 0, 100).await.unwrap(), b"cancel\n");
+    assert_eq!(
+        fs.write(Fid(83), 0, b"cancel").await,
+        Err(ErrorCode::NoAccess)
+    );
+    fs.clunk(Fid(83)).await.unwrap();
+    fs.walk(Fid::ROOT, Fid(84), &ctl).await.unwrap();
+    fs.open(Fid(84), OpenMode::Write).await.unwrap();
+    for command in [b"approve".as_slice(), b"cancel\n", b"", b"cancel other"] {
+        assert_eq!(
+            fs.write(Fid(84), 0, command).await,
+            Err(ErrorCode::BadRequest)
+        );
+    }
+    assert_eq!(
+        fs.write(Fid(84), 1, b"cancel").await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(
+        read_text(&fs, &["requests", "r0", "status"], Fid(85)).await,
+        "pending"
+    );
+    fs.walk(
+        Fid::ROOT,
+        Fid(86),
+        &["requests".into(), "r0".into(), "response".into()],
+    )
+    .await
+    .unwrap();
+    fs.open(Fid(86), OpenMode::Write).await.unwrap();
+    fs.write(Fid(86), 0, b"actual answer").await.unwrap();
+    let before = fs.stat(Fid(85)).await.unwrap().qid.version;
+    fs.write(Fid(84), 0, b"cancel").await.unwrap();
+    fs.clunk(Fid(84)).await.unwrap();
+    assert_eq!(fs.clunk(Fid(86)).await, Err(ErrorCode::NoAccess));
+    assert_eq!(
+        read_text(&fs, &["requests", "r0", "status"], Fid(87)).await,
+        "cancelled"
+    );
+    assert!(fs.stat(Fid(85)).await.unwrap().qid.version > before);
+    assert_eq!(
+        read_text(&fs, &["requests", "r0", "response"], Fid(88)).await,
+        ""
+    );
+    assert_eq!(
+        read_text(&fs, &["requests", "r1", "status"], Fid(89)).await,
+        "pending"
+    );
+    write_doc(&fs, &["requests", "r0", "ctl"], Fid(90), b"cancel")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["requests", "events"], Fid(91))
+            .await
+            .matches("r0:status\n")
+            .count(),
+        1
+    );
+    write_doc(&fs, &["requests", "r1", "response"], Fid(92), b"truth")
+        .await
+        .unwrap();
+    write_doc(&fs, &["requests", "r1", "ctl"], Fid(93), b"cancel")
+        .await
+        .unwrap();
+    assert_eq!(
+        read_text(&fs, &["requests", "r1", "status"], Fid(94)).await,
+        "answered"
+    );
+    assert_eq!(
+        read_text(&fs, &["requests", "r1", "response"], Fid(95)).await,
+        "truth"
+    );
+    assert!(
+        !read_text(&fs, &["requests", "events"], Fid(96))
+            .await
+            .contains("r1:status\n")
+    );
+    assert_eq!(
+        write_doc(&fs, &["requests", "absent", "ctl"], Fid(97), b"cancel").await,
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        write_doc(&fs, &["requests", "r0", "status"], Fid(98), b"pending").await,
+        Err(ErrorCode::NoAccess)
+    );
+}

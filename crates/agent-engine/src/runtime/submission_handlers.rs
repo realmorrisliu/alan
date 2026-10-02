@@ -55,7 +55,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     match op {
-        Op::SelectProjectDirectory { .. } => {
+        Op::SelectModel { .. } | Op::SelectProjectDirectory { .. } => {
             anyhow::bail!("directory selection must enter through the settled control boundary")
         }
         Op::CompactWithOptions { .. } => {

@@ -1,5 +1,6 @@
 //! Ordinary submissions retained by an Agent Machine across transition cancellation.
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 
 use alan_agent_protocol::{ContentPart, Submission};
 
@@ -23,17 +24,23 @@ pub(crate) async fn admit_input(
     {
         return Ok(());
     }
-    persist_input_event(
-        recorder,
-        "machine_input_admitted_v1",
-        serde_json::to_value(input)?,
-    )
-    .await?;
-    queue
+    let mut payload = serde_json::to_value(input)?;
+    if let Some(binding) = queue
         .lock()
         .expect("input queue poisoned")
-        .admitted_ids
-        .insert(input.id.clone());
+        .bindings
+        .get(&input.id)
+    {
+        payload["callable_binding"] = serde_json::to_value(&binding.callable_binding)?;
+        payload["request_controls"] = serde_json::to_value(&binding.request_controls)?;
+    }
+    persist_input_event(recorder, "machine_input_admitted_v1", payload).await?;
+    {
+        let mut state = queue.lock().expect("input queue poisoned");
+        state.admitted_ids.insert(input.id.clone());
+        state.queue_evidence_known |= recorder.is_some();
+    }
+    crate::runtime::queue_publication::observe(queue).await;
     Ok(())
 }
 
@@ -108,6 +115,34 @@ pub(crate) async fn persist_input_removals(
     }
 }
 
+/// Apply binding cleanup only after the shared durable removal owner acknowledges
+/// the complete correlated set. Dedup evidence and active snapshots are unrelated.
+pub(crate) async fn remove_input_bindings(
+    queue: &std::sync::Arc<std::sync::Mutex<MachineInputQueue>>,
+    recorder: Option<&crate::rollout::RolloutRecorder>,
+    submission_ids: &[String],
+) -> anyhow::Result<()> {
+    if let Err(error) = persist_input_removals(recorder, submission_ids).await {
+        queue
+            .lock()
+            .expect("input queue poisoned")
+            .queue_uncertain_ids
+            .extend(submission_ids.iter().cloned());
+        crate::runtime::queue_publication::observe(queue).await;
+        return Err(error);
+    }
+    {
+        let mut state = queue.lock().expect("input queue poisoned");
+        for id in submission_ids {
+            state.bindings.remove(id);
+            state.settled_ids.insert(id.clone());
+            state.queue_uncertain_ids.remove(id);
+        }
+    }
+    crate::runtime::queue_publication::observe(queue).await;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub(crate) enum QueuedRuntimeItem {
     Submission(Submission),
@@ -116,11 +151,21 @@ pub(crate) enum QueuedRuntimeItem {
 
 #[derive(Debug, Default)]
 pub(crate) struct MachineInputQueue {
+    pub(crate) queue_publisher: Option<Arc<crate::runtime::queue_publication::QueuePublisher>>,
+    pub(crate) queue_evidence_known: bool,
+    pub(crate) queue_uncertain_ids: HashSet<String>,
     pub(crate) pending: VecDeque<QueuedRuntimeItem>,
     pub(crate) paused: bool,
     /// Recovery never inherits the source Process's project authority.
     pub(crate) recovered: bool,
     pub(crate) admitted_ids: std::collections::HashSet<String>,
+    /// Acknowledged dispositions prevent repeated delivery from re-enqueueing work.
+    pub(crate) settled_ids: std::collections::HashSet<String>,
+    /// Accepted inputs whose rejection has not crossed the durable removal barrier.
+    pub(crate) pending_binding_rejections: std::collections::HashSet<String>,
+    pub(crate) confirmed_binding: Option<crate::runtime::model_binding::InputBinding>,
+    pub(crate) bindings:
+        std::collections::HashMap<String, crate::runtime::model_binding::InputBinding>,
     /// Derived lookup for Process controls while a transition borrows the Machine.
     pub(crate) active_submission_ids: Vec<String>,
     /// Accepted control request, observed by the Machine at settlement.
@@ -139,18 +184,36 @@ impl super::AgentMachine {
 
     pub(crate) async fn dispatch_input(&self, input: &Submission) -> anyhow::Result<()> {
         self.admit_input(input).await?;
-        self.persist_input_event(
-            "machine_input_dispatched_v1",
-            serde_json::json!({"submission_id": input.id}),
-        )
-        .await
+        let disposition = self
+            .persist_input_event(
+                "machine_input_dispatched_v1",
+                serde_json::json!({"submission_id": input.id}),
+            )
+            .await;
+        let queue = self.input_queue();
+        {
+            let mut state = queue.lock().expect("input queue poisoned");
+            if disposition.is_ok() {
+                state.bindings.remove(&input.id);
+                state.settled_ids.insert(input.id.clone());
+                state.queue_uncertain_ids.remove(&input.id);
+            } else {
+                state.queue_uncertain_ids.insert(input.id.clone());
+            }
+        }
+        crate::runtime::queue_publication::observe(&queue).await;
+        disposition
     }
 
     /// Rejection/drop evidence must be acknowledged before visible settlement.
     /// On failure retain the input locally as well as in recovery evidence.
     pub(crate) async fn remove_input(&mut self, input: &Submission) -> anyhow::Result<()> {
-        if let Err(error) =
-            persist_input_removals(self.recorder.as_ref(), std::slice::from_ref(&input.id)).await
+        if let Err(error) = remove_input_bindings(
+            &self.input_queue(),
+            self.recorder.as_ref(),
+            std::slice::from_ref(&input.id),
+        )
+        .await
         {
             self.push_buffered_inband_submission(input.clone());
             return Err(error);
@@ -176,8 +239,23 @@ impl super::AgentMachine {
         let mut queue = queue.lock().expect("input queue poisoned");
         for event in events {
             match event.event_type.as_str() {
+                "machine_model_selected_v1" => {
+                    queue.confirmed_binding = Some(serde_json::from_value(event.payload.clone())?);
+                }
                 "machine_input_admitted_v1" => {
                     let input: Submission = serde_json::from_value(event.payload.clone())?;
+                    queue.queue_evidence_known = true;
+                    if event.payload.get("callable_binding").is_some() {
+                        let binding = crate::runtime::model_binding::InputBinding {
+                            callable_binding: serde_json::from_value(
+                                event.payload["callable_binding"].clone(),
+                            )?,
+                            request_controls: serde_json::from_value(
+                                event.payload["request_controls"].clone(),
+                            )?,
+                        };
+                        queue.bindings.insert(input.id.clone(), binding);
+                    }
                     if queue.admitted_ids.insert(input.id.clone()) {
                         inputs.push(input);
                     }
@@ -196,6 +274,8 @@ impl super::AgentMachine {
                 _ => {}
             }
         }
+        queue.bindings.retain(|id, _| !excluded.contains(id));
+        queue.settled_ids.extend(excluded.iter().cloned());
         queue.pending.extend(
             inputs
                 .into_iter()

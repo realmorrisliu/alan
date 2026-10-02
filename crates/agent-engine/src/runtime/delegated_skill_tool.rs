@@ -265,95 +265,96 @@ where
         });
     }
 
-    let (persisted_request, result, child_run) =
-        match resolve_delegated_skill_invocation(&mut runtime, &request) {
-            Ok(spec) => {
-                let persisted_request = request.with_effective_launch_inputs(
-                    spec.launch.cwd.clone(),
-                    spec.launch.timeout_secs,
-                );
-                let child_result = if cancel.is_cancelled() {
-                    Ok(ChildRuntimeResult::cancelled_before_launch())
-                } else {
-                    let child_runtime = runtime.child_launch_runtime(&spec);
-                    spawn_child(child_runtime, spec, cancel).await
-                };
-                match child_result {
-                    Ok(mut child_result) => {
-                        if cancel.is_cancelled()
-                            && child_result.is_cancelled()
-                            && check_turn_cancelled(
-                                &mut *runtime.machine,
-                                &runtime.agent_files,
-                                &runtime.host_mount_requests,
-                                emit,
-                                cancel,
-                            )
-                            .await?
-                        {
-                            return Ok(VirtualToolOutcome::EndTurn);
-                        }
-
-                        let output_reference = persist_delegated_child_evidence(
+    let resolution = resolve_delegated_skill_invocation(&mut runtime, &request);
+    // Publish ensured cache on both dispositions, before any child launch/join.
+    // Presentation failure must not replace the original Tool result.
+    runtime.publish_ensured_skills().await;
+    let (persisted_request, result, child_run) = match resolution {
+        Ok(spec) => {
+            let persisted_request = request
+                .with_effective_launch_inputs(spec.launch.cwd.clone(), spec.launch.timeout_secs);
+            let child_result = if cancel.is_cancelled() {
+                Ok(ChildRuntimeResult::cancelled_before_launch())
+            } else {
+                let child_runtime = runtime.child_launch_runtime(&spec);
+                spawn_child(child_runtime, spec, cancel).await
+            };
+            match child_result {
+                Ok(mut child_result) => {
+                    if cancel.is_cancelled()
+                        && child_result.is_cancelled()
+                        && check_turn_cancelled(
+                            &mut *runtime.machine,
                             &runtime.agent_files,
-                            &request,
-                            &child_result,
+                            &runtime.host_mount_requests,
+                            emit,
+                            cancel,
                         )
-                        .await;
-                        if let (Some(child_run_id), Some(reference)) = (
-                            child_result.child_run_id.as_deref(),
-                            output_reference.as_ref(),
-                        ) {
-                            runtime
-                                .child_run_registry()
-                                .set_state_ref(child_run_id, reference.clone());
-                            child_result.child_run = runtime.child_run_registry().get(child_run_id);
-                        }
-                        (
-                            persisted_request,
-                            child_result.delegated_result(output_reference),
-                            Some(child_result.reference()),
-                        )
+                        .await?
+                    {
+                        return Ok(VirtualToolOutcome::EndTurn);
                     }
-                    Err(err) => {
-                        if cancel.is_cancelled()
-                            && check_turn_cancelled(
-                                &mut *runtime.machine,
-                                &runtime.agent_files,
-                                &runtime.host_mount_requests,
-                                emit,
-                                cancel,
-                            )
-                            .await?
-                        {
-                            return Ok(VirtualToolOutcome::EndTurn);
-                        }
 
-                        let capability_decision = err
-                            .downcast_ref::<DelegatedSpawnRejected>()
-                            .map(|rejection| rejection.decision.clone());
-                        let error_kind = if capability_decision.is_some() {
-                            "delegated_capability_mismatch"
-                        } else {
-                            "child_launch_failed"
-                        };
-                        let mut result = DelegatedSkillResult::failed(
-                            format!(
-                                "Failed to launch delegated runtime for skill '{}': {err}",
-                                request.skill_id
-                            ),
-                            Some(json!({
-                                "error_kind": error_kind
-                            })),
-                        );
-                        result.error_kind = Some(error_kind.to_string());
-                        result.capability_decision = capability_decision;
-                        (persisted_request, result, None)
+                    let output_reference = persist_delegated_child_evidence(
+                        &runtime.agent_files,
+                        &request,
+                        &child_result,
+                    )
+                    .await;
+                    if let (Some(child_run_id), Some(reference)) = (
+                        child_result.child_run_id.as_deref(),
+                        output_reference.as_ref(),
+                    ) {
+                        runtime
+                            .child_run_registry()
+                            .set_state_ref(child_run_id, reference.clone());
+                        child_result.child_run = runtime.child_run_registry().get(child_run_id);
                     }
+                    (
+                        persisted_request,
+                        child_result.delegated_result(output_reference),
+                        Some(child_result.reference()),
+                    )
+                }
+                Err(err) => {
+                    if cancel.is_cancelled()
+                        && check_turn_cancelled(
+                            &mut *runtime.machine,
+                            &runtime.agent_files,
+                            &runtime.host_mount_requests,
+                            emit,
+                            cancel,
+                        )
+                        .await?
+                    {
+                        return Ok(VirtualToolOutcome::EndTurn);
+                    }
+
+                    let capability_decision = err
+                        .downcast_ref::<DelegatedSpawnRejected>()
+                        .map(|rejection| rejection.decision.clone());
+                    let error_kind = if capability_decision.is_some() {
+                        "delegated_capability_mismatch"
+                    } else {
+                        "child_launch_failed"
+                    };
+                    let mut result = DelegatedSkillResult::failed(
+                        format!(
+                            "Failed to launch delegated runtime for skill '{}': {err}",
+                            request.skill_id
+                        ),
+                        Some(json!({
+                            "error_kind": error_kind
+                        })),
+                    );
+                    result.error_kind = Some(error_kind.to_string());
+                    result.capability_decision = capability_decision;
+                    (persisted_request, result, None)
                 }
             }
-            Err(result) => (request.clone(), *result, None),
-        };
+        }
+        Err(result) => (request.clone(), *result, None),
+    };
 
     let (persisted_arguments, tape_record, rollout_record) =
         build_bounded_delegated_invocation_persistence(&persisted_request, result, child_run);

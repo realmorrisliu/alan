@@ -21,13 +21,48 @@ mod file_surface;
 mod history_merge;
 mod interrupt;
 mod layout;
+mod model;
+#[cfg(test)]
+mod model_layout_tests;
+#[cfg(test)]
+mod model_matrix_tests;
+#[cfg(test)]
+mod model_review_tests;
+#[cfg(test)]
+mod model_tests;
+#[cfg(test)]
+mod model_transport_tests;
 mod previous_input;
 mod project;
+mod queue;
+#[cfg(test)]
+mod queue_boundary_tests;
+#[cfg(test)]
+mod queue_coordinate_tests;
+#[cfg(test)]
+mod queue_hint_lifetime_tests;
+#[cfg(test)]
+mod queue_lifetime_tests;
+#[cfg(test)]
+mod queue_lineage_tests;
+#[cfg(test)]
+mod queue_removed_hint_tests;
+#[cfg(test)]
+mod queue_root_lifetime_tests;
+#[cfg(test)]
+mod skill_descriptor_tests;
+#[cfg(test)]
+mod skill_review_tests;
+#[cfg(test)]
+mod skill_tests;
+mod skills;
 pub use project::{
     ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
     ProjectControlResult, ProjectMountReceipt,
 };
 mod stdio_completion;
+mod watchers;
+use watchers::AgentWatchers;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
@@ -47,31 +82,31 @@ use file_surface::{
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
-#[cfg(test)]
-use layout::draw;
 use layout::{
     activity_elapsed_second, frame_needs_redraw, history_prefix_to_drain, inline_viewport_height,
-    live_region_height,
 };
+#[cfg(test)]
+use layout::{draw, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
     root_agent_path_for_pid, spawn_root_agent_pid_refresh,
 };
 
 use crate::completion::CompletionCandidate;
-use crate::composer::{Composer, load_history};
+use crate::composer::Composer;
 #[cfg(test)]
 use crate::history::HistoryCell;
 #[cfg(test)]
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
-fn dispatch_with_pending_submissions(
-    app: &mut FileBackedApp,
-    event: FileBackedEvent,
-    pending_turns: &VecDeque<PendingRootAgentTurn>,
-) -> Option<FileBackedAction> {
-    app.dispatch_with_pending_submission(event, !pending_turns.is_empty())
-}
+#[cfg(test)]
+mod completion_anchor_tests;
+#[cfg(test)]
+mod completion_layout_tests;
+#[cfg(test)]
+mod completion_reference_tests;
+mod project_dispatch;
+use project_dispatch::dispatch_with_pending_submissions;
 
 const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
@@ -92,7 +127,8 @@ pub struct FileBackedRunConfig {
     pub require_interactive_terminal: bool,
     /// Optional file used to persist composer input history across launches.
     pub history_path: Option<PathBuf>,
-    /// Optional local skill candidates used for `$` completion.
+    /// Legacy compatibility field; ignored by the file-backed renderer.
+    /// `$` candidates come exclusively from the pinned Process skill snapshot.
     pub skill_candidates: Vec<CompletionCandidate>,
     /// Host cwd offered as the initial path in `/project`.
     pub project_candidate: Option<PathBuf>,
@@ -126,20 +162,17 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let shell = alan_shell::Shell::new(config.root_transport.clone());
     let mut app = FileBackedApp::new(config.agent_path.clone());
     app.set_effective_model(config.effective_model.clone());
-    app.set_skill_candidates(config.skill_candidates.clone());
     app.set_project_candidate(config.project_candidate.clone());
     if let Some(host_root) = &config.host_file_completion_root {
         app.set_file_candidates(super::build_file_index(host_root, crate::FILE_INDEX_LIMIT));
     }
     if let Some(history_path) = &config.history_path {
-        let history = load_history(history_path, crate::HISTORY_LIMIT);
-        app.composer = Composer::with_history(history, Some(history_path.clone()));
+        app.composer = Composer::from_history_path(history_path.clone());
     }
     let follows_root_agent = config.agent_path == "/agent/root";
     let mut pending_root_agent_turns = VecDeque::<PendingRootAgentTurn>::new();
-    let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
-
     let mut terminal = TerminalSession::enter()?;
+    let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     let terminal_reader = spawn_terminal_events(tx.clone());
@@ -162,6 +195,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut dirty = true;
     let mut last_drawn_second = None;
 
+    let mut draw_result = Ok(());
     loop {
         tokio::select! {
             event = receive_file_backed_event(&mut watchers.pending_terminal_events, &mut rx) => {
@@ -193,6 +227,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             watchers.root_agent_pid,
                             &mut app,
                         );
+                    }
+                    event @ (FileBackedEvent::QueueChanged { .. }
+                    | FileBackedEvent::QueueUnavailable { .. }) => {
+                        queue::dispatch_queue_event(&shell, &mut app, &pending_root_agent_turns, event).await;
+                    }
+                    event @ (FileBackedEvent::ModelChanged { .. } | FileBackedEvent::ModelUnavailable { .. }) => {
+                        model::dispatch_model_event(&shell, &mut app, event).await;
+                    }
+                    event @ (FileBackedEvent::SkillsChanged { .. } | FileBackedEvent::SkillsUnavailable { .. }) => {
+                        skills::dispatch_skill_event(&shell, &mut app, event).await;
                     }
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
@@ -239,15 +283,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     let text = record.body.clone();
                                     match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
                                         Ok(()) => {
-                                            app.accept_input();
-                                            app.notice = None;
-                                            if follows_root_agent {
-                                                pending_root_agent_turns.push_back(PendingRootAgentTurn {
-                                                    input: text.clone(),
-                                                    submission_id: record.submission_id.clone(),
-                                                    submitted_process: watchers.root_agent_pid,
-                                                    submitted_at_ms,
+                                            let owner = if follows_root_agent { watchers.root_agent_pid.map(|pid| format!("/agent/{pid}")).unwrap_or_else(|| app.agent_path.clone()) } else { app.agent_path.clone() };
+                                            app.track_local_input(&record.submission_id, owner, text.clone(), record.intent);
+                                            app.notice = Some("submission sent; admission unconfirmed".into());
+                                            pending_root_agent_turns.push_back(PendingRootAgentTurn {
+                                                input: text.clone(),
+                                                submission_id: record.submission_id.clone(),
+                                                submitted_process: if follows_root_agent { watchers.root_agent_pid } else { app.agent_path.strip_prefix("/agent/").and_then(|pid| pid.parse().ok()) },
+                                                submitted_at_ms,
                                             });
+                                            if follows_root_agent {
                                                 watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
@@ -315,6 +360,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         "control failed".into(),
                                     );
                                 }
+                                FileBackedAction::SelectModel { owner, id, op } => {
+                                    model::write_selection(&shell, &mut app, &owner, &id, op).await;
+                                }
                                 FileBackedAction::Project(command) => {
                                     let Some(handler) = config.project_control.as_ref() else {
                                         app.push_error("local project selection is unavailable in this Host".into());
@@ -325,44 +373,34 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         ProjectControl::Mount { host_path, access } => {
                                             match handler(ProjectControl::Mount { host_path, access }).await {
                                                 Ok(ProjectControlResult::Mounted { receipt, completion_root }) => {
-                                                    let record = alan_agent_protocol::UserInputRecord::new(
+                                                    if receipt.grant_id.trim().is_empty()
+                                                        || !std::path::Path::new(&receipt.namespace_path).is_absolute()
+                                                        || !receipt.namespace_path.starts_with("/mnt/")
+                                                        || std::path::Path::new(&receipt.namespace_path).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                                                        app.push_error("invalid mount receipt; no cwd control or unsafe grant cleanup attempted".into());
+                                                        continue;
+                                                    }
+                                                    let Some(owner) = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)) else {
+                                                        if app.project.as_ref().is_none_or(|old| old.grant_id != receipt.grant_id) {
+                                                            app.project_cleanup = Some(receipt.grant_id);
+                                                        }
+                                                        app.push_error("Root owner unavailable; project cwd not selected".into());
+                                                        if let Some(grant_id) = app.project_cleanup.take()
+                                                            && let Err(err) = handler(ProjectControl::Revoke { grant_id }).await
+                                                        {
+                                                            app.push_error(format!("candidate cleanup failed: {err:#}"));
+                                                        }
+                                                        continue;
+                                                    };
+                                                    let id = alan_agent_protocol::UserInputRecord::new(
                                                         alan_agent_protocol::InputIntent::Command,
-                                                        alan_agent_protocol::InputMode::FollowUp,
-                                                        format!("cd {}", receipt.namespace_path),
-                                                    );
-                                                    let submission_id = record.submission_id.clone();
-                                                    match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
-                                                        Ok(()) => {
-                                                            if follows_root_agent {
-                                                                pending_root_agent_turns.push_back(PendingRootAgentTurn {
-                                                                    input: record.body.clone(),
-                                                                    submission_id: record.submission_id.clone(),
-                                                                    submitted_process: watchers.root_agent_pid,
-                                                                    submitted_at_ms: unix_time_ms(),
-                                                                });
-                                                            }
-                                                            app.set_file_candidates(super::build_file_index(&completion_root, crate::FILE_INDEX_LIMIT));
-                                                            app.project_mounted(receipt, submission_id);
-                                                            if follows_root_agent {
-                                                                watchers.refresh_root_agent_attachment(
-                                                                    &shell,
-                                                                    &config.agent_path,
-                                                                    &mut app,
-                                                                    &mut rx,
-                                                                    &mut pending_root_agent_turns,
-                                                                    &tx,
-                                                                ).await;
-                                                            }
-                                                        }
-                                                        Err(err) => {
-                                                            let cleanup = handler(ProjectControl::Revoke {
-                                                                grant_id: receipt.grant_id.clone(),
-                                                            }).await;
-                                                            app.push_error(match cleanup {
-                                                                Ok(_) => format!("project mounted but cwd setup failed: {err:#}"),
-                                                                Err(cleanup) => format!("project mount succeeded, cwd setup failed ({err:#}); grant cleanup also failed ({cleanup:#})"),
-                                                            });
-                                                        }
+                                                        alan_agent_protocol::InputMode::FollowUp, "",
+                                                    ).submission_id;
+                                                    let path = receipt.namespace_path.clone();
+                                                    app.stage_project_control(owner.clone(), id.clone(), Some((receipt, completion_root)), None);
+                                                    let command = format!("project-cwd-v1 {}", serde_json::json!({"id": id, "path": path}));
+                                                    if let Err(err) = write_machine_ctl(&shell, &owner, &command).await {
+                                                        app.fail_project_control(format!("project control write failed; effects uncertain: {err:#}"));
                                                     }
                                                 }
                                                 Ok(ProjectControlResult::Revoked) => {
@@ -372,33 +410,18 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                             }
                                         }
                                         ProjectControl::Revoke { grant_id } => {
-                                            let record = alan_agent_protocol::UserInputRecord::new(
+                                            let Some(owner) = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)) else {
+                                                app.push_error("Root owner unavailable; grant retained".into());
+                                                continue;
+                                            };
+                                            let id = alan_agent_protocol::UserInputRecord::new(
                                                 alan_agent_protocol::InputIntent::Command,
-                                                alan_agent_protocol::InputMode::FollowUp,
-                                                "cd /",
-                                            );
-                                            match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
-                                                Ok(()) => {
-                                                    app.begin_project_revoke(grant_id, record.submission_id.clone());
-                                                    app.notice = Some("leaving project cwd before revoking its grant".into());
-                                                    if follows_root_agent {
-                                                        pending_root_agent_turns.push_back(PendingRootAgentTurn {
-                                                            input: record.body.clone(),
-                                                            submission_id: record.submission_id.clone(),
-                                                            submitted_process: watchers.root_agent_pid,
-                                                            submitted_at_ms: unix_time_ms(),
-                                                        });
-                                                        watchers.refresh_root_agent_attachment(
-                                                            &shell,
-                                                            &config.agent_path,
-                                                            &mut app,
-                                                            &mut rx,
-                                                            &mut pending_root_agent_turns,
-                                                            &tx,
-                                                        ).await;
-                                                    }
-                                                }
-                                                Err(err) => app.push_error(format!("could not leave project before revoke: {err:#}")),
+                                                alan_agent_protocol::InputMode::FollowUp, "",
+                                            ).submission_id;
+                                            app.stage_project_control(owner.clone(), id.clone(), None, Some(grant_id));
+                                            let command = format!("project-cwd-v1 {}", serde_json::json!({"id": id, "path": "/"}));
+                                            if let Err(err) = write_machine_ctl(&shell, &owner, &command).await {
+                                                app.fail_project_control(format!("could not leave project; effects uncertain: {err:#}"));
                                             }
                                         }
                                     }
@@ -430,6 +453,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 }
+                if let Some(grant_id) = app.project_cleanup.take() {
+                    if let Some(handler) = config.project_control.as_ref() {
+                        match handler(ProjectControl::Revoke { grant_id: grant_id.clone() }).await {
+                            Ok(ProjectControlResult::Revoked) => {}
+                            result => app.push_error(format!("candidate grant {grant_id} cleanup unconfirmed: {result:?}")),
+                        }
+                    } else {
+                        app.push_error(format!("candidate grant {grant_id} cleanup unavailable"));
+                    }
+                }
                 action_detail_io::start_pending_for_pid(&shell, &mut app, &tx, watchers.root_agent_pid);
                 dirty = true;
             }
@@ -438,11 +471,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if frame_needs_redraw(dirty, &app, now_ms, last_drawn_second) {
                     let (viewport_width, terminal_height) = terminal.viewport_size();
                     let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
-                    terminal.draw_inline_frame(&committed, inline_viewport_height(
+                    draw_result = terminal.draw_inline_frame(&committed, inline_viewport_height(
                         &app,
                         viewport_width,
                         terminal_height,
-                    ), |frame| layout::draw_at(frame, &app, now_ms))?;
+                    ), layout::base_viewport_height(&app, viewport_width, terminal_height), |frame| layout::draw_at(frame, &app, now_ms));
+                    if draw_result.is_err() { break; }
                     // Record only successfully drawn seconds on the existing frame tick.
                     last_drawn_second = Some(activity_elapsed_second(&app, now_ms));
                     dirty = false;
@@ -463,6 +497,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         .await
         .context("terminal reader task failed")?;
 
+    draw_result?;
     Ok(())
 }
 
@@ -497,167 +532,6 @@ fn spawn_control_write(
             })
             .await;
     });
-}
-
-struct AgentWatchers {
-    recovery: Option<(alan_shell::Tail, alan_shell::Tail)>,
-    shutdown: tokio::sync::watch::Sender<bool>,
-    tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
-    root_agent_pid: Option<u64>,
-    pid_refresh_failed: bool,
-    pending_root_agent_pid_result: Option<Result<Option<u64>, String>>,
-    pending_terminal_events: VecDeque<FileBackedEvent>,
-}
-
-impl AgentWatchers {
-    fn start(
-        tails: file_surface::WatchTails,
-        agent_path: &str,
-        tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
-    ) -> Self {
-        let root_agent_pid = tails.root_agent_pid;
-        let action_agent_path = root_agent_pid
-            .and_then(|pid| root_agent_path_for_pid(agent_path, pid))
-            .unwrap_or_else(|| agent_path.to_string());
-        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-        let tasks = vec![
-            tokio::spawn(spawn_output_tail(
-                tails.output,
-                tx.clone(),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(spawn_request_watch(
-                tails.requests,
-                tx.clone(),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(spawn_action_watch(
-                tails.actions,
-                action_agent_path,
-                tx.clone(),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(spawn_ui_watch(tails.ui, tx.clone(), shutdown_rx.clone())),
-            tokio::spawn(spawn_tape_watch(tails.tape, tx, shutdown_rx)),
-        ];
-        Self {
-            recovery: Some((tails.recovery_ui, tails.recovery_tape)),
-            shutdown,
-            tasks,
-            root_agent_pid,
-            pid_refresh_failed: false,
-            pending_root_agent_pid_result: None,
-            pending_terminal_events: VecDeque::new(),
-        }
-    }
-
-    async fn refresh_root_agent_attachment(
-        &mut self,
-        shell: &alan_shell::Shell,
-        agent_path: &str,
-        app: &mut FileBackedApp,
-        rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-        pending_turns: &mut VecDeque<PendingRootAgentTurn>,
-        tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-    ) -> bool {
-        let current_pid = match self.pending_root_agent_pid_result.take() {
-            Some(result) => result,
-            None => current_root_agent_pid(shell)
-                .await
-                .map_err(|error| format!("{error:#}")),
-        };
-        match current_pid {
-            Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
-                let pending_count = pending_turns.len();
-                // Tape history outlives the local pending-input lock.
-                let history_restored = if let Some((_, tape)) = &self.recovery {
-                    previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
-                } else {
-                    false
-                };
-                let submitted = pending_turns
-                    .iter()
-                    .map(|turn| (turn.submission_id.clone(), turn.input.clone()))
-                    .collect::<Vec<_>>();
-                let retained = self.stop_for_input(&submitted).await;
-                app.expected_terminal_error = None;
-                let queued = discard_superseded_attachment_events(
-                    rx,
-                    &mut self.pending_terminal_events,
-                    &submitted,
-                );
-                for event in retained.0.iter().chain(&queued.0) {
-                    interrupt::observe_root_agent_completion(pending_turns, event, app);
-                }
-                // The detached Process's companion terminal errors are discarded with its events.
-                app.expected_terminal_error = None;
-                if !history_restored {
-                    for turn in &submitted {
-                        if let Some((_, input, answer)) = retained
-                            .1
-                            .iter()
-                            .chain(&queued.1)
-                            .find(|(id, _, _)| id.as_str() == turn.0.as_str())
-                        {
-                            previous_input::restore_answer(app, input, answer.clone());
-                        }
-                    }
-                }
-                let submitted = pending_turns.iter().cloned().collect::<Vec<_>>();
-                match reattach_to_current_agent(shell, agent_path, app, &submitted).await {
-                    Ok((tails, settled_ids)) => {
-                        pending_turns.retain(|turn| !settled_ids.contains(&turn.submission_id));
-                        self.pid_refresh_failed = false;
-                        let pending_terminal_events =
-                            std::mem::take(&mut self.pending_terminal_events);
-                        *self = Self::start(tails, agent_path, tx.clone());
-                        self.pending_terminal_events = pending_terminal_events;
-                        pending_turns.len() < pending_count
-                    }
-                    Err(err) => {
-                        self.root_agent_pid = None;
-                        if !self.pid_refresh_failed {
-                            app.push_error(format!("Root Agent reattach failed: {err:#}"));
-                        }
-                        self.pid_refresh_failed = true;
-                        pending_turns.len() < pending_count
-                    }
-                }
-            }
-            Ok(pid) => {
-                self.root_agent_pid = pid;
-                self.pid_refresh_failed = false;
-                false
-            }
-            Err(err) if !self.pid_refresh_failed => {
-                self.pid_refresh_failed = true;
-                app.push_error(format!("Root Agent identity refresh failed: {err}"));
-                false
-            }
-            Err(_) => false,
-        }
-    }
-
-    async fn stop(&mut self) {
-        self.stop_for_input(&[]).await;
-    }
-
-    async fn stop_for_input(
-        &mut self,
-        submitted: &[(String, String)],
-    ) -> (Vec<UiEvent>, Vec<(String, String, String)>) {
-        let _ = self.shutdown.send(true);
-        for task in self.tasks.drain(..) {
-            let _ = task.await;
-        }
-        let Some((ui, tape)) = self.recovery.take() else {
-            return (Vec::new(), Vec::new());
-        };
-        let outcome = previous_input::snapshot(&ui, &tape, submitted).await;
-        let _ = ui.close().await;
-        let _ = tape.close().await;
-        outcome
-    }
 }
 
 /// Run one redirected input, write its output streams, and return its exit status.
@@ -985,7 +859,12 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[path = "file_backed/accessibility_tests.rs"]
+mod accessibility_tests;
+#[cfg(test)]
 mod action_details_tests;
+#[cfg(test)]
+mod queue_tests;
 #[cfg(test)]
 #[path = "file_backed/semantic_tests.rs"]
 mod semantic_tests;

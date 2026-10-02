@@ -7,6 +7,7 @@ use serde_json::Value;
 
 include!("tool_batch/support_and_namespace_contract.inc.rs");
 include!("tool_batch/namespace_and_batch_contract.inc.rs");
+include!("tool_batch/partial_effect.inc.rs");
 include!("tool_batch/replay_and_effect_contract.inc.rs");
 
 include!("tool_batch/rejected_metadata.inc.rs");

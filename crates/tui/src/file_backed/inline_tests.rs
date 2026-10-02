@@ -38,11 +38,11 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
                 .contains(Modifier::ITALIC)
         );
         assert_eq!(buffer.cell((0, 2)).unwrap().symbol(), "•");
-        assert_eq!(buffer.cell((4, 3)).unwrap().symbol(), "l");
-        assert_eq!(buffer.cell((0, 4)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((0, 4)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((0, 5)).unwrap().fg, Color::Red);
-        for row in [6, 7, 8] {
+        assert_eq!(buffer.cell((4, 4)).unwrap().symbol(), "l");
+        assert_eq!(buffer.cell((0, 7)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((0, 7)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((0, 8)).unwrap().fg, Color::Red);
+        for row in [10, 11, 12] {
             assert_eq!(
                 buffer.cell((0, row)).unwrap().fg,
                 Color::Reset,
@@ -120,7 +120,7 @@ fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() 
             "# Heading\n```diff\n+    first\n-    second".into(),
         ));
         let before = app.styled_history_lines(width);
-        let drained = app.drain_committed_scrollback(width, 4);
+        let drained = app.drain_committed_scrollback(width, 5);
         let retained = app.styled_history_lines(width);
         assert!(!drained.is_empty());
         assert_eq!([drained, retained].concat(), before);
@@ -135,7 +135,7 @@ fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() 
             assert_eq!(buffer.cell((5, 2)).unwrap().fg, Color::Green);
             assert!(
                 buffer
-                    .cell((0, 3))
+                    .cell((0, 4))
                     .unwrap()
                     .modifier
                     .contains(Modifier::BOLD)
@@ -223,11 +223,11 @@ fn wrapped_unicode_draft_cursor_uses_nonzero_viewport_origin_after_scroll() {
         .unwrap();
 
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer.cell((6, 7)).unwrap().symbol(), "界");
-    assert_eq!(buffer.cell((8, 7)).unwrap().symbol(), "終");
+    assert_eq!(buffer.cell((6, 6)).unwrap().symbol(), "界");
+    assert_eq!(buffer.cell((8, 6)).unwrap().symbol(), "終");
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(10, 7)
+        ratatui::layout::Position::new(10, 6)
     );
 }
 
@@ -265,9 +265,9 @@ fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
         .map(|text| HistoryCell::Assistant(text.to_string()))
         .collect();
 
-    let drained = app.drain_committed_scrollback(8, 4);
+    let drained = app.drain_committed_scrollback(8, 5);
     let retained = app.rendered_history_lines(8);
-    let height = inline_viewport_height(&app, 8, 4);
+    let height = inline_viewport_height(&app, 8, 5);
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
 
@@ -380,9 +380,9 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
 }
 
 #[test]
-fn prompt_shows_the_host_supplied_effective_model() {
+fn prompt_shows_the_process_selected_next_model() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
-    app.set_effective_model(Some("gpt-6-luna".to_string()));
+    crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6-luna");
 
     let backend = render(&app);
     let line = (0..80)
@@ -391,13 +391,13 @@ fn prompt_shows_the_host_supplied_effective_model() {
         .trim_end()
         .to_string();
 
-    assert!(line.starts_with("alan no project · model gpt-6-luna · ready"));
+    assert!(line.starts_with("alan no project · model next gpt-6-luna · ready"));
 }
 
 #[test]
 fn model_and_status_remain_visible_across_prompt_widths() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
-    app.set_effective_model(Some("gpt-6-luna".to_string()));
+    crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6-luna");
     app.apply_ui_activity_snapshot(UiActivitySnapshot::running(1));
 
     for width in [40, 60, 80, 120] {
@@ -407,7 +407,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(text.contains("model gpt-6-luna"), "{text}");
+        assert!(text.contains("next gpt-6-luna"), "{text}");
         assert!(text.ends_with("working"), "{text}");
     }
 
@@ -430,7 +430,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(text.contains("model gpt-6-luna"), "{text}");
+        assert!(text.contains("model next"), "{text}");
         assert!(text.ends_with(status), "{text}");
     }
 }
@@ -501,7 +501,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
             );
             assert!(rendered.contains("select or revoke"), "{rendered}");
             let cursor = terminal.backend().cursor_position();
-            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, height - 1));
+            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 1));
             assert!(app.drain_committed_scrollback(width, 22).is_empty());
             assert!(
                 app.transcript.is_empty(),
@@ -531,7 +531,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
 }
 
 #[test]
-fn completion_candidates_render_before_the_inline_prompt_without_entering_history() {
+fn completion_candidates_render_below_the_inline_prompt_without_entering_history() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.transcript = vec![
         HistoryCell::User("pwd".to_string()),
@@ -549,18 +549,18 @@ fn completion_candidates_render_before_the_inline_prompt_without_entering_histor
             .to_string()
     };
 
-    assert!(line(3).contains("/project"));
-    assert!(line(4).contains("/compact"));
-    assert!(line(6).contains("/continue"));
-    assert!(line(7).contains("/discard"));
-    assert!(line(8).contains("/clear"));
-    assert_eq!(line(9), ": /");
+    assert_eq!(line(3), ": /");
+    assert!(line(4).contains("/project"));
+    assert!(line(5).contains("/compact"));
+    assert!(line(7).contains("/continue"));
+    assert!(line(8).contains("/discard"));
+    assert!(line(9).contains("/clear"));
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
     assert_eq!(inline_viewport_height(&app, 80, 12), 10);
 }
 
 #[test]
-fn wrapped_completion_candidates_reserve_their_rendered_height_before_the_prompt() {
+fn wrapped_completion_candidates_reserve_their_rendered_height_below_the_prompt() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.composer.set_text("/");
     app.refresh_completion();
@@ -606,7 +606,7 @@ fn wrapped_multiline_prompt_keeps_its_cursor_in_the_inline_viewport() {
     app.composer.set_text("\nx");
 
     let height = inline_viewport_height(&app, 8, 24);
-    assert_eq!(height, 3);
+    assert_eq!(height, 4);
 
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -629,7 +629,7 @@ fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
         terminal.backend().cursor_position(),
         ratatui::layout::Position::new(3, 4)
     );
-    assert_eq!(height, 5);
+    assert_eq!(height, 6);
 }
 
 #[test]
@@ -657,7 +657,7 @@ fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
     let mut terminal = Terminal::new(TestBackend::new(10, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
 
-    assert_eq!(height, 11);
+    assert_eq!(height, 12);
     assert_eq!(
         terminal.backend().cursor_position(),
         ratatui::layout::Position::new(3, 10)

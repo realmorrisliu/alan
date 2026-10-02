@@ -304,20 +304,20 @@ impl AnthropicMessagesClient {
             .await
             .context("Failed to send streaming request to the Anthropic Messages API")?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Anthropic Messages API streaming error ({}): {}",
-                status,
-                error_text
-            );
-        }
+        let response = response.error_for_status()?;
 
         let mut stream = response.bytes_stream();
         let mut parser = SseEventParser::new();
 
-        while let Some(chunk_result) = stream.next().await {
+        loop {
+            let chunk_result = tokio::select! {
+                biased;
+                _ = tx.closed() => return Ok(()),
+                chunk = stream.next() => match chunk {
+                    Some(chunk) => chunk,
+                    None => break,
+                },
+            };
             let chunk = chunk_result.context("Failed to read stream chunk")?;
             for data in parser.push(&chunk) {
                 if data == "[DONE]" {
@@ -768,20 +768,22 @@ impl LlmProvider for AnthropicMessagesClient {
         let client =
             AnthropicMessagesClient::with_params(&self.api_key, &self.base_url, &self.model);
         let request_headers_for_task = request_headers;
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            if let Err(e) = client
+            let outcome = client
                 .stream_anthropic_messages_with_headers(
                     anthropic_request,
                     event_tx,
                     Some(&request_headers_for_task),
                 )
-                .await
-            {
-                tracing::debug!(error = ?e, "Anthropic Messages API stream failed");
-            }
+                .await;
+            let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
 
-        Ok(streaming::project_events(event_rx))
+        Ok(crate::failure::guard_stream(
+            streaming::project_events(event_rx),
+            status_rx,
+        ))
     }
 
     fn provider_name(&self) -> &'static str {

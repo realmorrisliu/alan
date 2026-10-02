@@ -1,6 +1,20 @@
 use super::*;
 
 impl FileBackedApp {
+    pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
+        for input in self.local_inputs.values_mut() {
+            if let Some(index) = &mut input.cell
+                && *index >= inserted_at
+            {
+                *index += 1;
+            }
+        }
+        for index in self.action_cells.values_mut() {
+            if *index >= inserted_at {
+                *index += 1;
+            }
+        }
+    }
     pub(in crate::file_backed) fn prune_rendered_prefix(
         &mut self,
         opts: RenderOpts,
@@ -18,6 +32,12 @@ impl FileBackedApp {
             };
             let cell_lines = rows.len();
             let keep_source = Some(index) == self.current_assistant_cell();
+            for input in self.local_inputs.values_mut() {
+                if input.cell == Some(index) && remaining >= cell_lines {
+                    input.committed = true;
+                    input.release_terminal_source();
+                }
+            }
             if cell_lines > remaining || keep_source {
                 let count = remaining.min(cell_lines);
                 if count > 0 {
@@ -26,6 +46,13 @@ impl FileBackedApp {
                             HistoryCell::Styled(rows.into_iter().skip(count).collect());
                     } else if !self.transcript[index].trim_rendered_prefix(opts, count) {
                         break;
+                    }
+                    if let Some((_, _, cut)) = self.transcript[index].input_source() {
+                        for input in self.local_inputs.values_mut() {
+                            if input.cell == Some(index) {
+                                input.source_cut = cut;
+                            }
+                        }
                     }
                     remaining -= count;
                     self.scrollback_front_is_partial = true;
@@ -38,6 +65,15 @@ impl FileBackedApp {
                 index += 1;
             } else {
                 self.transcript.remove(index);
+                for input in self.local_inputs.values_mut() {
+                    if let Some(cell) = &mut input.cell {
+                        if *cell == index {
+                            input.cell = None;
+                        } else if *cell > index {
+                            *cell -= 1;
+                        }
+                    }
+                }
                 self.action_cells.retain(|_, cell_index| {
                     if *cell_index == index {
                         return false;
@@ -116,10 +152,48 @@ impl FileBackedApp {
         }
     }
 
+    pub(super) fn queued_receipt_at(&self, index: usize) -> bool {
+        self.local_inputs
+            .values()
+            .any(|input| input.cell == Some(index) && !input.tape_seen)
+    }
+
+    pub(in crate::file_backed) fn remove_receipt_cell(&mut self, index: usize) {
+        self.transcript.remove(index);
+        for input in self.local_inputs.values_mut() {
+            if let Some(cell) = &mut input.cell {
+                if *cell == index {
+                    input.cell = None;
+                } else if *cell > index {
+                    *cell -= 1;
+                }
+            }
+        }
+        self.action_cells.retain(|_, cell| {
+            if *cell == index {
+                return false;
+            }
+            if *cell > index {
+                *cell -= 1;
+            }
+            true
+        });
+        if let Some(boundary) = &mut self.pending_remote_turn_start
+            && *boundary > index
+        {
+            *boundary -= 1;
+        }
+    }
+
     pub(in crate::file_backed) fn current_turn_has_user_boundary(&self) -> bool {
-        for cell in self.transcript.iter().rev() {
+        for (index, cell) in self.transcript.iter().enumerate().rev() {
+            if self.queued_receipt_at(index) {
+                continue;
+            }
             match cell {
-                HistoryCell::User(_) | HistoryCell::Command(_) => return true,
+                HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::InputTail { .. } => {
+                    return true;
+                }
                 HistoryCell::Assistant(_) | HistoryCell::AssistantTail { .. } => return false,
                 _ => {}
             }
@@ -132,9 +206,15 @@ impl FileBackedApp {
     /// plan/notice cells are scanned over; a boundary stops the scan.
     pub(in crate::file_backed) fn current_assistant_cell(&self) -> Option<usize> {
         for (idx, cell) in self.transcript.iter().enumerate().rev() {
+            if self.queued_receipt_at(idx) {
+                continue;
+            }
             match cell {
                 HistoryCell::Assistant(_) | HistoryCell::AssistantTail { .. } => return Some(idx),
-                HistoryCell::User(_) | HistoryCell::Command(_) | HistoryCell::PendingYield(_) => {
+                HistoryCell::User(_)
+                | HistoryCell::Command(_)
+                | HistoryCell::InputTail { .. }
+                | HistoryCell::PendingYield(_) => {
                     return None;
                 }
                 _ => {}
@@ -153,8 +233,62 @@ impl FileBackedApp {
         }
         match record.role.as_str() {
             "user" => {
+                let ids: Vec<_> = self
+                    .local_inputs
+                    .iter()
+                    .filter(|(_, input)| input.owner == self.queue.owner)
+                    .map(|(id, _)| id)
+                    .filter(|id| record.belongs_to(id))
+                    .cloned()
+                    .collect();
+                let local = !ids.is_empty();
+                let duplicate = ids.iter().any(|id| {
+                    self.local_inputs
+                        .get(id)
+                        .is_some_and(|input| input.tape_seen || input.committed)
+                });
+                if ids.iter().any(|id| {
+                    self.local_inputs
+                        .get(id)
+                        .is_some_and(|input| input.tape_seen)
+                }) {
+                    return;
+                }
+                let cut = ids
+                    .iter()
+                    .filter_map(|id| self.local_inputs.get(id))
+                    .map(|input| input.source_cut)
+                    .max()
+                    .unwrap_or((0, 0));
+                let mut cells: Vec<_> = ids
+                    .iter()
+                    .filter_map(|id| self.local_inputs.get(id).and_then(|input| input.cell))
+                    .collect();
+                cells.sort_unstable();
+                cells.dedup();
+                for index in cells.into_iter().rev() {
+                    self.remove_receipt_cell(index);
+                }
+                for id in &ids {
+                    if let Some(input) = self.local_inputs.get_mut(id) {
+                        input.tape_seen = true;
+                    }
+                }
                 self.reconciler.on_user_record();
-                self.insert_user_boundary(record.into_user_cell());
+                if !local || !duplicate {
+                    let index = self
+                        .pending_remote_turn_start
+                        .unwrap_or(self.transcript.len());
+                    self.insert_user_boundary(record.into_user_cell().with_input_cut(cut));
+                    for id in &ids {
+                        if let Some(input) = self.local_inputs.get_mut(id) {
+                            input.cell = Some(index);
+                        }
+                    }
+                }
+                for input in self.local_inputs.values_mut() {
+                    input.release_terminal_source();
+                }
                 self.flush_held_stream_after_boundary();
             }
             "assistant" => {
