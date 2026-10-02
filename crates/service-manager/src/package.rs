@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::flat_fs::{FlatFileService, FlatServiceFs};
 
+mod bootstrap;
+pub(crate) use bootstrap::PackageBootstrap;
 mod fs_safety;
 mod materializer;
 mod store;
@@ -250,7 +252,7 @@ impl std::fmt::Debug for PackageService {
 
 impl PackageService {
     pub fn open(channel_id: impl Into<String>, store_root: PathBuf) -> Result<Arc<Self>> {
-        Self::open_inner(channel_id.into(), store_root, None)
+        Self::open_inner(channel_id.into(), store_root, None, None)
     }
 
     pub fn ephemeral(channel_id: impl Into<String>) -> Result<Arc<Self>> {
@@ -258,19 +260,20 @@ impl PackageService {
             .prefix("alan-package-service-")
             .tempdir()?;
         let root = temporary.path().to_path_buf();
-        Self::open_inner(channel_id.into(), root, Some(temporary))
+        Self::open_inner(channel_id.into(), root, Some(temporary), None)
     }
 
     fn open_inner(
         channel_id: String,
         store_root: PathBuf,
         temporary_store: Option<tempfile::TempDir>,
+        bootstrap: Option<Arc<bootstrap::BootstrapWait>>,
     ) -> Result<Arc<Self>> {
         ensure!(
             matches!(channel_id.as_str(), "stable" | "dev" | "test"),
             "invalid Package Service channel"
         );
-        let (store, catalog) = PackageStore::open(store_root)?;
+        let (store, catalog) = PackageStore::open(store_root, bootstrap)?;
         Ok(Arc::new(Self {
             channel_id,
             store,

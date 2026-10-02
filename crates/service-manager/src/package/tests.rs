@@ -4,6 +4,8 @@ use super::*;
 use alan_agent_engine::skills::{SkillScope, parse_skill_metadata};
 use std::fs::File;
 
+#[cfg(unix)]
+mod bootstrap;
 mod concurrency;
 mod file_surface;
 #[cfg(unix)]

@@ -6,7 +6,23 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
-## Current candidate qualification — 2026-10-03
+## Current startup candidate qualification — 2026-10-03
+
+Native Alan completed the shared Package startup correction in two ordinary
+same-instance tasks and exited naturally0. Frozen610 Rust/26 build manifest
+`59e3967bf39b6e4123688f8cc5af1ff5b0de496599166708d9c8aa4477b865bd`
+passes independent source reviews, unrestricted complete Service Manager/CLI
+owning tests (207 passed,1 ignored), canonical quality and release build.
+Exact release SHA
+`7dee8c6444ed3d067d93ab9c44d559953432484d24a58311ea763e3ffc20044c`.
+Actual managed FollowUp Agent recovery `alan-g3-agent-recovery-20261003-w2tqirtm`
+passes with complete captured binding/medium controls, fresh explicit authority,
+one correlated generated Bash effect, E/Q once,D zero, repeat nonreplay,
+four normal exits0,no rescue and no live processes. Independent joined runtime
+reviews pass with no findings; new-head commit/CI/normal merge remain pending. Previous source and
+failed CI evidence below remain retained; no NextTurn or unattended qualification.
+
+## Previous P1 candidate qualification — 2026-10-03
 
 Native authored both P1 corrections and all caller/test follow-ups; six exact
 completed tasks and natural author exit 0 are retained. Frozen 608 Rust/26 build
@@ -20,10 +36,59 @@ repeat recovery without replay, four natural exits 0, no manual rescue/live PIDs
 Independent joined Spec and standards runtime reviews pass with no findings. Two earlier harness failures
 remain FAIL with their original evidence; they do not provide gate credit.
 
-Current remote head remains ff9fbb6a and its green CI predates these changes.
-The candidate still requires a new source commit, current-head CI/review and
-normal approved merge before canonical sync/archive. Native NextTurn recovery,
+Native correction is now committed and pushed as
+`863a960363692db8bdee0c7017ddd0c8c5ab8381`; its commit hook passes canonical
+quality. Current-head CI fails Coverage and macOS tests on concurrent startup; its
+shared-owner correction is under new qualification; prior ff9 green checks do not supply new-head credit. Current-head source
+blobs match the reviewed freeze. Passing current-head CI/review and normal
+approved merge remain required before canonical sync/archive. Native NextTurn recovery,
 all-client detach and unfinished shared lifecycle acceptance are not claimed.
+
+### Current CI startup blocker
+
+Current CI run 37073769633 fails Coverage (Linux) and macOS full tests in the
+same existing simultaneous bare-invocation readiness integration test. Root
+reproduces the unchanged-production focused test locally, actual exit101.
+The old test discards partial discovery and child stderr, so timeout `left: 0`
+is not proof both children failed. A separate bounded operational two-child
+probe captures one `Package Store busy: lock acquisition exceeded 500 ms` exit;
+the peer ends only on diagnostic stdin EOF. Its directory scan is not an
+independent readiness proof. All diagnostic children naturally exit, no signals.
+CI/local raw failures are retained under `new-head-p1/qualified-candidate/`.
+
+Root starts exact833 candidate Native author PID64191, boot
+`2064e4b7-9ef1-4e27-81a7-2e6ce0fd9a58`, Root `/proc/8`, in owned w5E:p7.
+Fresh visible RW project request-1/cwd and actual sol-medium model are verified.
+One admitted task `32cced1a-3e3b-4492-b27f-dd88109081f7` owns diagnosis and the
+smallest evidence-backed Package Service/shared-bootstrap correction, preserving
+20-second double-ready acceptance, 500ms bounded operator busy behavior and
+all previous source fixes. Root/agents remain read-only for Rust. No timeout
+inflation, test serialization, skip, lock bypass or new framework is authorized.
+Native diagnostic task naturally Completed, with truthful separate sandbox
+socket denial. Root runs that exact Native fixture externally: actual exit101,
+all634 Rust/build pins stable, production unchanged. One child is Ready with
+its exact boot/socket; the other exits1 with the500ms Package Store busy error.
+This is meaningful external RED, not a timing or discovery guess. Root submits
+one ordinary continuation for the evidence-backed shared production correction;
+the same Native PID/boot/Root remains the sole Rust author. Continuation
+`324446f6-64d7-4db2-968a-b50f30b828e7` naturally Completed; public read-only
+inspection verified both tasks Completed and known empty idle state before
+ordinary /quit and natural author exit0, without manual rescue. Its seven-path
+correction uses one async-owned PackageBootstrap guard and shared ten-second
+lock-acquisition budget across open/seeding/initial references; success restores
+ordinary500ms policy, drop cancels subsequent waits, and acquired durable
+transactions remain protected. No test serialization or assertion weakening.
+Frozen610 Rust/26 build manifest
+`59e3967bf39b6e4123688f8cc5af1ff5b0de496599166708d9c8aa4477b865bd`
+passes independent Spec/standards source reviews. External complete owning
+Service Manager and CLI tests pass207, ignored1, with exact pins stable;
+the simultaneous double-ready test passes. Guard-drop tests cover a real
+blocking opener, not whole ServiceManager boot cancellation. Canonical `just quality` and release build both pass with stable source pins.
+New binary SHA `7dee8c6444ed3d067d93ab9c44d559953432484d24a58311ea763e3ffc20044c`
+is under renewed actual managed Agent recovery in the owned Herdr pane.
+New-binary runtime and both independent joined reviews pass; new-head CI and
+normal merge remain pending. Previous exact833 local Agent recovery evidence retains its
+narrow scope and does not waive this simultaneous-invocation failure.
 
 ## Latest qualification reopened — 2026-10-03
 

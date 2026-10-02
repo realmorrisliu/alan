@@ -20,10 +20,14 @@ pub(super) use leases::PackageLease;
 
 pub(super) struct PackageStore {
     root: PathBuf,
+    bootstrap: Option<std::sync::Arc<super::bootstrap::BootstrapWait>>,
 }
 
 impl PackageStore {
-    pub(super) fn open(store_root: PathBuf) -> Result<(Self, PackageCatalog)> {
+    pub(super) fn open(
+        store_root: PathBuf,
+        bootstrap: Option<std::sync::Arc<super::bootstrap::BootstrapWait>>,
+    ) -> Result<(Self, PackageCatalog)> {
         ensure_package_store_channel_chain(&store_root)?;
         match fs::symlink_metadata(&store_root) {
             Ok(_) => {
@@ -45,15 +49,18 @@ impl PackageStore {
             &store_root.join("staging"),
             "package staging path is not an owned directory",
         )?;
-        let _transaction = PackageStoreLock::acquire(&store_root)?;
+        let _transaction = PackageStoreLock::acquire(&store_root, bootstrap.as_deref())?;
         fs::create_dir_all(store_root.join("leases"))?;
-        let store = Self { root: store_root };
+        let store = Self {
+            root: store_root,
+            bootstrap,
+        };
         let catalog = store.recover()?;
         Ok((store, catalog))
     }
 
     pub(super) fn transaction(&self) -> Result<PackageStoreLock> {
-        PackageStoreLock::acquire(&self.root)
+        PackageStoreLock::acquire(&self.root, self.bootstrap.as_deref())
     }
 
     pub(super) fn load(&self) -> Result<PackageCatalog> {
@@ -176,7 +183,7 @@ pub(super) struct PackageStoreLock {
 }
 
 impl PackageStoreLock {
-    fn acquire(root: &Path) -> Result<Self> {
+    fn acquire(root: &Path, bootstrap: Option<&super::bootstrap::BootstrapWait>) -> Result<Self> {
         let path = root.join("store.lock");
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true);
@@ -192,8 +199,16 @@ impl PackageStoreLock {
         {
             use std::os::fd::AsRawFd;
             use std::time::{Duration, Instant};
-            let deadline = Instant::now() + Duration::from_millis(500);
+            let boot_deadline = bootstrap.map(|wait| wait.deadline()).transpose()?.flatten();
+            let deadline =
+                boot_deadline.unwrap_or_else(|| Instant::now() + Duration::from_millis(500));
             loop {
+                if let Some(wait) = bootstrap {
+                    wait.deadline()?;
+                }
+                if boot_deadline.is_some() && Instant::now() >= deadline {
+                    bail!("Package Store busy: bootstrap acquisition budget exhausted");
+                }
                 // SAFETY: file owns a valid descriptor throughout acquisition.
                 let result =
                     unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
@@ -208,6 +223,9 @@ impl PackageStoreLock {
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
+                    if boot_deadline.is_some() {
+                        bail!("Package Store busy: bootstrap acquisition budget exhausted");
+                    }
                     bail!("Package Store busy: lock acquisition exceeded 500 ms");
                 }
                 std::thread::sleep(remaining.min(Duration::from_millis(10)));
