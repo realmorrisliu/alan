@@ -1,7 +1,21 @@
 use super::*;
 
 impl RuntimeSubmissionQueues {
-    pub(super) async fn admit_input(&self, input: &Submission) -> Result<()> {
+    pub(super) fn push_outer_deferred(
+        &mut self,
+        action: crate::agent_machine::DeferredRuntimeAction,
+    ) {
+        self.outer_queue
+            .lock()
+            .expect("input queue poisoned")
+            .pending
+            .push_back(QueuedRuntimeItem::Deferred(action));
+    }
+
+    pub(super) async fn admit_input(
+        &self,
+        input: &Submission,
+    ) -> Result<crate::agent_machine::input_queue::AdmissionDisposition> {
         self.capture_input(input).await?;
         crate::agent_machine::input_queue::admit_input(
             &self.outer_queue,
@@ -9,6 +23,27 @@ impl RuntimeSubmissionQueues {
             input,
         )
         .await
+    }
+
+    /// Fresh deferred-observer intake must be admitted before it becomes queued work.
+    /// Duplicate delivery neither preempts promotion nor changes the original capture.
+    pub(super) async fn admit_during_deferred(
+        &mut self,
+        incoming: Submission,
+        cancel: &CancellationToken,
+    ) -> bool {
+        match self.admit_input(&incoming).await {
+            Ok(crate::agent_machine::input_queue::AdmissionDisposition::AlreadyAdmitted) => false,
+            Ok(_) => {
+                cancel.cancel();
+                self.push_outer_submission(incoming);
+                true
+            }
+            Err(error) => {
+                self.reject_admission(&incoming, &error).await;
+                false
+            }
+        }
     }
 
     pub(super) async fn reject_admission(&mut self, input: &Submission, error: &anyhow::Error) {
@@ -153,9 +188,15 @@ impl RuntimeSubmissionQueues {
             {
                 continue;
             }
-            if let Err(error) = self.admit_input(&input).await {
-                self.reject_admission(&input, &error).await;
-                continue;
+            match self.admit_input(&input).await {
+                Ok(crate::agent_machine::input_queue::AdmissionDisposition::AlreadyAdmitted) => {
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.reject_admission(&input, &error).await;
+                    continue;
+                }
             }
             self.push_outer_submission(input);
         }

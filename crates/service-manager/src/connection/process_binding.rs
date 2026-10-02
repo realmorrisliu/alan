@@ -39,10 +39,14 @@ impl ConnectionAuthority for ProcessConnection {
             identity.profile == self.profile,
             "restore profile is outside Process authority"
         );
-        let captured = self
-            .service
-            .capture_model(&self.profile, Some(&identity.model), &self.namespace)
-            .await?;
+        // Exact recovery of the profile's original callable is not a new model
+        // selection. Changed models still cross the existing catalog boundary.
+        let original = self.capture(None).await?;
+        let captured = if original.identity.model == identity.model {
+            original
+        } else {
+            self.capture(Some(&identity.model)).await?
+        };
         ensure!(
             &captured.identity == identity,
             "captured connection revision unavailable"

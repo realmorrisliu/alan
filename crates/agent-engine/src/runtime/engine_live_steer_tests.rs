@@ -135,6 +135,7 @@ async fn admission_recovery_live_compatible_steer_consumed_by_next_actual_a_requ
             "first actual A request before Tool gate"
         );
         runtime.handle.submission_tx.send(steer.clone()).await?;
+        runtime.handle.submission_tx.send(steer.clone()).await?;
         // Same FIFO receiver, serialized observer: completed selection proves the
         // previous admit_during_submission (including broker.push) has returned.
         runtime.handle.submission_tx.send(select.clone()).await?;
@@ -175,6 +176,37 @@ async fn admission_recovery_live_compatible_steer_consumed_by_next_actual_a_requ
             admitted["op"] == serde_json::to_value(&steer.op)?,
             "no FollowUp conversion"
         );
+        anyhow::ensure!(
+            history.iter().filter(|item| matches!(item,
+                crate::rollout::RolloutItem::Event(e)
+                    if e.event_type == "machine_input_admitted_v1" && e.payload["id"] == steer.id
+            )).count() == 1,
+            "one durable admission for repeated unsettled Steer"
+        );
+        let receipt: alan_agent_protocol::UiQueueSnapshot =
+            serde_json::from_slice(&shell.cat("/agent/1/machine/ui/queue").await?)?;
+        anyhow::ensure!(
+            receipt
+                .pending_submission_ids
+                .iter()
+                .filter(|id| *id == &steer.id)
+                .count()
+                == 1,
+            "one pending Steer receipt before Tool release"
+        );
+        anyhow::ensure!(
+            env.model_bindings.lock().await.captured[&steer.id].identity == callable_a.identity,
+            "original captured callable remains intact"
+        );
+        let expected_controls = crate::resolve_runtime_request_controls(
+            &core,
+            crate::provider_capabilities_for_config(&core),
+            Default::default(),
+        )?;
+        anyhow::ensure!(
+            admitted["request_controls"] == serde_json::to_value(expected_controls)?,
+            "original full controls remain intact"
+        );
         runtime.handle.submission_tx.send(next.clone()).await?;
         release.notify_one();
         anyhow::ensure!(
@@ -213,6 +245,18 @@ async fn admission_recovery_live_compatible_steer_consumed_by_next_actual_a_requ
             .messages
             .iter()
             .any(|m| m.content.contains("unique inband steering instruction"))
+    );
+    assert_eq!(
+        requests[1]
+            .messages
+            .iter()
+            .map(|m| m
+                .content
+                .matches("unique inband steering instruction")
+                .count())
+            .sum::<usize>(),
+        1,
+        "duplicate external Steer must enter actual generation exactly once"
     );
     assert_eq!(
         b.recorded_requests().len(),

@@ -73,12 +73,41 @@ async fn incompatible_steer_removal_failure_retains_exact_admitted_input() {
         },
     };
     queues.admit_input(&input).await.unwrap();
+    let admitted_binding = queues.outer_queue.lock().unwrap().bindings[&input.id].clone();
+    let captured_identity = env.model_bindings.lock().await.captured[&input.id]
+        .identity
+        .clone();
     let (probe, mut observed) = queues.recorder.as_ref().unwrap().batch_failure_probe(false);
     queues.recorder = Some(probe.clone());
-    queues
-        .admit_during_submission(input.clone(), Default::default(), true)
-        .await;
-    assert_eq!(observed.recv().await.unwrap().len(), 1);
+    // This is retained admitted work, not a second external intake. Exercise
+    // its existing compatibility/removal owner without redelivering the ID.
+    let removal_batch = tokio::time::timeout(Duration::from_secs(5), async {
+        assert!(queues.reject_incompatible_steer(&input).await.unwrap());
+        observed
+            .recv()
+            .await
+            .expect("failed removal batch must be observed")
+    })
+    .await
+    .expect("incompatible rejection/removal observation must complete within 5 seconds");
+    assert_eq!(removal_batch.len(), 1);
+    assert!(
+        matches!(&removal_batch[0], crate::rollout::RolloutItem::Event(e)
+        if e.event_type == "machine_inputs_removed_v1"
+            && e.payload["submission_ids"] == serde_json::json!([input.id]))
+    );
+    {
+        let queue = queues.outer_queue.lock().unwrap();
+        assert!(queue.admitted_ids.contains(&input.id));
+        assert!(!queue.settled_ids.contains(&input.id));
+        assert!(queue.queue_uncertain_ids.contains(&input.id));
+        assert!(queue.pending_binding_rejections.contains(&input.id));
+        assert_eq!(queue.bindings[&input.id], admitted_binding);
+    }
+    assert_eq!(
+        env.model_bindings.lock().await.captured[&input.id].identity,
+        captured_identity
+    );
     assert!(queues.is_paused());
     assert!(queues.pop_outer().is_none());
     let pending = queues

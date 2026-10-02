@@ -6,6 +6,171 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## Current candidate qualification — 2026-10-03
+
+Native authored both P1 corrections and all caller/test follow-ups; six exact
+completed tasks and natural author exit 0 are retained. Frozen 608 Rust/26 build
+inputs pass independent source reviews, unrestricted full owning tests (1478
+passed, 1 ignored), canonical `just quality` and release build. Exact candidate
+binary SHA `833727d187d50a0678b32ad1f23a006ccd5f2675c8fa1e0500b86a83c4f875f2`.
+Real FollowUp Agent recovery run `alan-g3-agent-recovery-20261003-8x0ohddz`
+passes: preserved full captured binding and medium controls, fresh explicit
+project authority, one correlated generated Bash effect, E/Q once and D zero,
+repeat recovery without replay, four natural exits 0, no manual rescue/live PIDs.
+Independent joined Spec and standards runtime reviews pass with no findings. Two earlier harness failures
+remain FAIL with their original evidence; they do not provide gate credit.
+
+Current remote head remains ff9fbb6a and its green CI predates these changes.
+The candidate still requires a new source commit, current-head CI/review and
+normal approved merge before canonical sync/archive. Native NextTurn recovery,
+all-client detach and unfinished shared lifecycle acceptance are not claimed.
+
+## Latest qualification reopened — 2026-10-03
+
+PR #1026 head `ff9fbb6a2a78541d563e8e728e02466520aaea97` passed all 16 actual
+GitHub checks, but current-head Codex review found two independently confirmed P1s:
+comments `4169172547` and `4169172560`. This head must not merge or be archived.
+Exact restore incorrectly requires static model metadata for an unchanged managed
+profile; duplicate externally delivered input IDs are admitted as success and then
+enqueued again. Full callable identity checks and legitimate internal queued/recovered
+dispatch must remain intact while the shared owners are corrected.
+
+Native Alan PID `98443`, boot `8e309c94-aad4-45a1-a2f9-f921e0af6c6f`, Root `/proc/8`
+is the sole Rust author in Herdr `w5E:p7`, with fresh explicit read-write project
+request-1 and `gpt-6.1-sol` / `medium`. Both regressions compiled and failed on
+unchanged production: managed restore reported unavailable catalog metadata;
+duplicate live Steer appeared twice in the actual generation request. Recorded
+production hashes remained unchanged at RED. Native correction and checks are
+in progress; no new candidate, GREEN qualification, commit or merge is claimed.
+Evidence: `/Users/morris/Library/Caches/Alan/ui-previews/20261003-pr-review-corrections/new-head-p1/`
+and author `target/pr1026-review-corrections/new-p1-*`.
+
+Primary Native task `d9f47b82-d406-43ea-afe5-a6cbabf01eb4` now has meaningful
+focused GREEN: four-provider exact managed restore, one actual duplicate live
+Steer generation, seven binding/recovery cases, and idle duplicate retention plus
+internal dispatch. This is not full source qualification. Full Engine exposed
+an outdated pre-admitted fault fixture waiting indefinitely after correct external
+ID suppression; Root diagnosis was delivered as ordinary Native input
+`71711954-9ea8-46b4-8fa9-0b57a75e3aa7`, without operator Rust writes or process
+rescue. A separate negative-callable assertion advisory
+`3641bc6c-ea23-4aa0-8952-12f3d60a6aa4` is also retained. Complete gates remain open.
+
+The primary task and both supplemental tasks have actual Completed receipts.
+Native passed the bounded failure fixture, full Service Manager (130 unit and
+2 integration tests), exact affected Clippy modes, workspace formatting/diff
+and the unmodified source-cap gate. Complete Engine finishes without hanging:
+1308 passed, 16 native restrictions failed, one ignored; it is NOT qualified.
+Public read-only inspection verified the same boot/Root and eventually known
+empty queue with deferred=false. A transient deferred=true was naturally drained
+TurnMemoryPromotion, not timed-out Tool replay; no process rescue occurred.
+
+Independent all-caller review then found a remaining duplicate intake P1 in
+both Deferred observer API/Namespace arms: raw push_outer_submission bypasses
+admission, later treating these external inputs as internal from_queue work.
+Ordinary same-instance Native correction `f07524db-c0b4-4339-9249-9aa483bb5436`
+is active; all prior evidence is preserved. Source remains mutable and must not
+be frozen, committed or qualified before this path is corrected and reviewed.
+Evidence prefix: author `target/pr1026-review-corrections/new-p1-deferred-intake-*`.
+Both deferred API and Namespace regressions compiled and failed before production
+correction with the precise missing admission-before-enqueue assertion (0 admissions).
+The first Namespace attempt timed out because its control frame was invalid; Native
+corrected that fixture, preserved attempt1, and attempt2 supplies both meaningful
+REDs. A compound Tool exit 0 is not the Cargo test exit: the test log records
+exit 101 with 0 passed and 2 failed. Production correction remains active.
+Native has routed both deferred observer arms through its existing queue control
+module's shared admission helper. First GREEN attempt compiled but failed full
+request-controls equality; Native corrected the fixture's initial intent.
+Second attempt is still an observed long-running test, not GREEN or a known exit.
+Independent fixture review identified a waiting-order risk and unbounded shutdown
+cleanup, while confirming real LlmFs abort races provider startup. Ordinary
+same-instance advisory `9d0d69a9-d07f-46f2-901c-f6d40b6b6d56` is actually admitted
+and queued with the original gpt-6.1-sol/medium binding. It requests releasing the
+promotion gate before selection, after core admission/capture assertions, and
+bounded cleanup without altering LlmFs or weakening actual once-only effects.
+No restart, kill or manual process rescue occurred. Source is not frozen.
+Third GREEN attempt reported a Tool timeout after 90 seconds, with no known
+successful test exit. Native identified the direct fixture lock cycle: blocked
+SelectModel holds model_bindings, while the fixture tried to re-lock it before
+releasing selection. Native removed that test inspection without changing product
+mutex ownership; complete durable A identity/controls and actual A generation
+once/B zero preserve the capture proof. GREEN attempt4 passes both regressions
+(exit 0; 2 passed), including exact dispatch and Tape once. All attempts remain.
+Final fixture safeguard advisory `1c2b565d-6736-43c8-bb56-9276c746bed3` is actually
+queued to bound the whole assertion phase and retain original assertion errors
+independently of bounded cleanup; no new abstraction or production change requested.
+Fifth and sixth tasks must naturally settle before source freeze and final gates.
+Deferred correction task `f07524db-c0b4-4339-9249-9aa483bb5436` now has an
+actual Completed receipt on the same Native boot/Root. Final meaningful API and
+Namespace regressions both pass after bounded phase changes; original binding,
+full controls, one actual generation/payload/dispatch/Tape/settlement and retained
+promotion retry are covered. Native final checks pass full Service Manager,
+dispatch/recovery/deferred suites, 20 Engine integration boundary tests, both exact
+affected Clippy modes, workspace fmt/diff and the unmodified direct source-cap gate.
+Full Native Engine: exit 101, 1310 passed, 16 restricted failures, 1 ignored; not
+qualified. engine.rs is 994 lines, transition.rs unchanged 978. Fifth advisory is
+active and sixth pending; known queue still owns both, with no uncertainty or rescue.
+Both supplemental tasks subsequently Completed naturally. Final fixture runs
+cleanup after scenario timeout/error, releases both gates and preserves primary
+assertion errors independently from cleanup failure. Final reruns: 2 intake,
+9 deferred, 51 recovery, 37 control and 78 owning runtime tests passed; exact
+Clippy/fmt/diff/source-cap passed. Public observation verified all six exact
+Completed receipts on the pinned boot/Root, idle and known empty queue with
+paused/deferred/uncertain false. Ordinary `/quit` ended Native PID98443, wrapper
+actual exit0, no process rescue. Evidence `new-head-p1/native-ready-state.json`
+and `native-exit.json`.
+
+Root froze exact Native source into `new-head-p1/qualified-candidate/source`:
+608 Rust files (607 existing plus one Native test file), 26 unchanged build inputs,
+12 Native Rust changes; all TUI hashes match the earlier qualified UI source.
+Manifest SHA `0e1e10cf299734fa76cd4c81bc56ebe5a8e1f8fcf0be32ea79034536e7197547`.
+Independent frozen Spec and standards reviews pass with no source findings and
+the same manifest pin. Unrestricted complete owning tests exit 0: Engine 1326 unit
+plus 20 integration, Service Manager 130 unit plus 2 integration; 1478 passed,
+1 ignored, source/build hashes unchanged. The 16 Native environment-restricted
+failures pass externally without waiver. Evidence: `spec-review.json`,
+`standards-review.json`, `owning-tests.json` and `owning-tests.log`. Canonical
+whole quality exits 0, including unchanged source cap, architecture, Clippy,
+docs, Host/current-surface checks and standalone distribution. Release build
+exits 0 with unchanged hashes; binary SHA
+`833727d187d50a0678b32ad1f23a006ccd5f2675c8fa1e0500b86a83c4f875f2`.
+First real Agent driver run `alan-g3-agent-recovery-20261003-tdjle_ey` failed
+at a harness state mismatch: UI `working` versus actual Machine `running`.
+Admission contains the expected full binding and medium controls. Operator
+`/quit` naturally exits the failed invocation; its manual-process-rescue flag
+precludes qualification. Failure/effects remain retained. Minimal operational
+v2 changes only that inspector expected-state literal; self-check exits 0 and
+independent v2 preparation review passed. The v2 run `curk1zyi` verified
+actual generation/Bash exit0, E/Q once, exact successful InputCompleted and
+unchanged complete admission. It then failed strict queue settlement because
+the immediate idle snapshot retained deferred memory work. Failed artifacts
+remain retained; operator `/quit` again means FAIL, not qualification. Operational
+v3 waits through the existing bounded 15-second poll for authoritative idle
+and deferred false before all unchanged strict queue/generation checks.
+Transient and timeout self-checks pass; independent v3 preparation review is
+passed. The reviewed v3 live run passes as recorded above; independent
+joined runtime reviews pass. Product source is unchanged.
+Live Agent recovery and new-head CI remain unqualified; source review/full owning PASS is not aggregate G3.
+
+Operational Agent FollowUp recovery driver self-check exits 0 and independent
+read-only review passes preparation only; live is NOT_RUN. It checks exact-ID
+admitted model projection, complete preserved durable binding/controls, actual
+turn-context model/medium, one generated Bash request joined through ToolCall and
+Action call-ID/process/success, effects once, fresh authority, repeat recovery
+without replay and natural exits. It does not claim a native NextTurn live path.
+The 17-requirement canonical sync preview (six capabilities) passes six strict
+spec validations in an isolated cache workspace; canonical masters were not
+changed and archive remains unauthorized until behavior merge and owned closure.
+
+Previous literal-Command G3 and terminal UI evidence remains valid only within
+its recorded scope. Command execution bypasses generation binding, so the old G3
+run does not qualify managed Agent-generation recovery. The corrected candidate
+also requires actual Agent pending-input recovery with preserved full captured
+model/controls, fresh explicit project authority, one real generated Tool effect,
+repeat recovery without replay, and normal exits without process rescue.
+Current-head independent review, full owning/quality checks, release build,
+new live evidence and GitHub CI must be renewed. Normal merge still requires
+another GitHub approval under ruleset 13402610; no admin bypass is authorized.
+
 ## Current delivery review — 2026-10-03
 
 PR #1026 head `b105bf7a5798badc0242bb3fcf04e977d4d08eb5` passed all 16 actual
@@ -108,6 +273,25 @@ snapshot is inferred from a failed reader.
 Delivery remains 0/10 and the weighted local qualification estimate remains 90/100.
 The confirmed P1/P2 and notice-source findings are closed with the final frozen
 checks above; new-head review/CI, merge, canonical sync and archive have not occurred.
+
+### Current-head delivery gate
+
+Correction commit `ff9fbb6a2a78541d563e8e728e02466520aaea97` contains exactly the
+18 Native Rust paths and two canonical plan/proposal updates. Mandatory pre-commit
+full quality passed; its Git tree matches all 607 Rust/26 build frozen pins. PR
+#1026 now has all 16 current-head checks actually SUCCESS, including both platform
+full tests/releases, complete quality, Harness/Self-Eval and CodeQL. Both old P1/P2
+review threads are resolved. Ordinary `gh pr merge --squash --match-head-commit`
+returned exit 1 because base-branch policy prohibits merge; no admin bypass was
+used. Active `Protect main` ruleset 13402610 requires one approving review, and no
+GitHub approval is present. The user has been asked to choose ordinary approval or
+explicit one-PR administrative authorization; no answer is inferred.
+
+A requirement-only canonical sync preview (seven modified/ten added requirements
+across six capabilities) is prepared under `canonical-sync-preview/`; it is not
+applied to canonical specs. Only after behavior merge may sync/archive close the
+remaining tasks. `unify-agent-command-input` stays active with its broad matrix and
+explicit unqualified all-client disconnect/server-stop/unattended/routing handoffs.
 
 ## Current status — 2026-10-02
 

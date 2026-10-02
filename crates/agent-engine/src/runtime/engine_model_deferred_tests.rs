@@ -1,5 +1,7 @@
 //! Actual turn-end promotion uses the retained callable after input settlement.
 use super::*;
+#[path = "engine_deferred_intake_tests.rs"]
+mod intake;
 
 struct GatedPromotion {
     mock: MockLlmProvider,

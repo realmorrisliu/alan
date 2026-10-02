@@ -302,7 +302,10 @@ async fn recovered_input(mode: InputMode, available: bool) {
     let mut core = crate::Config::default();
     core.memory.enabled = false;
     core.streaming_mode = crate::config::StreamingMode::Off;
-    core.model_reasoning_effort = Some(alan_agent_protocol::ReasoningEffort::Low);
+    core.llm_provider = crate::config::LlmProvider::Chatgpt;
+    core.chatgpt_model = "A".into();
+    core.model_reasoning_effort = Some(alan_agent_protocol::ReasoningEffort::Medium);
+    assert!(core.effective_model_info().is_none());
     let mut ns = alan_kernel::Namespace::new();
     ns.mount(
         "/agent/1",
@@ -323,9 +326,9 @@ async fn recovered_input(mode: InputMode, available: bool) {
     let make_callable = |model: &str| CapturedCallable {
         identity: CallableIdentity {
             profile: "exact-profile".into(),
-            provider: "openai_responses".into(),
+            provider: "chatgpt".into(),
             model: model.into(),
-            credential_ref: None,
+            credential_ref: Some("managed-credential-reference".into()),
             revision: "exact-revision".into(),
         },
         root: root.clone(),
@@ -476,6 +479,42 @@ async fn recovered_input(mode: InputMode, available: bool) {
     assert_eq!(a.recorded_requests().len(), usize::from(!rejected));
     assert!(b.recorded_requests().is_empty(), "never fall back to B");
     if !rejected {
+        assert_eq!(
+            a.recorded_requests()[0].reasoning,
+            binding.request_controls.reasoning
+        );
+        assert_eq!(
+            callable_a.config.effective_model(),
+            binding.callable_binding.model
+        );
+        let admitted = history
+            .iter()
+            .find_map(|item| match item {
+                crate::rollout::RolloutItem::Event(e)
+                    if e.event_type == "machine_input_admitted_v1"
+                        && e.payload["id"] == input.id =>
+                {
+                    Some(&e.payload)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            admitted["callable_binding"],
+            serde_json::to_value(&binding.callable_binding).unwrap()
+        );
+        assert_eq!(
+            admitted["request_controls"],
+            serde_json::to_value(&binding.request_controls).unwrap()
+        );
+        assert_eq!(
+            a.recorded_requests()[0]
+                .messages
+                .iter()
+                .filter(|m| m.content == "preserve A")
+                .count(),
+            1
+        );
         assert_eq!(
             a.recorded_requests()[0].reasoning.effort,
             binding.request_controls.reasoning_effort()

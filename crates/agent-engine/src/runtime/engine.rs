@@ -201,9 +201,13 @@ impl RuntimeSubmissionQueues {
             *mode = alan_agent_protocol::InputMode::FollowUp;
         }
         // Journal the payload actually accepted by the scheduler, not the raw request.
-        if let Err(error) = self.admit_input(&incoming).await {
-            self.reject_admission(&incoming, &error).await;
-            return;
+        match self.admit_input(&incoming).await {
+            Ok(crate::agent_machine::input_queue::AdmissionDisposition::AlreadyAdmitted) => return,
+            Ok(_) => {}
+            Err(error) => {
+                self.reject_admission(&incoming, &error).await;
+                return;
+            }
         }
         match self.reject_incompatible_steer(&incoming).await {
             Ok(true) => return,
@@ -220,14 +224,6 @@ impl RuntimeSubmissionQueues {
             return;
         }
         self.push_outer_submission(incoming);
-    }
-
-    fn push_outer_deferred(&mut self, action: crate::agent_machine::DeferredRuntimeAction) {
-        self.outer_queue
-            .lock()
-            .expect("input queue poisoned")
-            .pending
-            .push_back(QueuedRuntimeItem::Deferred(action));
     }
 
     async fn requeue_active_turn_leftovers(&mut self, machine: &mut AgentMachine) -> usize {
@@ -690,9 +686,14 @@ fn spawn_with_prepared_runtime_environment(
                     {
                         continue;
                     }
-                    if let Err(error) = queues.admit_input(&submission).await {
-                        queues.reject_admission(&submission, &error).await;
-                        continue;
+                    match queues.admit_input(&submission).await {
+                        Ok(crate::agent_machine::input_queue::AdmissionDisposition::AlreadyAdmitted)
+                            if !from_queue => continue,
+                        Ok(_) => {}
+                        Err(error) => {
+                            queues.reject_admission(&submission, &error).await;
+                            continue;
+                        }
                     }
                     if matches!(submission.op, alan_agent_protocol::Op::Interrupt)
                         && submission.intent != alan_agent_protocol::InputIntent::Command
@@ -919,9 +920,7 @@ fn spawn_with_prepared_runtime_environment(
                                             if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
                                                 continue;
                                             } else {
-                                                requeue_if_cancelled = true;
-                                                cancel.cancel();
-                                                queues.push_outer_submission(incoming);
+                                                requeue_if_cancelled |= queues.admit_during_deferred(incoming, &cancel).await;
                                             }
                                         }
                                         None => {
@@ -944,9 +943,7 @@ fn spawn_with_prepared_runtime_environment(
                                                 if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
                                                     continue;
                                                 } else {
-                                                    requeue_if_cancelled = true;
-                                                    cancel.cancel();
-                                                    queues.push_outer_submission(incoming);
+                                                    requeue_if_cancelled |= queues.admit_during_deferred(incoming, &cancel).await;
                                                 }
                                             }
                                             Err(err) => {

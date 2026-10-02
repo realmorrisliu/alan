@@ -478,5 +478,5 @@ pub(crate) async fn admit_test_input(
     let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
     queues.environment = Some(state.environment.clone());
     queues.recorder = state.machine.input_recorder();
-    queues.admit_input(input).await
+    queues.admit_input(input).await.map(|_| ())
 }

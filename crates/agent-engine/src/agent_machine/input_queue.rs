@@ -4,17 +4,25 @@ use std::sync::Arc;
 
 use alan_agent_protocol::{ContentPart, Submission};
 
+/// Admission evidence does not imply that a fresh external delivery may enqueue again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdmissionDisposition {
+    New,
+    AlreadyAdmitted,
+    NotInput,
+}
+
 /// One admission contract shared by the Machine and its Process-loop observer.
 pub(crate) async fn admit_input(
     queue: &std::sync::Arc<std::sync::Mutex<MachineInputQueue>>,
     recorder: Option<&crate::rollout::RolloutRecorder>,
     input: &Submission,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<AdmissionDisposition> {
     if !matches!(
         input.op,
         alan_agent_protocol::Op::Turn { .. } | alan_agent_protocol::Op::Input { .. }
     ) {
-        return Ok(());
+        return Ok(AdmissionDisposition::NotInput);
     }
     if queue
         .lock()
@@ -22,7 +30,7 @@ pub(crate) async fn admit_input(
         .admitted_ids
         .contains(&input.id)
     {
-        return Ok(());
+        return Ok(AdmissionDisposition::AlreadyAdmitted);
     }
     let mut payload = serde_json::to_value(input)?;
     if let Some(binding) = queue
@@ -41,7 +49,7 @@ pub(crate) async fn admit_input(
         state.queue_evidence_known |= recorder.is_some();
     }
     crate::runtime::queue_publication::observe(queue).await;
-    Ok(())
+    Ok(AdmissionDisposition::New)
 }
 
 pub(crate) async fn persist_input_event(
@@ -178,7 +186,10 @@ pub(crate) struct MachineInputQueue {
 
 impl super::AgentMachine {
     /// Acknowledged admission precedes acceptance into any runtime queue.
-    pub(crate) async fn admit_input(&self, input: &Submission) -> anyhow::Result<()> {
+    pub(crate) async fn admit_input(
+        &self,
+        input: &Submission,
+    ) -> anyhow::Result<AdmissionDisposition> {
         admit_input(&self.input_queue(), self.recorder.as_ref(), input).await
     }
 
