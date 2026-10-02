@@ -33,7 +33,7 @@ Model quality and latency are not scored against fx with different models.
 | --- | --- | --- |
 | G1: usable project agent | Fresh CLI → visible project approval → inspect/edit a disposable project → run a focused check → inspect actual diff; cancel and submit a correction without hidden setup | Passed locally on 2026-09-30; review and CI pending |
 | G2: supervised self-development | Alan reads relevant instructions and its own source in an isolated checkout, makes one scoped real fix, runs the failing-then-passing check, reports the actual diff; external review/build/relaunch confirms the fix | Passed locally on 2026-09-30; CI and merge pending |
-| G3: repeatable daily use | A second independent task plus explicit recovery of chosen work; no completed effect replay, correct queue/cwd, no manual process rescue | Not demonstrated |
+| G3: repeatable daily use | A second independent task plus explicit recovery of chosen work; no completed effect replay, correct queue/cwd, no manual process rescue | Passed locally through supervised native tasks and final recovery acceptance on 2026-10-02; current-head CI/merge pending; Herdr view detach retained another main client |
 
 A mock-provider test, manually inserted file, operator-written patch or model's
 claim of passing tests cannot satisfy G2. Human authorization and independent
