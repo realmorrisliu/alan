@@ -635,3 +635,6 @@ async fn acceptance_consumption_dispatch_fault_exact_ids_and_recovery() {
     let q = q.lock().unwrap();
     assert!(q.queue_uncertain_ids.contains(&n.id) && q.queue_uncertain_ids.contains(&t.id));
 }
+
+#[path = "engine_next_turn_discard_tests.rs"]
+mod discard;

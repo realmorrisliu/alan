@@ -273,7 +273,7 @@ impl RuntimeSubmissionQueues {
                 cancel.cancel();
             } else {
                 let mut queue = self.outer_queue.lock().expect("input queue poisoned");
-                if queue.pending.iter().any(|item| matches!(item,
+                if !queue.queued_next_turn_inputs.is_empty() || queue.pending.iter().any(|item| matches!(item,
                     QueuedRuntimeItem::Submission(input) if matches!(input.op, Op::Turn { .. } | Op::Input { .. }))) {
                     queue.paused = true;
                 }
@@ -290,7 +290,7 @@ impl RuntimeSubmissionQueues {
             return false;
         }
         let preflight = async {
-            let (recovered, removed) = {
+            let (recovered, removed, anonymous_count) = {
                 let queue = self.outer_queue.lock().expect("input queue poisoned");
                 let removed = if matches!(submission.op, Op::DiscardQueue) {
                     queue
@@ -304,7 +304,13 @@ impl RuntimeSubmissionQueues {
                             }
                             _ => None,
                         })
-                        .collect::<Vec<_>>()
+                        .chain(queue.queued_next_turn_inputs.iter().filter_map(|(id, _)| id.clone()))
+                        .fold(Vec::new(), |mut ids, id| {
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                            ids
+                        })
                 } else {
                     Vec::new()
                 };
@@ -312,10 +318,16 @@ impl RuntimeSubmissionQueues {
                 anyhow::ensure!(queue.paused, "input queue is not paused");
                 anyhow::ensure!(
                     !matches!(submission.op, Op::ContinueQueue)
-                        || queue.pending_binding_rejections.is_empty(),
+                        || (queue.pending_binding_rejections.is_empty()
+                            && queue.queue_uncertain_ids.is_empty()),
                     "accepted input removal is unresolved; discard queued work before continuing"
                 );
-                (queue.recovered, removed)
+                let anonymous_count = if matches!(submission.op, Op::DiscardQueue) {
+                    queue.queued_next_turn_inputs.iter().filter(|(id, _)| id.is_none()).count()
+                } else {
+                    0
+                };
+                (queue.recovered, removed, anonymous_count)
             };
             if recovered && matches!(submission.op, Op::ContinueQueue) {
                 let environment = self
@@ -347,57 +359,55 @@ impl RuntimeSubmissionQueues {
                     .reconcile_input_captures(&self.outer_queue)
                     .await;
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, anyhow::Error>((removed, anonymous_count))
         }
         .await;
-        let result = preflight.and_then(|()| {
-            (|| -> Result<Vec<Submission>> {
+        let result = preflight.and_then(|(discarded, anonymous_count)| {
+            (|| -> Result<(Vec<String>, usize)> {
                 anyhow::ensure!(cancel.is_none(), "active input has not settled yet");
                 let mut queue = self.outer_queue.lock().expect("input queue poisoned");
                 anyhow::ensure!(queue.paused, "input queue is not paused");
-                let mut discarded = Vec::new();
                 if matches!(submission.op, Op::DiscardQueue) {
-                    queue.pending.retain(|item| match item {
-                        QueuedRuntimeItem::Submission(input)
-                            if matches!(input.op, Op::Turn { .. } | Op::Input { .. }) =>
-                        {
-                            discarded.push(input.clone());
-                            false
-                        }
-                        _ => true,
+                    queue.pending.retain(|item| {
+                        !matches!(item,
+                        QueuedRuntimeItem::Submission(input) if discarded.contains(&input.id))
                     });
+                    // Anonymous legacy content has no exact receipt identity, but is
+                    // still discarded. Never synthesize an ID for that payload.
+                    queue.queued_next_turn_inputs.clear();
                 }
-                for input in &discarded {
-                    queue.pending_binding_rejections.remove(&input.id);
+                for id in &discarded {
+                    queue.pending_binding_rejections.remove(id);
                 }
                 queue.paused = false;
-                Ok(discarded)
+                Ok((discarded, anonymous_count))
             })()
         });
         let notice = match result {
-            Ok(discarded) => {
+            Ok((discarded, anonymous_count)) => {
+                let discarded_count = discarded.len() + anonymous_count;
                 let mut unpublished = 0;
-                for input in &discarded {
+                for id in &discarded {
                     if let Err(error) = publish_cancelled_input(
                         files,
-                        &input.id,
+                        id,
                         "Queued input discarded without execution",
                     )
                     .await
                     {
                         unpublished += 1;
-                        warn!(%error, submission_id=%input.id, "Failed to publish discarded input evidence");
+                        warn!(%error, submission_id=%id, "Failed to publish discarded input evidence");
                     }
                 }
                 if unpublished > 0 {
                     format!(
                         "Discarded {} queued inputs; could not publish {unpublished} result records",
-                        discarded.len()
+                        discarded_count
                     )
                 } else if matches!(submission.op, Op::DiscardQueue) {
                     format!(
                         "Discarded {} queued inputs without execution",
-                        discarded.len()
+                        discarded_count
                     )
                 } else {
                     "Input queue resumed".to_owned()
@@ -462,9 +472,6 @@ impl RuntimeSubmissionQueues {
                 removed |= matches;
                 !matches
             });
-            if removed {
-                queue.pending_binding_rejections.remove(submission_id);
-            }
             let MachineInputQueue {
                 inband,
                 buffered_inband_submissions,
@@ -482,6 +489,9 @@ impl RuntimeSubmissionQueues {
                 removed |= matches;
                 !matches
             });
+            if removed {
+                queue.pending_binding_rejections.remove(submission_id);
+            }
             let active = queue
                 .active_submission_ids
                 .iter()

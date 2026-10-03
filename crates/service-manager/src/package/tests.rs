@@ -6,6 +6,8 @@ use std::fs::File;
 
 #[cfg(unix)]
 mod bootstrap;
+#[cfg(unix)]
+mod bootstrap_wait_budget;
 mod concurrency;
 mod file_surface;
 #[cfg(unix)]

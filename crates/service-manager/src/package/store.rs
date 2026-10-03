@@ -199,16 +199,14 @@ impl PackageStoreLock {
         {
             use std::os::fd::AsRawFd;
             use std::time::{Duration, Instant};
-            let boot_deadline = bootstrap.map(|wait| wait.deadline()).transpose()?.flatten();
-            let deadline =
-                boot_deadline.unwrap_or_else(|| Instant::now() + Duration::from_millis(500));
+            let deadline = Instant::now() + Duration::from_millis(500);
             loop {
-                if let Some(wait) = bootstrap {
-                    wait.deadline()?;
-                }
-                if boot_deadline.is_some() && Instant::now() >= deadline {
-                    bail!("Package Store busy: bootstrap acquisition budget exhausted");
-                }
+                // Cancellation is checked even before a free first attempt. A zero
+                // wait allowance is not a prohibition on uncontended transactions.
+                let boot_remaining = bootstrap
+                    .map(|wait| wait.remaining())
+                    .transpose()?
+                    .flatten();
                 // SAFETY: file owns a valid descriptor throughout acquisition.
                 let result =
                     unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
@@ -221,14 +219,30 @@ impl PackageStoreLock {
                 }) {
                     return Err(error).context("acquire Package Store lock");
                 }
-                let remaining = deadline.saturating_duration_since(Instant::now());
+                let remaining = match boot_remaining {
+                    Some(_) => bootstrap
+                        .unwrap()
+                        .remaining()?
+                        .unwrap_or_else(|| deadline.saturating_duration_since(Instant::now())),
+                    None => deadline.saturating_duration_since(Instant::now()),
+                };
                 if remaining.is_zero() {
-                    if boot_deadline.is_some() {
+                    if boot_remaining.is_some() {
                         bail!("Package Store busy: bootstrap acquisition budget exhausted");
                     }
                     bail!("Package Store busy: lock acquisition exceeded 500 ms");
                 }
+                // Charge only the bounded retry interval (busy or interrupted),
+                // never file setup, spawn scheduling, or work under the lock.
+                // EINTR uses this same check/backoff/debit path so repeated
+                // interruption cannot bypass either acquisition bound.
+                // All callers debit the same allowance on every retry, rather
+                // than taking independent per-acquisition deadlines.
+                let waiting = Instant::now();
                 std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                if boot_remaining.is_some() {
+                    bootstrap.unwrap().charge_wait(waiting.elapsed());
+                }
             }
         }
         Ok(Self { file })

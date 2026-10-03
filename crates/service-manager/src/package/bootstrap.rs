@@ -1,20 +1,20 @@
 //! Boot-only lock acquisition budget; ordinary Package operations remain bounded at 500 ms.
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Result, ensure};
 
 use super::PackageService;
 
 pub(super) struct BootstrapWait {
-    deadline: Instant,
+    remaining: Mutex<Duration>,
     cancelled: AtomicBool,
     finished: AtomicBool,
 }
 
 impl BootstrapWait {
-    pub(super) fn deadline(&self) -> Result<Option<Instant>> {
+    pub(super) fn remaining(&self) -> Result<Option<Duration>> {
         if self.finished.load(Ordering::Acquire) {
             return Ok(None);
         }
@@ -22,13 +22,21 @@ impl BootstrapWait {
             !self.cancelled.load(Ordering::Acquire),
             "Package bootstrap cancelled"
         );
-        Ok(Some(self.deadline))
+        Ok(Some(
+            *self.remaining.lock().expect("bootstrap wait poisoned"),
+        ))
+    }
+
+    pub(super) fn charge_wait(&self, elapsed: Duration) {
+        let mut remaining = self.remaining.lock().expect("bootstrap wait poisoned");
+        *remaining = remaining.saturating_sub(elapsed);
     }
 }
 
-/// Dropping the boot future cancels any outstanding Package lock wait. The budget
-/// is shared across open, seeding, and initial reference acquisition, not renewed
-/// for each transaction. No durable transaction work is interrupted after locking.
+/// Dropping the boot future cancels any outstanding Package lock wait.
+/// Actual contention wait is shared across open, seeding, and initial reference
+/// acquisition, not renewed for each transaction. Unrelated setup and durable
+/// transaction work consume no allowance and are never interrupted after locking.
 pub(crate) struct PackageBootstrap {
     wait: Arc<BootstrapWait>,
 }
@@ -41,7 +49,7 @@ impl PackageBootstrap {
     fn with_budget(budget: Duration) -> Self {
         Self {
             wait: Arc::new(BootstrapWait {
-                deadline: Instant::now() + budget,
+                remaining: Mutex::new(budget),
                 cancelled: AtomicBool::new(false),
                 finished: AtomicBool::new(false),
             }),

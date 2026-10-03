@@ -6,7 +6,214 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
-## Current startup candidate qualification — 2026-10-03
+## Current quality-cleanup candidate — 2026-10-03
+
+Fresh NativePID28888 primary9f42 remains actualFailed (provider connect after
+checks); report-only ordinary followupb42b has actualCompleted. Public state
+is knownemptyidle/notpaused/deferred/uncertain; normalquit0/PIDgone/no rescue.
+New frozen612 Rust/26build manifest
+172e7a56e5fdcdb248a421fce555aea50abbe97f308392bf1a43579e86cb0bec
+has exactly the prior seven paths versus42f4 and one testline versus frozen30f2:
+last-use service.clone() becomes service move. All production/NextTurn/TUI/build
+pins are unchanged. Actual fresh Native6bootstrap and both canonical workspace
+Clippy denyflag commands pass, fmt/diffPASS. Prior default-target3pass3fail,
+providerFailed and previouscanonicalquality101 remain retained, not waived.
+New independent Spec/Standards source reviews PASS after full612/26 inventory/
+hash match with Native author; exactly one testline changes versus previous
+freeze, lease lifetime and assertions preserved. Unrestricted complete Engine/
+ServiceManager/CLI complete external tests now pass actual0:1561passed,
+0failed,2ignored; every frozen Rust/build pin remains unchanged. Canonical
+just quality now passes actual0, including source-size, architecture, both
+workspace Clippy denyflag sets, docs and standalone distribution checks; all
+source/build pins remain stable. New release build is running against the exact
+reviewed freeze; previousquality101 is retained. Exact new release actual0 has SHA
+b1f234205fe747b66222eb148d72afaf06c4232d5949b4d6db0e12d5094e7fdb.
+Its real managed Agent recovery run xiko_aqp PASS_RUNTIME_SEQUENCE preserves
+full capturedprofile/provider/model/credentialref/revision and medium/source;
+freshRW plus explicitcontinue produces correlated generatedBash
+call_BDGcDPrMLupCmll8YiMTaxUU/actiona3/proc9/QCompleted and uniqueeffectonce.
+E/Qonce,Dzero, exactbusyapprovalpolicycheckpoint, normal ownedchild discard,
+repeatrecoverynonreplay and newbare noautomaticrecovery pass. Four normalquits0,
+norescue/live[], and all four actual NativePIDs are independently absent;
+selected durable rollouts are snapshotted with hashes. New joined independent
+Spec/Standards runtime reviews PASS for this exact172e source andb1f234 binary,
+with full captured managedidentity/controls and correlated effects/receipts. ExactheadCI/approval/merge/normativecloseout remain
+pending; private NextTurn tests do not become public liveNextTurn evidence.
+No qualification or completion is borrowed from previous1561/0/2 source tests.
+
+## Current shared-wait correction candidate — 2026-10-03
+
+NativePID11475 primary08b4 remains actualFailed after provider connect failure;
+ordinary follow-up92ac, evidence-reconstructiona10d and EINTR correction72443
+all have exact actual Completed receipts. Processless public inspection confirms
+knownempty idle, paused/deferred false and uncertain IDs empty. Normal /quit
+exits0, PIDgone/no manual rescue. All Rust changes are Native authored.
+Frozen612 Rust/26 unchanged build manifest
+30f2f7ae391a0a9f280ba16288d505a942e569663ae3446953dbbc721d419a38
+contains exactly seven paths versus HEAD42f4: three NextTurn paths plus
+bootstrap/store/test declaration and adjacent wait-budget suite. All TUI hashes
+and other source/build inputs remain unchanged. Shared remaining allowance
+counts bounded busy/interrupted retry waiting across boot transactions, excludes
+setup and acquired-lock work, permits free zero-budget acquisitions and retains
+cancellation plus ordinary500ms policy. EINTR cannot bypass the common bound.
+Recreated compiled RED against isolated unchanged HEAD is actual0pass3fail101;
+Gitblob pairs match original production and exact Native fixture. Missing
+original logs and failed shared-target artifact attempt remain explicit.
+Final isolated Native ServiceManager136+2PASS; NextTurn5/modelbinding32PASS;
+format/diff/Clippy PASS. Native Engine full1315pass16FAIL1ignored andCLI5FAIL
+are retained; no waiver or full Native qualification, no liveEINTR assertion.
+Two independent source reviews PASS against this exact612/26 freeze, with
+full before/after source/author inventory/hash match and exact seven-path delta.
+Unrestricted complete Engine/ServiceManager/CLI tests are actual0: 1561
+passed/0 failed/2 ignored, with all frozen source/build hashes stable.
+The previously denied HostCLI Unix socket/startup cases pass externally; failed
+Native attempts remain failed. Canonical quality then new release build are
+started with both source-review pins enforced. Canonical quality is actual101:
+new wait-budget test line45 redundant Arc::clone denied by the repository's
+explicit redundant-clone lint. Source-size and architecture checks pass; all
+frozen source/build pins remain stable. Release never starts. Candidate and
+failure remain immutable; fresh Native minimally corrects the test ownership
+move, with no production/TUI/dependency change or failure waiver. Fresh NativePID28888/boot90ef9985-4195-43bd-9ad2-a829ad9df7d9/Root8,
+explicit visible projectRO->RW request1/cwd and actualsol-medium are verified.
+Ordinary task9f42af27-863f-4701-a1c9-acea4f99fa7b owns only redundant-clone
+test ownership cleanup and canonical-denyflag focused checks. Exactly one test
+line moves service instead of cloning at last use; all production/NextTurn/build
+pins stay unchanged. Fresh aarch64 target gives6 bootstrapPASS and both actual
+canonical Clippy workspace denyflag commands PASS, formatting/diffPASS. Prior
+default target3PASS/3FAIL retained separately, unqualified artifacts. Task9f42
+has actualFailed receipt after provider stream_error:connect before final report;
+no completion claim. Ordinary report-only followupb42b2364-8e08-43a5-b691-39bd934610cb
+is active with actualsol-medium, requests no source/test mutation. New frozen
+source reviews/owning/quality/release/live/current-head gates remain required. New quality/release,
+actual new-binary recovery/joined reviews, current-head CI, normal approval/merge
+and normative closeout remain required. Existing42f4 CI does not qualify this
+uncommitted source. No new gate or goal completion is claimed.
+
+## Current NextTurn correction candidate — 2026-10-03
+
+Both Native tasks6dadfd0b-55b6-4cd6-bd95-9a7952895067 and
+d040488f-8624-41cc-87f4-673ca569f451 naturally Completed in PID83046,
+boot1075235a-84a2-4293-a584-cb6fd6919cd3/Root8. Processless public inspection
+verified idle, known empty queue, not paused/deferred/uncertain, both exact
+Completed receipts; ordinary /quit yields natural0/no rescue/PIDgone.
+Frozen611 Rust/26 unchanged build manifest
+72beb98b02a20accc7924062820d27026ee8c41936a35d6419d4778db3274456
+contains exactly three Native paths: shared queue-control owner, existing
+acceptance suite child declaration and adjacent extracted discard white-box
+suite. All TUI and prior unrelated source/build pins remain unchanged.
+Actual no-artificial-rejection Continue RED compiles and fails before the
+additional shared preflight guard, verifying retained uncertain IDs previously
+unpaused. Minimal guard now rejects unresolved uncertainty. Final five focused
+cases pass, including NextTurn-exclusive full binding/capture/ID union,
+same-ID retry/readable durable batch/exact receipts and recovery/later Turn
+exclusion. Assertion phase15s and cleanup5s preserve original assertion panic.
+Final Native Service Manager135 and Engine queue83/dependency20, Clippy,
+format/source-cap/diff checks pass. Native full Engine remains actual101,
+1315 pass/16 environment failures/1ignored; it supplies no external credit.
+Independent Spec and Standards source reviews PASS against this exact freeze.
+Unrestricted external owning tests are actual101: Engine1331 passed/1ignored
+and20 integrations pass; Service Manager122 passed/11failed, all reporting
+bootstrap acquisition budget exhausted. Failed logs and stable full source pins
+are preserved. No quality/release/live/current-head credit follows this failure.
+Two independent read-only diagnoses confirm the Package shared owner checks
+an absolute boot-start deadline before its first nonblocking flock; unrelated
+open/seeding/runtime setup can reject a currently free lock. The error alone
+does not prove peer contention. Correct the shared cumulative lock-wait budget,
+retaining cancellation, integrity, bounded actual contention across transactions
+and ordinary500ms operations; no timeout inflation, serialization or waiver.
+Fresh Native PID11475, boot70c63dfa-2401-41a9-9d89-0f7e2667375b/Root8,
+uses the prior exact7dee binary in owned w5E:p7. Fresh visible RO->RW project
+request1/cwd authorization and active gpt-6.1-sol medium are verified.
+Ordinary task08b4f74c-fe2a-4171-93fb-37f887043bd1 owns compiled owner-level
+RED then minimal correction; three existing NextTurn paths remain preserved. Three real-owner
+regressions compile and fail on unchanged production (zero pass/three fail).
+Primary task08b4 has actual Failed receipt after llmfs stream_error:connect
+partway through production editing; no completion or rescue credit. Preserved
+same-instance ordinary advisory92ac7986-90b5-464a-bc03-2226ac99a96b is actually
+active with sol-medium and owns continuing correction/review strengthening.
+The source remains mutable and no freeze/build qualification has started. The author target directory was subsequently removed (origin unknown), including
+original raw RED/hash/test evidence; source edits and HEAD survive. Initial
+compiled3FAIL is observed in Root's prior read, but missing raw files are not
+complete auditable RED qualification. Ordinary same-instance queued task
+a10d9f78-eef4-4b96-a9e3-c8a2ce57e0b6 retains actual sol-medium and requests
+Native reconstruction of unchanged-HEAD production plus exact native regression
+in an isolated diagnostic copy, with fresh compiled RED rather than fabricated
+old logs. Root independently snapshots new test evidence into cache; failed
+first receipt remains Failed. New lock regressions have an initial actual GREEN
+and Root cache snapshots preserve new outputs. WIP Spec review finds EINTR
+immediate retry bypassing both ordinary deadline and boot allowance; ordinary
+queued task72443e14-e9b1-4e39-9f51-d4eada9da3c0 retains actual sol-medium
+and requests bounded shared retry correction. It is not final/source-qualified.
+Current Native suite evidence (mutable source) is real6 bootstrap regressions
+PASS and Service Manager136 unit+2 integration PASS. HostCLI actual101 has
+five failures, with explicit sandbox Unix socket bind Operation not permitted;
+these are retained, not waived. NextTurn five regressions PASS; an initial
+Engine83 filter executed zero tests and supplies no owning credit, with actual
+test enumeration underway. Root prepared complete Engine/ServiceManager/CLI
+external runner using candidate-owned cache build target after final freeze.
+Advisory92ac now has actual Completed receipt. Evidence taska10d is active,
+EINTR correction72443 remains queued with admitted sol-medium. Recreated RED
+uses Native exact git archive of HEAD42f4 plus current native regression/child
+module declaration, baseline/current fixture production Gitblob equality,
+actual compiled0pass/3fail/exit101, retained separately in Root cache. It is
+new evidence, not recovery of missing original logs. A subsequent current-source
+ServiceManager attempt shares fixture Cargo target and reproduces baseline
+three failures with no recompile; it is failed unqualified artifact evidence,
+not corrected-source GREEN. Native explicitly isolates the next target; Root's
+future external target is already isolated. Full current source hashes remain
+unchanged during this diagnostic phase. New corrected owning/release/live/CI
+gates remain unqualified.
+New freeze, external owning tests, quality/release/live recovery, current-head
+CI and normal approval/merge remain required. Previous42f4's16 green checks
+do not qualify the uncommitted corrected source.
+
+## Previous qualification reopened: NextTurn discard — 2026-10-03
+
+PR1026 head42f4cd873251b7c8f361b69d9a3dfeb1475fd694 is not mergeable despite
+its local source/build/recovery evidence below. Actual new Codex P2 comment
+4170431255, thread PRRT_kwDOQHux0c6og6CO, is independently confirmed by both
+Spec and standards reviewers: bulk discard preflight/mutation only enumerate
+pending, omitting Machine-owned queued_next_turn_inputs and their durable
+bindings/cancellation receipts. Later explicit Turn can consume discarded work.
+The same shared owner also omits NextTurn-only work in idle Interrupt pause.
+Correct both shared-owner classifications using existing durable exact-ID removal,
+not a new runtime abstraction; fault/unknown outcome must preserve paused work
+and never fabricate Cancelled. All prior failures and successful narrower
+qualification remain evidence, not permission to merge this known issue.
+
+Fresh Native author PID83046, boot1075235a-84a2-4293-a584-cb6fd6919cd3,
+Root/proc8, runs exact7dee candidate in owned Herdr w5E:p7. Fresh visible
+project chooser RO->RW and explicit request1/cwd action are verified, with
+actual gpt-6.1-sol medium. Ordinary admitted task
+6dadfd0b-55b6-4cd6-bd95-9a7952895067 owns meaningful compiled RED followed by
+the minimal shared correction/owning checks. Compiled RED on unchanged
+production fails NextTurn-only idle pause and mixed-container discard retention;
+Continue behavior passes (actual101,1 pass/2fail). First production-corrected
+attempt passes pause/Continue but fails the injected-writer fixture, not GREEN.
+Independent WIP fixture review identifies masked union membership (n also
+manually duplicated into pending) and artificial rejection flags masking the
+actual removal-uncertainty Continue guard. Same-instance ordinary advisory
+d040488f-8624-41cc-87f4-673ca569f451 is actually admitted/queued with original
+sol-medium binding. It requests a distinct real NextTurn-only identity, genuine
+failure/Continue retention without synthetic flags, same-ID successful retry,
+and separately bounded assertion/cleanup preserving original failures. First follow-up passes five focused regressions, including recovered-handler
+removal and targeted cancellation, plus83 owning Engine queue tests, full
+Service Manager135 tests and scoped Clippy. Native complete Engine actual101
+is1315 pass/16 environment failures/1ignored, not qualification; external
+frozen-source complete tests remain required. The distinct NextTurn-only mixed
+union/failure-without-artificial-flags and whole-phase cleanup strengthening
+remain the admitted advisory's pending work, not completed coverage. Primary task6dadfd0b-55b6-4cd6-bd95-9a7952895067 now has its actual Completed
+receipt; original advisory d040488f-8624-41cc-87f4-673ca569f451 is active in
+same PID/boot/Root with selected sol-medium. Native author report is retained
+in author target/pr1026-review-corrections/next-turn-discard-root-evidence/native-results.md.
+The advisory must naturally complete and fully settle before freeze; no rescue. Root/agents remain read-only for
+Rust. No source freeze/new qualification until natural completion and review.
+Current-head CI16/16 actualSUCCESS, all completed with no skips;
+this does not close the uncovered P2 or authorize merge. Native evidence and
+pinned processless public read-only state reader live under
+new-head-p1/next-turn-discard-author; original610/26 source is preserved.
+
+## Previous startup candidate qualification — 2026-10-03
 
 Native Alan completed the shared Package startup correction in two ordinary
 same-instance tasks and exited naturally0. Frozen610 Rust/26 build manifest
@@ -19,7 +226,11 @@ Actual managed FollowUp Agent recovery `alan-g3-agent-recovery-20261003-w2tqirtm
 passes with complete captured binding/medium controls, fresh explicit authority,
 one correlated generated Bash effect, E/Q once,D zero, repeat nonreplay,
 four normal exits0,no rescue and no live processes. Independent joined runtime
-reviews pass with no findings; new-head commit/CI/normal merge remain pending. Previous source and
+reviews pass with no findings. Exact nine-path commit
+`42f4cd873251b7c8f361b69d9a3dfeb1475fd694` is pushed; its full normal commit
+hook passes, and independent current-head source/spec review confirms all
+610 Rust/26 build committed blobs match this freeze. Actual current-head CI
+run37078450441 and ordinary approval/merge remain pending. Previous source and
 failed CI evidence below remain retained; no NextTurn or unattended qualification.
 
 ## Previous P1 candidate qualification — 2026-10-03
