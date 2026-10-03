@@ -56,7 +56,7 @@ struct NativeToolMount {
 struct NativeToolExecutionAdapter {
     mounts: Vec<NativeToolMount>,
     namespace_cwd: PathBuf,
-    cwd: PathBuf,
+    cwd: Option<PathBuf>,
     sandbox: Sandbox,
     shell_sandbox: Sandbox,
 }
@@ -95,7 +95,9 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn cwd(&self) -> Result<PathBuf> {
-        Ok(self.cwd.clone())
+        self.cwd
+            .clone()
+            .context("Process cwd is outside delegated Host Mounts")
     }
 
     fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
@@ -117,6 +119,11 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn resolve_directory(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
+        if path.is_absolute()
+            && normalize_tool_namespace_path(path.to_path_buf())? == Path::new("/")
+        {
+            return Ok(PathBuf::from("/"));
+        }
         if !path.is_absolute() {
             let current = normalize_tool_namespace_path(namespace_cwd.to_path_buf())?;
             let current_mount = longest_namespace_mount(&self.mounts, &current)
@@ -227,6 +234,7 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                     .expect("selected Host Mount owns native cwd"),
             );
         }
+        let at_namespace_root = requested_namespace_cwd == Path::new("/");
         let selected = longest_namespace_mount(&mounts, &requested_namespace_cwd)
             .or_else(|| {
                 mounts
@@ -235,16 +243,17 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             })
             .or_else(|| mounts.first())
             .context("Tool Process has no active Host Mount")?;
-        let namespace_cwd = if requested_namespace_cwd.starts_with(&selected.namespace_path) {
+        let namespace_cwd = if at_namespace_root {
+            requested_namespace_cwd.clone()
+        } else if requested_namespace_cwd.starts_with(&selected.namespace_path) {
             requested_namespace_cwd
         } else {
             selected.namespace_path.clone()
         };
-        let cwd = selected.host_path.join(
-            namespace_cwd
-                .strip_prefix(&selected.namespace_path)
-                .expect("selected Host Mount owns Tool cwd"),
-        );
+        let cwd = namespace_cwd
+            .strip_prefix(&selected.namespace_path)
+            .ok()
+            .map(|suffix| selected.host_path.join(suffix));
         let sandbox_mounts = mounts
             .iter()
             .map(|mount| SandboxHostMount {
@@ -387,7 +396,7 @@ fn validate_native_tool_mounts(mounts: &[NativeToolMount]) -> Result<()> {
     Ok(())
 }
 
-fn canonical_host_path(path: &Path) -> Result<PathBuf> {
+pub(super) fn canonical_host_path(path: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(path)?)
 }
 
@@ -508,7 +517,7 @@ mod tests {
         let service = service();
         let namespace = LiveNamespace::new(Namespace::new());
         service.register_process(Pid(7), namespace);
-        approve(
+        let project_grant = approve(
             &service,
             7,
             "/mnt/project",
@@ -516,7 +525,7 @@ mod tests {
             project.path(),
         )
         .await;
-        approve(
+        let other_grant = approve(
             &service,
             7,
             "/mnt/other",
@@ -538,8 +547,8 @@ mod tests {
         assert_eq!(resolved, native.namespace_cwd);
         assert!(service.reconcile(7, native).is_ok());
 
-        let binding = service.reconcile(7, binding("/mnt/project")).unwrap();
-        let adapter = binding.adapter().unwrap();
+        let current_binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+        let adapter = current_binding.adapter().unwrap();
 
         assert_eq!(
             adapter
@@ -584,6 +593,25 @@ mod tests {
                 .resolve_directory(Path::new("/mnt/project"), &project.path().join("src/file"))
                 .is_err()
         );
+
+        let project_binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+        let root = project_binding
+            .adapter()
+            .unwrap()
+            .resolve_directory(&project_binding.namespace_cwd, Path::new("/"))
+            .unwrap();
+        assert_eq!(root, Path::new("/"));
+        let mut root_binding = project_binding;
+        root_binding.namespace_cwd = root;
+        root_binding.cwd_grant_id = None;
+        root_binding = service.reconcile(7, root_binding).unwrap();
+        assert_eq!(root_binding.namespace_cwd, Path::new("/"));
+        assert!(root_binding.adapter().unwrap().cwd().is_err());
+
+        service.revoke(&project_grant.id, "test").unwrap();
+        service.revoke(&other_grant.id, "test").unwrap();
+        let unmounted = service.reconcile(7, root_binding).unwrap();
+        assert!(unmounted.adapter().is_none());
     }
 
     #[tokio::test]

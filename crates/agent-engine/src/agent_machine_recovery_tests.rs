@@ -1,5 +1,83 @@
 use super::*;
 
+#[tokio::test]
+async fn durable_pending_input_recovery_preserves_order_and_pause_without_dispatch_replay() {
+    use crate::agent_machine::input_queue::QueuedRuntimeItem;
+    use alan_agent_protocol::{Op, Submission};
+    let temp = TempDir::new().unwrap();
+    let source = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", temp.path())
+        .await
+        .unwrap();
+    let recorder = source.recorder.as_ref().unwrap();
+    let inputs: Vec<_> = ["completed", "unknown", "pending-first", "pending-second"]
+        .into_iter()
+        .map(|id| Submission {
+            id: id.into(),
+            intent: alan_agent_protocol::InputIntent::Command,
+            op: Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("echo never-replay")],
+                mode: alan_agent_protocol::InputMode::FollowUp,
+            },
+        })
+        .collect();
+    for input in &inputs {
+        recorder
+            .persist_batch(vec![RolloutItem::Event(EventRecord {
+                event_type: "machine_input_admitted_v1".into(),
+                payload: serde_json::to_value(input).unwrap(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            })])
+            .await
+            .unwrap();
+    }
+    for id in ["completed", "unknown"] {
+        recorder
+            .persist_batch(vec![RolloutItem::Event(EventRecord {
+                event_type: "machine_input_dispatched_v1".into(),
+                payload: serde_json::json!({"submission_id": id}),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            })])
+            .await
+            .unwrap();
+    }
+    // A legacy message has no admission and must never become queued work.
+    recorder
+        .persist_batch(vec![RolloutItem::Message(
+            RolloutRecorder::message_record_from_tape_message(&crate::tape::Message::user(
+                "legacy",
+            )),
+        )])
+        .await
+        .unwrap();
+    let mut path = source.rollout_path().unwrap().clone();
+    for pid in ["/proc/2", "/proc/3"] {
+        let recovered = AgentMachine::load_from_rollout_in_dir(&path, pid, "mock", temp.path())
+            .await
+            .unwrap();
+        let queue = recovered.input_queue();
+        let queue = queue.lock().unwrap();
+        let ids: Vec<_> = queue
+            .pending
+            .iter()
+            .filter_map(|item| match item {
+                QueuedRuntimeItem::Submission(input) => Some(input.id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            ["pending-first", "pending-second"],
+            "acknowledged never-dispatched inputs survive in admission order; dispatched and legacy inputs do not replay"
+        );
+        assert!(
+            queue.paused,
+            "explicit recovery must not dispatch pending work"
+        );
+        assert!(queue.active_submission_ids.is_empty());
+        path = recovered.rollout_path().unwrap().clone();
+    }
+}
+
 #[test]
 fn test_load_from_rollout_recovers_only_unsettled_logical_host_mount_waits() {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -592,6 +670,7 @@ fn test_load_from_rollout_preserves_turn_ordinal_floor_from_effect_keys_after_co
                 reasoning_effort: None,
             }),
             RolloutItem::Compacted(CompactedItem {
+                retained_messages: None,
                 message: "Older turns compacted".to_string(),
                 attempt_id: None,
                 trigger: None,

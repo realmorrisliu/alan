@@ -134,7 +134,7 @@ impl NamespaceToolExecution {
             _ = cancel.cancelled() => {
                 let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;
                 return Err(NamespaceToolProcessError {
-                    source: anyhow::anyhow!("tool process {pid} cancelled"),
+                    category: super::NamespaceToolObservationFailure::Cancelled,
                     pid,
                 }.into());
             }
@@ -147,7 +147,11 @@ impl NamespaceToolExecution {
                             .write_process_control_for_pid(&pid, "cancel")
                             .await;
                         return Err(NamespaceToolProcessError {
-                            source: err.context(format!("read tool process {pid} result")),
+                            category: if err.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
+                                super::NamespaceToolObservationFailure::Timeout
+                            } else {
+                                super::NamespaceToolObservationFailure::ResultUnavailable
+                            },
                             pid,
                         }.into());
                     }
@@ -165,6 +169,20 @@ impl NamespaceToolExecution {
         });
         if let Some(evidence) = evidence {
             result_doc["call_id"] = serde_json::json!(evidence.call_id);
+            let payload = crate::runtime::tool_execution::namespace_tool_payload(
+                NamespaceToolActionOutput {
+                    action_id: String::new(),
+                    pid: pid.clone(),
+                    output: result.output.clone(),
+                    exit_code: action_exit_code,
+                },
+            )?;
+            crate::runtime::tool_presentation::write_action_metadata(
+                &mut result_doc,
+                tool_name,
+                evidence.arguments,
+                &payload,
+            )?;
         }
         if action_exit_code != result.exit_code
             && let Some(object) = result_doc.as_object_mut()

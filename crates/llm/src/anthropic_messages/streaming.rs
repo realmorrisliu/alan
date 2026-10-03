@@ -5,6 +5,10 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use super::{StreamEvent, convert_usage, is_non_empty};
 use crate::{StreamChunk, TokenUsage, ToolCallDelta};
 
+#[cfg(test)]
+#[path = "cancellation_tests.rs"]
+mod cancellation_tests;
+
 pub(super) fn project_events(mut event_rx: Receiver<StreamEvent>) -> Receiver<StreamChunk> {
     let (tx, rx) = mpsc::channel(100);
 
@@ -13,7 +17,15 @@ pub(super) fn project_events(mut event_rx: Receiver<StreamEvent>) -> Receiver<St
         let mut latest_response_id: Option<String> = None;
         let mut tool_call_meta: HashMap<usize, StreamedToolUseState> = HashMap::new();
 
-        while let Some(event) = event_rx.recv().await {
+        loop {
+            let event = tokio::select! {
+                biased;
+                _ = tx.closed() => return,
+                event = event_rx.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
             if let Some(message) = event.message.as_ref()
                 && let Some(id) = message.id.clone()
             {

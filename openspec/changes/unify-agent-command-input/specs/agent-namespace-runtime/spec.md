@@ -47,6 +47,25 @@ ordering and queue pause state. Cwd changes SHALL update the existing Process
 context authority; no independent renderer or Machine copy may become a second
 source of cwd truth.
 
+The Agent Machine SHALL own renderer-visible admission and queue disposition.
+After durable admission and disposition changes, it SHALL update the existing
+AgentFS renderer snapshots and file-owned records with the corresponding
+submission identities. These observations SHALL distinguish admitted paused
+work from input delivery awaiting admission; neither a renderer-local queue
+nor a successful input-stream write is authoritative admission. Snapshot
+publication failure SHALL remain observable and SHALL NOT cause replay or
+terminal settlement of an uncertain accepted input.
+
+#### Scenario: A delivered input is acknowledged
+- **WHEN** an input reaches the Machine admission boundary
+- **THEN** the owning durable admission record succeeds before its accepted disposition is published to AgentFS
+- **AND** a client can correlate that receipt by submission identity independently from eventual completion
+
+#### Scenario: A renderer observes a paused queue after reconnect
+- **WHEN** a renderer reads the current AgentFS admission and queue snapshot
+- **THEN** it sees the Machine-owned pending identities and pause disposition without reading private Machine fields
+- **AND** missing or stale observation is reported as unknown instead of inferred from elapsed time or local pending entries
+
 #### Scenario: A submission starts a transition
 - **WHEN** the outer Process loop accepts a `Submission`
 - **THEN** Agent Machine records and advances all state local to that transition
@@ -239,3 +258,15 @@ trigger recovery. Actual application exit ends its owned runtime.
 - **WHEN** restored cwd cannot be validated against current namespace access
 - **THEN** directory-dependent work waits for an explicit choice or fails without a response channel
 - **AND** the runtime does not silently execute from another directory
+
+#### Scenario: Current directory is selected while recovered work remains paused
+- **WHEN** the user explicitly selects a directory in a currently authorized Host Mount after active work has settled
+- **THEN** the Agent Runtime accepts that directory choice through its existing file-native control lane and delegates validation and binding to the existing Process cwd owner
+- **AND** it reports the actual selected namespace cwd with correlated confirmation
+- **AND** queued ordinary inputs remain paused and no Tool, model request or pending effect is dispatched
+- **AND** project authorization alone does not continue queued work or choose a directory implicitly
+
+#### Scenario: Paused directory selection is rejected
+- **WHEN** the selected directory is unavailable, its grant is revoked, or active work has not settled
+- **THEN** the control reports correlated rejection and retains the previous authoritative cwd and queued inputs
+- **AND** it does not bypass ordinary command ordering for scripts or arbitrary commands

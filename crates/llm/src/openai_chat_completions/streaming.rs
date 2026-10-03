@@ -7,6 +7,12 @@ use tracing::{debug, instrument};
 
 use crate::{GenerationRequest, SseEventParser, StreamChunk, TokenUsage, ToolCallDelta};
 
+mod chat_bytes;
+use chat_bytes::consume_chat_bytes;
+
+#[cfg(test)]
+mod completion_tests;
+
 use super::{
     OpenAiChatCompletionsChunk, OpenAiChatCompletionsChunkChoice, OpenAiChatCompletionsClient,
     OpenAiChatCompletionsRequest, OpenAiResponsesRequest, OpenAiResponsesResponse,
@@ -44,58 +50,17 @@ impl OpenAiChatCompletionsClient {
             .await
             .context("Failed to send streaming request to OpenAI API")?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI streaming API error ({}): {}", status, error_text);
-        }
+        let response = response.error_for_status()?;
 
-        // Process SSE stream with event-boundary parsing.
-        let mut stream = response.bytes_stream();
-        let mut parser = SseEventParser::new();
-
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result.context("Failed to read stream chunk")?;
-            for data in parser.push(&chunk) {
-                if data == "[DONE]" {
-                    debug!("Stream completed");
-                    return Ok(());
-                }
-
-                match serde_json::from_str::<OpenAiChatCompletionsChunk>(&data) {
-                    Ok(chunk) => {
-                        if tx.send(chunk).await.is_err() {
-                            debug!("Receiver dropped, stopping stream");
-                            return Ok(());
-                        }
-                    }
-                    Err(e) => {
-                        debug!(?e, data, "Failed to parse stream chunk");
-                    }
-                }
-            }
-        }
-
-        for data in parser.finish() {
-            if data == "[DONE]" {
-                debug!("Stream completed");
-                return Ok(());
-            }
-
-            match serde_json::from_str::<OpenAiChatCompletionsChunk>(&data) {
-                Ok(chunk) => {
-                    if tx.send(chunk).await.is_err() {
-                        debug!("Receiver dropped, stopping stream");
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    debug!(?e, data, "Failed to parse stream chunk");
-                }
-            }
-        }
-
-        Ok(())
+        consume_chat_bytes(
+            response.bytes_stream().map(|chunk| {
+                chunk
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(anyhow::Error::from)
+            }),
+            tx,
+        )
+        .await
     }
 
     #[instrument(skip(self, request, tx))]
@@ -122,15 +87,7 @@ impl OpenAiChatCompletionsClient {
             .await
             .context("Failed to send streaming request to OpenAI Responses API")?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "OpenAI Responses streaming API error ({}): {}",
-                status,
-                error_text
-            );
-        }
+        let response = response.error_for_status()?;
 
         self.consume_openai_responses_stream_response(response, tx)
             .await
@@ -167,15 +124,7 @@ impl OpenAiChatCompletionsClient {
             .await
             .context("Failed to retrieve OpenAI Responses API stream")?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "OpenAI Responses streaming API error ({}): {}",
-                status,
-                error_text
-            );
-        }
+        let response = response.error_for_status()?;
 
         self.consume_openai_responses_stream_response(response, tx)
             .await
@@ -192,7 +141,15 @@ impl OpenAiChatCompletionsClient {
         let mut emitted_payload = false;
         let mut saw_tool_calls = false;
 
-        while let Some(chunk_result) = stream.next().await {
+        loop {
+            let chunk_result = tokio::select! {
+                biased;
+                _ = tx.closed() => return Ok(()),
+                chunk = stream.next() => match chunk {
+                    Some(chunk) => chunk,
+                    None => break,
+                },
+            };
             let chunk = chunk_result.context("Failed to read Responses stream chunk")?;
             for data in parser.push(&chunk) {
                 if data == "[DONE]" {
@@ -538,7 +495,7 @@ impl OpenAiChatCompletionsClient {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel(100);
         let (stream_status_tx, stream_status_rx) =
-            tokio::sync::oneshot::channel::<Option<String>>();
+            tokio::sync::oneshot::channel::<Option<&'static str>>();
 
         let client = self.clone_with_same_config();
         tokio::spawn(async move {
@@ -549,7 +506,7 @@ impl OpenAiChatCompletionsClient {
                 Ok(()) => None,
                 Err(e) => {
                     debug!(error = ?e, "OpenAI Chat Completions API stream failed");
-                    Some(e.to_string())
+                    Some(crate::safe_failure_reason(&e))
                 }
             };
             let _ = stream_status_tx.send(outcome);
@@ -563,7 +520,14 @@ impl OpenAiChatCompletionsClient {
             let mut selected_choice_index: Option<i32> = None;
             let mut tool_index_map: HashMap<(i32, i32), usize> = HashMap::new();
             let mut next_tool_index: usize = 0;
-            while let Some(chunk) = chunk_rx.recv().await {
+            loop {
+                let chunk = tokio::select! {
+                    _ = tx.closed() => return,
+                    chunk = chunk_rx.recv() => match chunk {
+                        Some(chunk) => chunk,
+                        None => break,
+                    },
+                };
                 latest_response_id = Some(chunk.id.clone());
                 if let Some(usage) = chunk.usage {
                     latest_usage = Some(convert_usage(usage));
@@ -689,10 +653,10 @@ impl OpenAiChatCompletionsClient {
                 }
             }
 
-            let upstream_error = stream_status_rx.await.ok().flatten();
-            if upstream_error.is_some() && !emitted_payload {
-                return;
-            }
+            let upstream_error = tokio::select! {
+                _ = tx.closed() => return,
+                status = stream_status_rx => status.ok().flatten(),
+            };
 
             let _ = tx
                 .send(StreamChunk {
@@ -704,8 +668,13 @@ impl OpenAiChatCompletionsClient {
                     sequence_number: None,
                     tool_call_delta: None,
                     is_finished: true,
-                    finish_reason: latest_finish_reason
-                        .or_else(|| upstream_error.map(|_| "stream_error".to_string())),
+                    finish_reason: Some(upstream_error.map(str::to_owned).unwrap_or_else(|| {
+                        latest_finish_reason
+                            .as_deref()
+                            .map(crate::safe_finish_reason)
+                            .unwrap_or("stop")
+                            .to_owned()
+                    })),
                     provider_response_id: latest_response_id,
                     provider_response_status: None,
                 })

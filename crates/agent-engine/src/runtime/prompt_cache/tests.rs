@@ -100,4 +100,5 @@ fn prompt_cache_for_definition_root_with_overrides(
 }
 
 include!("tests/cache_behavior.rs");
+include!("tests/skill_observation.rs");
 include!("tests/skill_behavior.rs");

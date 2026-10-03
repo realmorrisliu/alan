@@ -83,6 +83,8 @@ impl AgentConformanceChecker {
             ("machine/status", FileKind::File),
             ("machine/ctl", FileKind::File),
             ("machine/ui", FileKind::Dir),
+            ("machine/ui/models", FileKind::File),
+            ("machine/ui/queue", FileKind::File),
             ("machine/ui/activity", FileKind::File),
             ("machine/ui/plan", FileKind::File),
             ("machine/ui/thinking", FileKind::File),

@@ -49,7 +49,15 @@ pub(super) async fn consume_openai_responses_stream(
     let mut emitted_payload = false;
     let mut saw_tool_calls = false;
 
-    while let Some(chunk_result) = stream.next().await {
+    loop {
+        let chunk_result = tokio::select! {
+            biased;
+            _ = tx.closed() => return Ok(()),
+            chunk = stream.next() => match chunk {
+                Some(chunk) => chunk,
+                None => break,
+            },
+        };
         let chunk = chunk_result.context("Failed to read ChatGPT Responses stream chunk")?;
         for data in parser.push(&chunk) {
             if handle_stream_event(

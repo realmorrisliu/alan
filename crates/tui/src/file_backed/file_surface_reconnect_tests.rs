@@ -7,6 +7,46 @@ use alan_kernel::Access;
 use std::sync::Arc;
 
 #[tokio::test]
+async fn cancelled_reconnect_completion_uses_shared_non_error_presentation() {
+    let (shell, _agent_root, _namespace, pid) = live_root_agent().await;
+    let submission_id = "mine";
+    let event = UiEvent::InputCompleted {
+        submission_ids: vec![submission_id.into()],
+        status: alan_agent_protocol::UiInputStatus::Cancelled,
+        error: None,
+    };
+    shell
+        .write(
+            &format!("/agent/{pid}/machine/ui/events"),
+            format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
+        )
+        .await
+        .unwrap();
+    let task = super::PendingRootAgentTurn {
+        input: "task".into(),
+        submission_id: submission_id.into(),
+        submitted_process: Some(pid.parse().unwrap()),
+        submitted_at_ms: 0,
+    };
+    let mut app = FileBackedApp::new("/agent/root".into());
+    let (_tails, settled_ids) = crate::file_backed::file_surface::reattach_to_current_agent(
+        &shell,
+        &format!("/agent/{pid}"),
+        &mut app,
+        &[task],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(settled_ids, [submission_id]);
+    assert_eq!(app.notice.as_deref(), Some("Input cancelled"));
+    assert!(matches!(
+        app.transcript.as_slice(),
+        [HistoryCell::Rendered(lines)] if lines.join(" ") == "Input cancelled"
+    ));
+}
+
+#[tokio::test]
 async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() {
     use crate::file_backed::app::FileBackedEvent;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -215,8 +255,11 @@ fn reattached_action_indices_follow_removed_error_cells() {
 
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
-    let current_transcript =
-        remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
+    let current_transcript = remove_error_cells_and_remap_actions(
+        current_transcript,
+        &mut reattached.action_cells,
+        &mut reattached.local_inputs,
+    );
 
     assert!(reattached.merge_reconnected_history(current_transcript, "current task", 0));
     assert_eq!(reattached.action_cells.get("action-1"), Some(&3));

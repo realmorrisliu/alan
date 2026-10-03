@@ -386,7 +386,7 @@ async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
         "2"
     );
     let err = format!("{err:#}");
-    assert!(err.contains("timed out waiting 1s"), "{err}");
+    assert!(err.contains("timeout with unknown effects"), "{err}");
     tokio::time::timeout(std::time::Duration::from_secs(1), dropped.notified())
         .await
         .expect("tool runner future should be aborted on wait timeout");

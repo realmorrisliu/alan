@@ -24,10 +24,96 @@ pub(super) fn preserve_approved_host_mount(
     Ok(())
 }
 
+pub(super) async fn record_host_mount_terminal(
+    machine: &mut AgentMachine,
+    pending: &PendingHostMountRequest,
+    terminal: &HostMountTerminalResult,
+) -> Result<()> {
+    // Queue the correlated response before the terminal event's immediate flush.
+    // The failed-closed writer cannot persist terminal exclusion after rejecting
+    // that response. A retry suppresses only the duplicate Tool result, never
+    // the terminal evidence repair (which may be missing after an uncertain write).
+    let has_response = machine.messages().iter().any(|message| matches!(message,
+        crate::tape::Message::Tool { responses } if responses.iter().any(|response| response.id == pending.tool_call_id)));
+    let status = terminal.status.as_str();
+    if !has_response {
+        machine.add_tool_message(
+            &pending.tool_call_id,
+            "request_mount",
+            serde_json::json!({
+                "status": status,
+                "approved": terminal.status == HostMountTerminalStatus::Approved,
+                "request_reference": pending.request_id,
+                "namespace_path": pending.namespace_path,
+                "access": pending.access,
+                "reason": pending.reason,
+                "label": pending.label,
+                "grant_reference": terminal.grant_reference,
+                "error": terminal.error,
+            }),
+        );
+    } else if let Some(recorder) = machine.input_recorder() {
+        // Drain earlier enqueues before inspecting this Process's owning rollout.
+        // A failed flush can still leave complete evidence; canonical validation
+        // must succeed before deciding whether the response needs repair.
+        let flush = recorder.flush().await;
+        let history = crate::rollout::RolloutRecorder::load_history(recorder.path()).await?;
+        let recorded = history.iter().any(|item| matches!(item,
+            crate::rollout::RolloutItem::Message(record) if record.message.as_ref().is_some_and(|message|
+                message.tool_responses().iter().any(|response| response.id == pending.tool_call_id))));
+        if !recorded {
+            let payload = machine
+                .tool_payload_by_call_id(&pending.tool_call_id)
+                .context("existing Host Mount response has no payload")?;
+            let response = crate::tape::Message::tool_multi(vec![crate::tape::ToolResponse {
+                id: pending.tool_call_id.clone(),
+                content: vec![crate::tape::ContentPart::structured(
+                    crate::rollout::build_durable_tool_payload(&payload).payload,
+                )],
+            }]);
+            recorder
+                .persist_batch(vec![crate::rollout::RolloutItem::Message(
+                    crate::rollout::RolloutRecorder::message_record_from_tape_message(&response),
+                )])
+                .await
+                .context(
+                    "Host Mount response durability is uncertain; terminal evidence withheld",
+                )?;
+        } else if let Err(error) = flush {
+            // Evidence is complete, but the failed-closed writer cannot repair
+            // terminal exclusion. Keep the local wait resumable until recovery.
+            return Err(error.context("Host Mount terminal evidence remains unacknowledged"));
+        }
+    }
+    machine.record_event(
+        crate::agent_machine::HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
+        serde_json::json!({
+            "request_id": pending.request_id,
+            "status": status,
+            "grant_reference": terminal.grant_reference,
+            "error": terminal.error,
+        }),
+    );
+    machine.flush_recorder().await
+}
+
 pub(super) async fn reset_turn_after_cancelling_host_mounts(
     machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     host_mount_requests: &NamespaceHostMountRequests,
 ) -> Result<()> {
+    for request_id in machine.pending_request_ids() {
+        if matches!(
+            machine.pending_yield(&request_id),
+            Some(
+                crate::agent_machine::PendingYield::Confirmation(_)
+                    | crate::agent_machine::PendingYield::StructuredInput(_)
+            )
+        ) {
+            agent_files.cancel_request(&request_id).await?;
+            machine.take_pending(&request_id);
+        }
+    }
     let pending_host_mounts = machine
         .pending_request_ids()
         .into_iter()
@@ -36,6 +122,10 @@ pub(super) async fn reset_turn_after_cancelling_host_mounts(
     for pending in pending_host_mounts {
         let terminal = host_mount_requests.cancel(&pending.request_id).await?;
         preserve_approved_host_mount(&pending, &terminal)?;
+        // Keep the assistant Tool request and its truthful Host terminal result
+        // paired before clearing logical wait state or accepting correction input.
+        record_host_mount_terminal(machine, &pending, &terminal).await?;
+        machine.take_pending(&pending.request_id);
     }
     machine.reset_turn();
     Ok(())
@@ -54,7 +144,7 @@ where
     warn!("Cancelling current task");
     // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
-    reset_turn_after_cancelling_host_mounts(machine, host_mount_requests).await?;
+    reset_turn_after_cancelling_host_mounts(machine, agent_files, host_mount_requests).await?;
     machine.mark_submission_cancelled();
     machine.clear_plan_snapshot();
     machine.clear_active_task();
@@ -117,6 +207,10 @@ pub(super) fn tool_result_preview(value: &serde_json::Value) -> Option<String> {
         serde_json::Value::Object(map) => {
             if let Some(error) = map.get("error").and_then(|v| v.as_str()) {
                 format!("error: {}", error.trim())
+            } else if let Some(content) = map.get("content").and_then(|v| v.as_str()) {
+                content.to_string()
+            } else if let Some(cwd) = map.get("cwd").and_then(|v| v.as_str()) {
+                format!("cwd: {cwd}")
             } else if let Some(status) = map.get("status").and_then(|v| v.as_str()) {
                 status.trim().to_string()
             } else {

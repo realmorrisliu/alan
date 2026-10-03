@@ -1,7 +1,10 @@
 #[tokio::test]
 async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
     use alan_agent_protocol::{ContentPart, InputIntent};
-    let large_script = format!("printf '%s' '{}'", "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1));
+    let large_script = format!(
+        "printf '%s' '{}'",
+        "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
+    );
     for (choice, script) in [
         (None, "pwd"),
         (None, large_script.as_str()),
@@ -26,33 +29,35 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         let mut state =
             create_test_state_with_machine_tools_and_provider(AgentMachine::new(), tools, provider)
                 .await;
-        state.machine.set_active_skills(vec![crate::skills::ActiveSkillEnvelope::available(
-            crate::skills::SkillMetadata {
-                id: "deploy".to_string(),
-                package_id: Some("skill:deploy".to_string()),
-                name: "Deploy".to_string(),
-                description: "Deploy service".to_string(),
-                short_description: None,
-                path: std::path::PathBuf::from("/tmp/deploy/SKILL.md"),
-                package_root: None,
-                resource_root: None,
-                scope: crate::skills::SkillScope::Descriptor,
-                tags: vec![],
-                capabilities: None,
-                compatibility: Default::default(),
-                source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
-                    "/tmp/deploy/SKILL.md",
-                )),
-                enabled: true,
-                allow_implicit_invocation: true,
-                alan_metadata: Default::default(),
-                compatible_metadata: Default::default(),
-                execution: Default::default(),
-            },
-            crate::skills::SkillActivationReason::ExplicitMention {
-                mention: "deploy".to_string(),
-            },
-        )]);
+        state
+            .machine
+            .set_active_skills(vec![crate::skills::ActiveSkillEnvelope::available(
+                crate::skills::SkillMetadata {
+                    id: "deploy".to_string(),
+                    package_id: Some("skill:deploy".to_string()),
+                    name: "Deploy".to_string(),
+                    description: "Deploy service".to_string(),
+                    short_description: None,
+                    path: std::path::PathBuf::from("/tmp/deploy/SKILL.md"),
+                    package_root: None,
+                    resource_root: None,
+                    scope: crate::skills::SkillScope::Descriptor,
+                    tags: vec![],
+                    capabilities: None,
+                    compatibility: Default::default(),
+                    source: crate::skills::SkillContentSource::File(std::path::PathBuf::from(
+                        "/tmp/deploy/SKILL.md",
+                    )),
+                    enabled: true,
+                    allow_implicit_invocation: true,
+                    alan_metadata: Default::default(),
+                    compatible_metadata: Default::default(),
+                    execution: Default::default(),
+                },
+                crate::skills::SkillActivationReason::ExplicitMention {
+                    mention: "deploy".to_string(),
+                },
+            )]);
         assert!(!state.machine.record_guardian_review(true));
         assert!(!state.machine.record_guardian_review(true));
         let id = uuid::Uuid::new_v4().to_string();
@@ -87,16 +92,25 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         .await
         .unwrap();
         let shell = alan_shell::Shell::new(state.environment.root_transport());
-        let tape = shell.cat(&format!("{}/machine/tape", state.environment.agent_path())).await.unwrap();
-        let users: Vec<serde_json::Value> = std::str::from_utf8(&tape).unwrap().lines()
+        let tape = shell
+            .cat(&format!("{}/machine/tape", state.environment.agent_path()))
+            .await
+            .unwrap();
+        let users: Vec<serde_json::Value> = std::str::from_utf8(&tape)
+            .unwrap()
+            .lines()
             .map(|line| serde_json::from_str(line).unwrap())
-            .filter(|record: &serde_json::Value| record["role"] == "user").collect();
+            .filter(|record: &serde_json::Value| record["role"] == "user")
+            .collect();
         assert_eq!(users.len(), 1);
         assert_eq!(users[0]["submission_id"], id);
         assert_eq!(users[0]["input_intent"], "command");
         assert_eq!(users[0]["content"], script);
         assert!(state.machine.active_skills().is_empty());
-        assert!(!state.machine.record_guardian_review(true), "prior-turn denials must be cleared");
+        assert!(
+            !state.machine.record_guardian_review(true),
+            "prior-turn denials must be cleared"
+        );
         if let Some(choice) = choice {
             assert_eq!(executions.load(Ordering::SeqCst), 0);
             let request_id = state
@@ -168,8 +182,27 @@ async fn explicit_command_execution_and_approval_do_not_generate_agent_turns() {
         let mut matching = Vec::new();
         for action in state.agent_files().action_ids().await.unwrap() {
             let base = format!("{}/actions/{action}", state.environment.agent_path());
-            let result: Value = serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap()).unwrap();
-            if result["call_id"] == id { matching.push(base); }
+            let result: Value =
+                serde_json::from_slice(&shell.cat(&format!("{base}/result")).await.unwrap())
+                    .unwrap();
+            if result["call_id"] == id {
+                assert_eq!(result["title"], format!("Bash {script}"));
+                if choice == Some("reject") {
+                    assert!(
+                        result["result_preview"]
+                            .as_str()
+                            .is_some_and(|s| !s.is_empty())
+                    );
+                } else {
+                    let presentation: alan_agent_protocol::ToolResultPresentation =
+                        serde_json::from_value(result["presentation"].clone()).unwrap();
+                    assert!(matches!(
+                        presentation,
+                        alan_agent_protocol::ToolResultPresentation::Command { .. }
+                    ));
+                }
+                matching.push(base);
+            }
         }
         assert_eq!(matching.len(), 1, "one terminal Action per command");
         let base = &matching[0];
@@ -236,7 +269,16 @@ async fn cancelled_explicit_command_has_failed_action_without_execution_or_gener
     );
     assert_eq!(state.agent_files().action_ids().await.unwrap().len(), 1);
     let shell = alan_shell::Shell::new(state.environment.root_transport());
-    assert_eq!(shell.cat(&format!("{}/actions/a0/approval", state.environment.agent_path())).await.unwrap(), b"not_required");
+    assert_eq!(
+        shell
+            .cat(&format!(
+                "{}/actions/a0/approval",
+                state.environment.agent_path()
+            ))
+            .await
+            .unwrap(),
+        b"not_required"
+    );
 }
 
 #[tokio::test]
@@ -284,6 +326,17 @@ async fn interrupt_while_command_awaits_approval_publishes_correlated_failure() 
         interrupt
     );
     outcome.result.unwrap();
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    assert_eq!(
+        shell
+            .cat(&format!(
+                "{}/requests/r0/status",
+                state.environment.agent_path()
+            ))
+            .await
+            .unwrap(),
+        b"cancelled"
+    );
     assert_eq!(executions.load(Ordering::SeqCst), 0);
     assert!(probe.recorded_requests().is_empty());
     assert!(!state.machine.has_pending_interaction());

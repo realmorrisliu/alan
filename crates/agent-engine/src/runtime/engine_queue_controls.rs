@@ -1,7 +1,164 @@
 use super::*;
 
 impl RuntimeSubmissionQueues {
-    pub(super) fn admit_api_before_dispatch(
+    pub(super) fn push_outer_deferred(
+        &mut self,
+        action: crate::agent_machine::DeferredRuntimeAction,
+    ) {
+        self.outer_queue
+            .lock()
+            .expect("input queue poisoned")
+            .pending
+            .push_back(QueuedRuntimeItem::Deferred(action));
+    }
+
+    pub(super) async fn admit_input(
+        &self,
+        input: &Submission,
+    ) -> Result<crate::agent_machine::input_queue::AdmissionDisposition> {
+        self.capture_input(input).await?;
+        crate::agent_machine::input_queue::admit_input(
+            &self.outer_queue,
+            self.recorder.as_ref(),
+            input,
+        )
+        .await
+    }
+
+    /// Fresh deferred-observer intake must be admitted before it becomes queued work.
+    /// Duplicate delivery neither preempts promotion nor changes the original capture.
+    pub(super) async fn admit_during_deferred(
+        &mut self,
+        incoming: Submission,
+        cancel: &CancellationToken,
+    ) -> bool {
+        match self.admit_input(&incoming).await {
+            Ok(crate::agent_machine::input_queue::AdmissionDisposition::AlreadyAdmitted) => false,
+            Ok(_) => {
+                cancel.cancel();
+                self.push_outer_submission(incoming);
+                true
+            }
+            Err(error) => {
+                self.reject_admission(&incoming, &error).await;
+                false
+            }
+        }
+    }
+
+    pub(super) async fn reject_admission(&mut self, input: &Submission, error: &anyhow::Error) {
+        warn!(%error, submission_id=%input.id, "Input admission not acknowledged; input remains unaccepted");
+        if let Some(environment) = &self.environment {
+            if let Err(publish_error) = environment
+                .agent_files()
+                .append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
+                    submission_ids: vec![input.id.clone()],
+                    status: alan_agent_protocol::UiInputStatus::Failed,
+                    error: Some(if error.is::<super::model_controls::NoConfirmedCallable>() {
+                        super::model_controls::NO_CONFIRMED_CALLABLE.to_owned()
+                    } else {
+                        format!("Input admission persistence failed; acceptance is uncertain: {error}")
+                    }),
+                })
+                .await
+            {
+                warn!(%publish_error, submission_id=%input.id, "Failed to publish admission uncertainty");
+                self.pause();
+                self.push_outer_submission(input.clone());
+            }
+        } else {
+            // Without a visible surface, retain unaccepted work behind a pause.
+            self.pause();
+            self.push_outer_submission(input.clone());
+        }
+    }
+
+    /// Removal acknowledgement owns disposition; UI publication never owns replay.
+    /// Returns whether the correlated failure was observed on the file surface.
+    pub(super) async fn fail_accepted_input(
+        &mut self,
+        input: &Submission,
+        error: &anyhow::Error,
+        reason: &'static str,
+    ) -> bool {
+        warn!(%error, submission_id=%input.id, "Accepted input cannot execute");
+        if let Err(removal) = crate::agent_machine::input_queue::remove_input_bindings(
+            &self.outer_queue,
+            self.recorder.as_ref(),
+            std::slice::from_ref(&input.id),
+        )
+        .await
+        {
+            self.retain_durable_failure(input, &removal).await;
+            return false;
+        }
+        {
+            let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+            queue.pending.retain(
+                |item| !matches!(item, QueuedRuntimeItem::Submission(s) if s.id == input.id),
+            );
+            queue.inband.retain(|s| s.id != input.id);
+            queue
+                .buffered_inband_submissions
+                .retain(|s| s.id != input.id);
+            queue
+                .queued_next_turn_inputs
+                .retain(|(id, _)| id.as_deref() != Some(input.id.as_str()));
+            queue.pending_binding_rejections.remove(&input.id);
+        }
+        if let Some(environment) = &self.environment {
+            environment
+                .reconcile_input_captures(&self.outer_queue)
+                .await;
+            match environment
+                .agent_files()
+                .append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
+                    submission_ids: vec![input.id.clone()],
+                    status: alan_agent_protocol::UiInputStatus::Failed,
+                    error: Some(reason.to_owned()),
+                })
+                .await
+            {
+                Ok(()) => return true,
+                Err(publish_error) => {
+                    warn!(%publish_error, submission_id=%input.id, "Input durably excluded; failure observation uncertain; never replay for UI repair");
+                    let _ = crate::runtime::ui_surfaces::warning(&environment.agent_files(), format!("Input {} durably excluded without execution; failure observation uncertain.", input.id)).await;
+                }
+            }
+        } else {
+            warn!(submission_id=%input.id, "Input durably excluded; no failure observation surface; never replay for UI repair");
+        }
+        false
+    }
+
+    pub(super) async fn retain_durable_failure(
+        &mut self,
+        input: &Submission,
+        error: &anyhow::Error,
+    ) {
+        warn!(%error, submission_id=%input.id, "Accepted input retained pending durable removal");
+        {
+            let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+            queue.paused = true;
+            queue.pending_binding_rejections.insert(input.id.clone());
+            if !queue
+                .pending
+                .iter()
+                .any(|item| matches!(item, QueuedRuntimeItem::Submission(s) if s.id == input.id))
+            {
+                push_submission_ahead_of_deferred(&mut queue.pending, input.clone());
+            }
+        }
+        if let Some(environment) = &self.environment {
+            let _ = crate::runtime::ui_surfaces::warning(
+                &environment.agent_files(),
+                "Accepted input retained; durable removal is uncertain. Queue paused.".to_owned(),
+            )
+            .await;
+        }
+    }
+
+    pub(super) async fn admit_api_before_dispatch(
         &mut self,
         receiver: &mut mpsc::Receiver<Submission>,
     ) -> Option<Submission> {
@@ -17,8 +174,29 @@ impl RuntimeSubmissionQueues {
                     | Op::ContinueQueue
                     | Op::DiscardQueue
                     | Op::Resume { .. }
+                    | Op::SelectModel { .. }
+                    | Op::SelectProjectDirectory { .. }
             ) {
                 return Some(input);
+            }
+            if self
+                .outer_queue
+                .lock()
+                .expect("input queue poisoned")
+                .settled_ids
+                .contains(&input.id)
+            {
+                continue;
+            }
+            match self.admit_input(&input).await {
+                Ok(crate::agent_machine::input_queue::AdmissionDisposition::AlreadyAdmitted) => {
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.reject_admission(&input, &error).await;
+                    continue;
+                }
             }
             self.push_outer_submission(input);
         }
@@ -46,6 +224,30 @@ impl RuntimeSubmissionQueues {
         cancel: Option<&CancellationToken>,
     ) -> bool {
         use alan_agent_protocol::Op;
+        if self.model_control(submission).await {
+            return true;
+        }
+        if matches!(submission.op, Op::SelectProjectDirectory { .. }) && cancel.is_some() {
+            let result = async {
+                let environment = self
+                    .environment
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing Process directory owner"))?;
+                crate::runtime::transition::directory_control::write_cd_action(
+                    files,
+                    &submission.id,
+                    "Select Process directory",
+                    Err(anyhow::anyhow!("directory selection requires settled work")),
+                    environment.process_files().process_path()?,
+                )
+                .await
+            }
+            .await;
+            if let Err(error) = result {
+                warn!(%error, "Failed to record active directory rejection");
+            }
+            return true;
+        }
         if submission.intent == alan_agent_protocol::InputIntent::Command
             && !matches!(submission.op, Op::Input { .. })
         {
@@ -71,7 +273,7 @@ impl RuntimeSubmissionQueues {
                 cancel.cancel();
             } else {
                 let mut queue = self.outer_queue.lock().expect("input queue poisoned");
-                if queue.pending.iter().any(|item| matches!(item,
+                if !queue.queued_next_turn_inputs.is_empty() || queue.pending.iter().any(|item| matches!(item,
                     QueuedRuntimeItem::Submission(input) if matches!(input.op, Op::Turn { .. } | Op::Input { .. }))) {
                     queue.paused = true;
                 }
@@ -87,49 +289,125 @@ impl RuntimeSubmissionQueues {
         if !matches!(submission.op, Op::ContinueQueue | Op::DiscardQueue) {
             return false;
         }
-        let result = (|| -> Result<Vec<Submission>> {
-            anyhow::ensure!(cancel.is_none(), "active input has not settled yet");
-            let mut queue = self.outer_queue.lock().expect("input queue poisoned");
-            anyhow::ensure!(queue.paused, "input queue is not paused");
-            let mut discarded = Vec::new();
-            if matches!(submission.op, Op::DiscardQueue) {
-                queue.pending.retain(|item| match item {
-                    QueuedRuntimeItem::Submission(input)
-                        if matches!(input.op, Op::Turn { .. } | Op::Input { .. }) =>
-                    {
-                        discarded.push(input.clone());
-                        false
-                    }
-                    _ => true,
-                });
+        let preflight = async {
+            let (recovered, removed, anonymous_count) = {
+                let queue = self.outer_queue.lock().expect("input queue poisoned");
+                let removed = if matches!(submission.op, Op::DiscardQueue) {
+                    queue
+                        .pending
+                        .iter()
+                        .filter_map(|item| match item {
+                            QueuedRuntimeItem::Submission(input)
+                                if matches!(input.op, Op::Turn { .. } | Op::Input { .. }) =>
+                            {
+                                Some(input.id.clone())
+                            }
+                            _ => None,
+                        })
+                        .chain(queue.queued_next_turn_inputs.iter().filter_map(|(id, _)| id.clone()))
+                        .fold(Vec::new(), |mut ids, id| {
+                            if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                            ids
+                        })
+                } else {
+                    Vec::new()
+                };
+                anyhow::ensure!(cancel.is_none(), "active input has not settled yet");
+                anyhow::ensure!(queue.paused, "input queue is not paused");
+                anyhow::ensure!(
+                    !matches!(submission.op, Op::ContinueQueue)
+                        || (queue.pending_binding_rejections.is_empty()
+                            && queue.queue_uncertain_ids.is_empty()),
+                    "accepted input removal is unresolved; discard queued work before continuing"
+                );
+                let anonymous_count = if matches!(submission.op, Op::DiscardQueue) {
+                    queue.queued_next_turn_inputs.iter().filter(|(id, _)| id.is_none()).count()
+                } else {
+                    0
+                };
+                (queue.recovered, removed, anonymous_count)
+            };
+            if recovered && matches!(submission.op, Op::ContinueQueue) {
+                let environment = self
+                    .environment
+                    .as_ref()
+                    .context("recovered input requires current explicit project authority")?;
+                let execution = environment.tool_execution();
+                let cwd = execution
+                    .default_cwd()
+                    .context("recovered input requires current explicit project authority")?;
+                execution.change_process_directory(&cwd).context(
+                    "Recovered Process requires current explicit project authority before continuing queued work",
+                )?;
+                anyhow::ensure!(
+                    execution
+                        .execution_binding()
+                        .is_some_and(|binding| binding.cwd_grant_id.is_some()),
+                    "recovered input requires current explicit project authority"
+                );
             }
-            queue.paused = false;
-            Ok(discarded)
-        })();
+            crate::agent_machine::input_queue::remove_input_bindings(
+                &self.outer_queue,
+                self.recorder.as_ref(),
+                &removed,
+            )
+            .await?;
+            if let Some(environment) = &self.environment {
+                environment
+                    .reconcile_input_captures(&self.outer_queue)
+                    .await;
+            }
+            Ok::<_, anyhow::Error>((removed, anonymous_count))
+        }
+        .await;
+        let result = preflight.and_then(|(discarded, anonymous_count)| {
+            (|| -> Result<(Vec<String>, usize)> {
+                anyhow::ensure!(cancel.is_none(), "active input has not settled yet");
+                let mut queue = self.outer_queue.lock().expect("input queue poisoned");
+                anyhow::ensure!(queue.paused, "input queue is not paused");
+                if matches!(submission.op, Op::DiscardQueue) {
+                    queue.pending.retain(|item| {
+                        !matches!(item,
+                        QueuedRuntimeItem::Submission(input) if discarded.contains(&input.id))
+                    });
+                    // Anonymous legacy content has no exact receipt identity, but is
+                    // still discarded. Never synthesize an ID for that payload.
+                    queue.queued_next_turn_inputs.clear();
+                }
+                for id in &discarded {
+                    queue.pending_binding_rejections.remove(id);
+                }
+                queue.paused = false;
+                Ok((discarded, anonymous_count))
+            })()
+        });
         let notice = match result {
-            Ok(discarded) => {
+            Ok((discarded, anonymous_count)) => {
+                let discarded_count = discarded.len() + anonymous_count;
                 let mut unpublished = 0;
-                for input in &discarded {
+                for id in &discarded {
                     if let Err(error) = publish_cancelled_input(
                         files,
-                        &input.id,
+                        id,
                         "Queued input discarded without execution",
                     )
                     .await
                     {
                         unpublished += 1;
-                        warn!(%error, submission_id=%input.id, "Failed to publish discarded input evidence");
+                        warn!(%error, submission_id=%id, "Failed to publish discarded input evidence");
                     }
                 }
                 if unpublished > 0 {
                     format!(
                         "Discarded {} queued inputs; could not publish {unpublished} result records",
-                        discarded.len()
+                        discarded_count
                     )
                 } else if matches!(submission.op, Op::DiscardQueue) {
                     format!(
                         "Discarded {} queued inputs without execution",
-                        discarded.len()
+                        discarded_count
                     )
                 } else {
                     "Input queue resumed".to_owned()
@@ -149,6 +427,42 @@ impl RuntimeSubmissionQueues {
         files: &NamespaceAgentFiles,
         cancel: Option<&CancellationToken>,
     ) -> bool {
+        // A cancellation must be acknowledged durably before removing pending work.
+        let queued = {
+            let queue = self.outer_queue.lock().expect("input queue poisoned");
+            queue.pending.iter().any(|item| {
+                matches!(item,
+                QueuedRuntimeItem::Submission(input) if input.id == submission_id)
+            }) || queue
+                .inband
+                .iter()
+                .chain(queue.buffered_inband_submissions.iter())
+                .any(|input| input.id == submission_id)
+                || queue
+                    .queued_next_turn_inputs
+                    .iter()
+                    .any(|(id, _)| id.as_deref() == Some(submission_id))
+        };
+        if queued
+            && let Err(error) = crate::agent_machine::input_queue::remove_input_bindings(
+                &self.outer_queue,
+                self.recorder.as_ref(),
+                &[submission_id.to_owned()],
+            )
+            .await
+        {
+            let _ = crate::runtime::ui_surfaces::warning(
+                files,
+                format!("Queue cancellation rejected: {error}"),
+            )
+            .await;
+            return true;
+        }
+        if queued && let Some(environment) = &self.environment {
+            environment
+                .reconcile_input_captures(&self.outer_queue)
+                .await;
+        }
         let (removed, active) = {
             let mut queue = self.outer_queue.lock().expect("input queue poisoned");
             let mut removed = false;
@@ -175,6 +489,9 @@ impl RuntimeSubmissionQueues {
                 removed |= matches;
                 !matches
             });
+            if removed {
+                queue.pending_binding_rejections.remove(submission_id);
+            }
             let active = queue
                 .active_submission_ids
                 .iter()

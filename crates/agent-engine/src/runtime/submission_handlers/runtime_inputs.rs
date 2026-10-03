@@ -46,7 +46,12 @@ impl<'a> SubmissionRuntime<'a> {
     }
 
     pub(super) async fn reset_turn_after_cancelling_host_mounts(&mut self) -> Result<()> {
-        reset_turn_after_cancelling_host_mounts(self.machine, &self.host_mount_requests).await
+        reset_turn_after_cancelling_host_mounts(
+            self.machine,
+            &self.agent_files,
+            &self.host_mount_requests,
+        )
+        .await
     }
 
     pub(super) fn preserve_approved_host_mount(

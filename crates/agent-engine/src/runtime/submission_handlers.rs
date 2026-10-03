@@ -13,8 +13,7 @@ use super::transition::{
     HostMountTerminalResult, NamespaceAgentFiles, NamespaceTapeWriter, TurnRunKind,
 };
 use crate::agent_machine::{
-    AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE, NormalizedToolCall,
-    PendingHostMountRequest, PendingYield,
+    AgentMachine, NormalizedToolCall, PendingHostMountRequest, PendingYield,
 };
 
 mod runtime_inputs;
@@ -56,6 +55,9 @@ where
     F: std::future::Future<Output = ()>,
 {
     match op {
+        Op::SelectModel { .. } | Op::SelectProjectDirectory { .. } => {
+            anyhow::bail!("directory selection must enter through the settled control boundary")
+        }
         Op::CompactWithOptions { .. } => {
             anyhow::bail!("manual compaction must enter through the accepted-submission transition")
         }
@@ -110,7 +112,9 @@ where
         // New unified operations (Phase 2)
         // ====================================================================
         Op::Turn { parts, context } => {
-            *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+            if tape_writer.is_none() {
+                *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+            }
             let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
 
             let queued_next_turn_inputs = runtime.machine.drain_next_turn_inputs();
@@ -200,12 +204,18 @@ where
                             emit(Event::Warning { message }).await;
                         }
                         None => {
-                            emit(Event::Error {
-                                message: "Too many queued next_turn inputs (limit=16); dropping newest input."
-                                    .to_string(),
-                                recoverable: true,
-                            })
-                            .await;
+                            let id = runtime.machine.current_submission_id().map(str::to_owned);
+                            if let Some(id) = id {
+                                crate::agent_machine::input_queue::remove_input_bindings(
+                                    &runtime.machine.input_queue(),
+                                    runtime.machine.recorder().as_ref(),
+                                    &[id],
+                                )
+                                .await?;
+                            }
+                            anyhow::bail!(
+                                "Too many queued next_turn inputs (limit=16); dropping newest input"
+                            );
                         }
                     }
                     return Ok(RuntimeOpAction::NoTurn);
@@ -233,10 +243,11 @@ where
                     return Ok(RuntimeOpAction::NoTurn);
                 };
                 *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                runtime.preserve_approved_host_mount(&pending, &terminal)?;
+                let action = handle_host_mount_terminal(&mut runtime, pending, terminal).await?;
                 let taken = runtime.machine.take_pending(&request_id);
                 debug_assert!(matches!(taken, Some(PendingYield::HostMount(_))));
-                runtime.preserve_approved_host_mount(&pending, &terminal)?;
-                return Ok(handle_host_mount_terminal(&mut runtime, pending, terminal));
+                return Ok(action);
             }
             let result = resume_content_to_value(&content);
             match runtime.machine.pending_yield(&request_id).cloned() {
@@ -493,42 +504,18 @@ async fn handle_confirmation_resolution(
     })
 }
 
-fn handle_host_mount_terminal(
+async fn handle_host_mount_terminal(
     runtime: &mut SubmissionRuntime<'_>,
     pending: PendingHostMountRequest,
     terminal: HostMountTerminalResult,
-) -> RuntimeOpAction {
-    let status = terminal.status.as_str();
-    let approved = status == "approved";
-    let result = json!({
-        "status": status,
-        "approved": approved,
-        "request_reference": pending.request_id,
-        "namespace_path": pending.namespace_path,
-        "access": pending.access,
-        "reason": pending.reason,
-        "label": pending.label,
-        "grant_reference": terminal.grant_reference,
-        "error": terminal.error,
-    });
-    runtime.machine.record_event(
-        HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
-        json!({
-            "request_id": pending.request_id,
-            "status": status,
-            "grant_reference": terminal.grant_reference,
-            "error": terminal.error,
-        }),
-    );
-    runtime
-        .machine
-        .add_tool_message(&pending.tool_call_id, "request_mount", result);
+) -> Result<RuntimeOpAction> {
+    super::turn_support::record_host_mount_terminal(runtime.machine, &pending, &terminal).await?;
 
-    RuntimeOpAction::RunTurn {
+    Ok(RuntimeOpAction::RunTurn {
         turn_kind: TurnRunKind::ResumeTurn,
         user_input: None,
         activate_task: false,
-    }
+    })
 }
 
 fn is_unknown_effect_confirmation(pending: &crate::approval::PendingConfirmation) -> bool {

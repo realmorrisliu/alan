@@ -7,9 +7,11 @@ use tracing::error;
 
 use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
 
+#[cfg(test)]
+use crate::rollout::CompactedItem;
 use crate::rollout::{
-    CompactedItem, ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutItem,
-    RolloutRecorder, build_durable_tool_payload,
+    ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutRecorder,
+    build_durable_tool_payload,
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
@@ -766,26 +768,6 @@ impl AgentMachine {
         {
             error!(error = %err, "Failed to record compaction outcome");
         }
-    }
-
-    /// Record a compaction attempt and its optional compacted summary in one persisted batch.
-    pub async fn persist_compaction_observation(
-        &mut self,
-        attempt: CompactionAttemptSnapshot,
-        compacted: Option<CompactedItem>,
-    ) -> anyhow::Result<()> {
-        let Some(recorder) = self.recorder.as_ref() else {
-            self.latest_compaction_attempt = Some(attempt);
-            return Ok(());
-        };
-        let latest_attempt = attempt.clone();
-        let mut items = vec![RolloutItem::CompactionAttempt(attempt)];
-        if let Some(compacted) = compacted {
-            items.push(RolloutItem::Compacted(compacted));
-        }
-        recorder.persist_batch(items).await?;
-        self.latest_compaction_attempt = Some(latest_attempt);
-        Ok(())
     }
 
     /// Record a memory-flush attempt to persistence.

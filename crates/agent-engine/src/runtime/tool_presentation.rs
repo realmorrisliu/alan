@@ -8,17 +8,40 @@
 use alan_agent_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
 use serde_json::Value;
 
+/// Populate the existing Action result envelope using the same mapper as Events.
+pub(crate) fn write_action_metadata(
+    envelope: &mut Value,
+    name: &str,
+    args: &Value,
+    result: &Value,
+) -> serde_json::Result<()> {
+    if let Some(title) = tool_title(name, args) {
+        envelope["title"] = Value::String(title);
+    }
+    if let Some(preview) = crate::runtime::turn_support::tool_result_preview(result) {
+        envelope["result_preview"] = Value::String(preview);
+    }
+    if let Some(presentation) = tool_presentation(name, args, result) {
+        envelope["presentation"] = serde_json::to_value(presentation)?;
+    }
+    Ok(())
+}
+
 /// Human-readable title for a tool call, shown as the tool header.
 pub fn tool_title(name: &str, args: &Value) -> Option<String> {
     let path = args.get("path").and_then(Value::as_str);
     match name {
+        "cd" => args
+            .get("command")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         "read_file" => path.map(|p| format!("Read {p}")),
         "write_file" => path.map(|p| format!("Write {p}")),
         "edit_file" => path.map(|p| format!("Edit {p}")),
-        "bash" => args
-            .get("command")
-            .and_then(Value::as_str)
-            .map(|cmd| format!("Bash {}", first_line(cmd))),
+        "bash" => Some(match args.get("command").and_then(Value::as_str) {
+            Some(cmd) => format!("Bash {}", first_line(cmd)),
+            None => "Bash".to_string(),
+        }),
         "grep" => args
             .get("pattern")
             .and_then(Value::as_str)
@@ -41,6 +64,16 @@ pub fn tool_presentation(
     args: &Value,
     result: &Value,
 ) -> Option<ToolResultPresentation> {
+    if matches!(name, "edit_file" | "write_file")
+        && (result.get("success").and_then(Value::as_bool) != Some(true)
+            || result.get("error").is_some_and(|error| !error.is_null())
+            || result
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .is_some_and(|code| code != 0))
+    {
+        return None;
+    }
     match name {
         "edit_file" => {
             let path = result_path(result, args)?;
@@ -75,16 +108,20 @@ pub fn tool_presentation(
         // preview renders instead.
         "read_file" => None,
         "bash" => {
+            // Diagnostics without a Process result use the readable preview.
+            let cmdline = args.get("command").and_then(Value::as_str)?;
+            if result.get("exit_code").and_then(Value::as_i64).is_none()
+                || (!result.get("stdout").is_some_and(Value::is_string)
+                    && !result.get("stderr").is_some_and(Value::is_string))
+            {
+                return None;
+            }
             let (stdout, stdout_truncated) =
                 cap_text(result.get("stdout").and_then(Value::as_str).unwrap_or(""));
             let (stderr, stderr_truncated) =
                 cap_text(result.get("stderr").and_then(Value::as_str).unwrap_or(""));
             Some(ToolResultPresentation::Command {
-                cmdline: args
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
+                cmdline: cmdline.to_string(),
                 exit_code: result
                     .get("exit_code")
                     .and_then(Value::as_i64)
@@ -259,195 +296,5 @@ fn first_line(text: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn titles_format_from_args() {
-        assert_eq!(
-            tool_title("read_file", &json!({"path": "src/a.rs"})).as_deref(),
-            Some("Read src/a.rs")
-        );
-        assert_eq!(
-            tool_title("bash", &json!({"command": "cargo test\nmore"})).as_deref(),
-            Some("Bash cargo test")
-        );
-        assert!(tool_title("mcp_custom", &json!({})).is_none());
-    }
-
-    #[test]
-    fn edit_maps_to_diff() {
-        let p = tool_presentation(
-            "edit_file",
-            &json!({"path": "a.rs", "old_string": "old", "new_string": "new"}),
-            &json!({"path": "a.rs"}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::Diff { path, hunks } => {
-                assert_eq!(path, "a.rs");
-                assert_eq!(hunks[0].lines.len(), 2);
-            }
-            _ => panic!("expected diff"),
-        }
-    }
-
-    #[test]
-    fn bash_maps_to_command() {
-        let p = tool_presentation(
-            "bash",
-            &json!({"command": "ls"}),
-            &json!({"stdout": "a\nb", "exit_code": 0}),
-        )
-        .unwrap();
-        assert!(matches!(
-            p,
-            ToolResultPresentation::Command {
-                exit_code: Some(0),
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn read_file_uses_preview_to_keep_contents_visible() {
-        // No presentation → the content-bearing flat preview renders instead of
-        // hiding the file behind a path + line count.
-        assert!(
-            tool_presentation(
-                "read_file",
-                &json!({"path": "a.rs"}),
-                &json!({"path": "a.rs", "content": "l1\nl2\nl3"}),
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn grep_maps_to_listing() {
-        let p = tool_presentation(
-            "grep",
-            &json!({"pattern": "x"}),
-            &json!({"matches": [{"path": "a.rs", "line": 4, "content": "x here"}]}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::Listing { rows } => {
-                assert_eq!(rows, vec!["a.rs:4: x here".to_string()])
-            }
-            _ => panic!("expected listing"),
-        }
-    }
-
-    #[test]
-    fn unknown_tool_has_no_presentation() {
-        assert!(tool_presentation("mcp_custom", &json!({}), &json!({"ok": true})).is_none());
-    }
-
-    #[test]
-    fn list_dir_maps_entries_to_rows() {
-        let p = tool_presentation(
-            "list_dir",
-            &json!({"path": "."}),
-            &json!({"path": ".", "entries": [
-                {"name": "src", "type": "directory", "size": 0},
-                {"name": "Cargo.toml", "type": "file", "size": 12}
-            ], "total": 2}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::Listing { rows } => {
-                assert_eq!(rows, vec!["src/".to_string(), "Cargo.toml".to_string()]);
-            }
-            _ => panic!("expected listing"),
-        }
-    }
-
-    #[test]
-    fn huge_listing_row_is_capped() {
-        let huge = "x".repeat(PRESENTATION_MAX_LINE_CHARS * 4);
-        let p = tool_presentation(
-            "grep",
-            &json!({"pattern": "x"}),
-            &json!({"matches": [{"path": "min.js", "line": 1, "content": huge}]}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::Listing { rows } => {
-                assert_eq!(rows.len(), 1);
-                assert!(rows[0].len() <= PRESENTATION_MAX_LINE_CHARS + 64);
-            }
-            _ => panic!("expected listing"),
-        }
-    }
-
-    #[test]
-    fn empty_listing_falls_back_to_preview() {
-        // No matches/entries → no presentation, so the flat preview renders.
-        assert!(
-            tool_presentation("list_dir", &json!({"path": "."}), &json!({"entries": []})).is_none()
-        );
-        assert!(
-            tool_presentation("grep", &json!({"pattern": "x"}), &json!({"matches": []})).is_none()
-        );
-    }
-
-    #[test]
-    fn bash_caps_large_stdout() {
-        let huge = "x".repeat(PRESENTATION_MAX_STREAM_CHARS * 2);
-        let p = tool_presentation("bash", &json!({"command": "gen"}), &json!({"stdout": huge}))
-            .unwrap();
-        match p {
-            ToolResultPresentation::Command {
-                stdout, truncated, ..
-            } => {
-                assert!(truncated);
-                assert!(stdout.len() < PRESENTATION_MAX_STREAM_CHARS + 100);
-                assert!(stdout.contains("output truncated"));
-            }
-            _ => panic!("expected command"),
-        }
-    }
-
-    #[test]
-    fn single_huge_diff_line_is_capped_on_char_boundary() {
-        // One very long line of multi-byte chars must be capped without panicking.
-        let huge = "界".repeat(PRESENTATION_MAX_LINE_CHARS);
-        let p = tool_presentation(
-            "write_file",
-            &json!({"path": "min.js", "content": huge}),
-            &json!({"path": "min.js"}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::Diff { hunks, .. } => {
-                let DiffLine::Added { text } = &hunks[0].lines[0] else {
-                    panic!("expected added line");
-                };
-                assert!(text.len() <= PRESENTATION_MAX_LINE_CHARS + 4);
-            }
-            _ => panic!("expected diff"),
-        }
-    }
-
-    #[test]
-    fn large_diff_is_capped() {
-        let new = (0..PRESENTATION_MAX_ROWS + 500)
-            .map(|n| n.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let p = tool_presentation(
-            "write_file",
-            &json!({"path": "a.rs", "content": new}),
-            &json!({"path": "a.rs"}),
-        )
-        .unwrap();
-        match p {
-            ToolResultPresentation::Diff { hunks, .. } => {
-                assert!(hunks[0].lines.len() <= PRESENTATION_MAX_ROWS + 1);
-            }
-            _ => panic!("expected diff"),
-        }
-    }
-}
+#[path = "tool_presentation_tests.rs"]
+mod tests;

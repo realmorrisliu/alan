@@ -23,6 +23,39 @@ pub(super) fn observe_root_agent_completion(
         if !matched {
             return;
         }
+        let settled_local_input = pending_turns.iter().any(|turn| {
+            submission_ids.contains(&turn.submission_id)
+                && app
+                    .local_inputs
+                    .get(&turn.submission_id)
+                    .is_some_and(|input| input.owner == app.queue.owner)
+        });
+        if matches!(
+            event,
+            UiEvent::InputCompleted {
+                status: alan_agent_protocol::UiInputStatus::Completed,
+                ..
+            }
+        ) {
+            for turn in pending_turns
+                .iter()
+                .filter(|turn| submission_ids.contains(&turn.submission_id))
+            {
+                let owner = turn
+                    .submitted_process
+                    .map_or_else(|| app.agent_path.clone(), |pid| format!("/agent/{pid}"));
+                if owner == app.queue.owner {
+                    // Terminal acknowledgement must not publish an intermediate admission hint.
+                    // The final refresh below uses queue.hint ownership to preserve other notices.
+                    if let Some(input) = app.local_inputs.get_mut(&turn.submission_id)
+                        && input.owner == owner
+                    {
+                        input.terminal = true;
+                    }
+                    app.acknowledge_local_input(&turn.submission_id, &owner);
+                }
+            }
+        }
         render_input_completion(event, app);
         if let UiEvent::InputCompleted {
             status: alan_agent_protocol::UiInputStatus::Failed,
@@ -33,19 +66,69 @@ pub(super) fn observe_root_agent_completion(
             // Process emits this terminal error immediately after failed settlement.
             app.expected_terminal_error = Some(format!("Error handling submission: {error}"));
         }
+        let nondispatched = matches!(
+            event,
+            UiEvent::InputCompleted {
+                status: alan_agent_protocol::UiInputStatus::Cancelled
+                    | alan_agent_protocol::UiInputStatus::Failed,
+                ..
+            }
+        );
+        let mut cells: Vec<_> = submission_ids
+            .iter()
+            .filter_map(|id| app.local_inputs.get(id))
+            .filter(|input| input.owner == app.queue.owner && nondispatched && !input.tape_seen)
+            .filter_map(|input| input.cell)
+            .collect();
+        cells.sort_unstable();
+        cells.dedup();
+        for index in cells.into_iter().rev() {
+            app.remove_receipt_cell(index);
+        }
+        for id in submission_ids {
+            if let Some(input) = app.local_inputs.get_mut(id)
+                && input.owner == app.queue.owner
+            {
+                input.terminal = true;
+                input.release_terminal_source();
+            }
+        }
+        app.local_inputs.retain(|_, input| {
+            !(input.terminal && nondispatched && !input.tape_seen && !input.committed)
+        });
         pending_turns.retain(|turn| !submission_ids.contains(&turn.submission_id));
+        if settled_local_input {
+            // Queue observation may precede this receipt, with no later event to retire its hint.
+            app.refresh_queue_hint();
+        }
     }
 }
 
-pub(super) fn render_input_completion(event: &UiEvent, app: &mut FileBackedApp) {
-    if let UiEvent::InputCompleted { status, error, .. } = event
-        && *status != alan_agent_protocol::UiInputStatus::Completed
-    {
-        app.push_error(
-            error
-                .clone()
-                .unwrap_or_else(|| format!("Input ended: {status:?}")),
-        );
+pub(super) fn render_input_completion(event: &UiEvent, app: &mut FileBackedApp) -> Option<String> {
+    if let UiEvent::InputCompleted { status, error, .. } = event {
+        match status {
+            alan_agent_protocol::UiInputStatus::Completed => None,
+            alan_agent_protocol::UiInputStatus::Cancelled => {
+                let message = match error {
+                    Some(reason) if !reason.trim().is_empty() => {
+                        format!("Input cancelled: {reason}")
+                    }
+                    _ => "Input cancelled".to_string(),
+                };
+                app.transcript
+                    .push(crate::history::HistoryCell::Rendered(vec![message.clone()]));
+                Some(message)
+            }
+            alan_agent_protocol::UiInputStatus::Failed => {
+                let message = error
+                    .clone()
+                    .unwrap_or_else(|| "Input ended: Failed".into());
+                app.push_error(message.clone());
+                Some(message)
+            }
+        }
+    } else {
+        None
     }
 }
 
@@ -69,162 +152,27 @@ pub(super) fn settle_unknown_replaced_input(
     }
 }
 
-pub(super) async fn send_interrupt(
-    shell: &alan_shell::Shell,
-    app: &mut FileBackedApp,
+pub(super) fn interrupt_control(
+    agent_path: &str,
     pending_turns: &VecDeque<PendingRootAgentTurn>,
     root_pid: Option<u64>,
-) {
+) -> Result<(String, String), String> {
     let pending = pending_turns.front();
-    let agent_path = if app.agent_path == "/agent/root" {
+    let target = if agent_path == "/agent/root" {
         let Some(pid) = pending.map_or(root_pid, |turn| turn.submitted_process) else {
-            app.push_error("Root Agent is not attached; retry interrupt".into());
-            return;
+            return Err("Root Agent is not attached; retry interrupt".into());
         };
         format!("/agent/{pid}")
     } else {
-        app.agent_path.clone()
+        agent_path.to_string()
     };
-    let result = if let Some(turn) = pending {
-        super::file_surface::write_machine_ctl(
-            shell,
-            &agent_path,
-            &format!("queue-v1 interrupt {}", turn.submission_id),
-        )
-        .await
-    } else {
-        super::file_surface::write_interrupt(shell, &agent_path).await
-    };
-    match result {
-        Ok(()) => app.notice = Some("interrupt requested".to_string()),
-        Err(err) => app.push_error(format!("interrupt failed: {err:#}")),
-    }
+    let command = pending.map_or_else(
+        || "interrupt".to_string(),
+        |turn| format!("queue-v1 interrupt {}", turn.submission_id),
+    );
+    Ok((target, command))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn pending_input_interrupt_is_targeted_before_activity_is_observed() {
-        let (shell, root, _, pid) = super::super::stdio_tests::live_root_agent().await;
-        let mut app = FileBackedApp::new("/agent/root".into());
-        let pending = PendingRootAgentTurn {
-            input: "queued task".into(),
-            submission_id: "00000000-0000-4000-8000-000000000001".into(),
-            submitted_process: Some(pid.parse().unwrap()),
-            submitted_at_ms: 20,
-        };
-        let pending_turns = VecDeque::from([
-            pending,
-            PendingRootAgentTurn {
-                input: "later task".into(),
-                submission_id: "00000000-0000-4000-8000-000000000002".into(),
-                submitted_process: Some(pid.parse().unwrap()),
-                submitted_at_ms: 21,
-            },
-        ]);
-        root.set_root_process("99999").await;
-        for refreshed_pid in [Some(99999), None] {
-            app.notice = None;
-            send_interrupt(&shell, &mut app, &pending_turns, refreshed_pid).await;
-            assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
-        }
-        let events =
-            String::from_utf8(shell.cat(&format!("/agent/{pid}/events")).await.unwrap()).unwrap();
-        assert!(events.contains(&format!(
-            "ctl:queue-v1 interrupt {}",
-            pending_turns.front().unwrap().submission_id
-        )));
-        assert!(!events.contains("ctl:interrupt"));
-        assert!(!events.contains(&pending_turns.back().unwrap().submission_id));
-        assert_eq!(app.notice.as_deref(), Some("interrupt requested"));
-    }
-
-    #[test]
-    fn replacement_that_later_becomes_idle_reports_unknown_and_releases_pending() {
-        let mut pending = VecDeque::from([
-            PendingRootAgentTurn {
-                input: "task".into(),
-                submission_id: "input-one".into(),
-                submitted_process: Some(1),
-                submitted_at_ms: 20,
-            },
-            PendingRootAgentTurn {
-                input: "task two".into(),
-                submission_id: "input-two".into(),
-                submitted_process: Some(2),
-                submitted_at_ms: 21,
-            },
-        ]);
-        let mut app = FileBackedApp::new("/agent/root".into());
-        app.activity.state = UiActivityState::Running;
-        settle_unknown_replaced_input(&mut pending, Some(1), &mut app);
-        assert!(
-            !pending.is_empty(),
-            "a running turn is not settled by Root identity refresh"
-        );
-        settle_unknown_replaced_input(&mut pending, Some(2), &mut app);
-        assert!(!pending.is_empty());
-        app.activity.state = UiActivityState::Idle;
-        settle_unknown_replaced_input(&mut pending, Some(2), &mut app);
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending.front().unwrap().submission_id, "input-two");
-        settle_unknown_replaced_input(&mut pending, Some(3), &mut app);
-        assert!(pending.is_empty());
-        assert!(
-            matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message))
-            if message.contains("outcome is unknown"))
-        );
-    }
-    #[test]
-    fn matching_non_success_completion_is_visible_before_pending_is_released() {
-        for status in [
-            alan_agent_protocol::UiInputStatus::Failed,
-            alan_agent_protocol::UiInputStatus::Cancelled,
-        ] {
-            let mut pending = VecDeque::from([PendingRootAgentTurn {
-                input: "task".into(),
-                submission_id: "mine".into(),
-                submitted_process: Some(1),
-                submitted_at_ms: 20,
-            }]);
-            let mut app = FileBackedApp::new("/agent/root".into());
-            let mut event = UiEvent::InputCompleted {
-                submission_ids: vec!["other".into()],
-                status,
-                error: Some("reason".into()),
-            };
-            observe_root_agent_completion(&mut pending, &event, &mut app);
-            assert_eq!(pending.len(), 1);
-            assert!(app.transcript.is_empty());
-            if let UiEvent::InputCompleted { submission_ids, .. } = &mut event {
-                *submission_ids = vec!["mine".into()];
-            }
-            observe_root_agent_completion(&mut pending, &event, &mut app);
-            assert!(pending.is_empty());
-            assert!(
-                matches!(app.transcript.last(), Some(crate::history::HistoryCell::Error(message)) if message == "reason")
-            );
-            app.apply_ui_event(event);
-            if status == alan_agent_protocol::UiInputStatus::Failed {
-                app.apply_ui_event(UiEvent::Notice {
-                    snapshot: alan_agent_protocol::UiNoticeSnapshot::new(
-                        alan_agent_protocol::UiNoticeKind::Error,
-                        "Error handling submission: reason",
-                    ),
-                });
-                app.apply_ui_event(UiEvent::Error {
-                    message: "Error handling submission: reason".into(),
-                    recoverable: true,
-                });
-                assert_eq!(app.transcript.len(), 1);
-                // Only the immediately paired terminal error is suppressed.
-                app.apply_ui_event(UiEvent::Error {
-                    message: "Error handling submission: reason".into(),
-                    recoverable: true,
-                });
-                assert_eq!(app.transcript.len(), 2);
-            }
-        }
-    }
-}
+#[path = "interrupt_tests.rs"]
+mod tests;

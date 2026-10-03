@@ -104,6 +104,8 @@ fn truncate_text(text: &str, max_len: usize) -> String {
     format!("{}...[truncated]", truncated)
 }
 
+#[path = "agent_machine_compaction_fidelity_tests.rs"]
+mod compaction_fidelity;
 #[path = "agent_machine_compaction_recovery_tests.rs"]
 mod compaction_recovery;
 #[path = "agent_machine_persistence_tests.rs"]

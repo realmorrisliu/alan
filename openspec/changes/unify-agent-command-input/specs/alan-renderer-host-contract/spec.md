@@ -166,38 +166,38 @@ execution.
 - **THEN** Alan submits the complete collected input once and follows its outcome
 
 ### Requirement: Composer prompts communicate one-shot input intent
-The ordinary composer SHALL default to `alan: ` for Agent input. A leading `!`
-in an empty entry SHALL be represented by `alan! `, with the command body after
+The ordinary composer SHALL default to `: ` for Agent input. A leading `!`
+in an empty entry SHALL be represented by `! `, with the command body after
 the prompt. The renderer SHALL preserve canonical submission intent while folding
 its prefix into presentation. Backspace on an empty command body SHALL restore
-`alan: `. After accepted submission a fresh composer SHALL default to `alan: `;
+`: `. After accepted submission a fresh composer SHALL default to `: `;
 rejection SHALL preserve the draft and intent. Explicit `:` SHALL force Agent
 intent without a duplicate displayed delimiter. No persistent command mode or
 renderer-owned execution path SHALL be introduced.
 
 #### Scenario: User selects a command
 - **WHEN** the user types `!` into an empty ordinary composer
-- **THEN** the prompt becomes `alan! ` with an empty command body
+- **THEN** the prompt becomes `! ` with an empty command body
 - **AND** typing `git status` submits canonical command intent with exactly that body
 
 #### Scenario: User leaves an empty command entry
 - **WHEN** the command body is empty and the user presses Backspace
-- **THEN** the prompt returns to `alan: ` with an empty Agent entry
+- **THEN** the prompt returns to `: ` with an empty Agent entry
 - **AND** no command is submitted
 
 #### Scenario: Accepted command does not leave a persistent mode
 - **WHEN** a command submission is accepted
-- **THEN** the next fresh entry uses `alan: ` even if accepted work is still running
+- **THEN** the next fresh entry uses `: ` even if accepted work is still running
 - **AND** an empty override rejected before acceptance retains its draft and route
 
 #### Scenario: Paste follows the same prefix rules
 - **WHEN** a paste beginning with `!git status` is inserted into an empty entry
-- **THEN** the prompt shows `alan! ` and the remaining text is the command body
+- **THEN** the prompt shows `! ` and the remaining text is the command body
 - **AND** `!` inserted within an existing body is literal content rather than a mode switch
 
 #### Scenario: Explicit Agent prefix protects literal command-looking text
 - **WHEN** the user enters `:!explain this text`
-- **THEN** the prompt is `alan: ` and the visible body is `!explain this text`
+- **THEN** the prompt is `: ` and the visible body is `!explain this text`
 - **AND** the canonical submission retains forced-Agent intent without reparsing the body
 
 #### Scenario: History restores command intent

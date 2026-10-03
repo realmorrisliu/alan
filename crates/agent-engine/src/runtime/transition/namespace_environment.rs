@@ -7,6 +7,7 @@
 
 mod agent_files;
 pub(crate) use agent_files::NamespaceTapeWriter;
+pub(crate) use agent_files::valid_project_directory;
 mod child_launch;
 mod client;
 mod generation;
@@ -58,13 +59,29 @@ pub struct NamespaceTurnOutput {
     pub generation_id: String,
 }
 
-/// A failed wait after a Tool Process was spawned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NamespaceToolObservationFailure {
+    Timeout,
+    ResultUnavailable,
+    Cancelled,
+}
+
+impl NamespaceToolObservationFailure {
+    pub(crate) fn reason(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout with unknown effects",
+            Self::ResultUnavailable => "result unavailable with unknown effects",
+            Self::Cancelled => "cancelled with unknown effects",
+        }
+    }
+}
+
+/// A bounded observation failure after a Tool Process was spawned.
 #[derive(Debug, thiserror::Error)]
-#[error("{source}")]
+#[error("Tool Process {pid}: {}", category.reason())]
 pub(crate) struct NamespaceToolProcessError {
     pub(crate) pid: String,
-    #[source]
-    pub(crate) source: anyhow::Error,
+    pub(crate) category: NamespaceToolObservationFailure,
 }
 
 /// Correlation and human-approval evidence for one Tool Action.
@@ -72,6 +89,7 @@ pub(crate) struct NamespaceToolProcessError {
 pub(crate) struct NamespaceToolActionEvidence<'a> {
     pub(crate) call_id: &'a str,
     pub(crate) approval: &'a str,
+    pub(crate) arguments: &'a serde_json::Value,
 }
 
 /// A yield/request record written by the engine under `requests/<id>/`.
@@ -162,6 +180,17 @@ pub struct NamespaceRuntimeEnvironment {
     control_offset: Arc<AtomicU64>,
     action_recorder: Option<crate::rollout::RolloutRecorder>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
+    pub(crate) model_bindings:
+        Arc<tokio::sync::Mutex<super::super::model_binding::ProcessBindings>>,
+    // Active turn snapshot is independent of async catalog capture/selection. Never held across await.
+    pub(crate) active_binding: Arc<
+        std::sync::RwLock<
+            Option<(
+                super::super::model_binding::InputBinding,
+                super::super::model_binding::CapturedCallable,
+            )>,
+        >,
+    >,
 }
 
 /// Narrow file-native handle for one mounted LLM Connection.
@@ -229,6 +258,18 @@ impl std::fmt::Debug for NamespaceRuntimeEnvironment {
 }
 
 impl NamespaceRuntimeEnvironment {
+    /// Per-input captures follow the Machine's acknowledged binding disposition.
+    /// Never infer settlement from UI publication or from admitted-ID history.
+    pub(crate) async fn reconcile_input_captures(
+        &self,
+        queue: &Arc<std::sync::Mutex<crate::agent_machine::input_queue::MachineInputQueue>>,
+    ) {
+        let mut bindings = self.model_bindings.lock().await;
+        let queue = queue.lock().expect("input queue poisoned");
+        bindings
+            .captured
+            .retain(|id, _| queue.bindings.contains_key(id));
+    }
     pub fn new(
         root: InProcessTransport,
         agent_path: impl Into<String>,
@@ -239,6 +280,8 @@ impl NamespaceRuntimeEnvironment {
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
             namespace_cwd: PathBuf::from("/"),
+            model_bindings: Default::default(),
+            active_binding: Default::default(),
             tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
@@ -259,7 +302,26 @@ impl NamespaceRuntimeEnvironment {
         Ok(namespace_cwd)
     }
 
+    /// Attach the Connection-owned authority scoped to this Process profile.
+    pub fn with_connection_authority(
+        self,
+        authority: Arc<dyn super::super::model_binding::ConnectionAuthority>,
+    ) -> Self {
+        self.model_bindings
+            .try_lock()
+            .expect("new environment")
+            .authority = Some(authority);
+        self
+    }
+
     pub(crate) fn generation(&self) -> NamespaceGeneration {
+        if let Some((_, callable)) = &*self.active_binding.read().expect("active binding snapshot")
+        {
+            return NamespaceGeneration {
+                root: callable.root.clone(),
+                llm_connection: callable.connection.clone(),
+            };
+        }
         NamespaceGeneration {
             root: self.root.clone(),
             llm_connection: self.llm_connection.clone(),
@@ -322,6 +384,10 @@ impl NamespaceRuntimeEnvironment {
     ) -> Self {
         self.tool_process_context = Some(NamespaceToolProcessContext { pid, tool_runner });
         self
+    }
+
+    pub(crate) fn llm_connection_name(&self) -> &str {
+        &self.llm_connection
     }
 
     pub fn agent_path(&self) -> &str {

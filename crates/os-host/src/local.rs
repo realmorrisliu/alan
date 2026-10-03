@@ -16,12 +16,17 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use alan_service_manager::HostMountGrantRecord;
-use alan_service_manager::{BOOT_ID_PATH, BOOT_STATE_PATH, ServiceManager};
+use alan_service_manager::{BOOT_ID_PATH, BOOT_STATE_PATH, HostMountAccess, ServiceManager};
 
 use crate::HostBootConfig;
 
+mod project_mount;
+pub use project_mount::HostProjectMount;
+
 const STATUS_VERSION: u16 = 1;
-const LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 2;
+const LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 3;
+const LOCAL_PROCESSLESS_ATTACHMENT_PROTOCOL_VERSION: u16 = 2;
+const LOCAL_PROJECT_MOUNT_PROTOCOL_VERSION: u16 = 3;
 const LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 1;
 const SOCKET_FILE: &str = "namespace.ap.sock";
 const STATUS_FILE: &str = "host.json";
@@ -39,6 +44,10 @@ enum LocalRequest {
         request_id: String,
         host_path: PathBuf,
     },
+    MountProject {
+        host_path: PathBuf,
+        access: HostMountAccess,
+    },
     CancelHostMount {
         request_id: String,
     },
@@ -51,6 +60,8 @@ enum LocalRequest {
 struct LocalResponse {
     boot_id: Uuid,
     grant: Option<HostMountGrantRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host_path: Option<PathBuf>,
     error: Option<String>,
 }
 
@@ -184,7 +195,12 @@ pub struct HostStatus {
 impl HostStatus {
     /// Whether this Host supports processless local client attachments.
     pub fn supports_processless_attachment(&self) -> bool {
-        self.local_attachment_protocol_version >= LOCAL_ATTACHMENT_PROTOCOL_VERSION
+        self.local_attachment_protocol_version >= LOCAL_PROCESSLESS_ATTACHMENT_PROTOCOL_VERSION
+    }
+
+    /// Whether the Host can mount a user-selected project in the Root Agent.
+    pub fn supports_project_mount(&self) -> bool {
+        self.local_attachment_protocol_version >= LOCAL_PROJECT_MOUNT_PROTOCOL_VERSION
     }
 
     /// Returns an actionable error when the Host needs an explicit restart.
@@ -302,6 +318,11 @@ impl AlanOsHost {
         &self.status
     }
 
+    /// The effective model for this invocation's callable Root Agent boot binding, if available.
+    pub fn root_model(&self) -> Option<&str> {
+        self.service_manager.root_model()
+    }
+
     pub async fn serve_until<F>(mut self, shutdown: F) -> Result<()>
     where
         F: std::future::Future<Output = ()>,
@@ -319,6 +340,7 @@ impl AlanOsHost {
                     }
                     let local_entry = self.service_manager.local_entry();
                     let host_mount = self.service_manager.host_mount();
+                    let root_pid = self.service_manager.root_pid();
                     let boot_id = self.status.boot_id;
                     connections.spawn(async move {
                         let (mut read, mut write) = stream.into_split();
@@ -355,7 +377,33 @@ impl AlanOsHost {
                                     LocalResponse {
                                         boot_id,
                                         grant: result.as_ref().ok().cloned(),
+                                        host_path: None,
                                         error: result.err().map(|error| error.to_string()),
+                                    },
+                                )
+                                .await
+                            }
+                            LocalRequest::MountProject { host_path, access } => {
+                                let result = (|| {
+                                    let host_path = crate::host_mounts::canonical_host_path(&host_path)?;
+                                    ensure!(host_path.is_dir(), "selected project path is not a directory");
+                                    let request_id = host_mount.request_project_mount(root_pid, access)?;
+                                    let grant = crate::host_mounts::approve_host_mount(
+                                        &host_mount,
+                                        &request_id,
+                                        &host_path,
+                                        "native-project-chooser",
+                                        "local-user",
+                                    )?;
+                                    Ok::<_, anyhow::Error>((grant, host_path))
+                                })();
+                                write_local_response(
+                                    &mut write,
+                                    LocalResponse {
+                                        boot_id,
+                                        grant: result.as_ref().ok().map(|(grant, _)| grant.clone()),
+                                        host_path: result.as_ref().ok().map(|(_, path)| path.clone()),
+                                        error: result.as_ref().err().map(|error| error.to_string()),
                                     },
                                 )
                                 .await
@@ -371,6 +419,7 @@ impl AlanOsHost {
                                     LocalResponse {
                                         boot_id,
                                         grant: None,
+                                        host_path: None,
                                         error: result.err().map(|error| error.to_string()),
                                     },
                                 )
@@ -383,6 +432,7 @@ impl AlanOsHost {
                                     LocalResponse {
                                         boot_id,
                                         grant: None,
+                                        host_path: None,
                                         error: result.err().map(|error| error.to_string()),
                                     },
                                 )
@@ -528,36 +578,6 @@ impl HostCommandPlane {
 
     pub fn detect(channel_id: &str) -> Result<Self> {
         Ok(Self::new(HostEndpointPaths::detect(channel_id)?))
-    }
-
-    pub async fn approve_host_mount(
-        &self,
-        request_id: impl Into<String>,
-        host_path: PathBuf,
-    ) -> Result<HostMountGrantRecord> {
-        self.call(LocalRequest::ApproveHostMount {
-            request_id: request_id.into(),
-            host_path,
-        })
-        .await?
-        .grant
-        .context("Host Mount approval returned no grant")
-    }
-
-    pub async fn cancel_host_mount(&self, request_id: impl Into<String>) -> Result<()> {
-        self.call(LocalRequest::CancelHostMount {
-            request_id: request_id.into(),
-        })
-        .await?;
-        Ok(())
-    }
-
-    pub async fn revoke_host_mount(&self, grant_id: impl Into<String>) -> Result<()> {
-        self.call(LocalRequest::RevokeHostMount {
-            grant_id: grant_id.into(),
-        })
-        .await?;
-        Ok(())
     }
 
     async fn call(&self, request: LocalRequest) -> Result<LocalResponse> {

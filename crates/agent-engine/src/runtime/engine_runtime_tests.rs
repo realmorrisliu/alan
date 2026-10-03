@@ -539,6 +539,125 @@ async fn test_namespace_machine_ctl_drives_runtime_submission_without_api_submis
 }
 
 #[tokio::test]
+async fn duplicate_idle_intake_retains_original_and_internal_dispatch() {
+    let temp = TempDir::new().unwrap();
+    let machine = AgentMachine::new_with_recorder_in_dir("/agent/1", "test", temp.path())
+        .await
+        .unwrap();
+    let mut queues = RuntimeSubmissionQueues::new(machine.input_queue());
+    queues.recorder = machine.input_recorder();
+    let env = namespace_environment_for_test();
+    let captured = crate::runtime::model_binding::CapturedCallable {
+        identity: crate::runtime::model_binding::CallableIdentity {
+            profile: "default".into(),
+            provider: "chatgpt".into(),
+            model: "A".into(),
+            credential_ref: Some("original-reference".into()),
+            revision: "original-revision".into(),
+        },
+        root: env.root_transport(),
+        connection: "default".into(),
+        config: crate::Config::default(),
+    };
+    env.model_bindings.lock().await.confirmed = Some(captured.clone());
+    queues.environment = Some(env.clone());
+    let input = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("original idle payload")],
+        mode: InputMode::FollowUp,
+    });
+    let mut repeated = input.clone();
+    repeated.op = Op::Input {
+        parts: vec![ContentPart::text("must not replace original")],
+        mode: InputMode::Steer,
+    };
+    let (sender, mut receiver) = mpsc::channel(4);
+    sender.send(input.clone()).await.unwrap();
+    assert!(
+        queues
+            .admit_api_before_dispatch(&mut receiver)
+            .await
+            .is_none()
+    );
+    let original_binding = queues.outer_queue.lock().unwrap().bindings[&input.id].clone();
+    sender.send(repeated).await.unwrap();
+    assert!(
+        queues
+            .admit_api_before_dispatch(&mut receiver)
+            .await
+            .is_none()
+    );
+    assert_eq!(
+        queues.outer_queue.lock().unwrap().bindings[&input.id],
+        original_binding
+    );
+    assert_eq!(
+        env.model_bindings.lock().await.captured[&input.id].identity,
+        captured.identity
+    );
+    {
+        let queue = queues.outer_queue.lock().unwrap();
+        assert_eq!(queue.pending.len(), 1);
+        assert!(queue.settled_ids.is_empty());
+        assert!(
+            matches!(queue.pending.front(), Some(QueuedRuntimeItem::Submission(s))
+            if serde_json::to_value(s).unwrap() == serde_json::to_value(&input).unwrap())
+        );
+    }
+    assert!(
+        matches!(queues.pop_outer(), Some(QueuedRuntimeItem::Submission(s)) if s.id == input.id)
+    );
+    // Internal dispatch must accept existing admission, not globally reject it.
+    machine.dispatch_input(&input).await.unwrap();
+    let steer = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("active duplicate")],
+        mode: InputMode::Steer,
+    });
+    *env.active_binding.write().unwrap() = Some((original_binding, captured.clone()));
+    queues
+        .admit_during_submission(steer.clone(), Default::default(), true)
+        .await;
+    queues
+        .admit_during_submission(steer.clone(), Default::default(), true)
+        .await;
+    {
+        let queue = queues.outer_queue.lock().unwrap();
+        assert_eq!(queue.inband.len(), 1, "one physical broker entry");
+        assert!(queue.pending.is_empty());
+        assert!(!queue.settled_ids.contains(&steer.id));
+        assert_eq!(
+            queue.bindings[&steer.id].callable_binding,
+            captured.identity
+        );
+    }
+    assert_eq!(
+        env.model_bindings.lock().await.captured[&steer.id].identity,
+        captured.identity
+    );
+    let history = crate::rollout::RolloutRecorder::load_history(machine.rollout_path().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|item| matches!(item,
+        crate::rollout::RolloutItem::Event(e) if e.event_type == "machine_input_admitted_v1"
+            && e.payload["id"] == input.id))
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .iter()
+            .filter(|item| matches!(item,
+        crate::rollout::RolloutItem::Event(e) if e.event_type == "machine_input_dispatched_v1"
+            && e.payload["submission_id"] == input.id))
+            .count(),
+        1
+    );
+    machine.input_recorder().unwrap().close().await.unwrap();
+}
+
+#[tokio::test]
 async fn ready_api_interrupt_precedes_queued_dispatch() {
     let mut queues = RuntimeSubmissionQueues::default();
     let first = Submission::new(Op::Input {
@@ -556,7 +675,10 @@ async fn ready_api_interrupt_precedes_queued_dispatch() {
         .await
         .unwrap();
     sender.send(Submission::new(Op::Interrupt)).await.unwrap();
-    let control = queues.admit_api_before_dispatch(&mut receiver).unwrap();
+    let control = queues
+        .admit_api_before_dispatch(&mut receiver)
+        .await
+        .unwrap();
     assert!(matches!(control.op, Op::Interrupt));
     queues
         .handle_control(

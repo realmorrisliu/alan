@@ -170,10 +170,12 @@ impl LlmProvider for OpenAiResponsesClient {
         let client = Self {
             inner: self.inner.clone_with_same_config(),
         };
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let _ = client.stream_openai_responses(response_request, tx).await;
+            let outcome = client.stream_openai_responses(response_request, tx).await;
+            let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
-        Ok(rx)
+        Ok(crate::failure::guard_stream(rx, status_rx))
     }
 
     fn provider_name(&self) -> &'static str {

@@ -186,7 +186,7 @@ impl ToolEffectLifecycle {
                 "error": message,
                 "status": "effect_checkpoint_persist_failed"
             });
-            self.complete(machine, &record, &payload, false, Some(message.clone()));
+            self.complete_unknown(machine, &record, &payload, message.clone());
             return Err(EffectCheckpointFailure { message, payload });
         }
 
@@ -221,6 +221,24 @@ impl ToolEffectLifecycle {
             dedupe_hit: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
+    }
+
+    pub(super) fn complete_unknown(
+        &self,
+        machine: &mut AgentMachine,
+        started: &EffectRecord,
+        payload: &Value,
+        reason: String,
+    ) {
+        let durable = build_durable_tool_payload(payload);
+        let mut record = started.clone();
+        record.status = EffectStatus::Unknown;
+        record.applied_at = None;
+        record.result_digest = Some(durable.digest);
+        record.result_payload = Some(durable.payload);
+        record.reason = Some(reason);
+        record.timestamp = chrono::Utc::now().to_rfc3339();
+        machine.record_effect(record);
     }
 
     fn record_decision(

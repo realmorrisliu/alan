@@ -292,13 +292,13 @@ impl GoogleGeminiGenerateContentClient {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let http_error = response.error_for_status_ref().unwrap_err();
             // Clear token on auth error to force refresh
             if status.as_u16() == 401 {
                 warn!("Auth error, clearing cached token");
                 self.access_token = None;
             }
-            anyhow::bail!("Gemini API error ({}): {}", status, error_text);
+            return Err(http_error.into());
         }
 
         // Get response text first for better error diagnostics
@@ -344,12 +344,12 @@ impl GoogleGeminiGenerateContentClient {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let http_error = response.error_for_status_ref().unwrap_err();
             if status.as_u16() == 401 {
                 warn!("Auth error, clearing cached token");
                 self.access_token = None;
             }
-            anyhow::bail!("Gemini streaming API error ({}): {}", status, error_text);
+            return Err(http_error.into());
         }
 
         streaming::consume_response_stream(response, tx).await
@@ -758,16 +758,15 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
             &self.location,
             &self.model,
         );
+        let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            if let Err(e) = stream_client
+            let outcome = stream_client
                 .stream_generate_content(gemini_request, gemini_tx)
-                .await
-            {
-                warn!(error = %e, "Gemini streaming failed");
-            }
+                .await;
+            let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
 
-        Ok(rx)
+        Ok(crate::failure::guard_stream(rx, status_rx))
     }
 
     fn provider_name(&self) -> &'static str {

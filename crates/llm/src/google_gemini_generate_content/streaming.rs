@@ -6,6 +6,10 @@ use tracing::debug;
 use super::{Content, PromptFeedback, UsageMetadata, is_blocking_finish_reason};
 use crate::{SseEventParser, StreamChunk as UnifiedStreamChunk, TokenUsage, ToolCallDelta};
 
+#[cfg(test)]
+#[path = "cancellation_tests.rs"]
+mod cancellation_tests;
+
 /// Stream chunk from Gemini streaming API.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +42,15 @@ pub(super) async fn consume_response_stream(
     let mut stream = response.bytes_stream();
     let mut parser = SseEventParser::new();
 
-    while let Some(chunk_result) = stream.next().await {
+    loop {
+        let chunk_result = tokio::select! {
+            biased;
+            _ = tx.closed() => return Ok(()),
+            chunk = stream.next() => match chunk {
+                Some(chunk) => chunk,
+                None => break,
+            },
+        };
         let chunk = chunk_result.context("Failed to read stream chunk")?;
         for data in parser.push(&chunk) {
             if forward_event(&data, &tx).await {
@@ -87,7 +99,15 @@ pub(super) async fn project_chunks(
     let mut selected_candidate_index: Option<i32> = None;
     let mut next_tool_call_index: usize = 0;
 
-    while let Some(gemini_chunk) = gemini_rx.recv().await {
+    loop {
+        let gemini_chunk = tokio::select! {
+            biased;
+            _ = tx.closed() => return,
+            chunk = gemini_rx.recv() => match chunk {
+                Some(chunk) => chunk,
+                None => break,
+            },
+        };
         if let Some(usage) = gemini_chunk.usage_metadata {
             latest_usage = Some(TokenUsage {
                 prompt_tokens: usage.prompt_token_count.unwrap_or(0),

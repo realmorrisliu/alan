@@ -997,3 +997,4 @@ use recording_provider::RecordingToolCallProvider;
 mod active_skill_context;
 mod generation_failures;
 mod prompt_and_tools;
+mod skill_publication;

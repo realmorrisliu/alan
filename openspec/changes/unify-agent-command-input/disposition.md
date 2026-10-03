@@ -1,5 +1,12 @@
 # Disposition — 2026-09-27
 
+Presentation update (2026-09-29): the user selected compact `: ` / `! ` markers
+under a two-line Agent context prompt. The renderer-host delta and design here
+reflect that new target; current longer markers are not relabeled as shipped.
+The [self-development plan](../make-alan-self-development-ready/disposition.md)
+owns the aggregate product gate and two-line composition, while this change
+retains input intent, queue, cwd, cancellation and recovery ownership.
+
 ## Accepted session lifetime revision
 
 On 2026-09-27 the user explicitly selected one independent Alan invocation per

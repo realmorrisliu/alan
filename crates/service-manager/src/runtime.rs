@@ -123,6 +123,7 @@ impl ServiceManagerConfig {
 /// One running Service-Manager-owned Alan OS instance.
 pub struct ServiceManager {
     boot_id: Uuid,
+    root_model: Option<String>,
     state: Arc<tokio::sync::Mutex<ManagerState>>,
     procfs: alan_kernel::ProcFs,
     manager_pid: Pid,
@@ -164,11 +165,15 @@ impl ServiceManager {
         );
         let boot_id = Uuid::new_v4();
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
-        let package_service = match config.package_store.take() {
-            Some(store) => PackageService::open(&config.channel_id, store)?,
-            None => PackageService::ephemeral(&config.channel_id)?,
-        };
-        seed_preinstalled_packages(&package_service)?;
+        let package_bootstrap = crate::package::PackageBootstrap::new();
+        let open = package_bootstrap.opener(config.channel_id.clone(), config.package_store.take());
+        let package_service = tokio::task::spawn_blocking(move || {
+            let service = open()?;
+            seed_preinstalled_packages(&service)?;
+            Ok::<_, anyhow::Error>(service)
+        })
+        .await
+        .context("join Package bootstrap")??;
         validate_package_reference_mounts(&config.launch_context)?;
         let resolved_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
             config
@@ -231,6 +236,14 @@ impl ServiceManager {
                 None
             }
         };
+        let root_model = bootstrap.as_ref().map(|_| {
+            config
+                .process
+                .agent_config
+                .core_config
+                .effective_model()
+                .to_string()
+        });
         let generation_capabilities = bootstrap
             .as_ref()
             .map(|(_, client)| client.capabilities())
@@ -273,10 +286,12 @@ impl ServiceManager {
         runtime.settle_initial_root().await?;
         verify_readiness(&root, boot_id, &state).await?;
 
+        package_bootstrap.finish();
         let (supervisor_shutdown, supervisor_task) = runtime.start();
 
         Ok(Self {
             boot_id,
+            root_model,
             state,
             procfs,
             manager_pid,
@@ -295,6 +310,11 @@ impl ServiceManager {
 
     pub fn boot_id(&self) -> Uuid {
         self.boot_id
+    }
+
+    /// The effective model selected for the Root Agent's callable boot binding, if available.
+    pub fn root_model(&self) -> Option<&str> {
+        self.root_model.as_deref()
     }
 
     /// The authorized local-entry service used to create one Shell Process per renderer.
@@ -619,9 +639,15 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         launch_context.credentials.clone(),
     );
     launch_context = root_template_context;
-    for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-        project_package_reference(&package_service, &mut launch_context, &source.package_id)?;
-    }
+    let reference_service = package_service.clone();
+    launch_context = tokio::task::spawn_blocking(move || {
+        for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
+            project_package_reference(&reference_service, &mut launch_context, &source.package_id)?;
+        }
+        Ok::<_, anyhow::Error>(launch_context)
+    })
+    .await
+    .context("join initial Package references")??;
     validate_package_reference_mounts(&launch_context)?;
     process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
         launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),

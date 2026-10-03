@@ -18,6 +18,8 @@ pub(in crate::file_backed) async fn hydrate_and_open_tails(
     agent_path: &str,
     app: &mut FileBackedApp,
 ) -> Result<WatchTails> {
+    // Failed attachment must never leave an acceptable detached Skill owner.
+    app.invalidate_skill_owner();
     let follows_root_agent = agent_path == "/agent/root";
     let attempts = if follows_root_agent { 3 } else { 1 };
     for attempt in 0..attempts {
@@ -83,6 +85,7 @@ async fn hydrate_pinned_agent(
 ) -> Result<WatchTails> {
     let mut opened = Vec::with_capacity(7);
     let histories = async {
+        opened.push(shell.tail(&format!("{agent_path}/events")).await?);
         opened.push(tail_from_live_edge(shell, &request_events_path(agent_path)).await?);
         opened.push(tail_from_live_edge(shell, &action_events_path(agent_path)).await?);
         let (ui, ui_history) = tail_with_history(shell, &ui_events_path(agent_path)).await?;
@@ -104,12 +107,14 @@ async fn hydrate_pinned_agent(
         }
     };
     let mut opened = opened.into_iter();
+    let queue_events = opened.next().expect("Agent events tail was opened");
     let requests = opened.next().expect("request tail was opened");
     let actions = opened.next().expect("action tail was opened");
     let ui = opened.next().expect("UI tail was opened");
     let tape = opened.next().expect("tape tail was opened");
     let output = opened.next().expect("output tail was opened");
     let mut tails = WatchTails {
+        queue_events,
         root_agent_pid: None,
         output,
         requests,
@@ -123,11 +128,25 @@ async fn hydrate_pinned_agent(
     };
 
     let hydrate = async {
+        app.apply_skills(
+            agent_path,
+            super::super::skills::read_skills(shell, agent_path).await,
+        );
+        app.model.apply(
+            agent_path,
+            super::super::model::read_model(shell, agent_path).await,
+        );
+        app.queue.apply(
+            agent_path,
+            super::super::queue::read_queue(shell, agent_path).await,
+        );
         let tape_history =
             std::str::from_utf8(&tape_history).context("machine/tape is not utf8")?;
-        app.transcript = parse_tape_history(tape_history);
+        let receipt_history = projected_receipt_history(app, tape_history);
+        app.transcript = parse_tape_history(&receipt_history);
         app.tape_consumed_offset = tape_history.len();
-        app.seed_reconciler_from_tape_history(tape_history);
+        app.seed_reconciler_from_tape_history(&receipt_history);
+        app.restore_receipts_after_hydration(&receipt_history);
 
         let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
         let ui_events = ui_history_text
@@ -182,11 +201,146 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     submitted_tasks: &[PendingRootAgentTurn],
 ) -> Result<(WatchTails, Vec<String>)> {
     let mut reattached = app.clone();
+    let mut retained_inputs = reattached.local_inputs.clone();
+    let previous_inputs = retained_inputs.clone();
     let previous_transcript = std::mem::take(&mut reattached.transcript);
     reattached.reset_for_root_process_change();
     let tails = hydrate_and_open_tails(shell, agent_path, &mut reattached).await?;
-    let current_transcript = std::mem::take(&mut reattached.transcript);
+    let mut current_transcript = std::mem::take(&mut reattached.transcript);
+    let receipt_history =
+        projected_receipt_history(&reattached, std::str::from_utf8(&tails.tape_history)?);
+    let records = receipt_history
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str::<super::TapeRecordV1>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let prompt = submitted_tasks.iter().find_map(|task| {
+        let ordinal = records
+            .iter()
+            .filter(|record| {
+                record.kind == "message" && record.role == "user" && record.content == task.input
+            })
+            .position(|record| record.belongs_to(&task.submission_id));
+        ordinal.map(|ordinal| (task, ordinal))
+    });
+    let prompt_cell = prompt.and_then(|(task, ordinal)| {
+        current_transcript
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cell)| {
+                (cell
+                    .input_source()
+                    .is_some_and(|(text, _, _)| text == task.input)
+                    || reattached.local_inputs.values().any(|input| {
+                        input.tape_seen && input.cell == Some(index) && input.body == task.input
+                    }))
+                .then_some(index)
+            })
+            .nth(ordinal)
+    });
+    // Receipt identity is (owner, submission ID), never rendered/body overlap.
+    // Keep the retained source cell out of text-only history matching and omit
+    // its hydrated counterpart. Hydration still owns Tape/terminal evidence.
+    let mut retained_receipts = Vec::new();
     reattached.transcript = previous_transcript;
+    let mut indices = previous_inputs
+        .iter()
+        .filter_map(|(id, previous)| {
+            let hydrated = reattached.local_inputs.get(id)?;
+            (previous.owner == hydrated.owner)
+                .then_some(previous.cell.map(|index| (index, id.clone())))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    indices.sort_by_key(|(index, _)| *index);
+    for (index, id) in indices.into_iter().rev() {
+        if index >= reattached.transcript.len() {
+            continue;
+        }
+        let input = reattached
+            .local_inputs
+            .get_mut(&id)
+            .expect("retained receipt");
+        // A cloned receipt's owner/tape_seen flag is retained evidence, not
+        // authority over this Process's hydrated source. Old-owner turns stay
+        // visible and unknown; they are neither transferred nor resubmitted.
+        if input.owner != reattached.queue.owner {
+            continue;
+        }
+        let canonical = input.tape_seen
+            && input
+                .cell
+                .is_some_and(|cell| cell < current_transcript.len())
+            && records.iter().any(|record| {
+                record.kind == "message" && record.role == "user" && record.belongs_to(&id)
+            });
+        if canonical {
+            if let Some(current_index) = input.cell {
+                current_transcript[current_index] = reattached.transcript[index].clone();
+            }
+            // Only an exact submitted prompt transfers the retained turn to
+            // hydration. No-prompt recovery keeps the whole visible turn in place.
+            if prompt_cell.is_some_and(|boundary| input.cell.is_some_and(|cell| cell >= boundary)) {
+                // The following canonical answer has the same hydrated owner.
+                // Keeping it in the old prefix would also confuse submitted-A
+                // answer reconciliation on the next reattach.
+                let end = reattached.transcript[index + 1..]
+                    .iter()
+                    .position(|cell| cell.input_source().is_some())
+                    .map_or(reattached.transcript.len(), |next| index + 1 + next);
+                for next in (index + 1..end).rev() {
+                    if reattached.transcript[next].assistant_source().is_some() {
+                        remove_retained_cell(
+                            &mut reattached.transcript,
+                            &mut retained_inputs,
+                            next,
+                        );
+                    }
+                }
+                remove_retained_cell(&mut reattached.transcript, &mut retained_inputs, index);
+            }
+            continue;
+        } else if let Some(current_index) = input.cell.take()
+            && current_index < current_transcript.len()
+        {
+            current_transcript.remove(current_index);
+            reattached.pending_remote_turn_start = reattached
+                .pending_remote_turn_start
+                .map(|boundary| boundary - usize::from(boundary > current_index));
+            for other in reattached.local_inputs.values_mut() {
+                other.cell = other.cell.and_then(|i| {
+                    if i == current_index {
+                        None
+                    } else {
+                        Some(i - usize::from(i > current_index))
+                    }
+                });
+            }
+            reattached.action_cells.retain(|_, i| {
+                if *i == current_index {
+                    return false;
+                }
+                *i -= usize::from(*i > current_index);
+                true
+            });
+        }
+        retained_receipts.push((
+            id,
+            remove_retained_cell(&mut reattached.transcript, &mut retained_inputs, index),
+        ));
+    }
+    retained_receipts.reverse();
+    if !submitted_tasks.is_empty() {
+        // This recovery notice is regenerated below from the current evidence.
+        // It is not a retained turn and must not split that turn on reattach.
+        for index in (0..reattached.transcript.len()).rev() {
+            if matches!(&reattached.transcript[index], HistoryCell::Error(message)
+                if message == "Root Agent changed without correlated completion evidence; outcome is unknown")
+            {
+                remove_retained_cell(&mut reattached.transcript, &mut retained_inputs, index);
+            }
+        }
+    }
     let mut settled_ids = Vec::new();
     if let Some(first_task) = submitted_tasks.first() {
         let ui_task = correlated_ui_task(&tails.ui_history, first_task.submitted_at_ms)?;
@@ -202,18 +356,6 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
                     if submitted_tasks.iter().any(|task| submission_ids.contains(&task.submission_id)))
             })
             .collect::<Vec<_>>();
-        let records = std::str::from_utf8(&tails.tape_history)?
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(serde_json::from_str::<super::TapeRecordV1>)
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let prompt = submitted_tasks.iter().find_map(|task| {
-            let ordinal = records
-                .iter()
-                .filter(|record| record.role == "user" && record.content == task.input)
-                .position(|record| record.belongs_to(&task.submission_id));
-            ordinal.map(|ordinal| (task, ordinal))
-        });
         if reattached.notice.as_ref().is_some_and(|notice| {
             current_transcript
                 .iter()
@@ -222,16 +364,71 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
         }) {
             reattached.notice = None;
         }
-        let current_transcript =
-            remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
+        reattached.pending_remote_turn_start =
+            reattached.pending_remote_turn_start.map(|boundary| {
+                boundary
+                    - current_transcript
+                        .iter()
+                        .take(boundary)
+                        .filter(|cell| matches!(cell, HistoryCell::Error(_)))
+                        .count()
+            });
+        let current_transcript = remove_error_cells_and_remap_actions(
+            current_transcript,
+            &mut reattached.action_cells,
+            &mut reattached.local_inputs,
+        );
         if let Some((task, ordinal)) = prompt {
             reattached.merge_reconnected_history(current_transcript, &task.input, ordinal);
+            // Prefix receipts were not transferred to the appended hydrated
+            // suffix. Their retained coordinates still own the visible turn.
+            for (id, input) in &mut reattached.local_inputs {
+                if input.cell.is_none() {
+                    input.cell = retained_inputs.get(id).and_then(|retained| {
+                        (retained.owner == input.owner)
+                            .then_some(retained.cell)
+                            .flatten()
+                    });
+                }
+            }
+            // Indices from an omitted hydrated prefix cannot address retained
+            // cells. Retained receipts are restored below by exact ID.
+        } else {
+            // No exact submitted user record: clear/unknown-outcome recovery
+            // must not import unrelated canonical turns, even equal-body ones.
+            reattached.action_cells.clear();
+            reattached.pending_remote_turn_start = None;
+            let safe_cells = reattached
+                .local_inputs
+                .iter()
+                .filter_map(|(id, input)| {
+                    (input.owner == reattached.queue.owner).then_some(())?;
+                    let cell = current_transcript.get(input.cell?)?.clone();
+                    Some((id.clone(), cell))
+                })
+                .collect::<Vec<_>>();
+            for (id, input) in &mut reattached.local_inputs {
+                input.cell = retained_inputs.get(id).and_then(|retained| {
+                    (retained.owner == input.owner)
+                        .then_some(retained.cell)
+                        .flatten()
+                });
+            }
+            for (id, cell) in safe_cells {
+                if reattached.local_inputs[&id].cell.is_some() {
+                    continue;
+                }
+                let index = reattached.transcript.len();
+                let input = reattached.local_inputs.get_mut(&id).expect("safe receipt");
+                input.cell = Some(index);
+                reattached.transcript.insert(index, cell);
+            }
         }
         for event in completions {
             if let UiEvent::InputCompleted {
                 submission_ids,
                 status,
-                error,
+                error: _,
             } = event
             {
                 settled_ids.extend(
@@ -241,11 +438,10 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
                         .map(|task| task.submission_id.clone()),
                 );
                 if *status != alan_agent_protocol::UiInputStatus::Completed {
-                    let message = error
-                        .clone()
-                        .unwrap_or_else(|| format!("Input ended: {status:?}"));
-                    reattached.notice = Some(message.clone());
-                    reattached.transcript.push(HistoryCell::Error(message));
+                    let message =
+                        super::super::interrupt::render_input_completion(event, &mut reattached)
+                            .expect("non-completed status has a completion message");
+                    reattached.notice = Some(message);
                 }
             }
         }
@@ -265,13 +461,70 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     } else {
         reattached.merge_reconnected_idle_history(current_transcript);
     }
+    // Hydration coordinates have now been merged/remapped. Receipts from an
+    // older Process never participated: restore their retained anchors, adjusted
+    // only by actual retained-cell removals.
+    for (id, input) in &mut reattached.local_inputs {
+        if input.owner != reattached.queue.owner {
+            input.cell = retained_inputs.get(id).and_then(|retained| retained.cell);
+        }
+    }
+    for (id, cell) in retained_receipts {
+        if let Some(input) = reattached.local_inputs.get_mut(&id)
+            && input.cell.is_none()
+        {
+            input.cell = Some(reattached.transcript.len());
+            reattached.transcript.push(cell);
+        }
+    }
     *app = reattached;
     Ok((tails, settled_ids))
+}
+
+// One owner-scoped projection supplies all hydrated source coordinates.
+// Durable evidence and tail byte offsets always remain the original raw Tape.
+fn projected_receipt_history(app: &FileBackedApp, raw: &str) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    raw.lines()
+        .filter(|line| {
+            let Ok(record) = serde_json::from_str::<super::TapeRecordV1>(line) else {
+                return true;
+            };
+            if record.kind != "message" || record.role != "user" {
+                return true;
+            }
+            let ids = app
+                .local_inputs
+                .iter()
+                .filter_map(|(id, input)| {
+                    (input.owner == app.queue.owner && record.belongs_to(id)).then_some(id.clone())
+                })
+                .collect::<Vec<_>>();
+            let duplicate = ids.iter().any(|id| seen.contains(id));
+            seen.extend(ids);
+            !duplicate
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn remove_retained_cell(
+    transcript: &mut Vec<HistoryCell>,
+    inputs: &mut std::collections::BTreeMap<String, super::super::queue::LocalInput>,
+    index: usize,
+) -> HistoryCell {
+    for input in inputs.values_mut() {
+        input.cell = input
+            .cell
+            .and_then(|old| (old != index).then(|| old - usize::from(old > index)));
+    }
+    transcript.remove(index)
 }
 
 fn remove_error_cells_and_remap_actions(
     current: Vec<HistoryCell>,
     action_cells: &mut std::collections::BTreeMap<String, usize>,
+    local_inputs: &mut std::collections::BTreeMap<String, super::super::queue::LocalInput>,
 ) -> Vec<HistoryCell> {
     let mut action_indices = Vec::with_capacity(current.len());
     let mut next_index = 0;
@@ -288,6 +541,11 @@ fn remove_error_cells_and_remap_actions(
             }
         })
         .collect();
+    for input in local_inputs.values_mut() {
+        input.cell = input
+            .cell
+            .and_then(|index| action_indices.get(index).copied().flatten());
+    }
     *action_cells = std::mem::take(action_cells)
         .into_iter()
         .filter_map(|(id, index)| {
@@ -308,8 +566,9 @@ async fn close_tails(tails: Vec<alan_shell::Tail>) {
 }
 
 impl WatchTails {
-    async fn close(self) {
+    pub(in crate::file_backed) async fn close(self) {
         close_tails(vec![
+            self.queue_events,
             self.requests,
             self.actions,
             self.ui,

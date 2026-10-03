@@ -8,6 +8,53 @@ use anyhow::Result;
 
 use super::transition::NamespaceAgentFiles;
 
+impl super::transition::RuntimeLoopState {
+    pub(crate) async fn publish_ensured_skills(&mut self) -> Result<()> {
+        let mut last = self.prompt_cache.skill_publication.clone();
+        publish_skills(
+            &self.agent_files(),
+            &self.prompt_cache,
+            self.process_path(),
+            &mut last,
+        )
+        .await?;
+        self.prompt_cache.skill_publication = last;
+        Ok(())
+    }
+}
+
+pub(crate) async fn publish_skills(
+    files: &NamespaceAgentFiles,
+    cache: &super::prompt_cache::PromptAssemblyCache,
+    process_path: String,
+    last: &mut alan_agent_protocol::UiSkillSnapshot,
+) -> Result<()> {
+    let (known, mentionable_skill_ids) = cache.skill_observation();
+    let mut next = alan_agent_protocol::UiSkillSnapshot {
+        version: alan_agent_protocol::UI_SURFACE_VERSION,
+        publication_version: last.publication_version,
+        process_path,
+        known,
+        mentionable_skill_ids,
+    };
+    if serde_json::to_vec(&next)?.len() > (1 << 20) {
+        next = next.unknown();
+    }
+    if next == *last {
+        return Ok(());
+    }
+    next.publication_version = last
+        .publication_version
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("Skill publication version exhausted"))?;
+    if serde_json::to_vec(&next)?.len() > (1 << 20) {
+        next = next.unknown();
+    }
+    files.write_ui_skill_snapshot(&next).await?;
+    *last = next;
+    Ok(())
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -15,10 +62,18 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub(crate) async fn initialize(namespace: &NamespaceAgentFiles) -> Result<()> {
-    namespace
-        .write_ui_activity_snapshot(&UiActivitySnapshot::idle())
-        .await?;
+pub(crate) async fn initialize(namespace: &NamespaceAgentFiles, queue_paused: bool) -> Result<()> {
+    let activity = if queue_paused {
+        UiActivitySnapshot::paused(None)
+    } else {
+        UiActivitySnapshot::idle()
+    };
+    namespace.write_ui_activity_snapshot(&activity).await?;
+    if queue_paused {
+        namespace
+            .append_ui_event(&UiEvent::Activity { snapshot: activity })
+            .await?;
+    }
     namespace
         .write_ui_plan_snapshot(&UiPlanSnapshot::empty())
         .await?;
@@ -257,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn owners_write_snapshots_and_append_ui_events() {
         let (environment, shell) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         thinking(&environment, "reasoning").await.unwrap();
         plan_updated(
@@ -319,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_turn_clears_plan_snapshot() {
         let (environment, shell) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         plan_updated(
             &environment,
             Some("ship parity".to_string()),
@@ -341,7 +396,7 @@ mod tests {
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
         let (environment, _) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         turn_failed(&environment, "provider failed").await.unwrap();
 
@@ -389,7 +444,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
         let (environment, _) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         paused(&environment, None).await.unwrap();
 
         heartbeat(&environment).await.unwrap();

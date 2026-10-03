@@ -1,6 +1,45 @@
 use super::stdio_tests::{completion, correlated_records, task};
 use super::*;
 
+#[tokio::test]
+async fn root_agent_pid_poll_does_not_block_terminal_event_delivery() {
+    let (shell, _agent_root, namespace, pid) = stdio_tests::live_root_agent().await;
+    let pid_fs = std::sync::Arc::new(stdio_tests::FaultingFileServer::new(std::sync::Arc::new(
+        alan_ap::reference::MemFs::with_read_only_file("pid", format!("{pid}\n").into_bytes()),
+    )));
+    let (read_reached, resume_read) = pid_fs.pause_read_after_matching_reads("pid", 1);
+    namespace.replace_mount(
+        stdio_tests::PID_MOUNT,
+        InProcessTransport::new(pid_fs),
+        alan_kernel::Access::ReadOnly,
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (_retry_tx, retry_rx) = tokio::sync::watch::channel(());
+    let refresh =
+        spawn_root_agent_pid_refresh(shell, tx.clone(), retry_rx, Some(pid.parse().unwrap()));
+    tokio::time::timeout(std::time::Duration::from_secs(1), read_reached)
+        .await
+        .expect("PID poll did not reach the delayed service read")
+        .unwrap();
+
+    let terminal = FileBackedEvent::Terminal(TerminalEvent::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::NONE,
+    )));
+    tx.send(terminal).await.unwrap();
+    assert!(matches!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
+            .await
+            .expect("terminal event was blocked by the pending PID read"),
+        Some(FileBackedEvent::Terminal(TerminalEvent::Key(_)))
+    ));
+
+    refresh.abort();
+    let _ = refresh.await;
+    let _ = resume_read.send(());
+}
+
 fn publish_root_agent_pid(namespace: &alan_kernel::LiveNamespace, pid: impl std::fmt::Display) {
     namespace.replace_mount(
         stdio_tests::PID_MOUNT,
