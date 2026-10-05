@@ -22,9 +22,12 @@ impl FileBackedApp {
         self.skills = super::super::skills::SkillProjection::default();
         self.completion_sources.skills.clear();
         self.queue = super::super::queue::QueueProjection::default();
-        self.fail_project_control(
-            "Root changed; pending project selection invalidated, effects uncertain".into(),
-        );
+        let project_notice = if self.retained_project_grant().is_some() {
+            self.fence_project_control();
+            self.notice.take()
+        } else {
+            None
+        };
         self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.modal.active = false;
@@ -38,11 +41,15 @@ impl FileBackedApp {
         self.pending_yield = None;
         self.form = None;
         self.completion = None;
-        self.notice = self
+        let model_notice: Option<String> = self
             .model_chooser
             .uncertain
             .as_ref()
             .map(|_| "model selection outcome uncertain; detached Root; no retry".into());
+        self.notice = match (project_notice, model_notice) {
+            (Some(project), Some(model)) => Some(format!("{project}; {model}")),
+            (project, model) => project.or(model),
+        };
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
     }

@@ -6,6 +6,205 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## Direct correction delivery — 2026-10-06
+
+The direct review corrections are being delivered on `codex/alan-self-development-g2`.
+The final narrow-header follow-up removes redundant brand/known-model labels,
+keeps unknown model state explicit, reserves project label space before optional
+reasoning detail, and retains default foreground for critical model/status text.
+At 69/73/80/120 columns, the regression preserves a normal read-only project,
+actual model, and queue state; reasoning remains present when space permits.
+Final TUI follow-up:331 unit+11 integration tests passed. The preceding full
+workspace qualification was2735 passed/0 failed/10 ignored; only header display
+and its tests changed afterward. Canonical `just quality` passed again.
+
+The remote PR1026 still pointed to83a1499 during the pre-delivery audit: macOS
+Test Suite failed and Linux was cancelled. Those checks are not current-source
+acceptance. A new correction commit must obtain its own required CI and review.
+All ordinary delivery tasks below remain open until their evidence is complete.
+
+## Direct implementation takeover — 2026-10-06
+
+The user explicitly replaced Native-only implementation with direct Codex
+implementation and requested closing the task's Alan instances. This overrides
+older Native-only instructions for subsequent code/tests. Preserve earlier G2/G3
+Native authorship evidence as historical; do not attribute direct corrections to
+Alan or count them as new self-authored qualification.
+
+Verified task PIDs20741/53200/53510/69310 received user-requested SIGTERM and are
+absent; p7's crash-exited66421 was already gone. Herdr panes remain shell views.
+Implementation continues in the existing isolated author worktree, preserving
+its17 uncommitted Native Rust files and the dirty primary checkout.
+
+Direct plan: fix the shared cursor/Markdown and history record boundaries;
+make exact-grant revoke retries converge and retained recovery hints visible;
+move slow Host/model/Skill operations off the input/draw loop; observe external
+grant revocation and expose the owned Host authorization wait hint. Then run
+focused regressions, affected crate suites, canonical quality, and rebuild for
+real terminal paste/project/Tool/Markdown verification. Reuse existing owners
+and dependencies. Update acceptance only after actual passing results.
+
+## Direct correction verification — 2026-10-06 (local checks passed)
+
+Direct implementation now fixes source-aligned composer cursor offsets, intraword
+Markdown delimiters, incomplete typed-history tails, idempotent exact-grant
+revocation, retained recovery notices, asynchronous Host/model/Skill UI IO,
+confirmed external-revoke invalidation, and owned Host-authorization wait hints.
+Model headers include reasoning effort when space permits and avoid repeating
+identical active/next bindings. Direct corrections are not Alan-authored G2/G3
+qualification.
+
+New finite-read regression exposed an acquisition ownership defect below Shell:
+a backing Walk may bind a fid before its response. Cancellation and imported-wire
+late completion must release that unpublished fid without resurrecting a clunked
+caller mapping. The correction belongs to MountFs, with an actual wire-boundary
+regression; no new execution manager or protocol is introduced.
+
+Original failures are retained. The history stress fixture now distinguishes
+explicit 100 ms lock-timeout fallback from successful writes; it still accounts
+for every attempt and strictly compares every successful raw/loaded record.
+Recovery fixtures now explicitly consume actual model/Skill worker events before
+asserting recovered content; an added assumption that every repin must initially
+be unknown was removed because replacement attachment can hydrate synchronously.
+Final frozen-source `cargo test --workspace` passed: 2735 passed, 0 failed,
+10 ignored across 93 test-result groups. Independent review found one new
+cwd-phase input race; the shared Submit guard now also covers unconfirmed/fenced
+project controls, with actual dispatcher regressions preserving draft/help/quit.
+
+Fresh Herdr Native PID15312, binary SHA256
+`518d0f5f40bf483c50a9c9b485e4ecda8b9bff2ea404b437c9ee660ec17a8910`,
+passed explicit bracketed TAB+CJK paste, below-composer slash completion, actual
+read-only project selection, `!pwd` and retained Tool details, model/medium
+header, Markdown intraword identifiers and Rust/diff content. External exact-grant
+revoke automatically cleared selected-project UI; repeating the actual revoke
+succeeded. `/quit` exited0 without process rescue; p7 returned to its shell.
+This is direct-code acceptance, not additional Alan-authored self-development.
+Narrow project labels still abbreviate; no new graphical theme/fx parity claim.
+Final frozen-source `just quality` passed with exit0, including strict Clippy,
+rustdoc, CLI boundaries, standalone install/upgrade protection and release
+archive checks. All 646 source/manifest hashes remained unchanged. Local checks
+do not replace a new committed-head CI/review or close the remaining visual
+qualification. No direct corrections have been committed or merged.
+Evidence directory: `/Users/morris/Library/Caches/Alan/ui-previews/20261006-direct-review-fixes`.
+
+## Detailed review follow-up — 2026-10-06
+
+User requested a fresh detailed review of Alan-authored development. Read-only
+parallel reviews covered project authority/recovery, history/test boundaries,
+and cumulative TUI rendering; prior PASS was not assumed. HEAD remains83a1499
+plus the same17 Native-authored Rust paths. Reports and original qualifications
+remain separate in the grant-history candidate evidence directory.
+
+The current bc2f70 release has an actual P1 input failure: on the owned Herdr
+w5E:p7 preview, explicit bracketed paste of TAB followed by Chinese 中 panicked
+at layout.rs358 (byte3 is inside the character), NativePID66421 exit101 with no
+manual process rescue. Public pre-state was idle with no admitted/completed
+inputs and no project. Plain send-text first produced key events and did not
+reproduce; the later bracketed-paste attempt did. This is an inherited defect
+still present in this candidate, not a regression attributed to the history fix.
+Its failed preview must not be relabelled successful UI acceptance.
+
+Next Native-authored corrections, within existing owners, are prioritized as:
+
+1. P1 shared composer geometry: preserve source UTF-8/grapheme offsets when
+   controls are filtered; verify real paste and cursor positions, including
+   tabs, CJK and combining/emoji text. Preserve submitted-body semantics.
+2. P1 responsive rendering: move pending Host and file-surface control IO out
+   of the single input/draw loop using existing correlated completion events.
+   A timeout is uncertain effect evidence, never rejection or revoked authority.
+3. P2 revoke convergence: reconcile an already-applied revoke after a lost
+   response using authoritative exact-grant state; verify real applied effect,
+   lost acknowledgement, explicit retry and a new project selection.
+4. P2 project truth: retain actionable fenced-grant hints after Root replacement
+   and observe confirmed external revocation before showing active status or
+   stale Host file completion. Keep uncertainty separate from confirmed inactive.
+5. P2 text fidelity: check Markdown intraword underscore identifiers and repair
+   interpretation without introducing a new execution or presentation manager.
+6. P2 history fault boundary: repair/isolate incomplete JSONL tails under the
+   existing same-file lock so the next successful typed entry survives. Current
+   concurrent happy-path tests do not prove partial-error/crash-tail recovery.
+7. Existing Host authorization-wait presentation handoff remains open: publish
+   and retire the owned actionable hint through runtime notice/event surfaces.
+
+Except the actual paste panic, these findings are source-grounded fault paths;
+no fresh real Host lost-ack, external revoke or disk-write fault is claimed.
+History tail parsing has only a disposable JSONL model demonstration. New fixes
+require meaningful failing regressions, independent review, relevant owning
+checks and fresh UI/runtime qualification; all Rust/tests remain Native-authored
+through Herdr. These are follow-ups within the existing open delivery tasks,
+not additional completed gates or permission to merge/archive.
+
+## Delivery reopened — 2026-10-03
+
+HEAD83a1499 has two confirmed new P2 review blockers: lost candidate project
+Host grant identity after uncertain cwd control/owner replacement or cleanup
+failure, and interleaved JSONL appends to channel-shared composer history.
+Native must author compiled regressions and the smallest shared-owner repairs;
+unknown effects must retain exact authority and fence stale owners without
+blind replay/revoke. Current-head macOS Test Suite failed in run37125183777 (135 pass/1 fail
+in Service Manager); Linux passed that test, then was cancelled. The nominal
+40 ms holder durations actually exceeded their scheduling assumption, making
+the positive 250 ms shared-budget fixture unreliable. Replace only this
+fixture with deterministic existing-owner budget checks; retain real OS lock
+coverage and the actual failed run, without larger timeouts or CI retries. Previous
+local source/tests/quality/build and managed recovery PASS remain historical,
+scoped evidence and do not qualify these faults or waive current-head CI.
+Fresh Native31156 uses the current qualified b1f234 binary and actual
+sol medium with explicit RW request1/cwd. Initial input f391 was actually
+Cancelled through ordinary Ctrl+C after requesting an unnecessary outside
+Host grant; relative diagnosis material is now in the selected project.
+Explicit /continue runs queued correction08bf, with no expanded grant, blind
+replay or process termination. Host mount wait UI has no direct request control
+in this path; record this gap under its active runtime/UI owner rather than
+claiming self-development is unattended or universally recoverable.
+
+Native correction08bf has actualCompleted. Its isolated TUI/ServiceManager
+owning run passes461/0/0 after meaningful compiledRED for process-history
+malformedJSONL and actualctl lostack/receiptloss (private-state RED supplementary).
+First TUI GREEN310/1 failed history lock contention; encoding moved outside
+critical section without larger timeout. Ordinary advisoryfbd7 has Completed:
+stdlib file locks and bounded fixture-owned child teardown; local owning462/0/0.
+Ordinary bounded-state review46ab has Completed: one retained candidate receipt
+and one replaceable current control instead of recursive history; local owning466/0/0.
+These passes describe those sources only. Review3ffa has actualCompleted for normal successful mount transfer and
+idle boundary; compiled success-transfer RED preceded its minimal take correction,
+then local owning466/0/0 and both canonical Clippy sets passed. Independent
+protocol review found project-cwd-UUID is incompatible with actual uuid::Uuid
+selector intake; compiled UUID-producer RED confirmed the fault. Ordinary
+correctionba1b and supplemental8952 both Completed: UUID producer restored,
+existing Engine selector title used only for conservative generic-cwd exclusion;
+exact owner/id/target/fence still owns settlement. Local owning467/0/0, both
+canonical Clippy sets, format/diff and 5 existing actual Engine parser/directory
+tests pass. Initial repaired test failed empty-body probe validation, was corrected
+without production change, and its log remains preserved. Producer UUID validation
+is not a live TUI-to-Engine execution claim.
+
+Final public queue revision26 had real deferred TurnMemoryPromotion housekeeping;
+revision27 subsequently settled to knownemptyidle/notpaused/deferred/uncertain.
+All7 exact input receipts remain; no continue/discard/guard relaxation was used
+to settle that housekeeping. Ordinary quit0/PID31156gone/no process rescue.
+Final frozen616Rust26build/17NativeRust paths vs83a1499 manifest
+3a036b6121be1c9250ac307374a5493e9b887a344542bbed6cc87306bddc744f
+has independent source reviews, unrestricted four-package tests (1890 passed,
+0 failed, 2 ignored), canonical wholequality and release build exit0. The new
+bc2f70 binary passes separately recorded managed FollowUp G3 through operational
+V4 and both joined runtime reviews. Original V3 remains FAIL: its PTY EOF/exit
+observation race did not record the source exit status. V4 fixes only that
+operator driver race; it does not waive a product fault. Fresh UI acceptance,
+new-head CI and legitimate merge remain open. Earlier failures and hashes are
+retained; no prior source qualification is promoted to this freeze.
+
+Read-only Host wait source review confirms a separate actionable presentation
+gap: runtime mount_request_tool emits generic Paused without a typed hint;
+TUI cannot infer authorization from empty AgentFS requests. Reuse existing
+runtime notice/event owner if corrected, retire only the owned hint on terminal,
+cancel and reset, and verify public hydrate/live consumption and normal Ctrl+C.
+This is a P0/P1 runtime presentation handoff, not new authorization/catalog
+ownership. Current audit is not a reproduction or acceptance of new code.
+
+No merge, normative synchronization, archive or goal completion is authorized
+by these earlier passes. Fresh TUI changes need fresh UI acceptance.
+
 ## Current quality-cleanup candidate — 2026-10-03
 
 Fresh NativePID28888 primary9f42 remains actualFailed (provider connect after
@@ -38,7 +237,10 @@ norescue/live[], and all four actual NativePIDs are independently absent;
 selected durable rollouts are snapshotted with hashes. New joined independent
 Spec/Standards runtime reviews PASS for this exact172e source andb1f234 binary,
 with full captured managedidentity/controls and correlated effects/receipts. ExactheadCI/approval/merge/normativecloseout remain
-pending; private NextTurn tests do not become public liveNextTurn evidence.
+pending; private NextTurn tests do not become public liveNextTurn evidence. Normal full-hook commit actual0 is
+83a1499eadb8564eab1decc490b547f85ea78560, parent42f4; exact nine paths (seven Native Rust and two owning
+OpenSpec records), all committed612Rust/26build blobs match qualified source.
+Push/newheadCI/repositoryreview/merge remain pending; no oldheadCI credit.
 No qualification or completion is borrowed from previous1561/0/2 source tests.
 
 ## Current shared-wait correction candidate — 2026-10-03

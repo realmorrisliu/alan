@@ -140,7 +140,7 @@ async fn final_public_projection_receipt_matrix() {
                 "failed" => {
                     assert_eq!(app.model.known(), Some(&initial));
                     assert!(app.notice.as_deref().unwrap().contains("rejected"));
-                    assert!(app.context_line(200).to_string().contains("next A"));
+                    assert!(app.context_line(200).to_string().contains("active A"));
                 }
                 "success-unreadable" => {
                     assert!(app.model.known().is_none());

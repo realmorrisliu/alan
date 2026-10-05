@@ -25,41 +25,41 @@ pub(in crate::file_backed) async fn range_with_budget(
             "display bound: requested {length} bytes exceeds {budget}; original remains in AgentFS"
         ));
     }
-    let end = offset.checked_add(length).ok_or("invalid range")?;
-    let stat = shell
-        .stat(path)
+    offset.checked_add(length).ok_or("invalid range")?;
+    read_bounded(shell, path, offset, Some(length), budget).await
+}
+
+pub(in crate::file_backed) async fn document_with_budget(
+    shell: &alan_shell::Shell,
+    path: &str,
+    budget: u64,
+) -> Result<String, String> {
+    read_bounded(shell, path, 0, None, budget).await
+}
+
+async fn read_bounded(
+    shell: &alan_shell::Shell,
+    path: &str,
+    offset: u64,
+    length: Option<u64>,
+    budget: u64,
+) -> Result<String, String> {
+    let bytes = shell
+        .read_range_bounded(
+            path,
+            offset,
+            length,
+            budget,
+            std::time::Duration::from_secs(5),
+        )
         .await
-        .map_err(|e| format!("unavailable: {e:?}"))?;
-    if end > stat.length {
-        return Err("unavailable: retained range missing".into());
-    }
-    let mut descriptor = shell
-        .tail_from(path, offset)
-        .await
-        .map_err(|e| format!("unavailable: {e:?}"))?;
-    let result = async {
-        let mut bytes = Vec::new();
-        while bytes.len() < length as usize {
-            let count = (length - bytes.len() as u64).min(4096) as u32;
-            let chunk =
-                tokio::time::timeout(std::time::Duration::from_secs(5), descriptor.read(count))
-                    .await
-                    .map_err(|_| "unavailable: retained read timed out".to_string())?
-                    .map_err(|e| format!("unavailable: {e:?}"))?;
-            if chunk.is_empty() || chunk.len() > count as usize {
-                return Err("unavailable: short or invalid range read".into());
+        .map_err(|error| match error {
+            alan_ap::ErrorCode::NotFound => {
+                "unavailable: retained range missing or path not found".into()
             }
-            bytes.extend(chunk);
-        }
-        String::from_utf8(bytes).map_err(|_| "unavailable: range not UTF-8 aligned".into())
-    }
-    .await;
-    let close = descriptor
-        .close()
-        .await
-        .map_err(|e| format!("unavailable: descriptor close: {e:?}"));
-    close?;
-    result
+            _ => format!("unavailable: bounded range read: {error:?}"),
+        })?;
+    String::from_utf8(bytes).map_err(|_| "unavailable: range not UTF-8 aligned".into())
 }
 
 pub(super) struct Resolved {

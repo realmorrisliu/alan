@@ -314,3 +314,12 @@ async fn model_file_backed_hydration_notification_and_failure() {
         std::panic::resume_unwind(panic);
     }
 }
+
+#[test]
+fn identical_active_and_next_binding_shows_one_model_and_actual_effort() {
+    let mut projection = model::ModelProjection::default();
+    let mut value = snapshot("1", 1);
+    value.selected_next = value.active.clone();
+    projection.apply("/agent/1", Some(value));
+    assert_eq!(projection.header(), "active A · high");
+}

@@ -128,6 +128,7 @@ pub(super) async fn reset_turn_after_cancelling_host_mounts(
         machine.take_pending(&pending.request_id);
     }
     machine.reset_turn();
+    super::ui_surfaces::retire_host_mount_wait_notice(agent_files).await;
     Ok(())
 }
 

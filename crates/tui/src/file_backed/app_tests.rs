@@ -251,7 +251,7 @@ fn project_cwd_observation_accepts_normalized_trailing_separator() {
         app.namespace_cwd,
         std::path::PathBuf::from("/mnt/project-1/")
     );
-    assert_eq!(app.pending_project_cwd, None);
+    assert!(app.pending_project_control.is_none());
     assert!(
         app.notice
             .as_deref()

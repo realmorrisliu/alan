@@ -26,13 +26,26 @@ mod tests;
 pub(in crate::file_backed) struct PendingProjectControl {
     pub owner: String,
     pub id: String,
-    pub mount: Option<(ProjectMountReceipt, std::path::PathBuf)>,
+    pub target: String,
     pub revoke: Option<String>,
+    pub fenced: bool,
 }
 
 impl FileBackedApp {
     pub(in crate::file_backed) fn project_boundary_available(&self, admitted: bool) -> bool {
+        self.project_recovery_boundary_available(admitted)
+            && self.pending_project_control.is_none()
+            && self.retained_project_mount.is_none()
+            && self.ready_project_revoke.is_none()
+            && self.project_cleanup.is_none()
+    }
+
+    pub(in crate::file_backed) fn project_recovery_boundary_available(
+        &self,
+        admitted: bool,
+    ) -> bool {
         !admitted
+            && !self.project_host_pending
             && self.queue.project_safe()
             && !self.modal.active
             && self.activity.state != UiActivityState::Running
@@ -41,9 +54,6 @@ impl FileBackedApp {
             && self.form.is_none()
             && self.response_in_flight.is_none()
             && self.running_tools.is_empty()
-            && self.pending_project_control.is_none()
-            && self.ready_project_revoke.is_none()
-            && self.project_cleanup.is_none()
     }
 
     pub(in crate::file_backed) fn set_project_candidate(
@@ -60,22 +70,25 @@ impl FileBackedApp {
         mount: Option<(ProjectMountReceipt, std::path::PathBuf)>,
         revoke: Option<String>,
     ) {
-        self.project_action_ids.push(id.clone());
-        self.pending_project_cwd = Some(
-            mount
-                .as_ref()
-                .map_or("/", |(r, _)| r.namespace_path.as_str())
-                .into(),
-        );
+        let target = mount
+            .as_ref()
+            .map_or("/", |(r, _)| r.namespace_path.as_str())
+            .to_owned();
+        if let Some(mount) = mount {
+            // Only one candidate is admitted at a time. Recovery controls do
+            // not replace its authority with a request-history chain.
+            self.retained_project_mount = Some(mount);
+        }
+        // A retry supersedes only disposition evidence, never candidate authority.
+        self.ready_project_revoke = None;
         self.pending_project_control = Some(PendingProjectControl {
             owner,
             id,
-            mount,
+            target,
             revoke,
+            fenced: false,
         });
         self.project_selection = None;
-        self.composer.set_text("");
-        self.input_intent = InputIntent::Agent;
         self.notice = Some("project directory selection pending; authorization alone does not select cwd or continue paused work".into());
         self.refresh_completion();
     }
@@ -83,16 +96,61 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn fail_project_control(&mut self, message: String) {
         // A transport error or owner replacement does not prove the selector
         // was rejected. Retain candidate authority: it may already be cwd.
-        self.pending_project_control = None;
-        self.pending_project_cwd = None;
-        self.notice = Some(message);
+        self.notice = Some(format!(
+            "{message}; grant retained, cwd unconfirmed; /project revoke explicitly leaves current Root cwd before cleanup"
+        ));
+    }
+
+    pub(in crate::file_backed) fn fence_project_control(&mut self) {
+        if let Some(pending) = self.pending_project_control.as_mut() {
+            pending.fenced = true;
+        }
+        self.fail_project_control("Root changed; old owner evidence fenced".into());
+    }
+
+    pub(in crate::file_backed) fn retained_project_grant(&self) -> Option<String> {
+        self.retained_project_mount
+            .as_ref()
+            .map(|(receipt, _)| receipt.grant_id.clone())
+            .or_else(|| {
+                self.pending_project_control
+                    .as_ref()
+                    .and_then(|control| control.revoke.clone())
+            })
+            .or_else(|| self.project_cleanup.clone())
+            .or_else(|| self.project.as_ref().map(|p| p.grant_id.clone()))
     }
 
     pub(in crate::file_backed) fn project_revoked(&mut self) {
-        self.project = None;
-        self.pending_project_cwd = None;
+        let grant = self.retained_project_grant();
+        self.pending_project_control = None;
+        self.project_cleanup = None;
+        self.project_cleanup_attempted = false;
+        if self
+            .project
+            .as_ref()
+            .is_some_and(|p| Some(&p.grant_id) == grant.as_ref())
+        {
+            self.project = None;
+            self.set_file_candidates(Vec::new());
+        }
+        self.retained_project_mount = None;
         self.ready_project_revoke = None;
-        self.set_file_candidates(Vec::new());
+    }
+
+    pub(in crate::file_backed) fn take_project_cleanup(&mut self) -> Option<String> {
+        if self.project_cleanup_attempted {
+            return None;
+        }
+        let grant = self.project_cleanup.clone()?;
+        self.project_cleanup_attempted = true;
+        Some(grant)
+    }
+
+    pub(in crate::file_backed) fn finish_project_cleanup(&mut self, grant: &str, confirmed: bool) {
+        if confirmed && self.project_cleanup.as_deref() == Some(grant) {
+            self.project_cleanup = None;
+        }
     }
 
     pub(in crate::file_backed) fn take_ready_project_revoke(&mut self) -> Option<String> {
@@ -107,7 +165,7 @@ impl FileBackedApp {
         let Some(pending) = self.pending_project_control.as_ref() else {
             return;
         };
-        if snapshot.name != "cd" || pending.owner != owner {
+        if pending.fenced || snapshot.name != "cd" || pending.owner != owner {
             return;
         }
         let Ok(result) = serde_json::from_str::<serde_json::Value>(&snapshot.result) else {
@@ -120,7 +178,7 @@ impl FileBackedApp {
             return;
         }
         let cwd = result["outcome"]["cwd"].as_str();
-        let target = self.pending_project_cwd.as_deref().unwrap_or("/");
+        let target = &pending.target;
         if snapshot.status.trim() != "completed"
             || result["exit_code"].as_i64() != Some(0)
             || result["outcome"]["success"].as_bool() != Some(true)
@@ -131,13 +189,17 @@ impl FileBackedApp {
             if matches!(snapshot.status.trim(), "failed" | "rejected")
                 && result["exit_code"].as_i64().is_some_and(|code| code != 0)
                 && result["outcome"]["success"].as_bool() == Some(false)
-                && let Some((receipt, _)) = pending.mount.as_ref()
+                && pending.revoke.is_none()
+                && let Some((receipt, _)) = self.retained_project_mount.as_ref()
                 && self
                     .project
                     .as_ref()
                     .is_none_or(|old| old.grant_id != receipt.grant_id)
             {
                 self.project_cleanup = Some(receipt.grant_id.clone());
+                self.project_cleanup_attempted = false;
+                self.pending_project_control = None;
+                self.retained_project_mount = None;
             }
             self.fail_project_control("project cwd selection failed or returned an unexpected cwd; previous binding retained".into());
             return;
@@ -145,12 +207,18 @@ impl FileBackedApp {
         let cwd = cwd.unwrap().to_string();
         let pending = self.pending_project_control.take().unwrap();
         self.namespace_cwd = std::path::PathBuf::from(&cwd);
-        self.pending_project_cwd = None;
-        if let Some((receipt, root)) = pending.mount {
+        if pending.revoke.is_none()
+            && let Some((receipt, root)) = self.retained_project_mount.take()
+        {
             self.set_file_candidates(crate::build_file_index(&root, crate::FILE_INDEX_LIMIT));
             self.project = Some(receipt);
         }
-        self.ready_project_revoke = pending.revoke;
+        if pending.revoke.is_some() {
+            self.ready_project_revoke = pending.revoke.clone();
+            let mut pending = pending;
+            pending.fenced = true;
+            self.pending_project_control = Some(pending);
+        }
         self.notice = Some(format!(
             "project cwd: {cwd}; paused work requires explicit /continue"
         ));
@@ -160,10 +228,11 @@ impl FileBackedApp {
         if self.pending_project_control.is_some() {
             return;
         }
+        // Engine directory controls already carry this title; ordinary cd
+        // carries its command. No wire-ID mutation or request history needed.
         if serde_json::from_str::<serde_json::Value>(&snapshot.result)
             .ok()
-            .and_then(|v| v["call_id"].as_str().map(str::to_owned))
-            .is_some_and(|id| self.project_action_ids.contains(&id))
+            .is_some_and(|result| result["title"].as_str() == Some("Select Process directory"))
         {
             return;
         }

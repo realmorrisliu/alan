@@ -13,6 +13,12 @@ Process owns identity, cwd and lifecycle; Agent Machine owns advancement;
 AgentFS and durable evidence own observable execution; Host Mount Service owns
 grants. UI state must not become execution truth.
 
+Current delivery is reopened at HEAD83a1499 for candidate grant receipt
+retention/reconciliation, cross-process history record serialization, and
+failed macOS CI fixture (Linux subsequently cancelled). Prior managed recovery proves its exact happy path;
+it does not establish these fault paths. Preserve Host grant/Process cwd truth,
+unknown-outcome fencing and real record boundaries in their existing owners.
+
 ## Goals / Non-Goals
 
 **Goals:** a user can authorize a project, give a bounded coding task, inspect
@@ -115,6 +121,12 @@ editing keys. Do not introduce a new completion engine or terminal-owned history
 
 ### 5. Terminal design: substance first, details on demand
 
+The context row omits redundant product/model labels for known model bindings;
+unknown model observations remain explicitly labelled. Reserve a bounded project
+label budget before adding reasoning effort so ordinary pane widths preserve
+project access. Model and activity text keep the terminal default foreground
+for readability across themes.
+
 The user supplied a two-line shell prompt reference on 2026-09-29. Adopt that
 shape for Agent interaction: one context/status line immediately above one
 editable input line. It follows the transcript rather than being pinned to the
@@ -144,7 +156,7 @@ Proposed idle and completed-task composition (illustrative, not shipped):
 Complete. Enter now executes the selected command once.
 Changed: crates/tui/src/file_backed/app.rs
 
-alan / · <effective model> · ready
+/ · <effective model> · ready
 : ▌
 ```
 
@@ -153,7 +165,7 @@ Proposed paused state:
 ```text
 Cancelled. /continue resumes the queued input; /discard removes it.
 
-alan / · <effective model> · paused · 1 queued
+/ · <effective model> · paused · 1 queued
 : ▌
 ```
 
@@ -241,6 +253,23 @@ vertical slice carries its own verification and current-head review.
 
 `unify-agent-command-input` retains native execution, queue/cancellation, shared
 cwd, no-replay and lifecycle deltas, including actual Herdr detach acceptance.
+The 2026-10-03 author run exposed a Host Mount authorization wait presentation
+gap: Machine had request-2 while AgentFS requests was empty; TUI only said
+waiting for input. Ordinary Ctrl+C actually cancelled the Host request and its
+input, then explicit /continue ran the correction without extra authority.
+This change owns truthful, actionable waiting presentation in its P0/P1 gate;
+Host request lifecycle, authorization and cancellation remain with their existing
+Host Mount/runtime owners. Do not present queue /continue as answering an active
+Host authorization request or infer a grant from an empty AgentFS request tree.
+Do not broaden the current grant/history correction to implement a new grant
+manager. Read-only owner audit identifies the existing runtime ui_surfaces::warning
+notice/event path as the smallest presentation seam. A Host Mount wait hint
+must retire on that wait's terminal result, cancellation and reset without
+clearing unrelated notices or surviving owner replacement. Runtime must publish
+the fact; TUI must not guess it. Full approval selection remains with the Host
+owner. Audit alone does not qualify hydrate/live consumption or cancellation;
+retain that acceptance as unfinished P0/P1 work.
+
 This change adds presentation and an aggregate product gate, not competing
 runtime definitions. `expose-agent-rollout-history` remains parked; explicit
 recovery discovery is delivered only via the active input/recovery owner.

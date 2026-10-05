@@ -100,12 +100,16 @@ use crate::history::HistoryCell;
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
 #[cfg(test)]
+mod background_io_tests;
+#[cfg(test)]
 mod completion_anchor_tests;
 #[cfg(test)]
 mod completion_layout_tests;
 #[cfg(test)]
 mod completion_reference_tests;
+mod observation_io;
 mod project_dispatch;
+mod project_io;
 use project_dispatch::dispatch_with_pending_submissions;
 
 const MAX_COMPOSER_LINES: usize = 10;
@@ -195,6 +199,11 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut dirty = true;
     let mut last_drawn_second = None;
 
+    let mut jobs = tokio::task::JoinSet::new();
+    let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut jobs);
+    let skill_reads = observation_io::start(shell.clone(), false, tx.clone(), &mut jobs);
+    let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    let mut grant_read_pending = false;
     let mut draw_result = Ok(());
     loop {
         tokio::select! {
@@ -206,6 +215,22 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     observe_root_agent_completion(&mut pending_root_agent_turns, event, &mut app);
                 }
                 match event {
+                    FileBackedEvent::ProjectHostCompleted { owner, command, result } => {
+                        let current = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid));
+                        if let Some((owner, id, command)) = project_io::finish(&mut app, owner, current, command, result) {
+                            project_io::write_cwd(&mut app, &shell, owner, id, command, &mut jobs, &tx);
+                        }
+                    }
+                    FileBackedEvent::ProjectCwdWritten { owner, id, result, owner_current } => {
+                        if app.pending_project_control.as_ref().is_some_and(|p| p.owner == owner && p.id == id) {
+                            if !owner_current { app.fence_project_control(); }
+                            else if let Err(error) = result { app.fail_project_control(format!("project control write failed; effects uncertain: {error}")); }
+                        }
+                    }
+                    FileBackedEvent::ProjectGrantObserved { grant_id, active } => {
+                        grant_read_pending = false;
+                        project_io::observe_grant(&mut app, &grant_id, active);
+                    }
                     FileBackedEvent::RootAgentPidRefresh(result) => {
                         let retry = matches!(&result, Ok(Some(_)));
                         watchers.pending_root_agent_pid_result = Some(result);
@@ -232,11 +257,28 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     | FileBackedEvent::QueueUnavailable { .. }) => {
                         queue::dispatch_queue_event(&shell, &mut app, &pending_root_agent_turns, event).await;
                     }
-                    event @ (FileBackedEvent::ModelChanged { .. } | FileBackedEvent::ModelUnavailable { .. }) => {
-                        model::dispatch_model_event(&shell, &mut app, event).await;
+                    FileBackedEvent::ModelChanged { owner } => {
+                        if owner == app.model.owner { observation_io::request(&model_reads, owner); }
                     }
-                    event @ (FileBackedEvent::SkillsChanged { .. } | FileBackedEvent::SkillsUnavailable { .. }) => {
-                        skills::dispatch_skill_event(&shell, &mut app, event).await;
+                    FileBackedEvent::ModelUnavailable { owner } => {
+                        if owner == app.model.owner {
+                            observation_io::request(&model_reads, String::new());
+                            app.model.apply(&owner, None);
+                            app.reconcile_model_chooser();
+                        }
+                    }
+                    FileBackedEvent::SkillsChanged { owner } => {
+                        if owner == app.skills.owner { observation_io::request(&skill_reads, owner); }
+                    }
+                    FileBackedEvent::SkillsUnavailable { owner } => {
+                        if owner == app.skills.owner {
+                            observation_io::request(&skill_reads, String::new());
+                            app.apply_skills(&owner, None);
+                        }
+                    }
+                    FileBackedEvent::ObservationRead { revision, owner, snapshot } => {
+                        let request = match &snapshot { observation_io::Snapshot::Model(_) => &model_reads, observation_io::Snapshot::Skills(_) => &skill_reads };
+                        observation_io::apply(&mut app, request, revision, &owner, snapshot);
                     }
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
@@ -253,21 +295,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         .await
                         {
                             app.push_error(format!("action refresh failed: {err:#}"));
-                        } else if let Some(grant_id) = app.take_ready_project_revoke() {
-                            if let Some(handler) = config.project_control.as_ref() {
-                                match handler(ProjectControl::Revoke { grant_id }).await {
-                                    Ok(ProjectControlResult::Revoked) => {
-                                        app.project_revoked();
-                                        app.notice = Some("project grant revoked".into());
-                                    }
-                                    Ok(ProjectControlResult::Mounted { .. }) => {
-                                        app.push_error("Host mounted a project while revoke was expected".into());
-                                    }
-                                    Err(err) => app.push_error(format!("project revoke failed: {err:#}")),
-                                }
-                            } else {
-                                app.push_error("local project selection is unavailable in this Host".into());
-                            }
+                        } else if let Some(grant_id) = app.take_ready_project_revoke()
+                            && let Some(handler) = config.project_control.as_ref() {
+                            let owner = app.pending_project_control.as_ref().map(|p| p.owner.clone()).unwrap_or_default();
+                            project_io::start(&mut app, handler, ProjectControl::Revoke { grant_id }, owner, &mut jobs, &tx);
                         }
                     }
                     other => {
@@ -361,7 +392,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     );
                                 }
                                 FileBackedAction::SelectModel { owner, id, op } => {
-                                    model::write_selection(&shell, &mut app, &owner, &id, op).await;
+                                    model::start_selection(&shell, &mut app, owner, id, op, &mut jobs, &tx);
                                 }
                                 FileBackedAction::Project(command) => {
                                     let Some(handler) = config.project_control.as_ref() else {
@@ -369,60 +400,18 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         dirty = true;
                                         continue;
                                     };
+                                    let Some(owner) = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)) else {
+                                        app.push_error("Root owner unavailable; project operation not sent".into());
+                                        continue;
+                                    };
                                     match command {
-                                        ProjectControl::Mount { host_path, access } => {
-                                            match handler(ProjectControl::Mount { host_path, access }).await {
-                                                Ok(ProjectControlResult::Mounted { receipt, completion_root }) => {
-                                                    if receipt.grant_id.trim().is_empty()
-                                                        || !std::path::Path::new(&receipt.namespace_path).is_absolute()
-                                                        || !receipt.namespace_path.starts_with("/mnt/")
-                                                        || std::path::Path::new(&receipt.namespace_path).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-                                                        app.push_error("invalid mount receipt; no cwd control or unsafe grant cleanup attempted".into());
-                                                        continue;
-                                                    }
-                                                    let Some(owner) = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)) else {
-                                                        if app.project.as_ref().is_none_or(|old| old.grant_id != receipt.grant_id) {
-                                                            app.project_cleanup = Some(receipt.grant_id);
-                                                        }
-                                                        app.push_error("Root owner unavailable; project cwd not selected".into());
-                                                        if let Some(grant_id) = app.project_cleanup.take()
-                                                            && let Err(err) = handler(ProjectControl::Revoke { grant_id }).await
-                                                        {
-                                                            app.push_error(format!("candidate cleanup failed: {err:#}"));
-                                                        }
-                                                        continue;
-                                                    };
-                                                    let id = alan_agent_protocol::UserInputRecord::new(
-                                                        alan_agent_protocol::InputIntent::Command,
-                                                        alan_agent_protocol::InputMode::FollowUp, "",
-                                                    ).submission_id;
-                                                    let path = receipt.namespace_path.clone();
-                                                    app.stage_project_control(owner.clone(), id.clone(), Some((receipt, completion_root)), None);
-                                                    let command = format!("project-cwd-v1 {}", serde_json::json!({"id": id, "path": path}));
-                                                    if let Err(err) = write_machine_ctl(&shell, &owner, &command).await {
-                                                        app.fail_project_control(format!("project control write failed; effects uncertain: {err:#}"));
-                                                    }
-                                                }
-                                                Ok(ProjectControlResult::Revoked) => {
-                                                    app.push_error("Host revoked a project while a mount was expected".into());
-                                                }
-                                                Err(err) => app.push_error(format!("project mount failed: {err:#}")),
-                                            }
+                                        command @ ProjectControl::Mount { .. } => {
+                                            project_io::start(&mut app, handler, command, owner, &mut jobs, &tx);
                                         }
                                         ProjectControl::Revoke { grant_id } => {
-                                            let Some(owner) = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)) else {
-                                                app.push_error("Root owner unavailable; grant retained".into());
-                                                continue;
-                                            };
-                                            let id = alan_agent_protocol::UserInputRecord::new(
-                                                alan_agent_protocol::InputIntent::Command,
-                                                alan_agent_protocol::InputMode::FollowUp, "",
-                                            ).submission_id;
+                                            let (id, command) = project_dispatch::project_selector("/");
                                             app.stage_project_control(owner.clone(), id.clone(), None, Some(grant_id));
-                                            let command = format!("project-cwd-v1 {}", serde_json::json!({"id": id, "path": "/"}));
-                                            if let Err(err) = write_machine_ctl(&shell, &owner, &command).await {
-                                                app.fail_project_control(format!("could not leave project; effects uncertain: {err:#}"));
-                                            }
+                                            project_io::write_cwd(&mut app, &shell, owner, id, command, &mut jobs, &tx);
                                         }
                                     }
                                 }
@@ -453,18 +442,30 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 }
-                if let Some(grant_id) = app.project_cleanup.take() {
+                if !app.project_host_pending && let Some(grant_id) = app.take_project_cleanup() {
                     if let Some(handler) = config.project_control.as_ref() {
-                        match handler(ProjectControl::Revoke { grant_id: grant_id.clone() }).await {
-                            Ok(ProjectControlResult::Revoked) => {}
-                            result => app.push_error(format!("candidate grant {grant_id} cleanup unconfirmed: {result:?}")),
-                        }
+                        let owner = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)).unwrap_or_default();
+                        project_io::start(&mut app, handler, ProjectControl::Revoke { grant_id }, owner, &mut jobs, &tx);
                     } else {
                         app.push_error(format!("candidate grant {grant_id} cleanup unavailable"));
                     }
                 }
                 action_detail_io::start_pending_for_pid(&shell, &mut app, &tx, watchers.root_agent_pid);
                 dirty = true;
+            }
+            _ = jobs.join_next(), if !jobs.is_empty() => {}
+            _ = grant_tick.tick(), if !grant_read_pending => {
+                if let Some(project) = app.project.as_ref()
+                    && app.pending_project_control.is_none() && !app.project_host_pending {
+                    grant_read_pending = true;
+                    let grant_id = project.grant_id.clone();
+                    let shell = shell.clone();
+                    let tx = tx.clone();
+                    jobs.spawn(async move {
+                        let active = project_io::grant_active(&shell, &grant_id).await;
+                        let _ = tx.send(FileBackedEvent::ProjectGrantObserved { grant_id, active }).await;
+                    });
+                }
             }
             _ = frame_tick.tick() => {
                 let now_ms = unix_time_ms();
@@ -488,6 +489,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
+    jobs.abort_all();
+    while jobs.join_next().await.is_some() {}
     watchers.stop().await;
     drop(rx);
     if let Some(task) = root_agent_pid_refresh {
@@ -863,6 +866,8 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
 mod accessibility_tests;
 #[cfg(test)]
 mod action_details_tests;
+#[cfg(test)]
+mod project_review_tests;
 #[cfg(test)]
 mod queue_tests;
 #[cfg(test)]

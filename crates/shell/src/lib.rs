@@ -20,6 +20,8 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+mod bounded_read;
+
 /// A process-global fid allocator. aP fid state lives in the server keyed only by
 /// [`Fid`], so two shells over the same transport (two tabs on one namespace) must
 /// never draw the same number or one would clobber the other's open file. A single

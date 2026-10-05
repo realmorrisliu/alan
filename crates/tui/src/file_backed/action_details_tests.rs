@@ -220,10 +220,17 @@ async fn action_file_metadata_and_huge_output_use_three_physical_rows() {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width as u16, 12)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        assert_eq!(
-            terminal.backend().buffer().cell((0, 3)).unwrap().symbol(),
-            "a"
-        );
+        let header = (0..width as u16)
+            .map(|column| {
+                terminal
+                    .backend()
+                    .buffer()
+                    .cell((column, 3))
+                    .unwrap()
+                    .symbol()
+            })
+            .collect::<String>();
+        assert!(header.starts_with("no project · model unknown"), "{header}");
         assert_eq!(
             terminal.backend().buffer().cell((0, 2)).unwrap().symbol(),
             " "

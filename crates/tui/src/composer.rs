@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use alan_agent_protocol::InputIntent;
@@ -134,11 +134,14 @@ impl Composer {
         }
         self.history.push(entry.clone());
         self.reset_recall();
-        if let Some(path) = &self.history_path
-            && append_history_line(path, &entry).is_err()
-        {
-            self.history_unavailable = true;
-            tracing::warn!("composer history unavailable");
+        if let Some(path) = &self.history_path {
+            match append_history_line(path, &entry) {
+                Ok(false) => {}
+                Ok(true) | Err(_) => {
+                    self.history_unavailable = true;
+                    tracing::warn!("composer history unavailable");
+                }
+            }
         }
     }
 
@@ -337,16 +340,105 @@ fn history_records_path(path: &std::path::Path, version: u8) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn append_history_line(path: &std::path::Path, entry: &HistoryEntry) -> std::io::Result<()> {
+fn append_history_line(path: &std::path::Path, entry: &HistoryEntry) -> std::io::Result<bool> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut file = OpenOptions::new()
+    let mut encoded = serde_json::to_vec(entry).map_err(std::io::Error::other)?;
+    encoded.push(b'\n');
+    let file = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(history_records_path(path, 2))?;
-    let encoded = serde_json::to_string(entry).map_err(std::io::Error::other)?;
-    writeln!(file, "{encoded}")
+    let _lock = HistoryLock::acquire(&file, false)?;
+    let length = file.metadata()?.len();
+    let boundary = history_record_boundary(&file, length)?;
+    if boundary != length {
+        file.set_len(boundary)?;
+    }
+    if let Err(error) = (&file).write_all(&encoded) {
+        // Do not let a partially written record swallow the next successful
+        // append. If rollback also fails, the next writer repairs the tail.
+        let _ = file.set_len(boundary);
+        return Err(error);
+    }
+    Ok(boundary != length)
+}
+
+// Find the last complete record using bounded memory, under the caller's lock.
+fn history_record_boundary(mut file: &std::fs::File, mut end: u64) -> std::io::Result<u64> {
+    let mut chunk = [0; 4096];
+    while end > 0 {
+        let start = end.saturating_sub(chunk.len() as u64);
+        let count = (end - start) as usize;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut chunk[..count])?;
+        if let Some(index) = chunk[..count].iter().rposition(|byte| *byte == b'\n') {
+            return Ok(start + index as u64 + 1);
+        }
+        end = start;
+    }
+    Ok(0)
+}
+
+// Same-file descriptor locks serialize complete records across foreground OS
+// processes, including short writes. Contention is bounded; recall stays local
+// if persistence is unavailable rather than blocking terminal input indefinitely.
+struct HistoryLock<'a>(&'a std::fs::File);
+impl<'a> HistoryLock<'a> {
+    fn acquire(file: &'a std::fs::File, shared: bool) -> std::io::Result<Self> {
+        let started = std::time::Instant::now();
+        loop {
+            let result = if shared {
+                file.try_lock_shared()
+            } else {
+                file.try_lock()
+            };
+            match result {
+                Ok(()) => return Ok(Self(file)),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error))
+                    if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(std::fs::TryLockError::Error(error)) => return Err(error),
+            }
+            if started.elapsed() >= std::time::Duration::from_millis(100) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "history lock unavailable",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+impl Drop for HistoryLock<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+fn read_history_records(
+    path: &std::path::Path,
+    complete_records: bool,
+) -> std::io::Result<(String, bool)> {
+    let file = std::fs::File::open(path)?;
+    let _lock = HistoryLock::acquire(&file, true)?;
+    let mut bytes = Vec::new();
+    (&file).read_to_end(&mut bytes)?;
+    let length = bytes.len();
+    if complete_records {
+        let boundary = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |i| i + 1);
+        bytes.truncate(boundary);
+    }
+    let incomplete = bytes.len() != length;
+    Ok((
+        String::from_utf8(bytes).map_err(std::io::Error::other)?,
+        incomplete,
+    ))
 }
 
 /// Load legacy Agent entries, then typed v2 history, oldest first.
@@ -357,14 +449,20 @@ pub fn load_history(path: &std::path::Path, limit: usize) -> Vec<HistoryEntry> {
 
 fn load_history_status(path: &std::path::Path, limit: usize) -> (Vec<HistoryEntry>, bool) {
     let mut unavailable = false;
-    let mut read = |path: &std::path::Path| match std::fs::read_to_string(path) {
-        Ok(text) => text,
+    let mut read = |path: &std::path::Path, complete_records| match read_history_records(
+        path,
+        complete_records,
+    ) {
+        Ok((text, incomplete)) => {
+            unavailable |= incomplete;
+            text
+        }
         Err(error) => {
             unavailable |= error.kind() != std::io::ErrorKind::NotFound;
             String::new()
         }
     };
-    let legacy = read(path);
+    let legacy = read(path, false);
     let mut entries: Vec<HistoryEntry> = legacy
         .lines()
         .map(str::trim)
@@ -372,7 +470,7 @@ fn load_history_status(path: &std::path::Path, limit: usize) -> (Vec<HistoryEntr
         .map(|line| HistoryEntry::agent(line.to_owned()))
         .collect();
     {
-        let records = read(&history_records_path(path, 1));
+        let records = read(&history_records_path(path, 1), false);
         entries.extend(
             records
                 .lines()
@@ -382,7 +480,7 @@ fn load_history_status(path: &std::path::Path, limit: usize) -> (Vec<HistoryEntr
         );
     }
     {
-        let records = read(&history_records_path(path, 2));
+        let records = read(&history_records_path(path, 2), true);
         entries.extend(
             records
                 .lines()
@@ -406,6 +504,10 @@ pub enum ComposerKeyOutcome {
     Interrupt,
     Ignored,
 }
+
+#[cfg(test)]
+#[path = "composer_process_tests.rs"]
+mod process_tests;
 
 #[cfg(test)]
 #[path = "composer_history_tests.rs"]

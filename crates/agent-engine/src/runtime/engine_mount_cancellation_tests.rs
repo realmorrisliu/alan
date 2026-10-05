@@ -3,6 +3,15 @@ use super::*;
 
 #[tokio::test]
 async fn pending_mount_interrupt_then_new_agent_input_has_correlated_terminal_tool_response() {
+    pending_mount_terminal_notice_lifecycle(false).await;
+}
+
+#[tokio::test]
+async fn pending_mount_normal_approval_resumes_and_retires_wait_notice() {
+    pending_mount_terminal_notice_lifecycle(true).await;
+}
+
+async fn pending_mount_terminal_notice_lifecycle(approved: bool) {
     let temp = TempDir::new().unwrap();
     let stores = crate::AgentRuntimeStoreBindings {
         rollouts: temp.path().join("rollouts"),
@@ -92,53 +101,77 @@ async fn pending_mount_interrupt_then_new_agent_input_has_correlated_terminal_to
         host_mount.status(&request_id).await.as_deref(),
         Some("pending")
     );
-    shell
-        .write("/agent/1/machine/ctl", b"interrupt")
-        .await
-        .unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let events =
-                String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
-            if events.lines().any(|line| {
-                matches!(
-                    serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
-                    alan_agent_protocol::UiEvent::InputCompleted {
-                        status: alan_agent_protocol::UiInputStatus::Cancelled,
-                        ..
-                    }
-                )
-            }) {
+            let notice = shell.cat("/agent/1/machine/ui/notice").await.unwrap();
+            let notice: alan_agent_protocol::UiNoticeSnapshot =
+                serde_json::from_slice(&notice).unwrap();
+            if notice.message
+                == "Waiting for Host Mount authorization; Ctrl+C cancels current input"
+            {
+                assert_eq!(notice.kind, alan_agent_protocol::UiNoticeKind::Warning);
                 break;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("ordinary interrupt settles pending input");
-    assert_eq!(
-        host_mount.status(&request_id).await.as_deref(),
-        Some("cancelled")
-    );
-    let interrupted_history = crate::rollout::RolloutRecorder::load_history(&path)
+    .expect("actual pending Host Mount must publish actionable safe wait notice");
+    if approved {
+        host_mount
+            .settle(&request_id, "approved", Some("approved-grant"), None)
+            .await;
+    } else {
+        shell
+            .write("/agent/1/machine/ctl", b"interrupt")
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let events =
+                    String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap())
+                        .unwrap();
+                if events.lines().any(|line| {
+                    matches!(
+                        serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(),
+                        alan_agent_protocol::UiEvent::InputCompleted {
+                            status: alan_agent_protocol::UiInputStatus::Cancelled,
+                            ..
+                        }
+                    )
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
         .await
-        .unwrap();
-    assert!(interrupted_history.iter().any(|item| matches!(item,
+        .expect("ordinary interrupt settles pending input");
+        assert_eq!(
+            host_mount.status(&request_id).await.as_deref(),
+            Some("cancelled")
+        );
+        wait_for_retired_mount_notice(&shell).await;
+        let interrupted_history = crate::rollout::RolloutRecorder::load_history(&path)
+            .await
+            .unwrap();
+        assert!(interrupted_history.iter().any(|item| matches!(item,
         crate::rollout::RolloutItem::Message(record) if matches!(&record.message,
             Some(crate::tape::Message::Tool { responses }) if responses.iter().any(|response| response.id == "call-pending-mount")))),
         "interrupt must close the pending mount Tool request before accepting correction");
-    // Interrupt pauses scheduling independently of pending-request settlement.
-    shell
-        .write("/agent/1/machine/ctl", b"queue-v1 continue")
-        .await
-        .unwrap();
-    shell
-        .write(
-            "/agent/1/io/input",
-            b"Correction: answer without project access",
-        )
-        .await
-        .unwrap();
+        // Interrupt pauses scheduling independently of pending-request settlement.
+        shell
+            .write("/agent/1/machine/ctl", b"queue-v1 continue")
+            .await
+            .unwrap();
+        shell
+            .write(
+                "/agent/1/io/input",
+                b"Correction: answer without project access",
+            )
+            .await
+            .unwrap();
+    }
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let events =
@@ -159,6 +192,7 @@ async fn pending_mount_interrupt_then_new_agent_input_has_correlated_terminal_to
     })
     .await
     .expect("correction intake completes");
+    wait_for_retired_mount_notice(&shell).await;
     runtime.shutdown().await.unwrap();
     assert_eq!(
         mock.recorded_requests().len(),
@@ -185,17 +219,44 @@ async fn pending_mount_interrupt_then_new_agent_input_has_correlated_terminal_to
         "interrupted request_mount must have exactly one correlated Tool response"
     );
     let result: serde_json::Value = serde_json::from_str(&responses[0].text_content()).unwrap();
-    assert_eq!(result["status"], "cancelled");
-    assert_eq!(result["approved"], false);
-    assert_eq!(result["request_reference"], request_id);
-    assert!(
-        result["grant_reference"].is_null(),
-        "never invent approval or a grant"
+    assert_eq!(
+        result["status"],
+        if approved { "approved" } else { "cancelled" }
     );
+    assert_eq!(result["approved"], approved);
+    assert_eq!(result["request_reference"], request_id);
+    if approved {
+        assert_eq!(result["grant_reference"], "approved-grant");
+    } else {
+        assert!(
+            result["grant_reference"].is_null(),
+            "never invent approval or a grant"
+        );
+    }
     assert!(!recovered.has_pending_interaction());
     let next_request = format!("{:?}", mock.recorded_requests()[1]);
     assert!(
-        next_request.contains("call-pending-mount") && next_request.contains("cancelled"),
+        next_request.contains("call-pending-mount")
+            && next_request.contains(if approved { "approved" } else { "cancelled" }),
         "next provider request must include terminal response: {next_request}"
     );
+}
+
+async fn wait_for_retired_mount_notice(shell: &alan_shell::Shell) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let notice: alan_agent_protocol::UiNoticeSnapshot =
+                serde_json::from_slice(&shell.cat("/agent/1/machine/ui/notice").await.unwrap())
+                    .unwrap();
+            if notice.kind != alan_agent_protocol::UiNoticeKind::Warning
+                || notice.message
+                    != "Waiting for Host Mount authorization; Ctrl+C cancels current input"
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("terminal mount path retires only its wait notice");
 }

@@ -1,5 +1,7 @@
 //! Process-owned mentionability only; Skill IDs confer no execution authority.
-use super::{FileBackedApp, FileBackedEvent};
+use super::FileBackedApp;
+#[cfg(test)]
+use super::FileBackedEvent;
 use crate::completion::{CompletionCandidate, CompletionKind};
 use alan_agent_protocol::UiSkillSnapshot;
 
@@ -57,13 +59,12 @@ impl FileBackedApp {
 }
 pub(super) async fn read_skills(shell: &alan_shell::Shell, owner: &str) -> Option<UiSkillSnapshot> {
     let path = format!("{owner}/machine/ui/skills");
-    let length = shell.stat(&path).await.ok()?.length;
-    let text =
-        super::action_detail_io::reference::range_with_budget(shell, &path, 0, length, 1048576)
-            .await
-            .ok()?;
+    let text = super::action_detail_io::reference::document_with_budget(shell, &path, 1048576)
+        .await
+        .ok()?;
     serde_json::from_str(&text).ok()
 }
+#[cfg(test)]
 pub(super) async fn dispatch_skill_event(
     shell: &alan_shell::Shell,
     app: &mut FileBackedApp,

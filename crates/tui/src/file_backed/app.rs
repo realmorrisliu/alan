@@ -84,10 +84,11 @@ pub(super) struct FileBackedApp {
     pub(super) project_selection: Option<ProjectAccess>,
     pub(super) project: Option<ProjectMountReceipt>,
     pub(super) namespace_cwd: std::path::PathBuf,
-    pub(super) pending_project_cwd: Option<String>,
-    pub(super) project_action_ids: Vec<String>,
+    pub(super) retained_project_mount: Option<(ProjectMountReceipt, std::path::PathBuf)>,
     pub(super) pending_project_control: Option<project::PendingProjectControl>,
     pub(super) project_cleanup: Option<String>,
+    pub(super) project_cleanup_attempted: bool,
+    pub(super) project_host_pending: bool,
     ready_project_revoke: Option<String>,
     pub(super) last_input_failed: bool,
     pub(super) expand_thinking: bool,
@@ -143,10 +144,11 @@ impl FileBackedApp {
             project_selection: None,
             project: None,
             namespace_cwd: std::path::PathBuf::from("/"),
-            pending_project_cwd: None,
-            project_action_ids: Vec::new(),
+            retained_project_mount: None,
             pending_project_control: None,
             project_cleanup: None,
+            project_cleanup_attempted: false,
+            project_host_pending: false,
             ready_project_revoke: None,
             last_input_failed: false,
             expand_thinking: false,
@@ -265,7 +267,20 @@ impl FileBackedApp {
                 self.apply_tape_record(record);
                 None
             }
-            FileBackedEvent::QueueChanged { .. }
+            FileBackedEvent::ModelSelectionWritten {
+                owner,
+                id,
+                success,
+                owner_current,
+            } => {
+                super::model::finish_selection(self, &owner, &id, success, owner_current);
+                None
+            }
+            FileBackedEvent::ObservationRead { .. }
+            | FileBackedEvent::ProjectHostCompleted { .. }
+            | FileBackedEvent::ProjectCwdWritten { .. }
+            | FileBackedEvent::ProjectGrantObserved { .. }
+            | FileBackedEvent::QueueChanged { .. }
             | FileBackedEvent::QueueUnavailable { .. }
             | FileBackedEvent::RootAgentPidRefresh(_)
             | FileBackedEvent::ModelChanged { .. }
@@ -743,13 +758,17 @@ impl FileBackedApp {
                 None
             }
             "project" if command.trim() == "project revoke" => {
-                if !self.project_boundary_available(false) {
+                if !self.project_recovery_boundary_available(false) {
                     self.notice =
                         Some("wait for the current Agent turn before revoking a project".into());
                     None
-                } else if let Some(project) = &self.project {
+                } else if self.project_cleanup.is_some() && self.pending_project_control.is_none() {
+                    self.project_cleanup_attempted = false;
+                    self.notice = Some("explicit candidate cleanup retry requested".into());
+                    None
+                } else if let Some(grant_id) = self.retained_project_grant() {
                     Some(FileBackedAction::Project(ProjectControl::Revoke {
-                        grant_id: project.grant_id.clone(),
+                        grant_id,
                     }))
                 } else {
                     self.notice = Some("no project grant is active".into());

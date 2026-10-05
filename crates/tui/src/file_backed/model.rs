@@ -1,5 +1,7 @@
 //! Read-only consumer of Process-owned safe model observations.
-use super::{FileBackedApp, FileBackedEvent};
+use super::FileBackedApp;
+#[cfg(test)]
+use super::FileBackedEvent;
 use alan_agent_protocol::{UiModelBinding, UiModelSnapshot};
 
 #[derive(Clone, Default)]
@@ -35,21 +37,27 @@ impl ModelProjection {
         self.snapshot.as_ref().filter(|s| s.known)
     }
     pub fn header(&self) -> String {
+        self.header_controls(true)
+    }
+    pub fn header_controls(&self, controls: bool) -> String {
         let Some(s) = self.known() else {
             return "unknown".into();
         };
         if let Some(active) = &s.active {
-            let mut label = format!("active {}", safe(&active.model));
-            if let Some(next) = &s.selected_next {
-                label.push_str(&format!(" · next {}", safe(&next.model)));
+            let mut label = format!("active {}", compact_binding(active, controls));
+            if let Some(next) = &s.selected_next
+                && next != active
+            {
+                label.push_str(&format!(" · next {}", compact_binding(next, controls)));
             }
             label
         } else {
             format!(
                 "next {}",
-                s.selected_next
-                    .as_ref()
-                    .map_or_else(|| "unknown".into(), |b| safe(&b.model))
+                s.selected_next.as_ref().map_or_else(
+                    || "unknown".into(),
+                    |binding| compact_binding(binding, controls)
+                )
             )
         }
     }
@@ -92,6 +100,19 @@ impl FileBackedApp {
 pub(super) fn safe(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(200).collect()
 }
+fn compact_binding(binding: &UiModelBinding, controls: bool) -> String {
+    if !controls {
+        return safe(&binding.model);
+    }
+    format!(
+        "{} · {}",
+        safe(&binding.model),
+        binding
+            .reasoning
+            .effort
+            .map_or_else(|| "reasoning unknown".into(), |effort| effort.to_string())
+    )
+}
 fn binding_label(binding: Option<&UiModelBinding>) -> String {
     binding.map_or_else(
         || "unknown".into(),
@@ -111,14 +132,97 @@ fn binding_label(binding: Option<&UiModelBinding>) -> String {
 }
 pub(super) async fn read_model(shell: &alan_shell::Shell, owner: &str) -> Option<UiModelSnapshot> {
     let path = format!("{owner}/machine/ui/models");
-    let length = shell.stat(&path).await.ok()?.length;
     // Reuse the existing bounded descriptor reader; never cat an arbitrary document.
-    let text =
-        super::action_detail_io::reference::range_with_budget(shell, &path, 0, length, 1048576)
-            .await
-            .ok()?;
+    let text = super::action_detail_io::reference::document_with_budget(shell, &path, 1048576)
+        .await
+        .ok()?;
     serde_json::from_str(&text).ok()
 }
+pub(super) fn start_selection(
+    shell: &alan_shell::Shell,
+    app: &mut FileBackedApp,
+    owner: String,
+    id: String,
+    op: alan_agent_protocol::Op,
+    jobs: &mut tokio::task::JoinSet<()>,
+    tx: &tokio::sync::mpsc::Sender<super::FileBackedEvent>,
+) {
+    if !selection_ready(app, &owner, &id) {
+        return;
+    }
+    let shell = shell.clone();
+    let tx = tx.clone();
+    jobs.spawn(async move {
+        let (success, owner_current) = send_selection(&shell, &owner, &id, op).await;
+        let _ = tx
+            .send(super::FileBackedEvent::ModelSelectionWritten {
+                owner,
+                id,
+                success,
+                owner_current,
+            })
+            .await;
+    });
+}
+
+fn selection_ready(app: &mut FileBackedApp, owner: &str, id: &str) -> bool {
+    if app.model_chooser.pending.as_ref() != Some(&(owner.into(), id.into())) {
+        return false;
+    }
+    if app.model.owner != owner || app.queue.owner != owner {
+        app.lose_model_receipts(owner);
+        app.invalidate_model_owner();
+        return false;
+    }
+    true
+}
+
+async fn send_selection(
+    shell: &alan_shell::Shell,
+    owner: &str,
+    id: &str,
+    op: alan_agent_protocol::Op,
+) -> (bool, bool) {
+    let alan_agent_protocol::Op::SelectModel { model } = op else {
+        return (true, true);
+    };
+    let current = || async {
+        super::current_root_agent_pid(shell)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|pid| owner == format!("/agent/{pid}"))
+    };
+    if !current().await {
+        return (false, false);
+    }
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        super::file_surface::write_machine_ctl(shell, owner, &format!("select-model {id} {model}")),
+    )
+    .await;
+    (matches!(result, Ok(Ok(()))), current().await)
+}
+
+pub(super) fn finish_selection(
+    app: &mut FileBackedApp,
+    owner: &str,
+    id: &str,
+    success: bool,
+    owner_current: bool,
+) {
+    if app.model_chooser.pending.as_ref() != Some(&(owner.into(), id.into())) {
+        return;
+    }
+    if !success || !owner_current {
+        app.lose_model_receipts(owner);
+        if !owner_current {
+            app.invalidate_model_owner();
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) async fn write_selection(
     shell: &alan_shell::Shell,
     app: &mut FileBackedApp,
@@ -126,43 +230,13 @@ pub(super) async fn write_selection(
     id: &str,
     op: alan_agent_protocol::Op,
 ) {
-    // Only the exact outstanding chooser action may cross the transport boundary.
-    if app.model_chooser.pending.as_ref() != Some(&(owner.into(), id.into())) {
+    if !selection_ready(app, owner, id) {
         return;
     }
-    if let alan_agent_protocol::Op::SelectModel { model } = op {
-        let owner_current = super::current_root_agent_pid(shell)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|pid| owner == format!("/agent/{pid}"));
-        if !owner_current || app.model.owner != owner || app.queue.owner != owner {
-            app.lose_model_receipts(owner);
-            app.invalidate_model_owner();
-            return;
-        }
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            super::file_surface::write_machine_ctl(
-                shell,
-                owner,
-                &format!("select-model {id} {model}"),
-            ),
-        )
-        .await;
-        let owner_current = super::current_root_agent_pid(shell)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|pid| owner == format!("/agent/{pid}"));
-        if !matches!(result, Ok(Ok(()))) || !owner_current {
-            app.lose_model_receipts(owner);
-            if !owner_current {
-                app.invalidate_model_owner();
-            }
-        }
-    }
+    let (success, owner_current) = send_selection(shell, owner, id, op).await;
+    finish_selection(app, owner, id, success, owner_current);
 }
+#[cfg(test)]
 pub(super) async fn dispatch_model_event(
     shell: &alan_shell::Shell,
     app: &mut FileBackedApp,

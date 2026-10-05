@@ -145,6 +145,8 @@ async fn root_loss_revokes_model_events_and_prewrite_until_descriptor_repin() {
         .unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(128);
     let mut watchers = AgentWatchers::start(tails, "/agent/root", tx.clone());
+    let mut observation_jobs = tokio::task::JoinSet::new();
+    let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut observation_jobs);
     let outcome = catch_poll(async {
         app.composer.set_text_with_cursor("ForceAgent draft\n  ", 4);
         app.input_intent = alan_agent_protocol::InputIntent::ForceAgent;
@@ -268,6 +270,41 @@ async fn root_loss_revokes_model_events_and_prewrite_until_descriptor_repin() {
                 )
                 .await;
             assert_eq!(app.model.owner, owner);
+            observation_io::request(&model_reads, owner.clone());
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    match rx.recv().await.unwrap() {
+                        FileBackedEvent::ModelChanged { owner: observed }
+                            if observed == app.model.owner =>
+                        {
+                            observation_io::request(&model_reads, observed);
+                        }
+                        FileBackedEvent::ObservationRead {
+                            revision,
+                            owner,
+                            snapshot,
+                        } => {
+                            observation_io::apply(
+                                &mut app,
+                                &model_reads,
+                                revision,
+                                &owner,
+                                snapshot,
+                            );
+                            if app
+                                .model
+                                .known()
+                                .is_some_and(|s| s.publication_version == version)
+                            {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("repinned descriptor must hydrate through actual observation worker");
             assert_eq!(app.model.known().unwrap().publication_version, version);
             assert!(app.model_chooser.uncertain.is_none());
             assert_eq!(app.composer.text(), "ForceAgent draft\n  ");
@@ -278,12 +315,23 @@ async fn root_loss_revokes_model_events_and_prewrite_until_descriptor_repin() {
     })
     .await;
     watchers.stop().await;
+    drop(model_reads);
+    if outcome.is_err() {
+        observation_jobs.abort_all();
+    }
+    while let Some(joined) = observation_jobs.join_next().await {
+        if outcome.is_ok() {
+            joined.unwrap();
+        }
+    }
     assert!(watchers.recovery.is_none());
     assert!(
         !fault
             .open_paths()
             .iter()
-            .any(|p| p.ends_with("/machine/ui/events") || p.ends_with("/machine/tape"))
+            .any(|p| p.ends_with("/machine/ui/events")
+                || p.ends_with("/machine/tape")
+                || p.ends_with("/machine/ui/models"))
     );
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);

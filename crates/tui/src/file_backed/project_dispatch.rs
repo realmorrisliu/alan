@@ -1,5 +1,19 @@
 use super::*;
 
+pub(super) fn project_selector(path: &str) -> (String, String) {
+    let id = alan_agent_protocol::UserInputRecord::new(
+        alan_agent_protocol::InputIntent::Command,
+        alan_agent_protocol::InputMode::FollowUp,
+        "",
+    )
+    .submission_id;
+    let command = format!(
+        "project-cwd-v1 {}",
+        serde_json::json!({"id": id, "path": path})
+    );
+    (id, command)
+}
+
 pub(super) fn dispatch_with_pending_submissions(
     app: &mut FileBackedApp,
     event: FileBackedEvent,
@@ -34,8 +48,22 @@ pub(super) fn dispatch_with_pending_submissions(
         }
     }
     let action = app.dispatch_with_pending_submission(event, !pending_turns.is_empty());
-    if matches!(action, Some(FileBackedAction::Project(_)))
-        && !app.project_boundary_available(blocked)
+    if (app.project_host_pending || app.pending_project_control.is_some())
+        && matches!(action, Some(FileBackedAction::Submit(_)))
+    {
+        app.notice = Some(
+            "project operation pending; draft retained; /help or /quit remain available".into(),
+        );
+        return None;
+    }
+    if matches!(
+        action,
+        Some(FileBackedAction::Project(ProjectControl::Mount { .. }))
+    ) && !app.project_boundary_available(blocked)
+        || matches!(
+            action,
+            Some(FileBackedAction::Project(ProjectControl::Revoke { .. }))
+        ) && !app.project_recovery_boundary_available(blocked)
     {
         app.notice =
             Some("project selection requires settled Idle or Paused with no admitted input".into());

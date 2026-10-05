@@ -253,3 +253,64 @@ fn late_emphasis_close_preserves_uncommitted_content() {
     }
     assert_eq!(cell.render_lines(opts).concat(), "a".repeat(40));
 }
+
+#[test]
+fn markdown_intraword_underscores_preserve_identifiers_and_source_cut() {
+    use ratatui::style::Modifier;
+    let source = "model_control_available foo__bar__baz 中_文_名 _emphasis_ __strong__ `code_name`";
+    for width in [40, 60, 73, 80, 120] {
+        let opts = RenderOpts::new(width, false);
+        let mut cell = HistoryCell::Assistant(source.into());
+        let rows = cell.render_styled_lines(opts);
+        let text = rows.iter().map(ToString::to_string).collect::<String>();
+        assert!(text.contains("model_control_available"), "{text}");
+        assert!(
+            text.contains("foo__bar__baz") && text.contains("中_文_名"),
+            "{text}"
+        );
+        assert_eq!(
+            rows.iter()
+                .flat_map(|r| &r.spans)
+                .filter(|s| s.style.add_modifier.contains(Modifier::ITALIC))
+                .map(|s| s.content.as_ref())
+                .collect::<String>(),
+            "emphasis"
+        );
+        assert_eq!(
+            rows.iter()
+                .flat_map(|r| &r.spans)
+                .filter(|s| s.style.add_modifier.contains(Modifier::BOLD))
+                .map(|s| s.content.as_ref())
+                .collect::<String>(),
+            "strong"
+        );
+        let escaped = HistoryCell::Assistant(r"\_escaped\_ _name_with_underscores_".into());
+        let escaped_text = escaped
+            .render_styled_lines(opts)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<String>();
+        assert!(
+            escaped_text.contains("_escaped_") && escaped_text.contains("name_with_underscores")
+        );
+        let before = cell.render_styled_lines(opts);
+        cell.trim_rendered_prefix(opts, 1);
+        assert_eq!(cell.render_styled_lines(opts), before[1..]);
+        let HistoryCell::AssistantTail { text, committed } = &cell else {
+            panic!()
+        };
+        assert_eq!(text, source);
+        assert!(source.is_char_boundary(committed.0));
+        let cut = *committed;
+        for resized in [40, 120, 60] {
+            assert_eq!(
+                cell.render_styled_lines(RenderOpts::new(resized, false)),
+                HistoryCell::AssistantTail {
+                    text: source.into(),
+                    committed: cut
+                }
+                .render_styled_lines(RenderOpts::new(resized, false))
+            );
+        }
+    }
+}

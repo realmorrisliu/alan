@@ -117,12 +117,27 @@ fn inline(text: &str, atoms: &[Atom], style: Style, output: &mut Vec<Atom>) {
                 continue;
             }
         }
-        if let Some(delimiter) = ["`", "**", "__", "*", "_"]
-            .into_iter()
-            .find(|d| rest.starts_with(d))
-        {
+        if let Some(delimiter) = ["`", "**", "__", "*", "_"].into_iter().find(|d| {
+            rest.starts_with(d)
+                && (!d.starts_with('_')
+                    || !text[..byte]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_'))
+        }) {
             let start = byte + delimiter.len();
-            if let Some(end) = text[start..].find(delimiter).filter(|end| *end > 0) {
+            if let Some(end) = text[start..]
+                .match_indices(delimiter)
+                .map(|(end, _)| end)
+                .find(|end| {
+                    *end > 0
+                        && (!delimiter.starts_with('_')
+                            || !text[start + end + delimiter.len()..]
+                                .chars()
+                                .next()
+                                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_'))
+                })
+            {
                 let body = &text[start..start + end];
                 let first = index + delimiter.len();
                 let last = first + body.chars().count();

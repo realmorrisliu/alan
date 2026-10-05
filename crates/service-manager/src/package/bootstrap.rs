@@ -7,6 +7,10 @@ use anyhow::{Result, ensure};
 
 use super::PackageService;
 
+#[cfg(test)]
+#[path = "tests/bootstrap_budget_owner.rs"]
+mod budget_owner_tests;
+
 pub(super) struct BootstrapWait {
     remaining: Mutex<Duration>,
     cancelled: AtomicBool,

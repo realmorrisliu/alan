@@ -331,21 +331,15 @@ fn mark_cursor_in_line(line: &mut Line<'static>, cursor: usize) -> Option<usize>
 
 fn mark_cursor_in_span(span: &Span<'static>, cursor: usize) -> Option<(Vec<Span<'static>>, usize)> {
     let graphemes = span.styled_graphemes(Style::default()).collect::<Vec<_>>();
-    let mut byte_offset = 0;
+    // Ratatui omits control graphemes. Keep offsets in the original input,
+    // rather than accumulating lengths in that filtered display projection.
+    let source_start = |symbol: &str| symbol.as_ptr() as usize - span.content.as_ptr() as usize;
     let marker_index = graphemes
         .iter()
-        .position(|grapheme| {
-            let end = byte_offset + grapheme.symbol.len();
-            let contains_cursor = cursor < end;
-            byte_offset = end;
-            contains_cursor
-        })
+        .position(|grapheme| cursor < source_start(grapheme.symbol) + grapheme.symbol.len())
         .or_else(|| graphemes.len().checked_sub(1))?;
     let marker = &graphemes[marker_index];
-    let marker_start = graphemes[..marker_index]
-        .iter()
-        .map(|grapheme| grapheme.symbol.len())
-        .sum::<usize>();
+    let marker_start = source_start(marker.symbol);
     let marker_end = marker_start + marker.symbol.len();
     let cursor_column = if cursor == usize::MAX || cursor >= span.content.len() {
         unicode_width::UnicodeWidthStr::width(marker.symbol)

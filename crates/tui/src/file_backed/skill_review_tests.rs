@@ -43,6 +43,9 @@ async fn skill_consumer_root_loss_rejects_old_watch_and_recovers_same_root() {
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(128);
         let mut watchers = AgentWatchers::start(tails, "/agent/root", tx.clone());
+        let mut observation_jobs = tokio::task::JoinSet::new();
+        let skill_reads =
+            observation_io::start(shell.clone(), false, tx.clone(), &mut observation_jobs);
         let outcome = catch_poll(async {
             skills::dispatch_skill_event(&shell, &mut app, skill_event(&mut rx).await).await;
             app.composer.set_text_with_cursor("draft $", 7);
@@ -82,6 +85,37 @@ async fn skill_consumer_root_loss_rejects_old_watch_and_recovers_same_root() {
                 )
                 .await;
             assert_eq!(app.skills.owner, owner);
+            observation_io::request(&skill_reads, owner.clone());
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    match rx.recv().await.unwrap() {
+                        FileBackedEvent::SkillsChanged { owner: observed }
+                            if observed == app.skills.owner =>
+                        {
+                            observation_io::request(&skill_reads, observed);
+                        }
+                        FileBackedEvent::ObservationRead {
+                            revision,
+                            owner,
+                            snapshot,
+                        } => {
+                            observation_io::apply(
+                                &mut app,
+                                &skill_reads,
+                                revision,
+                                &owner,
+                                snapshot,
+                            );
+                            if !app.completion_sources.skills.is_empty() {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await
+            .expect("repinned Skill descriptor must hydrate through actual observation worker");
             assert_eq!(app.completion_sources.skills[0].value, "stale-restored");
             assert_eq!(app.composer.text(), "draft $");
             assert_eq!(app.composer.cursor(), 7);
@@ -89,6 +123,15 @@ async fn skill_consumer_root_loss_rejects_old_watch_and_recovers_same_root() {
         })
         .await;
         watchers.stop().await;
+        drop(skill_reads);
+        if outcome.is_err() {
+            observation_jobs.abort_all();
+        }
+        while let Some(joined) = observation_jobs.join_next().await {
+            if outcome.is_ok() {
+                joined.unwrap();
+            }
+        }
         assert!(watchers.recovery.is_none());
         if let Err(panic) = outcome {
             std::panic::resume_unwind(panic);

@@ -83,15 +83,22 @@ impl AgentWatchers {
                 if self.root_agent_pid == Some(pid)
                     && (app.skills.owner.is_empty() || app.model.owner.is_empty()) =>
             {
-                // Repin revoked observations only after descriptor hydration and identity recheck.
+                // Repin unknown projections, then hydrate off the terminal loop.
                 let owner = format!("/agent/{pid}");
-                let snapshot = skills::read_skills(shell, &owner).await;
-                let model_snapshot = model::read_model(shell, &owner).await;
-                if current_root_agent_pid(shell).await.ok().flatten() == Some(pid) {
-                    app.apply_skills(&owner, snapshot);
-                    app.model.apply(&owner, model_snapshot);
-                    app.reconcile_model_chooser();
-                    self.pid_refresh_failed = false;
+                app.apply_skills(&owner, None);
+                app.model.apply(&owner, None);
+                app.reconcile_model_chooser();
+                self.pid_refresh_failed = tx
+                    .try_send(FileBackedEvent::SkillsChanged {
+                        owner: owner.clone(),
+                    })
+                    .is_err()
+                    || tx
+                        .try_send(FileBackedEvent::ModelChanged { owner })
+                        .is_err();
+                if self.pid_refresh_failed {
+                    app.invalidate_skill_owner();
+                    app.invalidate_model_owner();
                 }
                 false
             }
@@ -99,9 +106,7 @@ impl AgentWatchers {
                 app.invalidate_skill_owner();
                 app.invalidate_model_owner();
                 if app.pending_project_control.is_some() {
-                    app.fail_project_control(
-                        "Root owner changed; project control invalidated, effects uncertain".into(),
-                    );
+                    app.fence_project_control();
                 }
                 let pending_count = pending_turns.len();
                 // Tape history outlives the local pending-input lock.

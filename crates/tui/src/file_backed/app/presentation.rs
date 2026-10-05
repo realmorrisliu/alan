@@ -84,7 +84,11 @@ impl FileBackedApp {
         let location = self.project.as_ref().map_or_else(
             || "no project".to_string(),
             |project| {
-                if self.pending_project_cwd.is_some() {
+                if self
+                    .pending_project_control
+                    .as_ref()
+                    .is_some_and(|control| !control.fenced)
+                {
                     return format!("/{} · opening", project.label);
                 }
                 let location = match self.namespace_cwd.strip_prefix(&project.namespace_path) {
@@ -110,21 +114,31 @@ impl FileBackedApp {
         } else {
             status
         };
-        let model = self.model.header();
+        let model = if self.model.known().is_some() {
+            self.model.header()
+        } else {
+            "model unknown".into()
+        };
         let model = model.trim();
         let model_width = width.saturating_sub(
-            UnicodeWidthStr::width("alan  · model  · ") + UnicodeWidthStr::width(status) + 1,
+            UnicodeWidthStr::width(" ·  · ")
+                + UnicodeWidthStr::width(status)
+                + UnicodeWidthStr::width(location.as_str()).min(20),
         );
+        let compact_model;
+        let model = if UnicodeWidthStr::width(model) > model_width {
+            compact_model = self.model.header_controls(false);
+            compact_model.as_str()
+        } else {
+            model
+        };
         let model = truncate_middle(model, model_width);
-        let suffix = format!(" · model {model} · {status}");
-        let available = width.saturating_sub(
-            UnicodeWidthStr::width("alan ") + UnicodeWidthStr::width(suffix.as_str()),
-        );
+        let suffix = format!(" · {model} · {status}");
+        let available = width.saturating_sub(UnicodeWidthStr::width(suffix.as_str()));
         let location = truncate_middle(&location, available);
         Line::from(vec![
-            Span::styled("alan ", Style::default()),
             Span::styled(location, Style::default().fg(Color::Cyan)),
-            Span::styled(" · model ", Style::default()),
+            Span::styled(" · ", Style::default()),
             Span::styled(model, Style::default()),
             Span::styled(" · ", Style::default()),
             Span::styled(status.to_string(), Style::default()),

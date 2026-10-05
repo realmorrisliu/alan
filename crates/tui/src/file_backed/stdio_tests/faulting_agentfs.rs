@@ -27,6 +27,7 @@ pub(crate) struct FaultingFileServer {
     write_pause: Mutex<Option<WalkPause>>,
     read_failure: Mutex<Option<String>>,
     descriptor_bytes: Mutex<Option<(String, Vec<u8>)>>,
+    write_failure: Mutex<Option<String>>,
     failed_reads: std::sync::atomic::AtomicUsize,
     walks: std::sync::atomic::AtomicUsize,
 }
@@ -43,9 +44,14 @@ impl FaultingFileServer {
             write_pause: Mutex::new(None),
             read_failure: Mutex::new(None),
             descriptor_bytes: Mutex::new(None),
+            write_failure: Mutex::new(None),
             failed_reads: std::sync::atomic::AtomicUsize::new(0),
             walks: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn lose_write_ack(&self, suffix: &str) {
+        *self.write_failure.lock().unwrap() = Some(suffix.into());
     }
 
     pub(crate) fn descriptor_bytes(&self, suffix: &str, bytes: Vec<u8>) {
@@ -259,6 +265,15 @@ impl FileServer for FaultingFileServer {
         if let Some(pause) = pause {
             let _ = pause.reached.send(());
             let _ = pause.resume.await;
+        }
+        if self
+            .write_failure
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|suffix| path.ends_with(suffix))
+        {
+            return Err(ErrorCode::Io);
         }
         result
     }

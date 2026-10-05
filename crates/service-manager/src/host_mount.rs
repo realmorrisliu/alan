@@ -576,13 +576,16 @@ impl HostMountService {
         Ok(())
     }
 
+    /// Revoke an existing grant; retries of an inactive grant have no further effects.
     pub fn revoke(&self, grant_id: &str, actor: impl Into<String>) -> Result<()> {
         let mut state = self.state.lock().unwrap();
         let grant = state
             .grants
             .get_mut(grant_id)
             .with_context(|| format!("unknown Host Mount grant `{grant_id}`"))?;
-        ensure!(grant.public.active, "Host Mount grant is already revoked");
+        if !grant.public.active {
+            return Ok(());
+        }
         grant.public.active = false;
         let affected = grant
             .projections

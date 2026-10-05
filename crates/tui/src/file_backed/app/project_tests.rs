@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "project_retry_tests.rs"]
+mod retry_tests;
+
 fn receipt() -> ProjectMountReceipt {
     ProjectMountReceipt {
         grant_id: "new".into(),
@@ -9,7 +12,7 @@ fn receipt() -> ProjectMountReceipt {
     }
 }
 fn action(id: &str, status: &str, exit: i32, cwd: &str) -> ActionSnapshot {
-    ActionSnapshot { id: "action".into(), name: "cd".into(), status: status.into(), output: String::new(), result: serde_json::json!({"call_id": id, "exit_code": exit, "outcome": {"success": exit == 0, "cwd": cwd}}).to_string() }
+    ActionSnapshot { id: "action".into(), name: "cd".into(), status: status.into(), output: String::new(), result: serde_json::json!({"call_id": id, "title": "Select Process directory", "exit_code": exit, "outcome": {"success": exit == 0, "cwd": cwd}}).to_string() }
 }
 fn staged() -> FileBackedApp {
     let mut app = FileBackedApp::new("/agent/root".into());
@@ -36,6 +39,21 @@ fn receipt_and_wrong_or_nonterminal_evidence_never_confirm() {
     assert_eq!(app.project.as_ref().unwrap().grant_id, "new");
     assert_eq!(app.activity.state, UiActivityState::Paused);
     assert_eq!(app.namespace_cwd, std::path::PathBuf::from("/mnt/new"));
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
+    assert!(app.retained_project_mount.is_none());
+    assert!(app.pending_project_control.is_none());
+    assert!(app.project_boundary_available(false));
+    assert!(app.handle_command("/project").is_none());
+    assert_eq!(
+        app.notice.as_deref(),
+        Some("revoke the active project before selecting another")
+    );
+    assert!(
+        matches!(app.handle_command("/project revoke"), Some(FileBackedAction::Project(ProjectControl::Revoke { grant_id })) if grant_id == "new")
+    );
 }
 #[test]
 fn rejection_and_unexpected_cwd_preserve_binding_and_cleanup_only_new_grant() {
@@ -59,7 +77,10 @@ fn rejection_and_unexpected_cwd_preserve_binding_and_cleanup_only_new_grant() {
                 None
             }
         );
-        assert!(app.pending_project_control.is_none());
+        assert_eq!(
+            app.pending_project_control.is_none(),
+            snapshot.status == "failed"
+        );
     }
 }
 #[test]
@@ -71,6 +92,17 @@ fn reconnect_tombstones_selector_and_does_not_replay_or_confirm_late_action() {
     app.observe_action_cwd(&snapshot);
     assert!(app.project.is_none());
     assert_eq!(app.namespace_cwd, std::path::PathBuf::from("/"));
+    let pending = app
+        .pending_project_control
+        .as_ref()
+        .expect("retain sole candidate receipt");
+    assert_eq!(pending.owner, "/agent/1");
+    assert_eq!(pending.id, "selector");
+    assert_eq!(
+        app.retained_project_mount.as_ref().unwrap().0.grant_id,
+        "new"
+    );
+    assert!(!app.project_boundary_available(false));
     assert!(
         app.project_cleanup.is_none(),
         "unknown effects must retain candidate authority"
@@ -114,4 +146,64 @@ fn admission_yield_and_running_boundaries_are_blocked() {
     app.activity.waiting_submission_ids.clear();
     app.response_in_flight = Some("approval".into());
     assert!(!app.project_boundary_available(false));
+}
+
+#[test]
+fn explicit_current_owner_recovery_retains_grant_until_confirmed_host_revoke() {
+    let mut app = staged();
+    app.fail_project_control("lost ack".into());
+    app.reset_for_root_process_change();
+    app.queue.apply(
+        "/agent/2",
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
+    assert!(
+        matches!(app.handle_command("/project revoke"), Some(FileBackedAction::Project(ProjectControl::Revoke { grant_id })) if grant_id == "new")
+    );
+    app.stage_project_control(
+        "/agent/2".into(),
+        "recover".into(),
+        None,
+        Some("new".into()),
+    );
+    app.observe_project_action("/agent/1", &action("selector", "completed", 0, "/mnt/new"));
+    assert!(app.take_ready_project_revoke().is_none());
+    app.observe_project_action("/agent/2", &action("recover", "completed", 0, "/"));
+    assert_eq!(app.take_ready_project_revoke().as_deref(), Some("new"));
+    assert_eq!(app.retained_project_grant().as_deref(), Some("new"));
+    assert!(!app.project_boundary_available(false));
+    assert!(app.take_ready_project_revoke().is_none());
+    app.project_revoked();
+    assert!(app.retained_project_grant().is_none());
+    assert!(app.project_boundary_available(false));
+}
+
+#[test]
+fn candidate_cleanup_retains_failed_authority_and_requires_explicit_retry() {
+    for rejected in [true, false] {
+        let mut app = if rejected {
+            staged()
+        } else {
+            FileBackedApp::new("/agent/root".into())
+        };
+        if rejected {
+            app.observe_project_action("/agent/1", &action("selector", "rejected", 1, "/"));
+        } else {
+            app.project_cleanup = Some("new".into());
+        }
+        app.queue.apply(
+            "/agent/1",
+            Some(alan_agent_protocol::UiQueueSnapshot::default()),
+        );
+        let grant = app.take_project_cleanup().unwrap();
+        app.finish_project_cleanup(&grant, false);
+        assert_eq!(app.project_cleanup.as_deref(), Some("new"));
+        assert!(app.take_project_cleanup().is_none());
+        assert!(!app.project_boundary_available(false));
+        assert!(app.handle_command("/project revoke").is_none());
+        assert_eq!(app.take_project_cleanup().as_deref(), Some("new"));
+        app.finish_project_cleanup("new", true);
+        assert!(app.project_cleanup.is_none());
+        assert!(app.project_boundary_available(false));
+    }
 }

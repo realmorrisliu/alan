@@ -9,6 +9,32 @@ pub(in crate::file_backed) enum FileBackedEvent {
         id: Option<String>,
         rows: Vec<Line<'static>>,
     },
+    ModelSelectionWritten {
+        owner: String,
+        id: String,
+        success: bool,
+        owner_current: bool,
+    },
+    ObservationRead {
+        revision: u64,
+        owner: String,
+        snapshot: super::super::observation_io::Snapshot,
+    },
+    ProjectHostCompleted {
+        owner: String,
+        command: ProjectControl,
+        result: Result<super::super::ProjectControlResult, String>,
+    },
+    ProjectCwdWritten {
+        owner: String,
+        id: String,
+        owner_current: bool,
+        result: Result<(), String>,
+    },
+    ProjectGrantObserved {
+        grant_id: String,
+        active: Option<bool>,
+    },
     Terminal(TerminalEvent),
     Output(String),
     ResumeWriteCompleted {

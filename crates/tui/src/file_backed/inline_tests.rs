@@ -371,7 +371,7 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
 
     assert_eq!(line(0), ": pwd");
     assert_eq!(line(1), "/workspace/alan");
-    assert!(line(2).starts_with("alan no project · model unknown · ready"));
+    assert!(line(2).starts_with("no project · model unknown · ready"));
     assert_eq!(line(3), ":");
     assert_eq!(
         backend.cursor_position(),
@@ -391,7 +391,7 @@ fn prompt_shows_the_process_selected_next_model() {
         .trim_end()
         .to_string();
 
-    assert!(line.starts_with("alan no project · model next gpt-6-luna · ready"));
+    assert!(line.starts_with("no project · next gpt-6-luna · high · ready"));
 }
 
 #[test]
@@ -430,7 +430,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(text.contains("model next"), "{text}");
+        assert!(text.contains("next gpt-6-luna"), "{text}");
         assert!(text.ends_with(status), "{text}");
     }
 }
@@ -717,6 +717,99 @@ fn folded_prefix_uses_visible_body_geometry_at_multiple_widths() {
                 actual.backend().cursor_position(),
                 expected.backend().cursor_position()
             );
+        }
+    }
+}
+
+#[test]
+fn pasted_controls_keep_original_utf8_cursor_offsets() {
+    let mut inputs = ["\t中", "a\t中", "\t👩‍💻e\u{301}", "\u{1b}中\0", "\t中\n\t界x"]
+        .map(str::to_owned)
+        .to_vec();
+    inputs.push(format!("\t{}👩‍💻e\u{301}", "界".repeat(70)));
+    for width in [40, 60, 73, 80, 120] {
+        for input in &inputs {
+            let mut app = FileBackedApp::new("/agent/root".into());
+            app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Paste(
+                input.clone(),
+            )));
+            assert_eq!(app.composer.text(), input);
+            let visible = input
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n')
+                .collect::<String>();
+            let mut expected = FileBackedApp::new("/agent/root".into());
+            expected.composer.set_text(visible);
+            for _ in 0..3 {
+                let mut actual_terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+                actual_terminal.draw(|frame| draw(frame, &app)).unwrap();
+                let mut expected_terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+                expected_terminal
+                    .draw(|frame| draw(frame, &expected))
+                    .unwrap();
+                assert_eq!(
+                    actual_terminal.backend().buffer(),
+                    expected_terminal.backend().buffer()
+                );
+                assert_eq!(
+                    actual_terminal.backend().cursor_position(),
+                    expected_terminal.backend().cursor_position()
+                );
+                app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+                // Controls have no terminal width; derive expected cursor from the original prefix.
+                let before = &app.composer.text()[..app.composer.cursor()];
+                let cursor = before
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\n')
+                    .map(char::len_utf8)
+                    .sum();
+                expected
+                    .composer
+                    .set_text_with_cursor(expected.composer.text().to_owned(), cursor);
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_header_keeps_project_access_model_and_effort_at_pane_width() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    app.model
+        .snapshot
+        .as_mut()
+        .unwrap()
+        .selected_next
+        .as_mut()
+        .unwrap()
+        .reasoning
+        .effort = Some(alan_agent_protocol::ReasoningEffort::Medium);
+    app.project = Some(ProjectMountReceipt {
+        grant_id: "grant".into(),
+        namespace_path: "/mnt/project".into(),
+        label: "fixture".into(),
+        access: ProjectAccess::ReadOnly,
+    });
+    app.namespace_cwd = "/mnt/project".into();
+    for known in [false, true] {
+        app.queue.apply(
+            "/agent/1",
+            Some(alan_agent_protocol::UiQueueSnapshot {
+                known,
+                revision: u64::from(known),
+                ..Default::default()
+            }),
+        );
+        for width in [69, 73, 80, 120] {
+            let line = app.context_line(width);
+            let text = line.to_string();
+            assert!(line.width() <= width, "{width}: {text}");
+            assert!(text.contains("/fixture · read-only"), "{width}: {text}");
+            assert!(text.contains("next gpt-6.1-sol"), "{width}: {text}");
+            assert!(text.contains(if known { "queued 0" } else { "queue unknown" }));
+            if known || width >= 73 {
+                assert!(text.contains("medium"), "{width}: {text}");
+            }
         }
     }
 }
