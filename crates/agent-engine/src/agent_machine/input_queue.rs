@@ -172,6 +172,9 @@ pub(crate) struct MachineInputQueue {
     /// Accepted inputs whose rejection has not crossed the durable removal barrier.
     pub(crate) pending_binding_rejections: std::collections::HashSet<String>,
     pub(crate) confirmed_binding: Option<crate::runtime::model_binding::InputBinding>,
+    /// Process-control receipts, independent of ordinary input admission and disposition.
+    pub(crate) model_selection_outcomes:
+        std::collections::HashMap<String, alan_agent_protocol::UiInputStatus>,
     pub(crate) bindings:
         std::collections::HashMap<String, crate::runtime::model_binding::InputBinding>,
     /// Derived lookup for Process controls while a transition borrows the Machine.
@@ -266,6 +269,19 @@ impl super::AgentMachine {
             match event.event_type.as_str() {
                 "machine_model_selected_v1" => {
                     queue.confirmed_binding = Some(serde_json::from_value(event.payload.clone())?);
+                    if let Some(id) = event.payload["submission_id"].as_str() {
+                        queue
+                            .model_selection_outcomes
+                            .insert(id.to_owned(), alan_agent_protocol::UiInputStatus::Completed);
+                    }
+                }
+                "machine_model_selection_failed_v1" => {
+                    let id = event.payload["submission_id"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("model selection failure missing ID"))?;
+                    queue
+                        .model_selection_outcomes
+                        .insert(id.to_owned(), alan_agent_protocol::UiInputStatus::Failed);
                 }
                 "machine_input_admitted_v1" => {
                     let input: Submission = serde_json::from_value(event.payload.clone())?;

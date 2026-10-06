@@ -104,33 +104,94 @@ impl RuntimeSubmissionQueues {
         let alan_agent_protocol::Op::SelectModel { model } = &input.op else {
             return false;
         };
-        let result: Result<()> = async {
-            anyhow::ensure!(input.intent == alan_agent_protocol::InputIntent::Agent, "model selection requires Agent intent");
-            let environment = self.environment.as_ref().context("missing Connection authority")?;
-            let mut bindings = environment.model_bindings.lock().await;
-            let authority = bindings.authority.as_ref().context("Connection catalog unavailable")?;
-            let callable = authority.capture(Some(model)).await?;
-            let controls = crate::resolve_runtime_request_controls(&callable.config, crate::provider_capabilities_for_config(&callable.config), bindings.runtime_intent)?;
-            // Publication must be durable before confirming. Queues and active work are untouched.
-            crate::agent_machine::input_queue::persist_input_event(self.recorder.as_ref(), "machine_model_selected_v1", serde_json::json!({"submission_id": input.id, "callable_binding": callable.identity, "request_controls":controls})).await?;
-            bindings.confirmed = Some(callable);
-            Ok(())
-        }.await;
-        if let Err(error) = &result {
-            warn!(%error, submission_id=%input.id, "Model selection failed at Connection authority");
-        }
+        use alan_agent_protocol::UiInputStatus;
+        let previous = self
+            .outer_queue
+            .lock()
+            .expect("input queue")
+            .model_selection_outcomes
+            .get(&input.id)
+            .copied();
+        let status = if let Some(status) = previous {
+            status
+        } else {
+            let result = self.install_model_selection(input, model).await;
+            let status = match result {
+                Ok(()) => UiInputStatus::Completed,
+                Err(error) => {
+                    warn!(%error, submission_id=%input.id, "Model selection failed at Connection authority");
+                    if let Err(error) = crate::agent_machine::input_queue::persist_input_event(
+                        self.recorder.as_ref(),
+                        "machine_model_selection_failed_v1",
+                        serde_json::json!({"submission_id":input.id}),
+                    )
+                    .await
+                    {
+                        // A broken recorder cannot promise recovery deduplication; retain the
+                        // terminal failure locally so redelivery never repeats capture here.
+                        warn!(%error, submission_id=%input.id, "Model failure receipt is not durable");
+                    }
+                    UiInputStatus::Failed
+                }
+            };
+            self.outer_queue
+                .lock()
+                .expect("input queue")
+                .model_selection_outcomes
+                .insert(input.id.clone(), status);
+            status
+        };
         self.observe_models().await;
         if let Some(environment) = &self.environment {
             let event = alan_agent_protocol::UiEvent::InputCompleted {
                 submission_ids: vec![input.id.clone()],
-                status: if result.is_ok() { alan_agent_protocol::UiInputStatus::Completed } else { alan_agent_protocol::UiInputStatus::Failed },
-                error: result.err().map(|_| "Model selection not installed; Connection validation or persistence failed.".to_owned()),
+                status,
+                error: (status == UiInputStatus::Failed).then(|| "Model selection not installed; Connection validation or persistence failed.".to_owned()),
             };
             if let Err(error) = environment.agent_files().append_ui_event(&event).await {
                 warn!(%error, "selection settlement publication failed");
             }
         }
         true
+    }
+
+    async fn install_model_selection(&self, input: &Submission, model: &str) -> Result<()> {
+        anyhow::ensure!(
+            input.intent == alan_agent_protocol::InputIntent::Agent,
+            "model selection requires Agent intent"
+        );
+        let environment = self
+            .environment
+            .as_ref()
+            .context("missing Connection authority")?;
+        let mut bindings = environment.model_bindings.lock().await;
+        let authority = bindings
+            .authority
+            .as_ref()
+            .context("Connection catalog unavailable")?;
+        let callable = authority.capture(Some(model)).await?;
+        let controls = crate::resolve_runtime_request_controls(
+            &callable.config,
+            crate::provider_capabilities_for_config(&callable.config),
+            bindings.runtime_intent,
+        )?;
+        // The existing selection event owns installation; UI receipt delivery does not.
+        crate::agent_machine::input_queue::persist_input_event(
+            self.recorder.as_ref(),
+            "machine_model_selected_v1",
+            serde_json::json!({"submission_id": input.id,
+                "callable_binding": callable.identity, "request_controls": controls}),
+        )
+        .await?;
+        self.outer_queue
+            .lock()
+            .expect("input queue")
+            .confirmed_binding = Some(crate::runtime::model_binding::InputBinding {
+            callable_binding: callable.identity.clone(),
+            request_controls: controls,
+        });
+        bindings.confirmed = Some(callable);
+        Ok(())
     }
 
     pub(super) async fn activate_binding(&self, input: &Submission) -> Result<()> {

@@ -51,3 +51,14 @@ SHALL be explicit; no secret material SHALL enter these projections.
 - **THEN** the renderer distinguishes the observed selected-next binding from the request's pending or completed disposition
 - **AND** it does not fabricate model controls when the projection cannot be read
 - **AND** losing the owning Process or completion stream leaves the request uncertain without automatic retry
+
+#### Scenario: A completed model selection is retried after a later selection
+- **WHEN** a client repeats a model selection with the same input ID after a different model has been confirmed
+- **THEN** the original terminal outcome is returned without installing or persisting that selection again
+- **AND** subsequent ordinary input captures the later confirmed binding
+- **AND** restoring durable selection outcomes preserves the same identity fence without replaying model selection
+
+#### Scenario: A failed model selection is repeated
+- **WHEN** a selection has a retained terminal failure and the same input ID is delivered again
+- **THEN** it returns the same failed outcome without trying a new selection
+- **AND** a durable failure outcome does not replace the last successfully confirmed binding

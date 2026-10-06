@@ -8,6 +8,8 @@ use crate::runtime::model_binding::{
 mod command;
 #[path = "engine_model_qualification_tests.rs"]
 mod qualification;
+#[path = "engine_model_retry_tests.rs"]
+mod retry;
 #[path = "engine_model_settlement_tests.rs"]
 mod settlement;
 

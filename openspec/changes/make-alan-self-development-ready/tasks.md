@@ -92,6 +92,30 @@ required independent approval remain outstanding. No earlier passing head qualif
 Evidence owner: `direct-review-fixes/project-idempotency` in the existing Alan
 Cache. Required independent approval and merge/spec closure remain outstanding.
 
+### Follow-up model selection identity review — 2026-10-06
+
+Project correction `ca96a1d0` passed all16 checks (CI37419538164 and
+CodeQL37419538124); the two project findings are resolved. A later review found
+that a completed model selection could repeat after a later choice and silently
+restore the old binding. Three real Runtime regressions reproduced repeated
+capture on successful, failed and lost-completion-receipt retries. The direct
+correction uses the existing Machine input queue and rollout owner to retain
+selection outcomes; it reissues the terminal receipt without installing again.
+Durable failure evidence must not overwrite the last successful binding. A
+recorder failure can retain the outcome only in the current Process; absence of
+durable evidence is not qualified as cross-recovery deduplication.
+
+A read-only sibling-control audit found no retained-wire-ID or general exactly-once
+contract for legacy immediate controls. Their new-command-per-delivery semantics
+remain unchanged. Ordinary input, request answers and target-specific cancellation
+retain their existing identity owners. No generic control transaction framework is
+introduced. Model-focused12 and full Engine1367 passed/0 failed/1 ignored;
+independent final source review passed. A test-only Captures alias resolved the
+initial Clippy type-complexity finding without changing assertions or production;
+final focused12 and canonical `just quality` passed. Current-head CI remains pending. The test uses real Runtime and
+AgentFS with a controlled Connection authority, not a new live-provider claim.
+Evidence: `direct-review-fixes/control-idempotency` in the existing Alan Cache.
+
 ## Direct implementation takeover — 2026-10-06
 
 The user explicitly replaced Native-only implementation with direct Codex
