@@ -6,6 +6,34 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## HTTP timeout and early Walk cancellation review — 2026-10-06
+
+Two new findings on `a6db3fbf` are confirmed and corrected directly by Codex.
+HTTP408 now uses the existing safe timeout cause, while permanent4xx responses
+remain terminal. A real reqwest status regression failed before correction;
+Runtime/LLMFS HTTP fixtures verify408→200 takes exactly two requests and404
+terminates after one, retaining exact input receipts and safe diagnostics.
+
+The aP exporter first polls requests in frame order before scheduling pending IO
+independently. MountFs reserves its first backing Walk during the same critical
+section that resolves its path; synthetic walks publish there without backing IO.
+The deterministic exported two-tag regression reproduced an early Clunk missing
+that reservation. Cancellation already ready before backing dispatch takes
+priority, so cleanup cannot be followed by a new late backing Walk. Existing
+PendingWalk owns cleanup, no permanent fid tombstones or global IO serialization
+are introduced. Reuse, backing-fid cleanup, unrelated pending IO and request-panic
+behavior are checked at their existing owners. This does not promise general
+cross-Process replay or arbitrary FileServer lifecycle ordering.
+
+Focused Kernel/aP154, LLM203 (7 ignored), real HTTP Runtime5 and full
+workspace2761 (10 ignored) passed with zero failures. Independent standards and
+spec source reviews and canonical `just quality` passed at the original baseline.
+Remote main integration and a new steering-settlement review require final
+combined qualification; earlier results are not substituted for current-head CI.
+Qualification evidence is retained under `direct-review-fixes/http408-walk-acceptance`
+in the existing Alan Cache. Final qualification and current-head CI are recorded
+with the correction commit and PR replies; merge still needs independent approval.
+
 ## Direct correction delivery — 2026-10-06
 
 The direct review corrections are being delivered on `codex/alan-self-development-g2`.

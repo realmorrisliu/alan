@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::task::Poll;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncWrite};
@@ -279,7 +280,25 @@ where
                     match message {
                         Some(Ok(ExportReaderMessage::Request { tag, request })) => {
                             let transport = transport.clone();
-                            calls.spawn(async move { (tag, transport.call(request).await) });
+                            let mut call = Box::pin(async move { transport.call(request).await });
+                            // Start in frame order, so an owner's initial reservation (or
+                            // FIFO lock wait) precedes the next request. Never await its IO.
+                            let ready = std::future::poll_fn(|cx| {
+                                Poll::Ready(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    match call.as_mut().poll(cx) {
+                                        Poll::Ready(result) => Some(result),
+                                        Poll::Pending => None,
+                                    }
+                                })))
+                            }).await.map_err(|_| WireError::Io(std::io::Error::other(
+                                "aP exported request panicked at dispatch",
+                            )))?;
+                            calls.spawn(async move {
+                                (tag, match ready {
+                                    Some(result) => result,
+                                    None => call.await,
+                                })
+                            });
                         }
                         Some(Err(error)) => break Err(error),
                         None => break Ok(()),

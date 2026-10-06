@@ -46,6 +46,7 @@ pub fn safe_failure_reason(error: &anyhow::Error) -> &'static str {
             if let Some(status) = http.status() {
                 return match status.as_u16() {
                     401 | 403 => "stream_error:authentication",
+                    408 => "stream_error:timeout",
                     429 => "stream_error:rate_limit",
                     500..=599 => "stream_error:unavailable",
                     _ => "stream_error:http",

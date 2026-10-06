@@ -1,5 +1,5 @@
 //! A backing walk owns its fid before the outer namespace can publish it.
-use super::{Fid, Request, Resolved, State};
+use super::{ErrorCode, Fid, Request, Resolved, Response, State};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
@@ -46,6 +46,20 @@ impl PendingWalk {
 
     pub(super) fn transfer(&mut self) {
         self.fid = None;
+    }
+
+    pub(super) async fn wait(
+        &self,
+        cancelled: &mut tokio::sync::oneshot::Receiver<()>,
+    ) -> Option<Result<Response, ErrorCode>> {
+        tokio::select! {
+            biased;
+            _ = cancelled => None,
+            result = self.resolved.call(Request::Walk {
+                fid: Fid::ROOT, newfid: self.fid.expect("pending backing fid"),
+                names: self.resolved.rel.clone(),
+            }) => Some(result),
+        }
     }
 
     pub(super) async fn close_backing(&self) {

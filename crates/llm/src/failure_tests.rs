@@ -184,3 +184,29 @@ async fn reqwest_response_body_failure_retains_typed_category() {
         assert!(output.recv().await.is_none(), "exactly one safe terminal");
     }
 }
+
+#[test]
+fn http_status_failures_preserve_transient_and_permanent_categories() {
+    for (status, expected) in [
+        (408, "stream_error:timeout"),
+        (400, "stream_error:http"),
+        (401, "stream_error:authentication"),
+        (403, "stream_error:authentication"),
+        (404, "stream_error:http"),
+        (422, "stream_error:http"),
+        (429, "stream_error:rate_limit"),
+        (500, "stream_error:unavailable"),
+        (503, "stream_error:unavailable"),
+        (504, "stream_error:unavailable"),
+    ] {
+        let response = reqwest::Response::from(
+            axum::http::Response::builder()
+                .status(status)
+                .body("private response body")
+                .unwrap(),
+        );
+        let error = anyhow::Error::from(response.error_for_status().unwrap_err())
+            .context("private request context");
+        assert_eq!(safe_failure_reason(&error), expected, "HTTP {status}");
+    }
+}

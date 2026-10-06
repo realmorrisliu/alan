@@ -7,19 +7,40 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn local_http_openrouter401_runtime_exact_input_failed() {
-    local_http_runtime_exact_input_failed(false).await;
+    local_http_runtime_exact_input(HttpOutcome::Unauthorized).await;
 }
 
 #[tokio::test]
 async fn local_http_anthropic_refusal_runtime_exact_input_failed() {
-    local_http_runtime_exact_input_failed(true).await;
+    local_http_runtime_exact_input(HttpOutcome::Refusal).await;
 }
 
-async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
-    let expected_reason = if anthropic_refusal {
-        "stream_error:safety"
-    } else {
-        "stream_error:authentication"
+#[tokio::test]
+async fn local_http_openrouter408_runtime_retries_exact_input() {
+    local_http_runtime_exact_input(HttpOutcome::TimeoutThenSuccess).await;
+}
+
+#[tokio::test]
+async fn local_http_openrouter404_runtime_does_not_retry() {
+    local_http_runtime_exact_input(HttpOutcome::NotFound).await;
+}
+
+#[derive(Clone, Copy)]
+enum HttpOutcome {
+    Unauthorized,
+    Refusal,
+    TimeoutThenSuccess,
+    NotFound,
+}
+
+async fn local_http_runtime_exact_input(outcome: HttpOutcome) {
+    let anthropic_refusal = matches!(outcome, HttpOutcome::Refusal);
+    let retries = matches!(outcome, HttpOutcome::TimeoutThenSuccess);
+    let expected_reason = match outcome {
+        HttpOutcome::Unauthorized => "stream_error:authentication",
+        HttpOutcome::Refusal => "stream_error:safety",
+        HttpOutcome::TimeoutThenSuccess => "stream_error:timeout",
+        HttpOutcome::NotFound => "stream_error:http",
     };
     let provider = if anthropic_refusal {
         "anthropic_messages"
@@ -42,11 +63,14 @@ async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
                 _ = server_stop.cancelled() => break,
                 accepted = listener.accept() => accepted.unwrap(),
             };
-            count.fetch_add(1, AtomicOrdering::SeqCst);
+            let attempt = count.fetch_add(1, AtomicOrdering::SeqCst);
             let mut request = Vec::new();
             loop {
                 let mut chunk = [0; 4096];
-                let n = socket.read(&mut chunk).await.unwrap();
+                let n = tokio::select! {
+                    _ = server_stop.cancelled() => return,
+                    read = socket.read(&mut chunk) => read.unwrap(),
+                };
                 assert!(n > 0, "incomplete Runtime HTTP request");
                 request.extend_from_slice(&chunk[..n]);
                 if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -77,9 +101,22 @@ async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
                         "data: {\"type\":\"message_stop\"}\n\n",
                     ),
                 )
+            } else if retries && attempt > 0 {
+                (
+                    "200 OK",
+                    "text/event-stream",
+                    concat!(
+                        "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"recovered-http-timeout\"},\"finish_reason\":\"stop\"}]}\n\n",
+                        "data: [DONE]\n\n",
+                    ),
+                )
             } else {
                 (
-                    "401 Unauthorized",
+                    match outcome {
+                        HttpOutcome::TimeoutThenSuccess => "408 Request Timeout",
+                        HttpOutcome::NotFound => "404 Not Found",
+                        _ => "401 Unauthorized",
+                    },
                     "text/plain",
                     "secretbodymarker https://private.example",
                 )
@@ -169,15 +206,20 @@ async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
             let ui = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
             let events: Vec<UiEvent> = ui.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
             if events.iter().any(|event| matches!(event, UiEvent::InputCompleted { submission_ids, .. } if submission_ids == std::slice::from_ref(&id)))
-                && events.iter().any(|event| matches!(event, UiEvent::Error { .. }))
+                && (retries || events.iter().any(|event| matches!(event, UiEvent::Error { .. })))
                 && matches!(events.last(), Some(UiEvent::Activity { snapshot }) if snapshot.state == alan_agent_protocol::UiActivityState::Idle)
             { break (ui, events); }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }).await;
-    runtime.shutdown().await.unwrap();
+    let shutdown =
+        tokio::time::timeout(std::time::Duration::from_secs(5), runtime.shutdown()).await;
     stop.cancel();
-    server.await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("bounded HTTP fixture cleanup")
+        .unwrap();
+    shutdown.expect("bounded Runtime shutdown").unwrap();
     let (ui, events) = observed.expect("exact Runtime input terminal and idle");
     let completed: Vec<_> = events
         .iter()
@@ -191,18 +233,29 @@ async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
         })
         .collect();
     assert_eq!(completed.len(), 1, "one exact-ID terminal");
-    assert_eq!(*completed[0].0, UiInputStatus::Failed);
-    assert!(
-        completed[0].1.as_ref().unwrap().contains(expected_reason),
-        "terminal={:?}",
-        completed[0]
+    assert_eq!(
+        *completed[0].0,
+        if retries {
+            UiInputStatus::Completed
+        } else {
+            UiInputStatus::Failed
+        }
     );
+    if retries {
+        assert!(completed[0].1.is_none());
+    } else {
+        assert!(
+            completed[0].1.as_ref().unwrap().contains(expected_reason),
+            "terminal={:?}",
+            completed[0]
+        );
+    }
     assert_eq!(
         events
             .iter()
             .filter(|event| matches!(event, UiEvent::Error { .. }))
             .count(),
-        1
+        usize::from(!retries)
     );
     let history = RolloutRecorder::load_history(&path).await.unwrap();
     let admission: Vec<_> = history
@@ -251,20 +304,31 @@ async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
     }
     let durable = tokio::fs::read_to_string(&path).await.unwrap();
     let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
-    assert!(
-        !tape.lines().any(
-            |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["role"] == "assistant"
-        ),
-        "no text/fallback execution"
-    );
-    assert!(
-        !history.iter().any(
-            |item| matches!(item, RolloutItem::Message(message) if message.role == "assistant")
-                || matches!(item, RolloutItem::ToolCall(_))
-                || matches!(item, RolloutItem::Event(event) if event.event_type == "text_delta")
-        ),
-        "no assistant TextDelta, fallback or Tool execution"
-    );
+    if retries {
+        assert!(tape.contains("recovered-http-timeout"));
+        assert_eq!(history.iter().filter(|item| matches!(item, RolloutItem::Message(message) if message.role == "assistant")).count(), 1);
+        assert!(
+            !history
+                .iter()
+                .any(|item| matches!(item, RolloutItem::ToolCall(_)))
+        );
+    } else {
+        assert!(
+            !tape.lines().any(
+                |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["role"]
+                    == "assistant"
+            ),
+            "no text/fallback execution"
+        );
+        assert!(
+            !history.iter().any(
+                |item| matches!(item, RolloutItem::Message(message) if message.role == "assistant")
+                    || matches!(item, RolloutItem::ToolCall(_))
+                    || matches!(item, RolloutItem::Event(event) if event.event_type == "text_delta")
+            ),
+            "no assistant TextDelta, fallback or Tool execution"
+        );
+    }
     let status = String::from_utf8(
         shell
             .cat("/mnt/llm/connections/default/g0/status")
@@ -301,18 +365,55 @@ async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
         assert!(!projection.contains("secretbodymarker"));
         assert!(!projection.contains("private.example"));
         assert!(!projection.contains(&url));
-        assert!(!projection.contains("401 Unauthorized"));
+        for raw_status in ["401 Unauthorized", "408 Request Timeout", "404 Not Found"] {
+            assert!(!projection.contains(raw_status));
+        }
     }
     assert_eq!(
         requests.load(AtomicOrdering::SeqCst),
-        1,
-        "no retry/fallback HTTP execution"
+        if retries { 2 } else { 1 },
+        "exact HTTP attempt count"
     );
-    assert!(
-        shell
-            .cat("/mnt/llm/connections/default/g1/status")
-            .await
-            .is_err(),
-        "one generation"
-    );
+    if retries {
+        let retry_status = String::from_utf8(
+            shell
+                .cat("/mnt/llm/connections/default/g1/status")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&retry_status).unwrap()["status"],
+            "done"
+        );
+        let retry_events = String::from_utf8(
+            shell
+                .cat("/mnt/llm/connections/default/g1/events")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(retry_events.contains("recovered-http-timeout"));
+        for projection in [&retry_status, &retry_events] {
+            assert!(!projection.contains("secretbodymarker"));
+            assert!(!projection.contains("private.example"));
+            assert!(!projection.contains(&url));
+            assert!(!projection.contains("408 Request Timeout"));
+        }
+        assert!(
+            shell
+                .cat("/mnt/llm/connections/default/g2/status")
+                .await
+                .is_err(),
+            "no extra generation"
+        );
+    } else {
+        assert!(
+            shell
+                .cat("/mnt/llm/connections/default/g1/status")
+                .await
+                .is_err(),
+            "one generation"
+        );
+    }
 }
