@@ -357,3 +357,219 @@ impl ConnectionAuthority for LiveAuthority {
         Ok(serde_json::json!({}))
     }
 }
+
+struct SteerTapeFaultFs {
+    inner: alan_agentfs::AgentFs,
+    tape_path: u64,
+    failures: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl alan_ap::FileServer for SteerTapeFaultFs {
+    async fn walk(
+        &self,
+        fid: alan_ap::Fid,
+        newfid: alan_ap::Fid,
+        names: &[String],
+    ) -> Result<alan_ap::Qid, alan_ap::ErrorCode> {
+        self.inner.walk(fid, newfid, names).await
+    }
+    async fn open(
+        &self,
+        fid: alan_ap::Fid,
+        mode: alan_ap::OpenMode,
+    ) -> Result<alan_ap::Qid, alan_ap::ErrorCode> {
+        self.inner.open(fid, mode).await
+    }
+    async fn read(
+        &self,
+        fid: alan_ap::Fid,
+        offset: u64,
+        count: u32,
+    ) -> Result<Vec<u8>, alan_ap::ErrorCode> {
+        self.inner.read(fid, offset, count).await
+    }
+    async fn write(
+        &self,
+        fid: alan_ap::Fid,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<u32, alan_ap::ErrorCode> {
+        if self.inner.stat(fid).await?.qid.path == self.tape_path
+            && serde_json::from_slice::<serde_json::Value>(data).is_ok_and(|record| {
+                record["role"] == "user" && record["submission_id"] == "tape-fault-steer"
+            })
+        {
+            self.failures
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return Err(alan_ap::ErrorCode::Io);
+        }
+        self.inner.write(fid, offset, data).await
+    }
+    async fn stat(&self, fid: alan_ap::Fid) -> Result<alan_ap::Stat, alan_ap::ErrorCode> {
+        self.inner.stat(fid).await
+    }
+    async fn create(
+        &self,
+        fid: alan_ap::Fid,
+        newfid: alan_ap::Fid,
+        name: &str,
+        kind: alan_ap::FileKind,
+    ) -> Result<alan_ap::Qid, alan_ap::ErrorCode> {
+        self.inner.create(fid, newfid, name, kind).await
+    }
+    async fn remove(&self, fid: alan_ap::Fid) -> Result<(), alan_ap::ErrorCode> {
+        self.inner.remove(fid).await
+    }
+    async fn clunk(&self, fid: alan_ap::Fid) -> Result<(), alan_ap::ErrorCode> {
+        self.inner.clunk(fid).await
+    }
+}
+
+#[tokio::test]
+async fn steering_tape_failure_settles_dispatched_input_with_original_turn() {
+    use alan_ap::FileServer;
+    let temp = TempDir::new().unwrap();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut tools = ToolRegistry::new();
+    tools.register(GateTool {
+        started: started.clone(),
+        release: release.clone(),
+    });
+    let mut first = mock_generation_response("");
+    first.tool_calls.push(alan_llm::ToolCall {
+        id: Some("tape-fault-gate".into()),
+        name: "steer_gate".into(),
+        arguments: serde_json::json!({}),
+    });
+    let provider = MockLlmProvider::new().with_responses(vec![
+        first,
+        mock_generation_response("must not generate after failed Tape append"),
+    ]);
+    let state = create_test_state_with_machine_tools_and_provider(
+        AgentMachine::new(),
+        tools,
+        provider.clone(),
+    )
+    .await;
+    let inner = alan_agentfs::AgentFs::new();
+    let tape_path = inner
+        .walk(
+            alan_ap::Fid::ROOT,
+            alan_ap::Fid(9),
+            &["machine".into(), "tape".into()],
+        )
+        .await
+        .unwrap()
+        .path;
+    inner.clunk(alan_ap::Fid(9)).await.unwrap();
+    let fault = Arc::new(SteerTapeFaultFs {
+        inner,
+        tape_path,
+        failures: Default::default(),
+    });
+    let mut ns = alan_kernel::Namespace::new();
+    ns.mount(
+        "/",
+        state.environment.root_transport(),
+        alan_kernel::Access::ReadWrite,
+    );
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(fault.clone()),
+        alan_kernel::Access::ReadWrite,
+    );
+    let env = NamespaceRuntimeEnvironment::new(
+        InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns))),
+        "/agent/1",
+        "default",
+    )
+    .with_namespace_cwd("/mnt/source");
+    let shell = alan_shell::Shell::new(env.root_transport());
+    let mut core = state.core_config;
+    core.memory.enabled = false;
+    core.streaming_mode = crate::config::StreamingMode::Off;
+    let mut runtime = spawn_with_namespace_environment(
+        AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core.clone()),
+            store_bindings: Some(stores(&temp)),
+            ..Default::default()
+        },
+        env,
+        crate::skills::SkillHostCapabilities::default(),
+        crate::provider_capabilities_for_config(&core),
+    )
+    .unwrap();
+    let path = runtime
+        .wait_until_ready()
+        .await
+        .unwrap()
+        .rollout_path
+        .unwrap();
+    let active = Submission::new(Op::Input {
+        parts: vec![ContentPart::text("start gated turn")],
+        mode: InputMode::FollowUp,
+    });
+    let steer = Submission {
+        id: "tape-fault-steer".into(),
+        intent: Default::default(),
+        op: Op::Input {
+            parts: vec![ContentPart::text("never replay this steering")],
+            mode: InputMode::Steer,
+        },
+    };
+    let result: anyhow::Result<()> = async {
+        runtime.handle.submission_tx.send(active.clone()).await?;
+        tokio::time::timeout(Duration::from_secs(5), started.notified()).await?;
+        runtime.handle.submission_tx.send(steer.clone()).await?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let history = crate::rollout::RolloutRecorder::load_history(&path).await?;
+                if history.iter().any(|item| matches!(item,
+                    crate::rollout::RolloutItem::Event(e) if e.event_type == "machine_input_admitted_v1" && e.payload["id"] == steer.id)) {
+                    return anyhow::Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await??;
+        // The observer processes this control after the prior intake has also
+        // pushed Steer into its broker. Durable admission alone precedes that push.
+        let barrier = Submission::new(Op::SelectModel { model: "unavailable-barrier".into() });
+        runtime.handle.submission_tx.send(barrier.clone()).await?;
+        anyhow::ensure!(settlement(&shell, &barrier.id).await?.0 == alan_agent_protocol::UiInputStatus::Failed,
+            "no-authority selection barrier must not change the callable");
+        release.notify_one();
+        anyhow::ensure!(settlement(&shell, &active.id).await?.0 == alan_agent_protocol::UiInputStatus::Failed,
+            "original input must fail at Tape boundary");
+        anyhow::ensure!(fault.failures.load(std::sync::atomic::Ordering::SeqCst) == 1,
+            "actual steering Tape write fault must execute exactly once");
+        anyhow::ensure!(settlement(&shell, &steer.id).await.context("missing Failed receipt for durably dispatched steering after actual Tape fault")?.0 == alan_agent_protocol::UiInputStatus::Failed,
+            "durably dispatched steering must share original failed settlement");
+        let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await?)?;
+        anyhow::ensure!(events.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line),
+            Ok(alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, .. })
+                if submission_ids.contains(&active.id) && submission_ids.contains(&steer.id))), "same failed turn owns both IDs");
+        Ok(())
+    }.await;
+    release.notify_one();
+    runtime.shutdown().await.unwrap();
+    result.unwrap();
+    assert_eq!(
+        provider.recorded_requests().len(),
+        1,
+        "no continuation request after Tape failure"
+    );
+    let history = crate::rollout::RolloutRecorder::load_history(&path)
+        .await
+        .unwrap();
+    assert_eq!(history.iter().filter(|item| matches!(item,
+        crate::rollout::RolloutItem::Event(e) if e.event_type == "machine_input_dispatched_v1" && e.payload["submission_id"] == steer.id)).count(), 1);
+    let recovered = AgentMachine::load_from_rollout_in_dir(&path, "/proc/2", "test", temp.path())
+        .await
+        .unwrap();
+    assert!(
+        recovered.input_queue().lock().unwrap().pending.is_empty(),
+        "dispatched IDs must not replay on recovery"
+    );
+}

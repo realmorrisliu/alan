@@ -419,10 +419,11 @@
             if fail { state.machine.recorder().unwrap().close().await.unwrap(); }
             let broker = crate::runtime::turn_input::TurnInputBroker::from_queue(state.machine.input_queue());
             assert!(broker.push(input.clone()).await);
-            let writer = state.agent_files().begin_tape_generation().await.unwrap();
+            let agent_files = state.agent_files();
+            let writer = agent_files.begin_tape_generation().await.unwrap();
             let mut emit = |_event: Event| async {};
             let result = crate::runtime::steering_queue::handle_queued_steering_inputs(
-                &mut state.machine, &writer, &[], 0, Some(&broker), &mut emit,
+                &mut state.machine, &writer, &agent_files, &[], 0, Some(&broker), &mut emit,
             ).await;
             writer.finish().await.unwrap();
             assert_eq!(result.is_err(), fail);
@@ -455,16 +456,23 @@
             state.machine.admit_input(&input).await.unwrap();
             if fail { state.machine.input_recorder().unwrap().close().await.unwrap(); }
             let broker = crate::runtime::turn_input::TurnInputBroker::from_queue(state.machine.input_queue());
-            assert!(broker.push(input).await);
-            let writer = state.agent_files().begin_tape_generation().await.unwrap();
+            assert!(broker.push(input.clone()).await);
+            let agent_files = state.agent_files();
+            let writer = agent_files.begin_tape_generation().await.unwrap();
             let mut events = vec![];
             let mut emit = |event| { events.push(event); async {} };
             let result = crate::runtime::steering_queue::handle_queued_steering_inputs(
-                &mut state.machine, &writer, &[], 0, Some(&broker), &mut emit,
+                &mut state.machine, &writer, &agent_files, &[], 0, Some(&broker), &mut emit,
             ).await;
             writer.finish().await.unwrap();
             assert_eq!(result.is_err(), fail);
             assert_eq!(events.is_empty(), fail);
+            let shell = Shell::new(state.environment.root_transport());
+            let ui = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+            assert_eq!(ui.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line),
+                Ok(alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, .. })
+                    if submission_ids == vec![input.id.clone()])), !fail,
+                "acknowledged removal must settle the exact overflow ID; failed removal must not");
             assert_eq!(state.machine.buffered_inband_user_input_count(), MAX_BUFFERED_INBAND_USER_INPUTS + usize::from(fail));
             let recovered = AgentMachine::load_from_rollout_in_dir(&path, "/agent/2", "test", dir.path()).await.unwrap();
             assert_eq!(recovered.input_queue().lock().unwrap().pending.len(), usize::from(fail));
@@ -500,10 +508,12 @@
             async {}
         };
 
-        let writer = state.agent_files().begin_tape_generation().await.unwrap();
+        let agent_files = state.agent_files();
+        let writer = agent_files.begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
             &writer,
+            &agent_files,
             &[],
             0,
             Some(&broker),
@@ -552,10 +562,12 @@
         }
         let mut emit = |_event: Event| async {};
 
-        let writer = state.agent_files().begin_tape_generation().await.unwrap();
+        let agent_files = state.agent_files();
+        let writer = agent_files.begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
             &writer,
+            &agent_files,
             &[],
             0,
             Some(&broker),

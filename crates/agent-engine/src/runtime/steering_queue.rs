@@ -2,13 +2,14 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
+use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, reject_inband_overflow};
 use super::turn_support::tool_result_preview;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
     machine: &mut AgentMachine,
     writer: &super::transition::NamespaceTapeWriter,
+    agent_files: &super::transition::NamespaceAgentFiles,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
     steering_broker: Option<&TurnInputBroker>,
@@ -33,6 +34,9 @@ where
                 machine.push_buffered_inband_submission(submission);
                 return Err(error);
             }
+            // Durable dispatch makes this input part of the active turn even if
+            // the subsequent namespace Tape projection fails.
+            machine.accept_steering_submission(submission.id.clone());
             writer
                 .append_record(
                     "user",
@@ -42,7 +46,6 @@ where
                 )
                 .await?;
             machine.note_resumed_user_input();
-            machine.accept_steering_submission(submission.id.clone());
             machine.add_user_message_parts(parts.clone());
             consumed_steering = true;
             continue;
@@ -56,14 +59,7 @@ where
             }
         ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            machine.remove_input(&submission).await?;
-            emit(Event::Error {
-                message: format!(
-                    "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                ),
-                recoverable: true,
-            })
-            .await;
+            reject_inband_overflow(machine, agent_files, &submission, emit).await?;
             continue;
         }
 

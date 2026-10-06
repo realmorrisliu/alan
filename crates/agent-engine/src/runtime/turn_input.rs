@@ -159,18 +159,7 @@ where
                 if is_brokered_input(&incoming.op)
                     && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
-                    machine.remove_input(&incoming).await?;
-                    let message = format!("Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input.");
-                    agent_files.append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
-                        submission_ids: vec![incoming.id],
-                        status: alan_agent_protocol::UiInputStatus::Failed,
-                        error: Some(message.clone()),
-                    }).await?;
-                    emit(Event::Error {
-                        message,
-                        recoverable: true,
-                    })
-                    .await;
+                    reject_inband_overflow(machine, agent_files, &incoming, emit).await?;
                     continue;
                 }
                 machine.push_buffered_inband_submission(incoming);
@@ -178,6 +167,36 @@ where
             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {}
         }
     }
+}
+
+// Publish the exact disposition only after the shared durable removal succeeds.
+pub(super) async fn reject_inband_overflow<E, F>(
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
+    submission: &Submission,
+    emit: &mut E,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    machine.remove_input(submission).await?;
+    let message = format!(
+        "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
+    );
+    agent_files
+        .append_ui_event(&alan_agent_protocol::UiEvent::InputCompleted {
+            submission_ids: vec![submission.id.clone()],
+            status: alan_agent_protocol::UiInputStatus::Failed,
+            error: Some(message.clone()),
+        })
+        .await?;
+    emit(Event::Error {
+        message,
+        recoverable: true,
+    })
+    .await;
+    Ok(())
 }
 
 pub(super) async fn namespace_pending_resume_submission(

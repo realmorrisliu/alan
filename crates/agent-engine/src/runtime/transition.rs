@@ -623,9 +623,11 @@ where
                 refresh_context: call_refresh,
             } => {
                 refresh_context |= call_refresh;
+                let agent_files = state.agent_files();
                 if handle_queued_steering_inputs(
                     &mut state.machine,
                     writer,
+                    &agent_files,
                     tool_calls,
                     idx + 1,
                     inputs.steering_broker,

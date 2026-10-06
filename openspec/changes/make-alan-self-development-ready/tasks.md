@@ -6,6 +6,26 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## Steering failure receipt follow-up — 2026-10-06
+
+After remote main integration `d028d856`, review found a steering submission
+could be durably dispatched but lose its terminal receipt when Tape append failed.
+The active turn now owns its ID immediately after successful dispatch, before that
+fallible write, so existing failure settlement covers original and steering IDs.
+A real Runtime/Tool/AgentFS fault regression first failed on the old ordering and
+passes after correction; the intake barrier is a correlated control receipt rather
+than an assumption that durable admission already means broker delivery. Explicit
+rollout restoration excludes the consumed input instead of replaying it.
+
+Sibling review found tool-batch FollowUp overflow durably removed inputs without
+an exact terminal UI receipt. Both existing overflow paths now reuse one removal
+and Failed-receipt helper; failed durable removal retains the submission and emits
+no false terminal. Existing normal, buffered and NextTurn dispatch paths already
+associate their IDs before fallible Tape work and are unchanged. Focused steering9
+and overflow7 passed. Final combined workspace2762 passed/0 failed/10 ignored
+on the updated dependency baseline. Canonical `just quality` and independent
+source reviews passed; current-head CI remains pending. The earlier2761-pass result predates this follow-up and dependency update.
+
 ## HTTP timeout and early Walk cancellation review — 2026-10-06
 
 Two new findings on `a6db3fbf` are confirmed and corrected directly by Codex.
