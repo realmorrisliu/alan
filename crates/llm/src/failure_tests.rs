@@ -21,6 +21,7 @@ fn diagnostic_never_formats_unknown_sources() {
         "stream_error:unknown"
     );
     assert_eq!(safe_finish_reason("stop"), "stop");
+    assert_eq!(safe_finish_reason("refusal"), "stream_error:safety");
 }
 
 #[tokio::test]

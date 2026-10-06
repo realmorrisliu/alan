@@ -100,6 +100,9 @@ fn log_generation_failure(request_start: Instant, error: &anyhow::Error) {
 }
 
 fn generation_error_message(error: &anyhow::Error) -> String {
+    if let Some(cause) = error.downcast_ref::<crate::retry::GenerationCause>() {
+        return format!("Namespace LLM request failed: {cause}");
+    }
     format!("Namespace LLM request failed: {error}")
 }
 

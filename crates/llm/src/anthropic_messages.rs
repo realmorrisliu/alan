@@ -131,6 +131,15 @@ pub struct Usage {
     pub output_tokens: i32,
 }
 
+/// Streaming usage updates omit unchanged token counts.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamUsageDelta {
+    pub input_tokens: Option<i32>,
+    pub cache_creation_input_tokens: Option<i32>,
+    pub cache_read_input_tokens: Option<i32>,
+    pub output_tokens: Option<i32>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct StreamEvent {
     #[serde(rename = "type")]
@@ -139,7 +148,7 @@ pub struct StreamEvent {
     pub content_block: Option<ContentBlock>,
     pub delta: Option<StreamDelta>,
     pub message: Option<StreamMessage>,
-    pub usage: Option<Usage>,
+    pub usage: Option<StreamUsageDelta>,
     pub error: Option<StreamError>,
 }
 

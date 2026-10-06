@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
-use super::{StreamEvent, convert_usage, is_non_empty};
-use crate::{StreamChunk, TokenUsage, ToolCallDelta};
+use super::{StreamEvent, StreamUsageDelta, Usage, convert_usage, is_non_empty};
+use crate::{StreamChunk, ToolCallDelta};
 
 #[cfg(test)]
 #[path = "cancellation_tests.rs"]
@@ -13,7 +13,8 @@ pub(super) fn project_events(mut event_rx: Receiver<StreamEvent>) -> Receiver<St
     let (tx, rx) = mpsc::channel(100);
 
     tokio::spawn(async move {
-        let mut latest_usage: Option<TokenUsage> = None;
+        let mut latest_usage: Option<Usage> = None;
+        let mut latest_stop_reason = None;
         let mut latest_response_id: Option<String> = None;
         let mut tool_call_meta: HashMap<usize, StreamedToolUseState> = HashMap::new();
 
@@ -31,14 +32,24 @@ pub(super) fn project_events(mut event_rx: Receiver<StreamEvent>) -> Receiver<St
             {
                 latest_response_id = Some(id);
             }
-            let usage_from_event = event.usage.clone().or_else(|| {
-                event
-                    .message
+            if let Some(message) = event.message.as_ref() {
+                if let Some(usage) = &message.usage {
+                    latest_usage = Some(usage.clone());
+                }
+                if let Some(reason) = &message.stop_reason {
+                    latest_stop_reason = Some(reason.clone());
+                }
+            }
+            if let Some(usage) = &event.usage {
+                merge_usage(&mut latest_usage, usage);
+            }
+            if event.event_type == "message_delta"
+                && let Some(reason) = event
+                    .delta
                     .as_ref()
-                    .and_then(|message| message.usage.clone())
-            });
-            if let Some(usage) = usage_from_event {
-                latest_usage = Some(convert_usage(usage));
+                    .and_then(|delta| delta.stop_reason.as_ref())
+            {
+                latest_stop_reason = Some(reason.clone());
             }
 
             match event.event_type.as_str() {
@@ -227,11 +238,11 @@ pub(super) fn project_events(mut event_rx: Receiver<StreamEvent>) -> Receiver<St
                             thinking: None,
                             thinking_signature: None,
                             redacted_thinking: None,
-                            usage: latest_usage,
+                            usage: latest_usage.clone().map(convert_usage),
                             sequence_number: None,
                             tool_call_delta: None,
                             is_finished: true,
-                            finish_reason: event.message.and_then(|message| message.stop_reason),
+                            finish_reason: latest_stop_reason.clone(),
                             provider_response_id: latest_response_id.clone(),
                             provider_response_status: None,
                         },
@@ -244,6 +255,27 @@ pub(super) fn project_events(mut event_rx: Receiver<StreamEvent>) -> Receiver<St
     });
 
     rx
+}
+
+fn merge_usage(latest: &mut Option<Usage>, delta: &StreamUsageDelta) {
+    let usage = latest.get_or_insert(Usage {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    });
+    if let Some(input) = delta.input_tokens {
+        usage.input_tokens = input;
+    }
+    if let Some(output) = delta.output_tokens {
+        usage.output_tokens = output;
+    }
+    if let Some(cache) = delta.cache_creation_input_tokens {
+        usage.cache_creation_input_tokens = Some(cache);
+    }
+    if let Some(cache) = delta.cache_read_input_tokens {
+        usage.cache_read_input_tokens = Some(cache);
+    }
 }
 
 fn merge_initial_tool_arguments_delta(

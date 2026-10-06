@@ -7,6 +7,25 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn local_http_openrouter401_runtime_exact_input_failed() {
+    local_http_runtime_exact_input_failed(false).await;
+}
+
+#[tokio::test]
+async fn local_http_anthropic_refusal_runtime_exact_input_failed() {
+    local_http_runtime_exact_input_failed(true).await;
+}
+
+async fn local_http_runtime_exact_input_failed(anthropic_refusal: bool) {
+    let expected_reason = if anthropic_refusal {
+        "stream_error:safety"
+    } else {
+        "stream_error:authentication"
+    };
+    let provider = if anthropic_refusal {
+        "anthropic_messages"
+    } else {
+        "openrouter"
+    };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("Runtime HTTP fixture bind");
@@ -45,17 +64,45 @@ async fn local_http_openrouter401_runtime_exact_input_failed() {
                     }
                 }
             }
-            let body = "secretbodymarker https://private.example";
-            socket.write_all(format!("HTTP/1.1 401 Unauthorized\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            let (status, content_type, body) = if anthropic_refusal {
+                (
+                    "200 OK",
+                    "text/event-stream",
+                    concat!(
+                        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"test\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\n",
+                        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"unexecuted\",\"name\":\"Bash\",\"input\":{}}}\n\n",
+                        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"echo unexecuted-refusal-tool\\\"}\"}}\n\n",
+                        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"},\"usage\":{\"output_tokens\":5}}\n\n",
+                        "data: {\"type\":\"message_stop\"}\n\n",
+                    ),
+                )
+            } else {
+                (
+                    "401 Unauthorized",
+                    "text/plain",
+                    "secretbodymarker https://private.example",
+                )
+            };
+            socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             socket.shutdown().await.unwrap();
         }
     });
     let stores = tempfile::tempdir().unwrap();
     let llmfs = Arc::new(LlmFs::new());
-    llmfs.register_connection(
-        "default",
-        Box::new(alan_llm::OpenRouterClient::with_params("test", &url, "test").unwrap()),
-    );
+    if anthropic_refusal {
+        llmfs.register_connection(
+            "default",
+            Box::new(alan_llm::AnthropicMessagesClient::with_params(
+                "test", &url, "test",
+            )),
+        );
+    } else {
+        llmfs.register_connection(
+            "default",
+            Box::new(alan_llm::OpenRouterClient::with_params("test", &url, "test").unwrap()),
+        );
+    }
     let mut ns = Namespace::new();
     ns.mount(
         "/agent/1",
@@ -70,10 +117,15 @@ async fn local_http_openrouter401_runtime_exact_input_failed() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let environment = NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default");
     let shell = Shell::new(root);
-    let mut core = crate::Config::default();
+    let mut core = if anthropic_refusal {
+        crate::Config::for_anthropic_messages("test", Some(&url), Some("test"))
+    } else {
+        let mut config = crate::Config::default();
+        config.llm_provider = crate::config::LlmProvider::OpenRouter;
+        config.openrouter_model = "test".into();
+        config
+    };
     core.memory.enabled = false;
-    core.llm_provider = crate::config::LlmProvider::OpenRouter;
-    core.openrouter_model = "test".into();
     let mut runtime = spawn_with_namespace_environment(
         AgentProcessConfig {
             agent_config: crate::AgentConfig::from(core.clone()),
@@ -99,7 +151,7 @@ async fn local_http_openrouter401_runtime_exact_input_failed() {
         .unwrap();
     let input = Submission::new(Op::Input {
         parts: vec![ContentPart::text(
-            "HTTP authentication failure must settle this input",
+            "HTTP terminal failure must settle this input",
         )],
         mode: InputMode::FollowUp,
     });
@@ -141,11 +193,9 @@ async fn local_http_openrouter401_runtime_exact_input_failed() {
     assert_eq!(completed.len(), 1, "one exact-ID terminal");
     assert_eq!(*completed[0].0, UiInputStatus::Failed);
     assert!(
+        completed[0].1.as_ref().unwrap().contains(expected_reason),
+        "terminal={:?}",
         completed[0]
-            .1
-            .as_ref()
-            .unwrap()
-            .contains("stream_error:authentication")
     );
     assert_eq!(
         events
@@ -173,7 +223,7 @@ async fn local_http_openrouter401_runtime_exact_input_failed() {
     );
     assert_eq!(
         admission[0].payload["callable_binding"]["provider"],
-        "openrouter"
+        provider
     );
     assert_eq!(history.iter().filter(|item| matches!(item,
         RolloutItem::Event(event) if event.event_type == "machine_input_dispatched_v1" && event.payload["submission_id"] == id
@@ -240,7 +290,13 @@ async fn local_http_openrouter401_runtime_exact_input_failed() {
                 |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["text"].is_string()
             )
     );
-    assert!(generation_events.contains("stream_error:authentication"));
+    assert!(generation_events.contains(expected_reason));
+    if anthropic_refusal {
+        assert!(
+            generation_events.contains("unexecuted-refusal-tool"),
+            "fixture delivered Tool arguments before refusal"
+        );
+    }
     for projection in [&ui, &durable, &tape, &status, &generation_events] {
         assert!(!projection.contains("secretbodymarker"));
         assert!(!projection.contains("private.example"));

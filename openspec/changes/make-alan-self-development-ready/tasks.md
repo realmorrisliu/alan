@@ -22,7 +22,8 @@ The correction commit `2db72c41` is pushed to PR1026. Its CI run37348603532
 passed every job, including both operating systems, quality, and release builds;
 Security and CodeQL also passed. Five verified review threads are resolved.
 The remaining directory-control Action-publication finding reproduced through
-actual Runtime/AgentFS IO and is now corrected locally; new-head CI is pending.
+actual Runtime/AgentFS IO and is corrected in `e484f812`. All16 checks passed
+for that commit, including CI37414835020 and CodeQL37414835201.
 Executed directory outcomes retain their Action identity and field publication
 progress. Retries reconcile lost acknowledgements without rewriting immutable
 output or repeating cwd effects. Ordinary work waits for confirmation while
@@ -39,6 +40,22 @@ Unknown clone IDs before observation are not qualified as exactly-once, and no
 new crash-recovery cwd replay is introduced. All test instances have exited.
 The older83a1499 failed/cancelled checks remain historical evidence. Main requires
 one approval and all threads resolved; delivery tasks stay open until satisfied.
+
+A subsequent review found Anthropic refusal was retryable. The same adapter
+also dropped standard `message_delta` terminal reasons because output-only
+usage did not deserialize. The direct correction preserves partial cumulative
+usage and terminal reasons, mapping refusal to existing nonretryable safety.
+Adapter regressions reproduced the defect before correction. A real local HTTP
+fixture then caught safe terminal causes hidden by outer read context; the shared
+UI formatter now prefers the existing typed safe cause. The fixture verifies one
+HTTP request, exact Failed input, delivered-but-unexecuted Tool arguments, durable
+settlement and no replay. Three HTTP regressions passed; full LLM/LLMFS/Engine:
+1611 passed/0 failed/9 ignored. Independent final source review passed.
+Evidence lives in `direct-review-fixes/anthropic-refusal`; this is a local protocol
+fixture, not live Anthropic or new Alan-authored self-development qualification.
+Canonical `just quality` passed, including strict Clippy, docs, architecture and
+standalone install/upgrade/release checks. Current-head CI, review closure and
+required approval remain pending until recorded as complete.
 
 ## Direct implementation takeover — 2026-10-06
 
