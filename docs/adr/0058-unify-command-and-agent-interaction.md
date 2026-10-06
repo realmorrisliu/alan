@@ -24,6 +24,12 @@ bounded namespace-command grammar: use a mature Host shell with internal aP acce
 refinement hides protocol operations behind task-oriented alan9 commands. Linux/FUSE exploration is deferred. See the
 [decision report](../../openspec/changes/unify-agent-command-input/decision-report.md).
 
+Prompt clarification, 2026-10-06: PR #1026 ships the contextual two-line prompt
+with `: ` for Agent input and `! ` for explicit commands, superseding the branded
+prompt strings in the original decision below. The route and authority boundaries
+are unchanged. See the [current prompt contract](../../openspec/specs/rust-inline-tui/spec.md).
+This UI delivery does not qualify the remaining lifecycle or typed-routing work.
+
 ## Decision
 
 - `!command` selects one exact Host shell script; `:content` selects Agent reasoning.

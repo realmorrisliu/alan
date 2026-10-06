@@ -1,10 +1,45 @@
 # Tasks
 
-Implementation is in progress in the local checkout and is not shipped. Each
-slice still requires focused checks, user-facing help, and current-head
-review/CI evidence before it can be called shipped. Existing runtime
-requirements remain in `unify-agent-command-input`; linked dependency work is
-not a second implementation owner.
+## Post-merge delivery audit — 2026-10-06
+
+PR [#1026](https://github.com/realmorrisliu/alan/pull/1026) merged at
+2026-10-06T14:56:09Z as `0bcdcbe5445e862cdfa704deb9762c76b7bf4889`.
+The merged head is `25f6a832c38be0de73379cacaf4f01a569e9adc0`; all 16 checks
+passed, including Linux/macOS tests, repository quality, OpenSpec, release builds
+and CodeQL. The exact-head automatic review completed and all four final review
+threads were replied to and resolved. Earlier pending-CI statements below are
+historical checkpoints, not current delivery status.
+
+The six owning deltas are now synchronized in the delivery follow-up checkout.
+Older canonical `alan >` requirements are reconciled with the shipped `: ` / `! `
+route markers, the ADR has a dated clarification, and README documents project
+approval, model selection and retained details. This documentation follow-up
+still requires its own review/CI/merge; PR #1026 does not prove its delivery.
+
+Completion audit limitations:
+
+- The retained `20261006-direct-review-fixes/project-idempotency/native/` evidence
+  verifies Herdr project selection, pwd/details, revocation and normal exit0
+  (PID79014). It explicitly records direct Codex verification, not Alan authorship.
+- The matched fx0.0.12/Alan69x20 comparison remains available under
+  `20261006-direct-review-fixes/header-candidate/`, including source/binary identity,
+  ANSI captures and normal exits. It does not prove graphical-theme parity.
+- Early G1/G2 `/tmp/alan-g1-*` and `/tmp/alan-g2-independent-*` raw artifacts could
+  not be found during this audit. The retained narrative is historical evidence,
+  not a substitute for the full original transcripts, failing checks and relaunch
+  records required by tasks2.6/3.5. These tasks remain open pending recoverable
+  evidence or an explicit disposition; no new Alan self-development is authorized
+  by this documentation work.
+- `unify-agent-command-input` remains the existing owner of ordinary-terminal and
+  Herdr runtime acceptance (tasks2.10/2.14) and broader lifecycle/recovery (2.19).
+  It does not silently inherit this change's missing G2 authorship proof.
+- Archive readiness is not established. Retain failed and successful checkpoints;
+  do not convert narrative-only qualification into unattended-bootstrap claims.
+
+Current assessment: usable under supervision, with retained terminal and automated
+regression evidence. Reliable unattended self-bootstrap remains unproven. The
+user's direct-Codex takeover remains in force; original self-development instances
+and temporary verification instances stay stopped.
 
 ## Canonical catalog sibling correction — 2026-10-06
 
@@ -2044,7 +2079,7 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 
 ## 5. Delivery and archive readiness
 
-- [ ] 5.1 Confirm every shipped slice has current-head review and passing required CI; queued/skipped checks do not count, and the plan's existence does not mark implementation complete.
+- [x] 5.1 Confirm every shipped slice has current-head review and passing required CI; queued/skipped checks do not count, and the plan's existence does not mark implementation complete.
 - [ ] 5.2 Sync only merged behavior into its canonical spec, reconcile shared requirement owners and update user-facing instructions; verify strict OpenSpec validation and current-surface guards.
 - [ ] 5.3 Archive only after owned tasks are complete or explicitly handed to an active successor with preserved status; verify G1/G2/G3 claims match live artifacts and leave any unfinished runtime lifecycle acceptance with its existing owner.
 

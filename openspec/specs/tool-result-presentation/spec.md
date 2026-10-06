@@ -36,35 +36,84 @@ A Tool-call-started record SHALL carry an optional human-readable title formatte
 - **THEN** the renderer displays the Tool name
 
 ### Requirement: Structured completion payload is additive and backward-compatible
-A tool-call-completed event SHALL carry an optional structured presentation payload while retaining the flat preview string as a fallback.
+Tool-call-completed records SHALL carry optional structured presentation while
+retaining fallback text. The production file-backed path SHALL carry the same
+runtime-owned title, presentation and fallback preview through additive metadata
+in `actions/<id>/result`, independently of retained raw `output`. Renderer hosts
+SHALL decode these generic forms without interpreting Tool arguments. Metadata
+SHALL pass through the existing durable-evidence redaction boundary and be
+persisted before terminal Action status is published.
 
 #### Scenario: Structured payload is preferred when present
-- **WHEN** a completed tool call includes a presentation payload
-- **THEN** the TUI renders the structured payload rather than the flat preview
+- **WHEN** a completed Action includes a structured presentation
+- **THEN** the file-backed TUI renders that presentation and its runtime title
+- **AND** user commands and Agent Tool calls use the same projection boundary
 
 #### Scenario: Fallback when payload absent
-- **WHEN** a completed tool call has no presentation payload
-- **THEN** the TUI renders the flat preview string
+- **WHEN** an older or dynamic Action has no usable presentation metadata
+- **THEN** the renderer retains a bounded textual fallback and Tool name
+- **AND** it does not fabricate a successful structured result
 
 #### Scenario: Older consumers are unaffected
-- **WHEN** a consumer that does not understand the new fields receives the event
-- **THEN** the new fields are absent-by-default in serialization and the consumer continues to function
+- **WHEN** a consumer does not understand the additive Action result metadata
+- **THEN** existing exit status, correlation and raw output remain available
+- **AND** absent metadata remains compatible with older durable Action records
+
+#### Scenario: Metadata is published atomically with completion evidence
+- **WHEN** a Tool completes through the authoritative Action path
+- **THEN** raw output and redacted presentation metadata are durable before its terminal status event
+- **AND** recovery preserves the presentation without re-executing the Tool
 
 ### Requirement: TUI renders each presentation primitive distinctly
-The TUI SHALL render each presentation primitive with a form appropriate to its content and SHALL collapse large outputs with an expand affordance.
+The TUI SHALL render each existing presentation primitive appropriately through
+the production file-backed path. Routine results SHALL use bounded summaries;
+the user SHALL be able to open retained detail and return to the same draft.
+Summary bounds SHALL account for rendered physical rows, including long single
+lines, rather than only newline counts. Raw evidence SHALL remain distinct from
+its user-facing summary.
 
 #### Scenario: Diff renders with change markers
 - **WHEN** a `Diff` payload is rendered
-- **THEN** added and removed lines are visually distinguished and the affected path is shown
+- **THEN** its summary shows the affected path and change counts
+- **AND** retained detail distinguishes additions and removals with text markers as well as optional color
 
 #### Scenario: Command renders cmdline and exit status
 - **WHEN** a `Command` payload is rendered
-- **THEN** the command line, exit code, and output streams are shown
+- **THEN** the command and exit status are visible in its summary
+- **AND** available stdout and stderr remain distinguishable in details
 
 #### Scenario: File content renders path and counts
 - **WHEN** a `FileContent` payload is rendered
-- **THEN** the path and line count are shown, with truncation indicated when the content was truncated
+- **THEN** the path and available line count appear in its summary
+- **AND** retained content can be inspected without rendering escaped JSON as the default result
 
 #### Scenario: Large output collapses
-- **WHEN** a rendered payload exceeds the display threshold
-- **THEN** the TUI shows a truncated view with a total count and an expand affordance
+- **WHEN** a payload exceeds the summary's physical-row budget, including a single long line
+- **THEN** it remains bounded with a visible detail action
+- **AND** closing details restores the draft and inline transcript position
+
+#### Scenario: Host reserves ordinary page keys
+- **WHEN** details are open in a terminal Host that consumes ordinary PageUp or PageDown for Host scrollback
+- **THEN** unmodified Space and b also page the existing readable detail forward and backward
+- **AND** the detail hint shows these usable aliases while existing page keys and Action selection remain available
+- **AND** closing details restores the draft, and these aliases do not replace normal draft input outside details
+
+#### Scenario: Details were not retained
+- **WHEN** the result is truncated or its evidence is no longer available
+- **THEN** the UI labels the missing portion or unavailable detail truthfully
+- **AND** expanding does not fabricate content or re-execute the Tool
+
+### Requirement: Tool failures explain an available next action
+Tool failure summaries SHALL identify the failed operation, an understandable
+cause and an available next action when known. Internal diagnostics SHALL remain
+available in details without becoming the entire default user-facing message.
+
+#### Scenario: Project execution lacks authorization
+- **WHEN** a project Tool cannot execute because no suitable project authority is present
+- **THEN** Alan explains that project access is needed and points to the authorization flow
+- **AND** it does not describe the Tool or operation as successful
+
+#### Scenario: A failure has no known remedy
+- **WHEN** a Tool fails without a reliable user action that resolves it
+- **THEN** Alan reports the failure and offers available diagnostic detail
+- **AND** it does not invent an authorization action, retry outcome or fix

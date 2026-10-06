@@ -130,6 +130,18 @@ writes the final answer to stdout, sends diagnostics to stderr, and returns the
 task's exit status. A leading `!` in the interactive renderer requests a
 command through the governed `bash` Tool; it does not execute a host command
 directly.
+The two-line prompt shows project, model and activity information above `: `
+for Agent input or `! ` for an explicit command. Use `/project` to choose a
+project and approve its access, `/status` to inspect current state, and `/model`
+to inspect the Connection-owned catalog and select a model for subsequent input.
+Already-admitted work keeps its earlier model binding; an unavailable catalog
+is reported explicitly.
+
+Tool results have compact summaries. Press Ctrl+O to inspect retained details,
+Space/b to page, and Esc to return to the draft. Completion candidates appear
+below the input; Tab inserts a candidate and Enter executes a selected slash
+command. `/help` lists the available controls.
+
 The current direct command families are:
 
 ```text

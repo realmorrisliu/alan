@@ -1,3 +1,27 @@
+## MODIFIED Requirements
+
+### Requirement: Interactive Alan uses a shell-like inline transcript
+When `alan` runs in an interactive terminal, the renderer SHALL present one
+continuous terminal transcript: accepted user input SHALL appear as a `: ` (Agent) or `! ` (command)
+line, Agent output SHALL follow it in terminal order, and the next contextual two-line
+prompt SHALL appear immediately after the output. The prompt SHALL NOT be pinned
+to a full-height bottom composer. Committed transcript SHALL remain available
+in the host terminal's scrollback.
+
+#### Scenario: A task completes in the inline REPL
+- **WHEN** a user submits a task to the attached Root Agent Process
+- **THEN** the submitted line is shown with its `: ` or `! ` route marker
+- **AND** Agent output follows in the same terminal flow
+- **AND** the next editable `: ` prompt follows the output
+
+#### Scenario: Completion candidates are opened
+- **WHEN** a user enters a slash command or a `$` skill or `@` file reference
+- **THEN** matching candidates appear in a temporary inline list adjacent to
+  the current prompt
+- **AND** arrow keys, Tab, Enter, and Escape retain their documented selection
+  and dismissal behavior
+- **AND** closing the list returns to the compact transcript-and-prompt layout
+
 ## ADDED Requirements
 
 ### Requirement: Foreground project authorization is discoverable
