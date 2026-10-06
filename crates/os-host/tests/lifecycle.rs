@@ -15,6 +15,7 @@ use alan_os_host::{
     AlanOsHost, HostBootConfig, HostCommandPlane, HostEndpointPaths, HostStorePaths,
     LocalAttachment, SystemStorePaths,
 };
+use alan_service_manager::HostMountAccess;
 use tokio_util::sync::CancellationToken;
 
 static TEST_HOST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -32,6 +33,16 @@ fn response(content: &str) -> GenerationResponse {
         provider_response_status: None,
         warnings: Vec::new(),
     }
+}
+
+fn confirmation_response(id: &str, summary: &str) -> GenerationResponse {
+    let mut response = response("");
+    response.tool_calls.push(ToolCall {
+        id: Some(id.to_string()),
+        name: "request_confirmation".to_string(),
+        arguments: serde_json::json!({ "summary": summary }),
+    });
+    response
 }
 
 fn config() -> HostBootConfig {
@@ -154,6 +165,10 @@ async fn wait_for_host_mount_request(shell: &alan_shell::Shell) -> String {
     .expect("Agent request_mount should publish a logical service request")
 }
 
+async fn process_namespace(shell: &alan_shell::Shell, pid: &str) -> String {
+    String::from_utf8(shell.cat(&format!("/proc/{pid}/namespace")).await.unwrap()).unwrap()
+}
+
 async fn wait_for_turn_idle(events: &mut alan_shell::Tail, phase: &str) {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut pending = String::new();
@@ -177,6 +192,179 @@ async fn wait_for_turn_idle(events: &mut alan_shell::Tail, phase: &str) {
     })
     .await
     .unwrap_or_else(|error| panic!("Root Agent {phase} turn did not reach idle: {error}"));
+}
+
+async fn wait_for_pending_agent_request(shell: &alan_shell::Shell) -> String {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            for id in shell
+                .ls("/agent/root/requests")
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|entry| !matches!(entry.as_str(), "clone" | "events"))
+            {
+                if shell
+                    .cat(&format!("/agent/root/requests/{id}/status"))
+                    .await
+                    .is_ok_and(|status| status == b"pending")
+                {
+                    return id;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    match result {
+        Ok(id) => id,
+        Err(error) => {
+            let requests = shell.ls("/agent/root/requests").await.unwrap_or_default();
+            let tape = shell
+                .cat("/agent/root/machine/tape")
+                .await
+                .unwrap_or_default();
+            let activity = shell
+                .cat("/agent/root/machine/ui/activity")
+                .await
+                .unwrap_or_default();
+            let output = shell.cat("/agent/root/io/output").await.unwrap_or_default();
+            panic!(
+                "Agent should publish a pending confirmation request: {error:?}; requests={requests:?}; tape={:?}; activity={:?}; output={:?}",
+                String::from_utf8_lossy(&tape),
+                String::from_utf8_lossy(&activity),
+                String::from_utf8_lossy(&output),
+            )
+        }
+    }
+}
+
+async fn start_idle_tail(
+    shell: &alan_shell::Shell,
+    path: &str,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    let mut tail = shell.tail(path).await.unwrap();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                result = tail.read(4096) => if result.is_err() { break; },
+            }
+        }
+        let _ = tail.close().await;
+    })
+}
+
+#[tokio::test]
+async fn approval_and_agent_control_writes_finish_with_renderer_tails_open() {
+    let _host_guard = TEST_HOST_LOCK.lock().await;
+    let runtime = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let host = AlanOsHost::boot(
+        HostBootConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            LlmClient::new(MockLlmProvider::new().with_responses(vec![
+                confirmation_response("confirm-one", "first confirmation"),
+                response("first approved"),
+                confirmation_response("confirm-two", "second confirmation"),
+            ])),
+            ToolRegistry::new(),
+        ),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
+    let shutdown = CancellationToken::new();
+    let shutdown_request = shutdown.clone();
+    let server =
+        tokio::spawn(async move { host.serve_until(shutdown_request.cancelled_owned()).await });
+    let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+    let shell = alan_shell::Shell::new(attachment.root.clone());
+    let mut activity = shell.tail("/agent/root/machine/ui/events").await.unwrap();
+    let tail_shutdown = shutdown.child_token();
+    let mut tail_tasks = Vec::new();
+    for path in [
+        "/agent/root/io/output",
+        "/agent/root/requests/events",
+        "/agent/root/actions/events",
+        "/agent/root/machine/tape",
+    ] {
+        tail_tasks.push(start_idle_tail(&shell, path, tail_shutdown.clone()).await);
+    }
+
+    let control_boot = paths.read_status().unwrap().boot_id;
+    let project_mount = HostCommandPlane::new(paths.clone())
+        .mount_project(
+            uuid::Uuid::new_v4(),
+            control_boot,
+            project.path().to_path_buf(),
+            HostMountAccess::ReadWrite,
+        )
+        .await
+        .unwrap();
+    let cwd_id = "46e4ba7c-87e8-41a9-8e88-d0dc49ac99d3";
+    let cwd_input = format!(
+        "alan-input-v1\n{{\"version\":1,\"submission_id\":\"{cwd_id}\",\"intent\":\"command\",\"mode\":\"follow_up\",\"body\":\"cd {}\"}}",
+        project_mount.grant.namespace_path,
+    );
+    shell
+        .write("/agent/root/io/input", cwd_input.as_bytes())
+        .await
+        .unwrap();
+    wait_for_turn_idle(&mut activity, "project cwd selection").await;
+
+    let first_id = "46e4ba7c-87e8-41a9-8e88-d0dc49ac99d1";
+    let first_input = format!(
+        "alan-input-v1\n{{\"version\":1,\"submission_id\":\"{first_id}\",\"intent\":\"agent\",\"mode\":\"follow_up\",\"body\":\"first\"}}"
+    );
+    shell
+        .write("/agent/root/io/input", first_input.as_bytes())
+        .await
+        .unwrap();
+    let request = wait_for_pending_agent_request(&shell).await;
+    let response_shell = alan_shell::Shell::new(attachment.root.clone());
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        response_shell.write(
+            &format!("/agent/root/requests/{request}/response"),
+            br#"{"choice":"approve"}"#,
+        ),
+    )
+    .await
+    .expect("approval response write must return with renderer tails open")
+    .unwrap();
+    wait_for_turn_idle(&mut activity, "confirmation approval").await;
+
+    let second_id = "46e4ba7c-87e8-41a9-8e88-d0dc49ac99d2";
+    let second_input = format!(
+        "alan-input-v1\n{{\"version\":1,\"submission_id\":\"{second_id}\",\"intent\":\"agent\",\"mode\":\"follow_up\",\"body\":\"second\"}}"
+    );
+    shell
+        .write("/agent/root/io/input", second_input.as_bytes())
+        .await
+        .unwrap();
+    let _request = wait_for_pending_agent_request(&shell).await;
+    let control_shell = alan_shell::Shell::new(attachment.root.clone());
+    let command = format!("queue-v1 interrupt {second_id}");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        control_shell.write("/agent/root/machine/ctl", command.as_bytes()),
+    )
+    .await
+    .expect("interrupt write must return with renderer tails open")
+    .unwrap();
+    wait_for_turn_idle(&mut activity, "confirmation interruption").await;
+
+    tail_shutdown.cancel();
+    for task in tail_tasks {
+        task.await.unwrap();
+    }
+    activity.close().await.unwrap();
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
 }
 
 #[tokio::test]
@@ -625,3 +813,117 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
     shutdown.cancel();
     server.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn local_project_mount_uses_the_root_process_and_revoke_removes_authority() {
+    let _host_guard = TEST_HOST_LOCK.lock().await;
+    let runtime = tempfile::tempdir().unwrap();
+    let read_only_dir = tempfile::tempdir().unwrap();
+    let read_write_dir = tempfile::tempdir().unwrap();
+    std::fs::write(read_only_dir.path().join("fixture.txt"), "readable").unwrap();
+    std::fs::write(read_write_dir.path().join("editable.txt"), "").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let host = AlanOsHost::boot(
+        mount_request_config(
+            &runtime.path().join("system-store"),
+            Arc::new(AtomicBool::new(false)),
+        ),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
+    let shutdown = CancellationToken::new();
+    let shutdown_request = shutdown.clone();
+    let server =
+        tokio::spawn(async move { host.serve_until(shutdown_request.cancelled_owned()).await });
+    let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+    let shell = alan_shell::Shell::new(attachment.root);
+    let control_boot = paths.read_status().unwrap().boot_id;
+    let control = HostCommandPlane::new(paths);
+    let root_pid = String::from_utf8(
+        shell
+            .cat("/mnt/service-manager/units/root-agent/pid")
+            .await
+            .unwrap(),
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let read_only = control
+        .mount_project(
+            uuid::Uuid::new_v4(),
+            control_boot,
+            read_only_dir.path().to_path_buf(),
+            HostMountAccess::ReadOnly,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read_only.host_path,
+        std::fs::canonicalize(read_only_dir.path()).unwrap()
+    );
+    let grant_record = shell
+        .cat(&format!(
+            "/mnt/host-mount/grants/{}/record",
+            read_only.grant.id
+        ))
+        .await
+        .unwrap();
+    assert!(
+        !String::from_utf8(grant_record)
+            .unwrap()
+            .contains(&read_only_dir.path().display().to_string())
+    );
+    let read_only_namespace = process_namespace(&shell, &root_pid).await;
+    assert!(
+        read_only_namespace
+            .lines()
+            .any(|line| line == format!("{} ro", read_only.grant.namespace_path))
+    );
+    control
+        .revoke_host_mount(read_only.grant.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        !process_namespace(&shell, &root_pid)
+            .await
+            .lines()
+            .any(|line| line == format!("{} ro", read_only.grant.namespace_path))
+    );
+
+    let read_write = control
+        .mount_project(
+            uuid::Uuid::new_v4(),
+            control_boot,
+            read_write_dir.path().to_path_buf(),
+            HostMountAccess::ReadWrite,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read_write.host_path,
+        std::fs::canonicalize(read_write_dir.path()).unwrap()
+    );
+    let read_write_namespace = process_namespace(&shell, &root_pid).await;
+    assert!(
+        read_write_namespace
+            .lines()
+            .any(|line| line == format!("{} rw", read_write.grant.namespace_path))
+    );
+    control
+        .revoke_host_mount(read_write.grant.id.clone())
+        .await
+        .unwrap();
+    assert!(
+        !process_namespace(&shell, &root_pid)
+            .await
+            .lines()
+            .any(|line| line == format!("{} rw", read_write.grant.namespace_path))
+    );
+
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+#[path = "lifecycle/project_reply_loss.rs"]
+mod project_reply_loss;

@@ -19,6 +19,39 @@ use crate::evidence::{
     is_retention_expired_record,
 };
 
+/// One Action publication retains its allocated file identity across IO retries.
+pub(crate) struct PendingActionPublication {
+    record: NamespaceActionRecord,
+    id: Option<String>,
+    persisted: bool,
+    status_attempted: bool,
+    field_index: usize,
+    field_attempted: bool,
+}
+impl PendingActionPublication {
+    pub(crate) fn new(mut record: NamespaceActionRecord) -> Self {
+        if let Some(output) = record.output.as_mut() {
+            *output = crate::evidence::redact_durable_evidence_text(output).text;
+        }
+        if let Some(result) = record.result.as_mut() {
+            *result = crate::evidence::redact_durable_evidence_text(result).text;
+        }
+        Self::from_durable_record(record)
+    }
+
+    // Durable evidence is already redacted; recovery preserves its exact bytes.
+    fn from_durable_record(record: NamespaceActionRecord) -> Self {
+        Self {
+            record,
+            id: None,
+            persisted: false,
+            status_attempted: false,
+            field_index: 0,
+            field_attempted: false,
+        }
+    }
+}
+
 impl NamespaceAgentFiles {
     fn client(&self) -> NamespaceClient {
         NamespaceClient::new(self.root.clone())
@@ -104,11 +137,14 @@ impl NamespaceAgentFiles {
                     submissions.push(self.read_next_input_submission(InputMode::FollowUp).await);
                 }
                 Ok(record) => {
-                    if let Some(submission) = record
-                        .strip_prefix("ctl:")
-                        .and_then(machine_control_submission)
-                    {
-                        submissions.push(Ok(submission));
+                    if let Some(command) = record.strip_prefix("ctl:") {
+                        let parsed = machine_control_submission(command);
+                        if command.starts_with("project-cwd-v1") && parsed.is_none() {
+                            submissions
+                                .push(Err(anyhow::anyhow!("invalid project-cwd-v1 selector")));
+                        } else if let Some(submission) = parsed {
+                            submissions.push(Ok(submission));
+                        }
                     }
                 }
                 Err(error) => submissions.push(Err(error.into())),
@@ -162,6 +198,24 @@ impl NamespaceAgentFiles {
         };
         let response = String::from_utf8(response).context("request response is not utf8")?;
         Ok(Some(response))
+    }
+
+    /// Settle only this pinned, service-assigned request and verify owner evidence.
+    pub(crate) async fn cancel_request(&self, request_id: &str) -> Result<()> {
+        validate_agent_file_id(request_id, "request id")?;
+        let client = self.client();
+        let path = format!("{}/requests/{request_id}", self.agent_path);
+        client
+            .write_document(&format!("{path}/ctl"), b"cancel")
+            .await
+            .with_context(|| format!("cancel request {path}"))?;
+        let status = String::from_utf8(client.read_file(&format!("{path}/status")).await?)
+            .context("cancelled request status is not utf8")?;
+        anyhow::ensure!(
+            matches!(status.as_str(), "cancelled" | "answered" | "closed"),
+            "request {path} has no terminal cancellation evidence: {status}"
+        );
+        Ok(())
     }
 
     pub async fn write_assistant_output(&self, response: &str) -> Result<()> {
@@ -225,38 +279,49 @@ impl NamespaceAgentFiles {
     }
 
     pub(crate) async fn write_rejected_command(&self, id: &str, message: &str) -> Result<()> {
+        let outcome = serde_json::json!({"success":false,"error":message});
+        let mut result = serde_json::json!({"call_id":id,"exit_code":1,"outcome":outcome});
+        // Rejection has no executed command or Process result. Use the shared
+        // runtime title and actual error preview, without a Command presentation.
+        crate::runtime::tool_presentation::write_action_metadata(
+            &mut result,
+            "bash",
+            &serde_json::json!({}),
+            &outcome,
+        )?;
         self.write_action(
             NamespaceActionRecord::new("bash", "failed")
                 .with_approval("not_required")
                 .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
-                .with_result(
-                    serde_json::json!({"call_id":id,"exit_code":1,
-                    "outcome":{"success":false,"error":message}})
-                    .to_string(),
-                ),
+                .with_result(result.to_string()),
         )
         .await?;
         Ok(())
     }
 
-    pub async fn write_action(&self, mut record: NamespaceActionRecord) -> Result<String> {
-        if let Some(output) = record.output.as_mut() {
-            *output = crate::evidence::redact_durable_evidence_text(output).text;
-        }
-        if let Some(result) = record.result.as_mut() {
-            *result = crate::evidence::redact_durable_evidence_text(result).text;
-        }
+    pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
+        self.publish_action(&mut PendingActionPublication::new(record))
+            .await
+    }
+
+    pub(crate) async fn publish_action(
+        &self,
+        pending: &mut PendingActionPublication,
+    ) -> Result<String> {
         let client = NamespaceClient::new(self.root.clone());
-        write_action_record(
+        publish_action_record(
             &client,
             &self.agent_path,
-            record,
+            pending,
             self.action_recorder.as_ref(),
         )
         .await
     }
 
-    pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
+    pub(crate) async fn restore_actions(
+        &self,
+        path: &std::path::PathBuf,
+    ) -> Result<std::collections::HashSet<String>> {
         // ponytail: startup scans the rollout once more; index evidence if large histories warrant it.
         let client = NamespaceClient::new(self.root.clone());
         let mut items = crate::rollout::RolloutRecorder::load_history(path).await?;
@@ -268,6 +333,7 @@ impl NamespaceAgentFiles {
             &mut items,
             &format!("/proc/{pid}"),
         )?;
+        let mut directory_ids = std::collections::HashSet::new();
         for item in items {
             if let crate::rollout::RolloutItem::Event(event) = item
                 && event.event_type == "agent_action_v1"
@@ -275,11 +341,27 @@ impl NamespaceAgentFiles {
                 let record: NamespaceActionRecord =
                     serde_json::from_value(event.payload["record"].clone())
                         .context("decode recovered Action evidence")?;
+                if record.name == "cd"
+                    && matches!(record.status.as_str(), "completed" | "failed")
+                    && let Some(result) = record.result.as_deref()
+                    && let Ok(result) = serde_json::from_str::<serde_json::Value>(result)
+                    && result["title"] == "Select Process directory"
+                    && let Some(id) = result["call_id"].as_str()
+                    && uuid::Uuid::parse_str(id).is_ok()
+                {
+                    directory_ids.insert(id.to_owned());
+                }
                 // This is an IO projection into a fresh Process, never a Tool replay.
-                write_action_record(&client, &self.agent_path, record, None).await?;
+                publish_action_record(
+                    &client,
+                    &self.agent_path,
+                    &mut PendingActionPublication::from_durable_record(record),
+                    None,
+                )
+                .await?;
             }
         }
-        Ok(())
+        Ok(directory_ids)
     }
 
     pub(crate) async fn read_ui_activity_snapshot(&self) -> Result<UiActivitySnapshot> {
@@ -447,6 +529,45 @@ impl NamespaceAgentFiles {
                 preview,
                 child_run,
             })
+    }
+
+    pub(crate) async fn write_ui_skill_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiSkillSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(
+            &client,
+            &format!("{}/machine/ui/skills", self.agent_path),
+            snapshot,
+        )
+        .await
+    }
+
+    pub(crate) async fn write_ui_model_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiModelSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(
+            &client,
+            &format!("{}/machine/ui/models", self.agent_path),
+            snapshot,
+        )
+        .await
+    }
+
+    pub(crate) async fn write_ui_queue_snapshot(
+        &self,
+        snapshot: &alan_agent_protocol::UiQueueSnapshot,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        write_json_document(
+            &client,
+            &format!("{}/machine/ui/queue", self.agent_path),
+            snapshot,
+        )
+        .await
     }
 
     pub(crate) async fn write_ui_activity_snapshot(
@@ -627,8 +748,53 @@ fn request_response_content_part(response: String) -> ContentPart {
     }
 }
 
+pub(crate) fn valid_project_directory(path: &str) -> bool {
+    path.len() <= 4096
+        && path.starts_with('/')
+        && !path.chars().any(char::is_control)
+        && (path == "/"
+            || path[1..]
+                .split('/')
+                .all(|part| !matches!(part, "" | "." | "..")))
+}
+
+#[cfg(test)]
+#[path = "agent_files_selector_tests.rs"]
+mod selector_tests;
+
 fn machine_control_submission(command: &str) -> Option<Submission> {
+    if let Some(model) = command.strip_prefix("select-model ") {
+        let (id, model) = model.split_once(' ')?;
+        return Some(Submission {
+            id: id.into(),
+            intent: alan_agent_protocol::InputIntent::Agent,
+            op: Op::SelectModel {
+                model: model.into(),
+            },
+        });
+    }
     let command = command.trim();
+    if let Some(json) = command.strip_prefix("project-cwd-v1 ") {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Selector {
+            id: uuid::Uuid,
+            path: String,
+        }
+        let selector: Selector = serde_json::from_str(json).ok()?;
+        if command.len() > 8192 || selector.path.len() > 4096 {
+            return None;
+        }
+        // A valid envelope retains its identity through semantic rejection.
+        // The directory-control owner validates namespace paths and authority.
+        return Some(Submission {
+            id: selector.id.to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
+            op: Op::SelectProjectDirectory {
+                path: selector.path,
+            },
+        });
+    }
     if let Some(id) = command.strip_prefix("queue-v1 interrupt ") {
         return uuid::Uuid::parse_str(id).ok().map(|_| {
             Submission::new(Op::InterruptSubmission {
@@ -676,49 +842,60 @@ async fn write_request_record(
     Ok(id)
 }
 
-async fn write_action_record(
+async fn publish_action_record(
     client: &NamespaceClient,
     agent_path: &str,
-    record: NamespaceActionRecord,
+    pending: &mut PendingActionPublication,
     recorder: Option<&crate::rollout::RolloutRecorder>,
 ) -> Result<String> {
+    let record = &pending.record;
     // AgentFS document fields accept at most 1 MiB. Status is the only field
     // not written before the durability barrier, because it publishes completion.
     anyhow::ensure!(
         record.status.len() <= 1 << 20,
         "Action status exceeds document limit"
     );
-    let payload = serde_json::to_value(&record)?;
+    let payload = serde_json::to_value(record)?;
     let clone_path = format!("{agent_path}/actions/clone");
-    let id = client
-        .clone_via_open(&clone_path)
-        .await
-        .with_context(|| format!("create action through {clone_path}"))?;
+    if pending.id.is_none() {
+        client
+            .clone_via_open_retained(&clone_path, &mut pending.id)
+            .await
+            .with_context(|| format!("create action through {clone_path}"))?;
+    }
+    let id = pending.id.as_ref().unwrap();
     let action_path = format!("{agent_path}/actions/{id}");
-    client
-        .write_document(&format!("{action_path}/name"), record.name.as_bytes())
-        .await?;
-    if let Some(output) = record.output {
-        client
-            .write_document(&format!("{action_path}/output"), output.as_bytes())
-            .await?;
+    if pending.status_attempted
+        && pending.persisted
+        && client.read_file(&format!("{action_path}/status")).await? == record.status.as_bytes()
+    {
+        return Ok(id.clone());
     }
-    if let Some(result) = record.result {
-        client
-            .write_document(&format!("{action_path}/result"), result.as_bytes())
-            .await?;
+    let fields = [
+        ("name", Some(record.name.as_str())),
+        ("output", record.output.as_deref()),
+        ("result", record.result.as_deref()),
+        ("approval", record.approval.as_deref()),
+        ("process", record.process.as_deref()),
+    ];
+    while let Some((field, value)) = fields.get(pending.field_index) {
+        if let Some(value) = value {
+            let path = format!("{action_path}/{field}");
+            // AgentFS output is immutable after commit. A lost acknowledgement
+            // must reconcile that same field, rather than rewrite acquired output.
+            let observed =
+                pending.field_attempted && client.read_file(&path).await? == value.as_bytes();
+            if !observed {
+                pending.field_attempted = true;
+                client.write_document(&path, value.as_bytes()).await?;
+            }
+        }
+        pending.field_index += 1;
+        pending.field_attempted = false;
     }
-    if let Some(approval) = record.approval {
-        client
-            .write_document(&format!("{action_path}/approval"), approval.as_bytes())
-            .await?;
-    }
-    if let Some(process) = record.process {
-        client
-            .write_document(&format!("{action_path}/process"), process.as_bytes())
-            .await?;
-    }
-    if let Some(recorder) = recorder {
+    if !pending.persisted
+        && let Some(recorder) = recorder
+    {
         recorder
             .persist_batch(vec![crate::rollout::RolloutItem::Event(
                 crate::rollout::EventRecord {
@@ -732,11 +909,13 @@ async fn write_action_record(
             .await
             .context("persist Action evidence before publishing completion")?;
     }
+    pending.persisted = true;
     // The terminal status event publishes a complete Action snapshot to watchers.
+    pending.status_attempted = true;
     client
         .write_document(&format!("{action_path}/status"), record.status.as_bytes())
         .await?;
-    Ok(id)
+    Ok(id.clone())
 }
 
 fn ui_activity_path(agent_path: &str) -> String {

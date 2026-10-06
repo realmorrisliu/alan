@@ -36,12 +36,19 @@ fn spawn_blocked_bare_cli(runtime: &Path, runtime_dir: Option<&Path>) -> Child {
     } else {
         command.env_remove("ALAN_INSTANCE_RUNTIME_DIR");
     }
-    command
+    let stderr_path = runtime.join(format!("child-{}.stderr", uuid::Uuid::new_v4()));
+    let child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(std::fs::File::create(&stderr_path).unwrap()))
         .spawn()
-        .unwrap()
+        .unwrap();
+    std::fs::rename(
+        stderr_path,
+        runtime.join(format!("child-{}.stderr", child.id())),
+    )
+    .unwrap();
+    child
 }
 
 struct ForegroundChild(Child);
@@ -245,8 +252,11 @@ async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown
     let mut first = ForegroundChild(spawn_blocked_bare_cli(runtime.path(), None));
     let mut second = ForegroundChild(spawn_blocked_bare_cli(runtime.path(), None));
 
+    let mut last_observed = Vec::new();
+    let mut last_ready = Vec::new();
     let instances = async {
         for _ in 0..400 {
+            last_observed.clear();
             let ready = std::fs::read_dir(runtime.path())
                 .unwrap()
                 .filter_map(|entry| entry.ok())
@@ -254,22 +264,33 @@ async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown
                 .filter_map(|entry| {
                     let paths =
                         HostEndpointPaths::from_runtime_dir(&entry.path(), "stable").ok()?;
-                    let status = paths.read_status().ok()?;
+                    let observed = paths.read_status();
+                    last_observed.push(format!("{}: {observed:?}", entry.path().display()));
+                    let status = observed.ok()?;
                     (status.readiness == HostReadiness::Ready).then_some((paths, status))
                 })
                 .collect::<Vec<_>>();
             if ready.len() == 2 {
                 return ready;
             }
+            last_ready = ready;
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        Vec::new()
+        last_ready
     }
     .await;
+    let child_exits = [first.0.try_wait().unwrap(), second.0.try_wait().unwrap()];
+    let stderr = std::fs::read_dir(runtime.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".stderr"))
+        .map(|entry| (entry.path(), std::fs::read_to_string(entry.path()).unwrap()))
+        .collect::<Vec<_>>();
     assert_eq!(
         instances.len(),
         2,
-        "both foreground instances must become ready"
+        "both foreground instances must become ready; pids={:?}; exits={child_exits:?}; last endpoints={last_observed:?}; stderr={stderr:?}",
+        [first.0.id(), second.0.id()]
     );
     assert_ne!(instances[0].1.boot_id, instances[1].1.boot_id);
     assert_ne!(instances[0].0.socket, instances[1].0.socket);

@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use alan_agent_protocol::InputIntent;
@@ -36,6 +36,8 @@ pub struct Composer {
     /// Live buffer stashed while recalling history.
     stash: Option<String>,
     history_path: Option<PathBuf>,
+    draft_revision: u64,
+    history_unavailable: bool,
 }
 
 impl Composer {
@@ -46,6 +48,21 @@ impl Composer {
             history_path,
             ..Self::default()
         }
+    }
+
+    /// Load the configured persistent history with the renderer's recall limit.
+    pub fn from_history_path(path: PathBuf) -> Self {
+        let (history, history_unavailable) = load_history_status(&path, crate::HISTORY_LIMIT);
+        Self {
+            history_unavailable,
+            ..Self::with_history(history, Some(path))
+        }
+    }
+
+    /// Safe nonfatal feedback when persistent history is unavailable.
+    pub fn history_notice(&self) -> Option<&'static str> {
+        self.history_unavailable
+            .then_some("Composer history unavailable; recall is session-only")
     }
 
     pub fn text(&self) -> &str {
@@ -64,7 +81,12 @@ impl Composer {
         self.history_index.map(|index| self.history[index].intent)
     }
 
+    pub(crate) fn draft_revision(&self) -> u64 {
+        self.draft_revision
+    }
+
     pub fn set_text(&mut self, text: impl Into<String>) {
+        self.draft_revision += 1;
         self.buffer = text.into();
         self.cursor = self.buffer.len();
         self.reset_recall();
@@ -112,10 +134,14 @@ impl Composer {
         }
         self.history.push(entry.clone());
         self.reset_recall();
-        if let Some(path) = &self.history_path
-            && let Err(err) = append_history_line(path, &entry)
-        {
-            tracing::warn!(%err, "failed to persist composer history");
+        if let Some(path) = &self.history_path {
+            match append_history_line(path, &entry) {
+                Ok(false) => {}
+                Ok(true) | Err(_) => {
+                    self.history_unavailable = true;
+                    tracing::warn!("composer history unavailable");
+                }
+            }
         }
     }
 
@@ -209,11 +235,13 @@ impl Composer {
     }
 
     fn reset_recall(&mut self) {
+        self.draft_revision += 1;
         self.history_index = None;
         self.stash = None;
     }
 
     fn history_prev(&mut self) {
+        self.draft_revision += 1;
         if self.history.is_empty() {
             return;
         }
@@ -231,6 +259,7 @@ impl Composer {
     }
 
     fn history_next(&mut self) {
+        self.draft_revision += 1;
         let Some(index) = self.history_index else {
             return;
         };
@@ -311,29 +340,137 @@ fn history_records_path(path: &std::path::Path, version: u8) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn append_history_line(path: &std::path::Path, entry: &HistoryEntry) -> std::io::Result<()> {
+fn append_history_line(path: &std::path::Path, entry: &HistoryEntry) -> std::io::Result<bool> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut file = OpenOptions::new()
+    let mut encoded = serde_json::to_vec(entry).map_err(std::io::Error::other)?;
+    encoded.push(b'\n');
+    let file = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(history_records_path(path, 2))?;
-    let encoded = serde_json::to_string(entry).map_err(std::io::Error::other)?;
-    writeln!(file, "{encoded}")
+    let _lock = HistoryLock::acquire(&file, false)?;
+    let length = file.metadata()?.len();
+    let boundary = history_record_boundary(&file, length)?;
+    if boundary != length {
+        file.set_len(boundary)?;
+    }
+    if let Err(error) = (&file).write_all(&encoded) {
+        // Do not let a partially written record swallow the next successful
+        // append. If rollback also fails, the next writer repairs the tail.
+        let _ = file.set_len(boundary);
+        return Err(error);
+    }
+    Ok(boundary != length)
+}
+
+// Find the last complete record using bounded memory, under the caller's lock.
+fn history_record_boundary(mut file: &std::fs::File, mut end: u64) -> std::io::Result<u64> {
+    let mut chunk = [0; 4096];
+    while end > 0 {
+        let start = end.saturating_sub(chunk.len() as u64);
+        let count = (end - start) as usize;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut chunk[..count])?;
+        if let Some(index) = chunk[..count].iter().rposition(|byte| *byte == b'\n') {
+            return Ok(start + index as u64 + 1);
+        }
+        end = start;
+    }
+    Ok(0)
+}
+
+// Same-file descriptor locks serialize complete records across foreground OS
+// processes, including short writes. Contention is bounded; recall stays local
+// if persistence is unavailable rather than blocking terminal input indefinitely.
+struct HistoryLock<'a>(&'a std::fs::File);
+impl<'a> HistoryLock<'a> {
+    fn acquire(file: &'a std::fs::File, shared: bool) -> std::io::Result<Self> {
+        let started = std::time::Instant::now();
+        loop {
+            let result = if shared {
+                file.try_lock_shared()
+            } else {
+                file.try_lock()
+            };
+            match result {
+                Ok(()) => return Ok(Self(file)),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error))
+                    if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(std::fs::TryLockError::Error(error)) => return Err(error),
+            }
+            if started.elapsed() >= std::time::Duration::from_millis(100) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "history lock unavailable",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+impl Drop for HistoryLock<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+fn read_history_records(
+    path: &std::path::Path,
+    complete_records: bool,
+) -> std::io::Result<(String, bool)> {
+    let file = std::fs::File::open(path)?;
+    let _lock = HistoryLock::acquire(&file, true)?;
+    let mut bytes = Vec::new();
+    (&file).read_to_end(&mut bytes)?;
+    let length = bytes.len();
+    if complete_records {
+        let boundary = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |i| i + 1);
+        bytes.truncate(boundary);
+    }
+    let incomplete = bytes.len() != length;
+    Ok((
+        String::from_utf8(bytes).map_err(std::io::Error::other)?,
+        incomplete,
+    ))
 }
 
 /// Load legacy Agent entries, then typed v2 history, oldest first.
 /// New records live beside the legacy file with a `.v2.jsonl` suffix.
-pub fn load_history(path: &PathBuf, limit: usize) -> Vec<HistoryEntry> {
-    let legacy = std::fs::read_to_string(path).unwrap_or_default();
+pub fn load_history(path: &std::path::Path, limit: usize) -> Vec<HistoryEntry> {
+    load_history_status(path, limit).0
+}
+
+fn load_history_status(path: &std::path::Path, limit: usize) -> (Vec<HistoryEntry>, bool) {
+    let mut unavailable = false;
+    let mut read = |path: &std::path::Path, complete_records| match read_history_records(
+        path,
+        complete_records,
+    ) {
+        Ok((text, incomplete)) => {
+            unavailable |= incomplete;
+            text
+        }
+        Err(error) => {
+            unavailable |= error.kind() != std::io::ErrorKind::NotFound;
+            String::new()
+        }
+    };
+    let legacy = read(path, false);
     let mut entries: Vec<HistoryEntry> = legacy
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(|line| HistoryEntry::agent(line.to_owned()))
         .collect();
-    if let Ok(records) = std::fs::read_to_string(history_records_path(path, 1)) {
+    {
+        let records = read(&history_records_path(path, 1), false);
         entries.extend(
             records
                 .lines()
@@ -342,7 +479,8 @@ pub fn load_history(path: &PathBuf, limit: usize) -> Vec<HistoryEntry> {
                 .map(HistoryEntry::agent),
         );
     }
-    if let Ok(records) = std::fs::read_to_string(history_records_path(path, 2)) {
+    {
+        let records = read(&history_records_path(path, 2), true);
         entries.extend(
             records
                 .lines()
@@ -353,7 +491,10 @@ pub fn load_history(path: &PathBuf, limit: usize) -> Vec<HistoryEntry> {
     if entries.len() > limit {
         entries.drain(..entries.len() - limit);
     }
-    entries
+    if unavailable {
+        tracing::warn!("composer history unavailable");
+    }
+    (entries, unavailable)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,155 +506,13 @@ pub enum ComposerKeyOutcome {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "composer_process_tests.rs"]
+mod process_tests;
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
+#[cfg(test)]
+#[path = "composer_history_tests.rs"]
+mod history_tests;
 
-    fn key_mod(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
-        KeyEvent::new(code, modifiers)
-    }
-
-    #[test]
-    fn composer_submits_and_clears_text() {
-        let mut composer = Composer::default();
-        composer.handle_key(key(KeyCode::Char('h')));
-        composer.handle_key(key(KeyCode::Char('i')));
-        assert_eq!(
-            composer.handle_key(key(KeyCode::Enter)),
-            ComposerKeyOutcome::Submit
-        );
-        assert_eq!(composer.take_submit(), Some("hi".into()));
-        assert_eq!(composer.text(), "");
-    }
-
-    #[test]
-    fn submitted_and_recalled_input_preserves_whitespace_and_newlines() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history");
-        std::fs::write(&path, "legacy command\n\"quoted legacy\"\nalan-history-v1\t\"quoted\"\nalan-history-v1\tliteral\n").unwrap();
-        let text = "!printf '%s\\n' 'a b'\n  printf done  \n";
-        let mut composer = Composer::with_history(load_history(&path, 100), Some(path.clone()));
-        composer.set_text(text);
-        assert_eq!(composer.take_submit().as_deref(), Some(text));
-        composer.remember(text);
-        composer.handle_key(key(KeyCode::Up));
-        assert_eq!(composer.text(), text);
-        let loaded = load_history(&path, 100);
-        assert_eq!(
-            loaded
-                .iter()
-                .map(|entry| entry.body.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "legacy command",
-                "\"quoted legacy\"",
-                "alan-history-v1\t\"quoted\"",
-                "alan-history-v1\tliteral",
-                text
-            ]
-        );
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(load_history(&path, 1)[0].body, text);
-        let mut restarted = Composer::with_history(loaded, Some(path));
-        restarted.handle_key(key(KeyCode::Up));
-        assert_eq!(restarted.text(), text);
-        restarted.set_text(" \n ");
-        assert!(restarted.take_submit().is_none());
-        assert_eq!(restarted.text(), " \n ");
-    }
-
-    #[test]
-    fn composer_inserts_paste_at_cursor() {
-        let mut composer = Composer::default();
-        composer.set_text("ac");
-        composer.handle_key(key(KeyCode::Left));
-        composer.insert_text("b\n");
-        assert_eq!(composer.text(), "ab\nc");
-    }
-
-    #[test]
-    fn ctrl_a_and_ctrl_e_jump_to_line_ends() {
-        let mut composer = Composer::default();
-        composer.set_text("hello");
-        composer.handle_key(key_mod(KeyCode::Char('a'), KeyModifiers::CONTROL));
-        assert_eq!(composer.cursor(), 0);
-        composer.handle_key(key_mod(KeyCode::Char('e'), KeyModifiers::CONTROL));
-        assert_eq!(composer.cursor(), 5);
-    }
-
-    #[test]
-    fn ctrl_w_deletes_previous_word() {
-        let mut composer = Composer::default();
-        composer.set_text("hello world");
-        composer.handle_key(key_mod(KeyCode::Char('w'), KeyModifiers::CONTROL));
-        assert_eq!(composer.text(), "hello ");
-    }
-
-    #[test]
-    fn ctrl_u_deletes_to_line_start() {
-        let mut composer = Composer::default();
-        composer.set_text("hello world");
-        composer.handle_key(key(KeyCode::Left));
-        composer.handle_key(key_mod(KeyCode::Char('u'), KeyModifiers::CONTROL));
-        assert_eq!(composer.text(), "d");
-    }
-
-    #[test]
-    fn alt_left_moves_by_word() {
-        let mut composer = Composer::default();
-        composer.set_text("hello world");
-        composer.handle_key(key_mod(KeyCode::Left, KeyModifiers::ALT));
-        assert_eq!(composer.cursor(), 6);
-        composer.handle_key(key_mod(KeyCode::Left, KeyModifiers::ALT));
-        assert_eq!(composer.cursor(), 0);
-    }
-
-    #[test]
-    fn history_recall_walks_previous_submissions() {
-        let mut composer = Composer::default();
-        composer.remember("first");
-        composer.remember("second");
-        composer.set_text("draft");
-        composer.handle_key(key(KeyCode::Up));
-        assert_eq!(composer.text(), "second");
-        composer.handle_key(key(KeyCode::Up));
-        assert_eq!(composer.text(), "first");
-        composer.handle_key(key(KeyCode::Down));
-        assert_eq!(composer.text(), "second");
-        composer.handle_key(key(KeyCode::Down));
-        assert_eq!(composer.text(), "draft");
-    }
-
-    #[test]
-    fn history_dedupes_adjacent_entries() {
-        let mut composer = Composer::default();
-        composer.remember("same");
-        composer.remember("same");
-        composer.handle_key(key(KeyCode::Up));
-        assert_eq!(composer.text(), "same");
-        composer.handle_key(key(KeyCode::Up));
-        // only one entry, stays put
-        assert_eq!(composer.text(), "same");
-    }
-
-    #[test]
-    fn history_persists_across_launches_via_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("tui_history");
-        {
-            let mut composer = Composer::with_history(Vec::new(), Some(path.clone()));
-            composer.remember("persisted entry");
-        }
-        let loaded = load_history(&path, 100);
-        assert_eq!(
-            loaded,
-            vec![HistoryEntry::agent("persisted entry".to_string())]
-        );
-        let mut next = Composer::with_history(loaded, Some(path));
-        next.handle_key(key(KeyCode::Up));
-        assert_eq!(next.text(), "persisted entry");
-    }
-}
+#[cfg(test)]
+#[path = "composer_tests.rs"]
+mod tests;

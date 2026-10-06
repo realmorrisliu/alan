@@ -104,16 +104,22 @@ of governed effects; `:` is not a read-only promise.
 
 ### Prompt communicates the submission route
 
-The explicit-prefix slice starts each ordinary composer entry with `alan: `,
+2026-09-29 presentation revision: the user selected a two-line Agent context/input
+prompt and compact `: ` / `! ` markers. The composition is owned by
+[the self-development readiness plan](../make-alan-self-development-ready/design.md);
+this change retains the one-shot intent and routing contract. Existing code still
+uses the longer markers until implementation is reviewed and merged.
+
+The explicit-prefix slice starts each ordinary composer entry with `: `,
 meaning Agent conversation. A leading `!` in an empty entry changes the prompt to
-`alan! ` and leaves only the command body after it. Backspace on an empty command
-body removes the command override and restores `alan: `. After successful
-submission/acceptance, a new entry starts at `alan: `; a rejected submission keeps
+`! ` and leaves only the command body after it. Backspace on an empty command
+body removes the command override and restores `: `. After successful
+submission/acceptance, a new entry starts at `: `; a rejected submission keeps
 its draft and intent. Command intent is one-shot, not a persistent shell mode.
 
 Typing and pasting use the same whole-submission prefix contract: a paste starting
 with `!` into an empty entry shows command intent, while `!` inserted within an
-existing body remains literal text. Explicit leading `:` keeps `alan: ` without
+existing body remains literal text. Explicit leading `:` keeps `: ` without
 showing a redundant delimiter; it retains forced-Agent intent for future routing.
 Pending form/request responses retain their own handling and do not toggle route.
 
@@ -126,7 +132,7 @@ and cursor placement use the actual visible prompt width. Redirected input keeps
 the same framing contract without printing interactive prompts.
 
 Future automatic classification must not execute a direct command while presenting
-it as conversation under `alan: `. Its visible route behavior must be designed and
+it as conversation under `: `. Its visible route behavior must be designed and
 qualified before activation; this does not add an unconditional approval dialog
 or enable automatic routing in the first slice.
 

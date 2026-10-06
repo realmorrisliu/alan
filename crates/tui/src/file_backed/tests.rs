@@ -1,4 +1,4 @@
-use super::file_surface::write_interrupt;
+use super::file_surface::write_machine_ctl;
 use super::*;
 use std::sync::Arc;
 
@@ -405,6 +405,24 @@ fn completed_ui_thinking_snapshot_appends_once() {
 }
 
 #[test]
+fn paused_status_plain_running_keeps_work_clock_and_quiet_redraw() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::running(1),
+    });
+    assert_eq!(app.activity_label(), Some("working"));
+    assert_eq!(activity_elapsed_second(&app, 5_001), 5);
+    assert!(!frame_needs_redraw(false, &app, 5_001, Some(5)));
+    assert!(frame_needs_redraw(false, &app, 6_001, Some(5)));
+    assert!(frame_needs_redraw(true, &app, 5_001, Some(5)));
+    app.apply_ui_event(UiEvent::Activity {
+        snapshot: UiActivitySnapshot::paused(Some(1)),
+    });
+    assert!(!frame_needs_redraw(false, &app, 6_001, Some(5)));
+    assert!(frame_needs_redraw(true, &app, 6_001, Some(5)));
+}
+
+#[test]
 fn paused_activity_prefers_waiting_label_and_notice_none_clears() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.apply_ui_event(UiEvent::Notice {
@@ -412,9 +430,9 @@ fn paused_activity_prefers_waiting_label_and_notice_none_clears() {
     });
     assert_eq!(app.notice.as_deref(), Some("retrying"));
 
-    app.apply_ui_event(UiEvent::Activity {
-        snapshot: UiActivitySnapshot::paused(Some(1)),
-    });
+    let mut waiting = UiActivitySnapshot::paused(Some(1));
+    waiting.waiting_submission_ids.push("r0".into());
+    app.apply_ui_event(UiEvent::Activity { snapshot: waiting });
     assert_eq!(app.activity_label(), Some("waiting for input"));
 
     app.apply_ui_event(UiEvent::Notice {
@@ -505,9 +523,11 @@ fn confirmation_digit_builds_resume_response() {
         Some(FileBackedAction::Resume {
             request_id,
             response,
+            retry_input,
         }) => {
             assert_eq!(request_id, "r1");
             assert_eq!(response, r#"{"choice":"approve"}"#);
+            assert_eq!(retry_input, "approve");
         }
         other => panic!("expected resume action, got {other:?}"),
     }
@@ -561,7 +581,9 @@ async fn write_agent_input_targets_agent_surface() {
     // Esc interrupts through the agent-runtime surface (machine/ctl), not
     // kernel process lifecycle: /proc/<pid>/ctl interrupt would terminate
     // the agent process while the runtime keeps generating.
-    write_interrupt(&shell, &agent_path).await.unwrap();
+    write_machine_ctl(&shell, &agent_path, "interrupt")
+        .await
+        .unwrap();
     let events =
         String::from_utf8(shell.cat(&format!("{agent_path}/events")).await.unwrap()).unwrap();
     assert!(

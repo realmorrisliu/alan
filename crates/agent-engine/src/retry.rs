@@ -23,8 +23,47 @@ pub fn backoff_delay(attempt: u32) -> Duration {
     Duration::from_millis(capped_delay)
 }
 
-/// Check whether an LLM/provider error looks transient enough to retry.
+/// Canonical namespace generation cause; never retains provider diagnostics.
+#[derive(Debug)]
+pub(crate) struct GenerationCause(&'static str);
+
+impl GenerationCause {
+    pub(crate) fn new(reason: &str) -> Self {
+        let reason = alan_llm::safe_finish_reason(reason);
+        Self(
+            if reason.starts_with("stream_error:") || reason == "stream_error" {
+                reason
+            } else {
+                "stream_error:unknown"
+            },
+        )
+    }
+
+    fn retryable(&self) -> bool {
+        // Unknown and parse retain the existing stream-error compatibility.
+        !matches!(
+            self.0,
+            "stream_error:authentication"
+                | "stream_error:http"
+                | "stream_error:safety"
+                | "stream_error:recitation"
+        )
+    }
+}
+
+impl std::fmt::Display for GenerationCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "llmfs generation failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for GenerationCause {}
+
+/// Check typed namespace causes before legacy LLM/provider error heuristics.
 pub fn is_retryable(error: &anyhow::Error) -> bool {
+    if let Some(cause) = error.downcast_ref::<GenerationCause>() {
+        return cause.retryable();
+    }
     let error_str = error
         .chain()
         .map(ToString::to_string)
@@ -82,3 +121,7 @@ pub fn is_retryable(error: &anyhow::Error) -> bool {
     let source_str = error.root_cause().to_string().to_lowercase();
     source_str.contains("hyper") || source_str.contains("reqwest") || source_str.contains("io")
 }
+
+#[cfg(test)]
+#[path = "retry_tests.rs"]
+mod tests;

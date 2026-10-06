@@ -259,6 +259,45 @@ fn approval_projects_an_opaque_handle_and_revocation_fails_closed() {
 }
 
 #[test]
+fn applied_revoke_with_lost_response_converges_without_repeating_effects() {
+    let host = tempfile::tempdir().unwrap();
+    let service = service();
+    let namespace = register(&service, 7);
+    approve(
+        &service,
+        7,
+        "lost-revoke",
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        host.path().to_path_buf(),
+    );
+    let authorized = service.reconcile(7, binding("/mnt/project")).unwrap();
+
+    // Apply the real authority mutation before losing its response, rather
+    // than injecting a failure that leaves the grant active.
+    let (response, receiver) = tokio::sync::oneshot::channel();
+    drop(receiver);
+    let lost_response = response
+        .send(service.revoke("lost-revoke", "user"))
+        .unwrap_err();
+    assert!(lost_response.is_ok(), "the first revoke really applied");
+    assert!(!service.grant_record("lost-revoke").unwrap().active);
+    assert!(namespace.snapshot().resolve("/mnt/project").is_err());
+    assert!(service.reconcile(7, authorized.clone()).is_err());
+    let generation = service.generation();
+    let audit_len = service.state.lock().unwrap().audit.len();
+    let events_len = service.events(Some(7)).len();
+
+    service.revoke("lost-revoke", "retry").unwrap();
+    assert!(!service.grant_record("lost-revoke").unwrap().active);
+    assert!(service.reconcile(7, authorized).is_err());
+    assert_eq!(service.generation(), generation);
+    assert_eq!(service.state.lock().unwrap().audit.len(), audit_len);
+    assert_eq!(service.events(Some(7)).len(), events_len);
+    assert!(service.revoke("unknown-grant", "user").is_err());
+}
+
+#[test]
 fn child_receives_no_host_authority_by_default() {
     let host = tempfile::tempdir().unwrap();
     let service = service();

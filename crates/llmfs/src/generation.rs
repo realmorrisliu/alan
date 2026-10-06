@@ -453,8 +453,13 @@ pub(super) async fn commit_request(
     };
     let mut rx = match rx {
         Ok(rx) => rx,
-        Err(_) => {
-            fail_generation(&generation, GenStatus::Error, "error").await;
+        Err(error) => {
+            fail_generation(
+                &generation,
+                GenStatus::Error,
+                alan_llm::safe_failure_reason(&error),
+            )
+            .await;
             return Err(ErrorCode::Io);
         }
     };
@@ -481,6 +486,10 @@ pub(super) async fn commit_request(
                         let _guard = drain_gen.finalize.lock().await;
                         if drain_gen.status().is_terminal() {
                             break; // aborted (or already finished) while we waited
+                        }
+                        let mut chunk = chunk;
+                        if let Some(reason) = chunk.finish_reason.as_deref() {
+                            chunk.finish_reason = Some(alan_llm::safe_finish_reason(reason).into());
                         }
                         if let Some(usage) = chunk.usage {
                             drain_gen.record_usage(usage);
@@ -516,7 +525,7 @@ pub(super) async fn commit_request(
                         let _guard = drain_gen.finalize.lock().await;
                         if drain_gen.advance(GenStatus::Error) {
                             events
-                                .append(&event_line(WireStreamEventV1::error("stream closed")))
+                                .append(&event_line(WireStreamEventV1::error("stream_error:closed")))
                                 .await;
                         }
                         break;

@@ -76,6 +76,7 @@ where
     let (parts, command) = input;
     crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
         &mut state.machine,
+        &state.environment.agent_files(),
         &state.environment.host_mount_requests(),
     )
     .await?;
@@ -275,16 +276,19 @@ async fn record_missing_command_action(
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, outcome.clone());
     }
+    let mut result = serde_json::json!({
+        "call_id": tool_call.id, "exit_code": 1, "outcome": outcome,
+    });
+    // No Process result exists here: do not synthesize a Command presentation.
+    crate::runtime::tool_presentation::write_action_metadata(
+        &mut result,
+        &tool_call.name,
+        &tool_call.arguments,
+        &serde_json::json!({"success": false, "error": message}),
+    )?;
     let mut action = NamespaceActionRecord::new(&tool_call.name, "failed")
         .with_output(serde_json::json!({"stdout": "", "stderr": message}).to_string())
-        .with_result(
-            serde_json::json!({
-                "call_id": tool_call.id,
-                "exit_code": 1,
-                "outcome": outcome,
-            })
-            .to_string(),
-        );
+        .with_result(result.to_string());
     if let Some(process) = outcome.get("process").and_then(serde_json::Value::as_str) {
         action = action.with_process(process);
     }
@@ -330,25 +334,20 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let (success, payload, action_status) = match outcome {
+    let action_outcome = outcome
+        .as_ref()
+        .map(Clone::clone)
+        .map_err(|error| anyhow::anyhow!(error.to_string()));
+    let (success, payload) = match outcome {
         Ok(namespace_cwd) => (
             true,
             serde_json::json!({"success": true, "cwd": namespace_cwd}),
-            "completed",
         ),
         Err(error) => (
             false,
             serde_json::json!({"success": false, "error": error.to_string()}),
-            "failed",
         ),
     };
-    let exit_code = if success { 0 } else { 1 };
-    let stderr = if success {
-        ""
-    } else {
-        payload["error"].as_str().unwrap_or("standalone cd failed")
-    };
-    let output = serde_json::json!({"stdout": "", "stderr": stderr});
     let arguments = serde_json::json!({"operation": "cd"});
     state
         .machine
@@ -369,24 +368,14 @@ where
     state
         .machine
         .add_tool_message(submission_id, "cd", payload.clone());
-    let process_path = state.environment.process_files().process_path()?;
-    state
-        .agent_files()
-        .write_action(
-            NamespaceActionRecord::new("cd", action_status)
-                .with_output(output.to_string())
-                .with_result(
-                    serde_json::json!({
-                        "call_id": submission_id,
-                        "exit_code": exit_code,
-                        "outcome": payload,
-                    })
-                    .to_string(),
-                )
-                .with_approval("not_required")
-                .with_process(process_path),
-        )
-        .await?;
+    super::directory_control::write_cd_action(
+        &state.agent_files(),
+        submission_id,
+        command,
+        action_outcome,
+        state.environment.process_files().process_path()?,
+    )
+    .await?;
 
     emit(Event::ToolCallCompleted {
         presentation: None,

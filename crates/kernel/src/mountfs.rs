@@ -28,6 +28,12 @@ use tokio::sync::Mutex;
 
 use crate::namespace::{Namespace, Resolved};
 
+#[cfg(test)]
+#[path = "mountfs/dispatch_tests.rs"]
+mod dispatch_tests;
+mod walk_owner;
+use walk_owner::PendingWalk;
+
 /// A process-global allocator for fids bound in backing trees. It must be unique
 /// across *every* `MountFs` — two wrappers over namespaces that share a backing
 /// server (child namespaces cloning the same `/proc` transport) would otherwise
@@ -70,6 +76,8 @@ struct Entry {
     /// flight. Normal operations cannot use it until the backing tree succeeds and
     /// this entry is replaced with a real backing fid.
     reserved: bool,
+    // Only forwarded walks are cancelable by clunk before their response.
+    walk_cancel: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 struct State {
@@ -79,7 +87,7 @@ struct State {
 /// The namespace-as-`FileServer`.
 pub struct MountFs {
     ns: LiveNamespace,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
 }
 
 /// Shared, live mount table for a running namespace.
@@ -200,11 +208,12 @@ impl MountFs {
                 path: Vec::new(),
                 backing: None,
                 reserved: false,
+                walk_cancel: None,
             },
         );
         Self {
             ns,
-            state: Mutex::new(State { fids }),
+            state: Arc::new(Mutex::new(State { fids })),
         }
     }
 
@@ -345,8 +354,9 @@ impl FileServer for MountFs {
         // (it may itself resolve through another server that is mid-operation),
         // and holding the namespace lock across it would freeze every other
         // operation — the same discipline `target()`/`read`/`open`/`write` use.
-        let path = {
-            let state = self.state.lock().await;
+        let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
+        let (path, candidates, mut pending, mut previous_fid) = {
+            let mut state = self.state.lock().await;
             if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
                 return Err(ErrorCode::BadRequest);
             }
@@ -367,29 +377,97 @@ impl FileServer for MountFs {
             }
             let mut path = base.path.clone();
             path.extend(names.iter().cloned());
-            path
+            let candidates = self.ns.resolve_candidates(&join_path(&path));
+            let Some(first) = candidates.first() else {
+                // Synthetic walks have no backing await; publish under this same lock.
+                if !path.is_empty() && !self.is_synthetic_dir(&path) {
+                    return Err(ErrorCode::NotFound);
+                }
+                let qid = synthetic_qid(&path, self.ns.generation());
+                state.fids.insert(
+                    newfid,
+                    Entry {
+                        path,
+                        backing: None,
+                        reserved: false,
+                        walk_cancel: None,
+                    },
+                );
+                return Ok(qid);
+            };
+            let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
+            // Resolve and reserve atomically: a queued clunk cannot pass between them.
+            state.fids.insert(
+                newfid,
+                Entry {
+                    path: path.clone(),
+                    backing: Some(Backing {
+                        resolved: first.clone(),
+                        backing_fid,
+                        is_dir: false,
+                    }),
+                    reserved: true,
+                    walk_cancel: Some(cancel),
+                },
+            );
+            let pending = PendingWalk::new(self.state.clone(), newfid, first.clone(), backing_fid);
+            (path, candidates, Some(pending), Some(backing_fid))
         };
 
-        // At or below a mount: forward the walk to the backing tree(s), trying each
-        // union contributor (longest-prefix, most-recent-first) until one resolves.
-        // The namespace lock is not held across these forwarded calls.
-        let candidates = self.ns.resolve_candidates(&join_path(&path));
-        for resolved in candidates {
-            let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
-            let walked = resolved
-                .call(Request::Walk {
-                    fid: Fid::ROOT,
-                    newfid: backing_fid,
-                    names: resolved.rel.clone(),
-                })
-                .await;
+        // Backing awaits run outside the namespace lock. Union fallback retains
+        // the same outer reservation/cancellation signal between contributors.
+        for (index, resolved) in candidates.into_iter().enumerate() {
+            let backing_fid = if index == 0 {
+                previous_fid.expect("initial walk reservation")
+            } else {
+                let backing_fid = Fid(NEXT_BACKING.fetch_add(1, Ordering::Relaxed));
+                let mut state = self.state.lock().await;
+                let Some(entry) = state.fids.get_mut(&newfid).filter(|entry| {
+                    entry.reserved
+                        && entry
+                            .backing
+                            .as_ref()
+                            .is_some_and(|backing| Some(backing.backing_fid) == previous_fid)
+                }) else {
+                    return Err(ErrorCode::BadRequest);
+                };
+                entry.backing = Some(Backing {
+                    resolved: resolved.clone(),
+                    backing_fid,
+                    is_dir: false,
+                });
+                pending.as_mut().expect("previous walk owner").transfer();
+                pending = Some(PendingWalk::new(
+                    self.state.clone(),
+                    newfid,
+                    resolved.clone(),
+                    backing_fid,
+                ));
+                previous_fid = Some(backing_fid);
+                backing_fid
+            };
+            let Some(walked) = pending
+                .as_ref()
+                .expect("walk owner")
+                .wait(&mut cancelled)
+                .await
+            else {
+                pending.as_mut().expect("walk owner").close().await;
+                return Err(ErrorCode::BadRequest);
+            };
             if let Ok(Response::Walk { qid }) = walked {
                 let mut state = self.state.lock().await;
-                // A concurrent walk may have claimed `newfid` while the lock was
-                // released; discard our backing fid and reject rather than leak.
-                if state.fids.contains_key(&newfid) {
+                // Clunk may have removed this pending walk, and another caller
+                // may already reuse its outer fid. Never publish a late response.
+                if !state.fids.get(&newfid).is_some_and(|entry| {
+                    entry.reserved
+                        && entry
+                            .backing
+                            .as_ref()
+                            .is_some_and(|backing| backing.backing_fid == backing_fid)
+                }) {
                     drop(state);
-                    let _ = resolved.call(Request::Clunk { fid: backing_fid }).await;
+                    pending.as_mut().expect("walk owner").close().await;
                     return Err(ErrorCode::BadRequest);
                 }
                 state.fids.insert(
@@ -402,10 +480,13 @@ impl FileServer for MountFs {
                             is_dir: qid.kind == FileKind::Dir,
                         }),
                         reserved: false,
+                        walk_cancel: None,
                     },
                 );
+                pending.as_mut().expect("walk owner").transfer();
                 return Ok(qid);
             }
+            pending.as_ref().expect("walk owner").close_backing().await;
         }
 
         // No backing tree resolved this path. Fall through to the synthetic check:
@@ -416,7 +497,17 @@ impl FileServer for MountFs {
         if path.is_empty() || self.is_synthetic_dir(&path) {
             let qid = synthetic_qid(&path, self.ns.generation());
             let mut state = self.state.lock().await;
-            if state.fids.contains_key(&newfid) {
+            if let Some(previous) = previous_fid {
+                if !state.fids.get(&newfid).is_some_and(|entry| {
+                    entry.reserved
+                        && entry
+                            .backing
+                            .as_ref()
+                            .is_some_and(|backing| backing.backing_fid == previous)
+                }) {
+                    return Err(ErrorCode::BadRequest);
+                }
+            } else if state.fids.contains_key(&newfid) {
                 return Err(ErrorCode::BadRequest);
             }
             state.fids.insert(
@@ -425,11 +516,20 @@ impl FileServer for MountFs {
                     path,
                     backing: None,
                     reserved: false,
+                    walk_cancel: None,
                 },
             );
+            if let Some(pending) = pending.as_mut() {
+                pending.transfer();
+            }
             return Ok(qid);
         }
 
+        if let Some(mut pending) = pending
+            && !pending.close().await
+        {
+            return Err(ErrorCode::BadRequest);
+        }
         Err(ErrorCode::NotFound)
     }
 
@@ -582,6 +682,7 @@ impl FileServer for MountFs {
                     path: path.clone(),
                     backing: None,
                     reserved: true,
+                    walk_cancel: None,
                 },
             );
             (resolved, backing_fid, path)
@@ -621,6 +722,7 @@ impl FileServer for MountFs {
                             is_dir: qid.kind == FileKind::Dir,
                         }),
                         reserved: false,
+                        walk_cancel: None,
                     },
                 );
                 true
@@ -672,29 +774,34 @@ impl FileServer for MountFs {
         }
         // Drop the entry under the lock, then forward the backing clunk without the
         // lock held (a commit-on-clunk commit must not serialize the namespace).
-        let backing = {
+        let (backing, pending_walk) = {
             let mut state = self.state.lock().await;
             let Some(entry) = state.fids.get(&fid) else {
                 return Err(ErrorCode::NotFound);
             };
-            if entry.reserved {
+            if entry.reserved && entry.walk_cancel.is_none() {
+                // Create reservations retain their existing commit semantics.
                 return Err(ErrorCode::BadRequest);
             }
             let Some(entry) = state.fids.remove(&fid) else {
                 return Err(ErrorCode::NotFound);
             };
-            entry.backing
+            let pending_walk = entry.walk_cancel.is_some();
+            if let Some(cancel) = entry.walk_cancel {
+                let _ = cancel.send(());
+            }
+            (entry.backing, pending_walk)
         };
         if let Some(b) = backing {
             // The MountFs fid is already dropped (no leak even on error). Propagate
             // the backing clunk result: on a commit-on-clunk endpoint the clunk *is*
             // the commit, so a rejected document must surface, not be swallowed.
-            return match b
-                .resolved
-                .call(Request::Clunk { fid: b.backing_fid })
-                .await?
-            {
-                Response::Clunk => Ok(()),
+            return match b.resolved.call(Request::Clunk { fid: b.backing_fid }).await {
+                Ok(Response::Clunk) => Ok(()),
+                // Cancellation cleanup may have already released the unpublished
+                // walk fid. Completed/commit-on-clunk descriptors keep all errors.
+                Err(ErrorCode::NotFound) if pending_walk => Ok(()),
+                Err(error) => Err(error),
                 _ => Err(ErrorCode::Io),
             };
         }

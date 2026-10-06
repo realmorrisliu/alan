@@ -397,3 +397,86 @@ mod startup;
 
 #[path = "engine_input_order_tests.rs"]
 mod input_order;
+
+struct GatedFirstGeneration {
+    mock: MockLlmProvider,
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl LlmProvider for GatedFirstGeneration {
+    async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        let first = self.mock.recorded_requests().is_empty();
+        let response = self.mock.generate(request).await?;
+        if first {
+            self.started.notify_one();
+            self.release.notified().await;
+        }
+        Ok(response)
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        Ok(response_stream(self.generate(request).await?))
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> anyhow::Result<String> {
+        self.mock.chat(system, user).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "gated_first_generation"
+    }
+}
+
+#[path = "engine_skill_lifecycle_tests.rs"]
+mod skill_lifecycle;
+#[path = "engine_skill_qualification_tests.rs"]
+mod skill_qualification;
+
+#[path = "engine_directory_selection_tests.rs"]
+mod directory_selection;
+#[path = "engine_model_failure_tests.rs"]
+mod model_failure;
+#[path = "engine_queue_projection_tests.rs"]
+mod queue_projection;
+
+#[path = "engine_model_binding_tests.rs"]
+mod model_binding;
+#[path = "engine_mount_cancellation_tests.rs"]
+mod mount_cancellation;
+#[path = "engine_recovery_boundary_tests.rs"]
+mod recovery_boundary;
+#[path = "engine_recovery_ux_tests.rs"]
+mod recovery_ux;
+#[path = "engine_removal_boundary_tests.rs"]
+mod removal_boundary;
+pub(crate) async fn admit_test_input(
+    state: &crate::runtime::transition::RuntimeLoopState,
+    input: &Submission,
+) -> Result<()> {
+    use crate::runtime::model_binding::{CallableIdentity, CapturedCallable};
+    let mut bindings = state.environment.model_bindings.lock().await;
+    if bindings.confirmed.is_none() {
+        bindings.confirmed = Some(CapturedCallable {
+            identity: CallableIdentity {
+                profile: "test".into(),
+                provider: "openai_responses".into(),
+                model: "test".into(),
+                credential_ref: None,
+                revision: "1".into(),
+            },
+            root: state.environment.root_transport(),
+            connection: "default".into(),
+            config: state.core_config.clone(),
+        });
+    }
+    drop(bindings);
+    let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
+    queues.environment = Some(state.environment.clone());
+    queues.recorder = state.machine.input_recorder();
+    queues.admit_input(input).await.map(|_| ())
+}

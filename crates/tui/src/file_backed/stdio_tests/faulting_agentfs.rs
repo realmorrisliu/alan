@@ -24,6 +24,12 @@ pub(crate) struct FaultingFileServer {
     closed_pid: watch::Sender<Option<u64>>,
     walk_pause: Mutex<Option<WalkPause>>,
     read_pause: Mutex<Option<ReadPause>>,
+    write_pause: Mutex<Option<WalkPause>>,
+    read_failure: Mutex<Option<String>>,
+    descriptor_bytes: Mutex<Option<(String, Vec<u8>)>>,
+    write_failure: Mutex<Option<String>>,
+    failed_reads: std::sync::atomic::AtomicUsize,
+    walks: std::sync::atomic::AtomicUsize,
 }
 
 impl FaultingFileServer {
@@ -35,7 +41,43 @@ impl FaultingFileServer {
             closed_pid,
             walk_pause: Mutex::new(None),
             read_pause: Mutex::new(None),
+            write_pause: Mutex::new(None),
+            read_failure: Mutex::new(None),
+            descriptor_bytes: Mutex::new(None),
+            write_failure: Mutex::new(None),
+            failed_reads: std::sync::atomic::AtomicUsize::new(0),
+            walks: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn lose_write_ack(&self, suffix: &str) {
+        *self.write_failure.lock().unwrap() = Some(suffix.into());
+    }
+
+    pub(crate) fn descriptor_bytes(&self, suffix: &str, bytes: Vec<u8>) {
+        *self.descriptor_bytes.lock().unwrap() = Some((suffix.into(), bytes));
+    }
+
+    pub(crate) fn open_paths(&self) -> Vec<String> {
+        self.paths.lock().unwrap().values().cloned().collect()
+    }
+
+    pub(crate) fn pause_next_write_with_suffix(
+        &self,
+        suffix: &str,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        *self.write_pause.lock().unwrap() = Some(WalkPause {
+            suffix: suffix.into(),
+            reached: reached_tx,
+            resume: resume_rx,
+        });
+        (reached_rx, resume_tx)
+    }
+
+    pub(crate) fn walk_count(&self) -> usize {
+        self.walks.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub(crate) fn pause_next_walk_with_suffix(
@@ -66,6 +108,14 @@ impl FaultingFileServer {
             resume: resume_rx,
         });
         (reached_rx, resume_tx)
+    }
+
+    pub(crate) fn fail_reads_with_suffix(&self, suffix: &str) {
+        *self.read_failure.lock().unwrap() = Some(suffix.into());
+    }
+
+    pub(crate) fn failed_read_count(&self) -> usize {
+        self.failed_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub(crate) fn close(&self, pid: u64) {
@@ -112,6 +162,7 @@ impl FaultingFileServer {
 #[async_trait::async_trait]
 impl FileServer for FaultingFileServer {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        self.walks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let qid = self.inner.walk(fid, newfid, names).await?;
         let path = self.path_after(fid, names);
         self.paths.lock().unwrap().insert(newfid, path.clone());
@@ -145,6 +196,12 @@ impl FileServer for FaultingFileServer {
             .get(&fid)
             .cloned()
             .unwrap_or_default();
+        if let Some((suffix, bytes)) = self.descriptor_bytes.lock().unwrap().as_ref()
+            && path.ends_with(suffix)
+        {
+            let start = (offset as usize).min(bytes.len());
+            return Ok(bytes[start..(start + count as usize).min(bytes.len())].to_vec());
+        }
         let is_agent_tail = path.ends_with("/machine/tape") || path.ends_with("/machine/ui/events");
         let Some(pid) = is_agent_tail
             .then(|| path.split('/').next()?.parse::<u64>().ok())
@@ -152,6 +209,17 @@ impl FileServer for FaultingFileServer {
         else {
             let bytes = self.inner.read(fid, offset, count).await?;
             self.pause_matching_read(&path).await;
+            if self
+                .read_failure
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|suffix| path.ends_with(suffix))
+            {
+                self.failed_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return Err(ErrorCode::Io);
+            }
             return Ok(bytes);
         };
         let mut closed_pid = self.closed_pid.subscribe();
@@ -175,11 +243,56 @@ impl FileServer for FaultingFileServer {
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        self.inner.write(fid, offset, data).await
+        let result = self.inner.write(fid, offset, data).await;
+        let path = self
+            .paths
+            .lock()
+            .unwrap()
+            .get(&fid)
+            .cloned()
+            .unwrap_or_default();
+        let pause = {
+            let mut pending = self.write_pause.lock().unwrap();
+            if pending
+                .as_ref()
+                .is_some_and(|pause| path.ends_with(&pause.suffix))
+            {
+                pending.take()
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            let _ = pause.reached.send(());
+            let _ = pause.resume.await;
+        }
+        if self
+            .write_failure
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|suffix| path.ends_with(suffix))
+        {
+            return Err(ErrorCode::Io);
+        }
+        result
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        self.inner.stat(fid).await
+        let mut stat = self.inner.stat(fid).await?;
+        let path = self
+            .paths
+            .lock()
+            .unwrap()
+            .get(&fid)
+            .cloned()
+            .unwrap_or_default();
+        if let Some((suffix, bytes)) = self.descriptor_bytes.lock().unwrap().as_ref()
+            && path.ends_with(suffix)
+        {
+            stat.length = bytes.len() as u64;
+        }
+        Ok(stat)
     }
 
     async fn create(

@@ -6,3 +6,5 @@
 
 include!("generation/connection_and_request_contract.inc.rs");
 include!("generation/lifecycle_and_failure_contract.inc.rs");
+include!("generation/http_completion_contract.inc.rs");
+include!("generation/http_abort_contract.inc.rs");

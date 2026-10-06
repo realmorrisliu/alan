@@ -317,45 +317,50 @@
     #[tokio::test]
     async fn test_handle_next_turn_overflow_emits_recoverable_error() {
         let mut state = create_test_state();
+        let temp = TempDir::new().unwrap();
+        state.machine = AgentMachine::new_with_recorder_in_dir("/proc/1", "test", temp.path()).await.unwrap();
         let cancel = CancellationToken::new();
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        for _ in 0..16 {
-            let result = handle_runtime_op_with_cancel(
-                &mut state,
-                Op::Input {
-                    parts: vec![ContentPart::text("queued")],
-                    mode: InputMode::NextTurn,
-                },
-                &mut emit,
-                &cancel,
-            )
-            .await
-            .unwrap();
-            assert!(matches!(result, RuntimeOpAction::NoTurn));
-        }
-
-        let overflow_result = handle_runtime_op_with_cancel(
-            &mut state,
-            Op::Input {
-                parts: vec![ContentPart::text("overflow")],
+        let broker = crate::runtime::turn_input::TurnInputBroker::default();
+        let mut ids = Vec::new();
+        for i in 0..16 {
+            let input = alan_agent_protocol::Submission::new(Op::Input {
+                parts: vec![ContentPart::text(format!("queued-{i}"))],
                 mode: InputMode::NextTurn,
-            },
-            &mut emit,
-            &cancel,
-        )
-        .await
-        .unwrap();
-        assert!(matches!(overflow_result, RuntimeOpAction::NoTurn));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::Error { message, recoverable }
-                if *recoverable && message.contains("Too many queued next_turn inputs")
-        )));
+            });
+            crate::runtime::engine::admit_test_input(&state, &input).await.unwrap();
+            ids.push(input.id.clone());
+            crate::runtime::transition::advance_accepted_submission(&mut state, input, &broker, &cancel).await.result.unwrap();
+        }
+        let input = alan_agent_protocol::Submission::new(Op::Input {
+            parts: vec![ContentPart::text("overflow")], mode: InputMode::NextTurn,
+        });
+        crate::runtime::engine::admit_test_input(&state, &input).await.unwrap();
+        let error = crate::runtime::transition::advance_accepted_submission(&mut state, input.clone(), &broker, &cancel).await.result.unwrap_err();
+        assert!(error.to_string().contains("Too many queued next_turn inputs"));
+        let queue = state.machine.input_queue();
+        {
+        let q = queue.lock().unwrap();
+        assert_eq!(q.queued_next_turn_inputs.iter().map(|(id, _)| id.clone().unwrap()).collect::<Vec<_>>(), ids);
+        for (i, (_, parts)) in q.queued_next_turn_inputs.iter().enumerate() {
+            assert_eq!(serde_json::to_value(parts).unwrap(), serde_json::to_value(vec![ContentPart::text(format!("queued-{i}"))]).unwrap());
+        }
+        }
+        let history = RolloutRecorder::load_history(state.machine.rollout_path().unwrap()).await.unwrap();
+        assert!(history.iter().any(|item| matches!(item, RolloutItem::Event(e) if e.event_type == "machine_inputs_removed_v1" && e.payload["submission_ids"] == serde_json::json!([input.id]))));
+        let recovered = AgentMachine::load_from_rollout_in_dir(state.machine.rollout_path().unwrap(), "/proc/2", "test", temp.path()).await.unwrap();
+        let q = recovered.input_queue();
+        {
+        let q = q.lock().unwrap();
+        assert!(!q.pending.iter().any(|item| matches!(item, crate::agent_machine::input_queue::QueuedRuntimeItem::Submission(s) if s.id == input.id)));
+        for id in &ids {
+            assert!(q.pending.iter().any(|item| matches!(item, crate::agent_machine::input_queue::QueuedRuntimeItem::Submission(s) if &s.id == id)));
+        }
+        }
+        let events = String::from_utf8(Shell::new(state.environment.root_transport()).cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        let receipts: Vec<_> = events.lines().filter_map(|line| match serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap() {
+            alan_agent_protocol::UiEvent::InputCompleted {submission_ids, status, ..} if submission_ids.contains(&input.id) => Some((submission_ids, status)), _ => None,
+        }).collect();
+        assert_eq!(receipts, vec![(vec![input.id], alan_agent_protocol::UiInputStatus::Failed)]);
     }
 
     #[tokio::test]

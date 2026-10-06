@@ -23,8 +23,8 @@ use crate::runtime::virtual_tools::virtual_tool_definitions;
 
 use super::{
     NamespaceTapeWriter, NamespaceToolExecution, NormalizedToolCall, RuntimeLoopState,
-    TurnExecutionOutcome, TurnRunKind, compaction_runtime, orchestrate_tool_batch_internal,
-    turn_memory_runtime,
+    TurnActivityState, TurnExecutionOutcome, TurnRunKind, compaction_runtime,
+    orchestrate_tool_batch_internal, turn_memory_runtime,
 };
 
 mod namespace_generation;
@@ -100,6 +100,9 @@ fn log_generation_failure(request_start: Instant, error: &anyhow::Error) {
 }
 
 fn generation_error_message(error: &anyhow::Error) -> String {
+    if let Some(cause) = error.downcast_ref::<crate::retry::GenerationCause>() {
+        return format!("Namespace LLM request failed: {cause}");
+    }
     format!("Namespace LLM request failed: {error}")
 }
 
@@ -308,6 +311,7 @@ where
         user_input_for_skills.as_deref(),
         resumed_active_skills.as_deref(),
     );
+    state.publish_ensured_skills().await?;
     debug!(
         elapsed_ms = prompt_build.elapsed_ms,
         skills_cache_hit = prompt_build.skills_cache_hit,
@@ -337,13 +341,26 @@ where
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>();
     let initial_provider_capabilities = generation.capabilities();
-    let turn_request_controls = crate::resolve_turn_request_controls(
-        &state.core_config,
-        initial_provider_capabilities,
-        state.runtime_config.request_control_intent,
-        state.machine.active_turn_request_control_intent(),
-    )?;
-    let model = state.core_config.effective_model().to_string();
+    let captured = state
+        .environment
+        .active_binding
+        .read()
+        .expect("active binding snapshot")
+        .clone();
+    let turn_request_controls = if let Some((binding, _)) = &captured {
+        binding.request_controls.clone()
+    } else {
+        crate::resolve_turn_request_controls(
+            &state.core_config,
+            initial_provider_capabilities,
+            state.runtime_config.request_control_intent,
+            state.machine.active_turn_request_control_intent(),
+        )?
+    };
+    let model = captured
+        .as_ref()
+        .map(|(_, callable)| callable.identity.model.clone())
+        .unwrap_or_else(|| state.core_config.effective_model().to_string());
     let memory_enabled = state.core_config.memory.enabled;
     let context_items = state.machine.context_items().to_vec();
     let context_delta = state.machine.last_context_delta().clone();
@@ -863,4 +880,29 @@ where
         emit,
     )
     .await
+}
+pub(super) async fn finalize_replayed_tool_end_turn_best_effort(
+    state: &mut RuntimeLoopState,
+    cancel: &CancellationToken,
+    surfaces_refreshed: bool,
+    surfaces_context: &'static str,
+    promotion_context: &'static str,
+) {
+    if !cancel.is_cancelled() {
+        let memory_runtime = turn_memory_runtime(state);
+        finalize_turn_memory_best_effort(
+            memory_runtime,
+            FinalizeTurnMemoryRequest {
+                surfaces_refreshed,
+                surfaces_context,
+                promotion_context,
+            },
+        )
+        .await;
+    }
+
+    if cancel.is_cancelled() {
+        state.machine.mark_submission_cancelled();
+    }
+    state.machine.set_turn_activity(TurnActivityState::Idle);
 }

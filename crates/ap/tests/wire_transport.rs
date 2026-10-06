@@ -184,6 +184,13 @@ impl FileServer for OneFile {
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        if fid == Fid(u64::MAX) {
+            panic!("test synchronous request panic");
+        }
+        if fid == Fid(u64::MAX - 1) {
+            tokio::task::yield_now().await;
+            panic!("test suspended request panic");
+        }
         if fid == Fid(1) {
             Ok(Stat {
                 name: "file".into(),
@@ -754,4 +761,27 @@ async fn imported_large_read_caps_remote_count_to_bounded_frame() {
 
     drop(imported);
     server_task.abort();
+}
+
+#[tokio::test]
+async fn request_panic_before_or_after_first_poll_is_an_export_error() {
+    use tokio::io::AsyncWriteExt;
+    for fid in [Fid(u64::MAX), Fid(u64::MAX - 1)] {
+        let (mut client, server) = duplex(4096);
+        let (reader, writer) = tokio::io::split(server);
+        let export = tokio::spawn(export_file_server(
+            Arc::new(OneFile),
+            BufReader::new(reader),
+            writer,
+        ));
+        client
+            .write_all(&encode_request_frame(&Request::Stat { fid }).unwrap())
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), export)
+            .await
+            .expect("panicking request must terminate the export")
+            .expect("export must retain its WireError boundary instead of panicking");
+        assert!(matches!(result, Err(alan_ap::WireError::Io(_))));
+    }
 }

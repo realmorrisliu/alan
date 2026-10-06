@@ -166,16 +166,14 @@ fn concurrent_services_do_not_overwrite_each_others_catalog_entries() {
             let barrier = &barrier;
             scope.spawn(move || {
                 barrier.wait();
-                assert!(
-                    service
-                        .execute(PackageCommand::Install {
-                            request_id: id.into(),
-                            package_id: id.into(),
-                            snapshot: native_snapshot(id, id),
-                        })
-                        .unwrap()
-                        .success
-                );
+                let result = service
+                    .execute(PackageCommand::Install {
+                        request_id: id.into(),
+                        package_id: id.into(),
+                        snapshot: native_snapshot(id, id),
+                    })
+                    .unwrap();
+                assert!(result.success, "Package Install reply: {result:?}");
             });
         }
     });

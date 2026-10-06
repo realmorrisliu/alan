@@ -18,6 +18,75 @@ pub(super) enum RolloutCmd {
     },
 }
 
+pub(super) async fn run_writer<W: tokio::io::AsyncWrite + Unpin>(
+    mut writer: W,
+    mut rx: mpsc::UnboundedReceiver<RolloutCmd>,
+) {
+    use super::RolloutRecorder;
+    let mut failed_write = None::<String>;
+    while let Some(command) = rx.recv().await {
+        let blocked = || {
+            anyhow!(
+                "Rollout writer failed closed after uncertain write or flush: {}",
+                failed_write.as_deref().unwrap_or("unknown")
+            )
+        };
+        match command {
+            RolloutCmd::Record(item) => {
+                if failed_write.is_some() {
+                    tracing::error!(error = %blocked(), "Rollout record rejected by failed-closed writer");
+                } else if let Err(error) = RolloutRecorder::write_item(&mut writer, &item).await {
+                    tracing::error!(%error, "Rollout record write failed");
+                    failed_write = Some(error.to_string());
+                }
+            }
+            RolloutCmd::PersistBatch { items, ack } => {
+                let result = if failed_write.is_some() {
+                    Err(blocked())
+                } else {
+                    RolloutRecorder::persist_items_and_flush(&mut writer, &items).await
+                };
+                if let Err(error) = &result {
+                    tracing::error!(%error, "Rollout persistence failed; writer closed to further writes");
+                    failed_write = Some(error.to_string());
+                }
+                let _ = ack.send(result);
+            }
+            RolloutCmd::Flush { ack } => {
+                let result = if failed_write.is_some() {
+                    Err(blocked())
+                } else {
+                    RolloutRecorder::flush_writer(&mut writer).await
+                };
+                if let Err(error) = &result {
+                    tracing::error!(%error, "Rollout flush failed; writer closed to further writes");
+                    failed_write = Some(error.to_string());
+                }
+                if let Some(ack) = ack {
+                    let _ = ack.send(result);
+                }
+            }
+            RolloutCmd::Close { ack } => {
+                let result = if failed_write.is_some() {
+                    Err(blocked())
+                } else {
+                    RolloutRecorder::flush_writer(&mut writer).await
+                };
+                if let Err(error) = &result {
+                    tracing::error!(%error, "Rollout close flush failed");
+                }
+                let _ = ack.send(result);
+                return;
+            }
+        }
+    }
+    if failed_write.is_none()
+        && let Err(error) = RolloutRecorder::flush_writer(&mut writer).await
+    {
+        tracing::error!(%error, "Rollout final flush failed");
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct RolloutWriter {
     tx: Mutex<Option<mpsc::UnboundedSender<RolloutCmd>>>,
@@ -95,6 +164,10 @@ impl RolloutWriter {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "writer_tests.rs"]
+mod io_tests;
 
 #[cfg(test)]
 mod tests {

@@ -54,7 +54,7 @@ async fn read_stream_clunks_open_fid_when_cancelled() {
 #[tokio::test]
 async fn llmfs_event_error_clunks_events_fid() {
     let fs = Arc::new(ScriptedReadFs::new(
-        b"{\"version\":1,\"error\":\"temporary 503\"}\n".as_slice(),
+        b"{\"version\":1,\"error\":\"secretbodymarker https://private.example\"}\n".as_slice(),
     ));
     let client = NamespaceClient::new(InProcessTransport::new(fs.clone()));
     let mut ignore = |_event: Event| async {};
@@ -63,9 +63,9 @@ async fn llmfs_event_error_clunks_events_fid() {
         .await
         .unwrap_err();
 
-    assert!(
-        err.to_string().contains("llmfs generation failed"),
-        "{err:#}"
+    assert_eq!(
+        err.to_string(),
+        "llmfs generation failed: stream_error:unknown"
     );
     assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
 }

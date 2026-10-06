@@ -47,6 +47,7 @@ pub(super) async fn sync_action_from_file(
     app: &mut FileBackedApp,
 ) -> Result<()> {
     let snapshot = read_action_snapshot(shell, agent_path, action_id).await?;
+    app.observe_project_action(agent_path, &snapshot);
     sync_action_snapshot(app, snapshot);
     Ok(())
 }
@@ -54,6 +55,7 @@ pub(super) async fn sync_action_from_file(
 /// Live streams and history from one file-backed renderer attachment.
 pub(super) struct WatchTails {
     pub(super) root_agent_pid: Option<u64>,
+    pub(super) queue_events: alan_shell::Tail,
     pub(super) output: alan_shell::Tail,
     pub(super) requests: alan_shell::Tail,
     pub(super) actions: alan_shell::Tail,
@@ -272,6 +274,7 @@ pub(super) async fn spawn_action_watch(
 
 pub(super) async fn spawn_ui_watch(
     mut tail: alan_shell::Tail,
+    owner: String,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
@@ -296,6 +299,7 @@ pub(super) async fn spawn_ui_watch(
                             }
                             match serde_json::from_slice::<UiEvent>(line) {
                                 Ok(event) => {
+                                    if matches!(event, UiEvent::InputCompleted { .. }) && !send_event_or_shutdown(&tx, &mut shutdown_rx, FileBackedEvent::ModelReceipt { owner: owner.clone(), event: event.clone() }).await { break 'watch; }
                                     if !send_event_or_shutdown(
                                         &tx,
                                         &mut shutdown_rx,
@@ -308,6 +312,7 @@ pub(super) async fn spawn_ui_watch(
                                     }
                                 }
                                 Err(err) => {
+                                    if !send_event_or_shutdown(&tx, &mut shutdown_rx, FileBackedEvent::ModelReceiptsUnavailable { owner: owner.clone() }).await { break 'watch; }
                                     if !send_event_or_shutdown(
                                         &tx,
                                         &mut shutdown_rx,
@@ -335,6 +340,14 @@ pub(super) async fn spawn_ui_watch(
         }
     }
 
+    if !*shutdown_rx.borrow() {
+        let _ = send_event_or_shutdown(
+            &tx,
+            &mut shutdown_rx,
+            FileBackedEvent::ModelReceiptsUnavailable { owner },
+        )
+        .await;
+    }
     tail.close()
         .await
         .map_err(|err| anyhow!("failed to close ui watch: {err:?}"))?;
@@ -550,16 +563,6 @@ pub(super) async fn write_machine_ctl(
         .write(&machine_ctl_path(agent_path), command.as_bytes())
         .await
         .map_err(|err| anyhow!("write machine ctl failed: {err:?}"))
-}
-
-pub(super) async fn write_interrupt(shell: &alan_shell::Shell, agent_path: &str) -> Result<()> {
-    // Turn interrupt is agent-runtime control: it must cancel the running
-    // generation and leave the agent process alive. Writing "interrupt" to
-    // the kernel `/proc/<pid>/ctl` would terminate the process instead.
-    shell
-        .write(&machine_ctl_path(agent_path), b"interrupt")
-        .await
-        .map_err(|err| anyhow!("write turn interrupt failed: {err:?}"))
 }
 
 async fn read_latest_pending_request(
@@ -795,15 +798,34 @@ pub(super) fn hydrate_actions_from_snapshots(
     app: &mut FileBackedApp,
     snapshots: Vec<ActionSnapshot>,
 ) {
+    for snapshot in &snapshots {
+        app.observe_action_cwd(snapshot);
+    }
     app.running_tools = snapshots.iter().filter_map(running_tool).collect();
 }
 
 pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnapshot) {
+    app.observe_action_cwd(&snapshot);
     app.running_tools.retain(|tool| tool.id != snapshot.id);
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);
     }
     if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+        use std::hash::{Hash, Hasher};
+        let key = (app.agent_path.clone(), snapshot.id.clone());
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (
+            &snapshot.name,
+            &snapshot.status,
+            &snapshot.output,
+            &snapshot.result,
+        )
+            .hash(&mut hash);
+        let fingerprint = hash.finish();
+        let unchanged = app.projected_actions.insert(key, fingerprint) == Some(fingerprint);
+        if unchanged && !app.action_cells.contains_key(&snapshot.id) {
+            return;
+        }
         app.upsert_action_cell(snapshot.id, cell);
     }
 }
@@ -852,10 +874,10 @@ fn action_status_is_running(status: &str) -> bool {
     matches!(status.trim(), "running" | "pending")
 }
 
-fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
+pub(super) fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
     let status = match snapshot.status.trim() {
         "completed" => ToolStatus::Complete,
-        "failed" => ToolStatus::Failed,
+        "failed" | "rejected" => ToolStatus::Failed,
         _ => return None,
     };
     let body = if !snapshot.output.trim().is_empty() {
@@ -866,11 +888,36 @@ fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryC
         None
     };
 
+    let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
+    let title = metadata
+        .as_ref()
+        .and_then(|v| v.get("title"))
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| action_title(snapshot));
+    let preview = metadata
+        .as_ref()
+        .and_then(|v| v.get("result_preview"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let presentation = metadata
+        .as_ref()
+        .and_then(|v| v.get("presentation"))
+        .and_then(|v| serde_json::from_value::<ToolResultPresentation>(v.clone()).ok())
+        .or_else(|| {
+            preview
+                .as_ref()
+                .filter(|text| !text.trim().is_empty())
+                .cloned()
+                .or(body)
+                .map(|body| ToolResultPresentation::PlainText { body })
+        });
     Some(HistoryCell::Tool {
-        title: action_title(snapshot),
+        title,
         status,
-        preview: None,
-        presentation: body.map(|body| ToolResultPresentation::PlainText { body }),
+        preview,
+        presentation,
     })
 }
 

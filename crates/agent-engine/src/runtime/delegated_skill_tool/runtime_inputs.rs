@@ -46,6 +46,21 @@ impl<'a> DelegatedSkillRuntime<'a> {
         }
     }
 
+    pub(super) async fn publish_ensured_skills(&mut self) {
+        let mut last = self.prompt_cache.skill_publication.clone();
+        match crate::runtime::ui_surfaces::publish_skills(
+            &self.agent_files,
+            self.prompt_cache,
+            self.child_runtime_inputs.parent_process_path.clone(),
+            &mut last,
+        )
+        .await
+        {
+            Ok(()) => self.prompt_cache.skill_publication = last,
+            Err(error) => tracing::warn!(%error, "Delegated skill presentation publication failed"),
+        }
+    }
+
     pub(super) fn child_namespace_cwd(&self) -> &std::path::Path {
         self.child_runtime_inputs.child_launch.namespace_cwd()
     }

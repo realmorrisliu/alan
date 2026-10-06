@@ -49,9 +49,16 @@ pub use spawn::{
     SpawnHostMount, SpawnLaunchInputs, SpawnMountAccess, SpawnRuntimeOverrides, SpawnSpec,
     SpawnSpecValidationError, SpawnTarget, SpawnToolProfileOverride,
 };
+mod ui_skills;
+pub use ui_skills::UiSkillSnapshot;
+mod ui_models;
+pub use ui_models::{
+    UiAdmittedModel, UiModelBinding, UiModelCatalog, UiModelChoice, UiModelControlSource,
+    UiModelSnapshot,
+};
 pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiInputStatus, UiNoticeKind,
-    UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState,
+    UiNoticeSnapshot, UiPlanSnapshot, UiQueueSnapshot, UiThinkingSnapshot, UiThinkingState,
 };
 
 pub use user_input::{InputIntent, UserInputRecord, parse_input_prefix};

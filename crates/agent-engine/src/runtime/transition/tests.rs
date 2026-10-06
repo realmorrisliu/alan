@@ -23,8 +23,9 @@ use std::{
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+mod next_turn_disposition;
 mod tape_lease;
-mod tool_batch;
+pub(crate) mod tool_batch;
 
 async fn maybe_compact_context_for_request<E, F>(
     state: &mut RuntimeLoopState,
@@ -170,7 +171,7 @@ fn runtime_state_with_environment(environment: NamespaceRuntimeEnvironment) -> R
     }
 }
 
-async fn namespace_environment_with_live_process(
+pub(crate) async fn namespace_environment_with_live_process(
     provider: impl LlmProvider + 'static,
 ) -> NamespaceRuntimeEnvironment {
     let (root, procfs) = namespace_root_with_provider(provider);
@@ -600,6 +601,7 @@ include!("tests/compaction_recovery.rs");
 include!("tests/compaction_thresholds.rs");
 include!("tests/core_behaviors.rs");
 include!("tests/submissions.rs");
+include!("tests/dispatch_failure.rs");
 
 pub(crate) async fn handle_runtime_op<E, F>(
     state: &mut RuntimeLoopState,

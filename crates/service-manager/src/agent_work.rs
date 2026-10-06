@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub(crate) const EXECUTABLE: &str = "/bin/agent_work";
-const HELP: &str = "agent_work status TARGET | submit TARGET TEXT | cancel TARGET INPUT_ID | continue TARGET | discard TARGET\nTARGET is root or an Agent PID visible to you. Submit returns an input ID, not a completed answer. Cancel/continue/discard request a queue change; inspect status to observe it. No command retries an uncertain write. JSON arguments use action, target, and text or submission_id.";
+const HELP: &str = "agent_work status TARGET | submit TARGET TEXT | cancel TARGET INPUT_ID | continue TARGET | discard TARGET\nTARGET is root or an Agent PID visible to you. root is this invocation's Root Agent Process and may be the caller itself. Submit queues input for that target, including legitimate self-scheduling; it does not notify an external operator and is not an external handoff or report. Submit returns an input ID, not a completed answer. Cancel/continue/discard request a queue change; inspect status to observe it. No command retries an uncertain write. JSON arguments use action, target, and text or submission_id.";
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -39,7 +39,7 @@ pub(crate) fn manifest() -> Vec<u8> {
         "version":1, "name":"agent_work", "description":HELP,
         "parameters":{"type":"object", "required":["action","target"], "additionalProperties":false,
             "properties":{"action":{"type":"string","enum":["status","submit","cancel","continue","discard"]},
-                "target":{"type":"string","description":"root or a visible Agent PID"},
+                "target":{"type":"string","description":"root (this invocation's Root Agent Process, which may be the caller itself) or a visible Agent PID"},
                 "text":{"type":"string"}, "submission_id":{"type":"string"}},
             "oneOf":[
                 {"properties":{"action":{"const":"submit"}},"required":["text"],"not":{"required":["submission_id"]}},
@@ -201,6 +201,36 @@ mod tests {
                 descriptors: BTreeMap::new(),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn help_and_manifest_explain_invocation_root_and_submit_semantics() {
+        let manifest: Value = serde_json::from_slice(&manifest()).unwrap();
+        assert_eq!(manifest["description"], HELP);
+        assert_eq!(
+            manifest["parameters"]["properties"]["target"]["description"],
+            "root (this invocation's Root Agent Process, which may be the caller itself) or a visible Agent PID"
+        );
+        let outcome = AgentWorkProcessRunner
+            .run(invocation(Namespace::new(), &["--help"]))
+            .await;
+        assert_eq!(outcome.exit_code, 0);
+        let result: Value = serde_json::from_slice(&outcome.output).unwrap();
+        assert_eq!(result["help"], HELP);
+        for clarification in [
+            "root is this invocation's Root Agent Process and may be the caller itself",
+            "Submit queues input for that target, including legitimate self-scheduling",
+            "does not notify an external operator",
+            "is not an external handoff or report",
+        ] {
+            assert!(HELP.contains(clarification));
+        }
+        println!("manifest description: {}", manifest["description"]);
+        println!(
+            "target description: {}",
+            manifest["parameters"]["properties"]["target"]["description"]
+        );
+        println!("--help output: {}", result);
     }
 
     #[test]

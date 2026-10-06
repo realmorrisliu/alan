@@ -20,10 +20,14 @@ pub(super) use leases::PackageLease;
 
 pub(super) struct PackageStore {
     root: PathBuf,
+    bootstrap: Option<std::sync::Arc<super::bootstrap::BootstrapWait>>,
 }
 
 impl PackageStore {
-    pub(super) fn open(store_root: PathBuf) -> Result<(Self, PackageCatalog)> {
+    pub(super) fn open(
+        store_root: PathBuf,
+        bootstrap: Option<std::sync::Arc<super::bootstrap::BootstrapWait>>,
+    ) -> Result<(Self, PackageCatalog)> {
         ensure_package_store_channel_chain(&store_root)?;
         match fs::symlink_metadata(&store_root) {
             Ok(_) => {
@@ -45,15 +49,18 @@ impl PackageStore {
             &store_root.join("staging"),
             "package staging path is not an owned directory",
         )?;
-        let _transaction = PackageStoreLock::acquire(&store_root)?;
+        let _transaction = PackageStoreLock::acquire(&store_root, bootstrap.as_deref())?;
         fs::create_dir_all(store_root.join("leases"))?;
-        let store = Self { root: store_root };
+        let store = Self {
+            root: store_root,
+            bootstrap,
+        };
         let catalog = store.recover()?;
         Ok((store, catalog))
     }
 
     pub(super) fn transaction(&self) -> Result<PackageStoreLock> {
-        PackageStoreLock::acquire(&self.root)
+        PackageStoreLock::acquire(&self.root, self.bootstrap.as_deref())
     }
 
     pub(super) fn load(&self) -> Result<PackageCatalog> {
@@ -176,7 +183,7 @@ pub(super) struct PackageStoreLock {
 }
 
 impl PackageStoreLock {
-    fn acquire(root: &Path) -> Result<Self> {
+    fn acquire(root: &Path, bootstrap: Option<&super::bootstrap::BootstrapWait>) -> Result<Self> {
         let path = root.join("store.lock");
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true);
@@ -191,12 +198,51 @@ impl PackageStoreLock {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
-            // SAFETY: file owns a valid descriptor for the lifetime of the lock.
-            // ponytail: serialize store operations; split locks only if contention warrants it.
-            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-            if result != 0 {
+            use std::time::{Duration, Instant};
+            let deadline = Instant::now() + Duration::from_millis(500);
+            loop {
+                // Cancellation is checked even before a free first attempt. A zero
+                // wait allowance is not a prohibition on uncontended transactions.
+                let boot_remaining = bootstrap
+                    .map(|wait| wait.remaining())
+                    .transpose()?
+                    .flatten();
+                // SAFETY: file owns a valid descriptor throughout acquisition.
+                let result =
+                    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                if result == 0 {
+                    break;
+                }
                 let error = std::io::Error::last_os_error();
-                return Err(error).context("acquire Package Store lock");
+                if !error.raw_os_error().is_some_and(|code| {
+                    code == libc::EWOULDBLOCK || code == libc::EAGAIN || code == libc::EINTR
+                }) {
+                    return Err(error).context("acquire Package Store lock");
+                }
+                let remaining = match boot_remaining {
+                    Some(_) => bootstrap
+                        .unwrap()
+                        .remaining()?
+                        .unwrap_or_else(|| deadline.saturating_duration_since(Instant::now())),
+                    None => deadline.saturating_duration_since(Instant::now()),
+                };
+                if remaining.is_zero() {
+                    if boot_remaining.is_some() {
+                        bail!("Package Store busy: bootstrap acquisition budget exhausted");
+                    }
+                    bail!("Package Store busy: lock acquisition exceeded 500 ms");
+                }
+                // Charge only the bounded retry interval (busy or interrupted),
+                // never file setup, spawn scheduling, or work under the lock.
+                // EINTR uses this same check/backoff/debit path so repeated
+                // interruption cannot bypass either acquisition bound.
+                // All callers debit the same allowance on every retry, rather
+                // than taking independent per-acquisition deadlines.
+                let waiting = Instant::now();
+                std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                if boot_remaining.is_some() {
+                    bootstrap.unwrap().charge_wait(waiting.elapsed());
+                }
             }
         }
         Ok(Self { file })

@@ -1,4 +1,5 @@
-use super::{FileBackedAction, FileBackedApp};
+use super::{FileBackedAction, FileBackedApp, FileBackedEvent};
+use crate::file_backed::{ProjectAccess, ProjectControl, ProjectMountReceipt};
 use crate::history::{HistoryCell, RenderOpts};
 use std::collections::BTreeMap;
 
@@ -157,6 +158,163 @@ fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
 }
 
 #[test]
+fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
+    app.project_candidate = Some(std::path::PathBuf::from("/tmp/fixture"));
+    assert!(app.handle_command("/project").is_none());
+    assert_eq!(app.composer.text(), "/tmp/fixture");
+    assert!(app.notice.as_deref().unwrap().contains("read-only"));
+    assert_eq!(app.input_prompt_prefix(), "! ");
+
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(app.notice.as_deref().unwrap().contains("read-write"));
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.composer.text().is_empty());
+    assert!(app.project_selection.is_none());
+
+    app.handle_command("/project");
+    let Some(FileBackedAction::Project(ProjectControl::Mount {
+        host_path, access, ..
+    })) = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("project approval action")
+    };
+    assert_eq!(host_path, std::path::PathBuf::from("/tmp/fixture"));
+    assert_eq!(access, ProjectAccess::ReadOnly);
+
+    app.project = Some(ProjectMountReceipt {
+        grant_id: "request-1".into(),
+        namespace_path: "/mnt/project-request-1".into(),
+        label: "fixture".into(),
+        access: ProjectAccess::ReadOnly,
+    });
+    assert!(matches!(
+        app.handle_command("/project revoke"),
+        Some(FileBackedAction::Project(ProjectControl::Revoke { grant_id }))
+            if grant_id == "request-1"
+    ));
+}
+
+#[test]
+fn settled_paused_project_picker_is_available_without_continuing_queue() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: true,
+            pending_submission_ids: vec!["queued".into()],
+            ..Default::default()
+        }),
+    );
+    app.activity.state = alan_agent_protocol::UiActivityState::Paused;
+    app.handle_command("/project");
+    assert_eq!(app.project_selection, Some(ProjectAccess::ReadOnly));
+    assert_eq!(
+        app.activity.state,
+        alan_agent_protocol::UiActivityState::Paused
+    );
+}
+
+#[test]
+fn project_cwd_observation_accepts_normalized_trailing_separator() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let receipt = ProjectMountReceipt {
+        grant_id: "grant-1".into(),
+        namespace_path: "/mnt/project-1".into(),
+        label: "fixture".into(),
+        access: ProjectAccess::ReadWrite,
+    };
+    app.stage_project_control(
+        "/agent/root".into(),
+        "mount-input".into(),
+        Some((receipt, "/tmp".into())),
+        None,
+    );
+
+    app.observe_project_action("/agent/root", &super::ActionSnapshot {
+        id: "action-1".into(),
+        name: "cd".into(),
+        status: "completed".into(),
+        output: String::new(),
+        result: r#"{"call_id":"mount-input","exit_code":0,"outcome":{"cwd":"/mnt/project-1/","success":true}}"#
+            .into(),
+    });
+
+    assert_eq!(
+        app.namespace_cwd,
+        std::path::PathBuf::from("/mnt/project-1/")
+    );
+    assert!(app.pending_project_control.is_none());
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .starts_with("project cwd: /mnt/project-1/")
+    );
+
+    app.stage_project_control(
+        "/agent/root".into(),
+        "revoke-input".into(),
+        None,
+        Some("grant-1".into()),
+    );
+    app.observe_project_action(
+        "/agent/root",
+        &super::ActionSnapshot {
+            id: "action-2".into(),
+            name: "cd".into(),
+            status: "completed".into(),
+            output: String::new(),
+            result: r#"{"call_id":"another-input","outcome":{"cwd":"/","success":true}}"#.into(),
+        },
+    );
+    assert_eq!(app.take_ready_project_revoke(), None);
+    app.observe_project_action(
+        "/agent/root",
+        &super::ActionSnapshot {
+            id: "action-3".into(),
+            name: "cd".into(),
+            status: "completed".into(),
+            output: String::new(),
+            result:
+                r#"{"call_id":"revoke-input","exit_code":0,"outcome":{"cwd":"/","success":true}}"#
+                    .into(),
+        },
+    );
+    assert_eq!(app.take_ready_project_revoke().as_deref(), Some("grant-1"));
+    assert!(app.project.is_some());
+}
+
+#[test]
+fn one_enter_executes_a_selected_slash_command_and_idle_ctrl_c_clears_the_draft() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.composer.set_text("/comp");
+    app.refresh_completion();
+    assert!(matches!(
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(FileBackedAction::MachineCtl { command, .. }) if command == "compact"
+    ));
+
+    app.composer.set_text("unsent draft");
+    assert!(
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .is_none()
+    );
+    assert!(app.composer.text().is_empty());
+    assert_eq!(app.notice.as_deref(), Some("draft cleared"));
+}
+
+#[test]
 fn pending_response_keeps_prefixes_as_literal_response_data() {
     for input in ["!answer", ":!answer", "/clear"] {
         let mut app = FileBackedApp::new("/agent/root".into());
@@ -176,12 +334,14 @@ fn pending_response_keeps_prefixes_as_literal_response_data() {
         let Some(FileBackedAction::Resume {
             request_id,
             response,
+            retry_input,
         }) = app.handle_submit()
         else {
             panic!("expected response to existing request")
         };
         assert_eq!(request_id, "request-1");
         assert_eq!(response, input);
+        assert_eq!(retry_input, input);
     }
 }
 
@@ -325,6 +485,59 @@ fn pending_response_resets_intent_only_when_it_consumes_the_draft() {
 }
 
 #[test]
+fn request_response_write_keeps_the_yield_retryable_without_blocking_repeats() {
+    use alan_agent_protocol::YieldKind;
+
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.set_pending_yield(crate::history::PendingYieldCell {
+        request_id: "request-1".into(),
+        kind: YieldKind::Confirmation,
+        title: "Approve?".into(),
+        prompt: None,
+        options: vec!["approve".into(), "reject".into()],
+        default_option: None,
+        questions: Vec::new(),
+        capability: None,
+        reason: None,
+        presentation: None,
+    });
+    app.composer.set_text("approve");
+
+    let Some(FileBackedAction::Resume {
+        request_id,
+        retry_input,
+        ..
+    }) = app.handle_submit()
+    else {
+        panic!("confirmation should produce a response")
+    };
+    app.begin_resume_write(request_id.clone());
+    assert!(app.handle_submit().is_none());
+
+    app.dispatch(FileBackedEvent::ResumeWriteCompleted {
+        request_id: request_id.clone(),
+        retry_input: retry_input.clone(),
+        result: Err("temporarily unavailable".into()),
+    });
+    assert_eq!(app.composer.text(), "approve");
+    assert!(app.pending_yield.is_some());
+    assert!(app.response_in_flight.is_none());
+
+    assert!(matches!(
+        app.handle_submit(),
+        Some(FileBackedAction::Resume { .. })
+    ));
+    app.begin_resume_write(request_id.clone());
+    app.dispatch(FileBackedEvent::ResumeWriteCompleted {
+        request_id,
+        retry_input,
+        result: Ok(()),
+    });
+    assert!(app.pending_yield.is_none());
+    assert_eq!(app.notice.as_deref(), Some("response sent"));
+}
+
+#[test]
 fn explicit_commands_bypass_semantic_completions_and_submit_exact_bodies() {
     use crate::completion::CompletionCandidate;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -425,11 +638,11 @@ fn command_prompt_edits_only_the_visible_body_and_recalls_intent() {
     let mut app = FileBackedApp::new("/agent/root".into());
     let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
     app.handle_key(key(KeyCode::Char('!')));
-    assert_eq!(app.input_prompt_prefix(), "alan! ");
+    assert_eq!(app.input_prompt_prefix(), "! ");
     assert_eq!(app.composer.text(), "");
     assert!(app.handle_submit().is_none());
     app.handle_key(key(KeyCode::Backspace));
-    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    assert_eq!(app.input_prompt_prefix(), ": ");
     app.dispatch(super::FileBackedEvent::Terminal(
         super::TerminalEvent::Paste("!echo x\n你好".into()),
     ));
@@ -442,13 +655,13 @@ fn command_prompt_edits_only_the_visible_body_and_recalls_intent() {
     };
     assert_eq!(record.body, "!echo x\n你好");
     app.accept_input();
-    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    assert_eq!(app.input_prompt_prefix(), ": ");
     app.handle_key(key(KeyCode::Up));
-    assert_eq!(app.input_prompt_prefix(), "alan! ");
+    assert_eq!(app.input_prompt_prefix(), "! ");
     assert_eq!(app.composer.text(), "!echo x\n你好");
     app.handle_key(key(KeyCode::Down));
     app.insert_input_text(":!literal");
-    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    assert_eq!(app.input_prompt_prefix(), ": ");
     assert_eq!(app.composer.text(), "!literal");
 }
 
@@ -497,13 +710,13 @@ fn live_and_rehydrated_transcripts_preserve_command_route_and_body() {
     assert_eq!(app.transcript, hydrated);
     assert_eq!(hydrated, [HistoryCell::Command(body.into())]);
     let lines = hydrated[0].render_lines(RenderOpts::new(80, false));
-    assert_eq!(lines, ["alan! printf '你好'", "        pwd"]);
+    assert_eq!(lines, ["! printf '你好'", "    pwd"]);
     let legacy = crate::file_backed::file_surface::parse_tape_history(
         r#"{"version":1,"kind":"message","role":"user","content":"!literal"}"#,
     );
     assert_eq!(legacy, [HistoryCell::User("!literal".into())]);
     assert_eq!(
         legacy[0].render_lines(RenderOpts::new(80, false)),
-        ["alan: !literal"]
+        [": !literal"]
     );
 }

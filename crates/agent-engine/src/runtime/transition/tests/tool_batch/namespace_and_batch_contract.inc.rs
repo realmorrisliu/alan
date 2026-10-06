@@ -52,10 +52,11 @@
             String::from_utf8(shell.cat("/agent/1/actions/a0/process").await.unwrap()).unwrap(),
             "/proc/2"
         );
-        assert_eq!(
-            String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
-            r#"{"call_id":"call-read","exit_code":0}"#
-        );
+        let result: Value = serde_json::from_slice(&shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap();
+        assert_eq!(result["call_id"], "call-read");
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["title"], "Read sample.txt");
+        assert_eq!(result["result_preview"], "from namespace read_file");
     }
 
     #[tokio::test]
@@ -303,7 +304,7 @@
             let payload = execute_tool_effect(
                 tools.clone(),
                 tool_name,
-                NamespaceToolActionEvidence { call_id: &format!("call-{idx}"), approval: "not_required" },
+                NamespaceToolActionEvidence { call_id: &format!("call-{idx}"), approval: "not_required", arguments: &json!({ "tool": tool_name, "call_index": idx }) },
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,
                 30,
@@ -404,6 +405,81 @@
     }
 
     #[tokio::test]
+    async fn steering_dispatch_is_durable_before_consumption_and_failure_prevents_tape_use() {
+        for fail in [false, true] {
+            let mut state = create_test_state();
+            let dir = tempfile::tempdir().unwrap();
+            state.machine = AgentMachine::new_with_recorder_in_dir("/agent/1", "test", dir.path()).await.unwrap();
+            let path = state.machine.rollout_path().unwrap().clone();
+            let input = alan_agent_protocol::Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("durable-steering-marker")],
+                mode: InputMode::Steer,
+            });
+            state.machine.admit_input(&input).await.unwrap();
+            if fail { state.machine.recorder().unwrap().close().await.unwrap(); }
+            let broker = crate::runtime::turn_input::TurnInputBroker::from_queue(state.machine.input_queue());
+            assert!(broker.push(input.clone()).await);
+            let agent_files = state.agent_files();
+            let writer = agent_files.begin_tape_generation().await.unwrap();
+            let mut emit = |_event: Event| async {};
+            let result = crate::runtime::steering_queue::handle_queued_steering_inputs(
+                &mut state.machine, &writer, &agent_files, &[], 0, Some(&broker), &mut emit,
+            ).await;
+            writer.finish().await.unwrap();
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(state.machine.messages().iter().any(|message| message.text_content().contains("durable-steering-marker")), !fail);
+            let history = crate::rollout::RolloutRecorder::load_history(&path).await.unwrap();
+            let dispatched = history.iter().any(|item| matches!(item,
+                crate::rollout::RolloutItem::Event(event) if event.event_type == "machine_input_dispatched_v1" && event.payload["submission_id"] == input.id));
+            assert_eq!(dispatched, !fail);
+            let recovered = AgentMachine::load_from_rollout_in_dir(&path, "/agent/2", "test", dir.path()).await.unwrap();
+            let pending = recovered.input_queue();
+            assert_eq!(pending.lock().unwrap().pending.len(), usize::from(fail));
+        }
+    }
+
+    #[tokio::test]
+    async fn overflow_follow_up_is_removed_before_drop_or_retained_on_writer_failure() {
+        for fail in [false, true] {
+            let mut state = create_test_state();
+            let dir = tempfile::tempdir().unwrap();
+            state.machine = AgentMachine::new_with_recorder_in_dir("/agent/1", "test", dir.path()).await.unwrap();
+            let path = state.machine.rollout_path().unwrap().clone();
+            for _ in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
+                state.machine.push_buffered_inband_submission(alan_agent_protocol::Submission::new(Op::Input {
+                    parts: vec![], mode: InputMode::FollowUp,
+                }));
+            }
+            let input = alan_agent_protocol::Submission::new(Op::Input {
+                parts: vec![alan_agent_protocol::ContentPart::text("overflow")], mode: InputMode::FollowUp,
+            });
+            state.machine.admit_input(&input).await.unwrap();
+            if fail { state.machine.input_recorder().unwrap().close().await.unwrap(); }
+            let broker = crate::runtime::turn_input::TurnInputBroker::from_queue(state.machine.input_queue());
+            assert!(broker.push(input.clone()).await);
+            let agent_files = state.agent_files();
+            let writer = agent_files.begin_tape_generation().await.unwrap();
+            let mut events = vec![];
+            let mut emit = |event| { events.push(event); async {} };
+            let result = crate::runtime::steering_queue::handle_queued_steering_inputs(
+                &mut state.machine, &writer, &agent_files, &[], 0, Some(&broker), &mut emit,
+            ).await;
+            writer.finish().await.unwrap();
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(events.is_empty(), fail);
+            let shell = Shell::new(state.environment.root_transport());
+            let ui = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+            assert_eq!(ui.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line),
+                Ok(alan_agent_protocol::UiEvent::InputCompleted { submission_ids, status: alan_agent_protocol::UiInputStatus::Failed, .. })
+                    if submission_ids == vec![input.id.clone()])), !fail,
+                "acknowledged removal must settle the exact overflow ID; failed removal must not");
+            assert_eq!(state.machine.buffered_inband_user_input_count(), MAX_BUFFERED_INBAND_USER_INPUTS + usize::from(fail));
+            let recovered = AgentMachine::load_from_rollout_in_dir(&path, "/agent/2", "test", dir.path()).await.unwrap();
+            assert_eq!(recovered.input_queue().lock().unwrap().pending.len(), usize::from(fail));
+        }
+    }
+
+    #[tokio::test]
     async fn test_handle_queued_steering_inputs_enforces_buffer_cap_for_follow_up() {
         let mut state = create_test_state();
         for idx in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
@@ -432,10 +508,12 @@
             async {}
         };
 
-        let writer = state.agent_files().begin_tape_generation().await.unwrap();
+        let agent_files = state.agent_files();
+        let writer = agent_files.begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
             &writer,
+            &agent_files,
             &[],
             0,
             Some(&broker),
@@ -484,10 +562,12 @@
         }
         let mut emit = |_event: Event| async {};
 
-        let writer = state.agent_files().begin_tape_generation().await.unwrap();
+        let agent_files = state.agent_files();
+        let writer = agent_files.begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
             &mut state.machine,
             &writer,
+            &agent_files,
             &[],
             0,
             Some(&broker),

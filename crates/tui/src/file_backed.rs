@@ -12,24 +12,62 @@ use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
-use crossterm::event::KeyEvent;
-#[cfg(test)]
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
+use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 #[cfg(test)]
 use ratatui::style::Color;
+mod action_detail_io;
 mod app;
 mod file_surface;
 mod history_merge;
 mod interrupt;
 mod layout;
+mod model;
+#[cfg(test)]
+mod model_layout_tests;
+#[cfg(test)]
+mod model_matrix_tests;
+#[cfg(test)]
+mod model_review_tests;
+#[cfg(test)]
+mod model_tests;
+#[cfg(test)]
+mod model_transport_tests;
 mod previous_input;
+mod project;
+mod queue;
+#[cfg(test)]
+mod queue_boundary_tests;
+#[cfg(test)]
+mod queue_coordinate_tests;
+#[cfg(test)]
+mod queue_hint_lifetime_tests;
+#[cfg(test)]
+mod queue_lifetime_tests;
+#[cfg(test)]
+mod queue_lineage_tests;
+#[cfg(test)]
+mod queue_removed_hint_tests;
+#[cfg(test)]
+mod queue_root_lifetime_tests;
+#[cfg(test)]
+mod skill_descriptor_tests;
+#[cfg(test)]
+mod skill_review_tests;
+#[cfg(test)]
+mod skill_tests;
+mod skills;
+pub use project::{
+    ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
+    ProjectControlResult, ProjectMountReceipt,
+};
 mod stdio_completion;
+mod watchers;
+use watchers::AgentWatchers;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 use interrupt::{
-    PendingRootAgentTurn, observe_root_agent_completion, send_interrupt,
-    settle_unknown_replaced_input,
+    PendingRootAgentTurn, observe_root_agent_completion, settle_unknown_replaced_input,
 };
 use previous_input::discard_superseded_attachment_events;
 
@@ -44,19 +82,36 @@ use file_surface::{
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
-use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
+use layout::{
+    activity_elapsed_second, frame_needs_redraw, history_prefix_to_drain, inline_viewport_height,
+};
+#[cfg(test)]
+use layout::{draw, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
-    root_agent_path_for_pid,
+    root_agent_path_for_pid, spawn_root_agent_pid_refresh,
 };
 
 use crate::completion::CompletionCandidate;
-use crate::composer::{Composer, load_history};
+use crate::composer::Composer;
 #[cfg(test)]
 use crate::history::HistoryCell;
 #[cfg(test)]
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
+#[cfg(test)]
+mod background_io_tests;
+#[cfg(test)]
+mod completion_anchor_tests;
+#[cfg(test)]
+mod completion_layout_tests;
+#[cfg(test)]
+mod completion_reference_tests;
+mod observation_io;
+mod project_dispatch;
+mod project_io;
+use project_dispatch::dispatch_with_pending_submissions;
+
 const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
 const SPINNER: [&str; 10] = ["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"];
@@ -68,14 +123,21 @@ pub struct FileBackedRunConfig {
     pub root_transport: InProcessTransport,
     /// Concrete launched agent path, for example `/agent/1`.
     pub agent_path: String,
+    /// Effective model selected for this invocation, when supplied by the Host.
+    pub effective_model: Option<String>,
     /// Optional explicitly authorized Host directory used for local `@` file completion.
     pub host_file_completion_root: Option<PathBuf>,
     /// Whether stdin/stdout must be interactive before entering the UI.
     pub require_interactive_terminal: bool,
     /// Optional file used to persist composer input history across launches.
     pub history_path: Option<PathBuf>,
-    /// Optional local skill candidates used for `$` completion.
+    /// Legacy compatibility field; ignored by the file-backed renderer.
+    /// `$` candidates come exclusively from the pinned Process skill snapshot.
     pub skill_candidates: Vec<CompletionCandidate>,
+    /// Host cwd offered as the initial path in `/project`.
+    pub project_candidate: Option<PathBuf>,
+    /// Host-local project grant/revoke control for this Alan invocation.
+    pub project_control: Option<ProjectControlHandler>,
 }
 
 impl FileBackedRunConfig {
@@ -84,10 +146,13 @@ impl FileBackedRunConfig {
         Self {
             root_transport,
             agent_path: agent_path.into(),
+            effective_model: None,
             host_file_completion_root: None,
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
+            project_candidate: None,
+            project_control: None,
         }
     }
 }
@@ -100,31 +165,46 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     let shell = alan_shell::Shell::new(config.root_transport.clone());
     let mut app = FileBackedApp::new(config.agent_path.clone());
-    app.set_skill_candidates(config.skill_candidates.clone());
+    app.set_effective_model(config.effective_model.clone());
+    app.set_project_candidate(config.project_candidate.clone());
     if let Some(host_root) = &config.host_file_completion_root {
         app.set_file_candidates(super::build_file_index(host_root, crate::FILE_INDEX_LIMIT));
     }
     if let Some(history_path) = &config.history_path {
-        let history = load_history(history_path, crate::HISTORY_LIMIT);
-        app.composer = Composer::with_history(history, Some(history_path.clone()));
+        app.composer = Composer::from_history_path(history_path.clone());
     }
     let follows_root_agent = config.agent_path == "/agent/root";
     let mut pending_root_agent_turns = VecDeque::<PendingRootAgentTurn>::new();
-    let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
-
     let mut terminal = TerminalSession::enter()?;
+    let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     let terminal_reader = spawn_terminal_events(tx.clone());
 
     let mut watchers = AgentWatchers::start(watch_tails, &config.agent_path, tx.clone());
+    let (root_agent_pid_retry, root_agent_pid_retry_rx) = tokio::sync::watch::channel(());
+    let root_agent_pid_refresh = if follows_root_agent {
+        Some(spawn_root_agent_pid_refresh(
+            shell.clone(),
+            tx.clone(),
+            root_agent_pid_retry_rx,
+            watchers.root_agent_pid,
+        ))
+    } else {
+        None
+    };
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
-    root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
+    let mut last_drawn_second = None;
 
+    let mut jobs = tokio::task::JoinSet::new();
+    let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut jobs);
+    let skill_reads = observation_io::start(shell.clone(), false, tx.clone(), &mut jobs);
+    let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    let mut grant_read_pending = false;
+    let mut draw_result = Ok(());
     loop {
         tokio::select! {
             event = receive_file_backed_event(&mut watchers.pending_terminal_events, &mut rx) => {
@@ -135,6 +215,71 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     observe_root_agent_completion(&mut pending_root_agent_turns, event, &mut app);
                 }
                 match event {
+                    FileBackedEvent::ProjectHostCompleted { owner, command, result } => {
+                        let current = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid));
+                        if let Some((owner, id, command)) = project_io::finish(&mut app, owner, current, command, result) {
+                            project_io::write_cwd(&mut app, &shell, owner, id, command, &mut jobs, &tx);
+                        }
+                    }
+                    FileBackedEvent::ProjectCwdWritten { owner, id, result, owner_current } => {
+                        if app.pending_project_control.as_ref().is_some_and(|p| p.owner == owner && p.id == id) {
+                            if !owner_current { app.fence_project_control(); }
+                            else if let Err(error) = result { app.fail_project_control(format!("project control write failed; effects uncertain: {error}")); }
+                        }
+                    }
+                    FileBackedEvent::ProjectGrantObserved { grant_id, active } => {
+                        grant_read_pending = false;
+                        project_io::observe_grant(&mut app, &grant_id, active);
+                    }
+                    FileBackedEvent::RootAgentPidRefresh(result) => {
+                        let retry = matches!(&result, Ok(Some(_)));
+                        watchers.pending_root_agent_pid_result = Some(result);
+                        watchers
+                            .refresh_root_agent_attachment(
+                                &shell,
+                                &config.agent_path,
+                                &mut app,
+                                &mut rx,
+                                &mut pending_root_agent_turns,
+                                &tx,
+                            )
+                            .await;
+                        if retry && watchers.pid_refresh_failed {
+                            root_agent_pid_retry.send_replace(());
+                        }
+                        settle_unknown_replaced_input(
+                            &mut pending_root_agent_turns,
+                            watchers.root_agent_pid,
+                            &mut app,
+                        );
+                    }
+                    event @ (FileBackedEvent::QueueChanged { .. }
+                    | FileBackedEvent::QueueUnavailable { .. }) => {
+                        queue::dispatch_queue_event(&shell, &mut app, &pending_root_agent_turns, event).await;
+                    }
+                    FileBackedEvent::ModelChanged { owner } => {
+                        if owner == app.model.owner { observation_io::request(&model_reads, owner); }
+                    }
+                    FileBackedEvent::ModelUnavailable { owner } => {
+                        if owner == app.model.owner {
+                            observation_io::request(&model_reads, String::new());
+                            app.model.apply(&owner, None);
+                            app.reconcile_model_chooser();
+                        }
+                    }
+                    FileBackedEvent::SkillsChanged { owner } => {
+                        if owner == app.skills.owner { observation_io::request(&skill_reads, owner); }
+                    }
+                    FileBackedEvent::SkillsUnavailable { owner } => {
+                        if owner == app.skills.owner {
+                            observation_io::request(&skill_reads, String::new());
+                            app.apply_skills(&owner, None);
+                        }
+                    }
+                    FileBackedEvent::ObservationRead { revision, owner, snapshot } => {
+                        let request = match &snapshot { observation_io::Snapshot::Model(_) => &model_reads, observation_io::Snapshot::Skills(_) => &skill_reads };
+                        observation_io::apply(&mut app, request, revision, &owner, snapshot);
+                    }
                     FileBackedEvent::RequestsChanged => {
                         if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
                             app.push_error(format!("request refresh failed: {err:#}"));
@@ -150,10 +295,18 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         .await
                         {
                             app.push_error(format!("action refresh failed: {err:#}"));
+                        } else if let Some(grant_id) = app.take_ready_project_revoke()
+                            && let Some(handler) = config.project_control.as_ref() {
+                            let owner = app.pending_project_control.as_ref().map(|p| p.owner.clone()).unwrap_or_default();
+                            project_io::start(&mut app, handler, ProjectControl::Revoke { grant_id }, owner, &mut jobs, &tx);
                         }
                     }
                     other => {
-                        if let Some(action) = app.dispatch(other)
+                        if let Some(action) = dispatch_with_pending_submissions(
+                            &mut app,
+                            other,
+                            &pending_root_agent_turns,
+                        )
                         {
                             match action {
                                 FileBackedAction::Submit(record) => {
@@ -161,15 +314,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     let text = record.body.clone();
                                     match write_agent_input(&shell, &app.agent_path, watchers.root_agent_pid, &record).await {
                                         Ok(()) => {
-                                            app.accept_input();
-                                            app.notice = None;
+                                            let owner = if follows_root_agent { watchers.root_agent_pid.map(|pid| format!("/agent/{pid}")).unwrap_or_else(|| app.agent_path.clone()) } else { app.agent_path.clone() };
+                                            app.track_local_input(&record.submission_id, owner, text.clone(), record.intent);
+                                            app.notice = Some("submission sent; admission unconfirmed".into());
+                                            pending_root_agent_turns.push_back(PendingRootAgentTurn {
+                                                input: text.clone(),
+                                                submission_id: record.submission_id.clone(),
+                                                submitted_process: if follows_root_agent { watchers.root_agent_pid } else { app.agent_path.strip_prefix("/agent/").and_then(|pid| pid.parse().ok()) },
+                                                submitted_at_ms,
+                                            });
                                             if follows_root_agent {
-                                                pending_root_agent_turns.push_back(PendingRootAgentTurn {
-                                                    input: text.clone(),
-                                                    submission_id: record.submission_id.clone(),
-                                                    submitted_process: watchers.root_agent_pid,
-                                                    submitted_at_ms,
-                                                });
                                                 watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
@@ -185,25 +339,100 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Err(err) => app.push_error(format!("submit failed: {err:#}")),
                                     }
                                 }
-                                FileBackedAction::Resume { request_id, response } => {
-                                    match write_request_response(&shell, &app.agent_path, &request_id, &response).await {
-                                        Ok(()) => {
-                                            app.notice = Some("response sent".to_string());
-                                            if let Err(err) = sync_requests_from_files(&shell, &app.agent_path.clone(), &mut app).await {
-                                                app.push_error(format!("request refresh failed: {err:#}"));
-                                            }
-                                        }
-                                        Err(err) => app.push_error(format!("resume failed: {err:#}")),
+                                FileBackedAction::Resume {
+                                    request_id,
+                                    response,
+                                    retry_input,
+                                } => {
+                                    let response_agent_path = if follows_root_agent {
+                                        pending_root_agent_turns
+                                            .front()
+                                            .and_then(|turn| turn.submitted_process)
+                                            .or(watchers.root_agent_pid)
+                                            .map(|pid| format!("/agent/{pid}"))
+                                    } else {
+                                        Some(app.agent_path.clone())
+                                    };
+                                    if let Some(agent_path) = response_agent_path {
+                                        app.begin_resume_write(request_id.clone());
+                                        let operation_shell =
+                                            alan_shell::Shell::new(config.root_transport.clone());
+                                        let completion_tx = tx.clone();
+                                        tokio::spawn(async move {
+                                            let result = write_request_response(
+                                                &operation_shell,
+                                                &agent_path,
+                                                &request_id,
+                                                &response,
+                                            )
+                                            .await
+                                            .map_err(|err| format!("{err:#}"));
+                                            let _ = completion_tx
+                                                .send(FileBackedEvent::ResumeWriteCompleted {
+                                                    request_id,
+                                                    retry_input,
+                                                    result,
+                                                })
+                                                .await;
+                                        });
+                                    } else {
+                                        app.push_error(
+                                            "Root Agent is not attached; retry response".into(),
+                                        );
                                     }
                                 }
                                 FileBackedAction::MachineCtl { command, success_notice } => {
-                                    match write_machine_ctl(&shell, &app.agent_path, &command).await {
-                                        Ok(()) => app.notice = Some(success_notice),
-                                        Err(err) => app.push_error(format!("control failed: {err:#}")),
+                                    spawn_control_write(
+                                        config.root_transport.clone(),
+                                        tx.clone(),
+                                        app.agent_path.clone(),
+                                        command,
+                                        success_notice,
+                                        "control failed".into(),
+                                    );
+                                }
+                                FileBackedAction::SelectModel { owner, id, op } => {
+                                    model::start_selection(&shell, &mut app, owner, id, op, &mut jobs, &tx);
+                                }
+                                FileBackedAction::Project(command) => {
+                                    let Some(handler) = config.project_control.as_ref() else {
+                                        app.push_error("local project selection is unavailable in this Host".into());
+                                        dirty = true;
+                                        continue;
+                                    };
+                                    let Some(owner) = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)) else {
+                                        app.push_error("Root owner unavailable; project operation not sent".into());
+                                        continue;
+                                    };
+                                    match command {
+                                        command @ ProjectControl::Mount { .. } => {
+                                            project_io::start(&mut app, handler, command, owner, &mut jobs, &tx);
+                                        }
+                                        ProjectControl::Revoke { grant_id } => {
+                                            let (id, command) = project_dispatch::project_selector("/");
+                                            app.stage_project_control(owner.clone(), id.clone(), None, Some(grant_id));
+                                            project_io::write_cwd(&mut app, &shell, owner, id, command, &mut jobs, &tx);
+                                        }
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
-                                    send_interrupt(&shell, &mut app, &pending_root_agent_turns, watchers.root_agent_pid).await;
+                                    match interrupt::interrupt_control(
+                                        &app.agent_path,
+                                        &pending_root_agent_turns,
+                                        watchers.root_agent_pid,
+                                    ) {
+                                        Ok((agent_path, command)) => {
+                                            spawn_control_write(
+                                                config.root_transport.clone(),
+                                                tx.clone(),
+                                                agent_path,
+                                                command,
+                                                "interrupt requested".into(),
+                                                "interrupt failed".into(),
+                                            );
+                                        }
+                                        Err(error) => app.push_error(error),
+                                    }
                                 }
                                 FileBackedAction::Quit => break,
                             }
@@ -213,41 +442,44 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 if follows_root_agent {
                     settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
                 }
+                if !app.project_host_pending && let Some(grant_id) = app.take_project_cleanup() {
+                    if let Some(handler) = config.project_control.as_ref() {
+                        let owner = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid)).unwrap_or_default();
+                        project_io::start(&mut app, handler, ProjectControl::Revoke { grant_id }, owner, &mut jobs, &tx);
+                    } else {
+                        app.push_error(format!("candidate grant {grant_id} cleanup unavailable"));
+                    }
+                }
+                action_detail_io::start_pending_for_pid(&shell, &mut app, &tx, watchers.root_agent_pid);
                 dirty = true;
             }
-            _ = root_agent_pid_tick.tick(), if follows_root_agent => {
-                let previous_pid = watchers.root_agent_pid;
-                let previous_refresh_failed = watchers.pid_refresh_failed;
-                let previous_turns = pending_root_agent_turns.clone();
-                watchers
-                    .refresh_root_agent_attachment(
-                    &shell,
-                    &config.agent_path,
-                    &mut app,
-                    &mut rx,
-                    &mut pending_root_agent_turns,
-                    &tx,
-                    )
-                    .await;
-                settle_unknown_replaced_input(&mut pending_root_agent_turns, watchers.root_agent_pid, &mut app);
-                if previous_pid != watchers.root_agent_pid
-                    || previous_refresh_failed != watchers.pid_refresh_failed
-                    || previous_turns != pending_root_agent_turns
-                {
-                    dirty = true;
+            _ = jobs.join_next(), if !jobs.is_empty() => {}
+            _ = grant_tick.tick(), if !grant_read_pending => {
+                if let Some(project) = app.project.as_ref()
+                    && app.pending_project_control.is_none() && !app.project_host_pending {
+                    grant_read_pending = true;
+                    let grant_id = project.grant_id.clone();
+                    let shell = shell.clone();
+                    let tx = tx.clone();
+                    jobs.spawn(async move {
+                        let active = project_io::grant_active(&shell, &grant_id).await;
+                        let _ = tx.send(FileBackedEvent::ProjectGrantObserved { grant_id, active }).await;
+                    });
                 }
             }
             _ = frame_tick.tick() => {
-                if dirty {
+                let now_ms = unix_time_ms();
+                if frame_needs_redraw(dirty, &app, now_ms, last_drawn_second) {
                     let (viewport_width, terminal_height) = terminal.viewport_size();
                     let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
-                    terminal.write_scrollback(&committed)?;
-                    terminal.set_inline_height(inline_viewport_height(
+                    draw_result = terminal.draw_inline_frame(&committed, inline_viewport_height(
                         &app,
                         viewport_width,
                         terminal_height,
-                    ))?;
-                    terminal.draw_with(|frame| draw(frame, &app))?;
+                    ), layout::base_viewport_height(&app, viewport_width, terminal_height), |frame| layout::draw_at(frame, &app, now_ms));
+                    if draw_result.is_err() { break; }
+                    // Record only successfully drawn seconds on the existing frame tick.
+                    last_drawn_second = Some(activity_elapsed_second(&app, now_ms));
                     dirty = false;
                 }
                 if app.should_quit {
@@ -257,12 +489,18 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
+    jobs.abort_all();
+    while jobs.join_next().await.is_some() {}
     watchers.stop().await;
     drop(rx);
+    if let Some(task) = root_agent_pid_refresh {
+        let _ = task.await;
+    }
     terminal_reader
         .await
         .context("terminal reader task failed")?;
 
+    draw_result?;
     Ok(())
 }
 
@@ -276,157 +514,27 @@ async fn receive_file_backed_event(
     }
 }
 
-struct AgentWatchers {
-    recovery: Option<(alan_shell::Tail, alan_shell::Tail)>,
-    shutdown: tokio::sync::watch::Sender<bool>,
-    tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
-    root_agent_pid: Option<u64>,
-    pid_refresh_failed: bool,
-    pending_terminal_events: VecDeque<FileBackedEvent>,
-}
-
-impl AgentWatchers {
-    fn start(
-        tails: file_surface::WatchTails,
-        agent_path: &str,
-        tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
-    ) -> Self {
-        let root_agent_pid = tails.root_agent_pid;
-        let action_agent_path = root_agent_pid
-            .and_then(|pid| root_agent_path_for_pid(agent_path, pid))
-            .unwrap_or_else(|| agent_path.to_string());
-        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-        let tasks = vec![
-            tokio::spawn(spawn_output_tail(
-                tails.output,
-                tx.clone(),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(spawn_request_watch(
-                tails.requests,
-                tx.clone(),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(spawn_action_watch(
-                tails.actions,
-                action_agent_path,
-                tx.clone(),
-                shutdown_rx.clone(),
-            )),
-            tokio::spawn(spawn_ui_watch(tails.ui, tx.clone(), shutdown_rx.clone())),
-            tokio::spawn(spawn_tape_watch(tails.tape, tx, shutdown_rx)),
-        ];
-        Self {
-            recovery: Some((tails.recovery_ui, tails.recovery_tape)),
-            shutdown,
-            tasks,
-            root_agent_pid,
-            pid_refresh_failed: false,
-            pending_terminal_events: VecDeque::new(),
-        }
-    }
-
-    async fn refresh_root_agent_attachment(
-        &mut self,
-        shell: &alan_shell::Shell,
-        agent_path: &str,
-        app: &mut FileBackedApp,
-        rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
-        pending_turns: &mut VecDeque<PendingRootAgentTurn>,
-        tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-    ) -> bool {
-        match current_root_agent_pid(shell).await {
-            Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
-                let pending_count = pending_turns.len();
-                // Tape history outlives the local pending-input lock.
-                let history_restored = if let Some((_, tape)) = &self.recovery {
-                    previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
-                } else {
-                    false
-                };
-                let submitted = pending_turns
-                    .iter()
-                    .map(|turn| (turn.submission_id.clone(), turn.input.clone()))
-                    .collect::<Vec<_>>();
-                let retained = self.stop_for_input(&submitted).await;
-                app.expected_terminal_error = None;
-                let queued = discard_superseded_attachment_events(
-                    rx,
-                    &mut self.pending_terminal_events,
-                    &submitted,
-                );
-                for event in retained.0.iter().chain(&queued.0) {
-                    interrupt::observe_root_agent_completion(pending_turns, event, app);
-                }
-                // The detached Process's companion terminal errors are discarded with its events.
-                app.expected_terminal_error = None;
-                if !history_restored {
-                    for turn in &submitted {
-                        if let Some((_, input, answer)) = retained
-                            .1
-                            .iter()
-                            .chain(&queued.1)
-                            .find(|(id, _, _)| id.as_str() == turn.0.as_str())
-                        {
-                            previous_input::restore_answer(app, input, answer.clone());
-                        }
-                    }
-                }
-                let submitted = pending_turns.iter().cloned().collect::<Vec<_>>();
-                match reattach_to_current_agent(shell, agent_path, app, &submitted).await {
-                    Ok((tails, settled_ids)) => {
-                        pending_turns.retain(|turn| !settled_ids.contains(&turn.submission_id));
-                        self.pid_refresh_failed = false;
-                        let pending_terminal_events =
-                            std::mem::take(&mut self.pending_terminal_events);
-                        *self = Self::start(tails, agent_path, tx.clone());
-                        self.pending_terminal_events = pending_terminal_events;
-                        pending_turns.len() < pending_count
-                    }
-                    Err(err) => {
-                        self.root_agent_pid = None;
-                        if !self.pid_refresh_failed {
-                            app.push_error(format!("Root Agent reattach failed: {err:#}"));
-                        }
-                        self.pid_refresh_failed = true;
-                        pending_turns.len() < pending_count
-                    }
-                }
-            }
-            Ok(pid) => {
-                self.root_agent_pid = pid;
-                self.pid_refresh_failed = false;
-                false
-            }
-            Err(err) if !self.pid_refresh_failed => {
-                self.pid_refresh_failed = true;
-                app.push_error(format!("Root Agent identity refresh failed: {err:#}"));
-                false
-            }
-            Err(_) => false,
-        }
-    }
-
-    async fn stop(&mut self) {
-        self.stop_for_input(&[]).await;
-    }
-
-    async fn stop_for_input(
-        &mut self,
-        submitted: &[(String, String)],
-    ) -> (Vec<UiEvent>, Vec<(String, String, String)>) {
-        let _ = self.shutdown.send(true);
-        for task in self.tasks.drain(..) {
-            let _ = task.await;
-        }
-        let Some((ui, tape)) = self.recovery.take() else {
-            return (Vec::new(), Vec::new());
-        };
-        let outcome = previous_input::snapshot(&ui, &tape, submitted).await;
-        let _ = ui.close().await;
-        let _ = tape.close().await;
-        outcome
-    }
+fn spawn_control_write(
+    transport: InProcessTransport,
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    agent_path: String,
+    command: String,
+    success_notice: String,
+    error_prefix: String,
+) {
+    tokio::spawn(async move {
+        let shell = alan_shell::Shell::new(transport);
+        let result = write_machine_ctl(&shell, &agent_path, &command)
+            .await
+            .map_err(|err| format!("{err:#}"));
+        let _ = tx
+            .send(FileBackedEvent::ControlWriteCompleted {
+                success_notice,
+                error_prefix,
+                result,
+            })
+            .await;
+    });
 }
 
 /// Run one redirected input, write its output streams, and return its exit status.
@@ -753,6 +861,18 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
     lines
 }
 
+#[cfg(test)]
+#[path = "file_backed/accessibility_tests.rs"]
+mod accessibility_tests;
+#[cfg(test)]
+mod action_details_tests;
+#[cfg(test)]
+mod project_review_tests;
+#[cfg(test)]
+mod queue_tests;
+#[cfg(test)]
+#[path = "file_backed/semantic_tests.rs"]
+mod semantic_tests;
 #[cfg(test)]
 #[path = "file_backed/stdio_idle_tests.rs"]
 mod stdio_idle_tests;

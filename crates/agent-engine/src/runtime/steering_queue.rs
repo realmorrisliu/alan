@@ -2,13 +2,14 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
+use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, reject_inband_overflow};
 use super::turn_support::tool_result_preview;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
     machine: &mut AgentMachine,
     writer: &super::transition::NamespaceTapeWriter,
+    agent_files: &super::transition::NamespaceAgentFiles,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
     steering_broker: Option<&TurnInputBroker>,
@@ -22,14 +23,31 @@ where
         return Ok(false);
     };
 
-    let mut steering_inputs = Vec::new();
+    let mut consumed_steering = false;
     while let Some(submission) = broker.try_recv().await {
         if let Op::Input {
             parts,
             mode: InputMode::Steer,
         } = &submission.op
         {
-            steering_inputs.push((submission.id.clone(), parts.clone()));
+            if let Err(error) = machine.dispatch_input(&submission).await {
+                machine.push_buffered_inband_submission(submission);
+                return Err(error);
+            }
+            // Durable dispatch makes this input part of the active turn even if
+            // the subsequent namespace Tape projection fails.
+            machine.accept_steering_submission(submission.id.clone());
+            writer
+                .append_record(
+                    "user",
+                    &crate::tape::parts_to_text(parts),
+                    Some(&submission.id),
+                    &[],
+                )
+                .await?;
+            machine.note_resumed_user_input();
+            machine.add_user_message_parts(parts.clone());
+            consumed_steering = true;
             continue;
         }
 
@@ -41,30 +59,15 @@ where
             }
         ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            emit(Event::Error {
-                message: format!(
-                    "Too many queued in-turn user inputs (limit={MAX_BUFFERED_INBAND_USER_INPUTS}); dropping newest input."
-                ),
-                recoverable: true,
-            })
-            .await;
+            reject_inband_overflow(machine, agent_files, &submission, emit).await?;
             continue;
         }
 
         machine.push_buffered_inband_submission(submission);
     }
 
-    if steering_inputs.is_empty() {
+    if !consumed_steering {
         return Ok(false);
-    }
-
-    machine.note_resumed_user_input();
-    for (id, parts) in steering_inputs {
-        writer
-            .append_record("user", &crate::tape::parts_to_text(&parts), Some(&id), &[])
-            .await?;
-        machine.accept_steering_submission(id);
-        machine.add_user_message_parts(parts);
     }
 
     let remaining = &tool_calls[remaining_start_idx..];

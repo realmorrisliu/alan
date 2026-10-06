@@ -394,7 +394,8 @@ impl Config {
         }
     }
 
-    fn resolved_model_catalog(&self) -> &crate::ModelCatalog {
+    /// Resolve canonical model metadata, using an explicit catalog or the bundled catalog.
+    pub fn resolved_model_catalog(&self) -> &crate::ModelCatalog {
         if let Some(model_catalog) = self.model_catalog.as_deref() {
             model_catalog
         } else {

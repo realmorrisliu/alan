@@ -43,6 +43,7 @@ pub use alan_agent_protocol::{ReasoningControls, ReasoningEffort};
 pub mod anthropic_messages;
 pub mod chatgpt_responses;
 pub mod factory;
+mod failure;
 pub mod google_gemini_generate_content;
 mod message;
 #[cfg(any(test, feature = "mock"))]
@@ -51,6 +52,7 @@ mod model;
 pub mod openai_chat_completions;
 pub mod openai_responses;
 pub mod openrouter;
+pub use failure::{safe_failure_reason, safe_finish_reason};
 mod provider;
 mod sse;
 
@@ -69,6 +71,9 @@ pub use openai_responses::OpenAiResponsesClient;
 pub use openrouter::OpenRouterClient;
 pub use provider::LlmProvider;
 pub(crate) use sse::SseEventParser;
+
+#[cfg(test)]
+mod safe_failure_tests;
 
 #[cfg(test)]
 mod tests;

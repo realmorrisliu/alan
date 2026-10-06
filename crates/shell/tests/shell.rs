@@ -9,3 +9,5 @@
 include!("shell/support_and_streams.inc.rs");
 include!("shell/write_and_agent_contracts.inc.rs");
 include!("shell/namespace_spawn_race.inc.rs");
+
+include!("shell/bounded_read.inc.rs");

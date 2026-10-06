@@ -62,6 +62,9 @@ impl State {
                 _ => Err(ErrorCode::NotFound),
             },
             Node::UiDir => match name {
+                "skills" => Ok(Node::UiSkills),
+                "models" => Ok(Node::UiModels),
+                "queue" => Ok(Node::UiQueue),
                 "activity" => Ok(Node::UiActivity),
                 "plan" => Ok(Node::UiPlan),
                 "thinking" => Ok(Node::UiThinking),
@@ -84,6 +87,7 @@ impl State {
                 "prompt" => Ok(Node::RequestField(id.clone(), "prompt")),
                 "options" => Ok(Node::RequestField(id.clone(), "options")),
                 "status" => Ok(Node::RequestField(id.clone(), "status")),
+                "ctl" => Ok(Node::RequestField(id.clone(), "ctl")),
                 "response" => Ok(Node::RequestField(id.clone(), "response")),
                 _ => Err(ErrorCode::NotFound),
             },
@@ -116,10 +120,15 @@ impl State {
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
             Node::MachineDir => b"tape\nstatus\nctl\nui\ncheckpoints".to_vec(),
-            Node::UiDir => b"activity\nplan\nthinking\nnotice\nevents".to_vec(),
+            Node::UiDir => {
+                b"activity\nplan\nthinking\nnotice\nevents\nqueue\nmodels\nskills".to_vec()
+            }
             Node::CheckpointsDir => b"current".to_vec(),
             Node::CurrentCheckpoint => format!("{}\n", self.tape_root).into_bytes(),
             Node::Status => self.status.clone().into_bytes(),
+            Node::UiSkills => self.ui_skills.clone().into_bytes(),
+            Node::UiModels => self.ui_models.clone().into_bytes(),
+            Node::UiQueue => self.ui_queue.clone().into_bytes(),
             Node::UiActivity => self.ui_activity.clone().into_bytes(),
             Node::UiPlan => self.ui_plan.clone().into_bytes(),
             Node::UiThinking => self.ui_thinking.clone().into_bytes(),
@@ -131,11 +140,12 @@ impl State {
             Node::RequestsDir => listing(&["clone", "events"], self.requests.keys()),
             Node::ActionsDir => listing(&["clone", "events", "help"], self.actions.keys()),
             Node::ActionsHelp => ACTIONS_HELP.as_bytes().to_vec(),
-            Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse".to_vec(),
+            Node::Request(_) => b"kind\nprompt\noptions\nstatus\nresponse\nctl".to_vec(),
             Node::Action(_) => b"name\nstatus\noutput\nresult\napproval\nprocess".to_vec(),
             Node::RequestField(id, field) => {
                 let r = self.requests.get(id).ok_or(ErrorCode::NotFound)?;
                 match *field {
+                    "ctl" => return Ok(b"cancel\n".to_vec()),
                     "kind" => &r.kind,
                     "prompt" => &r.prompt,
                     "options" => &r.options,
@@ -238,6 +248,61 @@ impl State {
             )
             .map_err(map_knowledge_error)?;
         Ok(root)
+    }
+}
+
+// Wire shape only; canonical Skill authority belongs to Engine.
+pub(super) const UNKNOWN_SKILLS: &str = r#"{"version":1,"publication_version":0,"process_path":"","known":false,"mentionable_skill_ids":[]}"#;
+
+pub(super) fn skill_projection(value: &str) -> String {
+    use serde_json::Value;
+    let safe = serde_json::from_str::<Value>(value).ok().filter(|value| {
+        let Some(fields) = value.as_object() else {
+            return false;
+        };
+        let keys = [
+            "version",
+            "publication_version",
+            "process_path",
+            "known",
+            "mentionable_skill_ids",
+        ];
+        fields.len() == keys.len()
+            && keys.iter().all(|key| fields.contains_key(*key))
+            && value["version"].as_u64() == Some(1)
+            && value["publication_version"].as_u64().is_some()
+            && value["process_path"].is_string()
+            && value["known"].is_boolean()
+            && value["mentionable_skill_ids"]
+                .as_array()
+                .is_some_and(|ids| {
+                    ids.iter().all(Value::is_string) && (value["known"] == true || ids.is_empty())
+                })
+    });
+    safe.map(|value| value.to_string())
+        .unwrap_or_else(|| UNKNOWN_SKILLS.to_string())
+}
+
+pub(super) fn is_writable(node: &Node) -> bool {
+    match node {
+        Node::Input
+        | Node::Output
+        | Node::Tape
+        | Node::MachineCtl
+        | Node::UiModels
+        | Node::UiQueue
+        | Node::UiActivity
+        | Node::UiPlan
+        | Node::UiThinking
+        | Node::UiSkills
+        | Node::UiNotice
+        | Node::UiEvents
+        | Node::RequestsClone
+        | Node::ActionsClone
+        | Node::ActionField(..) => true,
+        // Request status and machine status are read-only observations.
+        Node::RequestField(_, field) => *field != "status",
+        _ => false,
     }
 }
 

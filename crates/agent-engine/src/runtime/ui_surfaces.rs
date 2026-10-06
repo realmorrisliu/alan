@@ -8,6 +8,74 @@ use anyhow::Result;
 
 use super::transition::NamespaceAgentFiles;
 
+const HOST_MOUNT_WAIT_NOTICE: &str =
+    "Waiting for Host Mount authorization; Ctrl+C cancels current input";
+
+pub(super) async fn retire_host_mount_wait_notice(namespace: &NamespaceAgentFiles) {
+    let result: Result<()> = async {
+        let current = namespace.read_ui_notice_snapshot().await?;
+        if current.kind == UiNoticeKind::Warning && current.message == HOST_MOUNT_WAIT_NOTICE {
+            let snapshot = UiNoticeSnapshot::none();
+            namespace.write_ui_notice_snapshot(&snapshot).await?;
+            namespace
+                .append_ui_event(&UiEvent::Notice { snapshot })
+                .await?;
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, "Failed to retire Host Mount wait notice");
+    }
+}
+
+impl super::transition::RuntimeLoopState {
+    pub(crate) async fn publish_ensured_skills(&mut self) -> Result<()> {
+        let mut last = self.prompt_cache.skill_publication.clone();
+        publish_skills(
+            &self.agent_files(),
+            &self.prompt_cache,
+            self.process_path(),
+            &mut last,
+        )
+        .await?;
+        self.prompt_cache.skill_publication = last;
+        Ok(())
+    }
+}
+
+pub(crate) async fn publish_skills(
+    files: &NamespaceAgentFiles,
+    cache: &super::prompt_cache::PromptAssemblyCache,
+    process_path: String,
+    last: &mut alan_agent_protocol::UiSkillSnapshot,
+) -> Result<()> {
+    let (known, mentionable_skill_ids) = cache.skill_observation();
+    let mut next = alan_agent_protocol::UiSkillSnapshot {
+        version: alan_agent_protocol::UI_SURFACE_VERSION,
+        publication_version: last.publication_version,
+        process_path,
+        known,
+        mentionable_skill_ids,
+    };
+    if serde_json::to_vec(&next)?.len() > (1 << 20) {
+        next = next.unknown();
+    }
+    if next == *last {
+        return Ok(());
+    }
+    next.publication_version = last
+        .publication_version
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("Skill publication version exhausted"))?;
+    if serde_json::to_vec(&next)?.len() > (1 << 20) {
+        next = next.unknown();
+    }
+    files.write_ui_skill_snapshot(&next).await?;
+    *last = next;
+    Ok(())
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -15,10 +83,18 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub(crate) async fn initialize(namespace: &NamespaceAgentFiles) -> Result<()> {
-    namespace
-        .write_ui_activity_snapshot(&UiActivitySnapshot::idle())
-        .await?;
+pub(crate) async fn initialize(namespace: &NamespaceAgentFiles, queue_paused: bool) -> Result<()> {
+    let activity = if queue_paused {
+        UiActivitySnapshot::paused(None)
+    } else {
+        UiActivitySnapshot::idle()
+    };
+    namespace.write_ui_activity_snapshot(&activity).await?;
+    if queue_paused {
+        namespace
+            .append_ui_event(&UiEvent::Activity { snapshot: activity })
+            .await?;
+    }
     namespace
         .write_ui_plan_snapshot(&UiPlanSnapshot::empty())
         .await?;
@@ -49,6 +125,7 @@ pub(crate) async fn turn_started(namespace: &NamespaceAgentFiles) -> Result<()> 
 }
 
 pub(crate) async fn turn_completed(namespace: &NamespaceAgentFiles, cancelled: bool) -> Result<()> {
+    retire_host_mount_wait_notice(namespace).await;
     if cancelled {
         plan_updated(namespace, None, Vec::new()).await?;
     }
@@ -92,10 +169,24 @@ pub(crate) async fn paused(
     namespace.write_ui_activity_snapshot(&activity).await?;
     namespace
         .append_ui_event(&UiEvent::Activity { snapshot: activity })
-        .await
+        .await?;
+    if machine.is_some_and(|machine| {
+        machine
+            .pending_request_ids()
+            .iter()
+            .any(|id| machine.pending_host_mount(id).is_some())
+    }) {
+        if let Err(error) = warning(namespace, HOST_MOUNT_WAIT_NOTICE).await {
+            tracing::warn!(%error, "Failed to publish Host Mount wait notice");
+        }
+    } else {
+        retire_host_mount_wait_notice(namespace).await
+    }
+    Ok(())
 }
 
 pub(crate) async fn resumed(namespace: &NamespaceAgentFiles) -> Result<()> {
+    retire_host_mount_wait_notice(namespace).await;
     let activity = UiActivitySnapshot::running(now_unix_ms());
     namespace.write_ui_activity_snapshot(&activity).await?;
     namespace
@@ -257,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn owners_write_snapshots_and_append_ui_events() {
         let (environment, shell) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         thinking(&environment, "reasoning").await.unwrap();
         plan_updated(
@@ -319,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_turn_clears_plan_snapshot() {
         let (environment, shell) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         plan_updated(
             &environment,
             Some("ship parity".to_string()),
@@ -341,13 +432,81 @@ mod tests {
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
         let (environment, _) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         turn_failed(&environment, "provider failed").await.unwrap();
 
         let notice = environment.read_ui_notice_snapshot().await.unwrap();
         assert_eq!(notice.kind, UiNoticeKind::Error);
         assert_eq!(notice.message, "provider failed");
+    }
+
+    #[tokio::test]
+    async fn host_mount_unreadable_notice_does_not_block_activity_lifecycle() {
+        let (environment, shell) = agent_files();
+        shell
+            .write("/agent/1/machine/ui/notice", b"{")
+            .await
+            .unwrap();
+        resumed(&environment).await.unwrap();
+        assert_eq!(
+            environment.read_ui_activity_snapshot().await.unwrap().state,
+            UiActivityState::Running
+        );
+        turn_completed(&environment, true).await.unwrap();
+        assert_eq!(
+            environment.read_ui_activity_snapshot().await.unwrap().state,
+            UiActivityState::Idle
+        );
+        paused(&environment, None).await.unwrap();
+        assert_eq!(
+            environment.read_ui_activity_snapshot().await.unwrap().state,
+            UiActivityState::Paused
+        );
+    }
+
+    #[tokio::test]
+    async fn host_mount_notice_retirement_preserves_other_notice_owners() {
+        let (environment, shell) = agent_files();
+        for boundary in 0..4 {
+            for notice in [
+                UiNoticeSnapshot::new(UiNoticeKind::Warning, HOST_MOUNT_WAIT_NOTICE),
+                UiNoticeSnapshot::new(UiNoticeKind::Warning, "unrelated warning"),
+                UiNoticeSnapshot::new(UiNoticeKind::Error, "unrelated failure"),
+            ] {
+                environment.write_ui_notice_snapshot(&notice).await.unwrap();
+                match boundary {
+                    0 => resumed(&environment).await.unwrap(),
+                    1 => turn_completed(&environment, false).await.unwrap(),
+                    2 => turn_completed(&environment, true).await.unwrap(),
+                    _ => paused(&environment, None).await.unwrap(),
+                }
+                let actual = environment.read_ui_notice_snapshot().await.unwrap();
+                if notice.message == HOST_MOUNT_WAIT_NOTICE {
+                    assert_eq!(actual.kind, UiNoticeKind::None);
+                } else {
+                    assert_eq!(actual, notice);
+                }
+            }
+        }
+        for recovery in [true, false] {
+            warning(&environment, HOST_MOUNT_WAIT_NOTICE).await.unwrap();
+            if recovery {
+                initialize(&environment, true).await.unwrap();
+            } else {
+                turn_started(&environment).await.unwrap();
+            }
+            assert_eq!(
+                environment.read_ui_notice_snapshot().await.unwrap().kind,
+                UiNoticeKind::None
+            );
+        }
+        let events =
+            String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+        assert!(events.lines().any(
+            |line| matches!(serde_json::from_str::<UiEvent>(line).unwrap(),
+            UiEvent::Notice { snapshot } if snapshot.kind == UiNoticeKind::None)
+        ));
     }
 
     #[tokio::test]
@@ -389,7 +548,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
         let (environment, _) = agent_files();
-        initialize(&environment).await.unwrap();
+        initialize(&environment, false).await.unwrap();
         paused(&environment, None).await.unwrap();
 
         heartbeat(&environment).await.unwrap();

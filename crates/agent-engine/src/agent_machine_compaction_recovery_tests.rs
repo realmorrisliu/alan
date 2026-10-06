@@ -44,6 +44,7 @@ fn test_load_from_rollout_restores_latest_compaction_attempt_item_when_summary_i
             }),
             RolloutItem::CompactionAttempt(attempt.clone()),
             RolloutItem::Compacted(CompactedItem {
+                retained_messages: None,
                 message: "Summary after retry".to_string(),
                 attempt_id: Some(attempt.attempt_id.clone()),
                 trigger: Some(CompactionTrigger::Auto),
@@ -139,6 +140,7 @@ fn test_latest_compaction_attempt_from_rollout_matches_summary_by_attempt_id() {
         RolloutItem::CompactionAttempt(completed_attempt.clone()),
         RolloutItem::CompactionAttempt(incomplete_retry),
         RolloutItem::Compacted(CompactedItem {
+            retained_messages: None,
             message: "Summary after retry".to_string(),
             attempt_id: Some(completed_attempt.attempt_id.clone()),
             trigger: Some(CompactionTrigger::Manual),
@@ -282,6 +284,7 @@ fn test_latest_compaction_attempt_from_rollout_does_not_let_linked_summary_overr
         RolloutItem::CompactionAttempt(completed_attempt),
         RolloutItem::CompactionAttempt(failure.clone()),
         RolloutItem::Compacted(CompactedItem {
+            retained_messages: None,
             message: "Summary after retry".to_string(),
             attempt_id: Some("attempt-complete".to_string()),
             trigger: Some(CompactionTrigger::Manual),
@@ -373,6 +376,7 @@ fn test_load_from_rollout_does_not_let_repersisted_linked_summary_override_newer
             }),
             RolloutItem::CompactionAttempt(completed_attempt.clone()),
             RolloutItem::Compacted(CompactedItem {
+                retained_messages: None,
                 message: "Summary after retry".to_string(),
                 attempt_id: Some(completed_attempt.attempt_id.clone()),
                 trigger: Some(CompactionTrigger::Manual),

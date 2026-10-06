@@ -10,7 +10,11 @@ pub mod terminal;
 mod transcript_ui;
 
 use crate::completion::CompletionCandidate;
-pub use file_backed::{FileBackedRunConfig, run as run_file_backed, run_stdio_task};
+pub use file_backed::{
+    FileBackedRunConfig, ProjectAccess, ProjectControl, ProjectControlFuture,
+    ProjectControlHandler, ProjectControlResult, ProjectMountReceipt, run as run_file_backed,
+    run_stdio_task,
+};
 
 /// Maximum number of composer history entries kept in memory.
 const HISTORY_LIMIT: usize = 1000;

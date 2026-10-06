@@ -274,6 +274,7 @@ async fn test_persist_batch_writes_compaction_attempt_and_summary_together() {
         timestamp: "2026-01-29T14:31:00Z".to_string(),
     };
     let compacted = CompactedItem {
+        retained_messages: None,
         message: "Summary after retry".to_string(),
         attempt_id: Some(attempt.attempt_id.clone()),
         trigger: Some(CompactionTrigger::Manual),
