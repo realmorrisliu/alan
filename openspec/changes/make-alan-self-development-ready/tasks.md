@@ -46,6 +46,16 @@ records are retained in `~/Library/Caches/Alan/self-development-delivery-evidenc
   all original PIDs are absent. No Alan self-development was restarted. Current
   fixture validation is Codex-directed product testing, not new authorship evidence.
 
+Task4.6 comparison audit is complete: retained matched73x22 and69x20 Markdown
+captures cover headings/lists/Chinese/code/diff with exact fx/Alan identities;
+`20261001-native/qualification.json` ties Tool output/details to the same200-line
+fixture, and the subsequent pager author candidate has actual Space/b/last-line
+and draft-restoration captures. The October6 header comparison records model,
+effort, project access and activity/queue differences. Each delivered P3 slice has
+source pins, independent review, quality checks and final merged-head CI. Model
+and network timing are excluded. This closes the scoped comparison, not graphical
+parity or a promise to repeat the entire comparison after each backend correction.
+
 Conclusion: supervised usability and historical supervised self-development are
 supported by recoverable original evidence. Reliable unattended bootstrap, all-client
 Herdr disconnect and graphical parity with fx are not established by these records.
@@ -2124,7 +2134,7 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 - [x] 4.3 Carry semantic spans through the existing history/layout path and apply the design's spacing and color roles; verify headings/lists/code/diffs, copyable indentation, light/dark/low-color terminals and resize snapshots at 40/60/80/120 columns.
 - [x] 4.4 Wire `/status` and `/model` to Connection-owned catalog/effective binding, adding any required owning provider/Connection delta before implementation; verify successful next-input binding, unavailable catalog, selection failure and unchanged in-flight bindings without hardcoded model choices.
 - [x] 4.5 Verify chosen durable recovery and paused/no-replay behavior with the active unified-input owner; keep the parked history-browser project inactive. Run a second independent Alan-authored task through Herdr and record G3, including whether any manual process rescue was needed.
-- [ ] 4.6 Re-run the fixed fx/Alan comparison scenarios with exact versions and matched viewport widths; preserve visual/ANSI evidence and separate model-dependent timing from interaction quality. Review, pass `just quality` and required current-head CI for each delivered P3 slice.
+- [x] 4.6 Re-run the fixed fx/Alan comparison scenarios with exact versions and matched viewport widths; preserve visual/ANSI evidence and separate model-dependent timing from interaction quality. Review, pass `just quality` and required current-head CI for each delivered P3 slice.
 - [x] 4.7 Preserve a bounded safe provider startup reason through the existing LLMFS terminal error event and namespace/Engine failure projection. Reuse typed auth and HTTP/transport classification behind provider adapters; never publish unrestricted HTTP bodies, credentials, URLs or account identifiers. Verify startup cause propagation and unknown-sensitive-error fallback through existing failure suites. Distinguish local connection configuration validation from a real successful provider request. Cover both direct startup failures and background streaming adapters through existing terminal StreamChunk conventions. Preserve failed commit ErrorCode::Io and abort/single-terminal semantics; after failed data commit, read only the bounded terminal cause from the already-created generation instead of formatting the write error chain. Verify real local HTTP status/transport stubs through LLMFS and namespace projection; no new error framework is needed.
 
 ## 5. Delivery and archive readiness
