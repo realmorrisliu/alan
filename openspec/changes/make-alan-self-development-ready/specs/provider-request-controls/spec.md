@@ -23,6 +23,12 @@ renderer-owned catalog. Unavailable metadata SHALL remain explicitly unavailable
 - **THEN** it includes supported reasoning efforts and the default reasoning effort for each listed model
 - **AND** the Connection projection preserves those owner-provided values
 
+#### Scenario: Default managed configuration uses the canonical bundled catalog
+- **WHEN** a published managed connection uses a model recognized by the canonical bundled catalog without an explicit catalog override
+- **THEN** its model list and reasoning metadata come from the same resolved catalog used to validate model selection
+- **AND** absence of an optional override does not make that known catalog unavailable
+- **AND** a provider without canonical model information remains explicitly unavailable
+
 #### Scenario: Frequent model observation uses published Connection state
 - **WHEN** the runtime observes model state without an explicit Connection operation
 - **THEN** its catalog projection reads the Connection Service's already-published authority and canonical metadata

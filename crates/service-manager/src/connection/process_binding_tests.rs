@@ -209,6 +209,26 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
     };
     let captured = managed.capture_initial().await.unwrap().unwrap();
     assert_ne!(captured.identity.revision, "injected-namespace-callable");
+    assert!(
+        captured.config.model_catalog.is_none(),
+        "ordinary default configuration has no explicit catalog"
+    );
+    let info = captured.config.effective_model_info().unwrap();
+    let catalog = managed.catalog().await.unwrap();
+    let choice = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|choice| choice["model"] == info.slug)
+        .expect("canonical current model is selectable");
+    assert_eq!(
+        choice["supported_reasoning_efforts"],
+        serde_json::to_value(&info.supported_reasoning_efforts).unwrap()
+    );
+    assert_eq!(
+        choice["default_reasoning_effort"],
+        serde_json::to_value(info.default_reasoning_effort).unwrap()
+    );
     assert_eq!(
         managed.restore(&captured.identity).await.unwrap().identity,
         captured.identity
@@ -216,6 +236,14 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
     let changed_model = "gpt-5.2";
     let changed = managed.capture(Some(changed_model)).await.unwrap();
     assert_ne!(changed.identity.model, captured.identity.model);
+    assert!(
+        catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["model"] == changed.identity.model),
+        "catalog and explicit capture authorize the same canonical model"
+    );
     assert_eq!(
         managed.restore(&changed.identity).await.unwrap().identity,
         changed.identity
@@ -300,10 +328,14 @@ async fn catalog_observes_published_authority_without_recapturing_on_idle_polls(
         captured.identity.revision, "injected-namespace-callable",
         "capture refreshes the external managed profile"
     );
-    assert_eq!(
-        authority.catalog().await.unwrap_err().to_string(),
-        "model catalog unavailable",
-        "no invented static catalog"
+    let managed_catalog = authority.catalog().await.unwrap();
+    assert!(
+        managed_catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["model"] == captured.identity.model),
+        "refreshed managed profile uses canonical model metadata"
     );
     service
         .apply(ConnectionCommand::RemoveProfile {
@@ -323,10 +355,7 @@ async fn catalog_observes_published_authority_without_recapturing_on_idle_polls(
         })
         .await
         .unwrap();
-    assert_eq!(
-        authority.catalog().await.unwrap_err().to_string(),
-        "model catalog unavailable"
-    );
+    assert_eq!(authority.catalog().await.unwrap(), managed_catalog);
     service
         .apply(ConnectionCommand::RequestNative {
             request: NativeConnectionRequest {

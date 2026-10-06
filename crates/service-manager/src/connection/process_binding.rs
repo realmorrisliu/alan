@@ -88,10 +88,7 @@ impl ConnectionAuthority for ProcessConnection {
         let info = config
             .effective_model_info()
             .context("model catalog unavailable")?;
-        let catalog = config
-            .model_catalog
-            .as_ref()
-            .context("model catalog unavailable")?;
+        let catalog = config.resolved_model_catalog();
         let entries: Vec<_> = catalog
             .supported_model_slugs(info.provider)
             .into_iter()

@@ -6,6 +6,26 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## Canonical catalog sibling correction — 2026-10-06
+
+The idle-catalog P1 was committed as `3e57bf96` and replied/resolved. Further
+same-path review confirmed default Config has no explicit model_catalog object,
+while effective model validation resolves bundled canonical metadata. Reading the
+raw optional object made known managed OpenAI models selectable but unlistable.
+Connection catalog now reuses Config's existing resolved catalog getter, documented
+and exposed for this actual production consumer. Providers without canonical model
+info remain unavailable and injected callables remain singleton authority.
+
+The existing managed default-config fixture reproduces catalog-unavailable after
+successful capture; corrected focused3 verifies canonical model/effort consistency,
+100 idle observations and the retained update/revocation boundaries. This also
+identifies the earlier managed catalog fixture failure as a separate real catalog
+bug, without retroactively counting it as the idle-IO regression. No new resolver,
+catalog copy, renderer metadata source or fallback provider list is introduced.
+Full Engine/Service Manager1510 passed/0 failed/1 ignored, canonical `just quality`
+and independent standards/spec source reviews passed. Current-head CI remains
+pending.
+
 ## Idle model catalog review — 2026-10-06
 
 The three preceding review fixes were committed as `ae1fce6e` and `65354846`,
