@@ -23,6 +23,14 @@ renderer-owned catalog. Unavailable metadata SHALL remain explicitly unavailable
 - **THEN** it includes supported reasoning efforts and the default reasoning effort for each listed model
 - **AND** the Connection projection preserves those owner-provided values
 
+#### Scenario: Frequent model observation uses published Connection state
+- **WHEN** the runtime observes model state without an explicit Connection operation
+- **THEN** its catalog projection reads the Connection Service's already-published authority and canonical metadata
+- **AND** observation does not reload persisted connection metadata or construct a new callable
+- **AND** Connection-owned publication changes remain visible on the next observation
+- **AND** external metadata changes are refreshed at existing explicit Connection read, capture, selection and recovery boundaries, without claiming an instantaneous cross-process disk watch
+- **AND** observation never bypasses refreshed validation of an explicit capture or selection
+
 ### Requirement: Effective request controls are file and rollout observable
 Agent Runtime Service SHALL project effective Process and current-turn request
 controls through Agent Machine state and rollout/checkpoint evidence. Inspection

@@ -6,6 +6,29 @@ review/CI evidence before it can be called shipped. Existing runtime
 requirements remain in `unify-agent-command-input`; linked dependency work is
 not a second implementation owner.
 
+## Idle model catalog review — 2026-10-06
+
+The three preceding review fixes were committed as `ae1fce6e` and `65354846`,
+with2762 workspace tests and all16 current-head checks passing; their replies and
+threads are closed. A subsequent P1 exposed model observation calling catalog at
+idle10ms intervals, where ProcessConnection.catalog recaptured a callable and
+reloaded shared metadata before snapshot equality could avoid publication.
+
+Catalog observation now projects Connection Service's published registry and
+matching in-memory metadata. It neither reloads disk nor constructs a callable;
+explicit capture/selection/recovery refresh and validation are unchanged. Existing
+Connection ctl/native updates change published authority immediately; independent
+writers are observed through existing explicit Connection read/capture boundaries,
+not a newly promised cross-process disk watch. No cache, timer or public API was
+introduced. A valid actual-Service regression failed on the original disk-reading
+catalog path; corrected focused3 passed, covering100 known observations, explicit
+capture failure, external changes and published ctl/native authority changes.
+Three earlier fixture-setup failures are retained separately and are not credited
+as product regressions. Full Service Manager140 passed/0 failed; canonical
+`just quality` and independent source/spec reviews passed. Current-head CI remains
+pending.
+Evidence: `direct-review-fixes/model-idle-catalog` in the existing Alan Cache.
+
 ## Steering failure receipt follow-up — 2026-10-06
 
 After remote main integration `d028d856`, review found a steering submission

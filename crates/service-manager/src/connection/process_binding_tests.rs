@@ -227,3 +227,132 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
     wrong.revision.push_str("changed");
     assert!(managed.restore(&wrong).await.is_err());
 }
+
+#[tokio::test]
+async fn catalog_observes_published_authority_without_recapturing_on_idle_polls() {
+    let temp = tempfile::tempdir().unwrap();
+    let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
+    let service = ConnectionService::open("test", &bindings).unwrap();
+    let writer = ConnectionService::open("test", &bindings).unwrap();
+    service
+        .attach_callable_registry(
+            Arc::new(alan_llmfs::LlmFs::new()),
+            Arc::new(TestLlmClientFactory::default()),
+            Config::default(),
+            Some(("main".into(), LlmClient::new(MockLlmProvider::new()))),
+        )
+        .await
+        .unwrap();
+    let managed = profile();
+    let mut connections = service.metadata();
+    connections.credentials.insert(
+        "openai-main".into(),
+        crate::connection_profile::ConnectionCredential {
+            kind: crate::connection_profile::CredentialKind::SecretString,
+            provider_family: ProviderId::OpenAiResponses,
+            label: "test reference".into(),
+            backend: crate::connection_profile::default_credential_backend(
+                crate::connection_profile::CredentialKind::SecretString,
+            )
+            .into(),
+        },
+    );
+    service
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: service.metadata().fingerprint().unwrap(),
+            connections,
+        })
+        .await
+        .unwrap();
+    let authority = ProcessConnection {
+        service: service.clone(),
+        profile: "main".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+    };
+    let published = authority.catalog().await.unwrap();
+    let bytes = std::fs::read(&bindings.metadata_path).unwrap();
+    // This sentinel proves observation performs no disk read. It is not a fresh
+    // external metadata assertion: only the already-published callable is observed.
+    std::fs::write(&bindings.metadata_path, "invalid = [").unwrap();
+    for _ in 0..100 {
+        assert_eq!(authority.catalog().await.unwrap(), published);
+    }
+    assert!(
+        authority.capture(None).await.is_err(),
+        "capture still validates durable metadata"
+    );
+    std::fs::write(&bindings.metadata_path, bytes).unwrap();
+    writer.refresh().await.unwrap();
+    writer
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: managed.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        authority.catalog().await.unwrap(),
+        published,
+        "external change waits for an existing refresh boundary"
+    );
+    let captured = authority.capture(None).await.unwrap();
+    assert_ne!(
+        captured.identity.revision, "injected-namespace-callable",
+        "capture refreshes the external managed profile"
+    );
+    assert_eq!(
+        authority.catalog().await.unwrap_err().to_string(),
+        "model catalog unavailable",
+        "no invented static catalog"
+    );
+    service
+        .apply(ConnectionCommand::RemoveProfile {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        authority.catalog().await.unwrap_err().to_string(),
+        "Process profile unavailable",
+        "same-service removal publishes immediately"
+    );
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: managed,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        authority.catalog().await.unwrap_err().to_string(),
+        "model catalog unavailable"
+    );
+    service
+        .apply(ConnectionCommand::RequestNative {
+            request: NativeConnectionRequest {
+                id: "logout-main".into(),
+                profile_id: "main".into(),
+                action: NativeConnectionAction::Logout,
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        authority.catalog().await.unwrap_err().to_string(),
+        "Process profile is not callable",
+        "pending native request removes callable authority"
+    );
+    service
+        .respond_native(NativeConnectionResponse {
+            request_id: "logout-main".into(),
+            opaque_credential_ref: None,
+            status: "logged_out".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        authority.catalog().await.unwrap_err().to_string(),
+        "Process profile is not callable",
+        "logout must not retain a catalog grant"
+    );
+}

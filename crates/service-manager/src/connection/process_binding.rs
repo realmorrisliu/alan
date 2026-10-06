@@ -55,31 +55,40 @@ impl ConnectionAuthority for ProcessConnection {
     }
 
     async fn catalog(&self) -> Result<serde_json::Value> {
-        let captured = self.capture(None).await?;
-        // Published injection grants exactly one callable, not the provider's static catalog.
-        // Consult authority state directly; Connection revision is opaque restore evidence.
-        let injected = {
-            let callables = self.service.callables.lock().await;
-            let registry = callables
-                .as_ref()
-                .context("callable registry unavailable")?;
-            registry.published_fallbacks.contains(&self.profile)
-                && !self.service.metadata().profiles.contains_key(&self.profile)
-        };
+        // Observation reads the Connection owner's published authority. Disk refresh
+        // and callable construction belong to capture/restore and Connection operations,
+        // not the Process's frequent model-status observation loop.
+        let callables = self.service.callables.lock().await;
+        let registry = callables
+            .as_ref()
+            .context("callable registry unavailable")?;
+        let connections = self.service.metadata();
+        let injected = registry.published_fallbacks.contains(&self.profile)
+            && !connections.profiles.contains_key(&self.profile);
+        let mut config = registry.base_config.clone();
+        if !injected {
+            let profile = connections
+                .profiles
+                .get(&self.profile)
+                .context("Process profile unavailable")?;
+            ensure!(
+                registry.published_profiles.get(&self.profile) == Some(profile),
+                "Process profile is not callable"
+            );
+            connections.apply_profile_metadata_to_config(Some(&self.profile), &mut config)?;
+        }
         if injected {
-            let info = captured.config.effective_model_info();
+            let info = config.effective_model_info();
             return Ok(serde_json::json!({"profile":self.profile,"models":[{
-                "model":captured.identity.model,
+                "model":config.effective_model(),
                 "supported_reasoning_efforts":info.as_ref().map(|info| &info.supported_reasoning_efforts).cloned().unwrap_or_default(),
                 "default_reasoning_effort":info.as_ref().and_then(|info| info.default_reasoning_effort)
             }]}));
         }
-        let info = captured
-            .config
+        let info = config
             .effective_model_info()
             .context("model catalog unavailable")?;
-        let catalog = captured
-            .config
+        let catalog = config
             .model_catalog
             .as_ref()
             .context("model catalog unavailable")?;
