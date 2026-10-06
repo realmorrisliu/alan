@@ -57,6 +57,41 @@ Canonical `just quality` passed, including strict Clippy, docs, architecture and
 standalone install/upgrade/release checks. Current-head CI, review closure and
 required approval remain pending until recorded as complete.
 
+### Follow-up project operation identity review — 2026-10-06
+
+Refusal correction `f43ca088` passed all16 checks (CI37417158368 and
+CodeQL37417158413). Its original refusal thread is resolved. Subsequent review
+found two additional boundaries, now corrected locally by Codex; final delivery
+qualification remains in progress:
+
+- A completed directory selector can be delivered again after later navigation.
+  Reuse completed Action identity so it cannot apply cwd or publish twice;
+  retain unresolved evidence safely and cover rejection and recovery boundaries.
+- A project mount can succeed before its local socket reply is lost. Correlate
+  the operation from the client before mutation and retain enough Host/TUI
+  evidence to reconcile the same grant. Unknown outcomes must not enable another
+  selection; known rejection and exact revoke must remain usable. Fence different
+  arguments/boot and never recreate an already-revoked grant on retry.
+
+Both defects reproduced in real fault/duplicate regressions before correction.
+Directory focused12 and full Engine1364 passed/1 ignored. Host socket-loss and
+response-correlation tests2 and TUI unknown-operation test1 passed. A later
+Root-reset notice correction preserves the retained unknown operation and draft;
+its added assertions passed in full TUI332 unit+11 integration. Full Host/TUI/
+Service Manager/CLI600 passed/1 ignored, giving1964 passed/0 failed/2 ignored
+across the affected suites. Independent final source reviews passed; all23 Rust
+source hashes stayed unchanged through the full tests. Protocol4 rejects older Host project
+RPC support before sending; current-invocation results retain immutable operation
+identity and consult live grant status, never a TTL or replay after revoke.
+Canonical `just quality` passed. Fresh Native79014, binary SHA256
+2d810854f4e395aba6d6dacacc3017bb6f35e78db2aaa242c405f2d45ee99be6,
+passed readonly selection, pwd Tool details, revoke-to-root and normal quit0;
+all temporary instances are closed. This is a happy-path terminal check, not
+new Alan-authored or graphical-theme qualification. Current-head review/CI and
+required independent approval remain outstanding. No earlier passing head qualifies new source.
+Evidence owner: `direct-review-fixes/project-idempotency` in the existing Alan
+Cache. Required independent approval and merge/spec closure remain outstanding.
+
 ## Direct implementation takeover — 2026-10-06
 
 The user explicitly replaced Native-only implementation with direct Codex

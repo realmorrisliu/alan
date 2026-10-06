@@ -19,7 +19,10 @@ impl ToolExecutionAdapter for SelectionAdapter {
         Ok(cwd.join(path))
     }
     fn resolve_directory(&self, _: &Path, path: &Path) -> anyhow::Result<PathBuf> {
-        anyhow::ensure!(path == Path::new("/mnt/new"), "directory unavailable");
+        anyhow::ensure!(
+            matches!(path.to_str(), Some("/mnt/new" | "/mnt/later")),
+            "directory unavailable"
+        );
         Ok(path.into())
     }
     fn visible_path(&self, path: &Path) -> PathBuf {
@@ -41,11 +44,15 @@ impl ToolExecutionAuthority for SelectionAuthority {
         mut binding: ToolExecutionBinding,
     ) -> anyhow::Result<ToolExecutionBinding> {
         anyhow::ensure!(
-            binding.namespace_cwd == Path::new("/mnt/new"),
+            matches!(
+                binding.namespace_cwd.to_str(),
+                Some("/mnt/new" | "/mnt/later")
+            ),
             "old grant revoked"
         );
         binding.cwd_grant_id = Some("replacement".into());
-        Ok(binding.with_adapter(Arc::new(SelectionAdapter("/mnt/new".into()))))
+        let cwd = binding.namespace_cwd.clone();
+        Ok(binding.with_adapter(Arc::new(SelectionAdapter(cwd))))
     }
 }
 
@@ -486,7 +493,38 @@ async fn directory_selection_rejects_running(fault_field: Option<&str>) {
         runner.process_binding(2).unwrap().namespace_cwd,
         PathBuf::from("/mnt/old")
     );
+    let duplicate = std::panic::AssertUnwindSafe(async {
+        shell
+            .write("/agent/2/machine/ctl", control.as_bytes())
+            .await
+            .unwrap();
+        let barrier = Submission::new(Op::SelectProjectDirectory {
+            path: "/mnt/new".into(),
+        });
+        runtime
+            .handle
+            .submission_tx
+            .send(barrier.clone())
+            .await
+            .unwrap();
+        publication::wait_navigation_action(&shell, "a1").await;
+        let result: serde_json::Value =
+            serde_json::from_slice(&shell.cat("/agent/2/actions/a1/result").await.unwrap())
+                .unwrap();
+        assert_eq!(result["call_id"], barrier.id);
+        assert_eq!(
+            publication::navigation_call_count(&shell, &id).await,
+            1,
+            "completed active rejection must preserve its single correlated Action"
+        );
+    });
+    use futures::FutureExt;
+    let duplicate = duplicate.catch_unwind().await;
     release.notify_one();
+    if let Err(panic) = duplicate {
+        runtime.shutdown().await.unwrap();
+        std::panic::resume_unwind(panic);
+    }
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         runner.process_binding(2).unwrap().namespace_cwd,

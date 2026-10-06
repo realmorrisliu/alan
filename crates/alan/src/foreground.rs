@@ -56,6 +56,7 @@ pub(super) async fn run_bare_in_foreground_instance(
         .context("listen for Alan instance shutdown")?;
     let config = HostBootConfig::product_with_root_resume(channel.descriptor().id, resume_root)?;
     let host = AlanOsHost::boot(config, paths.clone()).await?;
+    let project_boot = host.status().boot_id;
     let root_model = host.root_model().map(str::to_string);
     let (shutdown, shutdown_requested) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
@@ -83,7 +84,7 @@ pub(super) async fn run_bare_in_foreground_instance(
                         Box::pin(async move {
                             let host = alan_os_host::HostCommandPlane::new(paths);
                             match command {
-                                alan_tui::ProjectControl::Mount { host_path, access } => {
+                                alan_tui::ProjectControl::Mount { operation_id, host_path, access } => {
                                     let access = match access {
                                         alan_tui::ProjectAccess::ReadOnly => {
                                             alan_service_manager::HostMountAccess::ReadOnly
@@ -92,7 +93,14 @@ pub(super) async fn run_bare_in_foreground_instance(
                                             alan_service_manager::HostMountAccess::ReadWrite
                                         }
                                     };
-                                    let mounted = host.mount_project(host_path, access).await?;
+                                    let mounted = match host.mount_project(uuid::Uuid::parse_str(&operation_id)?, project_boot, host_path, access).await {
+                                        Ok(mounted) => mounted,
+                                        Err(error) => return Ok(if let Some(rejected) = error.downcast_ref::<alan_os_host::ProjectMountRejected>() {
+                                            alan_tui::ProjectControlResult::MountRejected { message: rejected.to_string() }
+                                        } else {
+                                            alan_tui::ProjectControlResult::MountUncertain { message: error.to_string() }
+                                        }),
+                                    };
                                     let label = mounted
                                         .host_path
                                         .file_name()

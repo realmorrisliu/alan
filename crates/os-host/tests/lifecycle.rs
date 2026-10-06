@@ -295,8 +295,14 @@ async fn approval_and_agent_control_writes_finish_with_renderer_tails_open() {
         tail_tasks.push(start_idle_tail(&shell, path, tail_shutdown.clone()).await);
     }
 
+    let control_boot = paths.read_status().unwrap().boot_id;
     let project_mount = HostCommandPlane::new(paths.clone())
-        .mount_project(project.path().to_path_buf(), HostMountAccess::ReadWrite)
+        .mount_project(
+            uuid::Uuid::new_v4(),
+            control_boot,
+            project.path().to_path_buf(),
+            HostMountAccess::ReadWrite,
+        )
         .await
         .unwrap();
     let cwd_id = "46e4ba7c-87e8-41a9-8e88-d0dc49ac99d3";
@@ -832,6 +838,7 @@ async fn local_project_mount_uses_the_root_process_and_revoke_removes_authority(
         tokio::spawn(async move { host.serve_until(shutdown_request.cancelled_owned()).await });
     let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
     let shell = alan_shell::Shell::new(attachment.root);
+    let control_boot = paths.read_status().unwrap().boot_id;
     let control = HostCommandPlane::new(paths);
     let root_pid = String::from_utf8(
         shell
@@ -844,6 +851,8 @@ async fn local_project_mount_uses_the_root_process_and_revoke_removes_authority(
     .to_owned();
     let read_only = control
         .mount_project(
+            uuid::Uuid::new_v4(),
+            control_boot,
             read_only_dir.path().to_path_buf(),
             HostMountAccess::ReadOnly,
         )
@@ -884,6 +893,8 @@ async fn local_project_mount_uses_the_root_process_and_revoke_removes_authority(
 
     let read_write = control
         .mount_project(
+            uuid::Uuid::new_v4(),
+            control_boot,
             read_write_dir.path().to_path_buf(),
             HostMountAccess::ReadWrite,
         )
@@ -913,3 +924,6 @@ async fn local_project_mount_uses_the_root_process_and_revoke_removes_authority(
     shutdown.cancel();
     server.await.unwrap().unwrap();
 }
+
+#[path = "lifecycle/project_reply_loss.rs"]
+mod project_reply_loss;

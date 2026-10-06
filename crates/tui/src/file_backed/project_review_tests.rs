@@ -68,6 +68,7 @@ async fn mounted_receipt_survives_actual_ctl_lost_ack_and_late_file_settlement()
         })
     };
     let mounted = handler(ProjectControl::Mount {
+        operation_id: project_dispatch::project_operation_id(),
         host_path: "/unused".into(),
         access: ProjectAccess::ReadWrite,
     })

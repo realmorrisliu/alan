@@ -1,12 +1,7 @@
 use super::*;
 
 pub(super) fn project_selector(path: &str) -> (String, String) {
-    let id = alan_agent_protocol::UserInputRecord::new(
-        alan_agent_protocol::InputIntent::Command,
-        alan_agent_protocol::InputMode::FollowUp,
-        "",
-    )
-    .submission_id;
+    let id = project_operation_id();
     let command = format!(
         "project-cwd-v1 {}",
         serde_json::json!({"id": id, "path": path})
@@ -48,7 +43,9 @@ pub(super) fn dispatch_with_pending_submissions(
         }
     }
     let action = app.dispatch_with_pending_submission(event, !pending_turns.is_empty());
-    if (app.project_host_pending || app.pending_project_control.is_some())
+    if (app.project_host_pending
+        || app.uncertain_project_mount.is_some()
+        || app.pending_project_control.is_some())
         && matches!(action, Some(FileBackedAction::Submit(_)))
     {
         app.notice = Some(
@@ -56,10 +53,20 @@ pub(super) fn dispatch_with_pending_submissions(
         );
         return None;
     }
+    let retrying_mount = match &action {
+        Some(FileBackedAction::Project(command @ ProjectControl::Mount { .. })) => {
+            app.uncertain_project_mount
+                .as_ref()
+                .is_some_and(|(_, retained)| retained == command)
+                && app.project_recovery_boundary_available(blocked)
+        }
+        _ => false,
+    };
     if matches!(
         action,
         Some(FileBackedAction::Project(ProjectControl::Mount { .. }))
-    ) && !app.project_boundary_available(blocked)
+    ) && !retrying_mount
+        && !app.project_boundary_available(blocked)
         || matches!(
             action,
             Some(FileBackedAction::Project(ProjectControl::Revoke { .. }))
@@ -70,4 +77,13 @@ pub(super) fn dispatch_with_pending_submissions(
         return None;
     }
     action
+}
+
+pub(super) fn project_operation_id() -> String {
+    alan_agent_protocol::UserInputRecord::new(
+        alan_agent_protocol::InputIntent::Command,
+        alan_agent_protocol::InputMode::FollowUp,
+        "",
+    )
+    .submission_id
 }

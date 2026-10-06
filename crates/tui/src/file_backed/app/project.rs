@@ -34,6 +34,7 @@ pub(in crate::file_backed) struct PendingProjectControl {
 impl FileBackedApp {
     pub(in crate::file_backed) fn project_boundary_available(&self, admitted: bool) -> bool {
         self.project_recovery_boundary_available(admitted)
+            && self.uncertain_project_mount.is_none()
             && self.pending_project_control.is_none()
             && self.retained_project_mount.is_none()
             && self.ready_project_revoke.is_none()
@@ -271,6 +272,7 @@ impl FileBackedApp {
                     return None;
                 }
                 Some(FileBackedAction::Project(ProjectControl::Mount {
+                    operation_id: project_dispatch::project_operation_id(),
                     host_path: std::path::PathBuf::from(path),
                     access: self.project_selection.unwrap_or(ProjectAccess::ReadOnly),
                 }))

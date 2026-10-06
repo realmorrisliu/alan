@@ -18,7 +18,7 @@ use crate::agent_machine::{
 };
 use alan_agent_protocol::Submission;
 use anyhow::{Context, Result};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -127,6 +127,7 @@ struct RuntimeSubmissionQueues {
     environment: Option<NamespaceRuntimeEnvironment>,
     deferred_model: Option<alan_agent_protocol::UiModelBinding>,
     pending_directory_actions: VecDeque<(String, super::transition::PendingActionPublication)>,
+    completed_directory_ids: HashSet<String>,
     directory_publication_retry: std::time::Instant,
     model_process_path: String,
     model_status: tokio::sync::Mutex<alan_agent_protocol::UiModelSnapshot>,
@@ -147,6 +148,7 @@ impl RuntimeSubmissionQueues {
             environment: None,
             deferred_model: None,
             pending_directory_actions: VecDeque::new(),
+            completed_directory_ids: HashSet::new(),
             directory_publication_retry: std::time::Instant::now(),
             model_process_path: String::new(),
             model_status: Default::default(),
@@ -507,14 +509,17 @@ fn spawn_with_prepared_runtime_environment(
         let machine = startup.machine;
         let _ = runtime_recorder.set(machine.recorder());
         let environment = environment.with_action_recorder(machine.recorder());
-        if let Some(path) = recovery_rollout_path.as_ref()
-            && let Err(error) = environment.agent_files().restore_actions(path).await
-        {
-            let _ = ready_tx.send(Err(format!("restore Action evidence: {error:#}")));
-            return;
-        }
+        let completed_directory_ids = match recovery_rollout_path.as_ref() {
+            Some(path) => match environment.agent_files().restore_actions(path).await {
+                Ok(ids) => ids,
+                Err(error) => {
+                    let _ = ready_tx.send(Err(format!("restore Action evidence: {error:#}")));
+                    return;
+                }
+            },
+            None => HashSet::new(),
+        };
 
-        // Build the transition context owned by this Process loop.
         let mut state = RuntimeLoopState {
             machine,
             environment,
@@ -541,13 +546,13 @@ fn spawn_with_prepared_runtime_environment(
             agent_path = %state.agent_path(),
             "Agent runtime started"
         );
-        // Ready is published only after initial/recovered callable capture succeeds.
 
         // Main event loop with graceful shutdown support and interruptible submissions.
         let mut submissions_closed = false;
         let mut shutdown_requested = false;
 
         let mut queues = RuntimeSubmissionQueues::new(state.machine.input_queue());
+        queues.completed_directory_ids = completed_directory_ids;
         queues.recorder = state.machine.input_recorder();
         queues.model_process_path = state.process_path();
         queues.environment = Some(state.environment.clone());

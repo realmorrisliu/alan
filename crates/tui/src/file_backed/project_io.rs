@@ -12,8 +12,19 @@ pub(super) fn start(
     if app.project_host_pending {
         return;
     }
-    app.project_host_pending = true;
+    let retrying_mount = app.uncertain_project_mount.is_some();
     if matches!(command, ProjectControl::Mount { .. }) {
+        if let Some((prior_owner, prior_command)) = &app.uncertain_project_mount {
+            if prior_owner != &owner || prior_command != &command {
+                app.push_error("Root changed; unknown project operation remains fenced".into());
+                return;
+            }
+        } else {
+            app.uncertain_project_mount = Some((owner.clone(), command.clone()));
+        }
+    }
+    app.project_host_pending = true;
+    if matches!(command, ProjectControl::Mount { .. }) && !retrying_mount {
         app.project_selection = None;
         app.composer.set_text("");
         app.input_intent = alan_agent_protocol::InputIntent::Agent;
@@ -42,6 +53,17 @@ pub(super) fn finish(
     command: ProjectControl,
     result: Result<ProjectControlResult, String>,
 ) -> Option<(String, String, String)> {
+    if matches!(command, ProjectControl::Mount { .. })
+        && !app
+            .uncertain_project_mount
+            .as_ref()
+            .is_some_and(|(prior_owner, prior_command)| {
+                prior_owner == &owner && prior_command == &command
+            })
+    {
+        app.push_error("stale project response ignored; current operation retained".into());
+        return None;
+    }
     app.project_host_pending = false;
     match (command, result) {
         (
@@ -63,6 +85,7 @@ pub(super) fn finish(
                 );
                 return None;
             }
+            app.uncertain_project_mount = None;
             let (id, control) = project_dispatch::project_selector(&receipt.namespace_path);
             app.stage_project_control(
                 owner.clone(),
@@ -75,6 +98,17 @@ pub(super) fn finish(
                 return None;
             }
             Some((owner, id, control))
+        }
+        (ProjectControl::Mount { .. }, Ok(ProjectControlResult::MountRejected { message })) => {
+            app.uncertain_project_mount = None;
+            app.push_error(format!("project selection rejected: {message}"));
+            None
+        }
+        (ProjectControl::Mount { .. }, Ok(ProjectControlResult::MountUncertain { message })) => {
+            app.push_error(format!(
+                "project outcome unknown; /project retries this selection: {message}"
+            ));
+            None
         }
         (ProjectControl::Revoke { grant_id }, Ok(ProjectControlResult::Revoked)) => {
             if app.project_cleanup.as_deref() == Some(&grant_id) {

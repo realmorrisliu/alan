@@ -179,8 +179,9 @@ fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
     assert!(app.project_selection.is_none());
 
     app.handle_command("/project");
-    let Some(FileBackedAction::Project(ProjectControl::Mount { host_path, access })) =
-        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    let Some(FileBackedAction::Project(ProjectControl::Mount {
+        host_path, access, ..
+    })) = app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
     else {
         panic!("project approval action")
     };

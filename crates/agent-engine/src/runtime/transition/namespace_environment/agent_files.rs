@@ -318,7 +318,10 @@ impl NamespaceAgentFiles {
         .await
     }
 
-    pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
+    pub(crate) async fn restore_actions(
+        &self,
+        path: &std::path::PathBuf,
+    ) -> Result<std::collections::HashSet<String>> {
         // ponytail: startup scans the rollout once more; index evidence if large histories warrant it.
         let client = NamespaceClient::new(self.root.clone());
         let mut items = crate::rollout::RolloutRecorder::load_history(path).await?;
@@ -330,6 +333,7 @@ impl NamespaceAgentFiles {
             &mut items,
             &format!("/proc/{pid}"),
         )?;
+        let mut directory_ids = std::collections::HashSet::new();
         for item in items {
             if let crate::rollout::RolloutItem::Event(event) = item
                 && event.event_type == "agent_action_v1"
@@ -337,6 +341,16 @@ impl NamespaceAgentFiles {
                 let record: NamespaceActionRecord =
                     serde_json::from_value(event.payload["record"].clone())
                         .context("decode recovered Action evidence")?;
+                if record.name == "cd"
+                    && matches!(record.status.as_str(), "completed" | "failed")
+                    && let Some(result) = record.result.as_deref()
+                    && let Ok(result) = serde_json::from_str::<serde_json::Value>(result)
+                    && result["title"] == "Select Process directory"
+                    && let Some(id) = result["call_id"].as_str()
+                    && uuid::Uuid::parse_str(id).is_ok()
+                {
+                    directory_ids.insert(id.to_owned());
+                }
                 // This is an IO projection into a fresh Process, never a Tool replay.
                 publish_action_record(
                     &client,
@@ -347,7 +361,7 @@ impl NamespaceAgentFiles {
                 .await?;
             }
         }
-        Ok(())
+        Ok(directory_ids)
     }
 
     pub(crate) async fn read_ui_activity_snapshot(&self) -> Result<UiActivitySnapshot> {

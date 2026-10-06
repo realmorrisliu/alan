@@ -766,7 +766,8 @@ impl HostMountService {
             .collect()
     }
 
-    pub(super) fn grant_record(&self, id: &str) -> Option<HostMountGrantRecord> {
+    /// Read current logical grant authority, including retained revoked grants.
+    pub fn grant_record(&self, id: &str) -> Option<HostMountGrantRecord> {
         self.state
             .lock()
             .unwrap()

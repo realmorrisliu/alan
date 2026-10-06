@@ -30,6 +30,9 @@ impl RuntimeSubmissionQueues {
         ) {
             return false;
         }
+        if self.completed_directory_ids.contains(&submission.id) {
+            return true;
+        }
         if !self
             .pending_directory_actions
             .iter()
@@ -61,6 +64,9 @@ impl RuntimeSubmissionQueues {
         files: &NamespaceAgentFiles,
         submission: &Submission,
     ) {
+        if self.completed_directory_ids.contains(&submission.id) {
+            return;
+        }
         // This Process path was validated before Runtime Ready; rejection has no cwd effect.
         if let Ok(record) = cd_action_record(
             &submission.id,
@@ -84,6 +90,7 @@ impl RuntimeSubmissionQueues {
                     + crate::runtime::turn_input::NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL;
                 break;
             }
+            self.completed_directory_ids.insert(id.clone());
             self.pending_directory_actions.pop_front();
         }
     }

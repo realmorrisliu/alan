@@ -23,6 +23,19 @@ paths SHALL remain outside Agent-visible files.
 - **THEN** Alan shows that the project is unavailable and offers a new explicit selection
 - **AND** stale completion entries and execution do not retain that authority
 
+#### Scenario: Project authorization reply is lost
+- **WHEN** the Host approves a selected project but the client loses the reply
+- **THEN** the client retains the operation identity allocated before submission and reports the outcome as unconfirmed
+- **AND** explicit reconciliation against the same Host invocation returns the original grant outcome without granting again
+- **AND** a different directory or access mode cannot reuse that operation identity
+- **AND** another project selection remains unavailable until the outcome is resolved, while help and quit remain available
+- **AND** an already-revoked grant is never recreated by retrying its original operation
+
+#### Scenario: Completed directory selection is delivered again
+- **WHEN** a completed project directory control is delivered again after later navigation
+- **THEN** the existing completed Action identity prevents another cwd effect or duplicate Action
+- **AND** restoring that Action evidence does not replay the original directory change
+
 ### Requirement: Accepted inputs have visible disposition
 Alan SHALL acknowledge authoritative admission with a visible submitted input
 and its running, queued or paused disposition, correlated with the existing

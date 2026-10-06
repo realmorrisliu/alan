@@ -19,7 +19,7 @@ use crate::transcript_ui::{
 };
 
 use super::file_surface::{ActionSnapshot, TapeRecordV1, response_text_from_content};
-use super::{ProjectAccess, ProjectControl, ProjectMountReceipt};
+use super::{ProjectAccess, ProjectControl, ProjectMountReceipt, project_dispatch};
 
 mod action_modal;
 mod attachment;
@@ -89,6 +89,7 @@ pub(super) struct FileBackedApp {
     pub(super) project_cleanup: Option<String>,
     pub(super) project_cleanup_attempted: bool,
     pub(super) project_host_pending: bool,
+    pub(super) uncertain_project_mount: Option<(String, ProjectControl)>,
     ready_project_revoke: Option<String>,
     pub(super) last_input_failed: bool,
     pub(super) expand_thinking: bool,
@@ -149,6 +150,7 @@ impl FileBackedApp {
             project_cleanup: None,
             project_cleanup_attempted: false,
             project_host_pending: false,
+            uncertain_project_mount: None,
             ready_project_revoke: None,
             last_input_failed: false,
             expand_thinking: false,
@@ -623,6 +625,7 @@ impl FileBackedApp {
                 return None;
             }
             return Some(FileBackedAction::Project(ProjectControl::Mount {
+                operation_id: project_dispatch::project_operation_id(),
                 host_path: std::path::PathBuf::from(path),
                 access: self.project_selection.unwrap_or(ProjectAccess::ReadOnly),
             }));
@@ -736,6 +739,16 @@ impl FileBackedApp {
             "status" => self.model_status_command(),
             "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
             "project" if command.trim() == "project" => {
+                if let Some((_, retained)) = self.uncertain_project_mount.as_ref() {
+                    if self.project_recovery_boundary_available(false) {
+                        return Some(FileBackedAction::Project(retained.clone()));
+                    }
+                    self.notice = Some(
+                        "project outcome unknown; wait, then /project retries the same selection"
+                            .into(),
+                    );
+                    return None;
+                }
                 if !self.project_boundary_available(false) {
                     self.notice =
                         Some("wait for the current Agent turn before selecting a project".into());

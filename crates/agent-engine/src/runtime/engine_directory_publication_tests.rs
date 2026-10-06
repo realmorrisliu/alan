@@ -295,3 +295,182 @@ async fn pending_request_boundary(interrupt: bool) {
         "permanent real Action fault remains retained without effect replay"
     );
 }
+
+#[tokio::test]
+async fn directory_completed_retry_does_not_rewind_later_selection() {
+    let temp = TempDir::new().unwrap();
+    let stores = crate::AgentRuntimeStoreBindings {
+        rollouts: temp.path().join("rollouts"),
+        checkpoints: temp.path().join("checkpoints"),
+        cache: temp.path().join("cache"),
+        tmp: temp.path().join("tmp"),
+        metadata: temp.path().join("metadata"),
+    };
+    let first = Submission::new(Op::SelectProjectDirectory {
+        path: "/mnt/new".into(),
+    });
+    let later = Submission::new(Op::SelectProjectDirectory {
+        path: "/mnt/later".into(),
+    });
+    let (mut runtime, shell, runner) = navigation_runtime(stores.clone(), None);
+    let metadata = runtime.wait_until_ready().await.unwrap();
+    let observed = std::panic::AssertUnwindSafe(async {
+        runtime
+            .handle
+            .submission_tx
+            .send(first.clone())
+            .await
+            .unwrap();
+        wait_navigation_action(&shell, "a0").await;
+        runtime.handle.submission_tx.send(later).await.unwrap();
+        wait_navigation_action(&shell, "a1").await;
+        runtime
+            .handle
+            .submission_tx
+            .send(first.clone())
+            .await
+            .unwrap();
+        // A subsequent distinct rejection is a FIFO barrier for the delayed retry.
+        runtime
+            .handle
+            .submission_tx
+            .send(Submission::new(Op::SelectProjectDirectory {
+                path: "/mnt/missing".into(),
+            }))
+            .await
+            .unwrap();
+        wait_navigation_action(&shell, "a2").await;
+        assert_eq!(
+            runner.process_binding(2).unwrap().namespace_cwd,
+            PathBuf::from("/mnt/later"),
+            "delayed completed selector must not rewind later navigation"
+        );
+        assert_eq!(navigation_call_count(&shell, &first.id).await, 1);
+    })
+    .catch_unwind()
+    .await;
+    runtime.shutdown().await.unwrap();
+    if let Err(panic) = observed {
+        std::panic::resume_unwind(panic);
+    }
+
+    // Explicit recovery projects the same durable Actions into a fresh AgentFS.
+    let (mut runtime, shell, runner) = navigation_runtime(stores, metadata.rollout_path);
+    runtime.wait_until_ready().await.unwrap();
+    let observed = std::panic::AssertUnwindSafe(async {
+        runtime
+            .handle
+            .submission_tx
+            .send(first.clone())
+            .await
+            .unwrap();
+        runtime
+            .handle
+            .submission_tx
+            .send(Submission::new(Op::SelectProjectDirectory {
+                path: "/mnt/missing".into(),
+            }))
+            .await
+            .unwrap();
+        wait_navigation_action(&shell, "a3").await;
+        assert_eq!(
+            runner.process_binding(2).unwrap().namespace_cwd,
+            PathBuf::from("/mnt/old"),
+            "recovered terminal selector is evidence, never fresh authority or cwd replay"
+        );
+        assert_eq!(navigation_call_count(&shell, &first.id).await, 1);
+    })
+    .catch_unwind()
+    .await;
+    runtime.shutdown().await.unwrap();
+    if let Err(panic) = observed {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+fn navigation_runtime(
+    stores: crate::AgentRuntimeStoreBindings,
+    recovery: Option<PathBuf>,
+) -> (RuntimeController, alan_shell::Shell, ToolProcessRunner) {
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection("default", Box::new(MockLlmProvider::new()));
+    let mut ns = alan_kernel::Namespace::new();
+    ns.mount(
+        "/agent/2",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    ns.mount(
+        "/mnt/llm",
+        InProcessTransport::new(llmfs),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+    let shell = alan_shell::Shell::new(root.clone());
+    let runner = ToolProcessRunner::from_registry(&ToolRegistry::new());
+    runner.register_process_binding(
+        2,
+        ToolExecutionBinding::awaiting_host_projection("/mnt/old".into(), "/tmp".into())
+            .with_adapter(Arc::new(SelectionAdapter("/mnt/old".into()))),
+    );
+    runner.register_process_authority(2, Arc::new(SelectionAuthority));
+    let environment = NamespaceRuntimeEnvironment::new(root, "/agent/2", "default")
+        .with_namespace_cwd("/mnt/old")
+        .with_tool_process_context(2, runner.clone());
+    let mut core =
+        crate::Config::for_openai_chat_completions_compatible("sk-test", None, Some("test-model"));
+    core.memory.enabled = false;
+    let capabilities = crate::provider_capabilities_for_config(&core);
+    let runtime = spawn_with_namespace_environment(
+        AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core),
+            store_bindings: Some(stores),
+            recovery_rollout_path: recovery,
+            ..Default::default()
+        },
+        environment,
+        crate::skills::SkillHostCapabilities::default(),
+        capabilities,
+    )
+    .unwrap();
+    (runtime, shell, runner)
+}
+
+pub(super) async fn wait_navigation_action(shell: &alan_shell::Shell, action: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if matches!(
+                shell
+                    .cat(&format!("/agent/2/actions/{action}/status"))
+                    .await
+                    .ok()
+                    .as_deref(),
+                Some(b"completed" | b"failed")
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("correlated directory Action must become terminal");
+}
+
+pub(super) async fn navigation_call_count(shell: &alan_shell::Shell, call: &str) -> usize {
+    let ids = shell.ls("/agent/2/actions").await.unwrap();
+    let mut count = 0;
+    for id in ids {
+        if !id.starts_with('a') {
+            continue;
+        }
+        let result: serde_json::Value = serde_json::from_slice(
+            &shell
+                .cat(&format!("/agent/2/actions/{id}/result"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        count += usize::from(result["call_id"] == call);
+    }
+    count
+}

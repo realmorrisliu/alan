@@ -22,12 +22,19 @@ impl FileBackedApp {
         self.skills = super::super::skills::SkillProjection::default();
         self.completion_sources.skills.clear();
         self.queue = super::super::queue::QueueProjection::default();
-        let project_notice = if self.retained_project_grant().is_some() {
+        let mut project_notice = if self.retained_project_grant().is_some() {
             self.fence_project_control();
             self.notice.take()
         } else {
             None
         };
+        if self.uncertain_project_mount.is_some() {
+            let unknown = "project outcome unknown; detached Root; new selections blocked; retry only with the original Root or /quit exits";
+            project_notice = Some(match project_notice {
+                Some(notice) => format!("{notice}; {unknown}"),
+                None => unknown.into(),
+            });
+        }
         self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.modal.active = false;

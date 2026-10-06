@@ -1,4 +1,5 @@
 use super::*;
+use alan_agent_protocol::InputIntent;
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
@@ -27,6 +28,7 @@ async fn held_host_operation_keeps_input_draw_and_quit_available_and_preserves_d
         &mut app,
         &handler,
         ProjectControl::Mount {
+            operation_id: project_dispatch::project_operation_id(),
             host_path: "/unused".into(),
             access: ProjectAccess::ReadOnly,
         },
@@ -310,4 +312,125 @@ async fn project_cwd_write_fences_actual_root_replacement_without_retargeting_or
             std::panic::resume_unwind(panic);
         }
     }
+}
+
+#[tokio::test]
+async fn unknown_project_reply_retries_exact_operation_and_preserves_editing() {
+    let handler: ProjectControlHandler = Arc::new(|_| {
+        Box::pin(async {
+            Ok(ProjectControlResult::MountUncertain {
+                message: "reply lost".into(),
+            })
+        })
+    });
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.queue.apply("/agent/8", Some(Default::default()));
+    let command = ProjectControl::Mount {
+        operation_id: project_dispatch::project_operation_id(),
+        host_path: "/fixture".into(),
+        access: ProjectAccess::ReadOnly,
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let mut jobs = tokio::task::JoinSet::new();
+    project_io::start(
+        &mut app,
+        &handler,
+        command.clone(),
+        "/agent/8".into(),
+        &mut jobs,
+        &tx,
+    );
+    app.composer.set_text_with_cursor("界 draft 🦀", 4);
+    app.input_intent = InputIntent::ForceAgent;
+    let FileBackedEvent::ProjectHostCompleted {
+        owner,
+        command: delivered,
+        result,
+    } = rx.recv().await.unwrap()
+    else {
+        panic!("Host response")
+    };
+    project_io::finish(&mut app, owner, Some("/agent/8".into()), delivered, result);
+    assert!(!app.project_host_pending);
+    assert!(!app.project_boundary_available(false));
+    let enter = || {
+        FileBackedEvent::Terminal(TerminalEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+    };
+    let pending = VecDeque::new();
+    assert!(dispatch_with_pending_submissions(&mut app, enter(), &pending).is_none());
+    assert_eq!(app.composer.text(), "界 draft 🦀");
+    assert_eq!(app.composer.cursor(), 4);
+    assert_eq!(app.input_intent, InputIntent::ForceAgent);
+    for (text, quit) in [("/help", false), ("/quit", true)] {
+        let mut clone = app.clone();
+        clone.composer.set_text(text);
+        clone.input_intent = InputIntent::Agent;
+        let action = dispatch_with_pending_submissions(&mut clone, enter(), &pending);
+        assert_eq!(matches!(action, Some(FileBackedAction::Quit)), quit);
+    }
+    // Actual slash dispatch must permit the retained retry despite the new-selection fence.
+    let mut retry_app = app.clone();
+    retry_app.composer.set_text("/project");
+    retry_app.input_intent = InputIntent::Agent;
+    let Some(FileBackedAction::Project(retry)) =
+        dispatch_with_pending_submissions(&mut retry_app, enter(), &pending)
+    else {
+        panic!("retained retry")
+    };
+    assert_eq!(retry, command);
+    project_io::start(&mut app, &handler, retry, "/agent/8".into(), &mut jobs, &tx);
+    assert_eq!(app.composer.text(), "界 draft 🦀");
+    assert_eq!(app.composer.cursor(), 4);
+    assert_eq!(app.input_intent, InputIntent::ForceAgent);
+    let FileBackedEvent::ProjectHostCompleted {
+        owner,
+        command: delivered,
+        result,
+    } = rx.recv().await.unwrap()
+    else {
+        panic!("retry response")
+    };
+    project_io::finish(&mut app, owner, Some("/agent/8".into()), delivered, result);
+    let other = ProjectControl::Mount {
+        operation_id: project_dispatch::project_operation_id(),
+        host_path: "/other".into(),
+        access: ProjectAccess::ReadWrite,
+    };
+    project_io::finish(
+        &mut app,
+        "/agent/8".into(),
+        Some("/agent/8".into()),
+        other,
+        Ok(ProjectControlResult::MountRejected {
+            message: "stale".into(),
+        }),
+    );
+    assert_eq!(app.uncertain_project_mount.as_ref().unwrap().1, command);
+    project_io::start(
+        &mut app,
+        &handler,
+        command.clone(),
+        "/agent/9".into(),
+        &mut jobs,
+        &tx,
+    );
+    assert!(
+        !app.project_host_pending,
+        "different Root cannot retry old operation"
+    );
+    project_io::finish(
+        &mut app,
+        "/agent/8".into(),
+        Some("/agent/8".into()),
+        command,
+        Ok(ProjectControlResult::MountRejected {
+            message: "known rejection".into(),
+        }),
+    );
+    assert!(app.uncertain_project_mount.is_none());
+    assert!(app.project_boundary_available(false));
+    while jobs.join_next().await.is_some() {}
 }

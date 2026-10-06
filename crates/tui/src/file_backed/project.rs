@@ -31,10 +31,12 @@ impl ProjectAccess {
 }
 
 /// Local TUI command passed to the native Host adapter.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProjectControl {
     /// Request and approve the explicitly selected native directory.
     Mount {
+        /// Stable identity retained until the Host result is known.
+        operation_id: String,
         host_path: PathBuf,
         access: ProjectAccess,
     },
@@ -65,6 +67,10 @@ pub enum ProjectControlResult {
         /// Canonical Host root used only by this local UI for file completion.
         completion_root: PathBuf,
     },
+    /// Correlated rejection of this exact retained selection request.
+    MountRejected { message: String },
+    /// The response was lost; retry the same selection identity explicitly.
+    MountUncertain { message: String },
     /// Grant was revoked.
     Revoked,
 }

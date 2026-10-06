@@ -16,6 +16,33 @@ fn root_reset_preserves_retained_project_recovery_notice() {
     assert!(notice.contains("/project revoke"));
     assert!(notice.contains("model selection outcome uncertain"));
 
+    let mut unknown = FileBackedApp::new("/agent/root".into());
+    let command = ProjectControl::Mount {
+        operation_id: project_dispatch::project_operation_id(),
+        host_path: "/fixture".into(),
+        access: ProjectAccess::ReadOnly,
+    };
+    unknown.uncertain_project_mount = Some(("/agent/1".into(), command.clone()));
+    unknown.composer.set_text_with_cursor("界 draft 🦀", 4);
+    unknown.input_intent = InputIntent::ForceAgent;
+    unknown.reset_for_root_process_change();
+    assert_eq!(
+        unknown.uncertain_project_mount.as_ref().unwrap(),
+        &("/agent/1".into(), command)
+    );
+    assert!(
+        unknown
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("project outcome unknown")
+    );
+    assert!(unknown.notice.as_deref().unwrap().contains("original Root"));
+    assert!(!unknown.project_boundary_available(false));
+    assert_eq!(unknown.composer.text(), "界 draft 🦀");
+    assert_eq!(unknown.composer.cursor(), 4);
+    assert_eq!(unknown.input_intent, InputIntent::ForceAgent);
+
     let mut fresh = FileBackedApp::new("/agent/root".into());
     fresh.reset_for_root_process_change();
     assert!(fresh.notice.is_none());
