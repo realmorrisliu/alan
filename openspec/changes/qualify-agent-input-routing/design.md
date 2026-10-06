@@ -21,7 +21,7 @@ typed operations and provider capability discovery. Jev is a candidate, not deli
   and generation-only baselines. Fixtures alone do not establish provider benefit.
 - Shadow mode has no classification-caused effects. Known discussion-to-execution
   cases block activation until fixed and requalified. Actual activation requires an
-  explicit decision and visible command route; `alan: ` must not conceal direct execution.
+  explicit decision and visible command route; `: ` must not conceal direct execution.
 - Disabling returns to the unprefixed Agent baseline. No renderer state or separate
   execution authority may bypass existing rights, policies, approvals and sandbox.
 

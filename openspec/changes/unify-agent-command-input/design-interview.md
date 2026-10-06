@@ -22,7 +22,7 @@ this revision is accepted direction, not a runtime delivery claim.
 
 ## Accepted prompt refinement
 
-The user confirmed `alan: ` as the default conversation prompt and `alan! ` for
+The user confirmed `: ` as the default conversation prompt and `! ` for
 one explicit command. Leading-prefix typing/paste, empty-command Backspace,
 accepted-submission reset and explicit `:` follow design.md. This is presentation
 of canonical intent, not another execution mode. Future automatic routing must
