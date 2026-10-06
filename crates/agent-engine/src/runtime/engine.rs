@@ -26,6 +26,8 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+#[path = "engine_directory_controls.rs"]
+mod directory_controls;
 #[path = "engine_model_controls.rs"]
 mod model_controls;
 #[path = "engine_model_status.rs"]
@@ -124,6 +126,8 @@ struct RuntimeSubmissionQueues {
     recorder: Option<crate::rollout::RolloutRecorder>,
     environment: Option<NamespaceRuntimeEnvironment>,
     deferred_model: Option<alan_agent_protocol::UiModelBinding>,
+    pending_directory_actions: VecDeque<(String, super::transition::PendingActionPublication)>,
+    directory_publication_retry: std::time::Instant,
     model_process_path: String,
     model_status: tokio::sync::Mutex<alan_agent_protocol::UiModelSnapshot>,
 }
@@ -142,6 +146,8 @@ impl RuntimeSubmissionQueues {
             recorder: None,
             environment: None,
             deferred_model: None,
+            pending_directory_actions: VecDeque::new(),
+            directory_publication_retry: std::time::Instant::now(),
             model_process_path: String::new(),
             model_status: Default::default(),
         }
@@ -149,7 +155,7 @@ impl RuntimeSubmissionQueues {
 
     fn pop_outer(&mut self) -> Option<QueuedRuntimeItem> {
         let mut queue = self.outer_queue.lock().expect("input queue poisoned");
-        if queue.paused {
+        if queue.paused || !self.pending_directory_actions.is_empty() {
             None
         } else {
             queue.pending.pop_front()
@@ -559,6 +565,7 @@ fn spawn_with_prepared_runtime_environment(
         let mut namespace_ready = VecDeque::new();
         let mut namespace_batch_admitted = false;
         loop {
+            queues.publish_directory_actions(&state.agent_files()).await;
             queues.observe_models().await;
             super::queue_publication::observe(&queues.outer_queue).await;
             if !shutdown_requested && !namespace_batch_admitted {
@@ -662,19 +669,10 @@ fn spawn_with_prepared_runtime_environment(
 
             match queued_item {
                 QueuedRuntimeItem::Submission(mut submission) => {
-                    if matches!(
-                        submission.op,
-                        alan_agent_protocol::Op::SelectProjectDirectory { .. }
-                    ) {
-                        if let Err(error) =
-                            super::transition::directory_control::select_project_directory(
-                                &mut state,
-                                &submission,
-                            )
-                            .await
-                        {
-                            error!(%error, "Failed to record directory selection");
-                        }
+                    if queues
+                        .handle_directory_selection(&mut state, &submission)
+                        .await
+                    {
                         continue;
                     }
                     if queues
@@ -727,7 +725,7 @@ fn spawn_with_prepared_runtime_environment(
                     }
                     // Only boundary controls may overtake admitted work. Ordinary
                     // Machine controls share the same FIFO as Turn/Input records.
-                    if (!from_queue
+                    if ((!from_queue || !queues.pending_directory_actions.is_empty())
                         && !matches!(
                             submission.op,
                             alan_agent_protocol::Op::Interrupt
@@ -789,6 +787,7 @@ fn spawn_with_prepared_runtime_environment(
                     let monitor_stop = CancellationToken::new();
                     let observer = async {
                         loop {
+                            queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
                             super::queue_publication::observe(&queues.outer_queue).await;
                             tokio::select! {
@@ -911,6 +910,7 @@ fn spawn_with_prepared_runtime_environment(
                     let monitor_stop = CancellationToken::new();
                     let observer = async {
                         loop {
+                            queues.publish_directory_actions(&namespace_control).await;
                             queues.observe_models().await;
                             tokio::select! {
                                 _ = monitor_stop.cancelled() => break,

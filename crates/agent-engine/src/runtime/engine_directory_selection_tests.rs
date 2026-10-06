@@ -51,15 +51,18 @@ impl ToolExecutionAuthority for SelectionAuthority {
 
 #[tokio::test]
 async fn file_directory_selection_preserves_recovered_paused_work_until_continue() {
-    directory_selection_preserves_recovered_paused_work_until_continue(false).await;
+    directory_selection_preserves_recovered_paused_work_until_continue(false, None).await;
 }
 
 #[tokio::test]
 async fn api_directory_selection_preserves_recovered_paused_work_until_continue() {
-    directory_selection_preserves_recovered_paused_work_until_continue(true).await;
+    directory_selection_preserves_recovered_paused_work_until_continue(true, None).await;
 }
 
-async fn directory_selection_preserves_recovered_paused_work_until_continue(api: bool) {
+async fn directory_selection_preserves_recovered_paused_work_until_continue(
+    api: bool,
+    fault_field: Option<&str>,
+) {
     let temp = TempDir::new().unwrap();
     let stores = crate::AgentRuntimeStoreBindings {
         rollouts: temp.path().join("rollouts"),
@@ -95,10 +98,11 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(api:
     let mock = MockLlmProvider::new();
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection("default", Box::new(mock.clone()));
+    let fault = Arc::new(publication::ActionFaultFs::new(fault_field));
     let mut ns = alan_kernel::Namespace::new();
     ns.mount(
         "/agent/2",
-        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        InProcessTransport::new(fault.clone()),
         alan_kernel::Access::ReadWrite,
     );
     ns.mount(
@@ -114,7 +118,11 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(api:
         ToolExecutionBinding::awaiting_host_projection("/mnt/old".into(), temp.path().into())
             .with_adapter(Arc::new(SelectionAdapter("/mnt/old".into()))),
     );
-    runner.register_process_authority(2, Arc::new(SelectionAuthority));
+    let selections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    runner.register_process_authority(
+        2,
+        Arc::new(publication::CountedSelectionAuthority(selections.clone())),
+    );
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/2", "default")
         .with_namespace_cwd("/mnt/old")
         .with_tool_process_context(2, runner.clone());
@@ -265,6 +273,48 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(api:
             .unwrap();
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
+    if fault_field.is_some() {
+        let observed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if shell
+                    .cat("/agent/2/actions/a0/status")
+                    .await
+                    .ok()
+                    .as_deref()
+                    == Some(b"completed")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        // Always shut down a failed fixture before asserting: no detached runtime.
+        if observed.is_err() {
+            runtime.shutdown().await.unwrap();
+            panic!("executed cwd must eventually publish its correlated terminal Action");
+        }
+        assert!(
+            shell.cat("/agent/2/actions/a1/result").await.is_err(),
+            "retry must reuse one Action ID"
+        );
+        assert_eq!(
+            selections.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "one directory mutation owns exactly its two authority reconciliations; publication never re-enters it"
+        );
+        assert!(
+            fault.failures() > 0,
+            "real Action write must cross fault boundary"
+        );
+        if fault_field == Some("status-lost-ack") {
+            assert_eq!(
+                fault.terminal_writes(),
+                1,
+                "lost ack plus failed status read must not republish completion"
+            );
+        }
+    }
     let selected = runner.process_binding(2).unwrap().namespace_cwd;
     let queue: alan_agent_protocol::UiQueueSnapshot =
         serde_json::from_slice(&shell.cat("/agent/2/machine/ui/queue").await.unwrap()).unwrap();
@@ -332,6 +382,9 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(api:
 
 #[tokio::test]
 async fn file_directory_selection_rejects_running_work_without_delayed_selection() {
+    directory_selection_rejects_running(None).await;
+}
+async fn directory_selection_rejects_running(fault_field: Option<&str>) {
     let mock = MockLlmProvider::new();
     let started = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
@@ -347,7 +400,7 @@ async fn file_directory_selection_rejects_running_work_without_delayed_selection
     let mut ns = alan_kernel::Namespace::new();
     ns.mount(
         "/agent/2",
-        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        InProcessTransport::new(Arc::new(publication::ActionFaultFs::new(fault_field))),
         alan_kernel::Access::ReadWrite,
     );
     ns.mount(
@@ -406,7 +459,14 @@ async fn file_directory_selection_rejects_running_work_without_delayed_selection
         .unwrap();
     let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Ok(bytes) = shell.cat("/agent/2/actions/a0/result").await {
+            if shell
+                .cat("/agent/2/actions/a0/status")
+                .await
+                .ok()
+                .as_deref()
+                == Some(b"failed")
+                && let Ok(bytes) = shell.cat("/agent/2/actions/a0/result").await
+            {
                 break serde_json::from_slice::<serde_json::Value>(&bytes).unwrap();
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -436,3 +496,6 @@ async fn file_directory_selection_rejects_running_work_without_delayed_selection
     assert_eq!(mock.recorded_requests().len(), 1);
     runtime.shutdown().await.unwrap();
 }
+
+#[path = "engine_directory_publication_tests.rs"]
+mod publication;

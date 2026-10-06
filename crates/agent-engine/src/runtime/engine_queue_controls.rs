@@ -228,24 +228,7 @@ impl RuntimeSubmissionQueues {
             return true;
         }
         if matches!(submission.op, Op::SelectProjectDirectory { .. }) && cancel.is_some() {
-            let result = async {
-                let environment = self
-                    .environment
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("missing Process directory owner"))?;
-                crate::runtime::transition::directory_control::write_cd_action(
-                    files,
-                    &submission.id,
-                    "Select Process directory",
-                    Err(anyhow::anyhow!("directory selection requires settled work")),
-                    environment.process_files().process_path()?,
-                )
-                .await
-            }
-            .await;
-            if let Err(error) = result {
-                warn!(%error, "Failed to record active directory rejection");
-            }
+            self.reject_active_directory(files, submission).await;
             return true;
         }
         if submission.intent == alan_agent_protocol::InputIntent::Command

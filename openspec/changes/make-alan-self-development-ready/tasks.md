@@ -18,10 +18,27 @@ Final TUI follow-up:331 unit+11 integration tests passed. The preceding full
 workspace qualification was2735 passed/0 failed/10 ignored; only header display
 and its tests changed afterward. Canonical `just quality` passed again.
 
-The remote PR1026 still pointed to83a1499 during the pre-delivery audit: macOS
-Test Suite failed and Linux was cancelled. Those checks are not current-source
-acceptance. A new correction commit must obtain its own required CI and review.
-All ordinary delivery tasks below remain open until their evidence is complete.
+The correction commit `2db72c41` is pushed to PR1026. Its CI run37348603532
+passed every job, including both operating systems, quality, and release builds;
+Security and CodeQL also passed. Five verified review threads are resolved.
+The remaining directory-control Action-publication finding reproduced through
+actual Runtime/AgentFS IO and is now corrected locally; new-head CI is pending.
+Executed directory outcomes retain their Action identity and field publication
+progress. Retries reconcile lost acknowledgements without rewriting immutable
+output or repeating cwd effects. Ordinary work waits for confirmation while
+Interrupt, file answers, and shutdown remain reachable. Restored durable Action
+records bypass new-record redaction and retain their exact previously scrubbed
+bytes; the unchanged full-suite regression caught and verified that correction.
+Final corrected workspace:2744 passed/0 failed/10 ignored. A final redundant-borrow
+lint cleanup then passed full Engine1342 unit+20 integration/1 ignored, canonical
+quality, and fresh Native65423 happy-path selection/pwd/details/revoke/quit0.
+Native binary SHA256:66cda2c30a15c0e69f8e60a15339e5d33c48bb3681001161e36b997fc338b77e.
+All649 source/build manifest hashes remained unchanged during final checks.
+Evidence: direct-review-fixes/directory-publication under the existing Alan Cache.
+Unknown clone IDs before observation are not qualified as exactly-once, and no
+new crash-recovery cwd replay is introduced. All test instances have exited.
+The older83a1499 failed/cancelled checks remain historical evidence. Main requires
+one approval and all threads resolved; delivery tasks stay open until satisfied.
 
 ## Direct implementation takeover — 2026-10-06
 
@@ -84,7 +101,8 @@ Final frozen-source `just quality` passed with exit0, including strict Clippy,
 rustdoc, CLI boundaries, standalone install/upgrade protection and release
 archive checks. All 646 source/manifest hashes remained unchanged. Local checks
 do not replace a new committed-head CI/review or close the remaining visual
-qualification. No direct corrections have been committed or merged.
+qualification. This paragraph records pre-commit local qualification; current
+commit/CI status is in Direct correction delivery above, and no merge has occurred.
 Evidence directory: `/Users/morris/Library/Caches/Alan/ui-previews/20261006-direct-review-fixes`.
 
 ## Detailed review follow-up — 2026-10-06

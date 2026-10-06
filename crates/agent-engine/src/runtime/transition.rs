@@ -23,6 +23,7 @@ pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceTapeWriter,
     NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
+    PendingActionPublication,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,

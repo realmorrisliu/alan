@@ -326,24 +326,27 @@ impl NamespaceClient {
     }
 
     pub(super) async fn clone_via_open(&self, path: &str) -> Result<String> {
+        let mut id = None;
+        self.clone_via_open_retained(path, &mut id).await?;
+        Ok(id.expect("successful clone read retained its ID"))
+    }
+
+    pub(super) async fn clone_via_open_retained(
+        &self,
+        path: &str,
+        retained: &mut Option<String>,
+    ) -> Result<()> {
         let fid = self.walk_to(path).await?;
-        match async {
+        let read = async {
             self.open(fid, OpenMode::ReadWrite).await?;
             let id = String::from_utf8(self.read_at(fid, 0, 128).await?)
                 .with_context(|| format!("{path} returned non-utf8 id"))?;
-            Ok(id)
+            *retained = Some(id);
+            Ok(())
         }
-        .await
-        {
-            Ok(id) => {
-                self.clunk(fid).await?;
-                Ok(id)
-            }
-            Err(err) => {
-                let _ = self.clunk(fid).await;
-                Err(err)
-            }
-        }
+        .await;
+        let cleanup = self.clunk(fid).await;
+        read.and(cleanup)
     }
 
     pub(super) async fn clone_with_document(&self, path: &str, data: &[u8]) -> Result<String> {
