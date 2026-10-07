@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "status": "frozen_before_candidate_measurement",
+  "implementation_commit": "7f73149eb56c55634c341e869758ef3f2d5890b9",
+  "corpus_file": "shadow-corpus.v1.json",
+  "corpus_sha256": "f9aa8460c584b68d653b418a77da7d350b1d2c3fd919bf3ba1939105b247d704",
+  "budgets_file": "shadow-budgets.v1.json",
+  "budgets_sha256": "480561987feea18ca1252c65de6d5ff2129bbd6b9ce602091ea7f4de230e6736",
+  "candidate": {
+    "provider": "typesafe",
+    "model": "jev-1.13.0",
+    "adapter_sha256": "7f7a7f5ada037c36040a47248c71a1ce65219d2ea8c1e0f83ba08f0cc807dfcd",
+    "machine_shadow_sha256": "cc3cdbc4d17cfade24a500d354489c8a17c0524059ca2624777aa269cdab1e23",
+    "fixture_sha256": "26df60c86ffe2aed5dd54e9007ccbedc730ac88e8bf23fd3dca1c61e5d45f483",
+    "change": "Bounded validation of independently rounded hundredths; original input, criteria, labels and budgets unchanged."
+  },
+  "baselines": {
+    "generation_model": "gpt-6.1-sol",
+    "generation_reasoning_effort": "medium",
+    "generation_source_sha256": "23fb73aaf077a17d540b5743aead90ed3d7fe11376c38fdfdd034a572c564e98",
+    "deterministic_source_sha256": "c744ac3282cd0c2707b636ea80be9537d90c538bb46345170a900d38f48f43c6",
+    "rerun_both": true
+  },
+  "attempt_matrix": {
+    "ordinary": 300,
+    "pending_response": 24,
+    "repeats": 3,
+    "surfaces": [
+      "interactive",
+      "redirected"
+    ]
+  },
+  "limitations": [
+    "Redirected pending responses remain unsupported and must be retained.",
+    "Native Machine observation and warm generation component timing are not matched admission latency.",
+    "Unknown usage or billing remains incomplete, never zero."
+  ],
+  "activation_authorized": false
+}

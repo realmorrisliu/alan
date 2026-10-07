@@ -391,3 +391,14 @@ rejection remain unchanged; automatic execution remains disabled.
 
 The full LLM unit suite passed 209 tests with one existing credential-gated test
 ignored; `~/Library/Caches/Alan/typesafe-rounding-tests.log` retains the result.
+
+## Candidate v2 freeze — 2026-10-07
+
+`shadow-candidate.v2.json` pins implementation `7f73149e`, exact adapter/Machine/
+fixture and baseline source hashes, model/controls, and the unchanged v1 corpus
+and numeric budgets before any v2 candidate measurement. v1 evidence remains
+immutable. Re-run all 300 ordinary and 24 pending attempt slots and both existing
+component baselines. Preserve unsupported pending responses, unknown cost and the
+unmatched latency scopes; the new run cannot silently convert them into success.
+The clean build receipts will pin the collection executable separately. No
+classification prompt, labels, numeric limits or activation setting is changed.
