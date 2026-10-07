@@ -335,3 +335,27 @@ Next qualification work must preserve these failing v1 results: complete the
 existing deterministic baseline evidence and diagnose unavailable usage receipts;
 any changed candidate or labels require a new frozen version and fresh runs.
 Do not tune v1 labels to remove observed errors. Automatic execution stays off.
+
+## Deterministic prefix component baseline — 2026-10-07
+
+`routing_prefix_baseline` calls the shipped `alan_agent_protocol::parse_input_prefix`
+function directly against the frozen 50 ordinary cases × three repeats × two
+surface strata. It introduces no classifier, provider, Machine or dispatcher.
+The report preserves original-input hashes, parsed intent, exact remaining body,
+corpus/budget/source/executable hashes and the limited parser-only timing scope.
+Pending responses are deliberately not sent to this parser: the native request
+matrix above owns their precedence and unsupported redirected status.
+
+The 300 records match 198 labels (66%); all 36 explicit-prefix cases match. On the
+264 non-bypass slots the default-Agent rule matches 162 labels (61.36%), with
+zero false commands, 100% Agent recall and zero command/ambiguous recall. That
+is the expected conservative product behavior, not a successful automatic
+classifier. There are zero model calls and therefore zero model routing cost.
+Measured parser-only p50/p95 are 83/125 ns in this debug run; these are not native
+admission latency, and do not substitute for end-to-end acceptance.
+
+Evidence: `~/Library/Caches/Alan/routing-prefix-baseline-v1.json`. The matrix and
+input/corpus digest were independently checked against the frozen artifacts.
+The example's regression checks one-prefix consumption and exact body retention,
+including nested-prefix data and leading whitespace. Pending parity, unknown
+provider costs and the failing candidate remain open; no gate is relaxed.
