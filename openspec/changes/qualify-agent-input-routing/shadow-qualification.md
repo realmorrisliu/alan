@@ -3,8 +3,9 @@
 Status: corpus and gates remain frozen before measurement. The locally implemented
 Machine/Connection/TypeSafe path has now completed 300 ordinary native-client
 observations and fails the false-command, accuracy, recall and latency gates.
-Automatic execution remains disabled. Pending-response parity, generation baseline,
-complete cost evidence, current-head delivery and canonical sync are still open.
+Automatic execution remains disabled. The 264-call generation baseline is complete;
+both models fail the zero-false-command gate. Pending-response parity, full baseline
+qualification, complete cost evidence, current-head delivery and canonical sync remain open.
 The bounded phase was activated after local lifecycle/model/UI acceptance;
 predecessor merge remains a separate delivery gate.
 
@@ -292,3 +293,45 @@ completion latency. Candidate clients start fresh per attempt, whereas the
 component generation baseline reuses one captured connection. Those different
 conditions and unknown subscription cost preclude a full end-to-end efficiency
 claim even if component timing improves.
+
+
+## Completed generation component comparison — 2026-10-07
+
+The clean `4f7ad0c2129648eee24631684b9dbf0d7957b8fb` build completed all
+44 non-bypass cases × three repeats × two surface strata (264 calls), with no
+unavailable/malformed result. Every result retains its original-input digest,
+operation identity, terminal acknowledgement, raw stream and usage. The collection
+process exited successfully; no unresolved attempt was retried or dropped.
+
+| Same 264 non-bypass slots | TypeSafe jev-1.13.0 | Generation gpt-6.1-sol medium |
+| --- | --- | --- |
+| Correct labels | 200 / 264 (75.76%) | 216 / 264 (81.82%) |
+| False command classifications | 35 | 6 |
+| Valid results | 257 / 264 | 264 / 264 |
+| Command recall | 100% | 100% |
+| Agent recall | 86.42% | 96.30% |
+| Ambiguous recall | 22.22% | 22.22% |
+| Observed component p50 / p95 | 1,592 / 3,143 ms | 3,657 / 5,353 ms |
+| Overall verified mean cost | unknown | unknown |
+
+Both models fail the frozen zero-false-command, accuracy and ambiguous-recall
+requirements. TypeSafe also misses valid-result rate and the fixed latency cap.
+Its observed p95 is 41.3% lower in these different measurement conditions, but
+cold native candidate calls versus a reused generation connection are not a
+controlled full-client efficiency comparison. The generation subscription has
+no verified per-call price; usage is not converted to an invented API price.
+Neither the relative latency/cost gate nor activation is approved.
+
+Evidence: `~/Library/Caches/Alan/routing-generation-corpus-v1/`, including the
+264 receipts, pinned prompt/Connection manifest and `summary.json`. The adjacent
+`routing-generation-corpus-build-receipt.json` records a clean locked build and
+matching executable SHA-256
+`36a4582b59dcd9046065c6024208992f9078ee73c5e84e47a3fcfc7d38361bac`.
+The summary verifies the complete Cartesian matrix and frozen input/corpus/budget
+hashes before calculating results. Native response parity remains unsupported
+for redirected input as recorded above; this component run does not override it.
+
+Next qualification work must preserve these failing v1 results: complete the
+existing deterministic baseline evidence and diagnose unavailable usage receipts;
+any changed candidate or labels require a new frozen version and fresh runs.
+Do not tune v1 labels to remove observed errors. Automatic execution stays off.
