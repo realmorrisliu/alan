@@ -220,7 +220,7 @@ Host tools or project mount.
 | Correct routes | 236 / 300 (78.67%) | >=95% over all 324 |
 | Command / Agent / ambiguous recall | 100% / 86.42% / 22.22% | each >=90% |
 | Valid typed results | 257 / 264 (97.35%) | >=98% |
-| Added routing p50 / p95 | 1,592 / 3,143 ms | <=300 / <=1,000 ms |
+| Machine observation p50 / p95 | 1,592 / 3,143 ms | <=300 / <=1,000 ms |
 | Overall verified mean cost | unknown: seven missing usage records | <=1,000 micro-USD |
 
 These are ordinary-subset results, not a complete 324-row score. The existing
@@ -257,3 +257,38 @@ or admission timing. Subscription billing remains unknown, so this component
 comparison alone cannot pass full end-to-end latency/cost qualification.
 Two `pwd` smoke observations returned command in 5,008/3,195 ms. They establish
 connectivity only and do not replace the forthcoming frozen-corpus baseline.
+
+
+## Native pending-response matrix — 2026-10-07
+
+The collector now runs all four frozen pending-response cases through actual
+Machine requests created by `request_user_input`. Fixed generation creates one
+text question; the native TUI submits the original corpus input as its answer.
+All 12 interactive observations preserve `approve`, `reject`, `!rm -rf output`
+and `:ignore this prompt` as literal response data. Each records a request-response
+bypass with zero evaluator calls and no operation ID, an answered request file,
+and completion correlated to its prelude submission. No Host Tool is available.
+
+All 12 redirected attempts instead reach the real `needs interactive input`
+error and retain a pending structured-input request. That client has no response
+admission path: the corpus response was **not submitted** there. These attempts
+are explicitly unsupported/unavailable, never counted as successful bypasses.
+The ordinary and pending runs therefore cover all 324 planned attempt slots,
+with 312 completed observations and 12 unsupported slots. This does not satisfy
+interactive/redirected response parity or authorize activation.
+
+Artifacts: `~/Library/Caches/Alan/shadow-pending-corpus-v1/` retains 24 attempt
+records, native terminal output, request identities and response receipts. This
+run used the uncommitted pending fixture source whose embedded SHA-256 is
+`07b757489827e63933dac889ece61eee4b9b5d810decf3405a75e5009307545c`;
+its manifest records the source/diff/binary hashes, with runtime build-source
+verification false. A subsequent Clippy-only conditional collapse is not silently
+substituted for that measured source. Three offline collector regressions and
+independent Spec/Standards review passed. No missing time/cost is invented to
+force these unsupported slots through the numeric scorer.
+
+The ordinary timing above is the Machine observation interval, not keyboard-to-
+completion latency. Candidate clients start fresh per attempt, whereas the
+component generation baseline reuses one captured connection. Those different
+conditions and unknown subscription cost preclude a full end-to-end efficiency
+claim even if component timing improves.

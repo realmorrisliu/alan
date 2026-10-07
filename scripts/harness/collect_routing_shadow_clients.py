@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect ordinary-input evidence through native clients; pending parity stays open.
+"""Collect native input evidence, retaining unsupported redirected responses.
 
 Build `cargo build -p alan --example shadow_client_fixture`. Supply the evaluator
 key only in the child environment, then pass --binary and a new --output directory.
@@ -28,9 +28,13 @@ def digest(raw):
 
 def collect(binary, case, surface, report):
     command = [str(binary), surface, str(report)]
+    pending = case.get("pending_response", False)
+    initial = ":Prepare qualification response" if pending else case["input"]
+    if pending:
+        command.append("--pending")
     if surface == "redirected":
         try:
-            result = subprocess.run(command, input=case["input"].encode(),
+            result = subprocess.run(command, input=initial.encode(),
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
         except subprocess.TimeoutExpired as error:
             report.with_suffix(".terminal").write_bytes(error.stdout or b"")
@@ -48,6 +52,7 @@ def collect(binary, case, surface, report):
         try:
             deadline = time.monotonic() + 60
             submitted = False
+            responded = False
             quitting = False
             cursor_queries = 0
             while time.monotonic() < deadline:
@@ -65,8 +70,13 @@ def collect(binary, case, surface, report):
                     cursor_queries = queries
                 # The first rendered cursor-show marks an initialized native TUI.
                 if not submitted and b"\x1b[?25h" in transcript:
-                    os.write(master, b"\x1b[200~" + case["input"].encode() + b"\x1b[201~\r")
+                    os.write(master, b"\x1b[200~" + initial.encode() + b"\x1b[201~\r")
                     submitted = True
+                if (pending and submitted and not responded
+                        and report.with_suffix(".pending.json").exists()
+                        and b"QUALIFICATION_RESPONSE" in transcript):
+                    os.write(master, b"\x1b[200~" + case["input"].encode() + b"\x1b[201~\r")
+                    responded = True
                 if report.exists() and not quitting:
                     os.write(master, b"\x04")
                     quitting = True
@@ -86,14 +96,35 @@ def collect(binary, case, surface, report):
     source = ROOT / "crates/alan/examples/shadow_client_fixture.rs"
     if data["fixture_source_sha256"] != digest(source.read_bytes()):
         raise ValueError("executable was built from a different fixture source")
+    if data.get("unsupported"):
+        if not (pending and surface == "redirected"
+                and data["client_error"] == "needs interactive input"
+                and data["request"]["kind"] == "structured_input"
+                and data["request"]["status"] == "pending"):
+            raise ValueError("invalid unsupported response evidence")
+        return data
     observation = data["observation"]
     if observation["outcome"]["state"] == "started":
         raise ValueError("evaluation did not settle")
     completion = data["completion"]
+    completion_id = observation["identity"]["submission_id"]
+    if pending:
+        response = data["response_request"]
+        if (completion_id != "response:" + response["request_id"]
+                or json.loads(response["body"]) != {"response": case["input"]}
+                or response["status"].strip() not in ("answered", "closed")
+                or observation["outcome"]["state"] != "bypassed"
+                or observation["outcome"]["reason"] != "request_response"
+                or observation["outcome"]["evaluator_calls"] != 0):
+            raise ValueError("response was not preserved as a literal bypass")
+        completion_id = response["prelude_submission_id"]
     if (completion is None or completion["type"] != "input_completed"
-            or observation["identity"]["submission_id"] not in completion["submission_ids"]):
+            or completion_id not in completion["submission_ids"]):
         raise ValueError("uncorrelated client completion")
     body = case["input"][1:] if case["input"].startswith(("!", ":")) else case["input"]
+    if pending:
+        body = json.dumps([{"type": "structured", "data": {"response": case["input"]}}],
+                          ensure_ascii=False, separators=(",", ":"))
     if observation["identity"]["input_sha256"] != digest(body.encode()):
         raise ValueError("Machine input differs from original client bytes")
     if observation["identity"]["surface"] != surface:
@@ -106,18 +137,18 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", help="Optional single-case capability smoke; not qualification")
+    parser.add_argument("--pending", action="store_true", help="Collect pending-response cases")
     args = parser.parse_args()
     if not os.environ.get("TYPESAFE_API_KEY"):
         parser.error("TYPESAFE_API_KEY must be supplied in the environment")
     corpus_bytes = (PLAN / "shadow-corpus.v1.json").read_bytes()
     budget_bytes = (PLAN / "shadow-budgets.v1.json").read_bytes()
     corpus, budget = json.loads(corpus_bytes), json.loads(budget_bytes)
-    cases = [c for c in corpus["cases"] if not c["pending_response"]
-             and (args.case is None or c["id"] == args.case)]
+    cases = [c for c in corpus["cases"] if (c["id"] == args.case if args.case else c["pending_response"] == args.pending)]
     if not cases:
-        parser.error("no ordinary-input case selected")
+        parser.error("no corpus case selected")
     args.output.mkdir(parents=True, exist_ok=False)
-    manifest = {"version": 1, "kind": "ordinary_client_evidence_not_full_qualification",
+    manifest = {"version": 1, "kind": "native_client_evidence_not_full_qualification",
                 "corpus_sha256": digest(corpus_bytes), "budgets_sha256": digest(budget_bytes),
                 "binary_sha256": digest(args.binary.read_bytes()),
                 "runtime_build_source_verified": False,
@@ -125,7 +156,7 @@ def main():
                 "checkout_diff_sha256_at_collection": digest(subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT)),
                 "collector_sha256": digest(Path(__file__).read_bytes()),
                 "fixture_source_sha256": digest((ROOT / "crates/alan/examples/shadow_client_fixture.rs").read_bytes()),
-                "pending_response": "not collected; redirected client lacks response admission",
+                "pending_response": "redirected client lacks response admission; unsupported attempts retained",
                 "records": []}
     for repeat in range(1 if args.case else budget["min_repeats"]):
         for case in cases:
@@ -139,7 +170,10 @@ def main():
                 manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
                 try:
                     data = collect(args.binary.resolve(), case, surface, args.output / name)
-                    row.update(collection_state="collected", outcome=data["observation"]["outcome"])
+                    if data.get("unsupported"):
+                        row.update(collection_state="unsupported", outcome={"state": "unavailable"})
+                    else:
+                        row.update(collection_state="collected", outcome=data["observation"]["outcome"])
                 except Exception as error:
                     # Keep the attempted denominator and stop; never silently retry.
                     row.update(collection_state="failed", error_type=type(error).__name__)
