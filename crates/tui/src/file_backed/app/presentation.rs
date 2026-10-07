@@ -203,7 +203,16 @@ impl FileBackedApp {
                 model = self
                     .model
                     .known()
-                    .and_then(|s| s.active.as_ref().or(s.selected_next.as_ref()))
+                    .and_then(|s| {
+                        if self.activity.state == UiActivityState::Idle
+                            && self.pending_yield.is_none()
+                            && self.form.is_none()
+                        {
+                            s.selected_next.as_ref().or(s.active.as_ref())
+                        } else {
+                            s.active.as_ref().or(s.selected_next.as_ref())
+                        }
+                    })
                     .map(|binding| super::super::model::safe(&binding.model))
                     .unwrap_or_else(|| "model unknown".into());
             }

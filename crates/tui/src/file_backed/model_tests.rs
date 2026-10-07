@@ -122,6 +122,39 @@ fn model_status_separates_active_next_admitted_and_legacy_unknown() {
     }
     let header = app.context_line(200).to_string();
     assert!(header.contains("active A") && header.contains("next B"));
+    for (activity, model) in [
+        (UiActivityState::Idle, "B"),
+        (UiActivityState::Running, "A"),
+        (UiActivityState::Paused, "A"),
+    ] {
+        app.activity.state = activity;
+        for width in 16..=80 {
+            let line = app.context_line(width);
+            let text = line.to_string();
+            assert!(line.width() <= width, "{width}: {text}");
+            assert!(text.contains(model), "{activity:?}, {width}: {text}");
+        }
+    }
+    app.activity.state = UiActivityState::Idle;
+    for kind in [YieldKind::Confirmation, YieldKind::StructuredInput] {
+        app.set_pending_yield(PendingYieldCell {
+            request_id: "current-request".into(),
+            kind,
+            title: "Continue current work".into(),
+            prompt: None,
+            options: vec!["approve".into()],
+            default_option: None,
+            questions: Vec::new(),
+            capability: None,
+            reason: None,
+            presentation: None,
+        });
+        for width in 16..=80 {
+            let line = app.context_line(width);
+            assert!(line.width() <= width);
+            assert!(line.to_string().contains("A"), "{width}: {line}");
+        }
+    }
     let mut missing = snapshot("1", 4);
     missing.selected_next = None;
     app.model.apply("/agent/1", Some(missing));
