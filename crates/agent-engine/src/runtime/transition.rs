@@ -27,8 +27,8 @@ pub(crate) use namespace_environment::{
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,
-    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
-    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    NamespaceEvaluationUncertainty, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
+    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
 use std::collections::VecDeque;
@@ -624,11 +624,10 @@ where
                 refresh_context: call_refresh,
             } => {
                 refresh_context |= call_refresh;
-                let agent_files = state.agent_files();
                 if handle_queued_steering_inputs(
-                    &mut state.machine,
+                    state,
                     writer,
-                    &agent_files,
+                    inputs.cancel,
                     tool_calls,
                     idx + 1,
                     inputs.steering_broker,

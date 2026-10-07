@@ -1,5 +1,37 @@
 use super::*;
 
+fn runtime_host_capabilities(
+    _config: &AgentProcessConfig,
+    tools: &crate::tools::ToolRegistry,
+) -> crate::skills::SkillHostCapabilities {
+    runtime_host_capabilities_for_tools(tools.list_tools().into_iter().map(str::to_string))
+}
+
+fn runtime_host_capabilities_for_tools(
+    tools: impl IntoIterator<Item = String>,
+) -> crate::skills::SkillHostCapabilities {
+    let path_dirs = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    crate::skills::build_skill_host_capabilities_with_path_dirs(tools, path_dirs, true)
+}
+
+fn runtime_host_capabilities_with_path_dirs<I, P>(
+    _config: &AgentProcessConfig,
+    tools: &crate::tools::ToolRegistry,
+    path_dirs: I,
+) -> crate::skills::SkillHostCapabilities
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<std::path::Path>,
+{
+    crate::skills::build_skill_host_capabilities_with_path_dirs(
+        tools.list_tools().into_iter().map(str::to_string),
+        path_dirs,
+        true,
+    )
+}
+
 #[test]
 fn test_runtime_host_capabilities_enable_delegated_support_for_top_level_runtime() {
     let config = AgentProcessConfig::default();

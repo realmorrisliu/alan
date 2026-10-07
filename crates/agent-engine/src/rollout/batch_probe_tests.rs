@@ -76,6 +76,12 @@ impl RolloutRecorder {
                         let _ = observed_tx.send(items);
                         let _ = ack.send(Err(anyhow!("injected batch writer failure")));
                     }
+                    RolloutCmd::Flush { ack } => {
+                        let result = backing.flush().await;
+                        if let Some(ack) = ack {
+                            let _ = ack.send(result);
+                        }
+                    }
                     RolloutCmd::Close { ack } => {
                         let _ = ack.send(Ok(()));
                         break;

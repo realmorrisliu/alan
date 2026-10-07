@@ -2,14 +2,16 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
+use super::transition::RuntimeLoopState;
 use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, reject_inband_overflow};
 use super::turn_support::tool_result_preview;
-use crate::agent_machine::{AgentMachine, NormalizedToolCall};
+use crate::agent_machine::NormalizedToolCall;
+use tokio_util::sync::CancellationToken;
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
-    machine: &mut AgentMachine,
+    state: &mut RuntimeLoopState,
     writer: &super::transition::NamespaceTapeWriter,
-    agent_files: &super::transition::NamespaceAgentFiles,
+    cancel: &CancellationToken,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
     steering_broker: Option<&TurnInputBroker>,
@@ -30,13 +32,15 @@ where
             mode: InputMode::Steer,
         } = &submission.op
         {
-            if let Err(error) = machine.dispatch_input(&submission).await {
-                machine.push_buffered_inband_submission(submission);
+            if let Err(error) = state.dispatch_input(&submission, cancel).await {
+                state.machine.push_buffered_inband_submission(submission);
                 return Err(error);
             }
             // Durable dispatch makes this input part of the active turn even if
             // the subsequent namespace Tape projection fails.
-            machine.accept_steering_submission(submission.id.clone());
+            state
+                .machine
+                .accept_steering_submission(submission.id.clone());
             writer
                 .append_record(
                     "user",
@@ -45,8 +49,8 @@ where
                     &[],
                 )
                 .await?;
-            machine.note_resumed_user_input();
-            machine.add_user_message_parts(parts.clone());
+            state.machine.note_resumed_user_input();
+            state.machine.add_user_message_parts(parts.clone());
             consumed_steering = true;
             continue;
         }
@@ -57,13 +61,19 @@ where
                 mode: InputMode::FollowUp,
                 ..
             }
-        ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
+        ) && state.machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            reject_inband_overflow(machine, agent_files, &submission, emit).await?;
+            reject_inband_overflow(
+                &mut state.machine,
+                &state.environment.agent_files(),
+                &submission,
+                emit,
+            )
+            .await?;
             continue;
         }
 
-        machine.push_buffered_inband_submission(submission);
+        state.machine.push_buffered_inband_submission(submission);
     }
 
     if !consumed_steering {
@@ -103,13 +113,15 @@ where
             audit: None,
         })
         .await;
-        machine.record_tool_call(
+        state.machine.record_tool_call(
             &skipped.name,
             skipped.arguments.clone(),
             skipped_payload.clone(),
             false,
         );
-        machine.add_tool_message(&skipped.id, &skipped.name, skipped_payload);
+        state
+            .machine
+            .add_tool_message(&skipped.id, &skipped.name, skipped_payload);
     }
 
     Ok(true)

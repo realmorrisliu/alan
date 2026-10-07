@@ -1,11 +1,98 @@
 //! Recovery of acknowledged evaluation evidence; never a dispatch path.
 use std::collections::HashMap;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
 use crate::rollout::EventRecord;
+use crate::runtime::EvaluationSurface as Surface;
 use crate::runtime::model_binding::CallableIdentity;
+
+impl super::AgentMachine {
+    /// Acknowledge evaluation evidence before model commit or terminal publication.
+    /// Returns false for evidence already recorded; this never permits another call.
+    /// Errors leave the projection unchanged and must not trigger evaluation retries.
+    pub(crate) async fn persist_evaluation_observation(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<bool> {
+        let observation: Observation = serde_json::from_value(payload)?;
+        observation.validate()?;
+        ensure!(
+            observation.outcome != Outcome::Interrupted,
+            "interrupted evaluation is a recovery projection, not a new outcome"
+        );
+        let recorder = self
+            .recorder
+            .as_ref()
+            .context("evaluation requires durable rollout storage")?;
+        recorder.flush().await?;
+        // ponytail: scan the owning rollout for this low-volume shadow slice;
+        // use a recovered Machine index only if measured qualification volume needs it.
+        let history = crate::rollout::RolloutRecorder::load_history(recorder.path()).await?;
+        let mut events: Vec<_> = history
+            .into_iter()
+            .filter_map(|item| match item {
+                crate::rollout::RolloutItem::Event(event) if event.event_type == EVENT_TYPE => {
+                    Some(event)
+                }
+                _ => None,
+            })
+            .collect();
+        let reconciled = recover(&events)?;
+        for event in &events {
+            let prior: Observation = serde_json::from_value(event.payload.clone())?;
+            if prior.identity.submission_id == observation.identity.submission_id {
+                ensure!(
+                    prior.identity == observation.identity,
+                    "evaluation identity changed for an existing submission"
+                );
+                if prior == observation {
+                    // Reconcile acknowledged history without reviving an uncertain
+                    // start. A still-owned live start is already acknowledged.
+                    let live_start = self.evaluation_observation.as_ref().is_some_and(|live| {
+                        live["outcome"]["state"] == "started"
+                            && reconciled.as_ref().is_some_and(|latest| {
+                                latest["outcome"]["state"] == "interrupted"
+                                    && latest["identity"] == live["identity"]
+                            })
+                    });
+                    if !live_start {
+                        self.evaluation_observation = reconciled;
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        ensure!(
+            observation.identity.source_rollout_id == recorder.rollout_id(),
+            "new evaluation evidence must belong to the current rollout"
+        );
+        if observation.outcome != Outcome::Started {
+            let identity = serde_json::to_value(&observation.identity)?;
+            ensure!(
+                self.evaluation_observation.as_ref().is_some_and(|live| {
+                    live["outcome"]["state"] == "started" && live["identity"] == identity
+                }),
+                "evaluation terminal requires a live acknowledged start"
+            );
+        }
+        let event = EventRecord {
+            event_type: EVENT_TYPE.into(),
+            payload: serde_json::to_value(&observation)?,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        events.push(event.clone());
+        recover(&events)?;
+        recorder
+            .persist_batch(vec![crate::rollout::RolloutItem::Event(event)])
+            .await?;
+        let mut snapshot = serde_json::to_value(observation)?;
+        snapshot["cost_microusd"] = serde_json::Value::Null;
+        self.evaluation_observation = Some(snapshot);
+        Ok(true)
+    }
+}
 
 pub(crate) const EVENT_TYPE: &str = "machine_evaluation_v1";
 
@@ -14,13 +101,6 @@ pub(crate) const EVENT_TYPE: &str = "machine_evaluation_v1";
 pub(crate) struct Candidate {
     pub id: String,
     pub description: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Surface {
-    Interactive,
-    Redirected,
 }
 
 /// Identity is unchanged between the pre-dispatch and terminal durability barriers.

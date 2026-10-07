@@ -28,6 +28,15 @@ pub enum NamespaceEvaluationFailure {
 }
 use NamespaceEvaluationFailure::*;
 
+/// Cleanup uncertainty must not be relabeled as a confirmed terminal outcome.
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum NamespaceEvaluationUncertainty {
+    #[error("evaluation abort unconfirmed")]
+    Abort,
+    #[error("evaluation allocation identity unconfirmed")]
+    AllocationIdentity,
+}
+
 /// A single allocated operation. Consuming commit prevents accidental redispatch.
 /// Allocation performs no paid model call; the Machine must persist its start first.
 pub struct NamespaceEvaluation {
@@ -106,10 +115,10 @@ impl NamespaceRuntimeEnvironment {
                 if let Some(id) = retained_id {
                     let ctl = format!("/mnt/llm/connections/{}/{id}/ctl", self.llm_connection);
                     if abort(&client, &ctl).await.is_err() {
-                        error = error.context("evaluation allocation abort unconfirmed");
+                        error = error.context(NamespaceEvaluationUncertainty::Abort);
                     }
                 } else if allocation_may_exist {
-                    error = error.context("evaluation allocation identity unconfirmed");
+                    error = error.context(NamespaceEvaluationUncertainty::AllocationIdentity);
                 }
                 if let Some(fid) = allocation_fid {
                     let _ = tokio::time::timeout(Duration::from_secs(1), fid.close()).await;
@@ -145,7 +154,7 @@ impl NamespaceEvaluation {
     pub async fn abort(mut self) -> Result<()> {
         let result = abort(&self.client, &self.path("ctl")).await;
         self.armed = false;
-        result
+        result.map_err(|error| error.context(NamespaceEvaluationUncertainty::Abort))
     }
 
     /// Commit at most once, then validate typed advice against captured provenance.
@@ -202,7 +211,7 @@ impl NamespaceEvaluation {
             }
             self.armed = false;
             if aborted.is_err() {
-                return Err(error.context("evaluation abort unconfirmed"));
+                return Err(error.context(NamespaceEvaluationUncertainty::Abort));
             }
             return Err(error);
         } else {

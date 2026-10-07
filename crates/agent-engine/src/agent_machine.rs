@@ -15,7 +15,7 @@ use crate::rollout::{
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
-mod evaluation;
+pub(crate) mod evaluation;
 pub(crate) mod input_queue;
 mod recovery;
 mod runtime_control;

@@ -174,3 +174,223 @@ fn repeated_old_terminal_record_does_not_hide_a_newer_observation() {
     assert_eq!(recovered["identity"]["submission_id"], "second-input");
     assert_eq!(recovered["outcome"]["state"], "cancelled");
 }
+
+#[tokio::test]
+async fn writer_acknowledges_once_and_rejects_changed_or_recovered_attempts() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut machine = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", directory.path())
+        .await
+        .unwrap();
+    let mut start = started();
+    start.identity.source_rollout_id = machine.rollout_id().unwrap().into();
+    let payload = serde_json::to_value(&start).unwrap();
+    assert!(
+        machine
+            .persist_evaluation_observation(payload.clone())
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        machine.evaluation_observation.as_ref().unwrap()["outcome"]["state"],
+        "started"
+    );
+    assert!(
+        !machine
+            .persist_evaluation_observation(payload.clone())
+            .await
+            .unwrap()
+    );
+    let mut terminal = start.clone();
+    terminal.outcome = Outcome::Selected {
+        candidate_id: "command".into(),
+    };
+    terminal.elapsed_ms = Some(30);
+    assert!(
+        machine
+            .persist_evaluation_observation(serde_json::to_value(&terminal).unwrap())
+            .await
+            .unwrap()
+    );
+    let acknowledged = machine.evaluation_observation.clone();
+    assert!(
+        !machine
+            .persist_evaluation_observation(payload)
+            .await
+            .unwrap()
+    );
+    assert_eq!(machine.evaluation_observation, acknowledged);
+    terminal.outcome = Outcome::Cancelled;
+    assert!(
+        machine
+            .persist_evaluation_observation(serde_json::to_value(&terminal).unwrap())
+            .await
+            .is_err()
+    );
+    let history = RolloutRecorder::load_history(machine.rollout_path().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|item| matches!(item, RolloutItem::Event(e) if e.event_type == EVENT_TYPE))
+            .count(),
+        2
+    );
+    let mut recovered = AgentMachine::load_from_rollout_in_dir(
+        machine.rollout_path().unwrap(),
+        "/proc/2",
+        "mock",
+        directory.path(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !recovered
+            .persist_evaluation_observation(serde_json::to_value(&start).unwrap())
+            .await
+            .unwrap()
+    );
+    start.identity.source_rollout_id = recovered.rollout_id().unwrap().into();
+    start.identity.operation_id = "another-operation".into();
+    assert!(
+        recovered
+            .persist_evaluation_observation(serde_json::to_value(&start).unwrap())
+            .await
+            .is_err()
+    );
+    assert_eq!(recovered.evaluation_observation, acknowledged);
+    recovered.recorder().unwrap().close().await.unwrap();
+    machine.recorder().unwrap().close().await.unwrap();
+}
+
+#[tokio::test]
+async fn writer_requires_storage_and_never_publishes_unacknowledged_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut machine = AgentMachine::new();
+    assert!(
+        machine
+            .persist_evaluation_observation(serde_json::to_value(started()).unwrap())
+            .await
+            .is_err()
+    );
+    assert!(machine.evaluation_observation.is_none());
+    for terminal in [false, true] {
+        let mut machine =
+            AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", directory.path())
+                .await
+                .unwrap();
+        let mut observation = started();
+        observation.identity.source_rollout_id = machine.rollout_id().unwrap().into();
+        if terminal {
+            machine
+                .persist_evaluation_observation(serde_json::to_value(&observation).unwrap())
+                .await
+                .unwrap();
+            observation.outcome = Outcome::NoMatch;
+            observation.elapsed_ms = Some(2);
+        }
+        let previous = machine.evaluation_observation.clone();
+        let backing = machine.recorder().unwrap().clone();
+        let (probe, mut observed) = backing.batch_failure_probe(false);
+        machine.recorder = Some(probe);
+        assert!(
+            machine
+                .persist_evaluation_observation(serde_json::to_value(&observation).unwrap())
+                .await
+                .is_err()
+        );
+        assert_eq!(observed.recv().await.unwrap().len(), 1);
+        assert_eq!(machine.evaluation_observation, previous);
+        let recovered = AgentMachine::load_from_rollout_in_dir(
+            machine.rollout_path().unwrap(),
+            "/proc/2",
+            "mock",
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        if terminal {
+            assert_eq!(
+                recovered.evaluation_observation.as_ref().unwrap()["outcome"]["state"],
+                "interrupted"
+            );
+        } else {
+            assert!(recovered.evaluation_observation.is_none());
+        }
+        recovered.recorder().unwrap().close().await.unwrap();
+        machine.recorder().unwrap().close().await.unwrap();
+        backing.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn reconciliation_restores_evidence_but_cannot_continue_an_interrupted_attempt() {
+    let directory = tempfile::tempdir().unwrap();
+    for terminal in [false, true] {
+        let mut machine =
+            AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", directory.path())
+                .await
+                .unwrap();
+        let mut start = started();
+        start.identity.source_rollout_id = machine.rollout_id().unwrap().into();
+        machine
+            .persist_evaluation_observation(serde_json::to_value(&start).unwrap())
+            .await
+            .unwrap();
+        let mut done = start.clone();
+        done.outcome = Outcome::NoMatch;
+        done.elapsed_ms = Some(12);
+        if terminal {
+            // Model a writer that persisted the terminal before its caller received
+            // acknowledgement and updated the in-memory projection.
+            machine
+                .recorder()
+                .unwrap()
+                .persist_batch(vec![RolloutItem::Event(event(&done))])
+                .await
+                .unwrap();
+        } else {
+            // A dropped start acknowledgement never established live ownership.
+            machine.evaluation_observation = None;
+        }
+        assert!(
+            !machine
+                .persist_evaluation_observation(serde_json::to_value(&start).unwrap())
+                .await
+                .unwrap()
+        );
+        let expected = if terminal { "no_match" } else { "interrupted" };
+        assert_eq!(
+            machine.evaluation_observation.as_ref().unwrap()["outcome"]["state"],
+            expected
+        );
+        let mut recovered = AgentMachine::load_from_rollout_in_dir(
+            machine.rollout_path().unwrap(),
+            "/proc/2",
+            "mock",
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        if !terminal {
+            assert!(
+                machine
+                    .persist_evaluation_observation(serde_json::to_value(&done).unwrap())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                recovered
+                    .persist_evaluation_observation(serde_json::to_value(&done).unwrap())
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            recovered.evaluation_observation.as_ref().unwrap()["outcome"]["state"],
+            expected
+        );
+        recovered.recorder().unwrap().close().await.unwrap();
+        machine.recorder().unwrap().close().await.unwrap();
+    }
+}

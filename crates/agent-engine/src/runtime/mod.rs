@@ -25,6 +25,7 @@ mod mount_request_tool;
 mod prompt_cache;
 pub(crate) mod queue_publication;
 mod response_guardrails;
+mod shadow_evaluation;
 mod steering_queue;
 mod submission_handlers;
 #[cfg(test)]
@@ -54,10 +55,11 @@ pub use controller::{
 };
 pub use engine::spawn_with_namespace_environment;
 pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
+pub use shadow_evaluation::EvaluationSurface;
 pub use transition::{
-    NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceRuntimeEnvironment,
-    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
-    NamespaceTurnRuntimeConfig,
+    NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
+    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
+    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
 // Re-export the memory-promotion job for internal runtime modules.

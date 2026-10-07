@@ -423,6 +423,18 @@ impl AgentRuntimeService {
             format!("/agent/{}", pid.0),
             launch.template.llm_connection.clone(),
         )
+        .with_evaluation_publisher({
+            let agent = agent.clone();
+            move |observation| {
+                let agent = agent.clone();
+                async move {
+                    agent
+                        .publish_evaluation_observation(observation)
+                        .await
+                        .map_err(Into::into)
+                }
+            }
+        })
         .with_connection_authority(Arc::new(
             crate::connection::process_binding::ProcessConnection {
                 service: self.connection.clone(),
@@ -448,10 +460,6 @@ impl AgentRuntimeService {
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
-        agent
-            .publish_evaluation_observation(startup.evaluation_observation.clone())
-            .await
-            .context("publish recovered Machine evaluation observation")?;
         if launch.root {
             root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
             let rollout = startup
