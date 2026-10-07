@@ -19,7 +19,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
-            [": task", "```diff", "+committed"]
+            [": task", "", "╭─ diff", "+committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         for id in ["first", "second"] {
@@ -66,7 +66,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
         let expected = app.styled_history_lines(width);
         assert_eq!(
             expected.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["-literal", "+next", "```"]
+            ["-literal", "+next", "╰──"]
         );
         assert_eq!(expected[0].spans[0].style.fg, Some(Color::Red));
         assert_eq!(expected[1].spans[0].style.fg, Some(Color::Green));
@@ -143,7 +143,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
         let drained = app.drain_committed_scrollback(width, 1);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            [": task", "```diff", "+committed"]
+            [": task", "", "╭─ diff", "+committed"]
         );
         assert!(app.styled_history_lines(width).is_empty());
         assert!(app.drain_committed_scrollback(width, 1).is_empty());
@@ -162,7 +162,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
                 .render_styled_lines(crate::history::RenderOpts::new(width, false));
             assert_eq!(
                 lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
-                ["-    **literal**", "+new", "```", "done"]
+                ["-    **literal**", "+new", "╰──", "done"]
             );
             assert_eq!(lines[0].spans[0].style.fg, Some(Color::Red));
             assert_eq!(lines[1].spans[0].style.fg, Some(Color::Green));
@@ -221,6 +221,7 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             app.transcript.push(HistoryCell::User("task".into()));
             app.push_output(source);
             let index = app.current_assistant_cell().unwrap();
+            app.transcript[index].trim_rendered_prefix(RenderOpts::new(width, false), 1);
             let mut committed =
                 app.transcript[index].render_lines(RenderOpts::new(width, false))[0].clone();
             app.transcript[index].trim_rendered_prefix(RenderOpts::new(width, false), 1);
@@ -233,7 +234,7 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
             let expected = format!(
                 "{}{}: literal! literaltool> literal",
                 "a".repeat(238 - owned),
-                if fenced { "**```" } else { "" }
+                if fenced { "**╰──" } else { "" }
             );
             let check = |app: &FileBackedApp| {
                 assert_eq!(app.transcript.len(), 2);
@@ -301,7 +302,7 @@ fn semantic_idle_hydration_does_not_replay_drained_heading() {
         let drained = app.drain_committed_scrollback(width, 5);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["head"]
+            ["", "head"]
         );
         let before = app.styled_history_lines(width);
         app.merge_reconnected_idle_history(vec![HistoryCell::Assistant(source.into())]);
@@ -357,15 +358,15 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((4, 1)).unwrap().symbol(),
+            buffer.cell((4, 2)).unwrap().symbol(),
             "l",
             "code tab indentation at {width}"
         );
-        assert_eq!(buffer.cell((12, 8)).unwrap().symbol(), "n");
-        assert_eq!(buffer.cell((12, 8)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((12, 9)).unwrap().symbol(), "o");
-        assert_eq!(buffer.cell((12, 9)).unwrap().fg, Color::Red);
-        for row in 3..=5 {
+        assert_eq!(buffer.cell((12, 9)).unwrap().symbol(), "n");
+        assert_eq!(buffer.cell((12, 9)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((12, 10)).unwrap().symbol(), "o");
+        assert_eq!(buffer.cell((12, 10)).unwrap().fg, Color::Red);
+        for row in 4..=6 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }
         assert!(

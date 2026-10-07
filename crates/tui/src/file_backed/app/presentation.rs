@@ -69,13 +69,32 @@ impl FileBackedApp {
         } else {
             &queue_label
         };
+        let status = if width < 48 {
+            match status {
+                "selecting project" => "selecting",
+                "waiting for approval" => "approval",
+                "model outcome uncertain" => "model uncertain",
+                other => other,
+            }
+        } else {
+            status
+        };
+        let queue_label = if width < 64 {
+            queue_label
+                .replace("queued ", "q ")
+                .replace("queue unknown", "q ?")
+                .replace(" · active", "")
+        } else {
+            queue_label.to_string()
+        };
+        let core_status = status;
         let status = if self.queue.owner.is_empty() {
             status.to_string()
         } else {
             format!("{status} · {queue_label}")
         };
         let status = status.as_str();
-        if width < 32 {
+        if width < 16 {
             return Line::styled(
                 truncate_middle(status, width),
                 Style::default().fg(status_color),
@@ -105,15 +124,6 @@ impl FileBackedApp {
                 }
             },
         );
-        let status = if width < 48 {
-            match status {
-                "selecting project" => "selecting",
-                "waiting for approval" => "approval",
-                other => other,
-            }
-        } else {
-            status
-        };
         let model = if self.model.known().is_some() {
             self.model.header()
         } else {
@@ -132,17 +142,70 @@ impl FileBackedApp {
         } else {
             model
         };
-        let model = truncate_middle(model, model_width);
-        let suffix = format!(" · {model} · {status}");
-        let available = width.saturating_sub(UnicodeWidthStr::width(suffix.as_str()));
+        let mut model = model.to_string();
+        let mut status = status.to_string();
+        if UnicodeWidthStr::width(model.as_str()) + UnicodeWidthStr::width(status.as_str()) + 3
+            > width
+        {
+            // Preserve an urgent queue cue; counts and simultaneous details remain in /queue.
+            let cue = if self.queue.owner.is_empty() || core_status.starts_with("model ") {
+                None
+            } else {
+                match self.queue.snapshot.as_ref().filter(|q| q.known) {
+                    None => Some("q ?"),
+                    Some(q) if !q.uncertain_submission_ids.is_empty() => Some("uncertain"),
+                    Some(q) if q.deferred => Some("deferred"),
+                    Some(q) if q.paused && core_status != "paused" => Some("paused"),
+                    Some(_) => None,
+                }
+            };
+            status = cue.map_or_else(
+                || core_status.to_string(),
+                |cue| format!("{core_status} · {cue}"),
+            );
+            // Keep characters on both sides of a shortened model, not a bare ellipsis.
+            if UnicodeWidthStr::width(status.as_str()) + 6 > width {
+                status = cue
+                    .unwrap_or(core_status)
+                    .strip_prefix("model ")
+                    .unwrap_or(cue.unwrap_or(core_status))
+                    .to_string();
+            }
+            if UnicodeWidthStr::width(model.as_str()) + UnicodeWidthStr::width(status.as_str()) + 3
+                > width
+            {
+                model = self
+                    .model
+                    .known()
+                    .and_then(|s| s.active.as_ref().or(s.selected_next.as_ref()))
+                    .map(|binding| super::super::model::safe(&binding.model))
+                    .unwrap_or_else(|| "model unknown".into());
+            }
+        }
+        // Location yields first; never reserve a project slot at the model's expense.
+        let status = status.as_str();
+        let model_budget = width.saturating_sub(UnicodeWidthStr::width(status) + 3);
+        let model = truncate_middle(&model, model_budget);
+        let available = width.saturating_sub(
+            UnicodeWidthStr::width(model.as_str()) + UnicodeWidthStr::width(status) + 6,
+        );
         let location = truncate_middle(&location, available);
-        Line::from(vec![
-            Span::styled(location, Style::default().fg(Color::Cyan)),
-            Span::styled(" · ", Style::default()),
-            Span::styled(model, Style::default()),
-            Span::styled(" · ", Style::default()),
-            Span::styled(status.to_string(), Style::default()),
-        ])
+        let mut spans = Vec::new();
+        if !location.is_empty() {
+            spans.push(Span::styled(location, Style::default().fg(Color::Cyan)));
+            spans.push(Span::raw(" · "));
+        }
+        if !model.is_empty() {
+            spans.push(Span::raw(model));
+            spans.push(Span::raw(" · "));
+        }
+        spans.push(Span::raw(truncate_middle(status, width)));
+        let line = Line::from(spans);
+        if width < 32 {
+            line.style(Style::default().fg(status_color))
+        } else {
+            line
+        }
     }
 
     pub(in crate::file_backed) fn composer_lines(&self) -> Vec<Line<'static>> {

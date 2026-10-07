@@ -60,9 +60,27 @@ fn paused_status_real_wait_has_static_cue_without_clock() {
 #[test]
 fn paused_status_model_override_owns_narrow_color() {
     let mut app = FileBackedApp::new("/agent/root".into());
+    crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     app.model_chooser.pending = Some(("/agent/1".into(), "B".into()));
     assert_eq!(app.context_line(24).style.fg, Some(Color::Cyan));
-    app.model_chooser.uncertain = Some(("/agent/1".into(), "B".into()));
+    for uncertain in [false, true] {
+        if uncertain {
+            app.model_chooser.uncertain = Some(("/agent/1".into(), "B".into()));
+        }
+        for width in 16..=80 {
+            let line = app.context_line(width);
+            assert!(line.width() <= width);
+            assert!(
+                line.spans.iter().any(|span| span.content.contains("gpt")
+                    || (span.content.starts_with('g') && span.content.ends_with('l'))),
+                "{width}: {line}"
+            );
+            assert!(
+                line.to_string()
+                    .contains(if uncertain { "uncertain" } else { "pending" })
+            );
+        }
+    }
     assert_eq!(app.context_line(24).style.fg, Some(Color::Red));
 }
 
