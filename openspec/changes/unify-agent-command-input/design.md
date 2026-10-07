@@ -105,10 +105,10 @@ of governed effects; `:` is not a read-only promise.
 ### Prompt communicates the submission route
 
 2026-09-29 presentation revision: the user selected a two-line Agent context/input
-prompt and compact `: ` / `! ` markers. The composition is owned by
-[the self-development readiness plan](../make-alan-self-development-ready/design.md);
-this change retains the one-shot intent and routing contract. Existing code still
-uses the longer markers until implementation is reviewed and merged.
+prompt and compact `: ` / `! ` markers. The shipped composition is owned by
+[the canonical TUI contract](../../specs/rust-inline-tui/spec.md);
+this change retains the one-shot intent and routing contract. PR #1026 shipped
+the compact markers; PR #1030 synchronized the canonical requirements.
 
 The explicit-prefix slice starts each ordinary composer entry with `: `,
 meaning Agent conversation. A leading `!` in an empty entry changes the prompt to

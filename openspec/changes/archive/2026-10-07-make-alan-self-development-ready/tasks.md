@@ -1,5 +1,17 @@
 # Tasks
 
+## Final delivery and archive — 2026-10-07
+
+PR #1026 shipped implementation; PR #1030 synchronized canonical contracts and
+acceptance evidence, merged as `904b179d76613126029005963d0fbd679ef0745f`.
+Its final head `ab9750ed` passed all16 checks and the review finding is resolved.
+All19 owning requirement blocks match canonical specs. Owned tasks are complete.
+This archive preserves the historical G1/G2/G3 evidence and failed attempts;
+canonical specs own current requirements. Broader lifecycle acceptance remains
+with active `unify-agent-command-input` task2.19. No unattended-bootstrap,
+all-client-disconnect or graphical-parity qualification is added by archival.
+
+
 ## Extended verification — 2026-10-06
 
 The post-merge audit below initially could not locate the old `/tmp` artifacts.
@@ -2140,8 +2152,8 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 ## 5. Delivery and archive readiness
 
 - [x] 5.1 Confirm every shipped slice has current-head review and passing required CI; queued/skipped checks do not count, and the plan's existence does not mark implementation complete.
-- [ ] 5.2 Sync only merged behavior into its canonical spec, reconcile shared requirement owners and update user-facing instructions; verify strict OpenSpec validation and current-surface guards.
-- [ ] 5.3 Archive only after owned tasks are complete or explicitly handed to an active successor with preserved status; verify G1/G2/G3 claims match live artifacts and leave any unfinished runtime lifecycle acceptance with its existing owner.
+- [x] 5.2 Sync only merged behavior into its canonical spec, reconcile shared requirement owners and update user-facing instructions; verify strict OpenSpec validation and current-surface guards.
+- [x] 5.3 Archive only after owned tasks are complete or explicitly handed to an active successor with preserved status; verify G1/G2/G3 claims match live artifacts and leave any unfinished runtime lifecycle acceptance with its existing owner.
 
 
 ### 2026-09-30 recovery repair WIP and preliminary review

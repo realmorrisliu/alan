@@ -1,3 +1,14 @@
+# Archived disposition — 2026-10-07
+
+Implementation shipped in PR #1026; canonical specification synchronization and
+acceptance audit shipped in PR #1030 (merge `904b179d`). Owned tasks are complete.
+This tree is historical, non-normative evidence. Current requirements are in
+`openspec/specs`; unfinished runtime lifecycle acceptance stays with the active
+`unify-agent-command-input` owner. Historical supervised G1/G2/G3 evidence does
+not establish reliable unattended bootstrap or all-client Herdr disconnect.
+The user-directed Codex takeover and shutdown of self-development instances remain
+in force. Earlier disposition entries below are retained as historical context.
+
 # Current disposition — 2026-10-06
 
 Implementation and review corrections merged through PR #1026. This change is
