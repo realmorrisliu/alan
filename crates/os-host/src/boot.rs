@@ -299,6 +299,7 @@ impl HostBootConfig {
             channel_id: channel_id.into(),
             process,
             resume_root,
+            input_shadow: None,
             launch_context,
             connection_store: Some(connection_store),
             package_store: Some(system_store.packages()?),
@@ -329,6 +330,19 @@ impl HostBootConfig {
     /// Explicitly restore the selected Root Agent rollout for this invocation.
     pub fn with_root_resume(mut self) -> Self {
         self.0.resume_root = true;
+        self
+    }
+
+    /// Select an advice-only evaluator for this invocation's Root Agent input.
+    pub fn with_input_shadow(
+        mut self,
+        profile: impl Into<String>,
+        surface: alan_agent_engine::runtime::EvaluationSurface,
+    ) -> Self {
+        self.0.input_shadow = Some(alan_service_manager::InputShadowSelection {
+            profile: profile.into(),
+            surface,
+        });
         self
     }
 

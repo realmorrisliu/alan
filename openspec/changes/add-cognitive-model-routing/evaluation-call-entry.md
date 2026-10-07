@@ -5,7 +5,7 @@ mounted Connection. Allocation returns an operation identity without writing
 `data`; the Machine can acknowledge its started record before consuming the
 operation through `commit`. Commit consumes the handle and never retries a model
 call or dispatches command, Tool or fallback work. The caller now has an opt-in ordinary-input Machine consumer with acknowledged
-start/terminal records. Host selection of the evaluator profile remains unfinished.
+start/terminal records. Host selection is explicit through `--shadow-evaluator <profile>` on bare Alan.
 
 One monotonic deadline spans allocation, the intervening durability barrier and
 commit/result validation. Cancellation and an exhausted deadline before commit
@@ -34,9 +34,9 @@ asserts zero evaluator calls and release after abort. Additional gates cover
 lost allocation open/read acknowledgements and blocked cleanup acknowledgement. They use actual llmfs with
 fixture evaluators; they are not real-provider routing measurements.
 
-Remaining work: wire explicit evaluator profile selection through the Host and
-Connection Service, prove both admission surfaces without executing corpus
-commands, then collect and score the frozen real-model corpus and baselines. No task is marked complete solely by this API entry.
+Remaining work: prove original-input correlation and deterministic bypass evidence
+on both real admission surfaces without executing corpus commands, then collect
+and score the frozen real-model corpus and baselines. No task is marked complete solely by this API entry.
 
 Validation: 50 namespace runtime tests passed, including eight evaluation
 fixtures. Independent Spec and Standards review passed after correcting allocator
@@ -94,3 +94,25 @@ Seven mounted consumer tests cover these dispatch and publication windows.
 Current integration validation: 1,371 engine unit tests passed (one opt-in test
 ignored), 142 Service Manager tests passed, and strict OpenSpec validation passed.
 Independent Spec and Standards reviews passed on the integrated dispatch path.
+
+Host entry: bare Alan's `--shadow-evaluator <profile>` explicitly selects an
+invocation-local Root evaluator. It passes the actual interactive/redirected mode
+through HostBootConfig and Service Manager; child templates omit this setting.
+Connection Service checks the captured callable's capability, then builds a
+separate namespace snapshot and immutable identity without changing generation
+selection. No global environment override or new credential reader is introduced.
+Connection capture tests distinguish real capability from metadata and preserve a
+prior capture across profile changes. Root boot fixtures verify the full configured
+Service-to-Machine-to-AgentFS path for both surface labels; these are fixtures, not
+proof of the real client adapters or completed live corpus qualification.
+
+The opt-in `live_typesafe_profile_through_root_machine` probe additionally boots
+an isolated Host with the real Product credential wrapper and TypeSafe evaluator,
+submits a benign Agent input through AgentFS, and observes an acknowledged
+Selected result in the Root Machine projection. Generation uses a fixture provider
+and remains bound to `main`; the advice does not choose an execution path. The
+2026-10-07 call used `jev-1.13.0`, took 1430 ms, and reported 459 input / 53 output
+tokens with unknown cost. This verifies the Host/Machine/provider path, not actual
+interactive/redirected clients or the frozen 324-case performance qualification.
+The credential was injected from the explicitly named `.env` entry into the test
+process and temporary Host credential store; no user profile/default was changed.

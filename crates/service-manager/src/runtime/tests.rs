@@ -954,3 +954,5 @@ mod unavailable_command;
 
 mod boot_namespace;
 mod skill_lifecycle;
+
+mod input_shadow;

@@ -222,3 +222,122 @@ async fn live_typesafe_profile_through_mounted_connection() {
     assert!(service.default_profile().is_none());
     eprintln!("Mounted TypeSafe profile probe: {event}");
 }
+
+#[tokio::test]
+#[ignore = "requires explicitly supplied TYPESAFE_API_KEY; live Root Machine probe"]
+async fn live_typesafe_profile_through_root_machine() {
+    use alan_agent_engine::{InputIntent, InputMode, UserInputRecord, runtime::EvaluationSurface};
+    use alan_llm::MockLlmProvider;
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct Factory(ProductLlmClientFactory, MockLlmProvider);
+    impl LlmClientFactory for Factory {
+        fn create(
+            &self,
+            config: &Config,
+            profile: Option<&str>,
+            connections: &ConnectionsFile,
+        ) -> Result<LlmClient> {
+            if profile == Some("main") {
+                Ok(LlmClient::new(self.1.clone()))
+            } else {
+                self.0.create(config, profile, connections)
+            }
+        }
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let credentials = temp.path().join("host-credentials");
+    SecretStore::from_directory(&credentials)
+        .unwrap()
+        .save(
+            "eval-key",
+            &std::env::var("TYPESAFE_API_KEY").expect("TYPESAFE_API_KEY required"),
+        )
+        .unwrap();
+    let mut connections = evaluation_connections();
+    connections.profiles.insert(
+        "main".into(),
+        serde_json::from_value(serde_json::json!({
+            "provider":"openai_responses", "credential_id":"main-key", "settings":{"model":"gpt-5.4"}
+        }))
+        .unwrap(),
+    );
+    connections.credentials.insert(
+        "main-key".into(),
+        serde_json::from_value(serde_json::json!({
+            "kind":"secret_string", "provider_family":"openai_responses",
+            "label":"mock generation", "backend":"host_credential_store"
+        }))
+        .unwrap(),
+    );
+    connections.default_profile = Some("main".into());
+    let metadata = temp.path().join("connections.toml");
+    connections.save_to_path(&metadata).unwrap();
+    let generation = MockLlmProvider::new();
+    let mut host = HostBootConfig::ephemeral(
+        "test",
+        AgentProcessConfig::default(),
+        LlmClient::new(generation.clone()),
+        ToolRegistry::new(),
+    )
+    .with_input_shadow("evaluation", EvaluationSurface::Redirected);
+    host.0.process.agent_config.core_config.memory.enabled = false;
+    host.0.process.store_bindings = Some(alan_agent_engine::AgentRuntimeStoreBindings {
+        rollouts: temp.path().join("rollouts"),
+        checkpoints: temp.path().join("checkpoints"),
+        cache: temp.path().join("cache"),
+        tmp: temp.path().join("tmp"),
+        metadata: temp.path().join("runtime-metadata"),
+    });
+    host.0.connection_store =
+        Some(alan_service_manager::ConnectionStoreBindings::new(metadata).unwrap());
+    host.0.llm_factory = Arc::new(Factory(
+        ProductLlmClientFactory {
+            credentials_dir: credentials,
+            keychain_service: None,
+            managed_auth: None,
+        },
+        generation.clone(),
+    ));
+    let manager = host.boot_foreground().await.unwrap();
+    let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
+    let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
+    let input = UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, "pwd");
+    shell
+        .write("/agent/root/io/input", &input.encode_payload().unwrap())
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(35), async {
+        loop {
+            let snapshot: serde_json::Value =
+                serde_json::from_slice(&shell.cat("/agent/root/machine/evaluation").await.unwrap())
+                    .unwrap();
+            let observation = &snapshot["observation"];
+            if !observation.is_null()
+                && observation["outcome"]["state"] != "started"
+                && !generation.recorded_requests().is_empty()
+            {
+                break observation.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    let selected = manager.connection().selected_profile(manager.root_pid().0);
+    let default_profile = manager.connection().default_profile();
+    manager.shutdown().await.unwrap();
+    let observation = result.expect("Root shadow evaluation did not settle");
+    assert_eq!(
+        observation["identity"]["submission_id"],
+        input.submission_id
+    );
+    assert_eq!(observation["identity"]["callable"]["profile"], "evaluation");
+    assert_eq!(observation["identity"]["callable"]["model"], "jev-1.13.0");
+    assert_eq!(observation["outcome"]["state"], "selected", "{observation}");
+    assert_eq!(observation["outcome"]["candidate_id"], "command");
+    assert_eq!(selected.as_deref(), Some("main"));
+    assert_eq!(default_profile.as_deref(), Some("main"));
+    eprintln!("Root Machine TypeSafe probe: {observation}");
+}

@@ -259,6 +259,18 @@ impl LlmFs {
         snapshot
     }
 
+    /// Whether a visible captured callable supports the finite-choice operation.
+    pub fn supports_choice_evaluation(&self, name: &str) -> bool {
+        self.connection_visible(name)
+            && self
+                .state
+                .lock()
+                .unwrap()
+                .connections
+                .get(name)
+                .is_some_and(|connection| connection.choice_evaluation)
+    }
+
     fn connection_visible(&self, name: &str) -> bool {
         self.allowed_connections
             .as_ref()

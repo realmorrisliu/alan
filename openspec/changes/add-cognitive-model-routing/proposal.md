@@ -23,6 +23,8 @@ evaluation and generation. The old mandatory two-Process routing plan is superse
 
 ### Modified Capabilities
 
+- `alan-shell`: Explicit invocation-scoped advice evaluator selection, separate from generation.
+
 - `provider-request-controls`: Resolve controls against the selected operation
   and Connection, not a presumed fast/deep generation role.
 

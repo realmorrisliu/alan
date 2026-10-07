@@ -48,6 +48,7 @@ pub(crate) struct RootAgentTemplate {
     host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
     llm_connection: String,
+    input_shadow: Option<crate::InputShadowSelection>,
 }
 
 impl RootAgentTemplate {
@@ -58,10 +59,12 @@ impl RootAgentTemplate {
         generation_capabilities: ProviderCapabilities,
         llm_connection: String,
         resume_persisted_rollout: bool,
+        input_shadow: Option<crate::InputShadowSelection>,
     ) -> Self {
         Self {
             process,
             resume_persisted_rollout,
+            input_shadow,
             launch_context,
             host_capabilities,
             generation_capabilities,
@@ -418,7 +421,7 @@ impl AgentRuntimeService {
                 .as_ref()
                 .map(|stores| stores.tmp.clone()),
         )?;
-        let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
+        let mut environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
             root.clone(),
             format!("/agent/{}", pid.0),
             launch.template.llm_connection.clone(),
@@ -444,6 +447,18 @@ impl AgentRuntimeService {
         ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
         .with_tool_process_context(pid.0, self.tool_runner.clone());
+        if let Some(selection) = &launch.template.input_shadow {
+            let captured = self
+                .connection
+                .capture_evaluation(&selection.profile, &launch.namespace)
+                .await?;
+            environment = environment.with_shadow_evaluation(
+                captured.root,
+                captured.identity,
+                selection.surface.clone(),
+                30_000,
+            )?;
+        }
         let mut controller = spawn_with_namespace_environment(
             launch.template.process.clone(),
             environment,
@@ -720,6 +735,7 @@ fn child_template(
     Ok(RootAgentTemplate {
         process,
         resume_persisted_rollout: false,
+        input_shadow: None,
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
@@ -940,57 +956,4 @@ fn process_error(error: anyhow::Error) -> ProcessOutcome {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use alan_ap::InProcessTransport;
-    use alan_kernel::{Access, LiveNamespace, Namespace};
-
-    use super::{resolve_child_connection, validate_child_memory_mount, validate_process_cwd};
-
-    #[test]
-    fn process_cwd_must_be_reachable_after_service_projection() {
-        let namespace = LiveNamespace::new(Namespace::new());
-        assert!(validate_process_cwd(&namespace, "/").is_ok());
-        assert!(validate_process_cwd(&namespace, "/mnt/review").is_err());
-
-        namespace.mount(
-            "/mnt/review",
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
-        assert!(validate_process_cwd(&namespace, "/mnt/review/src").is_ok());
-    }
-
-    #[test]
-    fn child_connection_must_be_passed_by_the_parent() {
-        assert_eq!(
-            resolve_child_connection("parent-profile", None).unwrap(),
-            "parent-profile"
-        );
-        assert_eq!(
-            resolve_child_connection("parent-profile", Some("parent-profile")).unwrap(),
-            "parent-profile"
-        );
-        let error = resolve_child_connection("parent-profile", Some("other-profile")).unwrap_err();
-        assert!(error.to_string().contains("other-profile"));
-        assert!(error.to_string().contains("parent-profile"));
-    }
-
-    #[test]
-    fn child_memory_mount_requires_the_memory_handle() {
-        for mount in ["/memory", "/memory/root", "/memory/root/session"] {
-            let mut namespace = Namespace::new();
-            namespace.mount(
-                mount,
-                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-                Access::ReadWrite,
-            );
-
-            assert!(validate_child_memory_mount(&namespace, true, Some("/memory/root")).is_ok());
-            let error =
-                validate_child_memory_mount(&namespace, false, Some("/memory/root")).unwrap_err();
-            assert!(error.to_string().contains("without the Memory handle"));
-        }
-    }
-}
+mod tests;

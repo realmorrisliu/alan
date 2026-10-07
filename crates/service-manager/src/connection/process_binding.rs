@@ -118,6 +118,47 @@ impl ConnectionAuthority for ProcessConnection {
 }
 
 impl ConnectionService {
+    /// Capture an explicitly selected evaluator without touching generation selection.
+    pub(crate) async fn capture_evaluation(
+        &self,
+        profile_id: &str,
+        process_namespace: &alan_kernel::LiveNamespace,
+    ) -> Result<CapturedCallable> {
+        self.refresh().await?;
+        let callables = self.callables.lock().await;
+        let registry = callables
+            .as_ref()
+            .context("callable registry unavailable")?;
+        let connections = self.metadata();
+        let profile = connections
+            .profiles
+            .get(profile_id)
+            .context("evaluation profile unavailable")?;
+        ensure!(
+            registry.published_profiles.get(profile_id) == Some(profile),
+            "evaluation profile is not callable"
+        );
+        let llmfs = registry.llmfs.connection_snapshot(profile_id);
+        ensure!(
+            llmfs.supports_choice_evaluation(profile_id),
+            "Connection does not support finite-choice evaluation"
+        );
+        let mut config = registry.base_config.clone();
+        connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
+        Ok(CapturedCallable {
+            identity: CallableIdentity {
+                profile: profile_id.into(),
+                provider: config.llm_provider.as_str().into(),
+                model: config.effective_model().into(),
+                credential_ref: profile.credential_id.clone(),
+                revision: serde_json::to_string(profile)?,
+            },
+            root: captured_namespace(process_namespace, llmfs),
+            connection: profile_id.into(),
+            config,
+        })
+    }
+
     async fn capture_model(
         &self,
         profile_id: &str,
@@ -242,13 +283,6 @@ impl ConnectionService {
         } else {
             serde_json::to_string(&original)?
         };
-        let mut namespace = process_namespace.snapshot();
-        namespace.unmount("/mnt/llm");
-        namespace.mount(
-            "/mnt/llm",
-            alan_ap::InProcessTransport::new(Arc::new(llmfs)),
-            alan_kernel::Access::ReadWrite,
-        );
         Ok(CapturedCallable {
             identity: CallableIdentity {
                 profile: profile_id.into(),
@@ -257,9 +291,23 @@ impl ConnectionService {
                 credential_ref: original.credential_id,
                 revision,
             },
-            root: alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace))),
+            root: captured_namespace(process_namespace, llmfs),
             connection: profile_id.into(),
             config,
         })
     }
+}
+
+fn captured_namespace(
+    process_namespace: &alan_kernel::LiveNamespace,
+    llmfs: alan_llmfs::LlmFs,
+) -> alan_ap::InProcessTransport {
+    let mut namespace = process_namespace.snapshot();
+    namespace.unmount("/mnt/llm");
+    namespace.mount(
+        "/mnt/llm",
+        alan_ap::InProcessTransport::new(Arc::new(llmfs)),
+        alan_kernel::Access::ReadWrite,
+    );
+    alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)))
 }
