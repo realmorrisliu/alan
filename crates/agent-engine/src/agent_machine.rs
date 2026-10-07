@@ -644,6 +644,13 @@ impl AgentMachine {
         }
     }
 
+    /// Whether the latest durable effect state still contains uncertain outcomes.
+    pub(crate) fn has_unknown_effects(&self) -> bool {
+        self.effect_index
+            .values()
+            .any(|effect| matches!(effect.status, crate::rollout::EffectStatus::Unknown))
+    }
+
     /// Lookup latest effect record by idempotency key.
     pub fn effect_by_idempotency_key(&self, key: &str) -> Option<EffectRecord> {
         self.effect_index.get(key).cloned()

@@ -83,7 +83,11 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub(crate) async fn initialize(namespace: &NamespaceAgentFiles, queue_paused: bool) -> Result<()> {
+pub(crate) async fn initialize(
+    namespace: &NamespaceAgentFiles,
+    queue_paused: bool,
+    recovered_unknown_effects: bool,
+) -> Result<()> {
     let activity = if queue_paused {
         UiActivitySnapshot::paused(None)
     } else {
@@ -101,9 +105,21 @@ pub(crate) async fn initialize(namespace: &NamespaceAgentFiles, queue_paused: bo
     namespace
         .write_ui_thinking_snapshot(&UiThinkingSnapshot::idle())
         .await?;
-    namespace
-        .write_ui_notice_snapshot(&UiNoticeSnapshot::none())
-        .await
+    let notice = if recovered_unknown_effects {
+        UiNoticeSnapshot::new(
+            UiNoticeKind::Warning,
+            "Recovered work has unknown outcomes. It was not replayed; check its effects before retrying.",
+        )
+    } else {
+        UiNoticeSnapshot::none()
+    };
+    namespace.write_ui_notice_snapshot(&notice).await?;
+    if recovered_unknown_effects {
+        namespace
+            .append_ui_event(&UiEvent::Notice { snapshot: notice })
+            .await?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn turn_started(namespace: &NamespaceAgentFiles) -> Result<()> {
@@ -348,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn owners_write_snapshots_and_append_ui_events() {
         let (environment, shell) = agent_files();
-        initialize(&environment, false).await.unwrap();
+        initialize(&environment, false, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         thinking(&environment, "reasoning").await.unwrap();
         plan_updated(
@@ -410,7 +426,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_turn_clears_plan_snapshot() {
         let (environment, shell) = agent_files();
-        initialize(&environment, false).await.unwrap();
+        initialize(&environment, false, false).await.unwrap();
         plan_updated(
             &environment,
             Some("ship parity".to_string()),
@@ -432,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
         let (environment, _) = agent_files();
-        initialize(&environment, false).await.unwrap();
+        initialize(&environment, false, false).await.unwrap();
         turn_started(&environment).await.unwrap();
         turn_failed(&environment, "provider failed").await.unwrap();
 
@@ -492,7 +508,7 @@ mod tests {
         for recovery in [true, false] {
             warning(&environment, HOST_MOUNT_WAIT_NOTICE).await.unwrap();
             if recovery {
-                initialize(&environment, true).await.unwrap();
+                initialize(&environment, true, false).await.unwrap();
             } else {
                 turn_started(&environment).await.unwrap();
             }
@@ -548,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
         let (environment, _) = agent_files();
-        initialize(&environment, false).await.unwrap();
+        initialize(&environment, false, false).await.unwrap();
         paused(&environment, None).await.unwrap();
 
         heartbeat(&environment).await.unwrap();

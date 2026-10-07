@@ -223,3 +223,29 @@ No broad same-Agent-client, cross-grant, retention, Linux confinement or unknown
 effect requirement is closed by this reconciliation. Keep those existing owning
 checklists active; the bounded user's four-stage progress is not a claim that
 all historical unified-input requirements are delivered.
+
+## Recovery uncertainty display audit — 2026-10-07
+
+Task 2.19's discovery wording does not require a history browser or arbitrary
+rollout picker. The accepted `alan-shell` scenario already specifies `alan --resume`,
+and CLI help exposes that opt-in entry. The selector owner validates the selected
+file and pins the instance's source; a missing list is not itself a product defect.
+The remaining audit focuses on exceptional recovery, not adding a new registry.
+
+A real Runtime regression found that persisted Unknown effects survived recovery
+without replay, but startup initialized the UI notice to empty. The new assertion
+failed with `None` instead of `Warning`. Recovery now projects the Machine's latest
+effect index into the existing warning snapshot and notice event before Ready:
+unknown outcomes were not replayed and their effects must be checked before retry.
+Known outcomes and fresh invocations retain the existing empty notice. A later
+acknowledged result supersedes an older Unknown record, so old uncertainty alone
+does not produce a warning. New ordinary work retains the existing notice-clearing
+behavior; this does not introduce new execution, authority or recovery policy.
+
+The full Agent Engine suite passed 1,374 tests with one existing opt-in test ignored;
+independent Spec and Standards reviews passed. Evidence is in
+`~/Library/Caches/Alan/recovery-unknown-notice-{red,tests}.log`; the extended
+latest-result regression is recorded in `recovery-unknown-latest-test.log`.
+This proves the Runtime presentation boundary only. Parent 2.19 remains open for
+forced-termination product acceptance and full exceptional-startup correlation;
+normal exit, existing no-replay tests and this notice are not substitutes for it.

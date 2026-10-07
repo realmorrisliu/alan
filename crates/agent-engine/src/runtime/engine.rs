@@ -504,7 +504,13 @@ fn spawn_with_prepared_runtime_environment(
             .lock()
             .expect("input queue poisoned")
             .paused;
-        match super::ui_surfaces::initialize(&state.agent_files(), queue_paused).await {
+        match super::ui_surfaces::initialize(
+            &state.agent_files(),
+            queue_paused,
+            recovery_rollout_path.is_some() && state.machine.has_unknown_effects(),
+        )
+        .await
+        {
             Ok(()) => {}
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));
