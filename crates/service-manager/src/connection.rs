@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::connection_profile::{
     ConnectionProfile, ConnectionStoreBindings, ConnectionsFile, sanitize_identifier,
@@ -131,12 +131,16 @@ impl State {
     }
 }
 
+type ModelCatalogPublication = Arc<OnceLock<Option<Arc<alan_agent_engine::ModelCatalog>>>>;
+
 struct CallableRegistry {
     llmfs: Arc<alan_llmfs::LlmFs>,
     factory: Arc<dyn LlmClientFactory>,
     base_config: Config,
     bootstrap: Option<(String, LlmClient)>,
     published_profiles: BTreeMap<String, ConnectionProfile>,
+    published_catalogs: BTreeMap<String, ModelCatalogPublication>,
+    published_accounts: BTreeMap<String, String>,
     published_fallbacks: BTreeSet<String>,
     published_default: Option<String>,
 }
@@ -250,6 +254,8 @@ impl ConnectionService {
             base_config,
             bootstrap,
             published_profiles: BTreeMap::new(),
+            published_catalogs: BTreeMap::new(),
+            published_accounts: BTreeMap::new(),
             published_fallbacks: BTreeSet::new(),
             published_default: None,
         });
@@ -559,6 +565,8 @@ impl ConnectionService {
         for profile_id in stale_profiles {
             registry.llmfs.unregister_connection(&profile_id).await;
             registry.published_profiles.remove(&profile_id);
+            registry.published_catalogs.remove(&profile_id);
+            registry.published_accounts.remove(&profile_id);
         }
 
         let stale_fallbacks = registry
@@ -572,39 +580,53 @@ impl ConnectionService {
             registry.published_fallbacks.remove(&name);
         }
 
+        let mut catalog_requests = Vec::new();
         for (profile_id, profile) in ready_profiles {
-            if registry.published_profiles.get(&profile_id) == Some(&profile) {
-                validation.insert(profile_id, "ready".to_string());
-                continue;
-            }
-            let client = match registry.bootstrap.take() {
-                Some((name, client)) if name == profile_id => client,
-                Some(bootstrap) => {
-                    registry.bootstrap = Some(bootstrap);
-                    match registry.factory.create(
+            let already_published = registry.published_profiles.get(&profile_id) == Some(&profile);
+            let needs_catalog = profile.provider == alan_agent_engine::LlmProvider::Chatgpt
+                && !registry.published_catalogs.contains_key(&profile_id);
+            if !already_published {
+                let client = match registry.bootstrap.take() {
+                    Some((name, client)) if name == profile_id => client,
+                    Some(bootstrap) => {
+                        registry.bootstrap = Some(bootstrap);
+                        match registry.factory.create(
+                            &registry.base_config,
+                            Some(&profile_id),
+                            &connections,
+                        ) {
+                            Ok(client) => client,
+                            Err(_) => continue,
+                        }
+                    }
+                    None => match registry.factory.create(
                         &registry.base_config,
                         Some(&profile_id),
                         &connections,
                     ) {
                         Ok(client) => client,
                         Err(_) => continue,
-                    }
+                    },
+                };
+                if let Some(account) = client.account_identity() {
+                    registry
+                        .published_accounts
+                        .insert(profile_id.clone(), account.into());
                 }
-                None => match registry.factory.create(
-                    &registry.base_config,
-                    Some(&profile_id),
-                    &connections,
-                ) {
-                    Ok(client) => client,
-                    Err(_) => continue,
-                },
-            };
-            registry
-                .llmfs
-                .register_connection(&profile_id, Box::new(ConnectionLlmProvider { client }));
-            registry
-                .published_profiles
-                .insert(profile_id.clone(), profile);
+                registry
+                    .llmfs
+                    .register_connection(&profile_id, Box::new(ConnectionLlmProvider { client }));
+                registry
+                    .published_profiles
+                    .insert(profile_id.clone(), profile);
+            }
+            if needs_catalog {
+                let publication = Arc::new(OnceLock::new());
+                registry
+                    .published_catalogs
+                    .insert(profile_id.clone(), publication.clone());
+                catalog_requests.push((profile_id.clone(), publication));
+            }
             validation.insert(profile_id, "ready".to_string());
         }
 
@@ -643,6 +665,62 @@ impl ConnectionService {
             registry.published_fallbacks.insert(name);
         }
         self.state.lock().unwrap().validation = validation;
+        drop(callables);
+        for (profile_id, publication) in catalog_requests {
+            self.discover_catalog(&profile_id, &publication).await;
+        }
+    }
+
+    async fn discover_catalog(&self, profile_id: &str, publication: &ModelCatalogPublication) {
+        let discovery = async {
+            let (client, base_catalog) = {
+                let callables = self.callables.lock().await;
+                let registry = callables
+                    .as_ref()
+                    .context("callable registry unavailable")?;
+                let connections = self.metadata();
+                ensure!(
+                    registry
+                        .published_catalogs
+                        .get(profile_id)
+                        .is_some_and(|current| Arc::ptr_eq(current, publication)),
+                    "catalog publication replaced"
+                );
+                ensure!(
+                    registry.published_profiles.get(profile_id)
+                        == connections.profiles.get(profile_id)
+                        && registry.published_profiles.contains_key(profile_id),
+                    "profile publication changed"
+                );
+                let client = registry.factory.create(
+                    &registry.base_config,
+                    Some(profile_id),
+                    &connections,
+                )?;
+                let account = registry
+                    .published_accounts
+                    .get(profile_id)
+                    .context("managed catalog account unavailable")?;
+                ensure!(
+                    client.account_identity() == Some(account.as_str()),
+                    "provider account changed since callable publication"
+                );
+                (
+                    client,
+                    registry.base_config.resolved_model_catalog().clone(),
+                )
+            };
+            // Never hold the global callable lock across provider IO. The publication
+            // slot is detached on replacement, so late results cannot authorize it.
+            let models = client
+                .model_catalog()
+                .await?
+                .context("model catalog unavailable")?;
+            base_catalog.with_chatgpt_models(models).map(Arc::new)
+        }
+        .await;
+        // A settled failure is cached too. Only explicit selection retries it.
+        let _ = publication.set(discovery.ok());
     }
 }
 

@@ -63,6 +63,16 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
+    /// Non-secret provider account bound to this immutable callable.
+    pub fn account_identity(&self) -> Option<&str> {
+        self.provider.account_identity()
+    }
+
+    /// Read provider-owned model metadata using this callable's existing authority.
+    pub async fn model_catalog(&self) -> Result<Option<Vec<alan_llm::ProviderModel>>> {
+        self.provider.model_catalog().await
+    }
+
     /// Create a new LLM client from any provider implementing `LlmProvider`.
     pub fn new<P>(provider: P) -> Self
     where

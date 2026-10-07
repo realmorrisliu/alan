@@ -229,6 +229,49 @@ async fn spawn_chatgpt_test_server(
         }
     }
 
+    async fn models(
+        State(state): State<TestServerState>,
+        headers: HeaderMap,
+        uri: axum::http::Uri,
+    ) -> axum::response::Response {
+        assert_eq!(
+            uri.query(),
+            Some(
+                format!(
+                    "client_version={}",
+                    super::catalog::CODEX_MODELS_API_VERSION
+                )
+                .as_str()
+            )
+        );
+        state
+            .authorizations
+            .lock()
+            .unwrap()
+            .push(headers["authorization"].to_str().unwrap().into());
+        state
+            .account_ids
+            .lock()
+            .unwrap()
+            .push(headers["chatgpt-account-id"].to_str().unwrap().into());
+        let count = state.response_count.fetch_add(1, Ordering::SeqCst);
+        if matches!(state.response_mode, TestResponseMode::AlwaysUnauthorized)
+            || matches!(state.response_mode, TestResponseMode::UnauthorizedThenOk) && count == 0
+        {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                "private server diagnostic",
+            )
+                .into_response();
+        }
+        Json(
+            serde_json::json!({"models":[{"slug":"account-model", "visibility":"list",
+            "context_window":100000, "default_reasoning_level":"medium",
+            "supported_reasoning_levels":[{"effort":"medium"}]}]}),
+        )
+        .into_response()
+    }
+
     let state = TestServerState {
         response_count: Arc::new(AtomicUsize::new(0)),
         refresh_count: Arc::new(AtomicUsize::new(0)),
@@ -243,6 +286,7 @@ async fn spawn_chatgpt_test_server(
     let app = Router::new()
         .route("/oauth/token", post(refresh_token))
         .route("/responses", post(responses))
+        .route("/models", axum::routing::get(models))
         .with_state(state.clone());
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve");
@@ -272,15 +316,22 @@ fn provider_config_builds_chatgpt_client() {
 }
 
 #[test]
-fn client_requires_auth_manager_paths() {
-    let client = ChatgptResponsesClient::with_params(
-        "https://chatgpt.com/backend-api/codex",
-        "gpt-5.3-codex",
-        HashMap::new(),
-        None,
-        None,
-    );
-    assert!(client.is_ok());
+fn client_resolves_managed_account_identity_without_network() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("auth.json");
+    let create = |account| {
+        ChatgptResponsesClient::with_params(
+            "https://chatgpt.com/backend-api/codex",
+            "gpt-6.1-sol",
+            HashMap::new(),
+            account,
+            Some(path.clone()),
+        )
+    };
+    assert_eq!(create(None).unwrap().account_identity(), None);
+    seed_chatgpt_auth(path.clone(), valid_access_token(), "refresh");
+    assert_eq!(create(None).unwrap().account_identity(), Some("acct_123"));
+    assert!(create(Some("another-account".into())).is_err());
 }
 
 #[test]
@@ -574,4 +625,115 @@ async fn generate_stream_surfaces_auth_errors_before_returning_receiver() {
         auth_error,
         alan_auth::ChatgptAuthError::NotLoggedIn
     ));
+}
+
+#[tokio::test]
+async fn catalog_uses_bound_account_and_refreshes_only_once() {
+    for (mode, succeeds) in [
+        (TestResponseMode::UnauthorizedThenOk, true),
+        (TestResponseMode::AlwaysUnauthorized, false),
+    ] {
+        let (url, state, server) = spawn_chatgpt_test_server(mode).await;
+        let temp = TempDir::new().unwrap();
+        let path = seed_chatgpt_auth(
+            temp.path().join("auth.json"),
+            valid_access_token(),
+            "refresh",
+        );
+        let mut client = test_client(&url, path);
+        // Auth headers cannot be overridden by profile headers during catalog discovery.
+        client
+            .custom_headers
+            .insert("Authorization".into(), "wrong".into());
+        let result = client.model_catalog().await;
+        assert_eq!(result.is_ok(), succeeds);
+        assert_eq!(state.response_count.load(Ordering::SeqCst), 2);
+        assert_eq!(state.refresh_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *state.account_ids.lock().unwrap(),
+            vec!["acct_123", "acct_123"]
+        );
+        assert_eq!(
+            *state.authorizations.lock().unwrap(),
+            vec![
+                format!("Bearer {}", valid_access_token()),
+                format!("Bearer {}", refreshed_access_token())
+            ]
+        );
+        if let Ok(Some(models)) = result {
+            assert_eq!(models[0].slug, "account-model");
+        } else {
+            assert!(
+                !result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("private server diagnostic")
+            );
+        }
+        if succeeds {
+            client
+                .generate(GenerationRequest::new().with_user_message("check"))
+                .await
+                .unwrap();
+            assert_eq!(
+                state.authorizations.lock().unwrap().last().unwrap(),
+                &format!("Bearer {}", refreshed_access_token())
+            );
+        }
+        let requests = state.response_count.load(Ordering::SeqCst);
+        client.expected_account_id = Some("another-account".into());
+        assert!(client.model_catalog().await.is_err());
+        assert_eq!(state.response_count.load(Ordering::SeqCst), requests);
+        server.abort();
+    }
+}
+
+#[path = "catalog_limits_tests.rs"]
+mod catalog_limits_tests;
+
+#[tokio::test]
+async fn implicit_account_binding_cannot_follow_replaced_auth_storage() {
+    let (url, state, server) = spawn_chatgpt_test_server(TestResponseMode::AlwaysOk).await;
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("auth.json");
+    let unavailable = ChatgptResponsesClient::with_params(
+        &url,
+        "gpt-6.1-sol",
+        HashMap::new(),
+        None,
+        Some(path.clone()),
+    )
+    .unwrap();
+    seed_chatgpt_auth(path.clone(), valid_access_token(), "refresh");
+    assert!(
+        unavailable.model_catalog().await.is_err(),
+        "an unbound client cannot borrow a later login"
+    );
+    assert_eq!(state.response_count.load(Ordering::SeqCst), 0);
+    let mut client = ChatgptResponsesClient::with_params(
+        &url,
+        "gpt-6.1-sol",
+        HashMap::new(),
+        None,
+        Some(path.clone()),
+    )
+    .unwrap();
+    assert!(client.model_catalog().await.unwrap().is_some());
+    let storage = AuthStorage::new(path.clone()).unwrap();
+    let mut replaced = storage.load().unwrap();
+    replaced.chatgpt.as_mut().unwrap().account_id = "acct_replacement".into();
+    storage.save(&replaced).unwrap();
+    assert!(client.model_catalog().await.is_err());
+    assert!(
+        client
+            .generate(GenerationRequest::new().with_user_message("must not dispatch"))
+            .await
+            .is_err()
+    );
+    assert_eq!(state.response_count.load(Ordering::SeqCst), 1);
+    let replacement =
+        ChatgptResponsesClient::with_params(&url, "gpt-6.1-sol", HashMap::new(), None, Some(path))
+            .unwrap();
+    assert_eq!(replacement.account_identity(), Some("acct_replacement"));
+    server.abort();
 }

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "catalog_tests.rs"]
+mod catalog_tests;
 #[path = "process_binding_tests.rs"]
 mod process_binding_tests;
 use alan_agent_engine::LlmProvider as ProviderId;

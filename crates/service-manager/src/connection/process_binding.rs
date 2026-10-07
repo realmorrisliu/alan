@@ -66,6 +66,14 @@ impl ConnectionAuthority for ProcessConnection {
         let injected = registry.published_fallbacks.contains(&self.profile)
             && !connections.profiles.contains_key(&self.profile);
         let mut config = registry.base_config.clone();
+        if let Some(catalog) = registry
+            .published_catalogs
+            .get(&self.profile)
+            .and_then(|publication| publication.get())
+            .and_then(Option::as_ref)
+        {
+            config.set_model_catalog(catalog.clone());
+        }
         if !injected {
             let profile = connections
                 .profiles
@@ -85,20 +93,26 @@ impl ConnectionAuthority for ProcessConnection {
                 "default_reasoning_effort":info.as_ref().and_then(|info| info.default_reasoning_effort)
             }]}));
         }
-        let info = config
-            .effective_model_info()
-            .context("model catalog unavailable")?;
+        let provider = if config.llm_provider == alan_agent_engine::LlmProvider::Chatgpt {
+            alan_agent_engine::ModelCatalogProvider::Chatgpt
+        } else {
+            config
+                .effective_model_info()
+                .context("model catalog unavailable")?
+                .provider
+        };
         let catalog = config.resolved_model_catalog();
         let entries: Vec<_> = catalog
-            .supported_model_slugs(info.provider)
+            .supported_model_slugs(provider)
             .into_iter()
             .filter_map(|slug| {
-                catalog.find_model_info(info.provider, slug).map(|entry| serde_json::json!({
+                catalog.find_model_info(provider, slug).map(|entry| serde_json::json!({
                 "model":entry.slug, "supported_reasoning_efforts":entry.supported_reasoning_efforts,
                 "default_reasoning_effort":entry.default_reasoning_effort
             }))
             })
             .collect();
+        ensure!(!entries.is_empty(), "model catalog unavailable");
         Ok(serde_json::json!({"profile":self.profile,"models":entries}))
     }
 }
@@ -110,6 +124,20 @@ impl ConnectionService {
         model: Option<&str>,
         process_namespace: &alan_kernel::LiveNamespace,
     ) -> Result<CapturedCallable> {
+        if model.is_some() {
+            let mut callables = self.callables.lock().await;
+            if let Some(registry) = callables.as_mut()
+                && matches!(
+                    registry
+                        .published_catalogs
+                        .get(profile_id)
+                        .and_then(|p| p.get()),
+                    Some(None)
+                )
+            {
+                registry.published_catalogs.remove(profile_id);
+            }
+        }
         self.refresh().await?;
         let callables = self.callables.lock().await;
         let registry = callables
@@ -151,6 +179,14 @@ impl ConnectionService {
             "Process profile is not callable"
         );
         let mut config = registry.base_config.clone();
+        if let Some(catalog) = registry
+            .published_catalogs
+            .get(profile_id)
+            .and_then(|publication| publication.get())
+            .and_then(Option::as_ref)
+        {
+            config.set_model_catalog(catalog.clone());
+        }
         connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
         if let Some(model) = model {
             ensure!(!model.trim().is_empty(), "model selection is empty");
@@ -169,6 +205,7 @@ impl ConnectionService {
         let llmfs = if model.is_none()
             || model == Some(config.effective_model())
                 && original.settings.get("model").map(String::as_str) == model
+                && !registry.published_accounts.contains_key(profile_id)
         {
             registry.llmfs.connection_snapshot(profile_id)
         } else {
@@ -176,12 +213,31 @@ impl ConnectionService {
                 registry
                     .factory
                     .create(&registry.base_config, Some(profile_id), &connections)?;
+            ensure!(
+                client.account_identity()
+                    == registry
+                        .published_accounts
+                        .get(profile_id)
+                        .map(String::as_str),
+                "provider account changed since callable publication"
+            );
             let llmfs = alan_llmfs::LlmFs::new();
             llmfs.register_connection(profile_id, Box::new(ConnectionLlmProvider { client }));
             llmfs.connection_snapshot(profile_id)
         };
         // Only non-secret metadata names the exact restore revision.
-        let revision = serde_json::to_string(&original)?;
+        let revision = if let Some(account) = registry.published_accounts.get(profile_id) {
+            config.chatgpt_account_id = Some(account.clone());
+            if original.settings.get("account_id") == Some(account) {
+                // Explicitly bound profiles already carry account identity in their
+                // durable revision; preserve compatibility with earlier captures.
+                serde_json::to_string(&original)?
+            } else {
+                serde_json::to_string(&(original.clone(), account))?
+            }
+        } else {
+            serde_json::to_string(&original)?
+        };
         let mut namespace = process_namespace.snapshot();
         namespace.unmount("/mnt/llm");
         namespace.mount(

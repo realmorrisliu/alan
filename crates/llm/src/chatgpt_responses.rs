@@ -1,5 +1,6 @@
 //! ChatGPT/Codex managed-auth Responses client.
 
+mod catalog;
 mod streaming;
 
 use crate::openai_chat_completions::{
@@ -42,6 +43,7 @@ impl ChatgptResponsesClient {
                 ChatgptAuthManager::detect().context("Failed to initialize ChatGPT auth manager")?
             }
         };
+        let expected_account_id = auth_manager.bound_account_id(expected_account_id.as_deref())?;
         Ok(Self {
             client: reqwest::Client::new(),
             auth_manager,
@@ -50,6 +52,39 @@ impl ChatgptResponsesClient {
             custom_headers,
             expected_account_id,
         })
+    }
+
+    async fn request_auth(&self, force_refresh: bool) -> Result<alan_auth::ChatgptRequestAuth> {
+        // A client constructed while logged out remains unavailable until Connection
+        // publication constructs a newly bound callable; it cannot borrow a later login.
+        let account = self
+            .expected_account_id
+            .as_deref()
+            .ok_or(ChatgptAuthError::NotLoggedIn)?;
+        Ok(if force_refresh {
+            self.auth_manager
+                .force_refresh_auth_for_account(Some(account))
+                .await?
+        } else {
+            self.auth_manager
+                .request_auth_for_account(Some(account))
+                .await?
+        })
+    }
+
+    fn apply_custom_headers(
+        &self,
+        mut builder: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        for (name, value) in &self.custom_headers {
+            // Managed credentials and account identity must have exactly one owner.
+            if !name.eq_ignore_ascii_case("authorization")
+                && !name.eq_ignore_ascii_case("chatgpt-account-id")
+            {
+                builder = builder.header(name, value);
+            }
+        }
+        builder
     }
 
     fn build_openai_responses_request(
@@ -197,15 +232,7 @@ impl ChatgptResponsesClient {
         force_refresh: bool,
     ) -> Result<reqwest::Response> {
         self.validate_request(request)?;
-        let auth = if force_refresh {
-            self.auth_manager
-                .force_refresh_auth_for_account(self.expected_account_id.as_deref())
-                .await?
-        } else {
-            self.auth_manager
-                .request_auth_for_account(self.expected_account_id.as_deref())
-                .await?
-        };
+        let auth = self.request_auth(force_refresh).await?;
         let mut builder = self
             .client
             .post(format!("{}/responses", self.base_url))
@@ -216,9 +243,7 @@ impl ChatgptResponsesClient {
             builder = builder.header(reqwest::header::ACCEPT, "text/event-stream");
         }
 
-        for (name, value) in &self.custom_headers {
-            builder = builder.header(name, value);
-        }
+        builder = self.apply_custom_headers(builder);
 
         let response = builder
             .send()
@@ -251,15 +276,7 @@ impl ChatgptResponsesClient {
         starting_after: Option<u64>,
         force_refresh: bool,
     ) -> Result<reqwest::Response> {
-        let auth = if force_refresh {
-            self.auth_manager
-                .force_refresh_auth_for_account(self.expected_account_id.as_deref())
-                .await?
-        } else {
-            self.auth_manager
-                .request_auth_for_account(self.expected_account_id.as_deref())
-                .await?
-        };
+        let auth = self.request_auth(force_refresh).await?;
 
         let mut url = format!("{}/responses/{}", self.base_url, response_id);
         if stream {
@@ -277,9 +294,7 @@ impl ChatgptResponsesClient {
             builder = builder.header(reqwest::header::ACCEPT, "text/event-stream");
         }
 
-        for (name, value) in &self.custom_headers {
-            builder = builder.header(name, value);
-        }
+        builder = self.apply_custom_headers(builder);
 
         builder
             .send()
@@ -292,15 +307,7 @@ impl ChatgptResponsesClient {
         response_id: &str,
         force_refresh: bool,
     ) -> Result<reqwest::Response> {
-        let auth = if force_refresh {
-            self.auth_manager
-                .force_refresh_auth_for_account(self.expected_account_id.as_deref())
-                .await?
-        } else {
-            self.auth_manager
-                .request_auth_for_account(self.expected_account_id.as_deref())
-                .await?
-        };
+        let auth = self.request_auth(force_refresh).await?;
 
         let mut builder = self
             .client
@@ -311,9 +318,7 @@ impl ChatgptResponsesClient {
             .header("Authorization", format!("Bearer {}", auth.access_token))
             .header("ChatGPT-Account-ID", auth.account_id);
 
-        for (name, value) in &self.custom_headers {
-            builder = builder.header(name, value);
-        }
+        builder = self.apply_custom_headers(builder);
 
         builder
             .send()
@@ -383,6 +388,14 @@ impl ChatgptResponsesClient {
 
 #[async_trait]
 impl LlmProvider for ChatgptResponsesClient {
+    fn account_identity(&self) -> Option<&str> {
+        self.expected_account_id.as_deref()
+    }
+
+    async fn model_catalog(&self) -> Result<Option<Vec<crate::ProviderModel>>> {
+        self.fetch_model_catalog().await.map(Some)
+    }
+
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
         self.generate_via_stream(request).await
     }

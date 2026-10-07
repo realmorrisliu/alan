@@ -52,7 +52,7 @@ pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
     ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
 };
-pub use models::{ModelCatalog, ModelInfo};
+pub use models::{ModelCatalog, ModelCatalogProvider, ModelInfo};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
 pub use process_launch::{
     AgentRuntimeStoreBindings, MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessPackageKind,

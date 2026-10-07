@@ -212,7 +212,7 @@ pub(crate) fn build_openrouter_chat_request(
     }
     if let Some(effort) = reasoning.effort {
         extra_params.remove("reasoning_effort");
-        builder.reasoning_effort(openrouter_effort(effort));
+        builder.reasoning_effort(openrouter_effort(effort)?);
     }
 
     let tools = convert_tools_for_openrouter(tools);
@@ -849,15 +849,18 @@ fn effort_from_value(key: &str, value: Value) -> Result<Effort> {
     }
 }
 
-fn openrouter_effort(effort: ReasoningEffort) -> Effort {
-    match effort {
+fn openrouter_effort(effort: ReasoningEffort) -> Result<Effort> {
+    Ok(match effort {
         ReasoningEffort::None => Effort::None,
         ReasoningEffort::Minimal => Effort::Minimal,
         ReasoningEffort::Low => Effort::Low,
         ReasoningEffort::Medium => Effort::Medium,
         ReasoningEffort::High => Effort::High,
         ReasoningEffort::XHigh => Effort::Xhigh,
-    }
+        ReasoningEffort::Max | ReasoningEffort::Ultra => {
+            anyhow::bail!("Provider does not support reasoning effort `{effort}`")
+        }
+    })
 }
 
 #[cfg(test)]

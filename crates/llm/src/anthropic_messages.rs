@@ -478,7 +478,7 @@ fn build_thinking_params(
 ) -> Result<(Option<ThinkingConfig>, Option<f32>, i32)> {
     let resolved_budget = match reasoning_effort {
         Some(ReasoningEffort::None) => None,
-        Some(effort) => Some(anthropic_budget_for_effort(effort)),
+        Some(effort) => Some(anthropic_budget_for_effort(effort)?),
         None => None,
     };
 
@@ -522,14 +522,17 @@ fn build_thinking_params(
     }
 }
 
-fn anthropic_budget_for_effort(effort: ReasoningEffort) -> u32 {
-    match effort {
+fn anthropic_budget_for_effort(effort: ReasoningEffort) -> Result<u32> {
+    Ok(match effort {
         ReasoningEffort::None => 0,
         ReasoningEffort::Minimal | ReasoningEffort::Low => MIN_THINKING_BUDGET_TOKENS,
         ReasoningEffort::Medium => 4_096,
         ReasoningEffort::High => 8_192,
         ReasoningEffort::XHigh => 16_384,
-    }
+        ReasoningEffort::Max | ReasoningEffort::Ultra => {
+            anyhow::bail!("Provider does not support reasoning effort `{effort}`")
+        }
+    })
 }
 
 fn build_request_headers(
