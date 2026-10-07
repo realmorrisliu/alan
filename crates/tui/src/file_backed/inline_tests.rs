@@ -925,7 +925,11 @@ fn narrow_prompt_keeps_model_with_paused_deferred_and_uncertain_queue() {
                 identity.starts_with('g') && identity.ends_with('l'),
                 "{width}: {text}"
             );
-            assert!(text.contains("uncertain"), "{width}: {text}");
+            assert!(
+                text.contains("uncertain") || text.split_whitespace().any(|word| word == "unc"),
+                "{width}: {text}"
+            );
+            assert!(text.contains("paused"), "{width}: {text}");
             continue;
         }
         assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");

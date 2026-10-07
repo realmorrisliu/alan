@@ -166,16 +166,31 @@ impl FileBackedApp {
             );
             // Keep characters on both sides of a shortened model, not a bare ellipsis.
             if UnicodeWidthStr::width(status.as_str()) + 6 > width {
-                // Awaiting user action takes precedence over secondary queue metadata.
-                let compact_status = if matches!(core_status, "approval" | "selecting") {
-                    core_status
-                } else {
-                    cue.unwrap_or(core_status)
+                // Execution and admission coexist. Shorten both rather than
+                // replacing the current state with secondary queue metadata.
+                status = match cue {
+                    Some(cue) if !matches!(core_status, "approval" | "selecting") => {
+                        let state = match core_status {
+                            "working" => "run",
+                            "failed" => "fail",
+                            other => other,
+                        };
+                        let cue = match cue {
+                            "uncertain" => "unc",
+                            "deferred" => "def",
+                            "paused" => "hold",
+                            "active" => "act",
+                            "queued" => "q+",
+                            "q ?" => "q?",
+                            other => other,
+                        };
+                        format!("{state} {cue}")
+                    }
+                    _ => core_status
+                        .strip_prefix("model ")
+                        .unwrap_or(core_status)
+                        .to_string(),
                 };
-                status = compact_status
-                    .strip_prefix("model ")
-                    .unwrap_or(compact_status)
-                    .to_string();
             }
             if UnicodeWidthStr::width(model.as_str()) + UnicodeWidthStr::width(status.as_str()) + 3
                 > width
