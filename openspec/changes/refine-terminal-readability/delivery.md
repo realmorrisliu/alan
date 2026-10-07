@@ -104,3 +104,23 @@ cue while keeping the current state. All 336 terminal library tests and 11
 integration tests pass; authorization/project selection and model-control checks
 are unchanged. Logs: `~/Library/Caches/Alan/ui-status-queue-{red,tests}.log`.
 Independent review, the complete gate and current-head CI remain required.
+
+## Awaiting-action model identity priority — 2026-10-08
+
+PR #1034 review found that the first compact fallback kept secondary queue cues
+while truncating model identity during approval/project selection. Drop that cue
+at its existing selection point for these actions, as already done for pending
+model controls; remove the now-redundant later action guard. Ordinary queue and
+execution coexistence remains unchanged.
+
+The existing action/queue matrix now requires full short and long model identity
+whenever model plus action fits, across all six valid queue cases and both actions
+over widths 16–80. Both the short labels below 48 columns and the long labels
+at/above 48 are covered. The initial regression failed with
+`gpt-…luna · approval · q ?` at width 26; Spec review found the same bug with
+`claude-sonnet-4-20250514` at width 48 and its added regression also failed before
+the long-label correction. All 336 terminal library tests and 11 integration
+tests pass. Logs:
+`~/Library/Caches/Alan/ui-action-model-priority-{red,long-red,tests}.log`. Independent
+review, the mandatory quality gate and current-head CI remain required; earlier
+native visual acceptance is not attributed to this source.

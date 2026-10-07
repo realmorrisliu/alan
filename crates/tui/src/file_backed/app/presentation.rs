@@ -147,7 +147,12 @@ impl FileBackedApp {
             > width
         {
             // Preserve an urgent queue cue; counts and simultaneous details remain in /queue.
-            let cue = if self.queue.owner.is_empty() || core_status.starts_with("model ") {
+            let cue = if self.queue.owner.is_empty()
+                || core_status.starts_with("model ")
+                || matches!(
+                    core_status,
+                    "approval" | "selecting" | "waiting for approval" | "selecting project"
+                ) {
                 None
             } else {
                 match self.queue.snapshot.as_ref().filter(|q| q.known) {
@@ -169,7 +174,7 @@ impl FileBackedApp {
                 // Execution and admission coexist. Shorten both rather than
                 // replacing the current state with secondary queue metadata.
                 status = match cue {
-                    Some(cue) if !matches!(core_status, "approval" | "selecting") => {
+                    Some(cue) => {
                         let state = match core_status {
                             "working" => "run",
                             "failed" => "fail",

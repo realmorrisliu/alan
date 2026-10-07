@@ -469,14 +469,25 @@ fn model_and_status_remain_visible_across_prompt_widths() {
     ] {
         assert!(queue.is_valid());
         app.queue.apply("/agent/root", Some(queue));
-        for selecting in [false, true] {
-            app.project_selection = selecting.then_some(ProjectAccess::ReadOnly);
-            for width in 16..=80 {
-                let line = app.context_line(width);
-                let text = line.to_string();
-                assert!(line.width() <= width, "{width}: {text}");
-                let action = if selecting { "selecting" } else { "approval" };
-                assert!(text.contains(action), "{width}: {text}");
+        for model in ["gpt-6-luna", "claude-sonnet-4-20250514"] {
+            crate::file_backed::model_tests::install_header_model(&mut app, model);
+            for selecting in [false, true] {
+                app.project_selection = selecting.then_some(ProjectAccess::ReadOnly);
+                for width in 16..=80 {
+                    let line = app.context_line(width);
+                    let text = line.to_string();
+                    assert!(line.width() <= width, "{width}: {text}");
+                    let action = match (selecting, width < 48) {
+                        (true, true) => "selecting",
+                        (true, false) => "selecting project",
+                        (false, true) => "approval",
+                        (false, false) => "waiting for approval",
+                    };
+                    assert!(text.contains(action), "{width}: {text}");
+                    if width >= model.len() + 3 + action.len() {
+                        assert!(text.contains(model), "{width}: {text}");
+                    }
+                }
             }
         }
     }
