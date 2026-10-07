@@ -1,8 +1,8 @@
 # Delivery — 2026-10-07
 
 Status: local implementation, native acceptance and independent review passed;
-remote current-head CI remains separate. Base `a239021e` includes model catalog
-PR #1033; this UI slice is stacked on that branch until it merges.
+remote current-head CI remains separate. PRs #1032 and #1033 are merged; this
+UI branch is based on main `43700bb1`.
 
 - 335 terminal library tests passed, including continuous 16–80-column queue
   and model-control states, streamed fence labels, literal code, Unicode,
@@ -27,3 +27,13 @@ PR #1033; this UI slice is stacked on that branch until it merges.
   widening back to 94 columns preserved the same result.
 - `/quit` exited normally with code 0 after the queue settled; native PID gone.
   Test-only pane/session were closed. No runtime or profile defaults changed.
+
+## Complete terminal test follow-up
+
+The rebased CI exposed stale public integration assertions for the newly added
+answer-leading blank row and decorated fences. The earlier 335-test command
+covered only library tests. Updated both integration suites to assert the new
+row positions, cyan language labels and dim boundaries while retaining literal
+body, ANSI, late-closing Markdown, Unicode and semantic scrollback cutoff checks.
+`cargo test -p alan-terminal-ui --no-fail-fast` now passes all 335 library and
+11 integration tests. CI must still pass on the follow-up commit itself.
