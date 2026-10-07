@@ -1,11 +1,11 @@
-# Shadow qualification v1 — 2026-10-07
+# Shadow qualification — 2026-10-07 / 2026-10-08
 
-Status: corpus and gates remain frozen before measurement. The locally implemented
-Machine/Connection/TypeSafe path has now completed 300 ordinary native-client
-observations and fails the false-command, accuracy, recall and latency gates.
-Automatic execution remains disabled. The 264-call generation baseline is complete;
-both models fail the zero-false-command gate. Pending-response parity, full baseline
-qualification, complete cost evidence, current-head delivery and canonical sync remain open.
+Status: both v1 and freshly frozen v2 fail qualification. v2 completes all 300
+ordinary native-client observations and both component baselines. All 264 typed
+results are valid with usage, but false-command, accuracy, recall and observed
+latency still fail. Automatic execution remains disabled. The 24 pending-response
+attempts retain 12 unsupported redirected slots. Full admission timing, generation
+billing, pending-response parity, current-head delivery and canonical sync remain open.
 The bounded phase was activated after local lifecycle/model/UI acceptance;
 predecessor merge remains a separate delivery gate.
 
@@ -402,3 +402,84 @@ component baselines. Preserve unsupported pending responses, unknown cost and th
 unmatched latency scopes; the new run cannot silently convert them into success.
 The clean build receipts will pin the collection executable separately. No
 classification prompt, labels, numeric limits or activation setting is changed.
+
+## Candidate v2 results — 2026-10-07 / 2026-10-08
+
+The clean locked build at `1f551ad9b5c55a128c976e3d4967424e090caec4` includes
+the committed v2 freeze; measured runtime sources match implementation `7f73149e`.
+All 300 ordinary and 24 pending attempt slots and both baselines were collected
+again, without retries or substitution from v1. The unchanged corpus and budgets
+retain their frozen hashes. Local summaries verify the complete Cartesian matrices,
+input digests and source/binary bindings before calculating statistics.
+
+| Same 264 non-bypass slots | TypeSafe jev-1.13.0 | Generation gpt-6.1-sol medium |
+| --- | --- | --- |
+| Correct labels, including failures | 200 / 264 (75.76%) | 214 / 264 (81.06%) |
+| False command classifications | 34 | 6 |
+| Valid results | 264 / 264 (100%) | 262 / 264 (99.24%) |
+| Command recall | 100% | 95.83% |
+| Agent recall | 86.42% | 96.30% |
+| Ambiguous recall | 22.22% | 22.22% |
+| Observed p50 / p95 | 1,455 / 2,684 ms | 3,179 / 4,765 ms |
+| Mean public-list-priced cost | 19.61782 micro-USD | unknown |
+
+Typed results comprise 252 selections and 12 valid no-match outcomes; no-match
+is scored as ambiguous. The additional 36 explicit-prefix bypasses preserve
+zero calls and no operation identity, yielding 236 / 300 correct ordinary routes.
+All evaluated typed records now include usage. At the previously verified Jev
+public list price, the mean estimate meets the absolute 1,000 micro-USD budget;
+this estimate is not an invoice or evidence of generation subscription billing.
+The fresh run validates availability of this candidate; the change from 35 to
+34 false commands cannot be attributed to the rounding fix from stochastic runs.
+The seven unavailable v1 observations remain failures with unknown usage.
+
+Generation's two unavailable observations are `route-004`, redirected, repeat 0
+and `route-005`, interactive stratum, repeat 0. Both retain `stream_error:closed`,
+terminal error status, an `already_terminal` abort receipt and closed stream tail.
+Their elapsed times (1,200 / 1,159 ms) and failures remain in the denominators;
+unavailable token usage is not inferred as zero from projection counters. No
+unsettled operation was retried. Provider-side causes are not established by
+these terminal receipts, and subscription per-call cost remains unknown.
+
+The repeated deterministic baseline again matches 198 / 300 ordinary labels,
+including all 36 explicit bypasses, and 162 / 264 non-bypass labels. It selects
+no implicit commands, with zero false commands, 100% Agent recall and zero
+command/ambiguous recall. Its debug parser-only p50 / p95 are 84 / 167 ns;
+zero model calls establish zero model routing cost, not full admission timing.
+
+All 12 interactive pending responses remain literal request answers with zero
+evaluator calls, no operation identity and completion correlated to their prelude.
+All 12 redirected attempts retain the real interactive-input error and pending
+request; their response bytes were not admitted. The native matrix therefore has
+312 completed observations and 12 unsupported slots, not 324 successful routes.
+No missing time or cost is invented to obtain a complete numeric score.
+
+The native fixture exposes no Host Tools or project mount, and shadow advice
+does not choose dispatch. The generation baseline exposes only its captured
+Connection and no Tool definitions; the prefix baseline only calls the parser.
+These bounded runs cause no classification-driven command or project write.
+Production dispatch/cancellation safety is separately covered by the committed
+Machine tests; this fixture does not establish arbitrary Host sandbox safety.
+
+**Qualification fails; activation remains unauthorized and disabled.** Both
+models miss the zero-false-command, accuracy and ambiguous-recall gates. Typed
+Agent recall also fails. Its observed Machine interval exceeds both fixed caps,
+but neither that interval nor the warm generation component timing measures the
+required full native admission interval. The observed 43.67% lower typed p95
+therefore does not pass the relative efficiency gate: timing conditions differ
+and generation cost is unknown. Do not relax gates or enable command execution.
+Further candidate changes require another pre-measurement freeze and fresh runs;
+explicit prefixes and the conservative Agent default remain the product path.
+
+Evidence: `~/Library/Caches/Alan/shadow-candidate-v2-20261007/` contains
+`build-receipt.json`, ordinary/pending/generation manifests and raw receipts,
+terminal captures, summaries, analysis scripts, `prefix.json` and price provenance.
+`evidence-hashes.json` binds 617 exported artifacts; its SHA-256 is
+`c9dfd6b636d2afd7398c522455372927751edb00dcb91bbf2b672da6a6de6d25`.
+The build receipt pins these binaries:
+
+| Binary | SHA-256 |
+| --- | --- |
+| shadow_client_fixture | fb74cecff3394a2751e5752bc1c9ba658b4ca8ca10f6cef0405c40ce2ea9669c |
+| routing_generation_baseline | 8f5f02b29f6382f6e29ec10317ef338d5ece36cc663befcb8daa1bfe772267ee |
+| routing_prefix_baseline | 3a5c55020a5c6b40d76d4aaac27275f2cac383a943e679620a69cd42a8fce012 |
