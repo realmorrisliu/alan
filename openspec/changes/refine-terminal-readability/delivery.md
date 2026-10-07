@@ -124,3 +124,20 @@ tests pass. Logs:
 `~/Library/Caches/Alan/ui-action-model-priority-{red,long-red,tests}.log`. Independent
 review, the mandatory quality gate and current-head CI remain required; earlier
 native visual acceptance is not attributed to this source.
+
+## Confirmed next model in compact idle headers — 2026-10-08
+
+PR #1034 review reproduced a compact fallback selecting the old active binding
+while idle after a confirmed model change. When idle and not answering a pending
+interaction, prefer selected-next in that existing fallback; running/paused work
+and current Confirmation/StructuredInput responses retain active-model priority.
+The wide header still distinguishes active and next, and `/status` retains all
+admitted binding details. No Process binding, queue or dispatch behavior changes.
+
+The existing model-status regression now covers different active A and next B
+across Idle/Running/Paused and current responses at every width 16–80. It failed
+before the fix at `Idle, 16: A · ready hold`. All 336 TUI library tests and
+11 integration tests pass. Logs:
+`~/Library/Caches/Alan/ui-selected-next-header-{red,tests}.log`. Independent review,
+the mandatory quality gate and current-head CI remain required; earlier native
+acceptance remains tied to its recorded source.
