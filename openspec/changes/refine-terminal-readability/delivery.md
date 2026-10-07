@@ -84,3 +84,23 @@ Paused over widths 16–80. It failed before the fix at width 16 with
 snapshot. All 336 terminal library tests and 11 integration tests pass. Evidence:
 `~/Library/Caches/Alan/ui-pending-header-{red,tests}.log`. Independent review,
 the complete quality gate and current-head CI remain required for this correction.
+
+## Execution and admission coexistence — 2026-10-08
+
+A further review exposed the shared fallback's priority error: selecting a queue
+cue alone hides execution activity. The minimum-width branch now preserves both
+states with compact labels. `run`/`fail` retain working/failed meaning; queue cues
+use `unc`, `def`, `hold`, `act`, `q+` and `q?` for uncertain, deferred, paused,
+active, nonempty pending and unknown respectively. Ready/paused, approval/project
+selection and model-control priority remain explicit. Counts and simultaneous
+queue details remain in `/queue`; queue metadata never substitutes for execution.
+
+The existing pending-admission regression is expanded to every queue field case
+combined with Running/Idle/Paused/failed activity, over widths 16–80. It checks
+both meanings and bounded width, and forbids working/run outside Running. The
+pre-fix Running/unknown case showed only `gpt-…1-sol · q ?` at width 16. Existing
+active and mixed paused/uncertain checks now require the corresponding compact
+cue while keeping the current state. All 336 terminal library tests and 11
+integration tests pass; authorization/project selection and model-control checks
+are unchanged. Logs: `~/Library/Caches/Alan/ui-status-queue-{red,tests}.log`.
+Independent review, the complete gate and current-head CI remain required.
