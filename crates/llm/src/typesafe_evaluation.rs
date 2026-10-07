@@ -20,9 +20,8 @@ pub struct TypesafeEvaluationClient {
 }
 
 impl TypesafeEvaluationClient {
-    /// Construct a pinned-version evaluator. Aliases require separate requalification.
-    pub fn new(key: String, model: String) -> Result<Self> {
-        ensure!(!key.trim().is_empty(), "TypeSafe credential unavailable");
+    /// Validate a pinned model identifier before saving Connection metadata.
+    pub fn validate_model(model: &str) -> Result<()> {
         let version = model.strip_prefix("jev-").unwrap_or_default();
         ensure!(
             model.len() <= 128
@@ -32,6 +31,13 @@ impl TypesafeEvaluationClient {
                     .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())),
             "TypeSafe requires a pinned model version"
         );
+        Ok(())
+    }
+
+    /// Construct a pinned-version evaluator. Aliases require separate requalification.
+    pub fn new(key: String, model: String) -> Result<Self> {
+        ensure!(!key.trim().is_empty(), "TypeSafe credential unavailable");
+        Self::validate_model(&model)?;
         Ok(Self {
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())

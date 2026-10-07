@@ -95,6 +95,22 @@ struct State {
 }
 
 impl State {
+    fn select_generation(&mut self, pid: u64, profile_id: &str) -> Result<()> {
+        ensure!(pid > 0, "Process PID must be positive");
+        validate_id(profile_id)?;
+        let profile = self
+            .connections
+            .profiles
+            .get(profile_id)
+            .context("unknown profile")?;
+        ensure!(
+            profile.provider.supports_generation(),
+            "evaluation-only profile cannot be selected for generation"
+        );
+        self.selections.insert(pid, profile_id.into());
+        Ok(())
+    }
+
     fn replace_connections(&mut self, connections: ConnectionsFile) {
         let unchanged = connections
             .profiles
@@ -115,8 +131,12 @@ impl State {
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
-        self.selections
-            .retain(|_, profile| installed.contains(profile));
+        self.selections.retain(|_, profile| {
+            self.connections
+                .profiles
+                .get(profile)
+                .is_some_and(|profile| profile.provider.supports_generation())
+        });
         self.requests
             .retain(|_, request| unchanged.contains(&request.profile_id));
         self.native_status
@@ -159,6 +179,19 @@ struct ConnectionLlmProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for ConnectionLlmProvider {
+    fn supports_generation(&self) -> bool {
+        self.client.supports_generation()
+    }
+    fn supports_choice_evaluation(&self) -> bool {
+        self.client.supports_choice_evaluation()
+    }
+    async fn evaluate_choice(
+        &mut self,
+        request: alan_llm::ChoiceEvaluationRequest,
+    ) -> Result<alan_llm::ChoiceEvaluationResponse> {
+        self.client.evaluate_choice(request).await
+    }
+
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
         self.client.generate(request).await
     }
@@ -319,15 +352,10 @@ impl ConnectionService {
     }
 
     pub fn select(&self, pid: u64, profile_id: &str) -> Result<()> {
-        ensure!(pid > 0, "Process PID must be positive");
-        validate_id(profile_id)?;
-        let mut state = self.state.lock().unwrap();
-        ensure!(
-            state.connections.profiles.contains_key(profile_id),
-            "unknown profile"
-        );
-        state.selections.insert(pid, profile_id.to_string());
-        Ok(())
+        self.state
+            .lock()
+            .unwrap()
+            .select_generation(pid, profile_id)
     }
 
     pub fn release_process(&self, pid: u64) {
@@ -420,6 +448,12 @@ impl ConnectionService {
                         state.connections.profiles.contains_key(&profile_id),
                         "unknown profile"
                     );
+                    ensure!(
+                        state.connections.profiles[&profile_id]
+                            .provider
+                            .supports_generation(),
+                        "evaluation-only profile cannot be the generation default"
+                    );
                     state.connections.default_profile = Some(profile_id);
                     persist = true;
                     refresh = true;
@@ -449,12 +483,7 @@ impl ConnectionService {
                     refresh = true;
                 }
                 ConnectionCommand::Select { pid, profile_id } => {
-                    ensure!(pid > 0, "Process PID must be positive");
-                    ensure!(
-                        state.connections.profiles.contains_key(&profile_id),
-                        "unknown profile"
-                    );
-                    state.selections.insert(pid, profile_id);
+                    state.select_generation(pid, &profile_id)?;
                 }
                 ConnectionCommand::RequestNative { request } => {
                     validate_id(&request.id)?;
@@ -613,9 +642,20 @@ impl ConnectionService {
                         .published_accounts
                         .insert(profile_id.clone(), account.into());
                 }
-                registry
-                    .llmfs
-                    .register_connection(&profile_id, Box::new(ConnectionLlmProvider { client }));
+                let provider = Box::new(ConnectionLlmProvider { client });
+                if profile.provider == alan_agent_engine::LlmProvider::TypesafeEvaluation {
+                    registry.llmfs.register_connection_profile(
+                        &profile_id,
+                        alan_llmfs::ConnectionProfile::new(
+                            profile.provider.as_str(),
+                            profile.settings.get("model").cloned().unwrap_or_default(),
+                            profile.credential_id.clone().unwrap_or_default(),
+                        ),
+                        provider,
+                    );
+                } else {
+                    registry.llmfs.register_connection(&profile_id, provider);
+                }
                 registry
                     .published_profiles
                     .insert(profile_id.clone(), profile);
@@ -798,6 +838,10 @@ fn validate_connections(connections: &ConnectionsFile) -> Result<()> {
         ensure!(
             connections.profiles.contains_key(default),
             "unknown default profile"
+        );
+        ensure!(
+            connections.profiles[default].provider.supports_generation(),
+            "evaluation-only profile cannot be the generation default"
         );
     }
     for (id, profile) in &connections.profiles {

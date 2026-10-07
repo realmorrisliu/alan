@@ -52,9 +52,16 @@ pub enum LlmProvider {
     OpenRouter,
     #[serde(rename = "anthropic_messages")]
     AnthropicMessages,
+    #[serde(rename = "typesafe")]
+    TypesafeEvaluation,
 }
 
 impl LlmProvider {
+    /// Evaluation-only providers cannot be selected for a generation-bound Agent.
+    pub fn supports_generation(self) -> bool {
+        !matches!(self, Self::TypesafeEvaluation)
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::GoogleGeminiGenerateContent => "google_gemini_generate_content",
@@ -64,6 +71,7 @@ impl LlmProvider {
             Self::OpenAiChatCompletionsCompatible => "openai_chat_completions_compatible",
             Self::OpenRouter => "openrouter",
             Self::AnthropicMessages => "anthropic_messages",
+            Self::TypesafeEvaluation => "typesafe",
         }
     }
 }
@@ -81,6 +89,7 @@ impl<'de> Deserialize<'de> for LlmProvider {
             "openai_chat_completions_compatible",
             "openrouter",
             "anthropic_messages",
+            "typesafe",
         ];
 
         let value = String::deserialize(deserializer)?;
@@ -92,6 +101,7 @@ impl<'de> Deserialize<'de> for LlmProvider {
             "openai_chat_completions_compatible" => Ok(Self::OpenAiChatCompletionsCompatible),
             "openrouter" => Ok(Self::OpenRouter),
             "anthropic_messages" => Ok(Self::AnthropicMessages),
+            "typesafe" => Ok(Self::TypesafeEvaluation),
             other => Err(de::Error::unknown_variant(other, SUPPORTED)),
         }
     }
@@ -255,6 +265,11 @@ pub struct Config {
     /// OPENROUTER_MODEL
     #[serde(skip, default = "default_openrouter_model")]
     pub openrouter_model: String,
+    /// Host-resolved only; never serialized into Agent configuration.
+    #[serde(skip)]
+    pub typesafe_api_key: Option<String>,
+    #[serde(skip, default = "default_typesafe_model")]
+    pub typesafe_model: String,
 
     /// OPENROUTER_HTTP_REFERER
     #[serde(skip, default)]
@@ -422,6 +437,10 @@ fn default_openrouter_base_url() -> String {
     alan_llm::openrouter::OPENROUTER_BASE_URL.to_string()
 }
 
+fn default_typesafe_model() -> String {
+    "jev-1.13.0".into()
+}
+
 fn default_openrouter_model() -> String {
     "moonshotai/kimi-k2.6".to_string()
 }
@@ -488,6 +507,8 @@ impl Default for Config {
             openrouter_api_key: None,
             openrouter_base_url: default_openrouter_base_url(),
             openrouter_model: default_openrouter_model(),
+            typesafe_api_key: None,
+            typesafe_model: default_typesafe_model(),
             openrouter_http_referer: None,
             openrouter_x_title: None,
             openrouter_app_categories: Vec::new(),
@@ -541,6 +562,8 @@ impl Config {
         self.openrouter_api_key = None;
         self.openrouter_base_url = default_openrouter_base_url();
         self.openrouter_model = default_openrouter_model();
+        self.typesafe_model = default_typesafe_model();
+        self.typesafe_api_key = None;
         self.openrouter_http_referer = None;
         self.openrouter_x_title = None;
         self.openrouter_app_categories.clear();
@@ -577,6 +600,8 @@ impl Config {
         self.openrouter_api_key = other.openrouter_api_key.clone();
         self.openrouter_base_url = other.openrouter_base_url.clone();
         self.openrouter_model = other.openrouter_model.clone();
+        self.typesafe_model = other.typesafe_model.clone();
+        self.typesafe_api_key = other.typesafe_api_key.clone();
         self.openrouter_http_referer = other.openrouter_http_referer.clone();
         self.openrouter_x_title = other.openrouter_x_title.clone();
         self.openrouter_app_categories = other.openrouter_app_categories.clone();

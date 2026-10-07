@@ -162,6 +162,8 @@ impl LlmClientFactory for ProductLlmClientFactory {
             profile_id: profile_id.to_string(),
             connections: connections.clone(),
             provider_name: client.provider_name(),
+            generation: client.supports_generation(),
+            evaluation: client.supports_choice_evaluation(),
         }))
     }
 }
@@ -175,6 +177,8 @@ struct LiveSecretProvider {
     profile_id: String,
     connections: ConnectionsFile,
     provider_name: &'static str,
+    generation: bool,
+    evaluation: bool,
 }
 
 impl LiveSecretProvider {
@@ -186,6 +190,19 @@ impl LiveSecretProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for LiveSecretProvider {
+    fn supports_generation(&self) -> bool {
+        self.generation
+    }
+    fn supports_choice_evaluation(&self) -> bool {
+        self.evaluation
+    }
+    async fn evaluate_choice(
+        &mut self,
+        request: alan_llm::ChoiceEvaluationRequest,
+    ) -> Result<alan_llm::ChoiceEvaluationResponse> {
+        self.client()?.evaluate_choice(request).await
+    }
+
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
         self.client()?.generate(request).await
     }

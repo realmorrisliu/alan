@@ -175,6 +175,10 @@ impl ConnectionService {
             .context("Process profile unavailable")?
             .clone();
         ensure!(
+            original.provider.supports_generation(),
+            "evaluation-only profile cannot be captured for generation"
+        );
+        ensure!(
             registry.published_profiles.get(profile_id) == Some(&original),
             "Process profile is not callable"
         );

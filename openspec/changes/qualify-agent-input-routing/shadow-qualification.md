@@ -2,8 +2,8 @@
 
 Status: reviewed and frozen pre-measurement gates and labeled corpus. No candidate has been measured,
 the finite-choice boundary is locally delivered in `623440ca`, and automatic
-execution is disabled. A direct TypeSafe adapter capability probe has passed; no normal evaluator
-profile has yet been published or used for routing qualification. The user
+execution is disabled. Direct adapter and isolated mounted-profile TypeSafe capability probes have passed.
+Machine shadow collection and routing qualification are still unfinished. The user
 activated this bounded next phase after local lifecycle/model/UI acceptance;
 predecessor PR merge and delivered Connection capability remain entry gates for
 integrated qualification and canonical sync.
@@ -103,4 +103,6 @@ Tasks 1.2, 2.1, 2.3 and 2.4 remain open: the generic typed operation boundary
 now exists in `623440ca`, but its Machine consumer, real-provider publication and
 baseline measurements remain unfinished. The TypeSafe transport passed local HTTP fixtures and one authenticated capability
 probe (see the cognitive change's typesafe-adapter-entry.md). That does not complete
-ordinary Connection profile publication or routing qualification. The separate activation decision remains pending.
+routing qualification. Isolated normal profile publication has since passed the
+Host/Connection/llmfs probe in typesafe-profile-entry.md; Machine integration and
+all frozen corpus observations remain pending. The separate activation decision remains pending.

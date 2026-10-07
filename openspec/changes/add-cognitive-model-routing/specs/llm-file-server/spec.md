@@ -28,3 +28,17 @@ A reachable Connection SHALL advertise finite-choice evaluation only when its ca
 - **WHEN** a captured callable supports evaluation but not generation
 - **THEN** its capability projection exposes that distinction
 - **AND** generation allocation fails before provider dispatch or generation quota reservation
+
+### Requirement: Evaluation profiles preserve Host credential and generation ownership
+TypeSafe Connection profiles SHALL use the existing Host credential store and forward finite-choice evaluation through callable wrappers. Each new request SHALL resolve current credential authority. Evaluation-only profiles SHALL NOT replace generation defaults, Process selections or captured generation bindings. Callable publication SHALL retain pinned provider/model provenance without exposing secrets.
+
+#### Scenario: Credential revoked after callable capture
+- **WHEN** a Host secret is removed after an evaluation callable was captured
+- **THEN** a subsequent evaluation fails before provider dispatch
+- **AND** the revoked secret is not recovered from the captured configuration
+
+#### Scenario: Evaluation profile is published
+- **WHEN** a valid pinned TypeSafe profile with an available Host credential is published
+- **THEN** llmfs evaluate calls reach the evaluation adapter and return pinned provenance
+- **AND** choosing that profile as generation default or Process generation selection fails without changing the prior binding
+- **AND** saved Agent configuration and Connection metadata omit secret bytes
