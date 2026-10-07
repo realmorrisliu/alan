@@ -406,11 +406,11 @@ async fn steering_and_brokered_follow_up_use_the_same_shadow_dispatch_boundary()
             let mut emit = |_event: Event| async {};
             assert!(
                 handle_queued_steering_inputs(
-                    &mut state,
+                    &mut state.machine,
+                    &state.environment,
                     &writer,
                     &CancellationToken::new(),
                     &[],
-                    0,
                     Some(&broker),
                     &mut emit
                 )

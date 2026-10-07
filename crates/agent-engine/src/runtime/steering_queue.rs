@@ -2,18 +2,18 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::transition::RuntimeLoopState;
+use super::transition::NamespaceRuntimeEnvironment;
 use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, reject_inband_overflow};
 use super::turn_support::tool_result_preview;
-use crate::agent_machine::NormalizedToolCall;
+use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 use tokio_util::sync::CancellationToken;
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
+    environment: &NamespaceRuntimeEnvironment,
     writer: &super::transition::NamespaceTapeWriter,
     cancel: &CancellationToken,
-    tool_calls: &[NormalizedToolCall],
-    remaining_start_idx: usize,
+    remaining: &[NormalizedToolCall],
     steering_broker: Option<&TurnInputBroker>,
     emit: &mut E,
 ) -> Result<bool>
@@ -32,15 +32,16 @@ where
             mode: InputMode::Steer,
         } = &submission.op
         {
-            if let Err(error) = state.dispatch_input(&submission, cancel).await {
-                state.machine.push_buffered_inband_submission(submission);
+            if let Err(error) =
+                super::shadow_evaluation::dispatch_input(machine, environment, &submission, cancel)
+                    .await
+            {
+                machine.push_buffered_inband_submission(submission);
                 return Err(error);
             }
             // Durable dispatch makes this input part of the active turn even if
             // the subsequent namespace Tape projection fails.
-            state
-                .machine
-                .accept_steering_submission(submission.id.clone());
+            machine.accept_steering_submission(submission.id.clone());
             writer
                 .append_record(
                     "user",
@@ -49,8 +50,8 @@ where
                     &[],
                 )
                 .await?;
-            state.machine.note_resumed_user_input();
-            state.machine.add_user_message_parts(parts.clone());
+            machine.note_resumed_user_input();
+            machine.add_user_message_parts(parts.clone());
             consumed_steering = true;
             continue;
         }
@@ -61,26 +62,19 @@ where
                 mode: InputMode::FollowUp,
                 ..
             }
-        ) && state.machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
+        ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            reject_inband_overflow(
-                &mut state.machine,
-                &state.environment.agent_files(),
-                &submission,
-                emit,
-            )
-            .await?;
+            reject_inband_overflow(machine, &environment.agent_files(), &submission, emit).await?;
             continue;
         }
 
-        state.machine.push_buffered_inband_submission(submission);
+        machine.push_buffered_inband_submission(submission);
     }
 
     if !consumed_steering {
         return Ok(false);
     }
 
-    let remaining = &tool_calls[remaining_start_idx..];
     if !remaining.is_empty() {
         emit(Event::Error {
             message: format!(
@@ -113,15 +107,13 @@ where
             audit: None,
         })
         .await;
-        state.machine.record_tool_call(
+        machine.record_tool_call(
             &skipped.name,
             skipped.arguments.clone(),
             skipped_payload.clone(),
             false,
         );
-        state
-            .machine
-            .add_tool_message(&skipped.id, &skipped.name, skipped_payload);
+        machine.add_tool_message(&skipped.id, &skipped.name, skipped_payload);
     }
 
     Ok(true)

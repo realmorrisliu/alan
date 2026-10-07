@@ -48,3 +48,23 @@ score correctness, failure denominators, latency and verified cost. Unknown bill
 cannot pass the cost gate. Keep tasks 2.2 onward open; PR merge, canonical sync and
 archive are also pending. User authorization is still required before enabling
 automatic execution, even if all shadow gates later pass.
+
+## Full-workspace steering boundary correction — 2026-10-07
+
+Full workspace verification at `9defc084` found that the shadow integration had
+made the steering leaf receive `RuntimeLoopState`, violating the existing
+`transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate` contract.
+The leaf now receives only Agent Machine and namespace environment. Shared shadow
+observation/dispatch remains in its existing module; ordinary and steering paths
+reuse it with unchanged durable observation-before-dispatch, cancellation,
+publication, requeue and skipped-Tool behavior. Callers pass the remaining Tool
+slice directly instead of the complete batch and a separate index.
+
+The unchanged boundary suite passes all 20 tests. The full workspace rerun passes
+2,824 tests with zero failures and 13 existing ignored tests across 95 result
+summaries. Spec and Standards review passed without weakening assertions.
+Logs: `~/Library/Caches/Alan/routing-shadow-current-workspace-tests.log` (failure),
+`shadow-leaf-boundary-tests.log` and
+`routing-shadow-current-workspace-tests-fixed.log` (successful rerun).
+This is local current-source evidence, not remote CI or a new real-model
+qualification result; the v1 routing failure and disabled activation remain.

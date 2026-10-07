@@ -625,11 +625,11 @@ where
             } => {
                 refresh_context |= call_refresh;
                 if handle_queued_steering_inputs(
-                    state,
+                    &mut state.machine,
+                    &state.environment,
                     writer,
                     inputs.cancel,
-                    tool_calls,
-                    idx + 1,
+                    &tool_calls[idx + 1..],
                     inputs.steering_broker,
                     emit,
                 )
