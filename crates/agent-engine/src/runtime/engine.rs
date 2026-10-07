@@ -365,21 +365,20 @@ async fn initialize_agent_machine(
         }
     };
 
-    Ok(AgentMachineStartupOutcome {
-        metadata: RuntimeStartupMetadata::ready(
-            launch.process_path.to_string(),
-            launch.agent_path.to_string(),
-            machine.rollout_id().map(str::to_string),
-            machine.rollout_path().cloned(),
-            AgentMachineDurabilityState {
-                durable: machine.is_durable(),
-                required: durability_required,
-            },
-            request_controls,
-            warnings,
-        ),
-        machine,
-    })
+    let mut metadata = RuntimeStartupMetadata::ready(
+        launch.process_path.to_string(),
+        launch.agent_path.to_string(),
+        machine.rollout_id().map(str::to_string),
+        machine.rollout_path().cloned(),
+        AgentMachineDurabilityState {
+            durable: machine.is_durable(),
+            required: durability_required,
+        },
+        request_controls,
+        warnings,
+    );
+    metadata.evaluation_observation = machine.evaluation_observation.clone();
+    Ok(AgentMachineStartupOutcome { metadata, machine })
 }
 
 /// Start Agent Execution Engine over an already-assembled Process namespace.

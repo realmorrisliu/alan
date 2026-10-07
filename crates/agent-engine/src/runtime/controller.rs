@@ -36,6 +36,8 @@ pub struct RuntimeStartupMetadata {
     pub execution_backend: String,
     /// Request controls resolved for this Agent Machine.
     pub request_controls: crate::ResolvedRequestControls,
+    /// Latest acknowledged evaluation advice, reconstructed without dispatch on recovery.
+    pub evaluation_observation: Option<serde_json::Value>,
     /// Non-fatal startup diagnostics.
     pub warnings: Vec<String>,
 }
@@ -59,6 +61,7 @@ impl RuntimeStartupMetadata {
             execution_backend: crate::tools::active_backend_name().to_string(),
             request_controls,
             warnings,
+            evaluation_observation: None,
         }
     }
 

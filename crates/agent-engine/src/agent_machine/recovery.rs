@@ -411,6 +411,7 @@ impl AgentMachine {
         machine.latest_compaction_attempt = recovered_latest_compaction_attempt;
         machine.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
         machine.recover_input_queue(&event_records)?;
+        machine.evaluation_observation = super::evaluation::recover(&event_records)?;
         machine.responses_continuation =
             Self::responses_continuation_from_event_records(&event_records);
         for pending in Self::pending_host_mounts_from_event_records(&event_records) {
