@@ -7,7 +7,9 @@ The archived self-development milestone stays closed and immutable.
 
 ## 1. Unified input and recovery
 
-The current apply checklist has 49 items: 27 checked, 22 unchecked. This measures
+The initial apply checklist had 49 items: 27 checked, 22 unchecked.
+After the directory-selection and model-binding closure audits it has
+29 checked and 20 unchecked. This measures
 recorded task closure, not implementation percentage. Broad parent tasks stay
 open until every required boundary has evidence. Historical implementation notes
 in design/tasks are dated slice reports, not a current absence-of-code inventory.
@@ -205,8 +207,8 @@ are dated investigation records, not current missing implementation.
   independent local reviews and native model/queue evidence are in
   [catalog delivery](chatgpt-catalog-delivery.md). The real catalog is available;
   successful switch, failed switch preserving binding and queued A followed by B
-  were accepted. Task 2.20 remains open for its full recovery/unavailable-binding
-  matrix, not because ordinary model switching is absent.
+  were accepted. Task 2.20 is now closed by the subsequent recovery/unavailable-
+  binding clause audit in the catalog delivery record; canonical sync remains open.
 - UI PR #1034 remains open at `942a5288ee942e03c17adc23a7580cdd26fc4b59` with
   all reported checks successful. Local native acceptance is complete; merge and
   canonical sync remain delivery work under its owning change.

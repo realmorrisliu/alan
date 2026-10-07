@@ -187,3 +187,37 @@ Strict OpenSpec validation reports the ten pre-existing long-requirement warning
 on base `59855ebe`; no warning concerns this provider delta. PR #1032 already
 contains their text-preserving restructuring. This branch does not duplicate
 those edits or claim strict validation passed before that prerequisite lands.
+
+
+## Task 2.20 closure audit — 2026-10-07
+
+Source `de003b4d80bc6d57ff10c5c3dafc10ae0f53d0d7` was inspected against
+merged main `43700bb11e28bc22e3cb099009018e0a494e4e3d`. The generation
+restore/capture contract and the Engine admission/recovery tests already exist
+on main; this audit adds no production mechanism. The shadow branch's evaluator
+capture is a separate opt-in capability, not the evidence for generation recovery.
+
+| Task clause | Owning executable evidence and assertions |
+| --- | --- |
+| Capture binding and resolved controls before acknowledgement | `engine_model_binding_tests::runtime_api_and_file_admission_capture_callable_before_dispatch` checks both API and AgentFS inputs, durable binding/controls and actual queued model projection before dispatch |
+| Earlier queued A survives selection B | `engine_model_contention_tests::observer_selection_preserves_active_guardian_and_admitted_callable` gates real Runtime calls, checks queued and active/guardian requests remain A with low reasoning, and new work uses B with high reasoning; native candidate 3 above independently exercises real ChatGPT A/B |
+| Recovery preserves binding and stays paused | `engine_admission_recovery_tests::admission_recovery_follow_up_restores_a_once_after_continue_not_b` loads a durable A input with selected B into a new Process, checks no restore/model call before continue, then exactly one A request with original controls and no B request |
+| Unavailable original callable never remaps | Its `follow_up_unavailable_never_falls_back_to_b` sibling requires failed correlated completion, no dispatch record, no A/B generation and durable queue removal; another recovery finds no pending input or retained binding |
+| Orphan steering cannot execute after restart | Both `orphan_steer_*_rejected_before_dispatch` cases require rejection before dispatch, regardless of callable availability |
+| Selection never resumes paused work | `engine_model_projection_tests::active_and_admitted_a_survive_selection_b_then_settled_pause` selects B through the real Runtime while paused and verifies unchanged queued identity, paused queue and no active model |
+| Exact authority belongs to Connection Service | `connection::process_binding_tests::managed_none_catalog_exact_restore_preserves_full_authority` rejects changed model/provider/credential/revision/profile and unpublished callable; `catalog_tests::implicit_account_replacement_cannot_select_or_restore_with_old_catalog_authority` rejects old account identity after replacement |
+| Failure preserves selection and does not silently continue | `engine_model_qualification_tests::selection_recorder_failure_retains_a_and_exact_pending_active_bindings` checks failed persistence retains A, captured/active bindings and no dispatch; settlement tests retain pause on unknown durable removal and never requeue after known removal |
+
+Fresh verification: `cargo test -p alan-agent-engine model --lib` passed 68 tests;
+`cargo test -p alan-service-manager connection:: --lib` passed 18 tests.
+This includes the four durable recovery cases, actual request/control assertions,
+selection contention, settlement uncertainty and retry/recovery boundaries.
+Provider execution in these boundary tests is controlled Mock generation; real
+provider model selection and queued-binding behavior are evidenced separately by
+the native candidate 3 acceptance above. No new real-provider recovery claim is
+inferred from those fixtures. Logs are in `~/Library/Caches/Alan/` as
+`model-binding-closure-tests.log` and `model-connection-closure-tests.log`.
+
+These mapped checks plus merged native model acceptance close task 2.20's
+implementation and acceptance clauses. Canonical synchronization and the broader
+unified-input lifecycle/authority matrix remain under tasks 4.2 and their owners.

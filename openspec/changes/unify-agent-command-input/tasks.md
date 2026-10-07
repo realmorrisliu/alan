@@ -258,7 +258,14 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
   admission must remain rejected, and authoritative correlated cwd settlement
   must precede success/revocation. No G3 or frontend completion is claimed.
 
-- [ ] 2.20 Coordinate Connection-confirmed model selection with input admission: capture the owning callable binding and resolver-owned controls for each acknowledged input; preserve earlier queued bindings across later selection, dispatch and explicit recovery; fail visibly if a captured binding is unavailable instead of silently remapping it. Install confirmed next-input bindings at a serialized admission boundary without Engine profile authority or implicit queue continuation. Owning contracts are canonical `provider-connection-contract` and `provider-request-controls`; delivered terminal acceptance is recorded in archived `2026-10-07-make-alan-self-development-ready` task4.4; an idle-only selection path does not complete this task.
+- [x] 2.20 Coordinate Connection-confirmed model selection with input admission: capture the owning callable binding and resolver-owned controls for each acknowledged input; preserve earlier queued bindings across later selection, dispatch and explicit recovery; fail visibly if a captured binding is unavailable instead of silently remapping it. Install confirmed next-input bindings at a serialized admission boundary without Engine profile authority or implicit queue continuation. Owning contracts are canonical `provider-connection-contract` and `provider-request-controls`; delivered terminal acceptance is recorded in archived `2026-10-07-make-alan-self-development-ready` task4.4; an idle-only selection path does not complete this task.
+
+  2026-10-07 closure: merged model delivery plus the
+  [clause-by-clause recovery/binding audit](chatgpt-catalog-delivery.md#task-220-closure-audit--2026-10-07)
+  cover exact recovery, unavailable original binding, resolved controls,
+  serialized admission and no implicit continuation. Fresh owning checks passed
+  (68 Engine and 18 Connection tests); canonical sync remains task 4.2.
+  The following 2026-10-01 note is historical, not current missing implementation.
 
   On 2026-10-01 Root submitted one owning-backend author task via the live Alan
   Root in w5E:p1. It requires real provider/Runtime red regressions for A/B
