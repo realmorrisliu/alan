@@ -115,15 +115,18 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 ## ADDED Requirements
 
 ### Requirement: Project tools and native commands share public paths and backing files
-Project read, edit and search tools SHALL accept public grant-relative paths for
-any delegated Host Mount and shared-cwd-relative paths for the active shell grant.
-The Host adapter SHALL resolve structured path arguments against explicitly
-delegated Host Mounts to existing file operations. Agent edits and native
-commands SHALL address the same backing files without a shadow project copy,
-protocol knowledge or command-string rewriting; to use the same file through the
-native shell, the shared cwd SHALL reference that file's grant. This SHALL NOT
-materialize virtual services as Host files or alter existing authorization,
-stale-content checks and save/commit semantics.
+Structured project tools and native commands SHALL address the same backing files through their existing Host adapters and delegated authority. Public paths, current-grant native scope, commit status and stale-content checks SHALL stay consistent without mirror copies or command rewriting.
+
+#### Scenario: Project path resolution preserves existing file semantics
+- **WHEN** a structured project tool or native command addresses a delegated file
+- **THEN** Project read, edit and search tools SHALL accept public grant-relative paths for any
+  delegated Host Mount and shared-cwd-relative paths for the active shell grant. The Host
+  adapter SHALL resolve structured path arguments against explicitly delegated Host Mounts to
+  existing file operations. Agent edits and native commands SHALL address the same backing files
+  without a shadow project copy, protocol knowledge or command-string rewriting; to use the same
+  file through the native shell, the shared cwd SHALL reference that file's grant. This SHALL
+  NOT materialize virtual services as Host files or alter existing authorization, stale-content
+  checks and save/commit semantics.
 
 #### Scenario: Committed Agent edit is inspected by a native command
 - **WHEN** an Agent edit to a file in the active shell grant reports committed success

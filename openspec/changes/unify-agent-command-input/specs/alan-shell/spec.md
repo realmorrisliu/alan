@@ -264,18 +264,21 @@ responses SHALL be consumed by their request before ordinary routing.
 ## ADDED Requirements
 
 ### Requirement: Unified commands reuse a governed Host shell
-The command route SHALL pass its unchanged body to the selected Host shell through
-one governed native Tool execution boundary shared with Agent commands, except
-that a standalone user `!cd <directory>` SHALL use the bounded shared-cwd control
-defined by Agent Process. Native PATH and filesystem rules SHALL determine
-executable and operand lookup. Shell composition, redirection, expansion and
-multiline scripts SHALL use that shell's semantics. Alan MUST NOT implement
-implicit aP lookup, command path rewriting or fallback shell selection. One script
-SHALL remain one submission. Explicit `!` SHALL bypass generation but MUST NOT
-bypass permissions or sandbox policy. Each native shell action SHALL be limited
-to the Host Mount grant referenced by shared cwd; a separate standalone `!cd`
-selects another already-delegated grant. A single native action SHALL NOT be
-required to address disjoint grants simultaneously.
+Explicit commands SHALL reuse the governed native Tool Process boundary with unchanged script data and native shell semantics. Standalone user cd SHALL remain the bounded shared-cwd operation. Explicit routing SHALL NOT grant authority or add a competing shell implementation.
+
+#### Scenario: Native dispatch preserves scripts and delegated scope
+- **WHEN** the Machine dispatches an explicit command to the Host adapter
+- **THEN** The command route SHALL pass its unchanged body to the selected Host shell through
+  one governed native Tool execution boundary shared with Agent commands, except that a
+  standalone user `!cd <directory>` SHALL use the bounded shared-cwd control defined by Agent
+  Process. Native PATH and filesystem rules SHALL determine executable and operand lookup. Shell
+  composition, redirection, expansion and multiline scripts SHALL use that shell's semantics.
+  Alan MUST NOT implement implicit aP lookup, command path rewriting or fallback shell
+  selection. One script SHALL remain one submission. Explicit `!` SHALL bypass generation but
+  MUST NOT bypass permissions or sandbox policy. Each native shell action SHALL be limited to
+  the Host Mount grant referenced by shared cwd; a separate standalone `!cd` selects another
+  already-delegated grant. A single native action SHALL NOT be required to address disjoint
+  grants simultaneously.
 
 #### Scenario: Relative executable is invoked
 - **WHEN** `!./tool arg` executes with an authorized native project cwd
@@ -324,17 +327,20 @@ required to address disjoint grants simultaneously.
 - **AND** Alan internal control requires an explicitly installed alan9 command that encapsulates namespace execution
 
 ### Requirement: Mount context does not imply native filesystem virtualization
-Mounted aP resources SHALL determine authorized service reachability, not automatic
-prompt inclusion or a matching native path. Delegated Host Mount grants SHALL
-supply both HostFS access and native execution authority through their owner.
-Virtual mounts MUST NOT imply native access. Scoped native cwd/path metadata SHALL
-be used only inside the Host adapter's ephemeral spawn/sandbox context; path strings
-SHALL NOT grant access. Alan-captured command output and evidence retain public
-paths or opaque references under existing redaction. Native shell redirection and
-file writes retain Host-shell semantics: files in the active delegated grant are
-ordinary project data, may contain native path strings, and are not rewritten or
-automatically copied into Alan evidence. Shell-facing output captured by Alan MUST
-NOT be rewritten to unusable aP aliases.
+Mounted aP resources SHALL grant service reachability rather than imply native filesystem virtualization. Host Mount authority and private adapter metadata SHALL govern native access; captured output projection SHALL preserve ordinary project-file and shell-redirection semantics.
+
+#### Scenario: Native path handling preserves the mount authority boundary
+- **WHEN** mounted resources or project file content are used by a native command
+- **THEN** Mounted aP resources SHALL determine authorized service reachability, not automatic
+  prompt inclusion or a matching native path. Delegated Host Mount grants SHALL supply both
+  HostFS access and native execution authority through their owner. Virtual mounts MUST NOT
+  imply native access. Scoped native cwd/path metadata SHALL be used only inside the Host
+  adapter's ephemeral spawn/sandbox context; path strings SHALL NOT grant access. Alan-captured
+  command output and evidence retain public paths or opaque references under existing redaction.
+  Native shell redirection and file writes retain Host-shell semantics: files in the active
+  delegated grant are ordinary project data, may contain native path strings, and are not
+  rewritten or automatically copied into Alan evidence. Shell-facing output captured by Alan
+  MUST NOT be rewritten to unusable aP aliases.
 
 #### Scenario: Agent reads a virtual resource
 - **WHEN** an Agent has a mounted virtual document service
@@ -370,14 +376,18 @@ wait indefinitely, guess consent or implicitly open a terminal.
 - **AND** any already completed effects are not reported as rolled back
 
 ### Requirement: Alan internal control is encapsulated by task-oriented commands
-Alan SHALL expose needed internal control operations as ordinary governed alan9
-command executables primarily for Agent use. Normal user flows and Agent command
-contracts SHALL NOT require aP paths, descriptors or commit-document knowledge.
-Advanced users MAY explicitly invoke these commands; developer protocol inspection
-MAY remain available. Commands SHALL reuse existing executable discovery, service
-owners and caller-scoped authority, without a duplicate Host manager or state store.
-Exact command names and schemas SHALL be documented with the delivered operations;
-this contract does not authorize a speculative wrapper for every protocol operation.
+Internal control SHALL use task-oriented governed alan9 executables with caller-scoped authority, existing service owners and documented command contracts. Ordinary users and Agents SHALL NOT need raw protocol operations, and no duplicate privileged manager SHALL be introduced.
+
+#### Scenario: An internal command exposes its supported task contract
+- **WHEN** Alan exposes an internal control operation as a command
+- **THEN** Alan SHALL expose needed internal control operations as ordinary governed alan9
+  command executables primarily for Agent use. Normal user flows and Agent command contracts
+  SHALL NOT require aP paths, descriptors or commit-document knowledge. Advanced users MAY
+  explicitly invoke these commands; developer protocol inspection MAY remain available. Commands
+  SHALL reuse existing executable discovery, service owners and caller-scoped authority, without
+  a duplicate Host manager or state store. Exact command names and schemas SHALL be documented
+  with the delivered operations; this contract does not authorize a speculative wrapper for
+  every protocol operation.
 
 #### Scenario: Agent controls internal work
 - **WHEN** an Agent invokes an installed alan9 command for a supported internal operation

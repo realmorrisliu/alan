@@ -174,14 +174,17 @@ generate. The `events` records are the source of truth for the model's output.
 ## ADDED Requirements
 
 ### Requirement: One Agent Machine owns command and reasoning execution
-An Agent Machine SHALL advance accepted work through deterministic command
-operations or generation using its existing namespace and governance. Direct
-commands SHALL not require a generation step. Native shell execution SHALL use
-the ordinary governed Tool Process launch boundary and existing action evidence,
-shared with Agent commands. The Host adapter SHALL track native descendants;
-each shell fork need not create a separate Alan Process. Standalone user cd
-SHALL update the owning Process context only after authorization. No renderer,
-classifier or second execution manager SHALL own a competing execution path.
+An Agent Machine SHALL own both deterministic command and generation transitions. Native commands SHALL reuse the governed Tool Process boundary, Action evidence and Process cwd authority; no competing executor SHALL be introduced.
+
+#### Scenario: Command execution uses the existing runtime owners
+- **WHEN** an Agent Machine advances a direct command or generated Tool call
+- **THEN** An Agent Machine SHALL advance accepted work through deterministic command operations
+  or generation using its existing namespace and governance. Direct commands SHALL not require a
+  generation step. Native shell execution SHALL use the ordinary governed Tool Process launch
+  boundary and existing action evidence, shared with Agent commands. The Host adapter SHALL
+  track native descendants; each shell fork need not create a separate Alan Process. Standalone
+  user cd SHALL update the owning Process context only after authorization. No renderer,
+  classifier or second execution manager SHALL own a competing execution path.
 
 #### Scenario: Explicit command needs no model
 - **WHEN** a valid explicit command has the authority required by its execution policy
@@ -194,19 +197,22 @@ classifier or second execution manager SHALL own a competing execution path.
 - **AND** the command does not thereby become a model-callable Tool
 
 ### Requirement: Agent Process owns ordered input and shared cwd
-Ordinary accepted submissions SHALL execute in one Agent-owned order. Controls
-and request responses SHALL retain their separate handling. The Agent Process
-SHALL own one cwd reference to a delegated Host Mount and normalized relative
-location, resolved by the Host adapter into native execution cwd. Standalone
-explicit user `cd <directory>` SHALL accept one quoted/escaped literal Host or
-relative directory, or a public path under an already-delegated Host Mount, and
-update it in execution order after access checks. No-arg, `-`, expansion and
-substitution forms SHALL fail explicitly in this initial builtin. A native shell
-action SHALL be scoped to the one grant referenced by shared cwd; selecting a
-different delegated grant requires a separate standalone `!cd`. Composed scripts
-SHALL retain native shell cd semantics without changing shared cwd. Virtual aP
-directories SHALL NOT serve as native execution cwd. Per-action Agent cwd SHALL
-NOT silently change it. Each submission SHALL have correlated outcomes.
+The Agent Process SHALL own ordered ordinary input, correlated outcomes and one authorized shared cwd. Standalone explicit user cd SHALL update that cwd in order; controls, request responses and per-action cwd SHALL retain their separate semantics.
+
+#### Scenario: Ordinary input uses the shared Process context
+- **WHEN** ordinary input or a standalone directory selection is admitted
+- **THEN** Ordinary accepted submissions SHALL execute in one Agent-owned order. Controls and
+  request responses SHALL retain their separate handling. The Agent Process SHALL own one cwd
+  reference to a delegated Host Mount and normalized relative location, resolved by the Host
+  adapter into native execution cwd. Standalone explicit user `cd <directory>` SHALL accept one
+  quoted/escaped literal Host or relative directory, or a public path under an already-delegated
+  Host Mount, and update it in execution order after access checks. No-arg, `-`, expansion and
+  substitution forms SHALL fail explicitly in this initial builtin. A native shell action SHALL
+  be scoped to the one grant referenced by shared cwd; selecting a different delegated grant
+  requires a separate standalone `!cd`. Composed scripts SHALL retain native shell cd semantics
+  without changing shared cwd. Virtual aP directories SHALL NOT serve as native execution cwd.
+  Per-action Agent cwd SHALL NOT silently change it. Each submission SHALL have correlated
+  outcomes.
 
 #### Scenario: Command follows a directory change
 - **WHEN** standalone `!cd subdir` succeeds before a queued relative command
@@ -241,14 +247,18 @@ NOT silently change it. Each submission SHALL have correlated outcomes.
 - **AND** controls stay responsive and completed effects are not automatically undone
 
 ### Requirement: Restart does not imply input replay or directory substitution
-Only explicitly selected recovery SHALL restore earlier work into a fresh
-invocation. Recoverable pending work SHALL remain paused until explicit
-continuation; a plain new launch SHALL NOT select prior work automatically. Unknown effects SHALL require reconciliation before any
-retry. Cwd SHALL be restored only from reliable state with valid current access;
-otherwise directory-dependent work SHALL require an explicit directory choice.
-Missing records SHALL be reported rather than reconstructed from textual Tape or
-reused PIDs. Closing an auxiliary attachment to a still-live instance SHALL NOT
-trigger recovery. Actual application exit ends its owned runtime.
+A fresh invocation SHALL recover prior work only by explicit selection, with current authority validation. Reliable pending work SHALL remain paused, unknown effects SHALL NOT replay automatically, and unavailable cwd or evidence SHALL NOT be silently substituted.
+
+#### Scenario: Recovery preserves execution and authority boundaries
+- **WHEN** an invocation starts or an attachment closes
+- **THEN** Only explicitly selected recovery SHALL restore earlier work into a fresh invocation.
+  Recoverable pending work SHALL remain paused until explicit continuation; a plain new launch
+  SHALL NOT select prior work automatically. Unknown effects SHALL require reconciliation before
+  any retry. Cwd SHALL be restored only from reliable state with valid current access; otherwise
+  directory-dependent work SHALL require an explicit directory choice. Missing records SHALL be
+  reported rather than reconstructed from textual Tape or reused PIDs. Closing an auxiliary
+  attachment to a still-live instance SHALL NOT trigger recovery. Actual application exit ends
+  its owned runtime.
 
 #### Scenario: Pending input is recovered
 - **WHEN** recovery finds a reliable pending submission record
