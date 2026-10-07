@@ -9,7 +9,7 @@ The archived self-development milestone stays closed and immutable.
 
 The initial apply checklist had 49 items: 27 checked, 22 unchecked.
 After the directory-selection and model-binding closure audits it has
-29 checked and 20 unchecked. This measures
+30 checked and 19 unchecked after the forced-termination acceptance below. This measures
 recorded task closure, not implementation percentage. Broad parent tasks stay
 open until every required boundary has evidence. Historical implementation notes
 in design/tasks are dated slice reports, not a current absence-of-code inventory.
@@ -249,3 +249,43 @@ latest-result regression is recorded in `recovery-unknown-latest-test.log`.
 This proves the Runtime presentation boundary only. Parent 2.19 remains open for
 forced-termination product acceptance and full exceptional-startup correlation;
 normal exit, existing no-replay tests and this notice are not substitutes for it.
+
+
+## Forced termination and task 2.19 acceptance — 2026-10-07
+
+Clean source `7b7b1692c878e350bdf6a535c5c64505467e40ef`, release binary SHA-256
+`a14595b771bf43fa88d480016d7006fcc8638e44c2bb7dccb6e323b3b2a3587b`,
+was run as the actual product CLI in owned Herdr session
+`alan-forced-recovery-20261007`, pane `w1:p1`. Evidence lives under
+`~/Library/Caches/Alan/forced-recovery-20261007/`; build/identity, raw rollout
+copies, AgentFS snapshots, ANSI captures, verification and hashes are retained.
+
+The first native command wrote `U`, then waited before a trailing `T`. A second
+command writing `Q` was durably admitted but not dispatched. The source was killed
+with SIGKILL while its effect record was still Unknown. Its remaining shell/sleep
+process group was separately killed by the harness before the trailing write;
+that cleanup is **not** an Alan cancellation acknowledgement or a claim that
+SIGKILL performed orderly descendant shutdown.
+
+| Required boundary | Observed evidence |
+| --- | --- |
+| Explicit selection/discovery | The accepted CLI entry is `--resume`; the selected filename was checked before invocation. No history-list mechanism is required by the accepted scenarios |
+| Fresh execution identity | Source PID 86904 / boot `28d35736-611c-4cdf-98f6-1c5c02637bb1`; resumed PID 87482 / boot `6607a668-a3e9-487d-b8a4-22d049f48235`; repeated PID 87878 / boot `7b2c2d22-19af-4091-a793-b8b27310a4c3`. Reused Root PID 8 is not identity |
+| Chosen durable history and Actions | Original admitted/dispatched IDs and Unknown effect survived; restored directory Action evidence was retained, and new directory/Q Action records were correlated separately |
+| Unknown outcome is truthful | The native terminal displayed the new unknown-outcome warning on both recoveries; durable original status remained Unknown, never successful cancellation |
+| Reliable queue stays paused | Only pending ID `6a448d80-2713-41e7-b5d1-2bd84a6516aa` was recovered; active unknown ID `13b114a8-9cfa-4912-8578-1f604ee47dd3` never re-entered the queue |
+| Current cwd authority | No grant survived either recovery. Continue without authority was rejected; native `/project` approval preserved pause; only explicit `/continue` ran Q |
+| No repeated effects | File remained `U` through recovery and reauthorization, then became exactly `UQ`; no T or repeated U/Q appeared. Repeated recovery had an empty queue. Each original ID has exactly one durable dispatch in the recovered history |
+| Missing/invalid evidence | Expanded Service Manager boot regression covers a selected missing file and an invalid rollout: startup fails, selector is retained, and no fresh rollout is created; all seven root-recovery tests passed |
+| One-shot shutdown | The same product binary consumed redirected input and returned exactly `RECOVERY_ONESHOT_OK` using the real Connection, then exited 0; actual `host.json` and `namespace.ap.sock` were absent afterward |
+| Normal exit, descendants and Herdr detach | Earlier native lifecycle evidence above verifies Ctrl-D/owned-descendant termination and last-view detach/reconnect. This new SIGKILL trace complements it rather than replacing orderly-exit evidence |
+
+Both resumed invocations exited 0 through `/quit`, all three owned Alan PIDs
+were gone, and both test runtime endpoints were removed. The owned Herdr server
+was stopped; its separate test UI client was terminated afterward and its PTY
+handle completed. No default Herdr session or unrelated process was stopped.
+
+This closes task 2.19 implementation and bounded product acceptance on the recorded
+source. The new uncertainty display and expanded boot regression still require
+current-head PR delivery under 4.1 and canonical synchronization under 4.2.
+It does not close unrelated multi-client, cross-grant or Linux qualification.
