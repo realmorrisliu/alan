@@ -36,7 +36,7 @@ Execution order:
   revocation and non-replay with disposable project data and exact effect counts.
 - [x] Exercise Herdr view disconnect/reconnect in an isolated owned session;
   distinguish a retained process from actual exit and forced termination.
-- [ ] Fix only reproduced gaps at their existing owner, run applicable quality
+- [x] Fix only reproduced gaps at their existing owner, run applicable quality
   checks, then record exact review/CI/merge evidence and update owning checkboxes.
 
 Current local checks (unchanged Rust source at `59855ebe`):
@@ -140,7 +140,8 @@ unchecked input/path/multi-client matrices.
   of a fixed delay. Both reviewers passed the fix; the two Host integration
   tests passed afterward. Full `just quality` passed, including standalone
   installer/release checks; log: `next-goal-lifecycle-quality.log` in the cache.
-  Remote delivery remains pending.
+  This bounded lifecycle slice was delivered by PR #1032; see the current
+  delivery record below. Broader parent tasks remain open.
 
 ## 2. Real Connection model switching
 
@@ -187,3 +188,36 @@ commands, discussion, ambiguity, invalid output, outages and explicit overrides.
 Shadow decisions have no execution authority and launch no Tools. Automatic
 routing remains disabled; a later explicit activation decision requires passing
 evidence. Do not add a second execution manager or a speculative adapter framework.
+
+
+## Current delivery reconciliation — 2026-10-07
+
+GitHub state was rechecked after the three baseline collections. The ordered
+lifecycle and model slices have merged; their earlier pending descriptions above
+are dated investigation records, not current missing implementation.
+
+- Lifecycle PR #1032: head `4e9c2877baf2d14639d2ecc7140ef0f6af5983c2`, merged as
+  `43700bb11e28bc22e3cb099009018e0a494e4e3d`. All reported checks succeeded.
+  Independent local Spec/Standards review is recorded above; GitHub has no
+  submitted review object for this PR, so no GitHub review approval is claimed.
+- Model PR #1033: head `a239021e78af816203ef5c43164a3020f8724a57`, merged as
+  `b93501aa7206dd9ef70cb6f4978680784cd19ee4`. All reported checks succeeded;
+  independent local reviews and native model/queue evidence are in
+  [catalog delivery](chatgpt-catalog-delivery.md). The real catalog is available;
+  successful switch, failed switch preserving binding and queued A followed by B
+  were accepted. Task 2.20 remains open for its full recovery/unavailable-binding
+  matrix, not because ordinary model switching is absent.
+- UI PR #1034 remains open at `942a5288ee942e03c17adc23a7580cdd26fc4b59` with
+  all reported checks successful. Local native acceptance is complete; merge and
+  canonical sync remain delivery work under its owning change.
+- Shadow PR #1035 remains draft and stacked on the UI branch. The
+  [qualification report](../qualify-agent-input-routing/shadow-qualification.md)
+  now records the native candidate, generation and deterministic prefix baselines.
+  Both model candidates fail the frozen command-safety/classification gates.
+  Redirected response admission and complete cost/latency qualification remain
+  open; automatic execution is disabled.
+
+No broad same-Agent-client, cross-grant, retention, Linux confinement or unknown-
+effect requirement is closed by this reconciliation. Keep those existing owning
+checklists active; the bounded user's four-stage progress is not a claim that
+all historical unified-input requirements are delivered.

@@ -1,7 +1,11 @@
 # ChatGPT catalog delivery — 2026-10-07
 
 Status: final candidate 3 passed native acceptance, final-tree quality and both
-independent review axes. Remote current-head CI remains a separate delivery gate.
+independent review axes. PR #1033 subsequently merged as
+`b93501aa7206dd9ef70cb6f4978680784cd19ee4` from head
+`a239021e78af816203ef5c43164a3020f8724a57`; all reported checks succeeded.
+See [current delivery reconciliation](next-delivery.md#current-delivery-reconciliation--2026-10-07)
+for the remaining full-task boundaries.
 Owner: task 2.20, canonical provider-connection-contract and
 provider-request-controls. Baseline: main `59855ebe`.
 
