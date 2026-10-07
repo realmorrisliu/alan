@@ -37,3 +37,19 @@ row positions, cyan language labels and dim boundaries while retaining literal
 body, ANSI, late-closing Markdown, Unicode and semantic scrollback cutoff checks.
 `cargo test -p alan-terminal-ui --no-fail-fast` now passes all 335 library and
 11 integration tests. CI must still pass on the follow-up commit itself.
+
+## Active-admission review correction — 2026-10-07
+
+PR #1034 review found that the narrow header removed `active` even when the queue
+contained admitted work and execution was idle or paused. Preserve that label in
+the compact queue string and in the existing minimum-width fallback, after more
+urgent uncertainty/deferred/pause cues. Admission remains distinct from execution;
+this correction does not label that work `working` or change queue behavior.
+
+The existing lifecycle regression now covers Idle/Paused at every width from 16
+through 80. It failed before the fix at 16 columns (`gpt…-sol · ready`) and now
+passes with an active cue and bounded width. All 335 terminal library tests and
+11 integration tests pass. Spec and Standards reviews pass. Logs are retained at
+`~/Library/Caches/Alan/ui-active-header-{red,tests}.log`. Prior native acceptance
+remains tied to its recorded source; this targeted presentation fix is validated
+by the updated renderer regression and requires new current-head CI.
