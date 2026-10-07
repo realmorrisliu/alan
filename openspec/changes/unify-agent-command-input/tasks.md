@@ -2,6 +2,22 @@
 
 ## Current product acceptance coordination
 
+2026-10-07 follow-through starts from merged main `59855ebe` in
+`codex/alan-input-lifecycle-audit`. The [ordered delivery plan](next-delivery.md)
+records the new user goal and initial implementation/acceptance inventory.
+PR #1026 delivered the runtime and terminal work referenced by the historical
+notes below; PR #1030 synchronized its bounded contracts and PR #1031 archived
+the completed self-development milestone. Their delivery does not close this
+change's broader remaining matrices. Earlier statements below that review or
+implementation is pending describe their dated slice, not the current baseline.
+In particular the TUI now sends `project-cwd-v1` through the existing control
+lane; task 2.19.2 needs remaining product acceptance rather than another selector.
+The new plan also records actual isolated Herdr last-view closure/reconnect and
+Ctrl-D shutdown of an active native shell plus descendant on the product binary.
+The dated all-client gap below is superseded by that bounded evidence; server
+shutdown with active Alan, explicit recovery and broader parent matrices are not
+inferred from it.
+
 2026-10-02 current local qualification: linked readiness G1/G2/G3 are locally
 accepted through supervised native Alan-authored tasks and independent frozen-source
 review. Final604Rust26build candidate40583bd...b99fc6/binary9fa4cb...8fe0a passed
@@ -211,7 +227,16 @@ as an unconfirmed anomaly, not a reproduced `exit 7` or aP failure.
 - [x] 2.18.2 Verify that simultaneous invocations also have independent cwd and queue state; complete the shared-store concurrency and ambient-Host command audit. The concurrent CLI integration test proves inputs stay on their own AgentFS stream; a runner test proves cwd bindings are isolated even when Process IDs match. Package catalog, Connection metadata, credential writes and legacy migration use their existing cross-process locks. `alan host status/stop` require `ALAN_INSTANCE_RUNTIME_DIR`; ordinary `alan connection` commands operate on channel stores without booting or selecting a live instance. PR #1011 merged at `0e9092e1ec5092f78f797e7ec2898e068b75f2bf` from reviewed head `2dc85e87a9469c4b2f559f60cc6d0ab35035fb18`; GitHub Codex review had no findings and required current-head CI passed. PR review and CI for the remaining delivery slices remain tracked by 4.1.
 - [ ] 2.19 Deliver explicit recovery selection/discovery and lifecycle acceptance: chosen durable history and Action evidence, paused reliable queue, authority-validated cwd, no unknown-effect replay, clear missing-record failure, clean one-shot shutdown, cancellation of owned descendants, ordinary terminal operation and Herdr view-detach versus actual process exit. Do not claim Herdr acceptance from unit tests or absent integration access.
 - [x] 2.19.1 Add `alan --resume` as the explicit cross-invocation Root rollout selector while retaining instance-scoped continuation after Root replacement, even when another foreground invocation updates the channel selector. Verify default fresh startup, explicit restore, malformed/missing selection failure and restart history preservation. PR #981 ships the selector; PR #982 verifies command-result preservation and no replay after explicit resume. Exact review, merge and CI evidence is recorded under 4.1; the remaining lifecycle acceptance stays under parent task 2.19.
-- [ ] 2.19.2 Complete current-authority directory selection while reliable recovered work remains paused: use the existing file-native Agent Runtime control lane and Process cwd validator, publish correlated actual cwd or rejection, preserve queued inputs and paused state, reject unsettled/running selection, and connect the native project chooser without queuing its cwd choice behind recovered work. Verify invalid/revoked grants retain the previous binding and only explicit continuation executes pending work; coordinate terminal projection with canonical `alan-interaction-model` and `rust-inline-tui`.
+- [x] 2.19.2 Complete current-authority directory selection while reliable recovered work remains paused: use the existing file-native Agent Runtime control lane and Process cwd validator, publish correlated actual cwd or rejection, preserve queued inputs and paused state, reject unsettled/running selection, and connect the native project chooser without queuing its cwd choice behind recovered work. Verify invalid/revoked grants retain the previous binding and only explicit continuation executes pending work; coordinate terminal projection with canonical `alan-interaction-model` and `rust-inline-tui`.
+  2026-10-07 closure: the native `/project` chooser restored current authority in
+  an explicitly recovered invocation while preserving the exact pending input
+  and paused state. Only `/continue` executed it once; repeat recovery retained
+  the once-only outcome and no grant. The [product evidence](next-delivery.md)
+  includes PID/boot, file-owned snapshots, correlated directory Actions and durable
+  admission/dispatch records. Existing directory selection/publication tests
+  (20 passing) cover invalid/revoked/running rejection and lost replies. This
+  closes implementation and bounded acceptance; final slice review/CI remains 4.1.
+  The following notes retain the earlier implementation trace:
   Read-only implementation trace confirms this lane is `machine/ctl` text →
   AgentFS `ctl:` events → real protocol `Submission`/`Op`; no `EngineControl`
   type exists. A scoped selector needs explicit protocol/control parsing plus

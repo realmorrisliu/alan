@@ -11,6 +11,9 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+#[path = "explicit_command/revoked_queue.rs"]
+mod revoked_queue;
+
 fn response() -> GenerationResponse {
     GenerationResponse {
         content: "ready".into(),
@@ -81,6 +84,30 @@ async fn command_result(shell: &Shell, id: &str) -> Value {
 async fn command(shell: &Shell, body: &str) -> Value {
     let id = submit_command(shell, body).await;
     command_result(shell, &id).await
+}
+
+async fn wait_pending_input(shell: &Shell, id: &str, paused: bool) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let queue: Value =
+                serde_json::from_slice(&shell.cat("/agent/root/machine/ui/queue").await.unwrap())
+                    .unwrap();
+            let activity: Value = serde_json::from_slice(
+                &shell.cat("/agent/root/machine/ui/activity").await.unwrap(),
+            )
+            .unwrap();
+            if queue["known"] == true
+                && queue["pending_submission_ids"] == json!([id])
+                && queue["paused"] == paused
+                && (!paused || activity["state"] == "paused")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("exact pending input and Machine pause state must be published");
 }
 
 #[tokio::test]
@@ -260,6 +287,7 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             .await
             .expect("native command started");
             let queued = submit_command(&shell, &format!("printf queued > {queued_file}")).await;
+            wait_pending_input(&shell, &queued, false).await;
             shell
                 .write("/agent/root/machine/ctl", b"interrupt")
                 .await
@@ -280,7 +308,7 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             std::fs::read_to_string(project.path().join("src").join(&before)).unwrap(),
             "saved"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        wait_pending_input(&shell, &queued, true).await;
         assert!(
             !project.path().join("src").join(&queued_file).exists(),
             "interrupt must hold the next native command"

@@ -1,14 +1,17 @@
 ## ADDED Requirements
 
 ### Requirement: Independent Package Services share channel storage safely
+Independent Package Services SHALL serialize shared channel-store operations and observe committed state. Live revision references across instances SHALL prevent reclamation; startup recovery SHALL remove only references belonging to exited operating-system processes.
 
-Independent alan9 instances SHALL be able to open the same channel Package Store.
-Catalog reads and mutations SHALL observe the latest committed catalog and
-serialize against other store operations. A live revision reference in any
-instance SHALL prevent upgrade, uninstall or another instance's startup recovery
-from reclaiming that revision. Releasing the final live reference SHALL permit
-retirement. Store startup recovery SHALL discard abandoned references whose
-owning operating-system process has exited, without discarding surviving ones.
+#### Scenario: Concurrent instances retain and retire package revisions
+- **WHEN** multiple Package Services open and operate on the same channel store
+- **THEN** Independent alan9 instances SHALL be able to open the same channel Package Store.
+  Catalog reads and mutations SHALL observe the latest committed catalog and serialize against
+  other store operations. A live revision reference in any instance SHALL prevent upgrade,
+  uninstall or another instance's startup recovery from reclaiming that revision. Releasing the
+  final live reference SHALL permit retirement. Store startup recovery SHALL discard abandoned
+  references whose owning operating-system process has exited, without discarding surviving
+  ones.
 
 #### Scenario: Two instances update the same store
 - **WHEN** two Package Services install different packages concurrently

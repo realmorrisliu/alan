@@ -143,14 +143,17 @@ private cwd, execution queue, command executor or durable result database.
 - **THEN** the interface shows its result and status without starting an explanatory model call
 
 ### Requirement: Terminal EOF and redirected EOF have distinct transport meanings
-Interactive Ctrl-D with empty input and no pending Agent input SHALL exit the
-foreground Alan invocation, as SHALL explicit quit. With a confirmation or structured-input request
-pending, Ctrl-D MUST leave the client attached and the request available for a
-response. The application SHALL shut down its owned work on actual exit.
-A terminal host MAY keep the process alive when only its view detaches; Alan
-MUST NOT start a background replacement to preserve execution.
-Redirected EOF SHALL finish collection of one submission rather than cancel
-execution.
+Interactive EOF SHALL follow foreground application and pending-request lifetime rules; redirected EOF SHALL complete one collected submission. View detach SHALL NOT be treated as application exit or create a replacement runtime.
+
+#### Scenario: EOF respects the input transport and pending request
+- **WHEN** terminal or redirected input reaches its EOF boundary
+- **THEN** Interactive Ctrl-D with empty input and no pending Agent input SHALL exit the
+  foreground Alan invocation, as SHALL explicit quit. With a confirmation or structured-input
+  request pending, Ctrl-D MUST leave the client attached and the request available for a
+  response. The application SHALL shut down its owned work on actual exit. A terminal host MAY
+  keep the process alive when only its view detaches; Alan MUST NOT start a background
+  replacement to preserve execution. Redirected EOF SHALL finish collection of one submission
+  rather than cancel execution.
 
 #### Scenario: Empty terminal input receives Ctrl-D
 - **WHEN** Ctrl-D is pressed with an empty composer and no pending Agent input
@@ -166,14 +169,17 @@ execution.
 - **THEN** Alan submits the complete collected input once and follows its outcome
 
 ### Requirement: Composer prompts communicate one-shot input intent
-The ordinary composer SHALL default to `: ` for Agent input. A leading `!`
-in an empty entry SHALL be represented by `! `, with the command body after
-the prompt. The renderer SHALL preserve canonical submission intent while folding
-its prefix into presentation. Backspace on an empty command body SHALL restore
-`: `. After accepted submission a fresh composer SHALL default to `: `;
-rejection SHALL preserve the draft and intent. Explicit `:` SHALL force Agent
-intent without a duplicate displayed delimiter. No persistent command mode or
-renderer-owned execution path SHALL be introduced.
+Composer prompts SHALL reflect canonical one-shot intent using `: ` or `! `. Prefix folding, reset, rejection and history SHALL preserve the submitted body and intent without a persistent command mode or renderer-owned executor.
+
+#### Scenario: Composer intent survives presentation changes
+- **WHEN** the composer selects, accepts or rejects a submission route
+- **THEN** The ordinary composer SHALL default to `: ` for Agent input. A leading `!` in an
+  empty entry SHALL be represented by `! `, with the command body after the prompt. The renderer
+  SHALL preserve canonical submission intent while folding its prefix into presentation.
+  Backspace on an empty command body SHALL restore `: `. After accepted submission a fresh
+  composer SHALL default to `: `; rejection SHALL preserve the draft and intent. Explicit `:`
+  SHALL force Agent intent without a duplicate displayed delimiter. No persistent command mode
+  or renderer-owned execution path SHALL be introduced.
 
 #### Scenario: User selects a command
 - **WHEN** the user types `!` into an empty ordinary composer
