@@ -1,7 +1,8 @@
 //! Finite-choice-only TypeSafe transport for explicitly selected evaluation Connections.
 
 use crate::{
-    ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationSelection, LlmProvider, TokenUsage,
+    ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationSelection, LlmProvider,
+    MalformedEvaluationResponse, TokenUsage,
 };
 use anyhow::{Result, ensure};
 use serde::Deserialize;
@@ -245,7 +246,7 @@ impl LlmProvider for TypesafeEvaluationClient {
             response
                 .content_length()
                 .is_none_or(|n| n <= MAX_RESPONSE_BYTES as u64),
-            "TypeSafe response exceeds size limit"
+            MalformedEvaluationResponse
         );
         let mut bytes = Vec::new();
         while let Some(chunk) = response
@@ -255,11 +256,12 @@ impl LlmProvider for TypesafeEvaluationClient {
         {
             ensure!(
                 chunk.len() <= MAX_RESPONSE_BYTES - bytes.len(),
-                "TypeSafe response exceeds size limit"
+                MalformedEvaluationResponse
             );
             bytes.extend_from_slice(&chunk);
         }
         decode(&bytes, &self.model, &request)
+            .map_err(|error| error.context(MalformedEvaluationResponse))
     }
 }
 

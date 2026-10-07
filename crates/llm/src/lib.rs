@@ -81,6 +81,7 @@ mod tests;
 mod evaluation;
 pub use evaluation::{
     ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationCandidate, EvaluationSelection,
+    MalformedEvaluationResponse,
 };
 
 mod typesafe_evaluation;

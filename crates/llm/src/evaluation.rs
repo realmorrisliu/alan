@@ -6,6 +6,18 @@ use anyhow::{Result, bail};
 
 use crate::TokenUsage;
 
+/// An evaluator returned invalid response evidence, distinct from provider unavailability.
+#[derive(Debug)]
+pub struct MalformedEvaluationResponse;
+
+impl std::fmt::Display for MalformedEvaluationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("malformed evaluation response")
+    }
+}
+
+impl std::error::Error for MalformedEvaluationResponse {}
+
 /// One Process-resolved candidate offered to an evaluator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationCandidate {

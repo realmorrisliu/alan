@@ -209,6 +209,51 @@ async fn http_failure_is_single_attempt_bounded_and_secret_free() {
         client.endpoint = endpoint;
         let error = client.evaluate_choice(request()).await.unwrap_err();
         assert!(!format!("{error:#}").contains("private-test-key"));
+        assert_eq!(
+            error.is::<crate::MalformedEvaluationResponse>(),
+            status == StatusCode::OK
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn http_invalid_evidence_retains_the_malformed_category() {
+    let mut wrong_model = response();
+    wrong_model["model"] = "jev-unknown".into();
+    let mut wrong_distribution = response();
+    wrong_distribution["answers"]["selection"]["probabilities"]["choice_0"] = 0.5.into();
+    for body in [
+        "private-test-key invalid JSON".into(),
+        wrong_model.to_string(),
+        wrong_distribution.to_string(),
+    ] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let endpoint = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/v1/systemone",
+                    post(move || {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        let body = body.clone();
+                        async move { body }
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let mut client =
+            TypesafeEvaluationClient::new("private-test-key".into(), "jev-1.13.0".into()).unwrap();
+        client.endpoint = endpoint;
+        let error = client.evaluate_choice(request()).await.unwrap_err();
+        assert!(error.is::<crate::MalformedEvaluationResponse>());
+        assert!(!format!("{error:#}").contains("private-test-key"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         server.abort();
     }

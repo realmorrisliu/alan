@@ -8,6 +8,7 @@ struct Evaluator {
     recorder: RolloutRecorder,
     close_recorder: bool,
     cancel: Option<CancellationToken>,
+    malformed: bool,
 }
 
 #[async_trait::async_trait]
@@ -32,6 +33,9 @@ impl LlmProvider for Evaluator {
         assert!(history.iter().any(|item| matches!(item, RolloutItem::Event(e)
             if e.event_type == "machine_evaluation_v1" && e.payload["outcome"]["state"] == "started")));
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.malformed {
+            return Err(alan_llm::MalformedEvaluationResponse.into());
+        }
         if self.close_recorder {
             self.recorder.close().await.unwrap();
         }
@@ -49,6 +53,7 @@ fn attach(
     state: &mut RuntimeLoopState,
     close_recorder: bool,
     cancel: Option<CancellationToken>,
+    malformed: bool,
 ) -> (Arc<AtomicUsize>, Arc<Mutex<Vec<serde_json::Value>>>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let observations = Arc::new(Mutex::new(Vec::new()));
@@ -62,6 +67,7 @@ fn attach(
             recorder: recorder.clone(),
             close_recorder,
             cancel,
+            malformed,
         }),
     );
     let mut ns = alan_kernel::Namespace::new();
@@ -106,7 +112,7 @@ async fn accepted_input_records_command_advice_without_selecting_command_dispatc
     state.core_config.memory.enabled = false;
     let sentinel = dir.path().join("sentinel");
     std::fs::write(&sentinel, "unchanged").unwrap();
-    let (calls, observations) = attach(&mut state, false, None);
+    let (calls, observations) = attach(&mut state, false, None, false);
     let result = advance_accepted_submission(
         &mut state,
         input,
@@ -130,9 +136,54 @@ async fn accepted_input_records_command_advice_without_selecting_command_dispatc
 }
 
 #[tokio::test]
+async fn malformed_provider_evidence_is_durable_and_never_repeated_on_recovery() {
+    let (mut state, dir, input, _, _) = dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
+    let (calls, observations) = attach(&mut state, false, None, true);
+    let cancel = CancellationToken::new();
+    state.observe_input_shadow(&input, &cancel).await.unwrap();
+    let latest = state.machine.evaluation_observation.clone().unwrap();
+    assert_eq!(latest["outcome"]["state"], "malformed");
+    assert!(latest["usage"].is_null());
+    assert!(latest["cost_microusd"].is_null());
+    let recorder = state.machine.input_recorder().unwrap();
+    recorder.flush().await.unwrap();
+    let history = RolloutRecorder::load_history(recorder.path())
+        .await
+        .unwrap();
+    let mut durable = latest.clone();
+    durable.as_object_mut().unwrap().remove("cost_microusd");
+    assert!(
+        history
+            .iter()
+            .any(|item| matches!(item, RolloutItem::Event(e)
+        if e.event_type == "machine_evaluation_v1" && e.payload == durable))
+    );
+    state.machine = AgentMachine::load_from_rollout_in_dir(
+        recorder.path(),
+        "/proc/recovered",
+        "test",
+        dir.path(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(state.machine.evaluation_observation.as_ref(), Some(&latest));
+    state.observe_input_shadow(&input, &cancel).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(observations.lock().unwrap().len(), 3);
+    state
+        .machine
+        .input_recorder()
+        .unwrap()
+        .close()
+        .await
+        .unwrap();
+    recorder.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn duplicate_and_recovered_input_never_repeat_the_evaluator() {
     let (mut state, dir, input, _, _) = dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
-    let (calls, observations) = attach(&mut state, false, None);
+    let (calls, observations) = attach(&mut state, false, None, false);
     let cancel = CancellationToken::new();
     state.observe_input_shadow(&input, &cancel).await.unwrap();
     state.observe_input_shadow(&input, &cancel).await.unwrap();
@@ -163,7 +214,7 @@ async fn shadow_barriers_prevent_unrecorded_calls_and_unrecorded_publication() {
     for fail_terminal in [false, true] {
         let (mut state, _dir, input, _, _) =
             dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
-        let (calls, observations) = attach(&mut state, fail_terminal, None);
+        let (calls, observations) = attach(&mut state, fail_terminal, None, false);
         let backing = state.machine.input_recorder().unwrap();
         let mut failed_batch = None;
         if !fail_terminal {
@@ -198,7 +249,7 @@ async fn shadow_barriers_prevent_unrecorded_calls_and_unrecorded_publication() {
 async fn cancellation_after_provider_completion_preserves_abort_uncertainty() {
     let (mut state, _dir, input, _, _) = dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
     let cancel = CancellationToken::new();
-    let (calls, observations) = attach(&mut state, false, Some(cancel.clone()));
+    let (calls, observations) = attach(&mut state, false, Some(cancel.clone()), false);
     let error = state
         .observe_input_shadow(&input, &cancel)
         .await
@@ -220,7 +271,7 @@ async fn cancellation_after_provider_completion_preserves_abort_uncertainty() {
 async fn explicit_intents_and_response_operations_persist_without_evaluator_calls() {
     let (mut state, dir, mut input, _, _) =
         dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
-    let (calls, observations) = attach(&mut state, false, None);
+    let (calls, observations) = attach(&mut state, false, None, false);
     for (intent, reason) in [
         (
             alan_agent_protocol::InputIntent::Command,
@@ -387,7 +438,7 @@ async fn publication_wait_is_cancellable_and_bounded_without_late_success() {
             }
             let (mut state, _dir, input, _, _) =
                 dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
-            let (calls, _) = attach(&mut state, false, None);
+            let (calls, _) = attach(&mut state, false, None, false);
             let reached = Arc::new(tokio::sync::Notify::new());
             let published = Arc::new(AtomicUsize::new(0));
             state.environment = state.environment.clone().with_evaluation_publisher({
@@ -449,7 +500,7 @@ async fn steering_and_brokered_follow_up_use_the_same_shadow_dispatch_boundary()
         };
         let (mut state, _dir, input, binding, _) = dispatch_failure_fixture(Some(mode)).await;
         state.core_config.memory.enabled = false;
-        let (calls, _) = attach(&mut state, false, None);
+        let (calls, _) = attach(&mut state, false, None, false);
         let broker = TurnInputBroker::default();
         if steering {
             broker.push(input).await;
@@ -511,7 +562,7 @@ async fn accepted_response_bypass_precedes_consumption_and_failure_preserves_pen
                 prompt: "Answer".into(),
                 questions: vec![],
             });
-        let (calls, observations) = attach(&mut state, false, None);
+        let (calls, observations) = attach(&mut state, false, None, false);
         let backing = state.machine.input_recorder().unwrap();
         let mut failed_batch = None;
         if fail_persistence {
@@ -574,7 +625,7 @@ async fn accepted_response_bypass_precedes_consumption_and_failure_preserves_pen
 #[tokio::test]
 async fn unknown_responses_and_host_controls_cannot_reserve_bypass_identity() {
     let (mut state, _dir, _, _, _) = dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
-    let (calls, observations) = attach(&mut state, false, None);
+    let (calls, observations) = attach(&mut state, false, None, false);
     state
         .observe_input_shadow(
             &Submission::new(Op::Resume {

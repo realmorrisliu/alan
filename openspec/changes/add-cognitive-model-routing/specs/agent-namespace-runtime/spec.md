@@ -13,6 +13,11 @@ An explicitly selected shadow evaluation SHALL be consumed by the existing Agent
 - **THEN** recovery exposes an interrupted or unavailable evaluation
 - **AND** it does not repeat the model call, synthesize a selection or replay an effect
 
+#### Scenario: Malformed provider evidence reaches the Machine
+- **WHEN** a committed evaluation returns malformed response evidence through llmfs
+- **THEN** the Machine records a malformed terminal outcome rather than provider unavailability
+- **AND** recovery retains that category without repeating the evaluator or inventing usage or cost
+
 ### Requirement: Shadow observations cross acknowledged durability barriers
 The Machine SHALL persist captured admission and evaluation identity before committing a model request, and persist a validated terminal outcome before publishing completed advice. It SHALL use existing rollout/checkpoint evidence, preserve the separate ordinary-input lifecycle, and never retry an uncertain or recovered operation implicitly.
 

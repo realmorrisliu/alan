@@ -14,6 +14,12 @@ A reachable Connection SHALL advertise finite-choice evaluation only when its ca
 - **THEN** no provider call starts and the operation is rejected or unavailable through its owning lifecycle
 - **AND** generation's current DTO remains unchanged
 
+#### Scenario: Provider response evidence is malformed
+- **WHEN** a completed evaluation response has invalid JSON, captured model provenance, candidate distribution or bounded response content
+- **THEN** the adapter and llmfs preserve a bounded malformed-evaluation failure distinct from provider unavailability
+- **AND** no response body, secret, selection or invalid usage is published as successful evidence
+- **AND** the operation is not retried or replaced implicitly
+
 #### Scenario: Evaluation cancellation or deadline
 - **WHEN** cancellation or the bounded deadline occurs while waiting for the provider lock or while evaluation is in flight
 - **THEN** the operation terminates without later result publication or implicit retry/fallback

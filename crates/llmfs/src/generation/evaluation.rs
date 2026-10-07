@@ -85,7 +85,11 @@ pub(super) async fn commit(buf: Vec<u8>, operation: Arc<Generation>) -> Result<(
                 fail_generation(
                     &operation,
                     GenStatus::Error,
-                    alan_llm::safe_failure_reason(&error),
+                    if error.is::<alan_llm::MalformedEvaluationResponse>() {
+                        "malformed_evaluation_response"
+                    } else {
+                        alan_llm::safe_failure_reason(&error)
+                    },
                 )
                 .await;
                 return;

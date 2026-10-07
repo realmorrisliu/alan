@@ -268,7 +268,10 @@ impl NamespaceEvaluation {
             return Err(TimedOut.into());
         }
         if event.rejected == Some(true)
-            || event.error.as_deref() == Some("invalid_evaluation_selection")
+            || matches!(
+                event.error.as_deref(),
+                Some("invalid_evaluation_selection" | "malformed_evaluation_response")
+            )
         {
             return Err(Malformed.into());
         }

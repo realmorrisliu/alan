@@ -35,6 +35,9 @@ impl LlmProvider for Evaluator {
         if request.candidates[0].id == "provider-error" {
             anyhow::bail!("synthetic provider outage");
         }
+        if request.candidates[0].id == "provider-malformed" {
+            return Err(alan_llm::MalformedEvaluationResponse.into());
+        }
         if self.hold {
             std::future::pending::<()>().await;
         }
@@ -360,7 +363,11 @@ async fn cancellation_with_a_complete_buffer_aborts_before_cleanup_clunk() {
 async fn mounted_failures_retain_malformed_and_unavailable_categories() {
     let (mut environment, mut identity, calls, _) = setup(false);
     let cancel = CancellationToken::new();
-    for (candidate, failure) in [("agent", Malformed), ("provider-error", Unavailable)] {
+    for (candidate, failure) in [
+        ("agent", Malformed),
+        ("provider-error", Unavailable),
+        ("provider-malformed", Malformed),
+    ] {
         let mut input = request();
         input.candidates[0].id = candidate.into();
         let operation = environment
@@ -379,7 +386,7 @@ async fn mounted_failures_retain_malformed_and_unavailable_categories() {
             "an acknowledged terminal error must not become abort uncertainty: {error:#}"
         );
     }
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
     environment.llm_connection = "absent".into();
     identity.profile = "absent".into();
     let error = match environment
@@ -393,7 +400,7 @@ async fn mounted_failures_retain_malformed_and_unavailable_categories() {
         error.downcast_ref::<NamespaceEvaluationFailure>(),
         Some(&Unavailable)
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]

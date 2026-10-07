@@ -97,3 +97,29 @@ at boot. No duplicate production guard was added. Receipt:
 These checks do not replace frozen v2 measurements or qualify the changed
 current Machine source. Automatic routing remains disabled; any later candidate
 qualification must use a fresh freeze and complete comparison.
+
+## Malformed evaluator error provenance — 2026-10-08
+
+PR #1035 review reproduced adapter validation failures losing their category
+through the generation-oriented diagnostic formatter. Introduce a provider-neutral
+malformed-response error marker, apply it to TypeSafe response decoding and
+response-size validation, and preserve it through the existing llmfs terminal
+event and Namespace evaluation decoder. Transport/HTTP failures remain unavailable;
+generation diagnostics, timeout/cancellation and the terminal fence are unchanged.
+No error text is parsed or copied into namespace evidence.
+
+Local HTTP regressions cover invalid JSON, model mismatch, invalid distribution
+and oversized bodies, with one request and no credential/body leakage. The
+existing mounted-operation regression covers invalid selections, provider outages
+and the new typed failure without turning settled terminals into abort uncertainty.
+A Machine regression verifies durable malformed outcome, unknown usage/cost and
+recovery without another evaluator call. Both adapter and mounted-category checks
+failed before the correction. All 1,375 Agent Engine unit tests, 20 architecture
+checks, 210 LLM unit tests and the llmfs/integration/doc suites pass; opt-in live
+tests remain ignored. Logs:
+`~/Library/Caches/Alan/shadow-malformed-{adapter-red,category-red,category-tests}.log`.
+
+These regressions are implementation evidence, not new frozen qualification.
+Historical v2 results remain unchanged, the changed candidate remains unqualified
+and automatic execution stays disabled. Independent reviews, strict OpenSpec
+validation, the mandatory quality gate and fresh current-head CI remain required.
