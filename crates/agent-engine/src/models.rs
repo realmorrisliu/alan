@@ -3,14 +3,9 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
-// The shared OpenAi prefix is intentional here: this enum distinguishes
-// OpenAI API families, not unrelated providers.
-#[allow(
-    clippy::enum_variant_names,
-    reason = "the shared OpenAi prefix distinguishes API families within the OpenAI provider"
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelCatalogProvider {
+    Chatgpt,
     OpenAiResponses,
     OpenAiChatCompletions,
     OpenAiChatCompletionsCompatible,
@@ -31,6 +26,7 @@ pub struct ModelInfo {
 
 #[derive(Debug, Clone)]
 pub struct ModelCatalog {
+    chatgpt: ProviderCatalog,
     openai_responses: ProviderCatalog,
     openai_chat_completions: ProviderCatalog,
     openai_chat_completions_compatible: ProviderCatalog,
@@ -90,6 +86,10 @@ static BASE_MODEL_CATALOG: LazyLock<ModelCatalog> = LazyLock::new(|| {
         .expect("runtime model catalog TOML should parse");
 
     ModelCatalog {
+        chatgpt: ProviderCatalog {
+            default_model: String::new(),
+            entries: Vec::new(),
+        },
         openai_responses: ProviderCatalog::from_toml(
             ModelCatalogProvider::OpenAiResponses,
             catalog.openai_responses,
@@ -114,6 +114,37 @@ pub fn default_model_slug(provider: ModelCatalogProvider) -> &'static str {
 }
 
 impl ModelCatalog {
+    /// Overlay account-authorized ChatGPT metadata without borrowing API-family defaults.
+    pub fn with_chatgpt_models(
+        &self,
+        models: Vec<alan_llm::ProviderModel>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(!models.is_empty(), "ChatGPT model catalog is empty");
+        let mut catalog = self.clone();
+        catalog.chatgpt = ProviderCatalog {
+            default_model: models[0].slug.clone(),
+            entries: models
+                .into_iter()
+                .map(|model| CatalogEntry {
+                    accepts_date_suffixes: false,
+                    info: ModelInfo {
+                        slug: model.slug,
+                        aliases: Vec::new(),
+                        provider: ModelCatalogProvider::Chatgpt,
+                        family: "chatgpt".into(),
+                        context_window_tokens: model.context_window_tokens,
+                        supports_reasoning: !model.supported_reasoning_efforts.is_empty(),
+                        supported_reasoning_efforts: model.supported_reasoning_efforts,
+                        default_reasoning_effort: model.default_reasoning_effort,
+                        effort_budget_tokens: BTreeMap::new(),
+                    },
+                })
+                .collect(),
+        };
+        catalog.chatgpt.validate()?;
+        Ok(catalog)
+    }
+
     pub fn default_model_slug(&self, provider: ModelCatalogProvider) -> &str {
         self.provider_catalog(provider).default_model.as_str()
     }
@@ -141,6 +172,7 @@ impl ModelCatalog {
 
     fn provider_catalog(&self, provider: ModelCatalogProvider) -> &ProviderCatalog {
         match provider {
+            ModelCatalogProvider::Chatgpt => &self.chatgpt,
             ModelCatalogProvider::OpenAiResponses => &self.openai_responses,
             ModelCatalogProvider::OpenAiChatCompletions => &self.openai_chat_completions,
             ModelCatalogProvider::OpenAiChatCompletionsCompatible => {

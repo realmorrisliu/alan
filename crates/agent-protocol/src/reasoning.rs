@@ -12,16 +12,20 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
+    Ultra,
 }
 
 impl ReasoningEffort {
-    pub const VALUES: [ReasoningEffort; 6] = [
+    pub const VALUES: [ReasoningEffort; 8] = [
         ReasoningEffort::None,
         ReasoningEffort::Minimal,
         ReasoningEffort::Low,
         ReasoningEffort::Medium,
         ReasoningEffort::High,
         ReasoningEffort::XHigh,
+        ReasoningEffort::Max,
+        ReasoningEffort::Ultra,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -32,11 +36,13 @@ impl ReasoningEffort {
             ReasoningEffort::Medium => "medium",
             ReasoningEffort::High => "high",
             ReasoningEffort::XHigh => "xhigh",
+            ReasoningEffort::Max => "max",
+            ReasoningEffort::Ultra => "ultra",
         }
     }
 
     pub fn supported_values() -> &'static str {
-        "none, minimal, low, medium, high, xhigh"
+        "none, minimal, low, medium, high, xhigh, max, ultra"
     }
 }
 

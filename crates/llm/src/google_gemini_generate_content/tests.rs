@@ -242,3 +242,10 @@ fn test_tool_serialization() {
     let json = serde_json::to_string(&tool).unwrap();
     assert!(json.contains("functionDeclarations"));
 }
+
+#[test]
+fn rejects_unqualified_extended_reasoning_efforts() {
+    for effort in [ReasoningEffort::Max, ReasoningEffort::Ultra] {
+        assert!(build_gemini_thinking_config("gemini-2.5-flash", Some(effort)).is_err());
+    }
+}

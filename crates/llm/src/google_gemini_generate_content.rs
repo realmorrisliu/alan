@@ -532,8 +532,8 @@ fn build_gemini_thinking_config(
                 anyhow::bail!("Gemini 3 Pro supports reasoning efforts `low` and `high`")
             }
             ReasoningEffort::High => "high",
-            ReasoningEffort::XHigh => {
-                anyhow::bail!("Gemini 3 does not support reasoning effort `xhigh`")
+            ReasoningEffort::XHigh | ReasoningEffort::Max | ReasoningEffort::Ultra => {
+                anyhow::bail!("Gemini 3 does not support reasoning effort `{effort}`")
             }
         };
         return Ok(Some(ThinkingConfig {
@@ -548,7 +548,7 @@ fn build_gemini_thinking_config(
                 anyhow::bail!("Gemini 2.5 Pro does not support disabling thinking")
             }
             Some(ReasoningEffort::None) => Some(0),
-            Some(effort) => Some(gemini_budget_for_effort(effort)),
+            Some(effort) => Some(gemini_budget_for_effort(effort)?),
             None => None,
         };
         return Ok(budget.map(|thinking_budget| ThinkingConfig {
@@ -567,15 +567,18 @@ fn build_gemini_thinking_config(
     Ok(None)
 }
 
-fn gemini_budget_for_effort(effort: ReasoningEffort) -> i32 {
-    match effort {
+fn gemini_budget_for_effort(effort: ReasoningEffort) -> Result<i32> {
+    Ok(match effort {
         ReasoningEffort::None => 0,
         ReasoningEffort::Minimal => 512,
         ReasoningEffort::Low => 1_024,
         ReasoningEffort::Medium => 4_096,
         ReasoningEffort::High => 8_192,
         ReasoningEffort::XHigh => 16_384,
-    }
+        ReasoningEffort::Max | ReasoningEffort::Ultra => {
+            anyhow::bail!("Provider does not support reasoning effort `{effort}`")
+        }
+    })
 }
 
 #[async_trait::async_trait]

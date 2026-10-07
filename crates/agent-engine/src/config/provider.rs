@@ -226,7 +226,9 @@ impl Config {
 
     pub fn effective_model_info(&self) -> Option<&ModelInfo> {
         match self.llm_provider {
-            LlmProvider::Chatgpt => None,
+            LlmProvider::Chatgpt => self
+                .resolved_model_catalog()
+                .find_model_info(ModelCatalogProvider::Chatgpt, self.effective_model()),
             LlmProvider::OpenAiResponses => self.resolved_model_catalog().find_model_info(
                 ModelCatalogProvider::OpenAiResponses,
                 self.resolved_openai_responses_model(),

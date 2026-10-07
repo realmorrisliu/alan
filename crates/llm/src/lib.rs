@@ -69,7 +69,7 @@ pub use model::{
 pub use openai_chat_completions::OpenAiChatCompletionsClient;
 pub use openai_responses::OpenAiResponsesClient;
 pub use openrouter::OpenRouterClient;
-pub use provider::LlmProvider;
+pub use provider::{LlmProvider, ProviderModel};
 pub(crate) use sse::SseEventParser;
 
 #[cfg(test)]

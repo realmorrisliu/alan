@@ -304,3 +304,10 @@ fn response_with_choice(choice: Value) -> CompletionsResponse {
     }))
     .unwrap()
 }
+
+#[test]
+fn rejects_unqualified_extended_reasoning_efforts() {
+    for effort in [ReasoningEffort::Max, ReasoningEffort::Ultra] {
+        assert!(openrouter_effort(effort).is_err());
+    }
+}

@@ -238,6 +238,19 @@ impl ChatgptAuthManager {
         &self.inner.config.issuer
     }
 
+    /// Bind a callable to the currently stored account without refreshing credentials.
+    /// Later requests must still validate this identity after any managed refresh.
+    pub fn bound_account_id(
+        &self,
+        expected_account_id: Option<&str>,
+    ) -> Result<Option<String>, ChatgptAuthError> {
+        let Some(auth) = self.inner.storage.load()?.chatgpt else {
+            return Ok(expected_account_id.map(str::to_string));
+        };
+        ensure_expected_account_matches(expected_account_id, &auth)?;
+        Ok(Some(auth.account_id))
+    }
+
     pub async fn status(&self) -> Result<Option<ChatgptAuthSnapshot>, ChatgptAuthError> {
         let store = self.inner.storage.load()?;
         Ok(store.chatgpt.map(|auth| ChatgptAuthSnapshot {

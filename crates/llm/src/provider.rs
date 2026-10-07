@@ -3,6 +3,15 @@ use tokio::sync::mpsc;
 
 use crate::{GenerationRequest, GenerationResponse, StreamChunk};
 
+/// Account-authorized model metadata supplied by a provider adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderModel {
+    pub slug: String,
+    pub context_window_tokens: u32,
+    pub supported_reasoning_efforts: Vec<crate::ReasoningEffort>,
+    pub default_reasoning_effort: Option<crate::ReasoningEffort>,
+}
+
 /// Unified trait for LLM providers.
 ///
 /// This trait abstracts over different LLM backends and API surfaces.
@@ -44,6 +53,16 @@ pub trait LlmProvider: Send + Sync {
         &mut self,
         request: GenerationRequest,
     ) -> Result<mpsc::Receiver<StreamChunk>>;
+
+    /// Non-secret account identity fixed when this callable was constructed.
+    fn account_identity(&self) -> Option<&str> {
+        None
+    }
+
+    /// Fetch account-scoped metadata when supported; never called by status observation.
+    async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
+        Ok(None)
+    }
 
     /// Get the provider name (for logging/debugging)
     fn provider_name(&self) -> &'static str;

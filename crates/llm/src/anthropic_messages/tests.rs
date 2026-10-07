@@ -525,3 +525,10 @@ fn test_convert_messages_for_anthropic_preserves_thinking_signature_and_redacted
         _ => panic!("Expected Text block"),
     }
 }
+
+#[test]
+fn rejects_unqualified_extended_reasoning_efforts() {
+    for effort in [ReasoningEffort::Max, ReasoningEffort::Ultra] {
+        assert!(anthropic_budget_for_effort(effort).is_err());
+    }
+}
