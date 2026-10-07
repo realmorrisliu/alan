@@ -128,3 +128,54 @@ These tests install actual namespace/AgentFS services but no Machine, provider o
 executor. They prove client admission contracts only, not native terminal event
 handling, end-to-end Machine digest correlation, latency, billing or model quality.
 No qualification records or numeric pass are inferred from these fixture counts.
+
+## Native client measurement entry — 2026-10-07
+
+`cargo build -p alan --example shadow_client_fixture` builds an isolated test Host.
+`scripts/harness/collect_routing_shadow_clients.py --binary <example> --output <new-dir>`
+drives the real TUI through a PTY and the real redirected task client. The fixture
+boots Service Manager and the Root Machine, mounts the actual TypeSafe Connection,
+and waits for a submission-correlated completion before exporting the refreshed
+Machine observation. It verifies that no bash executable or project mount exists;
+generation is a fixed Mock provider with no Tool requests. This tests the ordinary
+client/Machine/evaluator path, not real generation quality or Host credential-store
+provisioning (the latter has separate live probe evidence). PTY cursor-position
+responses are a harness convenience, not visual/Herdr layout qualification.
+
+The collector holds the frozen original input independently, checks its post-prefix
+Machine digest and surface, and records the attempted row before submission. It
+retains failed attempts and terminal output, does not retry, and rejects unsettled
+or uncorrelated evidence. Binary, collection-time checkout commit/diff, collector and fixture hashes
+identify the run; the binary embeds its own fixture-source digest for comparison.
+The checkout fields do not prove the entire runtime was built from that checkout;
+`runtime_build_source_verified: false` keeps that remaining provenance gate explicit.
+The collector covers only the 300 ordinary-input slots. Pending-response parity,
+the full 324-row score, deterministic/generation baselines and cost qualification
+remain open; no missing row is synthesized as success.
+
+An initial exploratory run at base `3974a55f` with the uncommitted native fixture
+retained 64 completed observations and stopped on attempt 65 (`route-033`,
+interactive, repeat 0). Its transcript reports `evaluation abort unconfirmed` and
+no normal completion receipt. This run predates the failure-ledger/source-binding
+hardening above: its failed attempt is recorded in a supplemental ledger rebuilt
+from the preserved traceback and terminal output, not represented as a collected
+observation or silently replaced by a retry. It is not a complete qualified run.
+
+Of the 64 completed observations, 57 match the frozen labels. Five incorrectly
+select `command`: redirected `route-010`, and both surfaces of `route-020` and
+`route-027`. The latter two are quoted log/JSON discussion, not commands to execute.
+Two `route-023` observations abstain instead of choosing Agent. Completed-only
+p50/p95 are 1,465/2,935 ms; these partial statistics exclude the unsettled attempt
+and must not be presented as the full-run score. The five false command choices
+already violate the frozen zero-error gate. The fixture provided no Host tools
+and shadow advice never selected an execution path. Automatic routing remains off.
+
+Local evidence: `~/Library/Caches/Alan/shadow-native-corpus-v1/` contains raw Machine
+observations, terminal captures, original manifest, supplemental failure ledger and
+partial summary. The hardened collector subsequently passed ordinary `pwd` and
+explicit `!pwd` smoke checks on both native surfaces; those diagnostic runs are
+separate from the failed corpus attempt, and never replace its denominator.
+`python3 -m unittest discover -s scripts/harness -p test_collect_routing_shadow_clients.py`
+checks failure retention and redirected timeout output; the frozen scorer self-test
+also passes. Next work is to diagnose the unsettled abort, then complete evidence
+collection and baseline comparison without changing the frozen labels or gates.
