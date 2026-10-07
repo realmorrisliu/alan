@@ -357,7 +357,7 @@ async fn connection_generation_limit_is_enforced_at_clone_open() {
     assert_eq!(meter["limits"]["max_generations"], 1);
     assert_eq!(meter["meter"]["generation_starts"], 1);
     assert_eq!(meter["meter"]["total_tokens"], 0);
-    assert_eq!(meter["meter"]["total_cost_microusd"], 0);
+    assert!(meter["meter"]["total_cost_microusd"].is_null());
 }
 
 #[tokio::test]

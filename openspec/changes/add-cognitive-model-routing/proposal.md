@@ -32,9 +32,8 @@ Agent Machine, AgentFS projections, llmfs/provider operations and evaluation
 tests. No Kernel cognition type, mandatory Process-per-call, global router,
 new package kind or renderer launch authority.
 
-Status: queued for tracer bullet slice 3 after the first usable-agent loop;
-necessary recovery contracts may be sliced earlier for reliability. See
-[next-planning.md](next-planning.md). This is accepted
-direction, not an implementation-ready slice. Before apply, that pass must
-complete the llm-file-server and agent-namespace-runtime deltas, choose versioned
-wire DTOs, reconcile state recovery, and explicitly activate the task scope.
+Status: the bounded finite-choice Connection entry is active under
+[entry-slice.md](entry-slice.md). This delivers the typed operation boundary and
+fixture contracts only; mixed-Machine composition, a real evaluator adapter,
+shadow qualification and automatic routing remain unfinished. The broader
+[next-planning.md](next-planning.md) roadmap is not activated wholesale.

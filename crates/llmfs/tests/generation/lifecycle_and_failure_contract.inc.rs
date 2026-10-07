@@ -310,7 +310,7 @@ async fn status_exposes_progress_tokens_and_cost() {
     assert_eq!(status["tokens"]["total_tokens"], 18);
     assert_eq!(status["tokens"]["reasoning_tokens"], 5);
     assert_eq!(status["cost"]["currency"], "USD");
-    assert_eq!(status["cost"]["amount_microusd"], 0);
+    assert!(status["cost"]["amount_microusd"].is_null());
     assert_eq!(status["cost"]["metered"], false);
     let meter_v1 = fs.stat(Fid(5)).await.unwrap().qid.version;
     assert_ne!(
@@ -323,7 +323,7 @@ async fn status_exposes_progress_tokens_and_cost() {
             .unwrap();
     assert_eq!(meter["meter"]["generation_starts"], 1);
     assert_eq!(meter["meter"]["total_tokens"], 18);
-    assert_eq!(meter["meter"]["total_cost_microusd"], 0);
+    assert!(meter["meter"]["total_cost_microusd"].is_null());
 }
 
 #[tokio::test]
@@ -683,7 +683,7 @@ async fn a_startup_failure_is_terminal() {
 
 /// A provider whose `generate_stream` startup takes a while before returning a
 /// receiver, so a test can abort *during* startup.
-struct SlowStartupProvider;
+struct SlowStartupProvider(Option<Arc<tokio::sync::Notify>>);
 
 #[async_trait::async_trait]
 impl LlmProvider for SlowStartupProvider {
@@ -697,6 +697,9 @@ impl LlmProvider for SlowStartupProvider {
         &mut self,
         _: GenerationRequest,
     ) -> anyhow::Result<mpsc::Receiver<StreamChunk>> {
+        if let Some(entered) = &self.0 {
+            entered.notify_one();
+        }
         tokio::time::sleep(Duration::from_secs(5)).await;
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn(async move {
@@ -711,7 +714,7 @@ impl LlmProvider for SlowStartupProvider {
 
 #[tokio::test]
 async fn abort_during_provider_startup_cancels_it() {
-    let fs = Arc::new(llmfs_with(SlowStartupProvider));
+    let fs = Arc::new(llmfs_with(SlowStartupProvider(None)));
     let g = clone_gen(&fs, Fid(1)).await;
     fs.walk(
         Fid::ROOT,
@@ -757,6 +760,51 @@ async fn abort_during_provider_startup_cancels_it() {
         .unwrap();
     assert_eq!(r, Ok(()));
     assert_eq!(status_of(&fs, &g, Fid(4)).await, "aborted");
+}
+
+/// A second request must cancel even while another startup owns the provider lock.
+#[tokio::test]
+async fn abort_while_waiting_for_provider_lock_returns_without_starting() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let fs = Arc::new(llmfs_with(SlowStartupProvider(Some(entered.clone()))));
+    let first = clone_gen(&fs, Fid(100)).await;
+    let second = clone_gen(&fs, Fid(101)).await;
+    let first_fs = fs.clone();
+    let first_id = first.clone();
+    let first_commit = tokio::spawn(async move {
+        commit_request(&first_fs, &first_id, Fid(102), SIMPLE_REQUEST).await
+    });
+    tokio::time::timeout(Duration::from_secs(1), entered.notified())
+        .await
+        .expect("first startup did not acquire the provider lock");
+    let second_fs = fs.clone();
+    let second_id = second.clone();
+    let second_commit = tokio::spawn(async move {
+        commit_request(&second_fs, &second_id, Fid(103), SIMPLE_REQUEST).await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let status = status_of(&fs, &second, Fid(104)).await;
+            fs.clunk(Fid(104)).await.unwrap();
+            if status == "running" {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("second request never entered startup");
+    for (id, fid) in [(&second, Fid(105)), (&first, Fid(106))] {
+        fs.walk(Fid::ROOT, fid, &[
+            "connections".into(), "default".into(), id.clone(), "ctl".into(),
+        ]).await.unwrap();
+        fs.open(fid, OpenMode::Write).await.unwrap();
+    }
+    fs.write(Fid(105), 0, b"abort").await.unwrap();
+    let second_result = tokio::time::timeout(Duration::from_millis(500), second_commit).await;
+    // Always release the first request, including when the regression is present.
+    fs.write(Fid(106), 0, b"abort").await.unwrap();
+    assert_eq!(first_commit.await.unwrap(), Ok(()));
+    assert_eq!(second_result.expect("aborted request waited for provider lock").unwrap(), Ok(()));
+    assert_eq!(status_of(&fs, &second, Fid(107)).await, "aborted");
 }
 
 /// Emits some text then a *finished* chunk whose finish_reason is `stream_error`

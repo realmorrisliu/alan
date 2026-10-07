@@ -77,3 +77,8 @@ mod safe_failure_tests;
 
 #[cfg(test)]
 mod tests;
+
+mod evaluation;
+pub use evaluation::{
+    ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationCandidate, EvaluationSelection,
+};

@@ -54,6 +54,20 @@ pub trait LlmProvider: Send + Sync {
         request: GenerationRequest,
     ) -> Result<mpsc::Receiver<StreamChunk>>;
 
+    /// Whether this actual callable supports finite-choice evaluation.
+    /// Generation or tool-calling support alone does not imply this capability.
+    fn supports_choice_evaluation(&self) -> bool {
+        false
+    }
+
+    /// Evaluate a finite set without producing assistant prose or dispatching Tools.
+    async fn evaluate_choice(
+        &mut self,
+        _request: crate::ChoiceEvaluationRequest,
+    ) -> Result<crate::ChoiceEvaluationResponse> {
+        anyhow::bail!("finite-choice evaluation unavailable")
+    }
+
     /// Non-secret account identity fixed when this callable was constructed.
     fn account_identity(&self) -> Option<&str> {
         None

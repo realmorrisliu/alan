@@ -8,6 +8,8 @@ use alan_llm::{LlmProvider, ProviderCapabilities, StreamChunk, TokenUsage, ToolC
 use serde::Serialize;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
+mod evaluation;
+
 use super::request_wire::WireRequestDocV2;
 use super::{ConnectionLimits, render_json_doc};
 
@@ -175,10 +177,11 @@ pub(super) struct Connection {
     pub(super) model: Option<String>,
     pub(super) credential_ref: Option<String>,
     pub(super) capabilities: ProviderCapabilities,
+    pub(super) choice_evaluation: bool,
     limits: ConnectionLimits,
+    evaluation_starts: AtomicU64,
     generation_starts: AtomicU64,
     total_tokens: AtomicU64,
-    total_cost_microusd: AtomicU64,
     meter_version: AtomicU32,
 }
 
@@ -192,38 +195,40 @@ impl Connection {
         provider: Box<dyn LlmProvider>,
     ) -> Self {
         Self {
+            choice_evaluation: provider.supports_choice_evaluation(),
             provider: AsyncMutex::new(provider),
             provider_name,
             model,
             credential_ref,
             capabilities,
             limits,
+            evaluation_starts: AtomicU64::new(0),
             generation_starts: AtomicU64::new(0),
             total_tokens: AtomicU64::new(0),
-            total_cost_microusd: AtomicU64::new(0),
             meter_version: AtomicU32::new(0),
         }
     }
 
-    pub(super) fn try_reserve_generation(&self) -> Result<(), ErrorCode> {
-        loop {
-            let current = self.generation_starts.load(Ordering::Relaxed);
-            if self
-                .limits
-                .max_generations
-                .is_some_and(|max| current >= max)
-            {
-                return Err(ErrorCode::NoAccess);
-            }
-            if self
-                .generation_starts
-                .compare_exchange(current, current + 1, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                self.meter_version.fetch_add(1, Ordering::Relaxed);
-                return Ok(());
-            }
+    pub(super) fn try_reserve(&self, evaluation: bool) -> Result<(), ErrorCode> {
+        if evaluation && !self.choice_evaluation {
+            return Err(ErrorCode::Unsupported);
         }
+        let (starts, max) = if evaluation {
+            (&self.evaluation_starts, self.limits.max_evaluations)
+        } else {
+            (&self.generation_starts, self.limits.max_generations)
+        };
+        starts
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                if max.is_some_and(|max| current >= max) {
+                    None
+                } else {
+                    current.checked_add(1)
+                }
+            })
+            .map_err(|_| ErrorCode::NoAccess)?;
+        self.meter_version.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     fn record_token_delta(&self, delta: u64) {
@@ -244,11 +249,13 @@ impl Connection {
             "connection": connection,
             "limits": {
                 "max_generations": self.limits.max_generations,
+                "max_evaluations": self.limits.max_evaluations,
             },
             "meter": {
                 "generation_starts": self.generation_starts.load(Ordering::Relaxed),
+                "evaluation_starts": self.evaluation_starts.load(Ordering::Relaxed),
                 "total_tokens": self.total_tokens.load(Ordering::Relaxed),
-                "total_cost_microusd": self.total_cost_microusd.load(Ordering::Relaxed),
+                "total_cost_microusd": null,
                 "currency": "USD",
             },
         }))
@@ -293,6 +300,7 @@ pub(super) struct Generation {
     /// The connection name, for directory membership under `connections/<conn>`.
     connection_name: String,
     sequence: u64,
+    evaluation: bool,
     events: Stream,
     status: StdMutex<GenStatus>,
     token_usage: StdMutex<Option<TokenUsage>>,
@@ -308,11 +316,17 @@ pub(super) struct Generation {
 }
 
 impl Generation {
-    pub(super) fn new(connection: Arc<Connection>, connection_name: String, sequence: u64) -> Self {
+    pub(super) fn new(
+        connection: Arc<Connection>,
+        connection_name: String,
+        sequence: u64,
+        evaluation: bool,
+    ) -> Self {
         Self {
             connection,
             connection_name,
             sequence,
+            evaluation,
             events: Stream::new(),
             status: StdMutex::new(GenStatus::Open),
             token_usage: StdMutex::new(None),
@@ -390,6 +404,9 @@ pub(super) async fn commit_request(
     buf: Vec<u8>,
     generation: Arc<Generation>,
 ) -> Result<(), ErrorCode> {
+    if generation.evaluation {
+        return evaluation::commit(buf, generation).await;
+    }
     // Parse the request first (pure): an empty or invalid document is malformed.
     let doc: Result<WireRequestDocV2, ()> = if buf.is_empty() {
         Err(())
@@ -436,11 +453,10 @@ pub(super) async fn commit_request(
     }
 
     // Start the provider stream, but race it against an abort: a `ctl` abort
-    // during startup drops the in-flight `generate_stream` future (cancelling
+    // while waiting for the provider lock or during startup drops the future (cancelling
     // the provider request) instead of paying for a stream nobody will read. A
     // startup failure is terminal (error).
     let rx = {
-        let mut provider = generation.connection.provider.lock().await;
         tokio::select! {
             biased;
             _ = generation.abort.notified() => {
@@ -448,7 +464,10 @@ pub(super) async fn commit_request(
                 // state; drop the provider future and do not stream.
                 return Ok(());
             }
-            result = provider.generate_stream(request) => result,
+            result = async {
+                let mut provider = generation.connection.provider.lock().await;
+                provider.generate_stream(request).await
+            } => result,
         }
     };
     let mut rx = match rx {
@@ -600,6 +619,7 @@ pub(super) fn generation_status_doc(id: &str, generation: &Generation) -> String
     render_json_doc(serde_json::json!({
         "version": 1,
         "generation": id,
+        "operation": if generation.evaluation { "choice.v1" } else { "generation" },
         "connection": generation.connection_name(),
         "status": status.as_str(),
         "progress": {
@@ -609,7 +629,7 @@ pub(super) fn generation_status_doc(id: &str, generation: &Generation) -> String
         "tokens": tokens,
         "cost": {
             "currency": "USD",
-            "amount_microusd": 0,
+            "amount_microusd": null,
             "metered": false,
         },
     }))

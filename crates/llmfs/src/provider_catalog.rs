@@ -81,12 +81,14 @@ pub(super) fn connection_capabilities_doc(
     connection: &str,
     provider: &str,
     capabilities: ProviderCapabilities,
+    choice_evaluation: bool,
 ) -> String {
     render_json_doc(serde_json::json!({
         "version": 1,
         "connection": connection,
         "provider": provider,
         "capabilities": capabilities,
+        "evaluation": { "choice_v1": choice_evaluation },
     }))
 }
 
