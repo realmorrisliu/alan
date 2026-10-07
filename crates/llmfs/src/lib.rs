@@ -828,6 +828,7 @@ fn computed_bytes(
                 &connection.provider_name,
                 connection.capabilities,
                 connection.choice_evaluation,
+                connection.generation_supported,
             )
             .into_bytes()
         }

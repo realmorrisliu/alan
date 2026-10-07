@@ -82,13 +82,16 @@ pub(super) fn connection_capabilities_doc(
     provider: &str,
     capabilities: ProviderCapabilities,
     choice_evaluation: bool,
+    generation: bool,
 ) -> String {
     render_json_doc(serde_json::json!({
         "version": 1,
         "connection": connection,
         "provider": provider,
-        "capabilities": capabilities,
+        // These are generation features; evaluation-only callables have none.
+        "capabilities": generation.then_some(capabilities),
         "evaluation": { "choice_v1": choice_evaluation },
+        "generation": generation,
     }))
 }
 

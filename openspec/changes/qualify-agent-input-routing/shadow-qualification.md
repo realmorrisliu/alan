@@ -1,7 +1,9 @@
 # Shadow qualification v1 — 2026-10-07
 
 Status: reviewed and frozen pre-measurement gates and labeled corpus. No candidate has been measured,
-no typed capability is delivered, and automatic execution is disabled. The user
+the finite-choice boundary is locally delivered in `623440ca`, and automatic
+execution is disabled. A direct TypeSafe adapter capability probe has passed; no normal evaluator
+profile has yet been published or used for routing qualification. The user
 activated this bounded next phase after local lifecycle/model/UI acceptance;
 predecessor PR merge and delivered Connection capability remain entry gates for
 integrated qualification and canonical sync.
@@ -42,7 +44,7 @@ The machine-readable budgets are `shadow-budgets.v1.json`.
   This bounds delay added before useful Agent work; fixture timings are not evidence.
 - Mean measured/verified-priced cost <=1000 micro-USD ($0.001) per evaluated input.
   Missing usage, price provenance or billing information is unknown, never zero.
-  Current llmfs `total_cost_microusd` has no accumulation and is not cost evidence.
+  llmfs unknown cost fields are null; they are not billing evidence.
 - Classification-caused Tool spawns, command runs and project writes: exactly 0.
   Controlled negative fixtures must prove this at dispatch and filesystem boundaries;
   a model-generated claim of no effects is not evidence. Shadow collection starts
@@ -97,8 +99,8 @@ The scorer self-test passed; this is fixture validation only. Strict validation
 passes, with an informational archive dependency on the predecessor's unmerged
 renderer requirement. This change is not archive-ready.
 
-Tasks 1.2, 2.1, 2.3 and 2.4 remain open: generic typed capability, its Machine
-consumer, real-provider/baseline measurements and the separate activation decision
-are not supplied by the scorer. The live entry audit found generation-only
-`LlmProvider`, `WireRequestDocV2` and Connection clone/Generation lifecycle;
-no advertised evaluation operation can currently be reached through llmfs.
+Tasks 1.2, 2.1, 2.3 and 2.4 remain open: the generic typed operation boundary
+now exists in `623440ca`, but its Machine consumer, real-provider publication and
+baseline measurements remain unfinished. The TypeSafe transport passed local HTTP fixtures and one authenticated capability
+probe (see the cognitive change's typesafe-adapter-entry.md). That does not complete
+ordinary Connection profile publication or routing qualification. The separate activation decision remains pending.

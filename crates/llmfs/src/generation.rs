@@ -178,6 +178,7 @@ pub(super) struct Connection {
     pub(super) credential_ref: Option<String>,
     pub(super) capabilities: ProviderCapabilities,
     pub(super) choice_evaluation: bool,
+    pub(super) generation_supported: bool,
     limits: ConnectionLimits,
     evaluation_starts: AtomicU64,
     generation_starts: AtomicU64,
@@ -196,6 +197,7 @@ impl Connection {
     ) -> Self {
         Self {
             choice_evaluation: provider.supports_choice_evaluation(),
+            generation_supported: provider.supports_generation(),
             provider: AsyncMutex::new(provider),
             provider_name,
             model,
@@ -210,7 +212,7 @@ impl Connection {
     }
 
     pub(super) fn try_reserve(&self, evaluation: bool) -> Result<(), ErrorCode> {
-        if evaluation && !self.choice_evaluation {
+        if (evaluation && !self.choice_evaluation) || (!evaluation && !self.generation_supported) {
             return Err(ErrorCode::Unsupported);
         }
         let (starts, max) = if evaluation {

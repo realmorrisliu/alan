@@ -25,7 +25,9 @@ pub trait LlmProvider: Send + Sync {
     ///
     /// # Returns
     /// * `Result<GenerationResponse>` - The generated response or an error
-    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse>;
+    async fn generate(&mut self, _request: GenerationRequest) -> Result<GenerationResponse> {
+        anyhow::bail!("generation unavailable")
+    }
 
     /// Simple chat without tool calling
     ///
@@ -37,7 +39,9 @@ pub trait LlmProvider: Send + Sync {
     ///
     /// # Returns
     /// * `Result<String>` - The assistant's response text
-    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String>;
+    async fn chat(&mut self, _system: Option<&str>, _user: &str) -> Result<String> {
+        anyhow::bail!("generation unavailable")
+    }
 
     /// Generate with streaming support
     ///
@@ -51,8 +55,15 @@ pub trait LlmProvider: Send + Sync {
     /// * `Result<mpsc::Receiver<StreamChunk>>` - Channel receiving stream chunks
     async fn generate_stream(
         &mut self,
-        request: GenerationRequest,
-    ) -> Result<mpsc::Receiver<StreamChunk>>;
+        _request: GenerationRequest,
+    ) -> Result<mpsc::Receiver<StreamChunk>> {
+        anyhow::bail!("generation unavailable")
+    }
+
+    /// Whether this callable implements generation (evaluation-only adapters do not).
+    fn supports_generation(&self) -> bool {
+        true
+    }
 
     /// Whether this actual callable supports finite-choice evaluation.
     /// Generation or tool-calling support alone does not imply this capability.

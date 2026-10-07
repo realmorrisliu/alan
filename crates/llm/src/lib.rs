@@ -82,3 +82,6 @@ mod evaluation;
 pub use evaluation::{
     ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationCandidate, EvaluationSelection,
 };
+
+mod typesafe_evaluation;
+pub use typesafe_evaluation::TypesafeEvaluationClient;

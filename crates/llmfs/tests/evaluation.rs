@@ -304,3 +304,66 @@ async fn no_match_is_a_typed_success_and_request_extensions_are_rejected() {
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn evaluation_only_callable_cannot_allocate_generation_or_spend_its_budget() {
+    let fs = LlmFs::new();
+    fs.register_connection(
+        "test",
+        Box::new(
+            alan_llm::TypesafeEvaluationClient::new(
+                "fixture-key-never-sent".into(),
+                "jev-1.13.0".into(),
+            )
+            .unwrap(),
+        ),
+    );
+    assert_eq!(
+        open(
+            &fs,
+            Fid(1),
+            &["connections", "test", "clone"],
+            OpenMode::ReadWrite
+        )
+        .await,
+        Err(ErrorCode::Unsupported)
+    );
+    open(
+        &fs,
+        Fid(2),
+        &["connections", "test", "capabilities"],
+        OpenMode::Read,
+    )
+    .await
+    .unwrap();
+    let capabilities: serde_json::Value =
+        serde_json::from_slice(&fs.read(Fid(2), 0, 65536).await.unwrap()).unwrap();
+    assert_eq!(capabilities["generation"], false);
+    assert!(
+        capabilities["capabilities"].is_null(),
+        "evaluation must not advertise streaming or other generation features"
+    );
+    assert_eq!(capabilities["evaluation"]["choice_v1"], true);
+    let id = allocate(&fs, Fid(3)).await;
+    open(
+        &fs,
+        Fid(4),
+        &["connections", "test", &id, "ctl"],
+        OpenMode::Write,
+    )
+    .await
+    .unwrap();
+    fs.write(Fid(4), 0, b"abort").await.unwrap();
+    open(
+        &fs,
+        Fid(5),
+        &["connections", "test", "meter"],
+        OpenMode::Read,
+    )
+    .await
+    .unwrap();
+    let meter: serde_json::Value =
+        serde_json::from_slice(&fs.read(Fid(5), 0, 65536).await.unwrap()).unwrap();
+    assert_eq!(meter["meter"]["generation_starts"], 0);
+    assert_eq!(meter["meter"]["evaluation_starts"], 1);
+}

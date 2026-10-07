@@ -23,3 +23,8 @@ A reachable Connection SHALL advertise finite-choice evaluation only when its ca
 - **WHEN** token usage or billing provenance is unavailable
 - **THEN** the affected measurement remains unknown rather than an invented zero
 - **AND** evaluation uses its own allocation quota without changing generation counts
+
+#### Scenario: Evaluation-only callable rejects generation allocation
+- **WHEN** a captured callable supports evaluation but not generation
+- **THEN** its capability projection exposes that distinction
+- **AND** generation allocation fails before provider dispatch or generation quota reservation
