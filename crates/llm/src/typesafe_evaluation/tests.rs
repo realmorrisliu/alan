@@ -78,6 +78,47 @@ fn typed_response_validation_preserves_identity_and_rejects_bad_evidence() {
     assert!(TypesafeEvaluationClient::new("".into(), "jev-1.13.0".into()).is_err());
 }
 
+#[test]
+fn rounded_provider_probabilities_preserve_selection_and_usage() {
+    let request = ChoiceEvaluationRequest {
+        input: "diagnostic only".into(),
+        candidates: (0..3)
+            .map(|i| EvaluationCandidate {
+                id: format!("candidate_{i}"),
+                description: "finite choice".into(),
+            })
+            .collect(),
+    };
+    // Real jev-1.13.0 response: individually rounded probabilities sum to 0.99.
+    let mut value = serde_json::json!({"model":"jev-1.13.0","answers":{"selection":{
+        "type":"choice","choice":"choice_1","confidence":0.91,
+        "probabilities":{"choice_0":0.03,"choice_2":0.01,"choice_1":0.93,"none":0.02}
+    }},"usage":{"input_tokens":464,"output_tokens":53}});
+    for (probability, valid) in [
+        (0.03, true),
+        (0.05, true),
+        (0.01, false),
+        (0.07, false),
+        (0.0301, false),
+    ] {
+        value["answers"]["selection"]["probabilities"]["choice_0"] = probability.into();
+        let result = decode(&serde_json::to_vec(&value).unwrap(), "jev-1.13.0", &request);
+        if valid {
+            let result = result.unwrap();
+            assert_eq!(
+                result.selection,
+                EvaluationSelection::Selected("candidate_1".into())
+            );
+            assert_eq!(result.usage.unwrap().total_tokens, 517);
+        } else {
+            assert!(
+                result.is_err(),
+                "accepted impossible or unrounded distribution"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn http_posts_typed_original_input_once_and_never_generates() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();

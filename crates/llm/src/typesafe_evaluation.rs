@@ -119,6 +119,25 @@ fn decode(
         .map(|i| format!("choice_{i}"))
         .chain(std::iter::once("none".into()))
         .collect();
+    // jev-1.13.0 can round each probability to hundredths independently.
+    // Accept only distributions whose rounding intervals can contain total mass 1;
+    // do not normalize evidence or apply the wider bound to higher-precision data.
+    let rounded_mass = answer
+        .probabilities
+        .values()
+        .all(|p| (p * 100.0 - (p * 100.0).round()).abs() <= 1e-9)
+        && answer
+            .probabilities
+            .values()
+            .map(|p| (p - 0.005).max(0.0))
+            .sum::<f64>()
+            <= 1.0 + 1e-9
+        && answer
+            .probabilities
+            .values()
+            .map(|p| (p + 0.005).min(1.0))
+            .sum::<f64>()
+            >= 1.0 - 1e-9;
     ensure!(
         answer.kind == "choice"
             && answer.probabilities.len() == keys.len()
@@ -129,7 +148,7 @@ fn decode(
                 .probabilities
                 .values()
                 .all(|p| p.is_finite() && (0.0..=1.0).contains(p))
-            && (answer.probabilities.values().sum::<f64>() - 1.0).abs() <= 0.001
+            && ((answer.probabilities.values().sum::<f64>() - 1.0).abs() <= 0.001 || rounded_mass)
             && answer.confidence.is_finite()
             && (0.0..=1.0).contains(&answer.confidence),
         "Invalid TypeSafe choice distribution"

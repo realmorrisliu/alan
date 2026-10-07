@@ -359,3 +359,35 @@ input/corpus digest were independently checked against the frozen artifacts.
 The example's regression checks one-prefix consumption and exact body retention,
 including nested-prefix data and leading whitespace. Pending parity, unknown
 provider costs and the failing candidate remain open; no gate is relaxed.
+
+## Unavailable-response diagnosis — 2026-10-07
+
+A separate five-call diagnostic revisited the five unique inputs represented by
+v1's seven unavailable observations. Every diagnostic call returned HTTP 200 and
+usage. Four decoded distributions sum to 1; route-032 returned probabilities
+`0.03, 0.01, 0.93, 0.02` (sum 0.99), selecting the largest entry. The unchanged
+adapter rejects that actual response as `Invalid TypeSafe choice distribution`.
+A regression reproduced this rejection before the fix. These are new diagnostic
+requests, not retries or replacements of the recorded v1 slots. Original raw
+provider responses were not retained for the seven failures, so their individual
+causes and missing usage cannot be recovered from this diagnosis.
+
+The [provider Choice contract](https://docs.typesafe.ai/primitives/choice) describes
+an argmax choice and probability mass 1. The observed two-decimal response requires
+allowance for independent rounding. Adapter validation now accepts rounded values
+only when their per-value half-hundredth intervals, bounded to [0, 1], can contain total
+mass 1. Higher-precision values retain the existing strict sum tolerance. It does
+not renormalize probabilities, change the selected option, infer missing usage or
+relax finite/range/key/model/argmax checks. The regression covers sums 0.99 and 1.01,
+rejects 0.97/1.03 and an unrounded deficient distribution, and checks selection and
+usage preservation.
+
+Evidence: `~/Library/Caches/Alan/typesafe-unavailable-diagnostic-20261007/` contains
+the one-pass probe and five request/response receipts, without credentials.
+`typesafe-rounding-red.log` records the pre-fix failure. This adapter correction
+changes the candidate implementation: future qualification requires a fresh frozen
+candidate and new runs. The failing v1 scores, unknown overall cost and activation
+rejection remain unchanged; automatic execution remains disabled.
+
+The full LLM unit suite passed 209 tests with one existing credential-gated test
+ignored; `~/Library/Caches/Alan/typesafe-rounding-tests.log` retains the result.
