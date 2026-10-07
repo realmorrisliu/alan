@@ -26,8 +26,9 @@ pub(crate) use namespace_environment::{
     PendingActionPublication,
 };
 pub use namespace_environment::{
-    NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
-    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,
+    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
+    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
 use std::collections::VecDeque;

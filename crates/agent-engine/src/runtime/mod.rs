@@ -55,8 +55,9 @@ pub use controller::{
 pub use engine::spawn_with_namespace_environment;
 pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
 pub use transition::{
-    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
-    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceRuntimeEnvironment,
+    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
+    NamespaceTurnRuntimeConfig,
 };
 
 // Re-export the memory-promotion job for internal runtime modules.
