@@ -24,9 +24,15 @@ the model used. Those transport facts are not evidence of accuracy or latency he
   caller IDs or NoMatch, never an executable body. Fixed question instructions and
   candidate descriptions are part of the adapter configuration pinned for all runs.
 - Require exact returned model identity, one expected Choice answer, the complete
-  finite distribution, finite bounded confidence/probabilities, normalized mass
-  within 0.001, selected maximum within 0.000001, and nonnegative nonoverflowing
-  usage. Reject duplicate answer/distribution keys. Unknown billing remains unknown.
+  finite distribution, finite bounded confidence/probabilities, and total mass
+  within 0.001. As corrected on 2026-10-07, independently rounded hundredths may
+  instead pass only when their clipped half-hundredth intervals can contain total
+  mass 1; higher-precision data does not receive this allowance. Preserve selected
+  maximum within 0.000001 and nonnegative nonoverflowing usage. Reject duplicate
+  answer/distribution keys. Do not renormalize probabilities or infer unknown billing.
+  The [diagnostic and regression](../qualify-agent-input-routing/shadow-qualification.md#unavailable-response-diagnosis--2026-10-07)
+  records the actual provider response, the bounded correction and the requirement
+  for fresh candidate qualification without replacing v1 measurements.
 - Fail without retry/fallback on authentication, rate limit, redirect, malformed
   result, timeout or oversized body. Do not expose credentials, state or response
   bodies through errors.

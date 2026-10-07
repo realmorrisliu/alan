@@ -1,4 +1,4 @@
-//! Experimental TypeSafe Choice transport; not yet published by Connection profiles.
+//! Finite-choice-only TypeSafe transport for explicitly selected evaluation Connections.
 
 use crate::{
     ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationSelection, LlmProvider, TokenUsage,
