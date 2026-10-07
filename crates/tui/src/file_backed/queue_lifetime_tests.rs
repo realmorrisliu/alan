@@ -189,3 +189,37 @@ fn lifetime_active_admission_is_not_execution() {
         }
     }
 }
+
+#[test]
+fn lifetime_pending_admission_remains_visible_in_narrow_headers() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    app.queue.apply(
+        "/agent/root",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            pending_submission_ids: vec!["pending".into()],
+            ..Default::default()
+        }),
+    );
+    for state in [
+        UiActivityState::Idle,
+        UiActivityState::Running,
+        UiActivityState::Paused,
+    ] {
+        app.activity.state = state;
+        for width in 16..=80 {
+            let line = app.context_line(width);
+            let text = line.to_string();
+            assert!(line.width() <= width, "{width}: {text}");
+            assert!(
+                text.contains("queued") || text.contains("q 1"),
+                "{width}: {text}"
+            );
+            if state != UiActivityState::Running {
+                assert!(!text.contains("working"), "{width}: {text}");
+            }
+        }
+    }
+}
