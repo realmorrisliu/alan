@@ -2,7 +2,8 @@
 
 Presentation update (2026-09-29): the user selected compact `: ` / `! ` markers
 under a two-line Agent context prompt. The renderer-host delta and design here
-reflect that new target; current longer markers are not relabeled as shipped.
+reflect that target, shipped by PR #1026 (merge `0bcdcbe5`) on 2026-10-06.
+The compact markers do not activate automatic routing or close lifecycle acceptance.
 The [self-development plan](../make-alan-self-development-ready/disposition.md)
 owns the aggregate product gate and two-line composition, while this change
 retains input intent, queue, cwd, cancellation and recovery ownership.

@@ -1,5 +1,38 @@
 ## MODIFIED Requirements
 
+### Requirement: Codex-like terminal interaction baseline
+The Rust TUI SHALL be a keyboard-driven inline renderer over mounted AgentFS
+files. It SHALL render recent transcript content followed immediately by an
+editable contextual two-line prompt with a `: ` or `! ` route marker, preserve committed content in terminal scrollback,
+and SHALL NOT reserve a full-screen viewport or pin the prompt to a bottom
+composer. Transient completion candidates, multiline input, and structured
+input MAY temporarily expand the inline viewport and SHALL disappear when the
+interaction ends. Existing typed transcript cells, incremental file updates,
+resize reflow, and frame coalescing SHALL remain supported.
+
+#### Scenario: Streaming assistant output renders incrementally
+- **WHEN** renderer-visible runtime state streams output
+- **THEN** the TUI updates typed transcript cells incrementally
+- **AND** it coalesces redraws so high-frequency deltas do not overwhelm the
+  terminal
+- **AND** the editable prompt follows the latest transcript without a fixed
+  bottom panel or a blank screen-sized gap
+
+#### Scenario: Completed content enters terminal scrollback
+- **WHEN** visible transcript content exceeds the active inline viewport
+- **THEN** committed lines are inserted into terminal scrollback
+- **AND** the inline viewport remains focused on the current interaction
+
+#### Scenario: Resize preserves readable state
+- **WHEN** the terminal is resized during a turn or while editing input
+- **THEN** transcript and prompt reflow without losing input or duplicating or
+  dropping rendered content
+
+#### Scenario: Long input keeps its editable tail visible
+- **WHEN** multiline input extends beyond the inline composer viewport
+- **THEN** the inline paragraph scrolls to keep the edit cursor visible
+- **AND** the complete input remains available for editing and submission
+
 ### Requirement: Command and reference completion surface
 The TUI SHALL provide keyboard-driven completion for slash commands, skill
 references and file references using the current authorized sources. Candidate

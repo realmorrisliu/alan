@@ -1,10 +1,105 @@
 # Tasks
 
-Implementation is in progress in the local checkout and is not shipped. Each
-slice still requires focused checks, user-facing help, and current-head
-review/CI evidence before it can be called shipped. Existing runtime
-requirements remain in `unify-agent-command-input`; linked dependency work is
-not a second implementation owner.
+## Extended verification — 2026-10-06
+
+The post-merge audit below initially could not locate the old `/tmp` artifacts.
+A subsequent original-session and durable-Runtime audit recovered substantive
+execution evidence; this supersedes the earlier narrative-only limitation without
+recreating missing original ANSI files. Evidence ledgers and exact selected source
+records are retained in `~/Library/Caches/Alan/self-development-delivery-evidence-audit/`.
+
+- Historical G1: original session tool outputs establish both Herdr and ordinary
+  PTY authorization, Agent read/edit, check/diff, cancellation with child termination,
+  explicit continuation/correction and natural exit. Full old ANSI byte streams
+  remain missing; selected original execution records are preserved with line hashes.
+  Complete original Runtime transcripts `0bba03b5-27dc-47f9-970a-452ce6324bf9`
+  and `ef108a08-8b53-474d-8198-3e6565a37142` join those Host outputs to cover every
+  workflow stage. Tasks1.5/2.6 close for the merged milestone; ordinary PTY is
+  historical candidate evidence, not a claim of a fresh final-head PTY run.
+- Historical G2: original Runtime rollout `8f986395-1c19-4e0b-8fe2-37cc27b12cef`
+  proves instruction/disposition reads and actual Alan-authored edits/checks. Original
+  session records prove compiled RED, final GREEN, quality, build and relaunch.
+  Recomputed commit `ce6bc0e9` diff/test hashes match both independent final reviews,
+  and the commit is an ancestor of merged head `25f6a832`. Task3.5 can close.
+- Repeated supervised development: original pager rollout
+  `76451489-f139-4ecd-9461-2d5a5a68eaf8` contains real Tool edits, RED101, GREEN0,
+  fullTUI305+10 and Clippy0. Frozen604Rust/26build pins, three-file patch and fresh
+  binary match; original Herdr Space/b/Esc captures preserve the draft. Native PTY
+  recovery records retain exact effect counts, cancellation and empty final queues.
+  Herdr attached-view detach/reattach preserves PID/boot/Root and authority; the
+  main client remained attached, so all-client-disconnect is not qualified.
+- Current build `552d1fb8` (documentation only over `1fe71f3f`) passed full workspace
+  tests:2763 passed/0 failed/10 ignored, canonical `just quality`, and67 OpenSpec
+  checks. These are local checks; this documentation PR's CI/approval remain separate.
+- Fresh Herdr Native21008 used binary SHA
+  `8572abd772ea14123ba64c591436326b25c835bf2a10b68b6ce80c06bdbd0201`.
+  It started with no grant, explicitly approved a disposable read-write fixture,
+  performed actual Agent read_file/edit_file, grep/diff exit0, and showed retained
+  diff details. External file and Git results matched. Approved sleep child22350
+  was cancelled and disappeared; explicit continue then pwd succeeded. Revocation
+  returned cwd to `/`, and `/quit` exited0 without process rescue. The temporary
+  pane was closed only after its foreground returned to fish.
+- Current model was gpt-6.1-sol medium; catalog reported unavailable. This verifies
+  honest failure presentation, not successful live selection. Known-model catalog
+  and selection success remain covered by the existing automated tests.
+- The original four self-development instances have retained shutdown evidence;
+  all original PIDs are absent. No Alan self-development was restarted. Current
+  fixture validation is Codex-directed product testing, not new authorship evidence.
+
+Task4.6 comparison audit is complete: retained matched73x22 and69x20 Markdown
+captures cover headings/lists/Chinese/code/diff with exact fx/Alan identities;
+`20261001-native/qualification.json` ties Tool output/details to the same200-line
+fixture, and the subsequent pager author candidate has actual Space/b/last-line
+and draft-restoration captures. The October6 header comparison records model,
+effort, project access and activity/queue differences. Each delivered P3 slice has
+source pins, independent review, quality checks and final merged-head CI. Model
+and network timing are excluded. This closes the scoped comparison, not graphical
+parity or a promise to repeat the entire comparison after each backend correction.
+
+Conclusion: supervised usability and historical supervised self-development are
+supported by recoverable original evidence. Reliable unattended bootstrap, all-client
+Herdr disconnect and graphical parity with fx are not established by these records.
+
+## Post-merge delivery audit — 2026-10-06
+
+PR [#1026](https://github.com/realmorrisliu/alan/pull/1026) merged at
+2026-10-06T14:56:09Z as `0bcdcbe5445e862cdfa704deb9762c76b7bf4889`.
+The merged head is `25f6a832c38be0de73379cacaf4f01a569e9adc0`; all 16 checks
+passed, including Linux/macOS tests, repository quality, OpenSpec, release builds
+and CodeQL. The exact-head automatic review completed and all four final review
+threads were replied to and resolved. Earlier pending-CI statements below are
+historical checkpoints, not current delivery status.
+
+The six owning deltas are now synchronized in the delivery follow-up checkout.
+Older canonical `alan >` requirements are reconciled with the shipped `: ` / `! `
+route markers, the ADR has a dated clarification, and README documents project
+approval, model selection and retained details. This documentation follow-up
+still requires its own review/CI/merge; PR #1026 does not prove its delivery.
+
+Completion audit limitations:
+
+- The retained `20261006-direct-review-fixes/project-idempotency/native/` evidence
+  verifies Herdr project selection, pwd/details, revocation and normal exit0
+  (PID79014). It explicitly records direct Codex verification, not Alan authorship.
+- The matched fx0.0.12/Alan69x20 comparison remains available under
+  `20261006-direct-review-fixes/header-candidate/`, including source/binary identity,
+  ANSI captures and normal exits. It does not prove graphical-theme parity.
+- Early G1/G2 `/tmp/alan-g1-*` and `/tmp/alan-g2-independent-*` raw artifacts could
+  not be found during this audit. The retained narrative is historical evidence,
+  not a substitute for the full original transcripts, failing checks and relaunch
+  records required by tasks2.6/3.5. These tasks remain open pending recoverable
+  evidence or an explicit disposition; no new Alan self-development is authorized
+  by this documentation work.
+- `unify-agent-command-input` remains the existing owner of ordinary-terminal and
+  Herdr runtime acceptance (tasks2.10/2.14) and broader lifecycle/recovery (2.19).
+  It does not silently inherit this change's missing G2 authorship proof.
+- Archive readiness is not established. Retain failed and successful checkpoints;
+  do not convert narrative-only qualification into unattended-bootstrap claims.
+
+Current assessment: usable under supervision, with retained terminal and automated
+regression evidence. Reliable unattended self-bootstrap remains unproven. The
+user's direct-Codex takeover remains in force; original self-development instances
+and temporary verification instances stay stopped.
 
 ## Canonical catalog sibling correction — 2026-10-06
 
@@ -2013,7 +2108,7 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 - [x] 1.2 Select the Process cwd after approval and project truthful project-relative status; verify fresh launch without approval cannot access the project, revoked grants fail closed, and `!pwd` plus Agent `read_file` agree on an authorized disposable project.
 - [x] 1.3 Replace missing-project internal errors with an actionable authorization summary; verify both explicit commands and Agent Tools reach the same explanation and retain diagnostics in details.
 - [x] 1.4 Reproduce the recorded cancel → queued follow-up → continue → unresponsive-control sequence against exact HEAD, preserving submission/Action identifiers and process evidence; if reproduced, fix the shared cause under the unified-input owner and add the smallest regression that fails before the fix. If not reproduced, retain the uncertainty and run the G1 interruption cases rather than claiming it fixed.
-- [ ] 1.5 Review the P0 slice, resolve findings, pass focused Host/CLI tests and required current-head CI; record actual ordinary-terminal and Herdr results here.
+- [x] 1.5 Review the P0 slice, resolve findings, pass focused Host/CLI tests and required current-head CI; record actual ordinary-terminal and Herdr results here.
 
 ## 2. P1 — Complete the everyday task loop and G1
 
@@ -2022,7 +2117,7 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 - [x] 2.3 Implement one-Enter slash execution, Tab insertion and idle Ctrl+C draft clearing with help text; place temporary candidates below the composer and keep the input/cursor anchor stable across candidate count/wrapping changes. Verify paste/Enter, multiline input, active interruption, rejected drafts, UTF-8 cursor editing, bounded menu at terminal edges and per-key anchor stability at 40/60/73/80/120 columns through focused composer tests and Herdr.
 - [x] 2.4 Add the two-line Agent prompt with actual project/cwd, model or unknown, and distinct ready/working/approval/paused/failure states; verify 40/60/80/120-column layouts, Chinese/emoji input and no fixed bottom panel or lost host scrollback.
 - [x] 2.5 Pass G1 through ordinary terminal and Herdr on the same build: explicitly approve a disposable project, have Alan read/edit a small fixture, run a focused check, show the real diff, cancel a bounded task and successfully submit a correction; record toolchain/cache/network restrictions and resolve them through existing scoped policy rather than disabling sandboxing.
-- [ ] 2.6 Review and merge the P1 slice after focused checks, `just quality` and required current-head CI; record G1 as passed only with the complete live transcript and no hidden operator wiring.
+- [x] 2.6 Review and merge the P1 slice after focused checks, `just quality` and required current-head CI; record G1 as passed only with the complete live transcript and no hidden operator wiring.
 
 ## 3. P2 — Demonstrate supervised self-development
 
@@ -2030,7 +2125,7 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 - [x] 3.2 Through Herdr, ask Alan to inspect its own source, identify the shared cause and produce the patch plus regression check; preserve its prompt/Tool evidence and confirm no operator supplied or silently edited its patch.
 - [x] 3.3 Have Alan run the focused check and inspect its diff; independently verify failing-before/passing-after, review scope and actual command exit statuses, and ensure the patch complies with repository architecture and test placement.
 - [x] 3.4 Build the reviewed candidate through the governed workflow and freshly launch it in Herdr; demonstrate the corrected interaction and clean exit, retaining the known-good binary. Record source/binary identity and mark G2 passed only after this loop succeeds.
-- [ ] 3.5 Complete normal review/CI/merge for the actual self-authored change under its owning OpenSpec scope; on any failed step, retain the failed-gate evidence and keep self-development unqualified.
+- [x] 3.5 Complete normal review/CI/merge for the actual self-authored change under its owning OpenSpec scope; on any failed step, retain the failed-gate evidence and keep self-development unqualified.
 
 ## 4. P3 — Refine terminal presentation and repeatability
 
@@ -2039,12 +2134,12 @@ Final UI qualification and shipment remain reserved. The remaining10 delivery po
 - [x] 4.3 Carry semantic spans through the existing history/layout path and apply the design's spacing and color roles; verify headings/lists/code/diffs, copyable indentation, light/dark/low-color terminals and resize snapshots at 40/60/80/120 columns.
 - [x] 4.4 Wire `/status` and `/model` to Connection-owned catalog/effective binding, adding any required owning provider/Connection delta before implementation; verify successful next-input binding, unavailable catalog, selection failure and unchanged in-flight bindings without hardcoded model choices.
 - [x] 4.5 Verify chosen durable recovery and paused/no-replay behavior with the active unified-input owner; keep the parked history-browser project inactive. Run a second independent Alan-authored task through Herdr and record G3, including whether any manual process rescue was needed.
-- [ ] 4.6 Re-run the fixed fx/Alan comparison scenarios with exact versions and matched viewport widths; preserve visual/ANSI evidence and separate model-dependent timing from interaction quality. Review, pass `just quality` and required current-head CI for each delivered P3 slice.
+- [x] 4.6 Re-run the fixed fx/Alan comparison scenarios with exact versions and matched viewport widths; preserve visual/ANSI evidence and separate model-dependent timing from interaction quality. Review, pass `just quality` and required current-head CI for each delivered P3 slice.
 - [x] 4.7 Preserve a bounded safe provider startup reason through the existing LLMFS terminal error event and namespace/Engine failure projection. Reuse typed auth and HTTP/transport classification behind provider adapters; never publish unrestricted HTTP bodies, credentials, URLs or account identifiers. Verify startup cause propagation and unknown-sensitive-error fallback through existing failure suites. Distinguish local connection configuration validation from a real successful provider request. Cover both direct startup failures and background streaming adapters through existing terminal StreamChunk conventions. Preserve failed commit ErrorCode::Io and abort/single-terminal semantics; after failed data commit, read only the bounded terminal cause from the already-created generation instead of formatting the write error chain. Verify real local HTTP status/transport stubs through LLMFS and namespace projection; no new error framework is needed.
 
 ## 5. Delivery and archive readiness
 
-- [ ] 5.1 Confirm every shipped slice has current-head review and passing required CI; queued/skipped checks do not count, and the plan's existence does not mark implementation complete.
+- [x] 5.1 Confirm every shipped slice has current-head review and passing required CI; queued/skipped checks do not count, and the plan's existence does not mark implementation complete.
 - [ ] 5.2 Sync only merged behavior into its canonical spec, reconcile shared requirement owners and update user-facing instructions; verify strict OpenSpec validation and current-surface guards.
 - [ ] 5.3 Archive only after owned tasks are complete or explicitly handed to an active successor with preserved status; verify G1/G2/G3 claims match live artifacts and leave any unfinished runtime lifecycle acceptance with its existing owner.
 

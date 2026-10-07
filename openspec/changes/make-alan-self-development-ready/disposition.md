@@ -1,3 +1,12 @@
+# Current disposition — 2026-10-06
+
+Implementation and review corrections merged through PR #1026. This change is
+active for canonical specification synchronization and delivery-evidence audit.
+The user's direct-Codex takeover supersedes the earlier instruction to operate
+Alan for new self-development. It does not retroactively establish G1/G2/G3
+qualification or authorize closing missing evidence. See the post-merge audit
+in `tasks.md`; archive remains pending. Runtime ownership is unchanged.
+
 # Disposition — 2026-09-29
 
 Active planning requested by the user: assess usable-agent/self-development
