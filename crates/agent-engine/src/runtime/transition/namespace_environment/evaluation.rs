@@ -161,6 +161,7 @@ impl NamespaceEvaluation {
     /// Errors do not retry generation, evaluation, or any effect.
     pub async fn commit(mut self, cancel: &CancellationToken) -> Result<ChoiceEvaluationResponse> {
         let mut data_fid: Option<Fid> = None;
+        let mut terminal_observed = false;
         let work = async {
             let remaining = self
                 .expires
@@ -192,7 +193,7 @@ impl NamespaceEvaluation {
             // Taking the descriptor precedes commit: an uncertain clunk is never retried.
             data_fid = None;
             self.client.clunk(fid).await?;
-            self.read_result().await
+            self.read_result(&mut terminal_observed).await
         };
         let result = tokio::select! {
             biased;
@@ -201,6 +202,12 @@ impl NamespaceEvaluation {
             result = work => result.map_err(classify),
         };
         if let Err(error) = result {
+            // A valid terminal receipt already fences this operation. Aborting it
+            // is rejected by llmfs and must not turn a settled error into uncertainty.
+            if terminal_observed {
+                self.armed = false;
+                return Err(error);
+            }
             let aborted = abort(&self.client, &self.path("ctl")).await;
             // Never clunk a buffered request unless abort was acknowledged: clunk
             // commits data. On uncertain abort retain the fid until server teardown.
@@ -220,7 +227,7 @@ impl NamespaceEvaluation {
         result
     }
 
-    async fn read_result(&self) -> Result<ChoiceEvaluationResponse> {
+    async fn read_result(&self, terminal_observed: &mut bool) -> Result<ChoiceEvaluationResponse> {
         let events = self
             .client
             .open_path_guarded(&self.path("events"), OpenMode::Read)
@@ -243,6 +250,17 @@ impl NamespaceEvaluation {
         events.close().await?;
         let event: EvaluationEvent = serde_json::from_slice(&bytes).map_err(|_| Malformed)?;
         ensure!(event.version == 1, Malformed);
+        let terminals = [
+            event.done == Some(true),
+            event.aborted == Some(true),
+            event.rejected == Some(true),
+            event.error.is_some(),
+        ];
+        ensure!(
+            terminals.into_iter().filter(|terminal| *terminal).count() == 1,
+            Malformed
+        );
+        *terminal_observed = true;
         if event.aborted == Some(true) {
             return Err(Cancelled.into());
         }

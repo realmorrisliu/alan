@@ -179,3 +179,26 @@ separate from the failed corpus attempt, and never replace its denominator.
 checks failure retention and redirected timeout output; the frozen scorer self-test
 also passes. Next work is to diagnose the unsettled abort, then complete evidence
 collection and baseline comparison without changing the frozen labels or gates.
+
+### Confirmed-terminal cleanup correction
+
+The mounted caller treated every failed result as needing abort, including a
+valid terminal error already acknowledged by llmfs. Since llmfs correctly refuses
+abort of a settled operation, this wrapped confirmed errors in `Abort` uncertainty
+and prevented the Machine from recording their terminal classification. An actual
+mounted malformed-result regression reproduced this false uncertainty before the
+fix. The caller now recognizes exactly one terminal marker in a valid v1 envelope
+and preserves its typed failure without aborting it again. Unknown acknowledgements,
+invalid envelopes and unfinished operations retain conservative abort handling.
+Regression coverage also checks provider outages and a rejected captured-model
+result, with no additional provider calls. This fixes a demonstrated cause of the
+observed symptom; the original live attempt has no retained provider error receipt,
+so its underlying provider failure remains unidentified and its failure is retained.
+The fix passed 1,374 Agent Engine unit tests (one unrelated live test ignored),
+the eight mounted evaluation tests, independent Spec/Standards review and strict
+change validation. A separate real `route-033` diagnostic then completed through
+both native clients (1,352/2,981 ms). Both selected `command` for frozen-ambiguous
+`ls?`: lifecycle completion improved, but this is still a classification failure,
+not evidence that the routing gate passed. Those diagnostic records live under
+`~/Library/Caches/Alan/shadow-terminal-diagnostic-route033/` and do not replace the
+original corpus attempt.

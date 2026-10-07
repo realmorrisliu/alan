@@ -32,6 +32,9 @@ impl LlmProvider for Evaluator {
         assert_eq!(request.input, "  pwd\n");
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
+        if request.candidates[0].id == "provider-error" {
+            anyhow::bail!("synthetic provider outage");
+        }
         if self.hold {
             std::future::pending::<()>().await;
         }
@@ -176,13 +179,15 @@ async fn captured_model_mismatch_rejects_the_result() {
         .allocate_choice_evaluation(identity, request(), 30_000, &cancel)
         .await
         .unwrap();
+    let error = operation.commit(&cancel).await.unwrap_err();
     assert_eq!(
-        operation
-            .commit(&cancel)
-            .await
-            .unwrap_err()
-            .downcast_ref::<NamespaceEvaluationFailure>(),
+        error.downcast_ref::<NamespaceEvaluationFailure>(),
         Some(&Malformed)
+    );
+    assert!(
+        error
+            .downcast_ref::<NamespaceEvaluationUncertainty>()
+            .is_none()
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
@@ -355,21 +360,26 @@ async fn cancellation_with_a_complete_buffer_aborts_before_cleanup_clunk() {
 async fn mounted_failures_retain_malformed_and_unavailable_categories() {
     let (mut environment, mut identity, calls, _) = setup(false);
     let cancel = CancellationToken::new();
-    let mut invalid_selection = request();
-    invalid_selection.candidates[0].id = "agent".into();
-    let operation = environment
-        .allocate_choice_evaluation(identity.clone(), invalid_selection, 30_000, &cancel)
-        .await
-        .unwrap();
-    assert_eq!(
-        operation
-            .commit(&cancel)
+    for (candidate, failure) in [("agent", Malformed), ("provider-error", Unavailable)] {
+        let mut input = request();
+        input.candidates[0].id = candidate.into();
+        let operation = environment
+            .allocate_choice_evaluation(identity.clone(), input, 30_000, &cancel)
             .await
-            .unwrap_err()
-            .downcast_ref::<NamespaceEvaluationFailure>(),
-        Some(&Malformed)
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+            .unwrap();
+        let error = operation.commit(&cancel).await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<NamespaceEvaluationFailure>(),
+            Some(&failure)
+        );
+        assert!(
+            error
+                .downcast_ref::<NamespaceEvaluationUncertainty>()
+                .is_none(),
+            "an acknowledged terminal error must not become abort uncertainty: {error:#}"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     environment.llm_connection = "absent".into();
     identity.profile = "absent".into();
     let error = match environment
@@ -383,7 +393,7 @@ async fn mounted_failures_retain_malformed_and_unavailable_categories() {
         error.downcast_ref::<NamespaceEvaluationFailure>(),
         Some(&Unavailable)
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
