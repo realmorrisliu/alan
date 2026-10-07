@@ -106,3 +106,25 @@ probe (see the cognitive change's typesafe-adapter-entry.md). That does not comp
 routing qualification. Isolated normal profile publication has since passed the
 Host/Connection/llmfs probe in typesafe-profile-entry.md; Machine integration and
 all frozen corpus observations remain pending. The separate activation decision remains pending.
+
+## Client admission evidence — 2026-10-07
+
+`file_backed/shadow_admission_tests.rs` runs all 50 ordinary corpus inputs three
+times through both shipped client adapters (300 committed AgentFS input frames).
+The interactive path uses composer insertion, submit handling and the ordinary
+input writer; the redirected path uses its actual task constructor and submitter.
+Each frame preserves the submission UUID and exact post-prefix body. The test
+retains the original source separately and checks that only one explicit prefix
+is consumed; it does not reconstruct source from resulting intent.
+
+The four pending-response cases run three times through the interactive submit
+handler and actual AgentFS request response files (12 responses). Their request
+identity and literal prefix bytes survive, and no ordinary input frame is created.
+A separate test drives the real redirected waiter to a correlated paused event
+and verifies that it exits requiring the TTY renderer. The remaining 12 frozen
+redirected-response observations are unsupported, not successes or omitted rows.
+
+These tests install actual namespace/AgentFS services but no Machine, provider or
+executor. They prove client admission contracts only, not native terminal event
+handling, end-to-end Machine digest correlation, latency, billing or model quality.
+No qualification records or numeric pass are inferred from these fixture counts.

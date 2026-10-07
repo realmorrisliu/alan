@@ -874,6 +874,10 @@ mod queue_tests;
 #[path = "file_backed/semantic_tests.rs"]
 mod semantic_tests;
 #[cfg(test)]
+#[path = "file_backed/shadow_admission_tests.rs"]
+mod shadow_admission_tests;
+
+#[cfg(test)]
 #[path = "file_backed/stdio_idle_tests.rs"]
 mod stdio_idle_tests;
 #[cfg(test)]
