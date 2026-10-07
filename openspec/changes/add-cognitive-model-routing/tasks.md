@@ -7,7 +7,7 @@ prerequisite slices does not count as their merge or canonical spec synchronizat
 
 - [ ] 1.1 Select a bounded evaluation point within the working read-only project task; explicitly activate this scope and record deterministic/generation baselines.
 - [x] 1.2 Define versioned evaluation DTOs and operation lifecycle in llm-file-server and provider contracts; verify all affected delta scenarios are present.
-- [ ] 1.3 Define complete Machine state/evidence/projection ownership and update agent-namespace-runtime plus agent-file-layout-contract deltas; verify recovery and write ownership are unambiguous.
+- [x] 1.3 Define complete Machine state/evidence/projection ownership and update agent-namespace-runtime plus agent-file-layout-contract deltas; verify recovery and write ownership are unambiguous.
 - [ ] 1.4 Reuse the first tracer bullet's Shell/Process IO path and any delivered recovery contract; record cross-change ownership without renderer launch bypass.
 
 ## 2. Bounded implementation after entry approval
@@ -24,3 +24,7 @@ prerequisite slices does not count as their merge or canonical spec synchronizat
 - [ ] 3.3 Merge with current-head CI and sync implemented deltas. Before archiving, transfer every unfinished roadmap item and activation gate to a then-active unfinished change, preserve status and update incoming references. Do not assume programmable-client is still unfinished. Archive only after delivery evidence and a discoverable active roadmap handoff exist.
 
 Bounded entry evidence: [typed-entry-delivery.md](typed-entry-delivery.md).
+
+Machine ownership planning evidence: [machine-shadow-contract.md](machine-shadow-contract.md).
+Task 1.3 passed independent Spec and Standards review and strict change validation;
+implementation, recovery fixtures and both-surface qualification remain unchecked.

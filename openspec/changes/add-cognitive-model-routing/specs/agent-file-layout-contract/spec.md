@@ -13,3 +13,15 @@ AgentFS SHALL expose evaluation identity, schema, captured Connection/model and 
 - **WHEN** a client writes to the evaluation observation
 - **THEN** the write is rejected
 - **AND** only Machine-owned controls can advance the current transition
+
+### Requirement: Evaluation snapshots cannot become a second write authority
+The `machine/evaluation` file SHALL project the latest acknowledged Machine observation as a bounded versioned snapshot. Agent Runtime Service SHALL publish it through the owning AgentFS in-process update path. The public aP node SHALL reject write-intent opens and direct writes. Historical evidence SHALL remain in rollout/checkpoint storage.
+
+#### Scenario: No observation exists
+- **WHEN** a fresh Machine has no acknowledged evaluation evidence
+- **THEN** its projection reports unknown or no observation rather than successful selection
+
+#### Scenario: Advice is recovered into another Process
+- **WHEN** explicit recovery reconstructs evaluation evidence under a new PID
+- **THEN** the projection retains the source observation and captured Connection identity
+- **AND** publication neither dispatches an evaluator nor settles ordinary queued input
