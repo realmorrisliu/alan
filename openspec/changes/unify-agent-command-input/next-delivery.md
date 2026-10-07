@@ -289,3 +289,20 @@ This closes task 2.19 implementation and bounded product acceptance on the recor
 source. The new uncertainty display and expanded boot regression still require
 current-head PR delivery under 4.1 and canonical synchronization under 4.2.
 It does not close unrelated multi-client, cross-grant or Linux qualification.
+
+## Partial canonical lifecycle sync — 2026-10-07
+
+Canonical `alan-shell`, `alan-os-host-lifecycle` and `service-manager` now describe
+explicit `--resume`, fresh recovery identity, paused work with revalidated authority,
+instance-pinned Root replacement and recorder flush ordering. They also distinguish
+Herdr view detach from native process exit. These behaviors exist on merged main
+`43700bb11e28bc22e3cb099009018e0a494e4e3d`; the product acceptance above supplies
+the bounded lifecycle evidence. The stale claim that recovery was unimplemented
+has been removed. Existing one-shot and restart-budget requirements are preserved.
+
+Canonical `provider-connection-contract` already requires confirmed model selection,
+retention of captured callable bindings and controls through queued dispatch and
+explicit recovery, and visible rejection of unavailable bindings. No duplicate
+requirement is added. Task 4.2 remains open: this partial sync does not include the
+unmerged Unknown-outcome UI notice, terminal polish, typed evaluation or automatic
+routing guarantees. The broader input-contract audit remains open as recorded above.

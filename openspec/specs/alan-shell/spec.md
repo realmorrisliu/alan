@@ -123,6 +123,19 @@ Runtime.
   `/agent/root`
 - **AND** Service Manager remains the Agent Process lifecycle owner
 
+#### Scenario: User explicitly restores a previous Root rollout
+- **WHEN** the user starts `alan --resume`
+- **THEN** the new foreground instance restores the selected durable Root rollout
+- **AND** missing or invalid selected evidence fails startup instead of silently
+  starting fresh
+
+#### Scenario: Service Manager replaces Root inside one foreground instance
+- **WHEN** Root fails after readiness, its restart policy permits replacement,
+  and the instance has a durable rollout
+- **THEN** Service Manager resumes that instance's latest durable rollout
+- **AND** another invocation cannot change the replacement's recovery source
+- **AND** a fresh invocation selects an earlier rollout only with explicit recovery
+
 #### Scenario: User runs alan with redirected IO
 - **WHEN** stdin is not a terminal, regardless of stdout
 - **THEN** stdin is submitted as one task and only the final answer is written
