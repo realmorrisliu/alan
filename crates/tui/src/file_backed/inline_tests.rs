@@ -434,6 +434,46 @@ fn model_and_status_remain_visible_across_prompt_widths() {
         assert!(text.contains("next gpt-6-luna"), "{text}");
         assert!(text.ends_with(status), "{text}");
     }
+    for queue in [
+        alan_agent_protocol::UiQueueSnapshot::default(),
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            uncertain_submission_ids: vec!["unknown".into()],
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            deferred: true,
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: true,
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            active_submission_ids: vec!["active".into()],
+            ..Default::default()
+        },
+    ] {
+        assert!(queue.is_valid());
+        app.queue.apply("/agent/root", Some(queue));
+        for selecting in [false, true] {
+            app.project_selection = selecting.then_some(ProjectAccess::ReadOnly);
+            for width in 16..=80 {
+                let line = app.context_line(width);
+                let text = line.to_string();
+                assert!(line.width() <= width, "{width}: {text}");
+                let action = if selecting { "selecting" } else { "approval" };
+                assert!(text.contains(action), "{width}: {text}");
+            }
+        }
+    }
 }
 
 #[test]

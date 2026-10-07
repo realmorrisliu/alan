@@ -165,10 +165,15 @@ impl FileBackedApp {
             );
             // Keep characters on both sides of a shortened model, not a bare ellipsis.
             if UnicodeWidthStr::width(status.as_str()) + 6 > width {
-                status = cue
-                    .unwrap_or(core_status)
+                // Awaiting user action takes precedence over secondary queue metadata.
+                let compact_status = if matches!(core_status, "approval" | "selecting") {
+                    core_status
+                } else {
+                    cue.unwrap_or(core_status)
+                };
+                status = compact_status
                     .strip_prefix("model ")
-                    .unwrap_or(cue.unwrap_or(core_status))
+                    .unwrap_or(compact_status)
                     .to_string();
             }
             if UnicodeWidthStr::width(model.as_str()) + UnicodeWidthStr::width(status.as_str()) + 3

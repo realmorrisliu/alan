@@ -53,3 +53,19 @@ passes with an active cue and bounded width. All 335 terminal library tests and
 `~/Library/Caches/Alan/ui-active-header-{red,tests}.log`. Prior native acceptance
 remains tied to its recorded source; this targeted presentation fix is validated
 by the updated renderer regression and requires new current-head CI.
+
+## Awaiting-action priority correction — 2026-10-08
+
+A subsequent PR #1034 review reproduced queue metadata replacing `approval`
+at minimum widths. The same fallback also affected project selection. Preserve
+these two current user actions when the combined state and queue cue cannot fit;
+queue details remain available through `/queue`. Other queue urgency and model
+control priority are unchanged.
+
+The existing model/status regression now combines confirmation and project
+selection with unknown, uncertain, deferred, paused and active queues at every
+width from 16 through 80. Its pre-fix failure was `gpt-6-luna · q ?` at width 16.
+All 335 terminal library tests and 11 integration tests pass. Evidence logs:
+`~/Library/Caches/Alan/ui-approval-priority-{red,tests}.log`. This targeted change
+requires independent review, the complete quality gate and fresh current-head CI;
+the earlier native visual acceptance is not attributed to this source.
