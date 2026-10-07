@@ -1,12 +1,12 @@
 # Shadow qualification v1 — 2026-10-07
 
-Status: reviewed and frozen pre-measurement gates and labeled corpus. No candidate has been measured,
-the finite-choice boundary is locally delivered in `623440ca`, and automatic
-execution is disabled. Direct adapter and isolated mounted-profile TypeSafe capability probes have passed.
-Machine shadow collection and routing qualification are still unfinished. The user
-activated this bounded next phase after local lifecycle/model/UI acceptance;
-predecessor PR merge and delivered Connection capability remain entry gates for
-integrated qualification and canonical sync.
+Status: corpus and gates remain frozen before measurement. The locally implemented
+Machine/Connection/TypeSafe path has now completed 300 ordinary native-client
+observations and fails the false-command, accuracy, recall and latency gates.
+Automatic execution remains disabled. Pending-response parity, generation baseline,
+complete cost evidence, current-head delivery and canonical sync are still open.
+The bounded phase was activated after local lifecycle/model/UI acceptance;
+predecessor merge remains a separate delivery gate.
 
 ## Scope and labels
 
@@ -202,3 +202,58 @@ both native clients (1,352/2,981 ms). Both selected `command` for frozen-ambiguo
 not evidence that the routing gate passed. Those diagnostic records live under
 `~/Library/Caches/Alan/shadow-terminal-diagnostic-route033/` and do not replace the
 original corpus attempt.
+
+
+## Post-fix ordinary native corpus — 2026-10-07
+
+A clean build of `537680dd0f6df5b93c1a1df33aa5f62900227129` completed all 50
+ordinary cases × three repeats × two actual clients, without an unsettled abort.
+The 300 records contain 246 selected choices, 11 valid no-match responses, seven
+unavailable results and 36 explicit-prefix bypasses. All bypasses retain zero
+calls and no operation ID. No-match is scored as ambiguous; unavailable remains
+Agent work. No evaluator result dispatches a command, and the fixture exposes no
+Host tools or project mount.
+
+| Ordinary-subset measurement | Result | Frozen gate |
+| --- | --- | --- |
+| False command classifications | 35 | 0 |
+| Correct routes | 236 / 300 (78.67%) | >=95% over all 324 |
+| Command / Agent / ambiguous recall | 100% / 86.42% / 22.22% | each >=90% |
+| Valid typed results | 257 / 264 (97.35%) | >=98% |
+| Added routing p50 / p95 | 1,592 / 3,143 ms | <=300 / <=1,000 ms |
+| Overall verified mean cost | unknown: seven missing usage records | <=1,000 micro-USD |
+
+These are ordinary-subset results, not a complete 324-row score. The existing
+scorer must still reject a missing response matrix. Pricing was rechecked against
+[TypeSafe's model documentation](https://docs.typesafe.ai/models): jev-1.13.0 has
+$0.042 per million input tokens and free output. The 257 known-usage observations
+average 19.61874 micro-USD at that public list price; this is neither an invoice
+nor a substitute for the seven unknown costs. Unknown costs are not set to zero.
+
+Evidence is in `~/Library/Caches/Alan/shadow-native-postfix-corpus-v1/`, including
+all original Machine observations and terminal captures. The adjacent
+`shadow-native-postfix-build-receipt.json` records the clean source commit,
+successful locked build, target, Cargo.lock hash and matching executable hash.
+This externally recorded build receipt supplements, rather than rewrites, the
+collector's conservative build-source flag. The original failed 65-attempt run
+remains intact as pre-fix evidence; it was not spliced into this post-fix run.
+
+### Generation comparison entry
+
+`routing_generation_baseline` is a test-only example using the existing dev
+ChatGPT Connection, configured for gpt-6.1-sol with medium reasoning. Its caller
+namespace contains only the captured Connection: it sends no Machine input and
+has no Tool dispatcher. Generation requests contain no Tool definitions. The
+prompt repeats the candidate definitions and requests one of the same three
+labels; it is frozen in the run manifest before any call. Labels from the corpus
+are not supplied to either model.
+
+The example records operation identity before commit and retains partial bytes,
+usage and bounded abort/close acknowledgements on failure. Unresolved attempts
+stop the batch without retry. It records provider projection and configured model
+separately because the existing generation projection omits model metadata.
+`surface_stratum` repeats the source matrix; it does not claim native-client parity
+or admission timing. Subscription billing remains unknown, so this component
+comparison alone cannot pass full end-to-end latency/cost qualification.
+Two `pwd` smoke observations returned command in 5,008/3,195 ms. They establish
+connectivity only and do not replace the forthcoming frozen-corpus baseline.
