@@ -1,7 +1,10 @@
 # 下一步规划入口：Tracer bullet
 
-2026-09-29 当前产品优先级移交：先按
-[Alan 自开发准备计划](../make-alan-self-development-ready/tasks.md)
+2026-10-07 交付更新：PR #1026/#1030 已完成受监督项目使用、自开发验收和终端交付；
+验收证据见下方归档计划，当前合同见 canonical specs。无人监督自举未证明。
+
+2026-09-29 历史产品优先级移交：先按
+[Alan 自开发准备计划](../archive/2026-10-07-make-alan-self-development-ready/tasks.md)
 完成普通项目入口、任务反馈与 G1/G2 自举验收，再推进该计划的终端精修。
 本文件保留既有 tracer bullet 证据；不将其等同于已完成自举。
 统一输入的 queue/cwd/cancellation/recovery 所有权不变。
@@ -106,8 +109,8 @@ ADR-0058 的显式 `!`/`:` 交付归属
 - [ ] 补齐 llmfs/provider、Agent Machine/AgentFS、执行证据 owning deltas。
 - [ ] 用可控 fixtures 验证 typed success、no-match、格式错误、超时、取消、结构化完成、wait/resume 和 Unknown 处理。
 - [ ] 复用切片 2 已交付的恢复合同；明确 Machine state、Tape 投影、rollout/checkpoint 的写入权威。
-TUI model picker、有效模型显示和下一输入的真实绑定已移交
-[自开发准备计划 P3](../make-alan-self-development-ready/tasks.md)。该 UI 不依赖
+TUI model picker、有效模型显示和下一输入的真实绑定已通过 PR #1026/#1030 交付，证据见
+[自开发准备计划 P3](../archive/2026-10-07-make-alan-self-development-ready/tasks.md)。该 UI 不依赖
 typed evaluation/Jev；不再在此维护重复任务。此前提出的无选择时优先 `gpt-6-luna`
 自动策略不进入本轮 UI 交付，仍需后续 capability/catalog 资格评估；首轮遵守已确认
 的 Connection 默认绑定，不宣称自动选型已实现。
