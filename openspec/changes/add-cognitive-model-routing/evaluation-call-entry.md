@@ -34,7 +34,7 @@ asserts zero evaluator calls and release after abort. Additional gates cover
 lost allocation open/read acknowledgements and blocked cleanup acknowledgement. They use actual llmfs with
 fixture evaluators; they are not real-provider routing measurements.
 
-Remaining work: prove original-input correlation and deterministic bypass evidence
+Remaining work: prove original-input correlation and the durable bypass path
 on both real admission surfaces without executing corpus commands, then collect
 and score the frozen real-model corpus and baselines. No task is marked complete solely by this API entry.
 
@@ -71,9 +71,9 @@ allocates only after reconciling previous evidence for the submission, persists 
 start before commit, publishes the acknowledged start, consumes one evaluation,
 and persists a terminal before publication. The original generation capture and
 normal dispatch branch are unchanged: even command advice does not select command
-execution. Explicit intents and pending/control input bypass the evaluator;
-durable bypass evidence and original-byte correlation across real clients remain
-unfinished. No default environment contains a shadow evaluator.
+execution. Explicit intents and request responses now persist deterministic bypass evidence;
+control-only operations still skip evaluation. Original-byte correlation across
+real clients remains unfinished. No default environment contains a shadow evaluator.
 
 Mounted consumer tests cover accepted-submission dispatch with command advice,
 repeat/recovery without another evaluator call, both failed persistence barriers,
@@ -116,3 +116,30 @@ tokens with unknown cost. This verifies the Host/Machine/provider path, not actu
 interactive/redirected clients or the frozen 324-case performance qualification.
 The credential was injected from the explicitly named `.env` entry into the test
 process and temporary Host credential store; no user profile/default was changed.
+
+
+The bypass follow-up records `bypassed` with an explicit-intent or request-response
+reason and zero evaluator calls, without allocating an operation or inventing
+usage. Request correlation survives fresh delivery UUIDs. Recovery treats this
+as one terminal record; duplicate delivery cannot create a model attempt, change
+payload/authority, or consume the ordinary input queue. The accepted response
+path acknowledges bypass evidence before existing response consumption; a failed
+write leaves the pending request in place and starts no generation. Its digest
+covers the actual Machine payload; a real-client collector must retain the separate
+original bytes before prefix/form conversion. This does not add a redirected
+response client or count synthetic responses toward qualification.
+
+Focused validation: 24 evaluation tests passed, including the actual accepted
+response path, failed persistence, repeat/recovery, and rejection of bypass records
+that claim a model operation, positive call count or usage.
+
+Only current user Confirmation/StructuredInput responses enter this observation
+path. Unknown/stale response IDs retain their normal rejection; Host Mount
+terminal notifications remain Service-owned controls and do not reserve bypass
+identity. The shared submission handler covers initial and in-turn responses.
+
+Full regression passed: 1,374 engine tests (one opt-in test ignored) and 144
+Service Manager tests; strict change validation passed. Independent Spec and
+Standards reviews passed after moving response observation to the shared handler
+and restricting it to current user requests. Both initial and in-turn response
+fixtures cover acknowledged publication and persistence failure before consumption.

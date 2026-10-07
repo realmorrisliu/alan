@@ -774,6 +774,9 @@ where
         )
         .await;
     }
+    if matches!(submission.op, Op::Resume { .. }) {
+        state.observe_input_shadow(&submission, cancel).await?;
+    }
     let mut tape_writer = if matches!(submission.op, Op::Turn { .. }) {
         Some(accepted_submission::begin_turn_dispatch(state, &submission).await?)
     } else {

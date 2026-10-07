@@ -15,7 +15,7 @@ use super::{
     NamespaceRuntimeEnvironment, model_binding::CallableIdentity, transition::RuntimeLoopState,
 };
 use crate::agent_machine::evaluation::{
-    Candidate, EVENT_TYPE, Identity, Observation, Outcome, Usage,
+    BypassReason, Candidate, EVENT_TYPE, Identity, Observation, Outcome, Usage,
 };
 use crate::rollout::{RolloutItem, RolloutRecorder};
 
@@ -98,19 +98,59 @@ impl RuntimeLoopState {
         let Some(shadow) = self.environment.shadow_evaluation.clone() else {
             return Ok(());
         };
-        // These intents and response/control operations retain deterministic precedence.
-        if submission.intent != InputIntent::Agent || self.machine.has_pending_interaction() {
+        // Ordinary input waiting behind an interaction is not response admission.
+        if self.machine.has_pending_interaction() && matches!(submission.op, Op::Input { .. }) {
             return Ok(());
         }
-        let Op::Input { parts, .. } = &submission.op else {
-            return Ok(());
+        // Response identity belongs to the request, not its transient delivery UUID.
+        let (correlation_id, parts, bypass) = match &submission.op {
+            Op::Input { parts, .. } => (
+                submission.id.clone(),
+                parts,
+                match submission.intent {
+                    InputIntent::Agent => None,
+                    InputIntent::ForceAgent => Some(BypassReason::ExplicitAgent),
+                    InputIntent::Command => Some(BypassReason::ExplicitCommand),
+                },
+            ),
+            Op::Resume {
+                request_id,
+                content,
+            } => {
+                // Host Mount completion is service-owned control, not client response
+                // admission. Unknown/stale responses retain their ordinary rejection.
+                if !matches!(
+                    self.machine.pending_yield(request_id),
+                    Some(
+                        crate::agent_machine::PendingYield::Confirmation(_)
+                            | crate::agent_machine::PendingYield::StructuredInput(_)
+                    )
+                ) {
+                    return Ok(());
+                }
+                (
+                    format!("response:{request_id}"),
+                    content,
+                    Some(BypassReason::RequestResponse),
+                )
+            }
+            _ => return Ok(()),
         };
-        let [ContentPart::Text { text }] = parts.as_slice() else {
-            anyhow::bail!("shadow evaluation requires one original text body");
+        // This digest describes the actual Machine payload. The qualification
+        // collector separately retains the raw client bytes before form/prefix parsing.
+        let text = match parts.as_slice() {
+            [ContentPart::Text { text }] => text.clone(),
+            _ if bypass.is_some() => serde_json::to_string(parts)?,
+            _ => anyhow::bail!("shadow evaluation requires one original text body"),
         };
         let started_at = Instant::now();
         let expires = started_at + Duration::from_millis(shadow.deadline_ms);
-        let digest = hex::encode(Sha256::digest(text.as_bytes()));
+        let digest = if matches!(submission.op, Op::Resume { .. }) {
+            // Include content-part tags so text containing JSON cannot alias a form response.
+            hex::encode(Sha256::digest(serde_json::to_vec(parts)?))
+        } else {
+            hex::encode(Sha256::digest(text.as_bytes()))
+        };
         let recorder = self
             .machine
             .input_recorder()
@@ -126,9 +166,10 @@ impl RuntimeLoopState {
                 && event.event_type == EVENT_TYPE
             {
                 let prior: Observation = serde_json::from_value(event.payload.clone())?;
-                if prior.identity.submission_id == submission.id {
+                if prior.identity.submission_id == correlation_id {
                     ensure!(
-                        prior.identity.input_sha256 == digest
+                        prior.outcome.bypass_reason() == bypass
+                            && prior.identity.input_sha256 == digest
                             && prior.identity.callable == shadow.identity
                             && prior.identity.surface == shadow.surface
                             && prior.identity.deadline_ms == shadow.deadline_ms,
@@ -159,6 +200,49 @@ impl RuntimeLoopState {
             input: text.clone(),
             candidates,
         };
+        let mut observation = Observation {
+            identity: Identity {
+                source_rollout_id: recorder.rollout_id().into(),
+                submission_id: correlation_id,
+                input_sha256: digest,
+                surface: shadow.surface.clone(),
+                operation_id: None,
+                callable: shadow.identity.clone(),
+                schema: "choice.v1".into(),
+                deadline_ms: shadow.deadline_ms,
+                candidates: request
+                    .candidates
+                    .iter()
+                    .map(|c| Candidate {
+                        id: c.id.clone(),
+                        description: c.description.clone(),
+                    })
+                    .collect(),
+            },
+            outcome: Outcome::Started,
+            elapsed_ms: None,
+            usage: None,
+        };
+        if let Some(reason) = bypass {
+            observation.outcome = Outcome::Bypassed {
+                reason,
+                evaluator_calls: 0,
+            };
+            observation.elapsed_ms = Some(started_at.elapsed().as_millis() as u64);
+            return bounded(expires, cancel, async {
+                self.machine
+                    .persist_evaluation_observation(serde_json::to_value(&observation)?)
+                    .await?;
+                ensure!(
+                    !cancel.is_cancelled(),
+                    super::NamespaceEvaluationFailure::Cancelled
+                );
+                self.environment
+                    .publish_evaluation(self.machine.evaluation_observation.clone())
+                    .await
+            })
+            .await;
+        }
         let remaining = expires
             .saturating_duration_since(Instant::now())
             .as_millis() as u64;
@@ -171,29 +255,7 @@ impl RuntimeLoopState {
         let operation = environment
             .allocate_choice_evaluation(shadow.identity.clone(), request.clone(), remaining, cancel)
             .await?;
-        let mut observation = Observation {
-            identity: Identity {
-                source_rollout_id: recorder.rollout_id().into(),
-                submission_id: submission.id.clone(),
-                input_sha256: digest,
-                surface: shadow.surface.clone(),
-                operation_id: operation.operation_id().into(),
-                callable: shadow.identity.clone(),
-                schema: "choice.v1".into(),
-                deadline_ms: shadow.deadline_ms,
-                candidates: request
-                    .candidates
-                    .into_iter()
-                    .map(|c| Candidate {
-                        id: c.id,
-                        description: c.description,
-                    })
-                    .collect(),
-            },
-            outcome: Outcome::Started,
-            elapsed_ms: None,
-            usage: None,
-        };
+        observation.identity.operation_id = Some(operation.operation_id().into());
         let acknowledgement = bounded(
             expires,
             cancel,

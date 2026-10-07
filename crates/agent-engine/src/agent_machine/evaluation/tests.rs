@@ -10,7 +10,7 @@ fn started() -> Observation {
             submission_id: "original-input".into(),
             input_sha256: "a".repeat(64),
             surface: Surface::Interactive,
-            operation_id: "e0".into(),
+            operation_id: Some("e0".into()),
             callable: CallableIdentity {
                 profile: "evaluator".into(),
                 provider: "typesafe".into(),
@@ -155,7 +155,7 @@ fn repeated_old_terminal_record_does_not_hide_a_newer_observation() {
     done.elapsed_ms = Some(10);
     let mut second = first.clone();
     second.identity.submission_id = "second-input".into();
-    second.identity.operation_id = "e1".into();
+    second.identity.operation_id = Some("e1".into());
     let events = [event(&first), event(&done), event(&second), event(&done)];
     let recovered = recover(&events).unwrap().unwrap();
     assert_eq!(recovered["identity"]["submission_id"], "second-input");
@@ -251,7 +251,7 @@ async fn writer_acknowledges_once_and_rejects_changed_or_recovered_attempts() {
             .unwrap()
     );
     start.identity.source_rollout_id = recovered.rollout_id().unwrap().into();
-    start.identity.operation_id = "another-operation".into();
+    start.identity.operation_id = Some("another-operation".into());
     assert!(
         recovered
             .persist_evaluation_observation(serde_json::to_value(&start).unwrap())
@@ -393,4 +393,69 @@ async fn reconciliation_restores_evidence_but_cannot_continue_an_interrupted_att
         recovered.recorder().unwrap().close().await.unwrap();
         machine.recorder().unwrap().close().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn bypass_is_one_terminal_record_and_cannot_claim_a_model_call() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut machine = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", directory.path())
+        .await
+        .unwrap();
+    let mut observation = started();
+    observation.identity.source_rollout_id = machine.rollout_id().unwrap().into();
+    observation.identity.operation_id = None;
+    observation.outcome = Outcome::Bypassed {
+        reason: BypassReason::ExplicitCommand,
+        evaluator_calls: 0,
+    };
+    observation.elapsed_ms = Some(1);
+    assert!(
+        machine
+            .persist_evaluation_observation(serde_json::to_value(&observation).unwrap())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !machine
+            .persist_evaluation_observation(serde_json::to_value(&observation).unwrap())
+            .await
+            .unwrap()
+    );
+    let recovered = AgentMachine::load_from_rollout_in_dir(
+        machine.rollout_path().unwrap(),
+        "/proc/2",
+        "mock",
+        directory.path(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        recovered.evaluation_observation,
+        machine.evaluation_observation
+    );
+    for field in ["calls", "operation", "usage"] {
+        let mut invalid = observation.clone();
+        match field {
+            "calls" => {
+                invalid.outcome = Outcome::Bypassed {
+                    reason: BypassReason::ExplicitCommand,
+                    evaluator_calls: 1,
+                }
+            }
+            "operation" => invalid.identity.operation_id = Some("not-allocated".into()),
+            _ => {
+                invalid.usage = Some(Usage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                })
+            }
+        }
+        assert!(recover(&[event(&invalid)]).is_err());
+    }
+    let mut evaluated = observation.clone();
+    evaluated.outcome = Outcome::Started;
+    evaluated.elapsed_ms = None;
+    evaluated.identity.operation_id = Some("operation".into());
+    assert!(recover(&[event(&observation), event(&evaluated)]).is_err());
+    assert!(recover(&[event(&evaluated), event(&observation)]).is_err());
 }

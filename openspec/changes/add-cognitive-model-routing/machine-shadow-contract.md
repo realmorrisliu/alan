@@ -1,8 +1,8 @@
 # Machine shadow evidence contract — 2026-10-07
 
-Status: implementation contract for the activated advice-only slice, not delivered
-runtime behavior. The Connection/profile boundary is delivered locally at
-`858e2535`; Machine consumption and qualification remain outstanding.
+Status: ownership contract for the activated advice-only slice. Connection,
+Machine consumption, recovery and explicit Host selection are implemented on the
+draft branch; real-client qualification and canonical delivery remain outstanding.
 
 ## Admission and original input
 
@@ -77,8 +77,14 @@ Do not silently treat the existing optional-recorder no-op as durable success.
 Observation identity includes the originating durable execution identity and
 submission/request identity. Process PID or ephemeral llmfs operation ID alone is
 not a recovery key. Bypass observations persist their reason and zero evaluator
-calls without allocating an operation. Repeated delivery reconciles the same
-observation. A qualification repeat is a fresh submission with explicit repeat
+calls without allocating an operation; operation identity is null and usage is
+absent. They are single terminal records, not fabricated started/model-result
+pairs. A response uses `response:<request_id>` as its stable correlation key,
+independent of a new delivery UUID. The digest describes the Machine payload
+(ordinary text bytes, or serialized tagged response content parts); the collector must separately retain
+raw client bytes before prefix/form conversion. Repeated delivery reconciles the
+same observation. A bypass does not prove response acceptance: the ordinary
+request owner still validates and consumes the response. A qualification repeat is a fresh submission with explicit repeat
 metadata, not replay of a completed observation.
 
 ## Recovery and projection
@@ -114,3 +120,8 @@ writes to the projection must fail. The real client adapters must prove source
 correlation; engine-only fixtures cannot stand in for the two admission surfaces.
 These checks remain tasks 1.4, 2.2–2.4 and 3.1–3.2; this contract does not check them
 off or activate automatic execution.
+
+Only current user Confirmation/StructuredInput responses enter this observation
+path. Unknown/stale response IDs retain their normal rejection; Host Mount
+terminal notifications remain Service-owned controls and do not reserve bypass
+identity. The shared submission handler covers initial and in-turn responses.

@@ -217,20 +217,83 @@ async fn cancellation_after_provider_completion_preserves_abort_uncertainty() {
 }
 
 #[tokio::test]
-async fn explicit_intents_and_response_operations_bypass_the_evaluator() {
-    let (mut state, _dir, mut input, _, _) =
+async fn explicit_intents_and_response_operations_persist_without_evaluator_calls() {
+    let (mut state, dir, mut input, _, _) =
         dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
     let (calls, observations) = attach(&mut state, false, None);
-    for intent in [
-        alan_agent_protocol::InputIntent::Command,
-        alan_agent_protocol::InputIntent::ForceAgent,
+    for (intent, reason) in [
+        (
+            alan_agent_protocol::InputIntent::Command,
+            "explicit_command",
+        ),
+        (
+            alan_agent_protocol::InputIntent::ForceAgent,
+            "explicit_agent",
+        ),
     ] {
+        input.id = uuid::Uuid::new_v4().to_string();
         input.intent = intent;
+        for _ in 0..2 {
+            state
+                .observe_input_shadow(&input, &CancellationToken::new())
+                .await
+                .unwrap();
+        }
+        let latest = observations.lock().unwrap().last().unwrap().clone();
+        assert_eq!(latest["outcome"]["state"], "bypassed");
+        assert_eq!(latest["outcome"]["reason"], reason);
+        assert_eq!(latest["outcome"]["evaluator_calls"], 0);
+        assert!(latest["identity"]["operation_id"].is_null());
+    }
+    state
+        .machine
+        .set_structured_input(crate::approval::PendingStructuredInputRequest {
+            request_id: "pending-request".into(),
+            title: "Question".into(),
+            prompt: "Answer".into(),
+            questions: vec![],
+        });
+    for _ in 0..2 {
         state
-            .observe_input_shadow(&input, &CancellationToken::new())
+            .observe_input_shadow(
+                &Submission::new(Op::Resume {
+                    request_id: "pending-request".into(),
+                    content: vec![alan_agent_protocol::ContentPart::text("! response data")],
+                }),
+                &CancellationToken::new(),
+            )
             .await
             .unwrap();
     }
+    let latest = observations.lock().unwrap().last().unwrap().clone();
+    assert_eq!(
+        latest["identity"]["submission_id"],
+        "response:pending-request"
+    );
+    assert_eq!(latest["outcome"]["reason"], "request_response");
+    state
+        .observe_input_shadow(&Submission::new(Op::Interrupt), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let recorder = state.machine.input_recorder().unwrap();
+    recorder.flush().await.unwrap();
+    let records = RolloutRecorder::load_history(recorder.path())
+        .await
+        .unwrap();
+    assert_eq!(records.iter().filter(|item| matches!(item, RolloutItem::Event(e) if e.event_type == "machine_evaluation_v1")).count(), 3);
+    state.machine = AgentMachine::load_from_rollout_in_dir(
+        recorder.path(),
+        "/proc/recovered",
+        "mock",
+        dir.path(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state.machine.evaluation_observation.as_ref().unwrap(),
+        &latest
+    );
     state
         .observe_input_shadow(
             &Submission::new(Op::Resume {
@@ -241,12 +304,26 @@ async fn explicit_intents_and_response_operations_bypass_the_evaluator() {
         )
         .await
         .unwrap();
-    state
-        .observe_input_shadow(&Submission::new(Op::Interrupt), &CancellationToken::new())
-        .await
-        .unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(observations.lock().unwrap().is_empty());
+    state
+        .machine
+        .set_structured_input(crate::approval::PendingStructuredInputRequest {
+            request_id: "pending-request".into(),
+            title: "Question".into(),
+            prompt: "Answer".into(),
+            questions: vec![],
+        });
+    let error = state
+        .observe_input_shadow(
+            &Submission::new(Op::Resume {
+                request_id: "pending-request".into(),
+                content: vec![alan_agent_protocol::ContentPart::text(": changed response")],
+            }),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("changed captured input"));
 }
 
 #[tokio::test]
@@ -365,4 +442,132 @@ async fn steering_and_brokered_follow_up_use_the_same_shadow_dispatch_boundary()
             assert_eq!(calls.load(Ordering::SeqCst), 2);
         }
     }
+}
+
+#[tokio::test]
+async fn accepted_response_bypass_precedes_consumption_and_failure_preserves_pending_request() {
+    for (fail_persistence, in_turn) in [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let (mut state, _dir, _, _, generation) =
+            dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
+        state.core_config.memory.enabled = false;
+        state.machine.begin_turn(0);
+        state
+            .machine
+            .set_structured_input(crate::approval::PendingStructuredInputRequest {
+                request_id: "pending-input".into(),
+                title: "Question".into(),
+                prompt: "Answer".into(),
+                questions: vec![],
+            });
+        let (calls, observations) = attach(&mut state, false, None);
+        let backing = state.machine.input_recorder().unwrap();
+        let mut failed_batch = None;
+        if fail_persistence {
+            let (probe, received) = backing.batch_failure_probe(false);
+            state.machine.set_input_recorder_for_test(probe);
+            failed_batch = Some(received);
+        }
+        let response = Submission::new(Op::Resume {
+            request_id: "pending-input".into(),
+            content: vec![alan_agent_protocol::ContentPart::structured(
+                serde_json::json!({"answers":[{"question_id":"q1","value":"! response data"}]}),
+            )],
+        });
+        let broker = TurnInputBroker::default();
+        let first = if in_turn {
+            broker.push(response).await;
+            // Rejected initial control leaves the pending request for the in-turn receiver.
+            Submission::new(Op::Resume {
+                request_id: "unknown".into(),
+                content: vec![],
+            })
+        } else {
+            response
+        };
+        let result = if in_turn {
+            let mut emit = |_event: Event| async {};
+            crate::runtime::transition::accepted_submission::drive_turn_submission_with_cancel(
+                &mut state,
+                first,
+                &broker,
+                &mut emit,
+                &CancellationToken::new(),
+            )
+            .await
+        } else {
+            advance_accepted_submission(&mut state, first, &broker, &CancellationToken::new())
+                .await
+                .result
+                .map(|_| ())
+        };
+        assert_eq!(result.is_err(), fail_persistence, "{result:?}");
+        assert_eq!(state.machine.has_pending_interaction(), fail_persistence);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        if let Some(mut received) = failed_batch {
+            assert_eq!(received.recv().await.unwrap().len(), 1);
+            assert!(observations.lock().unwrap().is_empty());
+            assert!(generation.recorded_requests().is_empty());
+        } else {
+            assert!(
+                !generation.recorded_requests().is_empty(),
+                "normal response continuation remains authoritative"
+            );
+            let observations = observations.lock().unwrap();
+            assert_eq!(observations.len(), 1);
+            assert_eq!(observations[0]["outcome"]["reason"], "request_response");
+        }
+    }
+}
+
+#[tokio::test]
+async fn unknown_responses_and_host_controls_cannot_reserve_bypass_identity() {
+    let (mut state, _dir, _, _, _) = dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
+    let (calls, observations) = attach(&mut state, false, None);
+    state
+        .observe_input_shadow(
+            &Submission::new(Op::Resume {
+                request_id: "unknown".into(),
+                content: vec![],
+            }),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    state
+        .machine
+        .set_host_mount_request(crate::agent_machine::PendingHostMountRequest {
+            request_id: "host-mount".into(),
+            tool_call_id: "mount".into(),
+            namespace_path: "/mnt/project".into(),
+            access: "read_only".into(),
+            reason: "Read files".into(),
+            label: None,
+            request_events_offset: 0,
+        });
+    for content in [
+        vec![alan_agent_protocol::ContentPart::text("forged response")],
+        vec![],
+    ] {
+        state
+            .observe_input_shadow(
+                &Submission::new(Op::Resume {
+                    request_id: "host-mount".into(),
+                    content,
+                }),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(observations.lock().unwrap().is_empty());
+    assert!(state.machine.evaluation_observation.is_none());
+    assert!(state.machine.pending_host_mount("host-mount").is_some());
+    let recorder = state.machine.input_recorder().unwrap();
+    recorder.flush().await.unwrap();
+    let history = RolloutRecorder::load_history(recorder.path())
+        .await
+        .unwrap();
+    assert!(!history.iter().any(|item| matches!(item, RolloutItem::Event(event) if event.event_type == "machine_evaluation_v1")));
 }

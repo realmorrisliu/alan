@@ -68,7 +68,8 @@ impl super::AgentMachine {
             observation.identity.source_rollout_id == recorder.rollout_id(),
             "new evaluation evidence must belong to the current rollout"
         );
-        if observation.outcome != Outcome::Started {
+        if observation.outcome != Outcome::Started && observation.outcome.bypass_reason().is_none()
+        {
             let identity = serde_json::to_value(&observation.identity)?;
             ensure!(
                 self.evaluation_observation.as_ref().is_some_and(|live| {
@@ -111,7 +112,7 @@ pub(crate) struct Identity {
     pub submission_id: String,
     pub input_sha256: String,
     pub surface: Surface,
-    pub operation_id: String,
+    pub operation_id: Option<String>,
     pub callable: CallableIdentity,
     pub schema: String,
     pub deadline_ms: u64,
@@ -122,13 +123,36 @@ pub(crate) struct Identity {
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Outcome {
     Started,
-    Selected { candidate_id: String },
+    Selected {
+        candidate_id: String,
+    },
     NoMatch,
     Unavailable,
     Malformed,
     TimedOut,
     Cancelled,
     Interrupted,
+    Bypassed {
+        reason: BypassReason,
+        evaluator_calls: u8,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BypassReason {
+    ExplicitCommand,
+    ExplicitAgent,
+    RequestResponse,
+}
+
+impl Outcome {
+    pub(crate) fn bypass_reason(&self) -> Option<BypassReason> {
+        match self {
+            Self::Bypassed { reason, .. } => Some(*reason),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,11 +175,26 @@ impl Observation {
     fn validate(&self) -> Result<()> {
         let identity = &self.identity;
         ensure!(
-            !identity.source_rollout_id.is_empty()
-                && !identity.submission_id.is_empty()
-                && !identity.operation_id.is_empty(),
+            !identity.source_rollout_id.is_empty() && !identity.submission_id.is_empty(),
             "evaluation evidence lacks correlation identity"
         );
+        if let Outcome::Bypassed {
+            evaluator_calls, ..
+        } = self.outcome
+        {
+            ensure!(
+                evaluator_calls == 0 && identity.operation_id.is_none() && self.usage.is_none(),
+                "bypassed input must not claim a model operation or usage"
+            );
+        } else {
+            ensure!(
+                identity
+                    .operation_id
+                    .as_ref()
+                    .is_some_and(|id| !id.is_empty()),
+                "evaluation evidence lacks operation identity"
+            );
+        }
         ensure!(
             identity.input_sha256.len() == 64
                 && identity.input_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
@@ -218,7 +257,8 @@ pub(super) fn recover(events: &[EventRecord]) -> Result<Option<serde_json::Value
         );
         match observations.get(&key) {
             None => ensure!(
-                observation.outcome == Outcome::Started,
+                observation.outcome == Outcome::Started
+                    || observation.outcome.bypass_reason().is_some(),
                 "evaluation terminal evidence lacks an acknowledged start"
             ),
             Some(previous) => {

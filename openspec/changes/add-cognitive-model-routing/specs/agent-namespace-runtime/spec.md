@@ -30,3 +30,11 @@ The Machine SHALL persist captured admission and evaluation identity before comm
 - **WHEN** a qualification input becomes an ordinary submission or a pending-request response
 - **THEN** evidence correlates the retained original bytes with that actual submission or request identity
 - **AND** it does not reconstruct raw input from intent, reinterpret response prefixes, or substitute synthetic admission for an unsupported client path
+
+#### Scenario: Explicit intent or request response bypasses evaluation
+- **WHEN** an explicitly configured Machine admits explicit command/Agent input or a current user Confirmation/StructuredInput response
+- **THEN** it acknowledges one bypass observation with its reason, payload digest and zero evaluator calls before publishing it
+- **AND** it allocates no evaluation operation and records no invented model usage
+- **AND** request responses correlate by request identity across repeated deliveries and recovery
+- **AND** this evidence does not grant response acceptance, settle ordinary input or dispatch effects
+- **AND** unknown/stale response IDs and Host Mount Service controls do not reserve bypass identity
