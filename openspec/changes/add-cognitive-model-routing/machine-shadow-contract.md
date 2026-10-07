@@ -79,8 +79,11 @@ submission/request identity. Process PID or ephemeral llmfs operation ID alone i
 not a recovery key. Bypass observations persist their reason and zero evaluator
 calls without allocating an operation; operation identity is null and usage is
 absent. They are single terminal records, not fabricated started/model-result
-pairs. A response uses `response:<request_id>` as its stable correlation key,
-independent of a new delivery UUID. The digest describes the Machine payload
+pairs. A response uses `response:<request_id>` qualified by its owning rollout as
+its stable correlation key, independent of a new delivery UUID. A fresh rollout
+may reuse a request id without reusing the earlier response observation. Ordinary
+submission UUIDs instead retain their original observation across recovery, so
+resuming acknowledged work does not call the evaluator again. The digest describes the Machine payload
 (ordinary text bytes, or serialized tagged response content parts); the collector must separately retain
 raw client bytes before prefix/form conversion. Repeated delivery reconciles the
 same observation. A bypass does not prove response acceptance: the ordinary

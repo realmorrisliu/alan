@@ -42,7 +42,10 @@ impl super::AgentMachine {
         let reconciled = recover(&events)?;
         for event in &events {
             let prior: Observation = serde_json::from_value(event.payload.clone())?;
-            if prior.identity.submission_id == observation.identity.submission_id {
+            if prior.identity.submission_id == observation.identity.submission_id
+                && (observation.outcome.bypass_reason() != Some(BypassReason::RequestResponse)
+                    || prior.identity.source_rollout_id == observation.identity.source_rollout_id)
+            {
                 ensure!(
                     prior.identity == observation.identity,
                     "evaluation identity changed for an existing submission"

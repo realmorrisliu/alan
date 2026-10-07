@@ -305,25 +305,76 @@ async fn explicit_intents_and_response_operations_persist_without_evaluator_call
         .await
         .unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // Fresh AgentFS instances may allocate the same request id. Both identical
+    // and different response bytes belong to the new rollout, while repeated
+    // delivery within that rollout must still be acknowledged only once.
+    for (index, text) in ["! response data", ": changed response"]
+        .into_iter()
+        .enumerate()
+    {
+        state
+            .machine
+            .set_structured_input(crate::approval::PendingStructuredInputRequest {
+                request_id: "pending-request".into(),
+                title: "Question".into(),
+                prompt: "Answer".into(),
+                questions: vec![],
+            });
+        let response = Submission::new(Op::Resume {
+            request_id: "pending-request".into(),
+            content: vec![alan_agent_protocol::ContentPart::text(text)],
+        });
+        for _ in 0..2 {
+            state
+                .observe_input_shadow(&response, &CancellationToken::new())
+                .await
+                .unwrap();
+        }
+        let latest = state.machine.evaluation_observation.clone().unwrap();
+        assert_eq!(
+            latest["identity"]["source_rollout_id"],
+            state.machine.rollout_id().unwrap()
+        );
+        assert_eq!(latest["outcome"]["reason"], "request_response");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let current = state.machine.input_recorder().unwrap();
+        current.flush().await.unwrap();
+        let history = RolloutRecorder::load_history(current.path()).await.unwrap();
+        assert_eq!(history.iter().filter(|item| matches!(item, RolloutItem::Event(e) if e.event_type == "machine_evaluation_v1")).count(), 4 + index);
+        let error = state
+            .observe_input_shadow(
+                &Submission::new(Op::Resume {
+                    request_id: "pending-request".into(),
+                    content: vec![alan_agent_protocol::ContentPart::text(
+                        "different same-rollout response",
+                    )],
+                }),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("changed captured input"));
+        assert_eq!(state.machine.evaluation_observation.as_ref(), Some(&latest));
+        if index == 0 {
+            state.machine = AgentMachine::load_from_rollout_in_dir(
+                current.path(),
+                "/proc/recovered-again",
+                "mock",
+                dir.path(),
+            )
+            .await
+            .unwrap();
+            current.close().await.unwrap();
+        }
+    }
     state
         .machine
-        .set_structured_input(crate::approval::PendingStructuredInputRequest {
-            request_id: "pending-request".into(),
-            title: "Question".into(),
-            prompt: "Answer".into(),
-            questions: vec![],
-        });
-    let error = state
-        .observe_input_shadow(
-            &Submission::new(Op::Resume {
-                request_id: "pending-request".into(),
-                content: vec![alan_agent_protocol::ContentPart::text(": changed response")],
-            }),
-            &CancellationToken::new(),
-        )
+        .input_recorder()
+        .unwrap()
+        .close()
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("changed captured input"));
+        .unwrap();
+    recorder.close().await.unwrap();
 }
 
 #[tokio::test]

@@ -68,3 +68,32 @@ Logs: `~/Library/Caches/Alan/routing-shadow-current-workspace-tests.log` (failur
 `routing-shadow-current-workspace-tests-fixed.log` (successful rerun).
 This is local current-source evidence, not remote CI or a new real-model
 qualification result; the v1 routing failure and disabled activation remain.
+
+## Rollout-local response identity correction — 2026-10-08
+
+PR #1035 review reproduced a response lookup colliding with copied history when
+a fresh AgentFS reused a request id after recovery. Both the Runtime lookup and
+Machine persistence lookup now scope response observations to their owning
+rollout. Ordinary submission UUID reconciliation remains across recovered
+history, preserving the existing no-repeat evaluator contract.
+
+The existing bypass regression now reuses a request id with identical and then
+different bytes across successive recovered rollouts. Each new response records
+one current-rollout observation; duplicate delivery records no additional event,
+changed bytes within the same rollout still fail, and evaluator calls remain zero.
+Before the fix the identical response retained the old rollout identity. Full
+Agent Engine and Service Manager tests pass, including ordinary recovered-input
+deduplication and the existing writer's rejected re-admission checks. Logs:
+`~/Library/Caches/Alan/shadow-response-scope-{red,tests}.log`.
+
+The separate evaluation-default review claim was disproved through the actual
+CLI in an isolated store at `e1ec537b`: default selection of an evaluation-only
+profile exits 1, leaves metadata byte-for-byte unchanged and retains the generation
+default on a subsequent metadata read. The CLI writes through Connection Service;
+its existing replace-metadata validation rejects this before commit, not merely
+at boot. No duplicate production guard was added. Receipt:
+`~/Library/Caches/Alan/eval-default-review-rfwdqyzf/rejection-confirmation.json`.
+
+These checks do not replace frozen v2 measurements or qualify the changed
+current Machine source. Automatic routing remains disabled; any later candidate
+qualification must use a fresh freeze and complete comparison.

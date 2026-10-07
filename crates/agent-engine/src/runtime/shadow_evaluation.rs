@@ -179,13 +179,17 @@ async fn observe_input_shadow(
         RolloutRecorder::load_history(recorder.path()).await
     })
     .await?;
+    // Ordinary submission UUIDs survive recovery; request ids are rollout-local.
     // Repeated admission reconciles the same durable attempt before allocation.
     for item in history {
         if let RolloutItem::Event(event) = item
             && event.event_type == EVENT_TYPE
         {
             let prior: Observation = serde_json::from_value(event.payload.clone())?;
-            if prior.identity.submission_id == correlation_id {
+            if prior.identity.submission_id == correlation_id
+                && (bypass != Some(BypassReason::RequestResponse)
+                    || prior.identity.source_rollout_id == recorder.rollout_id())
+            {
                 ensure!(
                     prior.outcome.bypass_reason() == bypass
                         && prior.identity.input_sha256 == digest

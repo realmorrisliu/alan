@@ -35,6 +35,6 @@ The Machine SHALL persist captured admission and evaluation identity before comm
 - **WHEN** an explicitly configured Machine admits explicit command/Agent input or a current user Confirmation/StructuredInput response
 - **THEN** it acknowledges one bypass observation with its reason, payload digest and zero evaluator calls before publishing it
 - **AND** it allocates no evaluation operation and records no invented model usage
-- **AND** request responses correlate by request identity across repeated deliveries and recovery
+- **AND** request responses correlate by owning rollout and request identity across repeated deliveries and recovery, while a new rollout may reuse a request id for a distinct response
 - **AND** this evidence does not grant response acceptance, settle ordinary input or dispatch effects
 - **AND** unknown/stale response IDs and Host Mount Service controls do not reserve bypass identity
