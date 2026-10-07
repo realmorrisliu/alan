@@ -460,6 +460,12 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             active_submission_ids: vec!["active".into()],
             ..Default::default()
         },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            pending_submission_ids: vec!["pending".into()],
+            ..Default::default()
+        },
     ] {
         assert!(queue.is_valid());
         app.queue.apply("/agent/root", Some(queue));

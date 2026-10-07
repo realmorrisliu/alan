@@ -156,6 +156,7 @@ impl FileBackedApp {
                     Some(q) if q.deferred => Some("deferred"),
                     Some(q) if q.paused && core_status != "paused" => Some("paused"),
                     Some(q) if !q.active_submission_ids.is_empty() => Some("active"),
+                    Some(q) if !q.pending_submission_ids.is_empty() => Some("queued"),
                     Some(_) => None,
                 }
             };

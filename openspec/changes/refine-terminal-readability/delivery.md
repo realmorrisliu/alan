@@ -69,3 +69,18 @@ All 335 terminal library tests and 11 integration tests pass. Evidence logs:
 `~/Library/Caches/Alan/ui-approval-priority-{red,tests}.log`. This targeted change
 requires independent review, the complete quality gate and fresh current-head CI;
 the earlier native visual acceptance is not attributed to this source.
+
+## Pending-admission compact cue — 2026-10-08
+
+The next PR review identified the remaining known queue case: pending admissions
+without other flags fell through to the activity status alone. Add `queued` to
+the existing cue selection after uncertainty/deferred/pause/active, preserving
+the awaiting-action priority above. This completes the snapshot field cases;
+counts and simultaneous details remain in `/queue` when space is insufficient.
+
+A narrow-header regression covers pending-only queues while Idle, Running and
+Paused over widths 16–80. It failed before the fix at width 16 with
+`gpt…-sol · ready`. The awaiting-action matrix also includes a valid pending-only
+snapshot. All 336 terminal library tests and 11 integration tests pass. Evidence:
+`~/Library/Caches/Alan/ui-pending-header-{red,tests}.log`. Independent review,
+the complete quality gate and current-head CI remain required for this correction.
