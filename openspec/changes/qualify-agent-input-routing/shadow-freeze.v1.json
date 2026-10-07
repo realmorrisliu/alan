@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "status": "frozen_before_candidate_measurement",
+  "corpus_sha256": "f9aa8460c584b68d653b418a77da7d350b1d2c3fd919bf3ba1939105b247d704",
+  "budgets_sha256": "480561987feea18ca1252c65de6d5ff2129bbd6b9ce602091ea7f4de230e6736",
+  "cases": 54,
+  "labels": {
+    "command": 11,
+    "agent": 30,
+    "ambiguous": 9,
+    "response": 4
+  }
+}

@@ -8,7 +8,7 @@
 ## 2. Implementation and qualification
 
 - [ ] 2.1 Consume the delivered generic typed evaluation capability from the cognition owner; verify it reaches mounted Connections, returns typed command/Agent/ambiguous results, preserves original command text and enforces bounded cancellation-aware fallback.
-- [ ] 2.2 Freeze labeled qualification cases and numeric accuracy/latency/cost budgets before candidate measurement; review the recorded budgets and avoid claiming a Jev adapter exists before integration.
+- [x] 2.2 Freeze labeled qualification cases and numeric accuracy/latency/cost budgets before candidate measurement (see [v1 qualification](shadow-qualification.md) and pinned JSON artifacts); review the recorded budgets and avoid claiming a Jev adapter exists before integration.
 - [ ] 2.3 Run shadow evaluation against deterministic and generation-only baselines; verify classification causes no effects, cover quoted discussion, ambiguity, malformed results, outages and overrides, and report false execution classifications with real timing/cost evidence.
 - [ ] 2.4 Obtain explicit activation approval only after qualification and known discussion-to-execution cases are resolved and visible route presentation prevents commands from appearing as conversation under `: `; verify qualified routing behaves identically across interactive and redirected submissions and can be disabled to the Agent baseline.
 
