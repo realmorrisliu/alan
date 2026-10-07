@@ -177,4 +177,15 @@ fn lifetime_active_admission_is_not_execution() {
     assert_eq!(app.activity_label(), Some("waiting for input"));
     assert!(!app.notice.as_ref().unwrap().contains("running"));
     assert!(app.notice.as_ref().unwrap().contains("active"));
+    model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    for state in [UiActivityState::Idle, UiActivityState::Paused] {
+        app.activity.state = state;
+        for width in 16..=80 {
+            let line = app.context_line(width);
+            let text = line.to_string();
+            assert!(line.width() <= width, "{width}: {text}");
+            assert!(text.contains("active"), "{width}: {text}");
+            assert!(!text.contains("working"), "{width}: {text}");
+        }
+    }
 }

@@ -83,7 +83,6 @@ impl FileBackedApp {
             queue_label
                 .replace("queued ", "q ")
                 .replace("queue unknown", "q ?")
-                .replace(" · active", "")
         } else {
             queue_label.to_string()
         };
@@ -156,6 +155,7 @@ impl FileBackedApp {
                     Some(q) if !q.uncertain_submission_ids.is_empty() => Some("uncertain"),
                     Some(q) if q.deferred => Some("deferred"),
                     Some(q) if q.paused && core_status != "paused" => Some("paused"),
+                    Some(q) if !q.active_submission_ids.is_empty() => Some("active"),
                     Some(_) => None,
                 }
             };
