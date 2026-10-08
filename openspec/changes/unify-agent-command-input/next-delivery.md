@@ -1,5 +1,9 @@
 # Ordered delivery — 2026-10-07
 
+Current continuation: the user-authorized [four-stage goal](continuation-plan.md)
+starts from merged main `1c53cf52` on 2026-10-08. The completed sequence below is
+historical delivery evidence; it does not close the broader reliability matrices.
+
 User-authorized sequence: lifecycle closure, real model switching, small terminal
 presentation improvements, then side-effect-free typed-routing qualification.
 Codex implements and tests directly. Baseline: merged main `59855ebe`.

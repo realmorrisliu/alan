@@ -17,4 +17,5 @@
 
 ## Workflow follow-up
 
-- After merge, synchronize delta specs and verify archive readiness before archive.
+- Canonical deltas synchronized by merged PR #1036 (`1c53cf52`). The
+  2026-10-08 archive audit verified both requirements against canonical specs.
