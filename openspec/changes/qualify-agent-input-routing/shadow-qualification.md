@@ -5,7 +5,9 @@ ordinary native-client observations and both component baselines. All 264 typed
 results are valid with usage, but false-command, accuracy, recall and observed
 latency still fail. Automatic execution remains disabled. The 24 pending-response
 attempts retain 12 unsupported redirected slots. Full admission timing, generation
-billing, pending-response parity, current-head delivery and canonical sync remain open.
+billing and pending-response parity remain open. Implementation merged in #1035
+at `cb0ec7ec`; post-merge CI and delivered-only canonical synchronization are tracked
+in [typed-entry-delivery.md](../add-cognitive-model-routing/typed-entry-delivery.md).
 The bounded phase was activated after local lifecycle/model/UI acceptance;
 predecessor merge remains a separate delivery gate.
 

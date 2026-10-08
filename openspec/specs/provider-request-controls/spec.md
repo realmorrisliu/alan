@@ -266,3 +266,20 @@ transport adapter, or provider adapter independently recomputes resolver-owned d
 #### Scenario: Resolver ownership drifts
 - **WHEN** request-control resolution is duplicated outside the canonical runtime resolver
 - **THEN** focused boundary tests fail
+
+### Requirement: TypeSafe finite-choice adapter preserves bounded evaluation authority
+The TypeSafe evaluation adapter SHALL map the caller's finite candidate set to a typed Choice with a distinct abstention option. It SHALL validate returned model identity, selection, distribution and usage, enforce bounded transport without retries or redirects, and keep credentials and response bodies out of errors. This adapter SHALL NOT implement generation by reinterpreting an evaluation request.
+
+#### Scenario: Valid finite-choice result
+- **WHEN** the pinned model returns a valid choice from the submitted wire criteria
+- **THEN** the adapter returns the original caller candidate ID or NoMatch for abstention
+- **AND** original input is preserved and no Tool or command is dispatched
+
+#### Scenario: Untrusted or unavailable provider result
+- **WHEN** response provenance, type, candidate identity, distribution, usage or size is invalid, or transport fails
+- **THEN** evaluation fails without retry, fallback generation or exposed credential/body diagnostics
+
+#### Scenario: Live qualification is incomplete
+- **WHEN** qualification evidence consists only of local HTTP fixtures
+- **THEN** that evidence does not establish authenticated live-provider support
+- **AND** successful Connection publication alone does not establish routing qualification

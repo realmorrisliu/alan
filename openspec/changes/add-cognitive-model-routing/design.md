@@ -2,7 +2,9 @@
 
 ADR-0055 supersedes this change's original two-generating-Agent design.
 See research-jev-and-fx.md and architecture-review.md for evidence. Current
-runtime remains generation-based; namespace Tape is not complete recovery state.
+runtime uses generation/Tools plus opt-in finite-choice input shadow advice
+(PR #1035); general mixed transitions remain unfinished. Namespace Tape is not
+complete recovery state.
 
 ## Goals / Non-Goals
 
@@ -55,9 +57,12 @@ as specified in [next-planning.md](next-planning.md). Then select one bounded
 evaluation point inside that working task and complete the entry contracts.
 Necessary Machine recovery contracts may land earlier for the reliability slice;
 they do not require evaluation or Jev. Reuse those contracts rather than creating
-another checkpoint path. Real-provider benefit measurement belongs to the later
-Jev adapter change; fixtures establish state-machine correctness only.
-Implementation, rollout and canonical sync remain pending.
+another checkpoint path. Real-provider qualification belongs to
+`qualify-agent-input-routing`; fixtures establish state-machine correctness only.
+PR #1035 delivered the finite-choice Connection, TypeSafe adapter and no-effect
+Machine shadow slice. Its failed v2 measurements do not qualify automatic routing
+or the subsequently reviewed source. Only those delivered requirements may sync;
+the broader transitions and activation gates remain pending.
 
 ## Activated shadow ownership contract
 

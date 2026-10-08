@@ -6,7 +6,8 @@ context: |
   Before applying any change, read its disposition.md if present. Parked work
   requires explicit reactivation; cancelled archives are not delivered behavior.
   ADR-0054 retires the desktop product; ADR-0055 accepts mixed Machine direction
-  without claiming typed evaluation is already implemented.
+  beyond the shipped finite-choice Connection and no-effect input shadow slice.
+  General mixed transitions and automatic routing remain unfinished.
 
 rules:
   proposal:

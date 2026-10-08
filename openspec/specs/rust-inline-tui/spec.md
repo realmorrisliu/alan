@@ -364,6 +364,24 @@ position. Multiline drafts and temporary controls SHALL expand only as needed.
 - **THEN** it abbreviates project context and moves secondary metadata to details before hiding the effective model or active state
 - **AND** critical authorization controls remain readable, wrapping when necessary
 
+#### Scenario: Narrow prompt keeps meaningful model and state
+- **WHEN** project, model, reasoning and queue details exceed the line budget
+- **THEN** project and secondary controls yield before the model identity and current state
+- **AND** empty model fields and orphan separators are not rendered
+- **AND** detailed model and queue observations remain available through their existing commands
+
+#### Scenario: Narrow action and queue priorities stay truthful
+- **WHEN** current approval or project selection competes with secondary queue metadata
+- **THEN** the action and model identity take priority over those queue details
+- **AND** otherwise compact status preserves execution activity separately from admitted or pending work
+- **AND** admission alone is not displayed as working
+
+#### Scenario: A confirmed next model differs from active work
+- **WHEN** the compact header is idle without a pending Confirmation or StructuredInput response
+- **THEN** it prefers the confirmed next-input model
+- **AND** running, paused work or a current response retains active-model priority
+- **AND** full status can still distinguish both bindings
+
 ### Requirement: Semantic transcript hierarchy survives terminal constraints
 The TUI SHALL distinguish user input, assistant prose, code, Tool summaries,
 failures and transient status through consistent spacing and semantic styles.
@@ -385,6 +403,17 @@ Critical meaning SHALL remain available without color.
 #### Scenario: Idle draft is cleared
 - **WHEN** Ctrl+C is pressed with an editable draft and no active operation or pending request
 - **THEN** the draft clears without issuing a misleading runtime cancellation notice
+
+#### Scenario: Fenced answer streams through scrollback
+- **WHEN** a fenced code block with an optional language label arrives incrementally
+- **THEN** its visible boundary and language label distinguish it from prose without raw fence markers
+- **AND** literal code indentation and diff addition/removal meaning are preserved
+- **AND** partial drains, resize and later reconciliation do not repeat the label or committed code
+
+#### Scenario: Answer separation survives partial drains
+- **WHEN** nonempty assistant content follows prior transcript content
+- **THEN** a single leading separation row distinguishes the answer
+- **AND** the row is committed at most once across streaming, resize and reconciliation
 
 ### Requirement: Terminal receipts retire their own pending outcome hints
 The terminal renderer SHALL settle an exact locally tracked submission from its correlated terminal completion receipt, regardless of whether the final queue snapshot arrives before or after that receipt. It SHALL refresh only its own stale pending or unknown hint and SHALL preserve unrelated notices and unsubmitted draft content. Empty queue state alone SHALL NOT imply completion.

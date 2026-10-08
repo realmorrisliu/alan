@@ -4,7 +4,7 @@ Status: final candidate 3 passed native acceptance, final-tree quality and both
 independent review axes. PR #1033 subsequently merged as
 `b93501aa7206dd9ef70cb6f4978680784cd19ee4` from head
 `a239021e78af816203ef5c43164a3020f8724a57`; all reported checks succeeded.
-See [current delivery reconciliation](next-delivery.md#current-delivery-reconciliation--2026-10-07)
+See [current delivery reconciliation](next-delivery.md#current-delivery-reconciliation--2026-10-08)
 for the remaining full-task boundaries.
 Owner: task 2.20, canonical provider-connection-contract and
 provider-request-controls. Baseline: main `59855ebe`.
@@ -53,7 +53,7 @@ OpenAI API families, not this account-scoped managed surface.
 - [x] Admit work under A, select B, and prove the previously queued work uses A
   while subsequently admitted work uses B. Record exact input and binding IDs.
 - [x] Run focused checks, full quality and independent review.
-- [ ] Record current-head remote CI separately from local acceptance.
+- [x] Record current-head remote CI separately from local acceptance (merged #1033, head `a239021e78af816203ef5c43164a3020f8724a57`, all reported checks succeeded; merge receipt above).
 
 No automatic routing, profile-default mutation or UI layout changes belong to
 this slice.

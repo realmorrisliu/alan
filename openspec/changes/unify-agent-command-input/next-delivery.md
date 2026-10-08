@@ -192,10 +192,10 @@ routing remains disabled; a later explicit activation decision requires passing
 evidence. Do not add a second execution manager or a speculative adapter framework.
 
 
-## Current delivery reconciliation — 2026-10-07
+## Current delivery reconciliation — 2026-10-08
 
-GitHub state was rechecked after the three baseline collections. The ordered
-lifecycle and model slices have merged; their earlier pending descriptions above
+GitHub state was rechecked after the four-stage implementation merged. The ordered
+lifecycle, model, UI and shadow slices have merged; earlier pending descriptions above
 are dated investigation records, not current missing implementation.
 
 - Lifecycle PR #1032: head `4e9c2877baf2d14639d2ecc7140ef0f6af5983c2`, merged as
@@ -209,13 +209,21 @@ are dated investigation records, not current missing implementation.
   successful switch, failed switch preserving binding and queued A followed by B
   were accepted. Task 2.20 is now closed by the subsequent recovery/unavailable-
   binding clause audit in the catalog delivery record; canonical sync remains open.
-- UI PR #1034 remains open at `942a5288ee942e03c17adc23a7580cdd26fc4b59` with
-  all reported checks successful. Local native acceptance is complete; merge and
-  canonical sync remain delivery work under its owning change.
-- Shadow PR #1035 remains draft and stacked on the UI branch. The
+- UI PR #1034 merged as `157d937ea3e2e3660783deae17ff6b86b536b9b7` from head
+  `fb6bd45d1cd917c9e8c47943c018f58522995b66`, with 16 passing head checks and
+  completed automated review. Source-pinned native acceptance and later header
+  regressions are distinguished in its owning delivery record.
+- Shadow PR #1035 merged as `cb0ec7ec7746a8f5b2af77782b281bbce7a838f0` from head
+  `ac0a8af5b200dcd26c95accd3a6032116e919cce`. Its PR head had only a label check;
+  combined main acceptance subsequently passed all 15 reported checks, including
+  full CI, CodeQL and Cargo Audit. See the
+  [typed delivery receipt](../add-cognitive-model-routing/typed-entry-delivery.md).
+  Delivered-only canonical synchronization is in PR #1036 and remains unmerged.
+  The
   [qualification report](../qualify-agent-input-routing/shadow-qualification.md)
   now records the native candidate, generation and deterministic prefix baselines.
-  Both model candidates fail the frozen command-safety/classification gates.
+  Both frozen candidates fail the command-safety/classification gates; later
+  reviewed source is unqualified rather than inheriting their scores.
   Redirected response admission and complete cost/latency qualification remain
   open; automatic execution is disabled.
 

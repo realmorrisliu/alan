@@ -43,7 +43,9 @@ supported delivery surface.
   generation transitions or Herdr integration
 - **THEN** it distinguishes accepted design from implemented and verified
   support
-- **AND** it does not present Jev support or a Herdr Alan agent kind as shipped
+- **AND** it distinguishes the shipped TypeSafe finite-choice adapter and opt-in
+  no-effect Machine shadow advice from unqualified automatic input routing
+- **AND** it does not present a Herdr Alan agent kind as shipped
 
 ### Requirement: OpenSpec owns durable specifications
 alan SHALL use OpenSpec as the only durable source of truth for product,

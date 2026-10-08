@@ -29,6 +29,6 @@ The TypeSafe evaluation adapter SHALL map the caller's finite candidate set to a
 - **THEN** evaluation fails without retry, fallback generation or exposed credential/body diagnostics
 
 #### Scenario: Live qualification is incomplete
-- **WHEN** only local HTTP fixtures have passed and no authenticated live probe has passed
-- **THEN** ordinary Connection profile publication remains unavailable
-- **AND** fixture results do not establish service support or routing qualification
+- **WHEN** qualification evidence consists only of local HTTP fixtures
+- **THEN** that evidence does not establish authenticated live-provider support
+- **AND** successful Connection publication alone does not establish routing qualification

@@ -48,6 +48,18 @@ position. Multiline drafts and temporary controls SHALL expand only as needed.
 - **AND** empty model fields and orphan separators are not rendered
 - **AND** detailed model and queue observations remain available through their existing commands
 
+#### Scenario: Narrow action and queue priorities stay truthful
+- **WHEN** current approval or project selection competes with secondary queue metadata
+- **THEN** the action and model identity take priority over those queue details
+- **AND** otherwise compact status preserves execution activity separately from admitted or pending work
+- **AND** admission alone is not displayed as working
+
+#### Scenario: A confirmed next model differs from active work
+- **WHEN** the compact header is idle without a pending Confirmation or StructuredInput response
+- **THEN** it prefers the confirmed next-input model
+- **AND** running, paused work or a current response retains active-model priority
+- **AND** full status can still distinguish both bindings
+
 ### Requirement: Semantic transcript hierarchy survives terminal constraints
 The TUI SHALL distinguish user input, assistant prose, code, Tool summaries,
 failures and transient status through consistent spacing and semantic styles.

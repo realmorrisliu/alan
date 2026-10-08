@@ -19,7 +19,7 @@ prerequisite slices does not count as their merge or canonical spec synchronizat
 
 ## 3. Acceptance and delivery
 
-- [ ] 3.1 Verify fixture correctness, escalation and bounded fallback against the selected baselines. Hand off real-model correctness, erroneous automatic execution, p50/p95 latency and cost thresholds/measurement to add-jev-evaluation-adapter; fixture timings are not provider benefit evidence.
+- [ ] 3.1 Verify fixture correctness, escalation and bounded fallback against the selected baselines. Hand off real-model correctness, erroneous automatic execution, p50/p95 latency and cost thresholds/measurement to qualify-agent-input-routing; fixture timings are not provider benefit evidence.
 - [ ] 3.2 Run focused runtime/provider tests and full strict OpenSpec validation; review interruption and crash-boundary coverage.
 - [ ] 3.3 Merge with current-head CI and sync implemented deltas. Before archiving, transfer every unfinished roadmap item and activation gate to a then-active unfinished change, preserve status and update incoming references. Do not assume programmable-client is still unfinished. Archive only after delivery evidence and a discoverable active roadmap handoff exist.
 
@@ -27,4 +27,5 @@ Bounded entry evidence: [typed-entry-delivery.md](typed-entry-delivery.md).
 
 Machine ownership planning evidence: [machine-shadow-contract.md](machine-shadow-contract.md).
 Task 1.3 passed independent Spec and Standards review and strict change validation;
-implementation, recovery fixtures and both-surface qualification remain unchecked.
+the finite-choice/shadow implementation and recovery fixtures shipped in #1035,
+while broader transitions and complete both-surface qualification remain unchecked.
