@@ -534,7 +534,10 @@ operation then remained unconfirmed. Register explicit metadata by actual choice
 capability, preserving generation-only registration behavior. A no-network
 ServiceManager-to-llmfs-to-Machine regression covers both provider families and
 both surfaces failed before the fix with an unpublished Root evaluation and
-passed after it. The focused Service Manager suite passed 148 tests with zero
+passed after it. Profiles omitting model settings reproduced the same unpublished
+evaluation; publication now reuses existing normalized profile defaults so the
+result identity matches the captured callable. The regression covers explicit and
+default models in both families and surfaces. The focused Service Manager suite passed 148 tests with zero
 failures. Preserve this v3 failure and freeze a new implementation before any
 new paid attempt.
 
