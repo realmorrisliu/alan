@@ -1,5 +1,23 @@
 # Delivery — 2026-10-07
 
+## Merge receipt — 2026-10-08
+
+PR [#1034](https://github.com/realmorrisliu/alan/pull/1034) merged at
+`157d937ea3e2e3660783deae17ff6b86b536b9b7`. Final head
+`fb6bd45d1cd917c9e8c47943c018f58522995b66` had all 16 reported checks passing,
+completed automated review and no unresolved review threads. Its complete local
+terminal suite passed 336 library and 11 integration tests, with mandatory quality
+and strict validation. The earlier native evidence below remains source-pinned;
+later header corrections use their recorded regressions, not that earlier binary.
+
+The UI post-merge CI was superseded by #1035's newer main commit `cb0ec7ec`.
+The combined main CI is a separate receipt in
+[typed-entry-delivery.md](../add-cognitive-model-routing/typed-entry-delivery.md).
+The two delivered TUI requirements are synchronized in the closure patch;
+archive readiness requires that synchronization to merge. No archive is performed here.
+
+## Historical implementation and acceptance
+
 Status: local implementation, native acceptance and independent review passed;
 remote current-head CI remains separate. PRs #1032 and #1033 are merged; this
 UI branch is based on main `43700bb1`.

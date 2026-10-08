@@ -13,7 +13,7 @@
 
 - [x] 3.1 Pass focused terminal suite and full quality, strict OpenSpec validation and independent review.
 - [x] 3.2 Rebuild and inspect the native Herdr pane at wide and narrow geometry; record exact binary and rendering evidence.
-- [ ] 3.3 Deliver the PR and record current-head CI/review separately from local acceptance.
+- [x] 3.3 Deliver the PR and record current-head CI/review separately from local acceptance (PR #1034, head `fb6bd45d`, 16 passing checks, merge `157d937e`; see delivery.md).
 
 ## Workflow follow-up
 

@@ -36,6 +36,8 @@ new package kind or renderer launch authority.
 
 Status: the bounded finite-choice Connection entry is active under
 [entry-slice.md](entry-slice.md). This delivers the typed operation boundary and
-fixture contracts only; mixed-Machine composition, a real evaluator adapter,
-shadow qualification and automatic routing remain unfinished. The broader
+the TypeSafe adapter and Machine-owned no-effect input shadow advice, merged in
+PR #1035. Frozen v2 qualification failed; the later reviewed source remains
+unqualified. General mixed-Machine composition and automatic routing remain
+unfinished. The broader
 [next-planning.md](next-planning.md) roadmap is not activated wholesale.

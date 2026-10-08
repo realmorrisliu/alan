@@ -6,7 +6,10 @@ This is the active destination for the predecessor's unimplemented tasks 3.1–3
 and their owning spec deltas. ADR-0058's accepted direction and original interview
 remain in the predecessor; this document makes the delivery boundary explicit.
 The existing Machine is the consumer; `add-cognitive-model-routing` owns generic
-typed operations and provider capability discovery. Jev is a candidate, not delivered support.
+typed operations and provider capability discovery. PR #1035 delivered the
+TypeSafe finite-choice adapter and no-effect Machine shadow consumer. Frozen v2
+qualification failed and the later reviewed candidate remains unqualified;
+automatic routing is disabled.
 
 ## Decisions
 

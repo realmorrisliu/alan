@@ -1,5 +1,55 @@
 # Finite-choice Connection entry delivery — 2026-10-07
 
+## Merge and synchronization receipt — 2026-10-08
+
+PR [#1035](https://github.com/realmorrisliu/alan/pull/1035) merged at
+`cb0ec7ec7746a8f5b2af77782b281bbce7a838f0`, final head
+`ac0a8af5b200dcd26c95accd3a6032116e919cce`. The PR head had only the label
+check. Post-merge main `cb0ec7ec` now has all 15 reported checks passing:
+all 12 jobs in [CI run 37709563067](https://github.com/realmorrisliu/alan/actions/runs/37709563067),
+[CodeQL](https://github.com/realmorrisliu/alan/actions/runs/37709563095),
+Cargo Audit and release draft. This is combined-code acceptance, not new live
+routing qualification. Final local acceptance and review corrections are recorded
+below with their own sources and logs.
+
+Delivered through the existing Connection owner: `alan-llm` finite-choice types
+and TypeSafe adapter; llmfs independent `evaluate` allocation, capability,
+quota, commit/terminal fences and typed failures; Host-backed credential and
+generation-binding protections. Agent Machine consumes captured advice through
+the namespace, persists before commit and terminal publication, and exposes a
+read-only `machine/evaluation` projection. `alan --shadow-evaluator <profile>`
+selects it explicitly for one invocation; children do not inherit it. Prefixes
+and current responses bypass it. Advice never selects command, Tool or fallback
+dispatch. Interrupted recovery does not repeat the evaluator or settle queued work.
+The owning deltas contain the focused boundary and recovery scenarios.
+
+The closure patch synchronizes only delivered requirements in `llm-file-server`,
+the TypeSafe requirement in `provider-request-controls`, the bounded snapshot in
+`agent-file-layout-contract`, both shadow requirements in `agent-namespace-runtime`,
+the invocation option in `alan-shell`, and current documentation status.
+General `cognitive-model-routing`, structured-only task completion, capability
+exposure and effecting routing deltas remain unsynchronized and unfinished.
+Broader tasks remain open; both changes stay active rather than being archived.
+
+Closure review passed independently on Spec and Standards axes. Review corrected
+an old delta that implied a runtime live-probe publication gate: fixture evidence
+alone cannot establish provider support, and successful publication alone cannot
+qualify routing. No new runtime gate is added. Pinned OpenSpec 1.4.1 validates all
+67 surfaces strictly; current-surface guard/fixtures and the complete mandatory
+quality/distribution commit gate pass. The synchronization PR still requires its
+own current-head checks and merge before canonical closure is complete.
+
+Frozen v2 was measured at `1f551ad9`, before later review fixes: 34 false-command
+classifications, 75.76% typed accuracy, observed Machine p95 2684 ms. It failed
+the frozen gates; full admission timing, generation billing and 12 redirected
+pending-response slots remain incomplete. These are historical candidate results,
+not scores for the merged source. Automatic routing stays disabled. Future
+activation requires a fresh freeze, full baseline comparison, passing gates and
+explicit authorization; see
+[shadow-qualification.md](../qualify-agent-input-routing/shadow-qualification.md).
+
+## Historical entry slice
+
 Scope: provider-neutral finite-choice DTOs, explicit callable capability (default
 unsupported), independent llmfs `evaluate` allocation and quota, strict request
 validation, captured Connection provenance, single dispatch, typed Selected/NoMatch,

@@ -3,7 +3,7 @@
 ## 1. Entry and inherited scope
 
 - [x] 1.1 Accept ownership of the predecessor's unfinished tasks 3.1–3.4 and future-only owning deltas, preserving unimplemented status and activation gates.
-- [ ] 1.2 Verify the explicit-input predecessor is merged and generic typed evaluation is delivered through the owning Connection capability; record exact code and capability evidence.
+- [x] 1.2 Verify the explicit-input predecessor is merged and generic typed evaluation is delivered through the owning Connection capability; record exact code and capability evidence (#1032 and #1035; see the merge receipt in ../add-cognitive-model-routing/typed-entry-delivery.md).
 
 ## 2. Implementation and qualification
 

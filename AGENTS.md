@@ -53,12 +53,14 @@ OpenSpec and the ADRs.
   separate invocation; reusing earlier durable work requires explicit user
   selection, never automatic channel-wide recovery. PR #1011 verifies separate
   input streams and cwd bindings across simultaneous invocations. Explicit
-  durable recovery and Herdr detach acceptance remain open; do not infer them
-  from the startup or isolation evidence.
+  durable recovery, Herdr view detach, revocation and no-repeat acceptance are
+  recorded in `openspec/changes/unify-agent-command-input/next-delivery.md`
+  (merged PR #1032); broader cross-client/grant matrices remain open.
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
 - prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).
-- distinguish accepted mixed-Machine direction (ADR-0055) from current generation-only execution.
+- distinguish accepted mixed-Machine direction (ADR-0055) from the shipped
+  generation/Tool loop and optional no-effect typed input shadow evaluation.
 
 When a touched area is transitional, make the durable target owner explicit and
 keep the slice narrowly scoped.
@@ -66,7 +68,9 @@ keep the slice narrowly scoped.
 ## AI Turing Machine
 
 Each Agent Process uses an AI Turing Machine abstraction. ADR-0055 accepts the
-following mixed-capability direction; typed evaluation is not implemented yet:
+following mixed-capability direction. Finite-choice Connection evaluation and
+opt-in Machine-owned input shadow advice are implemented (PR #1035); general
+mixed transitions and automatic input routing remain unfinished:
 
 | Concept | Implementation |
 | --- | --- |
@@ -77,8 +81,8 @@ following mixed-capability direction; typed evaluation is not implemented yet:
 | Side effects | Tool spawn and file writes through descriptors |
 | Completion | Work may complete with a structured result; wait, failure and Process exit are distinct |
 
-The Agent Execution Engine currently implements a generation/Tool loop, not
-the entire target above. Namespace Tape is currently a text projection;
+The Agent Execution Engine implements a generation/Tool loop with optional
+typed shadow advice, not the entire target above. Namespace Tape is a text projection;
 rollout/checkpoint recovery must not be equated with that projection alone.
 The engine is not alan9 Kernel or alan9 itself.
 

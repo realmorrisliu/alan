@@ -1,5 +1,18 @@
 # Disposition — 2026-09-20
 
+## Current delivery — 2026-10-08
+
+PR #1035 merged at `cb0ec7ec7746a8f5b2af77782b281bbce7a838f0`.
+Finite-choice Connection evaluation, the TypeSafe adapter and invocation-scoped
+Machine shadow advice are implemented. General mixed transitions remain unfinished.
+The frozen v2 qualification failed; later reviewed source is unqualified.
+Automatic routing remains disabled. Sync only the delivered operation, adapter,
+read-only snapshot, shadow and invocation requirements; the broad
+`cognitive-model-routing` delta is still future direction.
+See [typed-entry-delivery.md](typed-entry-delivery.md) for exact delivery evidence.
+
+## Historical entry decisions
+
 Discussion update (2026-09-24):
 [unify-agent-command-input](../unify-agent-command-input/disposition.md) owns
 unified input and deterministic command operations. Its first slice uses explicit
@@ -24,5 +37,5 @@ handed to an active successor with references updated, as required by task 3.3.
 The user authorized the finite-choice typed evaluation and no-effect shadow phase
 following local lifecycle/model/UI acceptance. [entry-slice.md](entry-slice.md)
 records the exact operation, lifecycle and ownership decisions. This activates
-that bounded implementation scope; it does not activate automatic command routing,
-claim a real provider adapter or authorize canonical sync before merge.
+that bounded implementation scope; it did not activate automatic command routing,
+claim a then-implemented provider adapter or authorize canonical sync before merge.
