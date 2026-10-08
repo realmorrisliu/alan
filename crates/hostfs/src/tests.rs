@@ -41,6 +41,62 @@ async fn ranged_reads_do_not_require_full_file_buffering() {
     assert_eq!(bytes, b"abc");
 }
 
+#[tokio::test]
+async fn revoked_export_rejects_old_fids_and_discards_unsaved_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("notes.txt");
+    std::fs::write(&path, b"original").unwrap();
+    let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+    fs.walk(Fid::ROOT, Fid(1), &["notes.txt".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    fs.write(Fid(1), 0, b"modified").await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"original");
+
+    fs.revoke();
+    fs.revoke();
+    assert!(fs.state.lock().unwrap().fids.is_empty());
+    assert_eq!(fs.read(Fid(1), 0, 100).await, Err(ErrorCode::NoAccess));
+    assert_eq!(fs.read(Fid::ROOT, 0, 100).await, Err(ErrorCode::NoAccess));
+    assert_eq!(fs.stat(Fid(1)).await, Err(ErrorCode::NoAccess));
+    assert_eq!(
+        fs.open(Fid(1), OpenMode::Read).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        fs.walk(Fid::ROOT, Fid(2), &["notes.txt".into()]).await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        fs.write(Fid(1), 0, b"forbidden").await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(
+        fs.create(Fid::ROOT, Fid(2), "forbidden", FileKind::File)
+            .await,
+        Err(ErrorCode::NoAccess)
+    );
+    assert_eq!(fs.remove(Fid(1)).await, Err(ErrorCode::NoAccess));
+    assert_eq!(fs.clunk(Fid(1)).await, Err(ErrorCode::NoAccess));
+    assert_eq!(fs.clunk(Fid::ROOT).await, Err(ErrorCode::NoAccess));
+    assert_eq!(std::fs::read(&path).unwrap(), b"original");
+    assert!(!temp.path().join("forbidden").exists());
+
+    // Independently authorized exports of the same backing remain usable.
+    let fresh = HostDirFs::new(temp.path(), HostDirAccess::ReadWrite).unwrap();
+    fresh
+        .walk(Fid::ROOT, Fid(1), &["notes.txt".into()])
+        .await
+        .unwrap();
+    fresh.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
+    assert_eq!(fresh.read(Fid(1), 0, 100).await.unwrap(), b"original");
+    fresh.write(Fid(1), 0, b"approved").await.unwrap();
+    fresh.clunk(Fid(1)).await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"approved");
+    assert_eq!(fs.read(Fid(1), 0, 100).await, Err(ErrorCode::NoAccess));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn walk_rejects_fifo_without_blocking() {

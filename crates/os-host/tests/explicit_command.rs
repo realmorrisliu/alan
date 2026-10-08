@@ -14,6 +14,9 @@ use tokio_util::sync::CancellationToken;
 #[path = "explicit_command/revoked_queue.rs"]
 mod revoked_queue;
 
+#[path = "explicit_command/multiple_clients.rs"]
+mod multiple_clients;
+
 fn response() -> GenerationResponse {
     GenerationResponse {
         content: "ready".into(),
@@ -350,6 +353,18 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
         2,
         "commands must not generate Agent responses"
     );
+    let large = command(&shell, "printf '%020000d' 0; printf '%020000d' 1 >&2").await;
+    assert_eq!(large["exit_code"], 0, "{large}");
+    assert_eq!(large["output"]["stdout"], "0".repeat(20_000));
+    assert_eq!(
+        large["output"]["stderr"],
+        format!("{}1", "0".repeat(19_999))
+    );
+    assert_eq!(
+        probe.recorded_requests().len(),
+        2,
+        "output projection is model-free"
+    );
     // Steering received during a native command must run after it completes.
     let running = submit_command(&shell, "printf started > steering-started; sleep 1").await;
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -376,6 +391,22 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
                 assert!(
                     format!("{:?}", requests[2].messages).contains("explain the completed command")
                 );
+                let message = requests[2]
+                    .messages
+                    .iter()
+                    .find(|message| message.tool_call_id.as_deref() == large["call_id"].as_str())
+                    .expect("prior command evidence must reach the subsequent Agent question");
+                let projection: Value = serde_json::from_str(&message.content).unwrap();
+                assert_eq!(projection["type"], "evidence_projection");
+                assert_eq!(projection["metadata"]["exit_code"], 0);
+                assert_eq!(projection["truncation"]["full_content_recoverable"], true);
+                assert!(projection["truncation"]["original_bytes"].as_u64().unwrap() > 40_000);
+                assert!(projection["preview"].as_str().unwrap().len() <= 8_000);
+                let path = projection["reference"]["path"].as_str().unwrap();
+                assert!(path.starts_with("/agent/") && path.ends_with("/output"));
+                let retained: Value =
+                    serde_json::from_slice(&shell.cat(path).await.unwrap()).unwrap();
+                assert_eq!(retained, large["output"]);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -419,7 +450,16 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             .unwrap()
             .contains("Search text not found")
     );
-    assert_eq!(probe.recorded_requests().len(), 11);
+    let requests = probe.recorded_requests();
+    let compactions = requests
+        .iter()
+        .filter(|request| {
+            request.system_prompt.as_deref() == Some(alan_agent_engine::prompts::COMPACT_PROMPT)
+        })
+        .count();
+    // The added command crosses the existing message-count compaction threshold.
+    assert_eq!(compactions, 1);
+    assert_eq!(requests.len() - compactions, 11);
     let persisted_id = submit_command(&shell,
         "printf 'retained stdout\\n'; printf 'retained stderr\\n' >&2; printf x >> restart-marker.txt; exit 7"
     ).await;
@@ -448,6 +488,10 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
         tokio::spawn(async move { restarted.serve_until(requested.cancelled_owned()).await });
     let shell = Shell::new(LocalAttachment::new(paths).connect().await.unwrap().root);
     assert_eq!(command_result(&shell, &persisted_id).await, persisted);
+    assert_eq!(
+        command_result(&shell, large["call_id"].as_str().unwrap()).await["output"],
+        large["output"]
+    );
     assert_eq!(
         std::fs::read(project.path().join("src/restart-marker.txt")).unwrap(),
         b"x",

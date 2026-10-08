@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 pub struct NativeHostMountExportAdapter;
 
 struct NativeHostMountExport {
-    tree: InProcessTransport,
+    tree: Arc<HostDirFs>,
     host_path: PathBuf,
     maximum_access: HostMountAccess,
 }
@@ -37,7 +37,11 @@ impl std::fmt::Debug for NativeHostMountExport {
 
 impl HostMountExport for NativeHostMountExport {
     fn file_tree(&self) -> InProcessTransport {
-        self.tree.clone()
+        InProcessTransport::new(self.tree.clone())
+    }
+
+    fn revoke(&self) {
+        self.tree.revoke();
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -323,14 +327,14 @@ fn native_export(
         HostMountAccess::ReadWrite => Access::ReadWrite,
     };
     let host_path = canonical_host_path(host_path)?;
-    let tree = InProcessTransport::new(Arc::new(
+    let tree = Arc::new(
         HostDirFs::new(&host_path, hostfs_access(kernel_access)).with_context(|| {
             format!(
                 "failed to export host directory {} at {namespace_path}",
                 host_path.display()
             )
         })?,
-    ));
+    );
     Ok(Arc::new(NativeHostMountExport {
         tree,
         host_path,
@@ -717,6 +721,72 @@ mod tests {
             .unwrap();
         assert!(adapter.sandbox().unwrap().is_readable(host.path()));
         assert!(!adapter.sandbox().unwrap().is_writable(host.path()));
+    }
+
+    #[tokio::test]
+    async fn revocation_rejects_preexisting_fids_and_discards_pending_save() {
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("notes.txt"), "original").unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(7), namespace.clone());
+        let grant = approve(
+            &service,
+            7,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+            host.path(),
+        )
+        .await;
+        let root = InProcessTransport::new(Arc::new(MountFs::from_live_namespace(namespace)));
+        for (fid, mode) in [(Fid(30), OpenMode::Read), (Fid(31), OpenMode::Write)] {
+            root.call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: fid,
+                names: vec!["mnt".into(), "project".into(), "notes.txt".into()],
+            })
+            .await
+            .unwrap();
+            root.call(Request::Open { fid, mode }).await.unwrap();
+        }
+        root.call(Request::Write {
+            fid: Fid(31),
+            offset: 0,
+            data: b"modified".to_vec(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read(host.path().join("notes.txt")).unwrap(),
+            b"original"
+        );
+        service.revoke(&grant.id, "test").unwrap();
+        assert_eq!(
+            root.call(Request::Read {
+                fid: Fid(30),
+                offset: 0,
+                count: 100
+            })
+            .await,
+            Err(ErrorCode::NoAccess)
+        );
+        assert_eq!(
+            root.call(Request::Write {
+                fid: Fid(31),
+                offset: 0,
+                data: b"forbidden".to_vec()
+            })
+            .await,
+            Err(ErrorCode::NoAccess)
+        );
+        assert_eq!(
+            root.call(Request::Clunk { fid: Fid(31) }).await,
+            Err(ErrorCode::NoAccess)
+        );
+        assert_eq!(
+            std::fs::read(host.path().join("notes.txt")).unwrap(),
+            b"original"
+        );
     }
 
     #[tokio::test]
