@@ -32,6 +32,7 @@
 //! `/agent/root` to the corresponding [`AgentFs`] backing tree.
 
 mod conformance;
+mod machine_projection;
 mod request_control;
 mod root;
 mod surface_state;
@@ -65,10 +66,11 @@ const MAX_ACTION_OUTPUT_BYTES: usize = 16 << 20; // 16 MiB
 /// (self-describing namespace). Semantics belong to the engine; this is the
 /// documented vocabulary, not an exhaustive parser.
 const MACHINE_CTL_HELP: &str = "\
-# machine/ctl — agent-runtime control. Write one command per write.
+# machine/ctl — agent-runtime control. Write one UTF-8 command per write, at most 64 KiB; no CR, LF or NUL.
 compact   compact the tape into a checkpoint
 rollback  roll back to the previous checkpoint
 interrupt stop the current turn; the agent process stays alive
+owner-work-v1 {\"id\":\"UUID\",\"request\":{...}} explicitly submit bounded read-only source-owner work through the ordinary queue
 project-cwd-v1 {\"id\":\"UUID\",\"path\":\"/absolute/namespace/path\"} select Process cwd only while settled; queued work stays paused. Engine validates the selector and current authority.
 ";
 const ACTIONS_HELP: &str = "\
@@ -133,6 +135,7 @@ struct State {
     /// lifecycle verbs on machine/ctl (D7).
     status: String,
     evaluation: Vec<u8>,
+    work: Vec<u8>,
     ui_skills: String,
     ui_models: String,
     ui_queue: String,
@@ -191,6 +194,7 @@ enum Node {
     Tape,
     Status,
     Evaluation,
+    Work,
     /// The agent-runtime control surface (`machine/ctl`): text commands such as
     /// `compact` / `rollback` whose tape/checkpoint semantics belong to the engine
     /// (agent-file-layout-contract). Generic process control (interrupt/cancel)
@@ -261,6 +265,7 @@ impl AgentFs {
                 actions: BTreeMap::new(),
                 status: "running".to_string(),
                 evaluation: br#"{"observation":null,"version":1}"#.to_vec(),
+                work: br#"{"version":1,"work":null}"#.to_vec(),
                 ui_models: "{\"version\":1,\"publication_version\":0,\"process_path\":\"\",\"known\":false,\"catalog\":null,\"selected_next\":null,\"active\":null,\"admitted\":[]}".into(),
                 ui_queue: "{\"version\":1,\"revision\":0,\"known\":false,\"pending_submission_ids\":[],\"active_submission_ids\":[],\"paused\":false,\"deferred\":false,\"uncertain_submission_ids\":[]}".into(),
                 ui_activity: DEFAULT_UI_ACTIVITY.to_string(),
@@ -275,35 +280,6 @@ impl AgentFs {
                 fids: HashMap::new(),
             }),
         }
-    }
-
-    /// Publish the Machine's latest acknowledged evaluation observation.
-    ///
-    /// Only the owning runtime calls this method after its durability barrier.
-    /// AgentFS stores a bounded projection; it does not validate advice or own
-    /// recovery history. Public aP clients cannot write this file.
-    pub async fn publish_evaluation_observation(
-        &self,
-        observation: Option<serde_json::Value>,
-    ) -> Result<(), ErrorCode> {
-        if observation.as_ref().is_some_and(|value| !value.is_object()) {
-            return Err(ErrorCode::BadRequest);
-        }
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "version": 1,
-            "observation": observation,
-        }))
-        .map_err(|_| ErrorCode::BadRequest)?;
-        if bytes.len() > MAX_DOC_BYTES {
-            return Err(ErrorCode::BadRequest);
-        }
-        let mut state = self.state.lock().await;
-        if state.evaluation != bytes {
-            state.evaluation = bytes;
-            state.bump(&Node::Evaluation);
-            state.events.append(b"evaluation\n").await;
-        }
-        Ok(())
     }
 
     /// Install the owning runtime's durable retention journal before exposing readiness.
@@ -641,7 +617,7 @@ impl FileServer for AgentFs {
             // empty command is malformed.
             Node::MachineCtl => {
                 if data.is_empty()
-                    || data.len() > 8192
+                    || data.len() > 64 * 1024
                     || data.contains(&b'\n')
                     || data.contains(&b'\r')
                     || data.contains(&0)

@@ -7,6 +7,7 @@ pub(crate) mod accepted_submission;
 pub(crate) mod directory_control;
 mod explicit_command;
 mod namespace_environment;
+pub(crate) mod owner_work;
 mod turn_execution;
 use turn_execution::finalize_replayed_tool_end_turn_best_effort;
 
@@ -777,6 +778,10 @@ where
     if matches!(submission.op, Op::Resume { .. }) {
         state.observe_input_shadow(&submission, cancel).await?;
     }
+    if owner_work::handle(state, &submission, emit, cancel).await? {
+        return Ok(());
+    }
+
     let mut tape_writer = if matches!(submission.op, Op::Turn { .. }) {
         Some(accepted_submission::begin_turn_dispatch(state, &submission).await?)
     } else {

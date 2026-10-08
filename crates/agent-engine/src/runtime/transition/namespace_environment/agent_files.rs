@@ -200,6 +200,27 @@ impl NamespaceAgentFiles {
         Ok(Some(response))
     }
 
+    /// Cancel only a currently exposed request with this logical owner; recovered IDs may be reused.
+    pub(crate) async fn cancel_owned_request(
+        &self,
+        request_id: &str,
+        owner_id: &str,
+    ) -> Result<()> {
+        validate_agent_file_id(request_id, "request id")?;
+        let path = format!("{}/requests/{request_id}/options", self.agent_path);
+        let Some(options) = self.client().try_read_file(&path).await? else {
+            return Ok(());
+        };
+        if options.is_empty() {
+            return Ok(());
+        }
+        let options: serde_json::Value = serde_json::from_slice(&options)?;
+        if options["request_id"].as_str() == Some(owner_id) {
+            self.cancel_request(request_id).await?;
+        }
+        Ok(())
+    }
+
     /// Settle only this pinned, service-assigned request and verify owner evidence.
     pub(crate) async fn cancel_request(&self, request_id: &str) -> Result<()> {
         validate_agent_file_id(request_id, "request id")?;
@@ -763,6 +784,13 @@ pub(crate) fn valid_project_directory(path: &str) -> bool {
 mod selector_tests;
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
+    if let Some(json) = command.strip_prefix("owner-work-v1 ") {
+        if command.len() > 64 * 1024 {
+            return None;
+        }
+        let control: alan_agent_protocol::OwnerWorkControl = serde_json::from_str(json).ok()?;
+        return control.into_submission().ok();
+    }
     if let Some(model) = command.strip_prefix("select-model ") {
         let (id, model) = model.split_once(' ')?;
         return Some(Submission {

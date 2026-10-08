@@ -1,5 +1,19 @@
 ## ADDED Requirements
 
+### Requirement: Machine control transport admits bounded complete envelopes
+AgentFS `machine/ctl` SHALL accept one nonempty UTF-8 control record per write up
+to and including 64 KiB, including any prefix and serialized envelope. It SHALL
+reject larger records and CR, LF or NUL without publishing a control event.
+AgentFS SHALL record the complete accepted record once; semantic validation and
+program selection SHALL remain owned by Agent Runtime Service.
+
+#### Scenario: A valid owner request exceeds the former 8 KiB transport limit
+- **WHEN** `agent_work select_owner` encodes a valid request with an 8 KiB question
+  into a control record within 64 KiB
+- **THEN** the writable AgentFS transport accepts the complete record once
+- **AND** the submission receipt retains the encoded work UUID
+- **AND** the request does not become ordinary text in `io/input`
+
 ### Requirement: Evaluation observations project existing Machine evidence
 AgentFS SHALL expose evaluation identity, schema, captured Connection/model and terminal or waiting outcome as read-only Machine state. Agent Machine SHALL own transition updates and rollout/checkpoint SHALL retain durable evidence. Evaluation SHALL NOT introduce a second Tape, mutable result authority or Process kind.
 
@@ -25,3 +39,30 @@ The `machine/evaluation` file SHALL project the latest acknowledged Machine obse
 - **WHEN** explicit recovery reconstructs evaluation evidence under a new PID
 - **THEN** the projection retains the source observation and captured Connection identity
 - **AND** publication neither dispatches an evaluator nor settles ordinary queued input
+
+
+### Requirement: Work results project acknowledged Machine completion
+AgentFS SHALL expose `machine/work` as a read-only version-1 document with
+`work` null before any observation and the latest acknowledged work snapshot
+otherwise. A snapshot SHALL contain `version`, `work_id`, `source_rollout_id`,
+`request_sha256`, `state` and spent model attempt counts. The full validated
+request and candidate evidence SHALL remain in the owning rollout snapshot. State SHALL distinguish started, completed, waiting, failed,
+cancelled and interrupted. Completed work SHALL include `owner` and citations
+with namespace path, inclusive line range and SHA-256 of the captured range bytes;
+waiting work SHALL include an owned request reference and boundary reason.
+Completed result SHALL be at most 8 KiB; the bounded nonterminal recovery snapshot
+MAY retain the validated request and candidate evidence within the existing 1 MiB
+document ceiling. Machine SHALL acknowledge rollout evidence before publication;
+AgentFS SHALL neither validate work history nor acquire a second write authority.
+`machine/evaluation` SHALL retain separate model advice provenance; Action results
+SHALL remain Tool completion metadata. Work completion SHALL NOT imply Process exit
+or manufacture an assistant message in `io/output`.
+
+#### Scenario: A client attempts to alter a work result
+- **WHEN** a client opens `machine/work` with write intent or directly writes it
+- **THEN** AgentFS rejects the write and preserves the Machine-owned snapshot
+
+#### Scenario: Completed work is recovered
+- **WHEN** explicit recovery reconstructs an acknowledged completed work under a new PID
+- **THEN** its work UUID, source rollout identity, owner and citations remain unchanged
+- **AND** recovery publishes no synthetic answer and dispatches no model call

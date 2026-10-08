@@ -82,6 +82,7 @@ impl AgentConformanceChecker {
             ("machine/checkpoints/current", FileKind::File),
             ("machine/status", FileKind::File),
             ("machine/evaluation", FileKind::File),
+            ("machine/work", FileKind::File),
             ("machine/ctl", FileKind::File),
             ("machine/ui", FileKind::Dir),
             ("machine/ui/models", FileKind::File),

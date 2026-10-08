@@ -476,6 +476,11 @@ async fn publication_wait_is_cancellable_and_bounded_without_late_success() {
                     .unwrap()
             };
             let error = result.unwrap_err();
+            assert!(
+                error
+                    .downcast_ref::<crate::runtime::NamespaceEvaluationUncertainty>()
+                    .is_none()
+            );
             assert_eq!(
                 error.downcast_ref::<crate::runtime::NamespaceEvaluationFailure>(),
                 Some(&if cancel_wait {

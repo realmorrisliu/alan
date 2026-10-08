@@ -556,7 +556,7 @@ fn boolean_options() -> Vec<StructuredInputOption> {
     ]
 }
 
-fn structured_input_yield_payload(
+pub(super) fn structured_input_yield_payload(
     title: String,
     prompt: String,
     questions: Vec<StructuredInputQuestion>,

@@ -8,6 +8,7 @@ pub(crate) struct ProcessConnection {
     pub service: Arc<ConnectionService>,
     pub profile: String,
     pub namespace: alan_kernel::LiveNamespace,
+    pub evaluator: Option<CapturedCallable>,
 }
 
 #[async_trait::async_trait]
@@ -52,6 +53,18 @@ impl ConnectionAuthority for ProcessConnection {
             "captured connection revision unavailable"
         );
         Ok(captured)
+    }
+
+    async fn capture_evaluation(&self, profile: &str) -> Result<CapturedCallable> {
+        let captured = self
+            .evaluator
+            .as_ref()
+            .context("Process has no explicitly granted evaluator")?;
+        ensure!(
+            captured.identity.profile == profile,
+            "evaluator profile is outside Process authority"
+        );
+        Ok(captured.clone())
     }
 
     async fn catalog(&self) -> Result<serde_json::Value> {

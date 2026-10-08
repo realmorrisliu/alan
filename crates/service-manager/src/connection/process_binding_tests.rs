@@ -61,6 +61,7 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
             service: service.clone(),
             profile: "managed".into(),
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+            evaluator: None,
         };
         let captured = authority.capture_initial().await.unwrap().unwrap();
         assert!(captured.config.effective_model_info().is_none());
@@ -149,6 +150,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         service: service.clone(),
         profile: "injected".into(),
         namespace: ns.clone(),
+        evaluator: None,
     };
     let captured = injected.capture_initial().await.unwrap().unwrap();
     assert_eq!(captured.identity.revision, "injected-namespace-callable");
@@ -171,6 +173,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         service: service.clone(),
         profile: "missing".into(),
         namespace: ns.clone(),
+        evaluator: None,
     };
     assert!(missing.capture_initial().await.unwrap().is_none());
     assert!(missing.capture(None).await.is_err());
@@ -206,6 +209,7 @@ async fn process_initial_binding_classifies_injection_and_preserves_managed_vali
         service: service.clone(),
         profile: "main".into(),
         namespace: ns,
+        evaluator: None,
     };
     let captured = managed.capture_initial().await.unwrap().unwrap();
     assert_ne!(captured.identity.revision, "injected-namespace-callable");
@@ -296,6 +300,7 @@ async fn catalog_observes_published_authority_without_recapturing_on_idle_polls(
         service: service.clone(),
         profile: "main".into(),
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
     };
     let published = authority.catalog().await.unwrap();
     let bytes = std::fs::read(&bindings.metadata_path).unwrap();
@@ -486,6 +491,22 @@ async fn evaluation_capture_checks_callable_capability_and_preserves_generation_
             "metadata alone is not a capability"
         );
         if let Ok(captured) = captured {
+            let authority = ProcessConnection {
+                service: service.clone(),
+                profile: "main".into(),
+                namespace: namespace.clone(),
+                evaluator: None,
+            };
+            assert!(authority.capture_evaluation("eval").await.is_err());
+            let granted = ProcessConnection {
+                evaluator: Some(captured.clone()),
+                ..authority
+            };
+            assert!(granted.capture_evaluation("main").await.is_err());
+            assert_eq!(
+                granted.capture_evaluation("eval").await.unwrap().identity,
+                captured.identity
+            );
             assert_eq!(captured.identity.profile, "eval");
             assert_eq!(captured.identity.provider, "typesafe");
             assert_eq!(captured.identity.model, "jev-1.13.0");

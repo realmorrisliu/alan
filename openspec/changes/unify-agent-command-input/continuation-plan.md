@@ -25,8 +25,8 @@ percentage. No parked change is activated by this plan.
 
 Owner: `unify-agent-command-input`, especially tasks 2.1, 2.4–2.7, 2.11–2.14.
 Local boundary evidence and the reproduced revocation fix are indexed in
-[reliability acceptance](reliability-acceptance.md). Current-head review, CI and
-merge remain required before this stage is delivered.
+[reliability acceptance](reliability-acceptance.md). PR #1038 delivered this stage at merge `3bee6689`; exact review, CI and
+post-merge checks are recorded in the acceptance receipt.
 
 Inventory existing public-boundary tests first. Keep code changes limited to
 reproduced failures at their shared owner; add only missing boundary checks.
@@ -46,7 +46,7 @@ reproduced failures at their shared owner; add only missing boundary checks.
 - [x] Linux: run the shipped namespace/mount/network adapter on a capable Linux
   host and verify confinement, read-only and virtual-only mounts, revocation and
   explicit degradation/fail-closed behavior. A skip or macOS mock is not a pass.
-- [ ] Run owning suites, quality and required CI; review exact changes and close
+- [x] Run owning suites, quality and required CI; review exact changes and close
   only fully covered parent clauses. Record remaining platform gaps explicitly.
 
 ## 3. One mixed-Machine task

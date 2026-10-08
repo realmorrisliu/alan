@@ -152,7 +152,15 @@ pub(crate) async fn turn_completed(namespace: &NamespaceAgentFiles, cancelled: b
         .await
 }
 
-pub(crate) async fn turn_failed(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
+pub(crate) async fn turn_failed(
+    namespace: &NamespaceAgentFiles,
+    message: &str,
+    machine: Option<&crate::agent_machine::AgentMachine>,
+) -> Result<()> {
+    if machine.is_some_and(|machine| machine.has_pending_interaction()) {
+        paused(namespace, machine).await?;
+        return error_notice(namespace, message).await;
+    }
     error_notice(namespace, message).await?;
     turn_completed(namespace, false).await
 }
@@ -450,11 +458,17 @@ mod tests {
         let (environment, _) = agent_files();
         initialize(&environment, false, false).await.unwrap();
         turn_started(&environment).await.unwrap();
-        turn_failed(&environment, "provider failed").await.unwrap();
+        turn_failed(&environment, "provider failed", None)
+            .await
+            .unwrap();
 
         let notice = environment.read_ui_notice_snapshot().await.unwrap();
         assert_eq!(notice.kind, UiNoticeKind::Error);
         assert_eq!(notice.message, "provider failed");
+        assert_eq!(
+            environment.read_ui_activity_snapshot().await.unwrap().state,
+            UiActivityState::Idle
+        );
     }
 
     #[tokio::test]

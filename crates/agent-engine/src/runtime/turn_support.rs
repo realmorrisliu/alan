@@ -102,6 +102,26 @@ pub(super) async fn reset_turn_after_cancelling_host_mounts(
     agent_files: &NamespaceAgentFiles,
     host_mount_requests: &NamespaceHostMountRequests,
 ) -> Result<()> {
+    if let Some(mut work) = machine.owner_work.clone()
+        && matches!(
+            work.outcome,
+            crate::agent_machine::owner_work::Outcome::Waiting { .. }
+                | crate::agent_machine::owner_work::Outcome::Cancelled
+        )
+    {
+        let request_id = work.owned_request.clone();
+        let owner_id = work.waiting_request().request_id;
+        if work.outcome != crate::agent_machine::owner_work::Outcome::Cancelled {
+            work.outcome = crate::agent_machine::owner_work::Outcome::Cancelled;
+            machine.persist_owner_work(work).await?;
+        }
+        if let Some(request_id) = request_id {
+            // Durable cancellation owns cleanup even after a previous AgentFS failure.
+            agent_files
+                .cancel_owned_request(&request_id, &owner_id)
+                .await?;
+        }
+    }
     for request_id in machine.pending_request_ids() {
         if matches!(
             machine.pending_yield(&request_id),

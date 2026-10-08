@@ -138,6 +138,15 @@ pub(crate) fn advance_accepted_submission<'a>(
             }
         });
 
+        if let Some(work) = &state.machine.owner_work {
+            let publication = match work.projection() {
+                Ok(work) => state.environment.publish_work(Some(work)).await,
+                Err(error) => Err(error),
+            };
+            if let Err(error) = publication {
+                result = Err(error);
+            }
+        }
         if !state.machine.has_pending_interaction() {
             state
                 .machine

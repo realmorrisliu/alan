@@ -1,5 +1,7 @@
 //! Task-oriented Agent work commands over the invoking Process's namespace.
-use alan_agent_engine::{InputIntent, InputMode, UserInputRecord};
+use alan_agent_engine::{
+    InputIntent, InputMode, OwnerWorkControl, OwnerWorkRequest, UserInputRecord,
+};
 use alan_ap::InProcessTransport;
 use alan_kernel::{MountFs, ProcessInvocation, ProcessOutcome, ProcessRunner};
 use alan_shell::Shell;
@@ -10,7 +12,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub(crate) const EXECUTABLE: &str = "/bin/agent_work";
-const HELP: &str = "agent_work status TARGET | submit TARGET TEXT | cancel TARGET INPUT_ID | continue TARGET | discard TARGET\nTARGET is root or an Agent PID visible to you. root is this invocation's Root Agent Process and may be the caller itself. Submit queues input for that target, including legitimate self-scheduling; it does not notify an external operator and is not an external handoff or report. Submit returns an input ID, not a completed answer. Cancel/continue/discard request a queue change; inspect status to observe it. No command retries an uncertain write. JSON arguments use action, target, and text or submission_id.";
+const HELP: &str = "agent_work status TARGET | result TARGET | submit TARGET TEXT | cancel TARGET INPUT_ID | continue TARGET | discard TARGET\nTARGET is root or an Agent PID visible to you. root is this invocation's Root Agent Process and may be the caller itself. Submit queues input for that target, including legitimate self-scheduling; it does not notify an external operator and is not an external handoff or report. Submit returns an input ID, not a completed answer. Cancel/continue/discard request a queue change; inspect status to observe it. No command retries an uncertain write. JSON arguments use action, target, and text or submission_id. The explicit select_owner JSON action accepts a versioned request with question, evaluator_profile and candidate source ranges; it queues bounded read-only Machine work. Result reads the latest acknowledged machine/work projection, which can belong to a different submission; compare work_id. It never waits for completion or retries work.";
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -21,6 +23,13 @@ enum Action {
     Submit {
         target: String,
         text: String,
+    },
+    SelectOwner {
+        target: String,
+        request: OwnerWorkRequest,
+    },
+    Result {
+        target: String,
     },
     Cancel {
         target: String,
@@ -35,16 +44,30 @@ enum Action {
 }
 
 pub(crate) fn manifest() -> Vec<u8> {
+    let source = json!({"type":"object", "additionalProperties":false,
+        "required":["path","start_line","end_line"], "properties":{
+            "path":{"type":"string","description":"Normalized /mnt/ namespace path"},
+            "start_line":{"type":"integer","minimum":1},
+            "end_line":{"type":"integer","minimum":1}}});
+    let candidate = json!({"type":"object", "additionalProperties":false,
+        "required":["id","sources"], "properties":{"id":{"type":"string","minLength":1},
+            "sources":{"type":"array","minItems":1,"maxItems":8,"items":source}}});
+    let request = json!({"type":"object", "additionalProperties":false,
+        "required":["version","question","evaluator_profile","candidates"], "properties":{
+            "version":{"const":1},"question":{"type":"string","minLength":1},
+            "evaluator_profile":{"type":"string","minLength":1},
+            "candidates":{"type":"array","minItems":1,"maxItems":16,"items":candidate}}});
     serde_json::to_vec(&json!({
         "version":1, "name":"agent_work", "description":HELP,
         "parameters":{"type":"object", "required":["action","target"], "additionalProperties":false,
-            "properties":{"action":{"type":"string","enum":["status","submit","cancel","continue","discard"]},
+            "properties":{"action":{"type":"string","enum":["status","submit","select_owner","result","cancel","continue","discard"]},
                 "target":{"type":"string","description":"root (this invocation's Root Agent Process, which may be the caller itself) or a visible Agent PID"},
-                "text":{"type":"string"}, "submission_id":{"type":"string"}},
+                "text":{"type":"string"}, "submission_id":{"type":"string"}, "request":request},
             "oneOf":[
-                {"properties":{"action":{"const":"submit"}},"required":["text"],"not":{"required":["submission_id"]}},
-                {"properties":{"action":{"const":"cancel"}},"required":["submission_id"],"not":{"required":["text"]}},
-                {"properties":{"action":{"enum":["status","continue","discard"]}},"not":{"anyOf":[{"required":["text"]},{"required":["submission_id"]}]}}
+                {"properties":{"action":{"const":"select_owner"}},"required":["request"],"not":{"anyOf":[{"required":["text"]},{"required":["submission_id"]}]}},
+                {"properties":{"action":{"const":"submit"}},"required":["text"],"not":{"anyOf":[{"required":["submission_id"]},{"required":["request"]}]}},
+                {"properties":{"action":{"const":"cancel"}},"required":["submission_id"],"not":{"anyOf":[{"required":["text"]},{"required":["request"]}]}},
+                {"properties":{"action":{"enum":["status","result","continue","discard"]}},"not":{"anyOf":[{"required":["text"]},{"required":["submission_id"]},{"required":["request"]}]}}
             ]},
         "capability":"write", "timeout_secs":10,
         "execution":{"arguments":"json_first_arg","result":"stdout_json"}
@@ -105,6 +128,9 @@ fn parse(args: &[String]) -> Result<Action> {
         ["status", target] => Ok(Action::Status {
             target: (*target).into(),
         }),
+        ["result", target] => Ok(Action::Result {
+            target: (*target).into(),
+        }),
         ["submit", target, text] => Ok(Action::Submit {
             target: (*target).into(),
             text: (*text).into(),
@@ -127,6 +153,8 @@ async fn execute(shell: &Shell, action: Action) -> Result<Value> {
     let target = match &action {
         Action::Status { target }
         | Action::Submit { target, .. }
+        | Action::SelectOwner { target, .. }
+        | Action::Result { target }
         | Action::Cancel { target, .. }
         | Action::Continue { target }
         | Action::Discard { target } => target,
@@ -158,6 +186,23 @@ async fn execute(shell: &Shell, action: Action) -> Result<Value> {
                 json!({"success":true,"target":target,"status":"submitted","submission_id":input.submission_id}),
             )
         }
+        Action::SelectOwner { target, request } => {
+            let control = OwnerWorkControl {
+                id: uuid::Uuid::new_v4(),
+                request,
+            };
+            let bytes = control.encode()?;
+            shell.write(&format!("{base}/machine/ctl"), bytes.as_bytes()).await
+                .with_context(|| format!("owner work {} delivery may be unknown; inspect this ID before resubmitting", control.id))?;
+            Ok(
+                json!({"success":true,"target":target,"status":"submitted","submission_id":control.id}),
+            )
+        }
+        Action::Result { target } => {
+            let projection: Value =
+                serde_json::from_slice(&shell.cat(&format!("{base}/machine/work")).await?)?;
+            Ok(json!({"success":true,"target":target,"projection":projection}))
+        }
         other => {
             let (target, control) = match other {
                 Action::Cancel {
@@ -183,175 +228,5 @@ async fn execute(shell: &Shell, action: Action) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use alan_kernel::{Access, Credentials, ExecSpec, Namespace, Pid};
-    use std::collections::BTreeMap;
-
-    fn invocation(namespace: Namespace, args: &[&str]) -> ProcessInvocation {
-        ProcessInvocation {
-            pid: Pid(2),
-            parent: Some(Pid(1)),
-            credentials: Credentials::user("test"),
-            namespace,
-            exec: ExecSpec {
-                executable: EXECUTABLE.into(),
-                args: args.iter().map(|s| (*s).into()).collect(),
-                namespace: Default::default(),
-                descriptors: BTreeMap::new(),
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn help_and_manifest_explain_invocation_root_and_submit_semantics() {
-        let manifest: Value = serde_json::from_slice(&manifest()).unwrap();
-        assert_eq!(manifest["description"], HELP);
-        assert_eq!(
-            manifest["parameters"]["properties"]["target"]["description"],
-            "root (this invocation's Root Agent Process, which may be the caller itself) or a visible Agent PID"
-        );
-        let outcome = AgentWorkProcessRunner
-            .run(invocation(Namespace::new(), &["--help"]))
-            .await;
-        assert_eq!(outcome.exit_code, 0);
-        let result: Value = serde_json::from_slice(&outcome.output).unwrap();
-        assert_eq!(result["help"], HELP);
-        for clarification in [
-            "root is this invocation's Root Agent Process and may be the caller itself",
-            "Submit queues input for that target, including legitimate self-scheduling",
-            "does not notify an external operator",
-            "is not an external handoff or report",
-        ] {
-            assert!(HELP.contains(clarification));
-        }
-        println!("manifest description: {}", manifest["description"]);
-        println!(
-            "target description: {}",
-            manifest["parameters"]["properties"]["target"]["description"]
-        );
-        println!("--help output: {}", result);
-    }
-
-    #[test]
-    fn tool_schema_matches_action_argument_requirements() {
-        let manifest: Value = serde_json::from_slice(&manifest()).unwrap();
-        let validator = jsonschema::validator_for(&manifest["parameters"]).unwrap();
-        for action in ["status", "continue", "discard", "submit", "cancel"] {
-            let mut value = json!({"action":action,"target":"root"});
-            assert_eq!(
-                validator.is_valid(&value),
-                !matches!(action, "submit" | "cancel")
-            );
-            if action == "submit" {
-                value["text"] = json!("do work");
-            }
-            if action == "cancel" {
-                value["submission_id"] = json!(uuid::Uuid::new_v4());
-            }
-            assert!(validator.is_valid(&value));
-            assert!(serde_json::from_value::<Action>(value.clone()).is_ok());
-            value[if action == "cancel" {
-                "text"
-            } else {
-                "submission_id"
-            }] = json!("unexpected");
-            assert!(!validator.is_valid(&value));
-        }
-    }
-
-    #[tokio::test]
-    async fn work_commands_use_only_visible_agent_files_and_preserve_receipt_semantics() {
-        let manifest: alan_agent_engine::runtime::ToolPackageManifest =
-            serde_json::from_slice(&manifest()).unwrap();
-        manifest.validate_for_name("agent_work").unwrap();
-        let fs = Arc::new(alan_agentfs::AgentFs::new());
-        let mut namespace = Namespace::new();
-        namespace.mount("/agent/7", InProcessTransport::new(fs), Access::ReadWrite);
-        let shell = Shell::new(InProcessTransport::new(Arc::new(MountFs::new(
-            namespace.clone(),
-        ))));
-        let runner = AgentWorkProcessRunner;
-        let status = runner
-            .run(invocation(namespace.clone(), &["status", "7"]))
-            .await;
-        assert_eq!(status.exit_code, 0);
-        assert!(serde_json::from_slice::<Value>(&status.output).unwrap()["activity"].is_object());
-        let submitted = runner
-            .run(invocation(
-                namespace.clone(),
-                &[r#"{"action":"submit","target":"7","text":"do work"}"#],
-            ))
-            .await;
-        assert_eq!(submitted.exit_code, 0);
-        let receipt: Value = serde_json::from_slice(&submitted.output).unwrap();
-        assert_eq!(receipt["status"], "submitted");
-        let id = receipt["submission_id"].as_str().unwrap();
-        uuid::Uuid::parse_str(id).unwrap();
-        let input = shell.cat("/agent/7/io/input").await.unwrap();
-        let input = String::from_utf8_lossy(&input);
-        assert!(
-            input.contains(id)
-                && input.contains("do work")
-                && input.contains("\"intent\":\"agent\"")
-        );
-        let upper_id = id.to_ascii_uppercase();
-        for args in [
-            vec!["cancel", "7", &upper_id],
-            vec!["continue", "7"],
-            vec!["discard", "7"],
-        ] {
-            let outcome = runner.run(invocation(namespace.clone(), &args)).await;
-            assert_eq!(outcome.exit_code, 0);
-            assert_eq!(
-                serde_json::from_slice::<Value>(&outcome.output).unwrap()["status"],
-                "requested"
-            );
-        }
-        let events = String::from_utf8(shell.cat("/agent/7/events").await.unwrap()).unwrap();
-        assert!(events.contains(&format!("ctl:queue-v1 interrupt {id}")));
-        for args in [
-            vec!["status", "root"],
-            vec!["submit", "7/../8", "escape"],
-            vec!["cancel", "7", "bad-id"],
-        ] {
-            assert_ne!(
-                runner
-                    .run(invocation(namespace.clone(), &args))
-                    .await
-                    .exit_code,
-                0
-            );
-        }
-        let mut read_only = Namespace::new();
-        read_only.mount(
-            "/agent/7",
-            InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
-            Access::ReadOnly,
-        );
-        let denied = runner
-            .run(invocation(read_only, &["submit", "7", "forbidden"]))
-            .await;
-        assert_eq!(denied.exit_code, 1);
-        assert!(
-            String::from_utf8_lossy(&denied.output).contains("access"),
-            "{}",
-            String::from_utf8_lossy(&denied.output)
-        );
-        let missing = crate::process_runner::SystemProcessRunner::new(None, None)
-            .run(invocation(namespace.clone(), &["status", "7"]))
-            .await;
-        assert_eq!(missing.exit_code, 127);
-        namespace.mount(
-            EXECUTABLE,
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadOnly,
-        );
-        let installed = crate::process_runner::SystemProcessRunner::new(None, None)
-            .run(invocation(namespace, &["status", "7"]))
-            .await;
-        assert_eq!(installed.exit_code, 0);
-    }
-
-    include!("agent_work/commit_tests.rs");
-}
+#[path = "agent_work/tests.rs"]
+mod tests;

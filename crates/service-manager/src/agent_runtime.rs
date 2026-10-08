@@ -421,6 +421,15 @@ impl AgentRuntimeService {
                 .as_ref()
                 .map(|stores| stores.tmp.clone()),
         )?;
+        let evaluator = if let Some(selection) = &launch.template.input_shadow {
+            Some(
+                self.connection
+                    .capture_evaluation(&selection.profile, &launch.namespace)
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
             root.clone(),
             format!("/agent/{}", pid.0),
@@ -438,20 +447,39 @@ impl AgentRuntimeService {
                 }
             }
         })
+        .with_work_publisher({
+            let agent = agent.clone();
+            move |work| {
+                let agent = agent.clone();
+                async move {
+                    if let Some(pending) = work.as_ref().and_then(|w| w.get("pending_request")) {
+                        agent
+                            .restore_pending_request(
+                                pending["id"].as_str().context("work request lacks id")?,
+                                "structured_input",
+                                pending["prompt"]
+                                    .as_str()
+                                    .context("work request lacks prompt")?,
+                                &serde_json::to_string(&pending["options"])?,
+                            )
+                            .await?;
+                    }
+                    agent.publish_work(work).await.map_err(Into::into)
+                }
+            }
+        })
         .with_connection_authority(Arc::new(
             crate::connection::process_binding::ProcessConnection {
                 service: self.connection.clone(),
                 profile: launch.template.llm_connection.clone(),
                 namespace: launch.namespace.clone(),
+                evaluator: evaluator.clone(),
             },
         ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
         .with_tool_process_context(pid.0, self.tool_runner.clone());
         if let Some(selection) = &launch.template.input_shadow {
-            let captured = self
-                .connection
-                .capture_evaluation(&selection.profile, &launch.namespace)
-                .await?;
+            let captured = evaluator.context("selected evaluator was not captured")?;
             environment = environment.with_shadow_evaluation(
                 captured.root,
                 captured.identity,

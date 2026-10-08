@@ -70,3 +70,13 @@ the broader transitions and activation gates remain pending.
 Connection capture, durable ordering, recovery and read-only publication for the
 bounded shadow slice. It records the missing redirected response path explicitly;
 no synthetic observation can satisfy that frozen acceptance case.
+
+## Bounded read-only mixed-task entry
+
+[mixed-task-entry.md](mixed-task-entry.md) records the selected task, immutable
+source, actual generation wait/resume diagnostic, deterministic reference,
+result ownership and fallback budget. The reliability prerequisite merged as
+`3bee6689`; the explicit source-owner program now passes local fixture and native
+acceptance in [mixed-task-acceptance.md](mixed-task-acceptance.md). Current-head
+CI, merge and implemented-delta synchronization remain delivery gates. General
+composition remains unfinished. The existing shadow invocation remains advice-only.
