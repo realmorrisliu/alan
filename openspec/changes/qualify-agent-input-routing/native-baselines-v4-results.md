@@ -134,3 +134,7 @@ generation, and the event tail is closed. Both baseline callers share this fix.
 All v4 generation receipts already contain terminal `done` snapshots, so the
 frozen measurements above remain historical evidence for `07b8c351`, unchanged.
 They do not qualify the modified reader: future measurement requires a new freeze.
+Shared result validation also receives each caller's allowed labels: the
+three-label component baseline rejects `none`, while the native choice facade
+allows NoMatch. The contract regression fails before this correction and passes
+afterward; no frozen v4 result or classification criterion is changed.

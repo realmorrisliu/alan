@@ -119,7 +119,12 @@ pub(super) async fn generate(
     }
 }
 
-pub(super) fn classify(text: &str, events: &Value, status: &Value) -> &'static str {
+pub(super) fn classify(
+    text: &str,
+    events: &Value,
+    status: &Value,
+    labels: &[&str],
+) -> &'static str {
     let Some(events) = events.as_array() else {
         return "malformed";
     };
@@ -133,7 +138,7 @@ pub(super) fn classify(text: &str, events: &Value, status: &Value) -> &'static s
             || e.get("aborted").is_some()
             || e.get("rejected").is_some()
     }) || events.last().is_none_or(|e| e["done"] != true)
-        || !matches!(text.trim(), "command" | "agent" | "ambiguous" | "none")
+        || !labels.contains(&text.trim())
     {
         return "malformed";
     }

@@ -108,7 +108,12 @@ impl GenerationAdvice {
             }
         };
         let outcome = if matches!(&result, Ok(())) {
-            operation::classify(&attempt.text, &json!(attempt.events), &attempt.status)
+            operation::classify(
+                &attempt.text,
+                &json!(attempt.events),
+                &attempt.status,
+                &["command", "agent", "ambiguous", "none"],
+            )
         } else {
             "unavailable"
         };

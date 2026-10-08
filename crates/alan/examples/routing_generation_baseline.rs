@@ -101,7 +101,8 @@ async fn main() -> Result<()> {
                     row["elapsed_ms"] = json!(started.elapsed().as_millis());
                     let unresolved = !matches!(&result, Ok(Ok(())));
                     row["outcome"] = json!(match &result {
-                        Ok(Ok(())) => classify(&attempt.text, &json!(attempt.events), &attempt.status),
+                        Ok(Ok(())) => classify(&attempt.text, &json!(attempt.events), &attempt.status,
+                            &["command", "agent", "ambiguous"]),
                         Err(_) => "timeout",
                         _ => "unavailable",
                     });

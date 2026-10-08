@@ -6,28 +6,61 @@ use std::sync::{
 };
 use std::time::Duration;
 
+const COMPONENT_LABELS: &[&str] = &["command", "agent", "ambiguous"];
+
 #[test]
 fn advice_requires_a_clean_terminal_result_not_just_label_text() {
     let done = json!({"status":"done"});
     let clean = json!([{"version":1,"text":"command"},{"version":1,"done":true}]);
-    assert_eq!(classify("command", &clean, &done), "success");
     assert_eq!(
-        classify("command", &clean, &json!({"status":"error"})),
+        classify("command", &clean, &done, COMPONENT_LABELS),
+        "success"
+    );
+    assert_eq!(
+        classify(
+            "command",
+            &clean,
+            &json!({"status":"error"}),
+            COMPONENT_LABELS
+        ),
         "unavailable"
     );
     assert_eq!(
         classify(
             "command",
             &json!([{"version":1,"tool_call":{}},{"version":1,"done":true}]),
-            &done
+            &done,
+            COMPONENT_LABELS,
         ),
         "malformed"
     );
     assert_eq!(
-        classify("command", &json!([{"version":1,"error":"failed"}]), &done),
+        classify(
+            "command",
+            &json!([{"version":1,"error":"failed"}]),
+            &done,
+            COMPONENT_LABELS
+        ),
         "malformed"
     );
-    assert_eq!(classify("command then execute", &clean, &done), "malformed");
+    assert_eq!(
+        classify("command then execute", &clean, &done, COMPONENT_LABELS),
+        "malformed"
+    );
+    let no_match = json!([{"version":1,"text":"none"},{"version":1,"done":true}]);
+    assert_eq!(
+        classify("none", &no_match, &done, COMPONENT_LABELS),
+        "malformed"
+    );
+    assert_eq!(
+        classify(
+            "none",
+            &no_match,
+            &done,
+            &["command", "agent", "ambiguous", "none"]
+        ),
+        "success"
+    );
 }
 
 struct PendingStatusFs {
@@ -155,7 +188,12 @@ async fn terminal_event_waits_for_status_publication_within_the_caller_deadline(
         } else {
             result.unwrap().unwrap();
             assert_eq!(
-                classify(&attempt.text, &json!(attempt.events), &attempt.status),
+                classify(
+                    &attempt.text,
+                    &json!(attempt.events),
+                    &attempt.status,
+                    COMPONENT_LABELS
+                ),
                 "success"
             );
         }
