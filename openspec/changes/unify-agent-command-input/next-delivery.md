@@ -7,7 +7,9 @@ The archived self-development milestone stays closed and immutable.
 
 ## 1. Unified input and recovery
 
-The current apply checklist has 49 items: 27 checked, 22 unchecked. This measures
+The initial apply checklist had 49 items: 27 checked, 22 unchecked.
+After the directory-selection and model-binding closure audits it has
+30 checked and 19 unchecked after the forced-termination acceptance below. This measures
 recorded task closure, not implementation percentage. Broad parent tasks stay
 open until every required boundary has evidence. Historical implementation notes
 in design/tasks are dated slice reports, not a current absence-of-code inventory.
@@ -36,7 +38,7 @@ Execution order:
   revocation and non-replay with disposable project data and exact effect counts.
 - [x] Exercise Herdr view disconnect/reconnect in an isolated owned session;
   distinguish a retained process from actual exit and forced termination.
-- [ ] Fix only reproduced gaps at their existing owner, run applicable quality
+- [x] Fix only reproduced gaps at their existing owner, run applicable quality
   checks, then record exact review/CI/merge evidence and update owning checkboxes.
 
 Current local checks (unchanged Rust source at `59855ebe`):
@@ -140,7 +142,8 @@ unchecked input/path/multi-client matrices.
   of a fixed delay. Both reviewers passed the fix; the two Host integration
   tests passed afterward. Full `just quality` passed, including standalone
   installer/release checks; log: `next-goal-lifecycle-quality.log` in the cache.
-  Remote delivery remains pending.
+  This bounded lifecycle slice was delivered by PR #1032; see the current
+  delivery record below. Broader parent tasks remain open.
 
 ## 2. Real Connection model switching
 
@@ -187,3 +190,119 @@ commands, discussion, ambiguity, invalid output, outages and explicit overrides.
 Shadow decisions have no execution authority and launch no Tools. Automatic
 routing remains disabled; a later explicit activation decision requires passing
 evidence. Do not add a second execution manager or a speculative adapter framework.
+
+
+## Current delivery reconciliation — 2026-10-07
+
+GitHub state was rechecked after the three baseline collections. The ordered
+lifecycle and model slices have merged; their earlier pending descriptions above
+are dated investigation records, not current missing implementation.
+
+- Lifecycle PR #1032: head `4e9c2877baf2d14639d2ecc7140ef0f6af5983c2`, merged as
+  `43700bb11e28bc22e3cb099009018e0a494e4e3d`. All reported checks succeeded.
+  Independent local Spec/Standards review is recorded above; GitHub has no
+  submitted review object for this PR, so no GitHub review approval is claimed.
+- Model PR #1033: head `a239021e78af816203ef5c43164a3020f8724a57`, merged as
+  `b93501aa7206dd9ef70cb6f4978680784cd19ee4`. All reported checks succeeded;
+  independent local reviews and native model/queue evidence are in
+  [catalog delivery](chatgpt-catalog-delivery.md). The real catalog is available;
+  successful switch, failed switch preserving binding and queued A followed by B
+  were accepted. Task 2.20 is now closed by the subsequent recovery/unavailable-
+  binding clause audit in the catalog delivery record; canonical sync remains open.
+- UI PR #1034 remains open at `942a5288ee942e03c17adc23a7580cdd26fc4b59` with
+  all reported checks successful. Local native acceptance is complete; merge and
+  canonical sync remain delivery work under its owning change.
+- Shadow PR #1035 remains draft and stacked on the UI branch. The
+  [qualification report](../qualify-agent-input-routing/shadow-qualification.md)
+  now records the native candidate, generation and deterministic prefix baselines.
+  Both model candidates fail the frozen command-safety/classification gates.
+  Redirected response admission and complete cost/latency qualification remain
+  open; automatic execution is disabled.
+
+No broad same-Agent-client, cross-grant, retention, Linux confinement or unknown-
+effect requirement is closed by this reconciliation. Keep those existing owning
+checklists active; the bounded user's four-stage progress is not a claim that
+all historical unified-input requirements are delivered.
+
+## Recovery uncertainty display audit — 2026-10-07
+
+Task 2.19's discovery wording does not require a history browser or arbitrary
+rollout picker. The accepted `alan-shell` scenario already specifies `alan --resume`,
+and CLI help exposes that opt-in entry. The selector owner validates the selected
+file and pins the instance's source; a missing list is not itself a product defect.
+The remaining audit focuses on exceptional recovery, not adding a new registry.
+
+A real Runtime regression found that persisted Unknown effects survived recovery
+without replay, but startup initialized the UI notice to empty. The new assertion
+failed with `None` instead of `Warning`. Recovery now projects the Machine's latest
+effect index into the existing warning snapshot and notice event before Ready:
+unknown outcomes were not replayed and their effects must be checked before retry.
+Known outcomes and fresh invocations retain the existing empty notice. A later
+acknowledged result supersedes an older Unknown record, so old uncertainty alone
+does not produce a warning. New ordinary work retains the existing notice-clearing
+behavior; this does not introduce new execution, authority or recovery policy.
+
+The full Agent Engine suite passed 1,374 tests with one existing opt-in test ignored;
+independent Spec and Standards reviews passed. Evidence is in
+`~/Library/Caches/Alan/recovery-unknown-notice-{red,tests}.log`; the extended
+latest-result regression is recorded in `recovery-unknown-latest-test.log`.
+This proves the Runtime presentation boundary only. Parent 2.19 remains open for
+forced-termination product acceptance and full exceptional-startup correlation;
+normal exit, existing no-replay tests and this notice are not substitutes for it.
+
+
+## Forced termination and task 2.19 acceptance — 2026-10-07
+
+Clean source `7b7b1692c878e350bdf6a535c5c64505467e40ef`, release binary SHA-256
+`a14595b771bf43fa88d480016d7006fcc8638e44c2bb7dccb6e323b3b2a3587b`,
+was run as the actual product CLI in owned Herdr session
+`alan-forced-recovery-20261007`, pane `w1:p1`. Evidence lives under
+`~/Library/Caches/Alan/forced-recovery-20261007/`; build/identity, raw rollout
+copies, AgentFS snapshots, ANSI captures, verification and hashes are retained.
+
+The first native command wrote `U`, then waited before a trailing `T`. A second
+command writing `Q` was durably admitted but not dispatched. The source was killed
+with SIGKILL while its effect record was still Unknown. Its remaining shell/sleep
+process group was separately killed by the harness before the trailing write;
+that cleanup is **not** an Alan cancellation acknowledgement or a claim that
+SIGKILL performed orderly descendant shutdown.
+
+| Required boundary | Observed evidence |
+| --- | --- |
+| Explicit selection/discovery | The accepted CLI entry is `--resume`; the selected filename was checked before invocation. No history-list mechanism is required by the accepted scenarios |
+| Fresh execution identity | Source PID 86904 / boot `28d35736-611c-4cdf-98f6-1c5c02637bb1`; resumed PID 87482 / boot `6607a668-a3e9-487d-b8a4-22d049f48235`; repeated PID 87878 / boot `7b2c2d22-19af-4091-a793-b8b27310a4c3`. Reused Root PID 8 is not identity |
+| Chosen durable history and Actions | Original admitted/dispatched IDs and Unknown effect survived; restored directory Action evidence was retained, and new directory/Q Action records were correlated separately |
+| Unknown outcome is truthful | The native terminal displayed the new unknown-outcome warning on both recoveries; durable original status remained Unknown, never successful cancellation |
+| Reliable queue stays paused | Only pending ID `6a448d80-2713-41e7-b5d1-2bd84a6516aa` was recovered; active unknown ID `13b114a8-9cfa-4912-8578-1f604ee47dd3` never re-entered the queue |
+| Current cwd authority | No grant survived either recovery. Continue without authority was rejected; native `/project` approval preserved pause; only explicit `/continue` ran Q |
+| No repeated effects | File remained `U` through recovery and reauthorization, then became exactly `UQ`; no T or repeated U/Q appeared. Repeated recovery had an empty queue. Each original ID has exactly one durable dispatch in the recovered history |
+| Missing/invalid evidence | Expanded Service Manager boot regression covers a selected missing file and an invalid rollout: startup fails, selector is retained, and no fresh rollout is created; all seven root-recovery tests passed |
+| One-shot shutdown | The same product binary consumed redirected input and returned exactly `RECOVERY_ONESHOT_OK` using the real Connection, then exited 0; actual `host.json` and `namespace.ap.sock` were absent afterward |
+| Normal exit, descendants and Herdr detach | Earlier native lifecycle evidence above verifies Ctrl-D/owned-descendant termination and last-view detach/reconnect. This new SIGKILL trace complements it rather than replacing orderly-exit evidence |
+
+Both resumed invocations exited 0 through `/quit`, all three owned Alan PIDs
+were gone, and both test runtime endpoints were removed. The owned Herdr server
+was stopped; its separate test UI client was terminated afterward and its PTY
+handle completed. No default Herdr session or unrelated process was stopped.
+
+This closes task 2.19 implementation and bounded product acceptance on the recorded
+source. The new uncertainty display and expanded boot regression still require
+current-head PR delivery under 4.1 and canonical synchronization under 4.2.
+It does not close unrelated multi-client, cross-grant or Linux qualification.
+
+## Partial canonical lifecycle sync — 2026-10-07
+
+Canonical `alan-shell`, `alan-os-host-lifecycle` and `service-manager` now describe
+explicit `--resume`, fresh recovery identity, paused work with revalidated authority,
+instance-pinned Root replacement and recorder flush ordering. They also distinguish
+Herdr view detach from native process exit. These behaviors exist on merged main
+`43700bb11e28bc22e3cb099009018e0a494e4e3d`; the product acceptance above supplies
+the bounded lifecycle evidence. The stale claim that recovery was unimplemented
+has been removed. Existing one-shot and restart-budget requirements are preserved.
+
+Canonical `provider-connection-contract` already requires confirmed model selection,
+retention of captured callable bindings and controls through queued dispatch and
+explicit recovery, and visible rejection of unavailable bindings. No duplicate
+requirement is added. Task 4.2 remains open: this partial sync does not include the
+unmerged Unknown-outcome UI notice, terminal polish, typed evaluation or automatic
+routing guarantees. The broader input-contract audit remains open as recorded above.

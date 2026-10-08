@@ -35,6 +35,7 @@ mod conformance;
 mod request_control;
 mod root;
 mod surface_state;
+use surface_state::node_identity;
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -131,6 +132,7 @@ struct State {
     /// Agent run-state (machine/status): read-only over aP, transitioned only by
     /// lifecycle verbs on machine/ctl (D7).
     status: String,
+    evaluation: Vec<u8>,
     ui_skills: String,
     ui_models: String,
     ui_queue: String,
@@ -188,6 +190,7 @@ enum Node {
     MachineDir,
     Tape,
     Status,
+    Evaluation,
     /// The agent-runtime control surface (`machine/ctl`): text commands such as
     /// `compact` / `rollback` whose tape/checkpoint semantics belong to the engine
     /// (agent-file-layout-contract). Generic process control (interrupt/cancel)
@@ -257,6 +260,7 @@ impl AgentFs {
                 requests: BTreeMap::new(),
                 actions: BTreeMap::new(),
                 status: "running".to_string(),
+                evaluation: br#"{"observation":null,"version":1}"#.to_vec(),
                 ui_models: "{\"version\":1,\"publication_version\":0,\"process_path\":\"\",\"known\":false,\"catalog\":null,\"selected_next\":null,\"active\":null,\"admitted\":[]}".into(),
                 ui_queue: "{\"version\":1,\"revision\":0,\"known\":false,\"pending_submission_ids\":[],\"active_submission_ids\":[],\"paused\":false,\"deferred\":false,\"uncertain_submission_ids\":[]}".into(),
                 ui_activity: DEFAULT_UI_ACTIVITY.to_string(),
@@ -271,6 +275,35 @@ impl AgentFs {
                 fids: HashMap::new(),
             }),
         }
+    }
+
+    /// Publish the Machine's latest acknowledged evaluation observation.
+    ///
+    /// Only the owning runtime calls this method after its durability barrier.
+    /// AgentFS stores a bounded projection; it does not validate advice or own
+    /// recovery history. Public aP clients cannot write this file.
+    pub async fn publish_evaluation_observation(
+        &self,
+        observation: Option<serde_json::Value>,
+    ) -> Result<(), ErrorCode> {
+        if observation.as_ref().is_some_and(|value| !value.is_object()) {
+            return Err(ErrorCode::BadRequest);
+        }
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "observation": observation,
+        }))
+        .map_err(|_| ErrorCode::BadRequest)?;
+        if bytes.len() > MAX_DOC_BYTES {
+            return Err(ErrorCode::BadRequest);
+        }
+        let mut state = self.state.lock().await;
+        if state.evaluation != bytes {
+            state.evaluation = bytes;
+            state.bump(&Node::Evaluation);
+            state.events.append(b"evaluation\n").await;
+        }
+        Ok(())
     }
 
     /// Install the owning runtime's durable retention journal before exposing readiness.
@@ -850,56 +883,6 @@ impl FileServer for AgentFs {
         }
         Ok(())
     }
-}
-
-/// A node's stable identity: its file kind and a server-unique qid path, keyed by
-/// its full file identity so distinct files (and distinct request/action ids)
-/// never share a qid. The qid *version* is layered on top from the state's
-/// [`VersionTable`] (see [`State::qid`]); this part never changes for a node.
-fn node_identity(node: &Node) -> (FileKind, u64) {
-    use std::hash::{Hash, Hasher};
-    fn path_of(key: &str) -> u64 {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut h);
-        h.finish()
-    }
-    let (kind, key) = match node {
-        Node::Root => (FileKind::Dir, "/".to_string()),
-        Node::IoDir => (FileKind::Dir, "io".into()),
-        Node::MachineDir => (FileKind::Dir, "machine".into()),
-        Node::UiDir => (FileKind::Dir, "machine/ui".into()),
-        Node::CheckpointsDir => (FileKind::Dir, "machine/checkpoints".into()),
-        Node::RequestsDir => (FileKind::Dir, "requests".into()),
-        Node::ActionsDir => (FileKind::Dir, "actions".into()),
-        Node::ActionsHelp => (FileKind::File, "actions/help".into()),
-        Node::ContextDir => (FileKind::Dir, "context".into()),
-        Node::ChildrenDir => (FileKind::Dir, "children".into()),
-        Node::Request(id) => (FileKind::Dir, format!("requests/{id}")),
-        Node::Action(id) => (FileKind::Dir, format!("actions/{id}")),
-        Node::RequestsClone => (FileKind::Clone, "requests/clone".into()),
-        Node::ActionsClone => (FileKind::Clone, "actions/clone".into()),
-        Node::RequestsEvents => (FileKind::Stream, "requests/events".into()),
-        Node::ActionsEvents => (FileKind::Stream, "actions/events".into()),
-        Node::Input => (FileKind::Stream, "io/input".into()),
-        Node::Output => (FileKind::Stream, "io/output".into()),
-        Node::IoEvents => (FileKind::Stream, "io/events".into()),
-        Node::Tape => (FileKind::Stream, "machine/tape".into()),
-        Node::Events => (FileKind::Stream, "events".into()),
-        Node::UiEvents => (FileKind::Stream, "machine/ui/events".into()),
-        Node::Status => (FileKind::File, "machine/status".into()),
-        Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
-        Node::UiSkills => (FileKind::File, "machine/ui/skills".into()),
-        Node::UiModels => (FileKind::File, "machine/ui/models".into()),
-        Node::UiQueue => (FileKind::File, "machine/ui/queue".into()),
-        Node::UiActivity => (FileKind::File, "machine/ui/activity".into()),
-        Node::UiPlan => (FileKind::File, "machine/ui/plan".into()),
-        Node::UiThinking => (FileKind::File, "machine/ui/thinking".into()),
-        Node::UiNotice => (FileKind::File, "machine/ui/notice".into()),
-        Node::CurrentCheckpoint => (FileKind::File, "machine/checkpoints/current".into()),
-        Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
-        Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
-    };
-    (kind, path_of(&key))
 }
 
 /// The qid for a node at version 0, for the stateless contexts (the pre-bound

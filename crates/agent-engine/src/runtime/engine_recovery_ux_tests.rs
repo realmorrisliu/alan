@@ -3,7 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn completed_or_legacy_recovery_accepts_fresh_agent_question_without_project_authority() {
-    for legacy in [false, true] {
+    for (legacy, uncertain) in [(false, true), (true, true), (false, false)] {
         let temp = TempDir::new().unwrap();
         let stores = crate::AgentRuntimeStoreBindings {
             rollouts: temp.path().join("rollouts"),
@@ -34,9 +34,16 @@ async fn completed_or_legacy_recovery_accepts_fresh_agent_question_without_proje
         }
         for (id, status) in [
             ("completed-effect", crate::rollout::EffectStatus::Applied),
-            ("unknown-effect", crate::rollout::EffectStatus::Unknown),
+            (
+                "unknown-effect",
+                if uncertain {
+                    crate::rollout::EffectStatus::Unknown
+                } else {
+                    crate::rollout::EffectStatus::Applied
+                },
+            ),
         ] {
-            source.record_effect(crate::rollout::EffectRecord {
+            let record = crate::rollout::EffectRecord {
                 effect_id: id.into(),
                 process_path: "/agent/old".into(),
                 tool_call_id: id.into(),
@@ -50,7 +57,14 @@ async fn completed_or_legacy_recovery_accepts_fresh_agent_question_without_proje
                 reason: None,
                 dedupe_hit: false,
                 timestamp: chrono::Utc::now().to_rfc3339(),
-            });
+            };
+            if !uncertain && id == "unknown-effect" {
+                // A later acknowledged result supersedes the old unknown evidence.
+                let mut started = record.clone();
+                started.status = crate::rollout::EffectStatus::Unknown;
+                source.record_effect(started);
+            }
+            source.record_effect(record);
         }
         source.input_recorder().unwrap().close().await.unwrap();
         let recovered = AgentMachine::load_from_rollout_in_dir(
@@ -115,6 +129,23 @@ async fn completed_or_legacy_recovery_accepts_fresh_agent_question_without_proje
             serde_json::from_slice(&shell.cat("/agent/2/machine/ui/activity").await.unwrap())
                 .unwrap();
         assert_eq!(activity.state, alan_agent_protocol::UiActivityState::Idle);
+        let notice = shell.cat("/agent/2/machine/ui/notice").await.unwrap();
+        let notice: alan_agent_protocol::UiNoticeSnapshot =
+            serde_json::from_slice(&notice).unwrap();
+        assert_eq!(
+            notice.kind,
+            if uncertain {
+                alan_agent_protocol::UiNoticeKind::Warning
+            } else {
+                alan_agent_protocol::UiNoticeKind::None
+            }
+        );
+        if uncertain {
+            assert!(notice.message.contains("unknown outcomes"));
+            let events =
+                String::from_utf8(shell.cat("/agent/2/machine/ui/events").await.unwrap()).unwrap();
+            assert!(events.lines().any(|line| matches!(serde_json::from_str::<alan_agent_protocol::UiEvent>(line).unwrap(), alan_agent_protocol::UiEvent::Notice { snapshot } if snapshot == notice)));
+        }
         assert!(
             mock.recorded_requests().is_empty(),
             "history must not start generation or effects"
@@ -165,7 +196,11 @@ async fn completed_or_legacy_recovery_accepts_fresh_agent_question_without_proje
                 _ => None,
             })
             .collect();
-        assert_eq!(effects.len(), 2, "no replayed effect records");
+        assert_eq!(
+            effects.len(),
+            if uncertain { 2 } else { 3 },
+            "no replayed effect records"
+        );
         assert!(
             effects
                 .iter()
@@ -176,7 +211,8 @@ async fn completed_or_legacy_recovery_accepts_fresh_agent_question_without_proje
             effects
                 .iter()
                 .any(|effect| effect.effect_id == "unknown-effect"
-                    && matches!(effect.status, crate::rollout::EffectStatus::Unknown))
+                    && (matches!(effect.status, crate::rollout::EffectStatus::Unknown)
+                        == uncertain))
         );
     }
 }

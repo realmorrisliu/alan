@@ -63,6 +63,22 @@ pub struct LlmClient {
 }
 
 impl LlmClient {
+    /// Operation capabilities of the captured callable, not its provider family.
+    pub fn supports_generation(&self) -> bool {
+        self.provider.supports_generation()
+    }
+    /// Whether the captured callable implements finite-choice evaluation.
+    pub fn supports_choice_evaluation(&self) -> bool {
+        self.provider.supports_choice_evaluation()
+    }
+    /// Evaluate without converting advice to generation or Tool dispatch.
+    pub async fn evaluate_choice(
+        &mut self,
+        request: alan_llm::ChoiceEvaluationRequest,
+    ) -> Result<alan_llm::ChoiceEvaluationResponse> {
+        self.provider.evaluate_choice(request).await
+    }
+
     /// Non-secret provider account bound to this immutable callable.
     pub fn account_identity(&self) -> Option<&str> {
         self.provider.account_identity()
@@ -87,6 +103,7 @@ impl LlmClient {
             "openai_chat_completions_compatible" => ProviderType::OpenAiChatCompletionsCompatible,
             "openrouter" => ProviderType::OpenRouter,
             "anthropic_messages" => ProviderType::AnthropicMessages,
+            "typesafe" => ProviderType::TypesafeEvaluation,
             _ => ProviderType::OpenAiChatCompletionsCompatible, // Default fallback
         };
 

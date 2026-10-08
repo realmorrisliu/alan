@@ -480,47 +480,66 @@ mod tests {
     }
     #[tokio::test]
     async fn failed_root_recovery_preserves_the_selected_source() {
-        let temp = tempfile::tempdir().unwrap();
-        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
-            rollouts: temp.path().join("rollouts"),
-            metadata: temp.path().join("metadata"),
-            checkpoints: temp.path().join("checkpoints"),
-            cache: temp.path().join("cache"),
-            tmp: temp.path().join("tmp"),
-        };
-        let config = AgentProcessConfig {
-            store_bindings: Some(stores.clone()),
-            ..Default::default()
-        };
-        fs::create_dir_all(&stores.rollouts).unwrap();
-        let source = stores.rollouts.join("selected.jsonl");
-        fs::write(&source, "invalid rollout\n").unwrap();
-        publish(&config, Some(&source)).unwrap();
-        let mut manager_config = crate::ServiceManagerConfig::ephemeral(
-            "test",
-            config,
-            crate::ProcessLaunchContext::root(),
-            alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
-            alan_agent_engine::tools::ToolRegistry::new(),
-        );
-        manager_config.resume_root = true;
-        let result = crate::ServiceManager::boot(manager_config).await;
-        let error = match result {
-            Ok(manager) => {
-                manager.shutdown().await.unwrap();
-                panic!("invalid selected recovery must fail startup");
+        for missing in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+                rollouts: temp.path().join("rollouts"),
+                metadata: temp.path().join("metadata"),
+                checkpoints: temp.path().join("checkpoints"),
+                cache: temp.path().join("cache"),
+                tmp: temp.path().join("tmp"),
+            };
+            let config = AgentProcessConfig {
+                store_bindings: Some(stores.clone()),
+                ..Default::default()
+            };
+            fs::create_dir_all(&stores.rollouts).unwrap();
+            let source = stores.rollouts.join("selected.jsonl");
+            fs::write(&source, "invalid rollout\n").unwrap();
+            publish(&config, Some(&source)).unwrap();
+            if missing {
+                fs::remove_file(&source).unwrap();
             }
-            Err(error) => error,
-        };
-        assert!(
-            format!("{error:#}").contains("Failed to recover selected"),
-            "{error:#}"
-        );
-        assert_eq!(
-            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
-            "selected.jsonl"
-        );
-        assert_eq!(fs::read_to_string(source).unwrap(), "invalid rollout\n");
-        assert_eq!(fs::read_dir(stores.rollouts).unwrap().count(), 1);
+            let mut manager_config = crate::ServiceManagerConfig::ephemeral(
+                "test",
+                config,
+                crate::ProcessLaunchContext::root(),
+                alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
+                alan_agent_engine::tools::ToolRegistry::new(),
+            );
+            manager_config.resume_root = true;
+            let result = crate::ServiceManager::boot(manager_config).await;
+            let error = match result {
+                Ok(manager) => {
+                    manager.shutdown().await.unwrap();
+                    panic!("invalid selected recovery must fail startup");
+                }
+                Err(error) => error,
+            };
+            assert!(
+                format!("{error:#}").contains(if missing {
+                    "selected Root Agent rollout is unavailable"
+                } else {
+                    "Failed to recover selected"
+                }),
+                "{error:#}"
+            );
+            assert_eq!(
+                fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+                "selected.jsonl"
+            );
+            if missing {
+                assert!(
+                    !source.exists(),
+                    "failed recovery must not reconstruct missing evidence"
+                );
+            } else {
+                assert_eq!(fs::read_to_string(source).unwrap(), "invalid rollout\n");
+            }
+            assert_eq!(
+                fs::read_dir(stores.rollouts).unwrap().count(),
+                usize::from(!missing)
+            );
+        }
     }
 }

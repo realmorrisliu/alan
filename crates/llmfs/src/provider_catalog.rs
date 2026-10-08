@@ -13,6 +13,7 @@ pub(super) fn known_provider_names() -> Vec<String> {
         "openai_chat_completions_compatible".to_string(),
         "openai_responses".to_string(),
         "openrouter".to_string(),
+        "typesafe".to_string(),
     ];
     names.sort();
     names
@@ -33,6 +34,7 @@ fn provider_type_for_name(name: &str) -> Option<ProviderType> {
         "openai_chat_completions" => Some(ProviderType::OpenAiChatCompletions),
         "openai_chat_completions_compatible" => Some(ProviderType::OpenAiChatCompletionsCompatible),
         "openrouter" => Some(ProviderType::OpenRouter),
+        "typesafe" => Some(ProviderType::TypesafeEvaluation),
         "anthropic_messages" => Some(ProviderType::AnthropicMessages),
         _ => None,
     }
@@ -73,7 +75,9 @@ pub(super) fn provider_capabilities_doc(
     render_json_doc(serde_json::json!({
         "version": 1,
         "provider": provider,
-        "capabilities": capabilities,
+        "capabilities": (provider != "typesafe").then_some(capabilities),
+        "generation": provider != "typesafe",
+        "evaluation": {"choice_v1": provider == "typesafe"},
     }))
 }
 
@@ -81,12 +85,17 @@ pub(super) fn connection_capabilities_doc(
     connection: &str,
     provider: &str,
     capabilities: ProviderCapabilities,
+    choice_evaluation: bool,
+    generation: bool,
 ) -> String {
     render_json_doc(serde_json::json!({
         "version": 1,
         "connection": connection,
         "provider": provider,
-        "capabilities": capabilities,
+        // These are generation features; evaluation-only callables have none.
+        "capabilities": generation.then_some(capabilities),
+        "evaluation": { "choice_v1": choice_evaluation },
+        "generation": generation,
     }))
 }
 

@@ -26,7 +26,8 @@ pub(crate) use namespace_environment::{
     PendingActionPublication,
 };
 pub use namespace_environment::{
-    NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
+    NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,
+    NamespaceEvaluationUncertainty, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
     NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
@@ -623,13 +624,12 @@ where
                 refresh_context: call_refresh,
             } => {
                 refresh_context |= call_refresh;
-                let agent_files = state.agent_files();
                 if handle_queued_steering_inputs(
                     &mut state.machine,
+                    &state.environment,
                     writer,
-                    &agent_files,
-                    tool_calls,
-                    idx + 1,
+                    inputs.cancel,
+                    &tool_calls[idx + 1..],
                     inputs.steering_broker,
                     emit,
                 )
@@ -773,6 +773,9 @@ where
             steering_broker,
         )
         .await;
+    }
+    if matches!(submission.op, Op::Resume { .. }) {
+        state.observe_input_shadow(&submission, cancel).await?;
     }
     let mut tape_writer = if matches!(submission.op, Op::Turn { .. }) {
         Some(accepted_submission::begin_turn_dispatch(state, &submission).await?)

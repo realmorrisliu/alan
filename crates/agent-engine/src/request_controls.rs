@@ -217,6 +217,7 @@ fn provider_type_for_llm_provider(provider: LlmProvider) -> ProviderType {
         }
         LlmProvider::OpenRouter => ProviderType::OpenRouter,
         LlmProvider::AnthropicMessages => ProviderType::AnthropicMessages,
+        LlmProvider::TypesafeEvaluation => ProviderType::TypesafeEvaluation,
     }
 }
 

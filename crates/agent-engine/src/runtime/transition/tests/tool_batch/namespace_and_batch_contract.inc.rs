@@ -423,7 +423,7 @@
             let writer = agent_files.begin_tape_generation().await.unwrap();
             let mut emit = |_event: Event| async {};
             let result = crate::runtime::steering_queue::handle_queued_steering_inputs(
-                &mut state.machine, &writer, &agent_files, &[], 0, Some(&broker), &mut emit,
+                &mut state.machine, &state.environment, &writer, &CancellationToken::new(), &[], Some(&broker), &mut emit,
             ).await;
             writer.finish().await.unwrap();
             assert_eq!(result.is_err(), fail);
@@ -462,7 +462,7 @@
             let mut events = vec![];
             let mut emit = |event| { events.push(event); async {} };
             let result = crate::runtime::steering_queue::handle_queued_steering_inputs(
-                &mut state.machine, &writer, &agent_files, &[], 0, Some(&broker), &mut emit,
+                &mut state.machine, &state.environment, &writer, &CancellationToken::new(), &[], Some(&broker), &mut emit,
             ).await;
             writer.finish().await.unwrap();
             assert_eq!(result.is_err(), fail);
@@ -511,11 +511,10 @@
         let agent_files = state.agent_files();
         let writer = agent_files.begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
-            &mut state.machine,
+            &mut state.machine, &state.environment,
             &writer,
-            &agent_files,
+            &CancellationToken::new(),
             &[],
-            0,
             Some(&broker),
             &mut emit,
         )
@@ -565,11 +564,10 @@
         let agent_files = state.agent_files();
         let writer = agent_files.begin_tape_generation().await.unwrap();
         let handled = handle_queued_steering_inputs(
-            &mut state.machine,
+            &mut state.machine, &state.environment,
             &writer,
-            &agent_files,
+            &CancellationToken::new(),
             &[],
-            0,
             Some(&broker),
             &mut emit,
         )

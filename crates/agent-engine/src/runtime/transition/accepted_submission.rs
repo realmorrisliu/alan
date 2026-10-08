@@ -76,11 +76,11 @@ pub(crate) fn advance_accepted_submission<'a>(
                 ..
             }
         ) {
-            let checkpoint = state.machine.dispatch_input(&submission).await;
+            let checkpoint = state.dispatch_input(&submission, cancel).await;
             if let Err(error) = checkpoint {
                 let publish = crate::runtime::ui_surfaces::error_notice(
                     &state.agent_files(),
-                    &format!("Input {} dispatch persistence failed; execution did not start and recovery disposition is uncertain: {error}", submission.id),
+                    &format!("Input {} preparation failed; ordinary execution did not start and recovery disposition is uncertain: {error}", submission.id),
                 ).await;
                 state.machine.finish_submission();
                 return AcceptedSubmissionOutcome {
@@ -345,7 +345,7 @@ where
             continue;
         }
         if matches!(next_submission.op, Op::Input { .. }) {
-            state.machine.dispatch_input(&next_submission).await?;
+            state.dispatch_input(&next_submission, cancel).await?;
             state
                 .environment
                 .reconcile_input_captures(&state.machine.input_queue())

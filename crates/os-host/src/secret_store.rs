@@ -193,6 +193,7 @@ pub fn apply_profile_to_config(
         )
     })?;
     match resolved.provider {
+        LlmProvider::TypesafeEvaluation => config.typesafe_api_key = Some(api_key),
         LlmProvider::OpenAiResponses => config.openai_responses_api_key = Some(api_key),
         LlmProvider::OpenAiChatCompletions => {
             config.openai_chat_completions_api_key = Some(api_key)

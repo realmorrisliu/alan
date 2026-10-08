@@ -243,6 +243,7 @@ fn parse_provider_id(raw: &str) -> Result<LlmProvider> {
         "openrouter" => LlmProvider::OpenRouter,
         "google_gemini_generate_content" | "gemini" => LlmProvider::GoogleGeminiGenerateContent,
         "anthropic_messages" | "anthropic" => LlmProvider::AnthropicMessages,
+        "typesafe" => LlmProvider::TypesafeEvaluation,
         other => anyhow::bail!("Unknown provider `{other}`"),
     };
     Ok(provider)
@@ -274,6 +275,7 @@ fn suggested_profile_id(provider: LlmProvider, requested: Option<String>) -> Res
         LlmProvider::OpenRouter => "openrouter-main",
         LlmProvider::GoogleGeminiGenerateContent => "gemini",
         LlmProvider::AnthropicMessages => "anthropic-main",
+        LlmProvider::TypesafeEvaluation => "typesafe-main",
     }
     .to_string())
 }
@@ -395,7 +397,11 @@ pub async fn run_connection_add(
             settings,
         },
     );
-    if make_default || connections.default_profile.is_none() {
+    anyhow::ensure!(
+        !make_default || provider.supports_generation(),
+        "evaluation-only profile cannot be the generation default"
+    );
+    if make_default || (connections.default_profile.is_none() && provider.supports_generation()) {
         connections.default_profile = Some(profile_id.clone());
     }
     save_connections(&stores, &connections).await?;

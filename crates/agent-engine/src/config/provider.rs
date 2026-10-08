@@ -165,6 +165,7 @@ impl Config {
 
     pub fn has_llm_config(&self) -> bool {
         match self.llm_provider {
+            LlmProvider::TypesafeEvaluation => self.typesafe_api_key.is_some(),
             LlmProvider::GoogleGeminiGenerateContent => {
                 self.has_google_gemini_generate_content_config()
             }
@@ -181,6 +182,7 @@ impl Config {
 
     pub fn effective_model(&self) -> &str {
         match self.llm_provider {
+            LlmProvider::TypesafeEvaluation => &self.typesafe_model,
             LlmProvider::GoogleGeminiGenerateContent => &self.google_gemini_generate_content_model,
             LlmProvider::Chatgpt => &self.chatgpt_model,
             LlmProvider::OpenAiResponses => self.resolved_openai_responses_model(),
@@ -196,6 +198,7 @@ impl Config {
     pub fn set_effective_model(&mut self, model: impl Into<String>) {
         let model = model.into();
         match self.llm_provider {
+            LlmProvider::TypesafeEvaluation => self.typesafe_model = model,
             LlmProvider::GoogleGeminiGenerateContent => {
                 self.google_gemini_generate_content_model = model;
             }
@@ -245,7 +248,8 @@ impl Config {
             }
             LlmProvider::OpenRouter
             | LlmProvider::GoogleGeminiGenerateContent
-            | LlmProvider::AnthropicMessages => None,
+            | LlmProvider::AnthropicMessages
+            | LlmProvider::TypesafeEvaluation => None,
         }
     }
 
@@ -271,6 +275,12 @@ impl Config {
         use crate::llm::factory::ProviderConfig;
 
         match self.llm_provider {
+            LlmProvider::TypesafeEvaluation => Ok(ProviderConfig::typesafe_evaluation(
+                self.typesafe_api_key.clone().ok_or_else(|| {
+                    anyhow::anyhow!("TypeSafe requires a Host-resolved credential")
+                })?,
+                &self.typesafe_model,
+            )),
             LlmProvider::GoogleGeminiGenerateContent => {
                 let project_id = self
                     .google_gemini_generate_content_project_id
@@ -408,6 +418,7 @@ impl Config {
 
 fn inferred_context_window_tokens(provider: LlmProvider) -> u32 {
     match provider {
+        LlmProvider::TypesafeEvaluation => 32_768,
         LlmProvider::GoogleGeminiGenerateContent => 1_048_576,
         LlmProvider::AnthropicMessages => 200_000,
         LlmProvider::Chatgpt => 400_000,

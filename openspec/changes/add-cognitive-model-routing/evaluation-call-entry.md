@@ -1,0 +1,145 @@
+# Mounted evaluation caller entry — 2026-10-07
+
+The namespace runtime now provides a finite-choice caller over the existing
+mounted Connection. Allocation returns an operation identity without writing
+`data`; the Machine can acknowledge its started record before consuming the
+operation through `commit`. Commit consumes the handle and never retries a model
+call or dispatches command, Tool or fallback work. The caller now has an opt-in ordinary-input Machine consumer with acknowledged
+start/terminal records. Host selection is explicit through `--shadow-evaluator <profile>` on bare Alan.
+
+One monotonic deadline spans allocation, the intervening durability barrier and
+commit/result validation. Cancellation and an exhausted deadline before commit
+abort the allocated operation without calling its evaluator. The remaining budget
+is sent to llmfs, which includes its provider-lock wait. Results validate version,
+schema, captured provider/model, finite selection membership, bounded JSON and
+nonnegative consistent token usage. Unknown billing remains null.
+
+The data descriptor intentionally does not use a cleanup guard that clunks on
+cancellation: clunk commits a request. Error cleanup first aborts and waits for
+acknowledgement, then releases any buffered data descriptor. If abort cannot be
+confirmed, the descriptor remains uncommitted until server teardown and the error
+retains its original cancellation/timeout classification with uncertainty context.
+Dropping an allocated handle requests bounded best-effort abort; this never commits
+data. If allocation open/read confirmation is lost, bounded re-reading of the
+same allocator reconciles its identity without opening another operation. If
+identity or abort remains unconfirmed, the error explicitly retains uncertainty.
+Cleanup clunks are bounded as well. There is no implicit evaluation retry after
+lost acknowledgements.
+
+Mounted fixtures cover delayed commit with zero initial calls, typed command
+advice with one evaluator call, expired durability budget, explicit abort,
+in-flight cancellation, captured-model mismatch, and cancellation after a complete
+request was buffered but before its write acknowledgement returned. The latter
+asserts zero evaluator calls and release after abort. Additional gates cover
+lost allocation open/read acknowledgements and blocked cleanup acknowledgement. They use actual llmfs with
+fixture evaluators; they are not real-provider routing measurements.
+
+Remaining work: prove original-input correlation and the durable bypass path
+on both real admission surfaces without executing corpus commands, then collect
+and score the frozen real-model corpus and baselines. No task is marked complete solely by this API entry.
+
+Validation: 50 namespace runtime tests passed, including eight evaluation
+fixtures. Independent Spec and Standards review passed after correcting allocator
+acknowledgement uncertainty, bounded cleanup and typed failure classification.
+
+The Machine now owns an acknowledged observation writer over its existing rollout
+recorder. It validates the typed payload and complete prior evaluation sequence,
+requires storage, binds a new attempt to the current rollout, and rejects changing
+an existing submission's identity, including after recovery into a new rollout.
+Identical records return `false`; callers must not interpret that as permission
+to commit another model call. Only acknowledged evidence updates the Machine snapshot. Duplicate records
+reconcile the latest acknowledged state without appending records or moving the
+latest observation backwards. A terminal transition requires a live acknowledged
+start in the current rollout; recovered or uncertain starts cannot be continued.
+Interrupted is reconstructed by recovery, never manufactured as a provider outcome.
+
+The writer reuses durable history for duplicate reconciliation. This is a bounded
+shadow-entry implementation choice, not a new Machine history store. Ordinary FollowUp/Steer dispatch now invokes the consumer only when a separately
+captured evaluator was explicitly injected into its namespace environment.
+Agent Runtime Service supplies the AgentFS owner publication callback before
+startup, so recovery and live snapshots share the same owner. Writer tests
+cover repeated records, conflicting terminal outcomes, changed recovery identities,
+missing storage, and failed start/terminal persistence with recovery. They do not
+establish end-to-end paid-call ordering or the two-surface qualification gates.
+
+The six evaluation tests passed, including lost start/terminal acknowledgement
+reconciliation. Independent Spec and Standards reviews passed after closing
+recovered-attempt continuation and stale-projection reconciliation gaps.
+
+The consumer preserves the exact single text body of ordinary Agent input. It
+allocates only after reconciling previous evidence for the submission, persists a
+start before commit, publishes the acknowledged start, consumes one evaluation,
+and persists a terminal before publication. The original generation capture and
+normal dispatch branch are unchanged: even command advice does not select command
+execution. Explicit intents and request responses now persist deterministic bypass evidence;
+control-only operations still skip evaluation. Original-byte correlation across
+real clients remains unfinished. No default environment contains a shadow evaluator.
+
+Mounted consumer tests cover accepted-submission dispatch with command advice,
+repeat/recovery without another evaluator call, both failed persistence barriers,
+cancellation before result publication, and explicit-intent/control bypass.
+These engine fixtures are not the frozen two-client real-model qualification.
+
+All three dispatch consumers (initial input, brokered follow-up, and active Tool
+batch steering) share the same shadow boundary. Preflight reconciliation and
+start publication obey the attempt deadline and cancellation. Terminal evidence
+and publication have one bounded one-second settlement window, including recording
+an already expired/cancelled operation; a successful result remains cancellable
+until publication. If its write acknowledgement is lost, no live success is
+published. Later reconciliation may expose a reliably recorded historical terminal
+without repeating its model call. Typed abort uncertainty is propagated unchanged;
+it leaves the acknowledged start unsettled instead of inventing confirmed cancellation.
+Seven mounted consumer tests cover these dispatch and publication windows.
+
+Current integration validation: 1,371 engine unit tests passed (one opt-in test
+ignored), 142 Service Manager tests passed, and strict OpenSpec validation passed.
+Independent Spec and Standards reviews passed on the integrated dispatch path.
+
+Host entry: bare Alan's `--shadow-evaluator <profile>` explicitly selects an
+invocation-local Root evaluator. It passes the actual interactive/redirected mode
+through HostBootConfig and Service Manager; child templates omit this setting.
+Connection Service checks the captured callable's capability, then builds a
+separate namespace snapshot and immutable identity without changing generation
+selection. No global environment override or new credential reader is introduced.
+Connection capture tests distinguish real capability from metadata and preserve a
+prior capture across profile changes. Root boot fixtures verify the full configured
+Service-to-Machine-to-AgentFS path for both surface labels; these are fixtures, not
+proof of the real client adapters or completed live corpus qualification.
+
+The opt-in `live_typesafe_profile_through_root_machine` probe additionally boots
+an isolated Host with the real Product credential wrapper and TypeSafe evaluator,
+submits a benign Agent input through AgentFS, and observes an acknowledged
+Selected result in the Root Machine projection. Generation uses a fixture provider
+and remains bound to `main`; the advice does not choose an execution path. The
+2026-10-07 call used `jev-1.13.0`, took 1430 ms, and reported 459 input / 53 output
+tokens with unknown cost. This verifies the Host/Machine/provider path, not actual
+interactive/redirected clients or the frozen 324-case performance qualification.
+The credential was injected from the explicitly named `.env` entry into the test
+process and temporary Host credential store; no user profile/default was changed.
+
+
+The bypass follow-up records `bypassed` with an explicit-intent or request-response
+reason and zero evaluator calls, without allocating an operation or inventing
+usage. Request correlation survives fresh delivery UUIDs. Recovery treats this
+as one terminal record; duplicate delivery cannot create a model attempt, change
+payload/authority, or consume the ordinary input queue. The accepted response
+path acknowledges bypass evidence before existing response consumption; a failed
+write leaves the pending request in place and starts no generation. Its digest
+covers the actual Machine payload; a real-client collector must retain the separate
+original bytes before prefix/form conversion. This does not add a redirected
+response client or count synthetic responses toward qualification.
+
+Focused validation: 24 evaluation tests passed, including the actual accepted
+response path, failed persistence, repeat/recovery, and rejection of bypass records
+that claim a model operation, positive call count or usage.
+
+Only current user Confirmation/StructuredInput responses enter this observation
+path. Unknown/stale response IDs retain their normal rejection; Host Mount
+terminal notifications remain Service-owned controls and do not reserve bypass
+identity. The shared submission handler covers initial and in-turn responses.
+
+Full regression passed: 1,374 engine tests (one opt-in test ignored) and 144
+Service Manager tests; strict change validation passed. Independent Spec and
+Standards reviews passed after moving response observation to the shared handler
+and restricting it to current user requests. Both initial and in-turn response
+fixtures cover acknowledged publication and persistence failure before consumption.

@@ -34,6 +34,12 @@ for ordinary terminal operation.
 - **AND** the other reports that it cannot acquire the instance instead of
   attaching to or borrowing its Root Agent
 
+#### Scenario: Terminal host retains a process
+- **WHEN** Herdr or another terminal host detaches a view while retaining Alan
+- **THEN** that instance may keep executing while its native process is alive
+- **AND** Alan does not spawn a background replacement to provide that lifetime
+- **AND** Herdr identifiers grant neither Alan identity nor authority
+
 ### Requirement: Host readiness is file-proven
 An invocation SHALL expose its renderer or an explicitly addressed local
 attachment only after the Standard Namespace, required services, and its
@@ -47,19 +53,31 @@ failed instance, and report an error rather than connect to another invocation.
   Agent
 
 ### Requirement: Host restart creates a new boot identity
-Every foreground instance boot SHALL publish a fresh boot identity and create a
-new Process table and Root Agent Process. It MUST NOT deserialize live Process
-state or attach to another invocation's live namespace. Durable recovery is
-outside the shipped startup contract.
+Each boot SHALL create a fresh boot identity, Process table and Root Agent.
+Recovery SHALL require explicit durable selection, never live Process state or
+another invocation's namespace. Invalid selection SHALL fail visibly. Recorded
+paths or grants MUST NOT restore live authority. Reliable pending work SHALL stay
+paused until explicit continuation under current authority; unknown effects MUST
+NOT replay automatically.
 
 #### Scenario: A Process reference belongs to another boot
 - **WHEN** a client presents a reference with a different instance boot identity
 - **THEN** Alan rejects it even if the PID has been reused
 
 #### Scenario: A new invocation starts
-- **WHEN** a user starts another bare `alan` invocation
+- **WHEN** a user starts another bare `alan` invocation without selecting recovery
 - **THEN** it creates fresh execution in its own instance
 - **AND** it does not implicitly attach to or resume another invocation's Root
+
+#### Scenario: User selects durable recovery
+- **WHEN** the user explicitly selects valid durable execution evidence
+- **THEN** existing recovery owners interpret it in a fresh instance
+- **AND** reliable pending work is exposed paused with current access revalidated
+- **AND** restoring directory authority alone does not continue the queue
+
+#### Scenario: User selects missing or invalid recovery evidence
+- **WHEN** the selected durable record is missing or invalid
+- **THEN** startup fails with a diagnostic rather than silently starting fresh
 
 ### Requirement: Product composition preserves production adapters
 Foreground product composition SHALL use the existing production providers,
@@ -76,7 +94,8 @@ itself select a test Host or weaken authorization.
 ### Requirement: Foreground application exit ends its owned runtime
 Actual Alan process exit SHALL shut down its owned services and active execution
 through existing lifecycle and native descendant-cancellation boundaries.
-Completed effects SHALL remain completed. Forced termination or incomplete
+Completed effects SHALL remain completed. Terminal-host view detach SHALL be
+distinguished from actual process exit. Forced termination or incomplete
 durable evidence SHALL NOT be reported as successful cancellation or work.
 
 #### Scenario: User exits Alan during work
@@ -88,6 +107,3 @@ durable evidence SHALL NOT be reported as successful cancellation or work.
 - **WHEN** Alan cannot complete orderly shutdown or persist a terminal outcome
 - **THEN** the result remains incomplete or unknown from available evidence
 - **AND** absence of completion does not authorize automatic replay
-
-> Explicit durable recovery selection and queue/cwd restoration remain
-> unimplemented; this specification records the shipped foreground lifecycle.

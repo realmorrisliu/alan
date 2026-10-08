@@ -749,3 +749,74 @@ async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
     std::fs::write(&bindings.metadata_path, "invalid = [").unwrap();
     assert!(fresh.cat("/metadata").await.is_err());
 }
+
+#[tokio::test]
+async fn evaluation_profile_cannot_replace_generation_default_or_selection() {
+    let service = ConnectionService::ephemeral("test");
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".into(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    service
+        .apply(ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    let mut evaluation = profile();
+    evaluation.provider = ProviderId::TypesafeEvaluation;
+    evaluation.settings = [("model".into(), "jev-1.13.0".into())]
+        .into_iter()
+        .collect();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "eval".into(),
+            profile: evaluation,
+        })
+        .await
+        .unwrap();
+    assert!(
+        service
+            .apply(ConnectionCommand::SetDefault {
+                profile_id: "eval".into()
+            })
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .apply(ConnectionCommand::Select {
+                pid: 42,
+                profile_id: "eval".into()
+            })
+            .await
+            .is_err()
+    );
+    service.select(42, "main").unwrap();
+    assert!(service.select(42, "eval").is_err());
+    assert_eq!(service.selected_profile(42).as_deref(), Some("main"));
+    assert_eq!(service.default_profile().as_deref(), Some("main"));
+    let mut replacement = service.metadata();
+    replacement.default_profile = Some("eval".into());
+    assert!(validate_connections(&replacement).is_err());
+    let settings = [("model".into(), "jev-latest".into())]
+        .into_iter()
+        .collect();
+    assert!(validate_profile_settings(ProviderId::TypesafeEvaluation, &settings).is_err());
+    let mut replacement = service.metadata();
+    replacement.default_profile = None;
+    let evaluation = replacement.profiles["eval"].clone();
+    replacement.profiles.insert("main".into(), evaluation);
+    service
+        .state
+        .lock()
+        .unwrap()
+        .replace_connections(replacement);
+    assert!(
+        service.selected_profile(42).is_none(),
+        "same-ID evaluation profile must retire the generation selection"
+    );
+}

@@ -37,6 +37,7 @@ pub enum ProviderType {
     OpenAiChatCompletionsCompatible,
     OpenRouter,
     AnthropicMessages,
+    TypesafeEvaluation,
 }
 
 impl ProviderConfig {
@@ -54,6 +55,26 @@ impl ProviderConfig {
             chatgpt_auth_storage_path: None,
             project_id: Some(project_id.into()),
             location: Some("us-central1".to_string()),
+            custom_headers: None,
+            client_name: None,
+            user_agent: None,
+            http_referer: None,
+            x_title: None,
+            app_categories: None,
+        }
+    }
+
+    /// Create a finite-choice-only TypeSafe callable with Host-resolved credentials.
+    pub fn typesafe_evaluation(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            provider_type: ProviderType::TypesafeEvaluation,
+            api_key: Some(api_key.into()),
+            base_url: None,
+            model: model.into(),
+            expected_account_id: None,
+            chatgpt_auth_storage_path: None,
+            project_id: None,
+            location: None,
             custom_headers: None,
             client_name: None,
             user_agent: None,
@@ -254,6 +275,19 @@ impl ProviderConfig {
 /// Create an LLM provider from configuration
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
     match config.provider_type {
+        ProviderType::TypesafeEvaluation => {
+            anyhow::ensure!(
+                config.base_url.is_none()
+                    && config.custom_headers.as_ref().is_none_or(|h| h.is_empty()),
+                "TypeSafe does not accept endpoint or header overrides"
+            );
+            Ok(Box::new(crate::TypesafeEvaluationClient::new(
+                config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("TypeSafe credential unavailable"))?,
+                config.model,
+            )?))
+        }
         ProviderType::GoogleGeminiGenerateContent => {
             let project_id = config.project_id.ok_or_else(|| {
                 anyhow::anyhow!("Google Gemini GenerateContent provider requires project_id")
@@ -475,6 +509,25 @@ impl ProviderType {
                 supports_reasoning_text: true,
                 supports_reasoning_signature: true,
                 supports_reasoning_effort_control: true,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: false,
+                supports_document_input: false,
+                supports_cached_token_usage: false,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::System,
+                compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+            },
+            ProviderType::TypesafeEvaluation => ProviderCapabilities {
+                supports_streaming_text: false,
+                supports_streaming_tool_calls: false,
+                supports_provider_response_id: false,
+                supports_provider_response_status: false,
+                supports_reasoning_text: false,
+                supports_reasoning_signature: false,
+                supports_reasoning_effort_control: false,
                 supports_redacted_thinking: false,
                 supports_multimodal_input: false,
                 supports_document_input: false,

@@ -347,6 +347,19 @@ pub fn provider_catalog() -> &'static [ProviderDescriptor] {
         .get_or_init(|| {
             vec![
                 ProviderDescriptor {
+                    provider_id: LlmProvider::TypesafeEvaluation,
+                    display_name: "TypeSafe Choice",
+                    credential_kind: CredentialKind::SecretString,
+                    supports_browser_login: false,
+                    supports_device_login: false,
+                    supports_secret_entry: true,
+                    supports_logout: true,
+                    supports_test: true,
+                    required_settings: &["model"],
+                    optional_settings: &[],
+                    default_settings: &[("model", "jev-1.13.0")],
+                },
+                ProviderDescriptor {
                     provider_id: LlmProvider::Chatgpt,
                     display_name: "ChatGPT / Codex",
                     credential_kind: CredentialKind::ManagedOauth,
@@ -499,6 +512,9 @@ pub fn validate_profile_settings(
             );
         }
     }
+    if provider == LlmProvider::TypesafeEvaluation {
+        alan_llm::TypesafeEvaluationClient::validate_model(&settings["model"])?;
+    }
     Ok(())
 }
 
@@ -549,6 +565,11 @@ fn apply_resolved_profile_metadata_to_config(
     config.reset_internal_provider_config();
     config.connection_profile = Some(resolved.profile_id.clone());
     match resolved.provider {
+        LlmProvider::TypesafeEvaluation => {
+            config.llm_provider = LlmProvider::TypesafeEvaluation;
+            config.typesafe_model = resolved.settings.get("model").cloned().unwrap_or_default();
+        }
+
         LlmProvider::Chatgpt => {
             config.llm_provider = LlmProvider::Chatgpt;
             config.chatgpt_base_url = resolved.settings["base_url"].clone();

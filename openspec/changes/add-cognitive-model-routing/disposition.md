@@ -18,3 +18,11 @@ checklist, ownership and activation gates on main 04753a2f. This change's
 implementation checklist remains in [tasks.md](tasks.md).
 Before this change is archived, its remaining cross-change roadmap must be
 handed to an active successor with references updated, as required by task 3.3.
+
+## 2026-10-07 bounded activation
+
+The user authorized the finite-choice typed evaluation and no-effect shadow phase
+following local lifecycle/model/UI acceptance. [entry-slice.md](entry-slice.md)
+records the exact operation, lifecycle and ownership decisions. This activates
+that bounded implementation scope; it does not activate automatic command routing,
+claim a real provider adapter or authorize canonical sync before merge.

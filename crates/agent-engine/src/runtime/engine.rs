@@ -249,41 +249,6 @@ fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("AgentMachine is running without persistent recorder; using in-memory mode: {err}")
 }
 
-#[cfg(test)]
-pub(crate) fn runtime_host_capabilities(
-    _config: &AgentProcessConfig,
-    tools: &crate::tools::ToolRegistry,
-) -> crate::skills::SkillHostCapabilities {
-    runtime_host_capabilities_for_tools(tools.list_tools().into_iter().map(str::to_string))
-}
-
-#[cfg(test)]
-pub(crate) fn runtime_host_capabilities_for_tools(
-    tools: impl IntoIterator<Item = String>,
-) -> crate::skills::SkillHostCapabilities {
-    let path_dirs = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-        .unwrap_or_default();
-    crate::skills::build_skill_host_capabilities_with_path_dirs(tools, path_dirs, true)
-}
-
-#[cfg(test)]
-fn runtime_host_capabilities_with_path_dirs<I, P>(
-    _config: &AgentProcessConfig,
-    tools: &crate::tools::ToolRegistry,
-    path_dirs: I,
-) -> crate::skills::SkillHostCapabilities
-where
-    I: IntoIterator<Item = P>,
-    P: AsRef<std::path::Path>,
-{
-    crate::skills::build_skill_host_capabilities_with_path_dirs(
-        tools.list_tools().into_iter().map(str::to_string),
-        path_dirs,
-        true,
-    )
-}
-
 async fn create_persistent_machine(
     process_path: &str,
     model: &str,
@@ -365,21 +330,20 @@ async fn initialize_agent_machine(
         }
     };
 
-    Ok(AgentMachineStartupOutcome {
-        metadata: RuntimeStartupMetadata::ready(
-            launch.process_path.to_string(),
-            launch.agent_path.to_string(),
-            machine.rollout_id().map(str::to_string),
-            machine.rollout_path().cloned(),
-            AgentMachineDurabilityState {
-                durable: machine.is_durable(),
-                required: durability_required,
-            },
-            request_controls,
-            warnings,
-        ),
-        machine,
-    })
+    let mut metadata = RuntimeStartupMetadata::ready(
+        launch.process_path.to_string(),
+        launch.agent_path.to_string(),
+        machine.rollout_id().map(str::to_string),
+        machine.rollout_path().cloned(),
+        AgentMachineDurabilityState {
+            durable: machine.is_durable(),
+            required: durability_required,
+        },
+        request_controls,
+        warnings,
+    );
+    metadata.evaluation_observation = machine.evaluation_observation.clone();
+    Ok(AgentMachineStartupOutcome { metadata, machine })
 }
 
 /// Start Agent Execution Engine over an already-assembled Process namespace.
@@ -507,6 +471,13 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
         let machine = startup.machine;
+        if let Err(error) = environment
+            .publish_evaluation(machine.evaluation_observation.clone())
+            .await
+        {
+            let _ = ready_tx.send(Err(format!("publish Machine evaluation: {error:#}")));
+            return;
+        }
         let _ = runtime_recorder.set(machine.recorder());
         let environment = environment.with_action_recorder(machine.recorder());
         let completed_directory_ids = match recovery_rollout_path.as_ref() {
@@ -533,7 +504,13 @@ fn spawn_with_prepared_runtime_environment(
             .lock()
             .expect("input queue poisoned")
             .paused;
-        match super::ui_surfaces::initialize(&state.agent_files(), queue_paused).await {
+        match super::ui_surfaces::initialize(
+            &state.agent_files(),
+            queue_paused,
+            recovery_rollout_path.is_some() && state.machine.has_unknown_effects(),
+        )
+        .await
+        {
             Ok(()) => {}
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));

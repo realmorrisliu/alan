@@ -10,7 +10,11 @@ pub(crate) use agent_files::valid_project_directory;
 pub(crate) use agent_files::{NamespaceTapeWriter, PendingActionPublication};
 mod child_launch;
 mod client;
+mod evaluation;
 mod generation;
+pub use evaluation::{
+    NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
+};
 mod host_mount_requests;
 mod process_files;
 mod tool_execution;
@@ -171,6 +175,8 @@ pub struct NamespaceToolActionOutput {
 /// Namespace-backed environment for an Agent Process.
 #[derive(Clone)]
 pub struct NamespaceRuntimeEnvironment {
+    pub(crate) shadow_evaluation: Option<Arc<super::super::shadow_evaluation::ShadowEvaluation>>,
+    pub(crate) evaluation_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
@@ -276,6 +282,8 @@ impl NamespaceRuntimeEnvironment {
         llm_connection: impl Into<String>,
     ) -> Self {
         Self {
+            shadow_evaluation: None,
+            evaluation_publisher: None,
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),

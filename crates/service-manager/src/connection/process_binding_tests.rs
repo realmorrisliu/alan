@@ -385,3 +385,153 @@ async fn catalog_observes_published_authority_without_recapturing_on_idle_polls(
         "logout must not retain a catalog grant"
     );
 }
+
+#[derive(Debug)]
+struct EvaluationCaptureFactory(bool);
+impl LlmClientFactory for EvaluationCaptureFactory {
+    fn create(
+        &self,
+        _base: &Config,
+        selected: Option<&str>,
+        _connections: &ConnectionsFile,
+    ) -> Result<LlmClient> {
+        if selected == Some("eval") && self.0 {
+            Ok(LlmClient::new(alan_llm::TypesafeEvaluationClient::new(
+                "fixture-secret-never-sent".into(),
+                "jev-1.13.0".into(),
+            )?))
+        } else {
+            Ok(LlmClient::new(MockLlmProvider::new()))
+        }
+    }
+}
+
+#[tokio::test]
+async fn evaluation_capture_checks_callable_capability_and_preserves_generation_authority() {
+    for supported in [false, true] {
+        let service = ConnectionService::ephemeral("test");
+        service
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: "main".into(),
+                profile: profile(),
+            })
+            .await
+            .unwrap();
+        let mut evaluation = profile();
+        evaluation.provider = ProviderId::TypesafeEvaluation;
+        evaluation.credential_id = Some("eval-key".into());
+        evaluation.settings = BTreeMap::from([("model".into(), "jev-1.13.0".into())]);
+        service
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: "eval".into(),
+                profile: evaluation,
+            })
+            .await
+            .unwrap();
+        service
+            .apply(ConnectionCommand::SetDefault {
+                profile_id: "main".into(),
+            })
+            .await
+            .unwrap();
+        service.select(42, "main").unwrap();
+        let mut connections = service.metadata();
+        for (id, provider) in [
+            ("openai-main", ProviderId::OpenAiResponses),
+            ("eval-key", ProviderId::TypesafeEvaluation),
+        ] {
+            connections.credentials.insert(
+                id.into(),
+                crate::ConnectionCredential {
+                    kind: crate::CredentialKind::SecretString,
+                    provider_family: provider,
+                    label: "fixture".into(),
+                    backend: "host_credential_store".into(),
+                },
+            );
+        }
+        service
+            .apply(ConnectionCommand::ReplaceMetadata {
+                expected: service.metadata().fingerprint().unwrap(),
+                connections,
+            })
+            .await
+            .unwrap();
+        service
+            .attach_callable_registry(
+                Arc::new(alan_llmfs::LlmFs::new()),
+                Arc::new(EvaluationCaptureFactory(supported)),
+                Config::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        let namespace = alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new());
+        assert!(
+            service
+                .capture_evaluation("missing", &namespace)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .capture_evaluation("main", &namespace)
+                .await
+                .is_err()
+        );
+        let captured = service.capture_evaluation("eval", &namespace).await;
+        assert_eq!(
+            captured.is_ok(),
+            supported,
+            "metadata alone is not a capability"
+        );
+        if let Ok(captured) = captured {
+            assert_eq!(captured.identity.profile, "eval");
+            assert_eq!(captured.identity.provider, "typesafe");
+            assert_eq!(captured.identity.model, "jev-1.13.0");
+            let shell = Shell::new(captured.root);
+            let capabilities: serde_json::Value = serde_json::from_slice(
+                &shell
+                    .cat("/mnt/llm/connections/eval/capabilities")
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(capabilities["evaluation"]["choice_v1"], true);
+            assert_eq!(capabilities["generation"], false);
+            assert!(
+                shell
+                    .cat("/mnt/llm/connections/main/profile")
+                    .await
+                    .is_err()
+            );
+            let original = shell
+                .cat("/mnt/llm/connections/eval/profile")
+                .await
+                .unwrap();
+            let mut replacement = service.metadata();
+            replacement
+                .profiles
+                .get_mut("eval")
+                .unwrap()
+                .settings
+                .insert("model".into(), "jev-1.14.0".into());
+            service
+                .apply(ConnectionCommand::ReplaceMetadata {
+                    expected: service.metadata().fingerprint().unwrap(),
+                    connections: replacement,
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                shell
+                    .cat("/mnt/llm/connections/eval/profile")
+                    .await
+                    .unwrap(),
+                original
+            );
+        }
+        assert_eq!(service.default_profile().as_deref(), Some("main"));
+        assert_eq!(service.selected_profile(42).as_deref(), Some("main"));
+    }
+}

@@ -1,11 +1,11 @@
 //! State-owned traversal and file materialization for the AgentFS surface.
 
-use alan_ap::{ErrorCode, Fid, Qid, Stream};
+use alan_ap::{ErrorCode, Fid, FileKind, Qid, Stream};
 use alan_knowledge::{ContentHash, RootAccess};
 
 use super::{
     ACTIONS_HELP, MACHINE_CTL_HELP, Node, State, TAPE_ROOT_NAME, action_output_root_name,
-    map_knowledge_error, node_identity,
+    map_knowledge_error,
 };
 
 impl State {
@@ -56,6 +56,7 @@ impl State {
             Node::MachineDir => match name {
                 "tape" => Ok(Node::Tape),
                 "status" => Ok(Node::Status),
+                "evaluation" => Ok(Node::Evaluation),
                 "ctl" => Ok(Node::MachineCtl),
                 "ui" => Ok(Node::UiDir),
                 "checkpoints" => Ok(Node::CheckpointsDir),
@@ -119,13 +120,14 @@ impl State {
             Node::Root => b"io\nmachine\nevents\nrequests\nactions\ncontext\nchildren".to_vec(),
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
-            Node::MachineDir => b"tape\nstatus\nctl\nui\ncheckpoints".to_vec(),
+            Node::MachineDir => b"tape\nstatus\nevaluation\nctl\nui\ncheckpoints".to_vec(),
             Node::UiDir => {
                 b"activity\nplan\nthinking\nnotice\nevents\nqueue\nmodels\nskills".to_vec()
             }
             Node::CheckpointsDir => b"current".to_vec(),
             Node::CurrentCheckpoint => format!("{}\n", self.tape_root).into_bytes(),
             Node::Status => self.status.clone().into_bytes(),
+            Node::Evaluation => self.evaluation.clone(),
             Node::UiSkills => self.ui_skills.clone().into_bytes(),
             Node::UiModels => self.ui_models.clone().into_bytes(),
             Node::UiQueue => self.ui_queue.clone().into_bytes(),
@@ -311,4 +313,55 @@ fn listing<'a>(fixed: &[&str], ids: impl Iterator<Item = &'a String>) -> Vec<u8>
     let mut names: Vec<String> = fixed.iter().map(|s| s.to_string()).collect();
     names.extend(ids.cloned());
     names.join("\n").into_bytes()
+}
+
+/// A node's stable identity: its file kind and a server-unique qid path, keyed by
+/// its full file identity so distinct files (and distinct request/action ids)
+/// never share a qid. The qid *version* is layered on top from the state's
+/// [`alan_ap::VersionTable`] (see [`State::qid`]); this part never changes for a node.
+pub(super) fn node_identity(node: &Node) -> (FileKind, u64) {
+    use std::hash::{Hash, Hasher};
+    fn path_of(key: &str) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        h.finish()
+    }
+    let (kind, key) = match node {
+        Node::Root => (FileKind::Dir, "/".to_string()),
+        Node::IoDir => (FileKind::Dir, "io".into()),
+        Node::MachineDir => (FileKind::Dir, "machine".into()),
+        Node::UiDir => (FileKind::Dir, "machine/ui".into()),
+        Node::CheckpointsDir => (FileKind::Dir, "machine/checkpoints".into()),
+        Node::RequestsDir => (FileKind::Dir, "requests".into()),
+        Node::ActionsDir => (FileKind::Dir, "actions".into()),
+        Node::ActionsHelp => (FileKind::File, "actions/help".into()),
+        Node::ContextDir => (FileKind::Dir, "context".into()),
+        Node::ChildrenDir => (FileKind::Dir, "children".into()),
+        Node::Request(id) => (FileKind::Dir, format!("requests/{id}")),
+        Node::Action(id) => (FileKind::Dir, format!("actions/{id}")),
+        Node::RequestsClone => (FileKind::Clone, "requests/clone".into()),
+        Node::ActionsClone => (FileKind::Clone, "actions/clone".into()),
+        Node::RequestsEvents => (FileKind::Stream, "requests/events".into()),
+        Node::ActionsEvents => (FileKind::Stream, "actions/events".into()),
+        Node::Input => (FileKind::Stream, "io/input".into()),
+        Node::Output => (FileKind::Stream, "io/output".into()),
+        Node::IoEvents => (FileKind::Stream, "io/events".into()),
+        Node::Tape => (FileKind::Stream, "machine/tape".into()),
+        Node::Events => (FileKind::Stream, "events".into()),
+        Node::UiEvents => (FileKind::Stream, "machine/ui/events".into()),
+        Node::Status => (FileKind::File, "machine/status".into()),
+        Node::Evaluation => (FileKind::File, "machine/evaluation".into()),
+        Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
+        Node::UiSkills => (FileKind::File, "machine/ui/skills".into()),
+        Node::UiModels => (FileKind::File, "machine/ui/models".into()),
+        Node::UiQueue => (FileKind::File, "machine/ui/queue".into()),
+        Node::UiActivity => (FileKind::File, "machine/ui/activity".into()),
+        Node::UiPlan => (FileKind::File, "machine/ui/plan".into()),
+        Node::UiThinking => (FileKind::File, "machine/ui/thinking".into()),
+        Node::UiNotice => (FileKind::File, "machine/ui/notice".into()),
+        Node::CurrentCheckpoint => (FileKind::File, "machine/checkpoints/current".into()),
+        Node::RequestField(id, field) => (FileKind::File, format!("requests/{id}/{field}")),
+        Node::ActionField(id, field) => (FileKind::File, format!("actions/{id}/{field}")),
+    };
+    (kind, path_of(&key))
 }

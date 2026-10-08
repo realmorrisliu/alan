@@ -46,6 +46,29 @@ system degraded and await explicit retry.
 - **THEN** the system becomes degraded
 - **AND** Service Manager does not restart it without bound
 
+### Requirement: Root recovery belongs to its foreground instance
+Root replacement SHALL use its instance's latest durable rollout without rereading
+the channel selector. A new invocation SHALL read that selector only for explicit
+`alan --resume`. An instance without a durable rollout SHALL restart fresh.
+Agent Runtime Service SHALL flush and terminate the prior Machine recorder before
+loading its replacement; a flush failure SHALL prevent that recovery.
+
+#### Scenario: Root restarts while another invocation publishes a rollout
+- **WHEN** Root fails after readiness and another invocation has changed the
+  channel selector
+- **THEN** replacement uses its own instance's latest durable rollout
+- **AND** replacement remains subject to the bounded restart policy
+
+#### Scenario: Root exits with pending rollout writes
+- **WHEN** the prior Root recorder has pending writes
+- **THEN** recovery waits for its successful flush and termination
+- **AND** flush failure prevents loading a replacement from that rollout
+
+#### Scenario: Root has no durable rollout
+- **WHEN** best-effort startup creates no durable rollout and Root later restarts
+- **THEN** replacement starts fresh without consulting the channel selector
+- **AND** a later successful durable startup becomes the instance's recovery source
+
 ### Requirement: Service Manager supervises Package Service
 
 Service Manager SHALL start Package Service as a required File-Server Service,

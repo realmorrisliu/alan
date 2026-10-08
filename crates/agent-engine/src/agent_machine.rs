@@ -15,6 +15,7 @@ use crate::rollout::{
 };
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
+pub(crate) mod evaluation;
 pub(crate) mod input_queue;
 mod recovery;
 mod runtime_control;
@@ -62,6 +63,7 @@ pub(crate) struct AgentMachine {
     latest_compaction_attempt: Option<CompactionAttemptSnapshot>,
     /// Latest persisted memory-flush attempt snapshot.
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
+    pub(crate) evaluation_observation: Option<serde_json::Value>,
     /// Whether the current automatic compaction cycle already attempted a silent memory flush.
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
@@ -85,6 +87,7 @@ impl AgentMachine {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            evaluation_observation: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         }
@@ -217,6 +220,7 @@ impl AgentMachine {
             compaction_failure_streak: 0,
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
+            evaluation_observation: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })
@@ -638,6 +642,13 @@ impl AgentMachine {
         {
             error!(error = %err, "Failed to record effect");
         }
+    }
+
+    /// Whether the latest durable effect state still contains uncertain outcomes.
+    pub(crate) fn has_unknown_effects(&self) -> bool {
+        self.effect_index
+            .values()
+            .any(|effect| matches!(effect.status, crate::rollout::EffectStatus::Unknown))
     }
 
     /// Lookup latest effect record by idempotency key.

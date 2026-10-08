@@ -289,7 +289,7 @@ struct LlmEvent {
 }
 
 #[derive(Deserialize)]
-struct LlmEventTokenUsage {
+pub(super) struct LlmEventTokenUsage {
     prompt_tokens: i32,
     #[serde(default)]
     cached_prompt_tokens: Option<i32>,

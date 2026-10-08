@@ -58,3 +58,10 @@ they do not require evaluation or Jev. Reuse those contracts rather than creatin
 another checkpoint path. Real-provider benefit measurement belongs to the later
 Jev adapter change; fixtures establish state-machine correctness only.
 Implementation, rollout and canonical sync remain pending.
+
+## Activated shadow ownership contract
+
+[machine-shadow-contract.md](machine-shadow-contract.md) fixes admission provenance,
+Connection capture, durable ordering, recovery and read-only publication for the
+bounded shadow slice. It records the missing redirected response path explicitly;
+no synthetic observation can satisfy that frozen acceptance case.

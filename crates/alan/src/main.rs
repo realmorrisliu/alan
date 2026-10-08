@@ -23,6 +23,9 @@ struct Cli {
     /// Restore the latest selected Root Agent rollout for this invocation.
     #[arg(long)]
     resume: bool,
+    /// Record typed input advice using this evaluator profile; never auto-run advice.
+    #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    shadow_evaluator: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -393,6 +396,10 @@ fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
 async fn main() -> Result<()> {
     let cli = parse_cli();
     validate_resume_scope(cli.resume, cli.command.is_some())?;
+    anyhow::ensure!(
+        cli.shadow_evaluator.is_none() || cli.command.is_none(),
+        "`--shadow-evaluator` only applies to bare `alan`"
+    );
 
     match cli.command {
         Some(Commands::Host { action }) => match action {
@@ -674,8 +681,14 @@ async fn main() -> Result<()> {
             let (runtime_dir, remove_runtime_dir) =
                 foreground::foreground_runtime_dir(channel.descriptor().id)?;
             let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, channel.descriptor().id)?;
-            let result =
-                foreground::run_bare_in_foreground_instance(channel, paths, mode, cli.resume).await;
+            let result = foreground::run_bare_in_foreground_instance(
+                channel,
+                paths,
+                mode,
+                cli.resume,
+                cli.shadow_evaluator,
+            )
+            .await;
             if remove_runtime_dir
                 && let Err(error) = std::fs::remove_dir_all(&runtime_dir)
                 && error.kind() != std::io::ErrorKind::NotFound
@@ -848,6 +861,24 @@ mod tests {
         assert_eq!(bare_run_mode(false, false).unwrap(), BareRunMode::OneShot);
         let err = bare_run_mode(true, false).unwrap_err();
         assert!(err.to_string().contains("needs terminal stdout"));
+    }
+
+    #[test]
+    fn shadow_evaluator_requires_an_explicit_nonempty_profile() {
+        assert!(
+            Cli::try_parse_from(["alan"])
+                .unwrap()
+                .shadow_evaluator
+                .is_none()
+        );
+        assert_eq!(
+            Cli::try_parse_from(["alan", "--shadow-evaluator", "evaluation"])
+                .unwrap()
+                .shadow_evaluator
+                .as_deref(),
+            Some("evaluation")
+        );
+        assert!(Cli::try_parse_from(["alan", "--shadow-evaluator", ""]).is_err());
     }
 
     #[test]

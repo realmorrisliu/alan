@@ -24,6 +24,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
 mod next_turn_disposition;
+mod shadow_evaluation;
 mod tape_lease;
 pub(crate) mod tool_batch;
 

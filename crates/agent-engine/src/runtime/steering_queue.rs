@@ -2,16 +2,18 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
+use super::transition::NamespaceRuntimeEnvironment;
 use super::turn_input::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker, reject_inband_overflow};
 use super::turn_support::tool_result_preview;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall};
+use tokio_util::sync::CancellationToken;
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
     machine: &mut AgentMachine,
+    environment: &NamespaceRuntimeEnvironment,
     writer: &super::transition::NamespaceTapeWriter,
-    agent_files: &super::transition::NamespaceAgentFiles,
-    tool_calls: &[NormalizedToolCall],
-    remaining_start_idx: usize,
+    cancel: &CancellationToken,
+    remaining: &[NormalizedToolCall],
     steering_broker: Option<&TurnInputBroker>,
     emit: &mut E,
 ) -> Result<bool>
@@ -30,7 +32,10 @@ where
             mode: InputMode::Steer,
         } = &submission.op
         {
-            if let Err(error) = machine.dispatch_input(&submission).await {
+            if let Err(error) =
+                super::shadow_evaluation::dispatch_input(machine, environment, &submission, cancel)
+                    .await
+            {
                 machine.push_buffered_inband_submission(submission);
                 return Err(error);
             }
@@ -59,7 +64,7 @@ where
             }
         ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
-            reject_inband_overflow(machine, agent_files, &submission, emit).await?;
+            reject_inband_overflow(machine, &environment.agent_files(), &submission, emit).await?;
             continue;
         }
 
@@ -70,7 +75,6 @@ where
         return Ok(false);
     }
 
-    let remaining = &tool_calls[remaining_start_idx..];
     if !remaining.is_empty() {
         emit(Event::Error {
             message: format!(

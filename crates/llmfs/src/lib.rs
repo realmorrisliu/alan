@@ -70,12 +70,15 @@ impl ConnectionProfile {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ConnectionLimits {
     pub max_generations: Option<u64>,
+    /// Independent lifetime allocation budget for finite-choice evaluations.
+    pub max_evaluations: Option<u64>,
 }
 
 impl ConnectionLimits {
     pub fn max_generations(max_generations: u64) -> Self {
         Self {
             max_generations: Some(max_generations),
+            ..Self::default()
         }
     }
 }
@@ -96,6 +99,7 @@ enum Node {
     ConnectionMeter(String),
     ConnectionCapabilities(String),
     Clone(String),
+    Evaluate(String),
     Gen(String),
     GenData(String),
     GenEvents(String),
@@ -169,7 +173,8 @@ impl State {
             | Node::ProviderModels(_)
             | Node::ProviderCapabilities(_)
             | Node::ProviderStatus(_)
-            | Node::Clone(_) => 0,
+            | Node::Clone(_)
+            | Node::Evaluate(_) => 0,
         };
         Qid {
             kind,
@@ -252,6 +257,18 @@ impl LlmFs {
                 .insert(name, connection);
         }
         snapshot
+    }
+
+    /// Whether a visible captured callable supports the finite-choice operation.
+    pub fn supports_choice_evaluation(&self, name: &str) -> bool {
+        self.connection_visible(name)
+            && self
+                .state
+                .lock()
+                .unwrap()
+                .connections
+                .get(name)
+                .is_some_and(|connection| connection.choice_evaluation)
     }
 
     fn connection_visible(&self, name: &str) -> bool {
@@ -422,6 +439,8 @@ impl LlmFs {
             Node::Connection(conn) => {
                 if name == "clone" {
                     Ok(Node::Clone(conn.clone()))
+                } else if name == "evaluate" {
+                    Ok(Node::Evaluate(conn.clone()))
                 } else if name == "provider" {
                     Ok(Node::ConnectionProvider(conn.clone()))
                 } else if name == "profile" {
@@ -510,7 +529,7 @@ impl FileServer for LlmFs {
         // fid back to learn its id, so it requires ReadWrite: a read-only observer
         // can't allocate, and a write-only open can't strand a Generation whose id
         // it could never read.
-        if let Node::Clone(conn) = &node {
+        if let Node::Clone(conn) | Node::Evaluate(conn) = &node {
             if !matches!(mode, OpenMode::ReadWrite) {
                 return Err(ErrorCode::NoAccess);
             }
@@ -519,14 +538,20 @@ impl FileServer for LlmFs {
                 .get(conn)
                 .cloned()
                 .ok_or(ErrorCode::NotFound)?;
-            connection.try_reserve_generation()?;
+            let evaluation = matches!(&node, Node::Evaluate(_));
+            connection.try_reserve(evaluation)?;
             let id = format!("g{}", state.next_gen);
             let sequence = state.next_gen;
             state.next_gen += 1;
             state.listing_version += 1;
             state.gens.insert(
                 id.clone(),
-                Arc::new(Generation::new(connection, conn.clone(), sequence)),
+                Arc::new(Generation::new(
+                    connection,
+                    conn.clone(),
+                    sequence,
+                    evaluation,
+                )),
             );
             if let Some(f) = state.fids.get_mut(&fid_key) {
                 f.clone_gen = Some(id);
@@ -774,6 +799,7 @@ fn computed_bytes(
         Node::Connection(conn) => {
             let mut names = vec![
                 "clone".to_string(),
+                "evaluate".to_string(),
                 "provider".to_string(),
                 "profile".to_string(),
                 "meter".to_string(),
@@ -809,8 +835,14 @@ fn computed_bytes(
         }
         Node::ConnectionCapabilities(conn) => {
             let connection = state.connections.get(conn).ok_or(ErrorCode::NotFound)?;
-            connection_capabilities_doc(conn, &connection.provider_name, connection.capabilities)
-                .into_bytes()
+            connection_capabilities_doc(
+                conn,
+                &connection.provider_name,
+                connection.capabilities,
+                connection.choice_evaluation,
+                connection.generation_supported,
+            )
+            .into_bytes()
         }
         Node::Gen(_) => b"data\nevents\nctl\nstatus".to_vec(),
         Node::GenStatus(id) => {
@@ -865,6 +897,7 @@ fn node_identity(node: &Node) -> (FileKind, String) {
             (FileKind::File, format!("connections/{c}/capabilities"))
         }
         Node::Clone(c) => (FileKind::Clone, format!("connections/{c}/clone")),
+        Node::Evaluate(c) => (FileKind::Clone, format!("connections/{c}/evaluate")),
         Node::Gen(id) => (FileKind::Dir, format!("gen/{id}")),
         Node::GenData(id) => (FileKind::File, format!("gen/{id}/data")),
         Node::GenEvents(id) => (FileKind::Stream, format!("gen/{id}/events")),
@@ -886,7 +919,10 @@ fn render_json_doc(value: serde_json::Value) -> String {
 }
 
 fn is_writable(node: &Node) -> bool {
-    matches!(node, Node::Clone(_) | Node::GenData(_) | Node::GenCtl(_))
+    matches!(
+        node,
+        Node::Clone(_) | Node::Evaluate(_) | Node::GenData(_) | Node::GenCtl(_)
+    )
 }
 
 /// Whether a node has a readable surface. `data` and `ctl` are write-only sinks;

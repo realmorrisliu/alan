@@ -49,12 +49,21 @@ pub(super) async fn run_bare_in_foreground_instance(
     paths: HostEndpointPaths,
     mode: BareRunMode,
     resume_root: bool,
+    shadow_evaluator: Option<String>,
 ) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
-    let config = HostBootConfig::product_with_root_resume(channel.descriptor().id, resume_root)?;
+    let mut config =
+        HostBootConfig::product_with_root_resume(channel.descriptor().id, resume_root)?;
+    if let Some(profile) = shadow_evaluator {
+        let surface = match mode {
+            BareRunMode::Interactive => alan_agent_engine::runtime::EvaluationSurface::Interactive,
+            BareRunMode::OneShot => alan_agent_engine::runtime::EvaluationSurface::Redirected,
+        };
+        config = config.with_input_shadow(profile, surface);
+    }
     let host = AlanOsHost::boot(config, paths.clone()).await?;
     let project_boot = host.status().boot_id;
     let root_model = host.root_model().map(str::to_string);

@@ -56,7 +56,7 @@ pub(super) struct NamespaceFidGuard {
 }
 
 impl NamespaceFidGuard {
-    fn new(client: NamespaceClient, fid: Fid) -> Self {
+    pub(super) fn new(client: NamespaceClient, fid: Fid) -> Self {
         Self {
             client,
             fid: Some(fid),
