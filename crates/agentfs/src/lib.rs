@@ -66,7 +66,7 @@ const MAX_ACTION_OUTPUT_BYTES: usize = 16 << 20; // 16 MiB
 /// (self-describing namespace). Semantics belong to the engine; this is the
 /// documented vocabulary, not an exhaustive parser.
 const MACHINE_CTL_HELP: &str = "\
-# machine/ctl — agent-runtime control. Write one command per write.
+# machine/ctl — agent-runtime control. Write one UTF-8 command per write, at most 64 KiB; no CR, LF or NUL.
 compact   compact the tape into a checkpoint
 rollback  roll back to the previous checkpoint
 interrupt stop the current turn; the agent process stays alive
@@ -617,7 +617,7 @@ impl FileServer for AgentFs {
             // empty command is malformed.
             Node::MachineCtl => {
                 if data.is_empty()
-                    || data.len() > 8192
+                    || data.len() > 64 * 1024
                     || data.contains(&b'\n')
                     || data.contains(&b'\r')
                     || data.contains(&0)

@@ -240,4 +240,38 @@ async fn owner_work_receipt_is_a_control_admission_not_a_completed_result() {
     );
 }
 
+#[tokio::test]
+async fn maximum_question_admits_one_complete_owner_control() {
+    let fs = Arc::new(alan_agentfs::AgentFs::new());
+    let mut namespace = Namespace::new();
+    namespace.mount("/agent/7", InProcessTransport::new(fs), Access::ReadWrite);
+    let shell = Shell::new(InProcessTransport::new(Arc::new(MountFs::new(
+        namespace.clone(),
+    ))));
+    let mut request = owner_request();
+    request["question"] = json!("q".repeat(8192));
+    let request: alan_agent_protocol::OwnerWorkRequest = serde_json::from_value(request).unwrap();
+    let args = json!({"action":"select_owner","target":"7","request":request}).to_string();
+    let result = AgentWorkProcessRunner
+        .run(invocation(namespace, &[&args]))
+        .await;
+    assert_eq!(
+        result.exit_code,
+        0,
+        "{}",
+        String::from_utf8_lossy(&result.output)
+    );
+    let receipt: Value = serde_json::from_slice(&result.output).unwrap();
+    let control = alan_agent_protocol::OwnerWorkControl {
+        id: serde_json::from_value(receipt["submission_id"].clone()).unwrap(),
+        request,
+    }
+    .encode()
+    .unwrap();
+    assert!(control.len() > 8192);
+    let events = String::from_utf8(shell.cat("/agent/7/events").await.unwrap()).unwrap();
+    assert_eq!(events, format!("ctl:{control}\n"));
+    assert!(shell.cat("/agent/7/io/input").await.unwrap().is_empty());
+}
+
 include!("commit_tests.rs");

@@ -1,5 +1,19 @@
 ## ADDED Requirements
 
+### Requirement: Machine control transport admits bounded complete envelopes
+AgentFS `machine/ctl` SHALL accept one nonempty UTF-8 control record per write up
+to and including 64 KiB, including any prefix and serialized envelope. It SHALL
+reject larger records and CR, LF or NUL without publishing a control event.
+AgentFS SHALL record the complete accepted record once; semantic validation and
+program selection SHALL remain owned by Agent Runtime Service.
+
+#### Scenario: A valid owner request exceeds the former 8 KiB transport limit
+- **WHEN** `agent_work select_owner` encodes a valid request with an 8 KiB question
+  into a control record within 64 KiB
+- **THEN** the writable AgentFS transport accepts the complete record once
+- **AND** the submission receipt retains the encoded work UUID
+- **AND** the request does not become ordinary text in `io/input`
+
 ### Requirement: Evaluation observations project existing Machine evidence
 AgentFS SHALL expose evaluation identity, schema, captured Connection/model and terminal or waiting outcome as read-only Machine state. Agent Machine SHALL own transition updates and rollout/checkpoint SHALL retain durable evidence. Evaluation SHALL NOT introduce a second Tape, mutable result authority or Process kind.
 

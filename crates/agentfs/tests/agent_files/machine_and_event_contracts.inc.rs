@@ -300,6 +300,34 @@ async fn machine_ctl_carries_runtime_tape_commands() {
 }
 
 #[tokio::test]
+async fn machine_ctl_accepts_a_complete_64_kib_control_and_rejects_invalid_records() {
+    let fs = AgentFs::new();
+    fs.walk(Fid::ROOT, Fid(1), &["machine".into(), "ctl".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(1), OpenMode::Write).await.unwrap();
+    let control = vec![b'x'; 64 * 1024];
+    assert_eq!(fs.write(Fid(1), 0, &control).await, Ok(control.len() as u32));
+    fs.walk(Fid::ROOT, Fid(2), &["events".into()])
+        .await
+        .unwrap();
+    fs.open(Fid(2), OpenMode::Read).await.unwrap();
+    let expected = format!("ctl:{}\n", String::from_utf8(control).unwrap()).into_bytes();
+    for invalid in [
+        vec![b'x'; 64 * 1024 + 1],
+        Vec::new(),
+        b"a\nb".to_vec(),
+        b"a\rb".to_vec(),
+        b"a\0b".to_vec(),
+        vec![0xff],
+    ] {
+        assert_eq!(fs.write(Fid(1), 0, &invalid).await, Err(ErrorCode::BadRequest));
+        assert_eq!(fs.read(Fid(2), 0, expected.len() as u32).await.unwrap(), expected);
+        assert_eq!(fs.stat(Fid(2)).await.unwrap().length, expected.len() as u64);
+    }
+}
+
+#[tokio::test]
 async fn ordinary_data_writes_do_not_invoke_control_semantics() {
     let fs = AgentFs::new();
 

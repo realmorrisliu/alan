@@ -214,3 +214,26 @@ white-box suite extraction and extra witness-identity assertions pass all 15
 focused tests (`mixed-owner-wait-ack-extracted-tests.log`). Production code is
 unchanged from that complete run and v5 freeze. Pinned strict OpenSpec still
 validates 65 surfaces; the staged commit hook and updated remote CI remain required.
+
+## Control transport envelope correction
+
+The next automated review found that valid `owner-work-v1` controls could be
+encoded within the 64 KiB protocol bound but rejected by the former 8 KiB
+AgentFS `machine/ctl` limit. The public `agent_work select_owner` test reproduced
+this with an 8 KiB question before correction (`mixed-owner-ctl-size-red.log`).
+AgentFS now admits one complete nonempty UTF-8 record through 64 KiB, retaining
+the existing CR/LF/NUL rejection and runtime-owned semantic validation. The Shell
+offers the complete buffer; the imported aP transport chunks at 128 KiB, so a
+valid owner control remains one write. The runtime event reader reads the full
+record and preserves its UUID.
+
+Related crate suites passed 290 tests, zero failed or ignored
+(`mixed-owner-ctl-size-green.log`), including exact 64 KiB acceptance, overflow
+and invalid records leaving events unchanged, and a public maximum-question
+submission producing exactly one complete control event without `io/input`.
+All three runtime selector tests passed (`mixed-owner-ctl-size-selectors.log`);
+pinned strict OpenSpec again passed 65 surfaces (`mixed-owner-ctl-size-openspec.log`).
+Both independent review axes passed the correction. The preceding full workspace
+run and v5 native artifacts retain their own source identity; this later transport
+fix has focused regression evidence rather than a repeated live model measurement.
+The final commit hook and current-head remote CI remain required.
