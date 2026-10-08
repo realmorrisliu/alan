@@ -122,3 +122,15 @@ passed with the shared publication change. Mandatory quality, architecture,
 standalone CLI/distribution and current-surface checks passed on source/freeze
 commits. Exact final delivery head, independent evidence review and required CI
 must be recorded separately before merge; this receipt claims no merge or activation.
+
+## Post-measurement reader correction
+
+Final automated review identified a terminal-event/status publication race in the
+shared generation baseline reader. It now waits for terminal status within the
+existing caller deadline instead of classifying the first snapshot. A real llmfs
+protocol fixture forces the first snapshot to remain `running` (red before the
+fix, green after); persistent nonterminal status still times out without a second
+generation, and the event tail is closed. Both baseline callers share this fix.
+All v4 generation receipts already contain terminal `done` snapshots, so the
+frozen measurements above remain historical evidence for `07b8c351`, unchanged.
+They do not qualify the modified reader: future measurement requires a new freeze.

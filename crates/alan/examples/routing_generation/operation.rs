@@ -102,9 +102,18 @@ pub(super) async fn generate(
             let ended = terminal(&event);
             attempt.events.push(event);
             if ended {
-                attempt.status =
-                    serde_json::from_slice(&shell.cat(&format!("{operation}/status")).await?)?;
-                return Ok(());
+                // Event publication precedes status advancement; retain the caller's deadline.
+                loop {
+                    attempt.status =
+                        serde_json::from_slice(&shell.cat(&format!("{operation}/status")).await?)?;
+                    if matches!(
+                        attempt.status["status"].as_str(),
+                        Some("done" | "error" | "rejected" | "aborted")
+                    ) {
+                        return Ok(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
             }
         }
     }
@@ -132,33 +141,8 @@ pub(super) fn classify(text: &str, events: &Value, status: &Value) -> &'static s
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn advice_requires_a_clean_terminal_result_not_just_label_text() {
-        let done = json!({"status":"done"});
-        let clean = json!([{"version":1,"text":"command"},{"version":1,"done":true}]);
-        assert_eq!(classify("command", &clean, &done), "success");
-        assert_eq!(
-            classify("command", &clean, &json!({"status":"error"})),
-            "unavailable"
-        );
-        assert_eq!(
-            classify(
-                "command",
-                &json!([{"version":1,"tool_call":{}},{"version":1,"done":true}]),
-                &done
-            ),
-            "malformed"
-        );
-        assert_eq!(
-            classify("command", &json!([{"version":1,"error":"failed"}]), &done),
-            "malformed"
-        );
-        assert_eq!(classify("command then execute", &clean, &done), "malformed");
-    }
-}
+#[path = "operation/tests.rs"]
+mod tests;
 
 pub(super) fn advice_body(input: &str, instructions: &str) -> Value {
     let request = GenerationRequest::new().with_user_message(input);
