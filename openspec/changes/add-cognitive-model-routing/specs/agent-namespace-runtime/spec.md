@@ -111,6 +111,17 @@ effects SHALL retain the existing reconciliation contract.
 - **THEN** a durable wait references the existing StructuredInput request
 - **AND** an accepted response resumes that work identity with its spent attempt budget
 
+#### Scenario: A newly created request lacks acknowledged wait ownership
+- **WHEN** AgentFS creates the request but work-wait persistence fails
+- **THEN** the Machine cancels that same request and verifies its terminal status before returning failure
+- **AND** it does not register or yield an unacknowledged wait, retry the evaluator or invent successful cleanup
+
+#### Scenario: Waiting bytes survive an unacknowledged write
+- **WHEN** recovery finds Waiting evidence without its matching post-acknowledgement witness
+- **THEN** work becomes Interrupted with retained request identity and spent attempts
+- **AND** no answerable request is restored from that unacknowledged wait
+- **AND** the witness is queued only after wait persistence returns acknowledgement, through the same rollout owner and before pending-request registration
+
 #### Scenario: A work start lacks a terminal acknowledgement
 - **WHEN** explicit recovery finds active work without an acknowledged result
 - **THEN** it projects interrupted work without repeating source or model dispatch

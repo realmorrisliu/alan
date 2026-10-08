@@ -7,6 +7,15 @@ use sha2::{Digest, Sha256};
 use crate::rollout::{EventRecord, RolloutItem, RolloutRecorder};
 
 pub(crate) const EVENT_TYPE: &str = "machine_owner_work_v1";
+const WAIT_ACK_TYPE: &str = "machine_owner_wait_acknowledged_v1";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WaitAcknowledged {
+    work_id: String,
+    request_id: String,
+    request_sha256: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,8 +238,25 @@ fn next(previous: &Snapshot, snapshot: &Snapshot) -> Result<()> {
 
 pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
     let mut works = std::collections::HashMap::<String, Snapshot>::new();
+    let mut acknowledged_waits = std::collections::HashSet::new();
     let mut latest = None;
-    for event in events.iter().filter(|e| e.event_type == EVENT_TYPE) {
+    for event in events {
+        if event.event_type == WAIT_ACK_TYPE {
+            let ack: WaitAcknowledged = serde_json::from_value(event.payload.clone())?;
+            let work = works
+                .get(&ack.work_id)
+                .context("wait acknowledgement lacks work")?;
+            ensure!(
+                matches!(&work.outcome, Outcome::Waiting { request_id, .. } if request_id == &ack.request_id)
+                    && work.request_sha256 == ack.request_sha256,
+                "wait acknowledgement changed request ownership"
+            );
+            acknowledged_waits.insert(ack.work_id);
+            continue;
+        }
+        if event.event_type != EVENT_TYPE {
+            continue;
+        }
         let snapshot: Snapshot = serde_json::from_value(event.payload.clone())?;
         snapshot.validate()?;
         ensure!(
@@ -256,7 +282,9 @@ pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
     }
     let mut snapshot = latest.and_then(|id| works.remove(&id));
     if let Some(work) = &mut snapshot
-        && work.outcome == Outcome::Started
+        && (work.outcome == Outcome::Started
+            || (matches!(work.outcome, Outcome::Waiting { .. })
+                && !acknowledged_waits.contains(&work.work_id)))
     {
         work.outcome = Outcome::Interrupted;
     }
@@ -264,6 +292,27 @@ pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
 }
 
 impl super::AgentMachine {
+    pub(crate) async fn persist_owner_wait(&mut self, snapshot: Snapshot) -> Result<()> {
+        let Outcome::Waiting { request_id, .. } = &snapshot.outcome else {
+            anyhow::bail!("wait acknowledgement requires Waiting work");
+        };
+        let ack = WaitAcknowledged {
+            work_id: snapshot.work_id.clone(),
+            request_id: request_id.clone(),
+            request_sha256: snapshot.request_sha256.clone(),
+        };
+        self.persist_owner_work(snapshot).await?;
+        // Only enqueue after the wait flush acknowledged; missing witness recovers Interrupted.
+        self.recorder
+            .as_ref()
+            .unwrap()
+            .record_nowait(RolloutItem::Event(EventRecord {
+                event_type: WAIT_ACK_TYPE.into(),
+                payload: serde_json::to_value(ack)?,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            }))
+    }
+
     pub(crate) async fn persist_owner_work(&mut self, snapshot: Snapshot) -> Result<()> {
         snapshot.validate()?;
         ensure!(
@@ -315,100 +364,5 @@ impl super::AgentMachine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use alan_agent_protocol::{OwnerCandidate, OwnerSourceRange};
-
-    fn snapshot() -> Snapshot {
-        let request = OwnerWorkRequest {
-            version: 1,
-            question: "Who owns the source?".into(),
-            evaluator_profile: "eval".into(),
-            candidates: vec![OwnerCandidate {
-                id: "hostfs".into(),
-                sources: vec![OwnerSourceRange {
-                    path: "/mnt/source/lib.rs".into(),
-                    start_line: 1,
-                    end_line: 1,
-                }],
-            }],
-        };
-        Snapshot {
-            version: 1,
-            work_id: uuid::Uuid::new_v4().to_string(),
-            source_rollout_id: "source-rollout".into(),
-            request_sha256: digest(&serde_json::to_vec(&request).unwrap()),
-            request,
-            evidence: vec![],
-            evaluator_calls: 0,
-            generation_calls: 0,
-            fallback: None,
-            owned_request: None,
-            outcome: Outcome::Started,
-        }
-    }
-    fn event(snapshot: &Snapshot) -> EventRecord {
-        EventRecord {
-            event_type: EVENT_TYPE.into(),
-            payload: serde_json::to_value(snapshot).unwrap(),
-            timestamp: "test".into(),
-        }
-    }
-    #[test]
-    fn recovery_preserves_waits_and_interrupts_active_work_without_replenishing_attempts() {
-        let start = snapshot();
-        let mut active = start.clone();
-        active.evaluator_calls = 1;
-        let interrupted = recover(&[event(&start), event(&active)]).unwrap().unwrap();
-        assert_eq!(interrupted.outcome, Outcome::Interrupted);
-        assert_eq!(interrupted.evaluator_calls, 1);
-        let mut wait = active.clone();
-        wait.owned_request = Some("r7".into());
-        wait.outcome = Outcome::Waiting {
-            request_id: "r7".into(),
-            reason: "generation_budget_unavailable".into(),
-        };
-        assert_eq!(
-            recover(&[event(&start), event(&active), event(&wait)]).unwrap(),
-            Some(wait.clone())
-        );
-        let mut invalid = wait.clone();
-        invalid.evaluator_calls = 0;
-        assert!(recover(&[event(&start), event(&wait), event(&invalid)]).is_err());
-        invalid = wait.clone();
-        invalid.outcome = Outcome::Started;
-        assert!(recover(&[event(&start), event(&wait), event(&invalid)]).is_err());
-        invalid = wait.clone();
-        invalid.request.question = "changed".into();
-        invalid.request_sha256 = digest(&serde_json::to_vec(&invalid.request).unwrap());
-        assert!(recover(&[event(&start), event(&wait), event(&invalid)]).is_err());
-    }
-    #[test]
-    fn completed_work_requires_real_captured_ranges_and_rejects_terminal_conflicts() {
-        let start = snapshot();
-        let mut completed = start.clone();
-        completed.outcome = Outcome::Completed {
-            owner: "hostfs".into(),
-        };
-        assert!(completed.validate().is_err());
-        completed.evidence = vec![Evidence {
-            owner: "hostfs".into(),
-            source: completed.request.candidates[0].sources[0].clone(),
-            content: "pub struct HostDirFs {}".into(),
-            sha256: digest(b"pub struct HostDirFs {}"),
-        }];
-        assert_eq!(
-            recover(&[event(&start), event(&completed), event(&completed)]).unwrap(),
-            Some(completed.clone())
-        );
-        let mut forged = completed.clone();
-        forged.outcome = Outcome::Failed {
-            reason: "rewrite".into(),
-        };
-        assert!(recover(&[event(&start), event(&completed), event(&forged)]).is_err());
-        forged = completed.clone();
-        forged.evidence[0].content = "changed".into();
-        assert!(forged.validate().is_err());
-        assert!(completed.projection().unwrap().get("request").is_none());
-    }
-}
+#[path = "owner_work/tests.rs"]
+mod tests;

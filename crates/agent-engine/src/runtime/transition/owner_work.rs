@@ -589,7 +589,17 @@ where
         request_id: request_id.clone(),
         reason: reason.into(),
     };
-    state.machine.persist_owner_work(work.clone()).await?;
+    if let Err(error) = state.machine.persist_owner_wait(work.clone()).await {
+        if let Some(live) = &mut state.machine.owner_work {
+            live.outcome = Outcome::Interrupted;
+        }
+        state
+            .agent_files()
+            .cancel_request(&request_id)
+            .await
+            .context("cancel work request whose wait was not acknowledged")?;
+        return Err(error);
+    }
     state
         .machine
         .set_structured_input_for_request(&request_id, pending.clone());

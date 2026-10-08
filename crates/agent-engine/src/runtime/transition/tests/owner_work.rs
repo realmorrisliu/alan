@@ -94,6 +94,7 @@ impl LlmProvider for ChoiceProvider {
 struct Authority {
     captured: CapturedCallable,
     quote: Option<u64>,
+    close_before_wait: Option<RolloutRecorder>,
 }
 #[async_trait::async_trait]
 impl ConnectionAuthority for Authority {
@@ -120,6 +121,9 @@ impl ConnectionAuthority for Authority {
     ) -> anyhow::Result<Option<GenerationCostBound>> {
         assert_eq!(request.max_tokens, Some(64));
         assert!(request.tools.is_empty());
+        if let Some(recorder) = &self.close_before_wait {
+            recorder.close().await?;
+        }
         Ok(self.quote.map(|cost_microusd| GenerationCostBound {
             cost_microusd,
             provenance: "test fixed total bill for the bounded request".into(),
@@ -246,7 +250,11 @@ async fn fixture(
     ));
     state.environment = state
         .environment
-        .with_connection_authority(Arc::new(Authority { captured, quote }));
+        .with_connection_authority(Arc::new(Authority {
+            captured,
+            quote,
+            close_before_wait: None,
+        }));
     (dir, state, reads, calls, probe)
 }
 
@@ -778,6 +786,7 @@ async fn generic_cancellation_correlates_input_and_preserves_uncertain_model_set
             .with_connection_authority(Arc::new(Authority {
                 captured,
                 quote: None,
+                close_before_wait: None,
             }));
         let (binding, callable) = state
             .environment
@@ -847,4 +856,57 @@ async fn generic_cancellation_correlates_input_and_preserves_uncertain_model_set
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(generation.recorded_requests().is_empty());
     }
+}
+
+#[tokio::test]
+async fn failed_wait_persistence_cancels_the_exposed_request_without_yield_or_retry() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let captured = state
+        .environment
+        .model_bindings
+        .lock()
+        .await
+        .authority
+        .as_ref()
+        .unwrap()
+        .capture_evaluation("evaluator")
+        .await
+        .unwrap();
+    state.environment = state
+        .environment
+        .with_connection_authority(Arc::new(Authority {
+            captured,
+            quote: None,
+            close_before_wait: state.machine.input_recorder(),
+        }));
+    let mut events = vec![];
+    let mut emit = |event| {
+        events.push(event);
+        async {}
+    };
+    assert!(
+        super::super::owner_work::handle(
+            &mut state,
+            &control("Who owns old fids?"),
+            &mut emit,
+            &CancellationToken::new(),
+        )
+        .await
+        .is_err()
+    );
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    assert_eq!(
+        shell.cat("/agent/1/requests/r0/status").await.unwrap(),
+        b"cancelled"
+    );
+    assert!(!state.machine.has_pending_interaction());
+    assert!(!events.iter().any(|e| matches!(e, Event::Yield { .. })));
+    let work = state.machine.owner_work.as_ref().unwrap();
+    assert!(matches!(
+        work.outcome,
+        crate::agent_machine::owner_work::Outcome::Interrupted
+    ));
+    assert!(work.owned_request.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(generation.recorded_requests().len(), 0);
 }

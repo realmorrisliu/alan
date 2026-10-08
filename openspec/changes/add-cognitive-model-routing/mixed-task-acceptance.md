@@ -141,3 +141,76 @@ package-reference qualification and automated effect routing remain outside this
 bounded entry. Task 2.4 and delivery task 3.3 stay open. Only implemented owning
 deltas may synchronize after merge. Do not archive the whole change until its
 unfinished roadmap and gates have a discoverable active owner.
+
+## PR #1039 wait-ownership correction
+
+Automated review of head `9a938265` reproduced one further failure boundary:
+AgentFS request creation could succeed before durable wait persistence failed,
+leaving an unowned pending prompt. The full-handler regression closes the actual
+recorder in the test Connection's quote callback after NoMatch, and fails on the
+original implementation because `r0/status` remains pending. The fix reuses the
+existing request cancellation operation and verifies terminal owner evidence
+before returning the persistence error; registration and Yield still follow only
+acknowledged wait ownership. Cleanup failures propagate. Similar ordinary
+interaction callers have no fallible wait-persistence step between request creation
+and synchronous registration, so they do not receive unrelated changes.
+
+Review also identified Waiting bytes surviving a failed flush. The Machine now
+queues a matching acknowledgement witness in the same rollout only after the
+Waiting persistence call returns success, and registers pending ownership before
+another await. Recovery requires that correctly ordered witness to restore the
+wait. Missing acknowledgement evidence becomes Interrupted, retaining attempts
+and request identity without restoring a prompt. Later witness flush failure may
+lose recoverability conservatively; it cannot falsely prove a Wait acknowledgement
+that never returned. No sidecar or second evidence owner is introduced.
+
+The owner-work suite now has 15 tests, including cancelled `r0`, no Machine
+pending interaction or Yield, live unsettled work and evaluator 1 / generation 0.
+The real `batch_failure_probe` covers both pre-write failure and complete Waiting
+bytes written before acknowledgement failure; a fresh Machine restores neither
+as an answerable request. Logs: `mixed-owner-wait-persistence-red.log`,
+`mixed-owner-wait-persistence-green.log` and `mixed-owner-wait-ack-tests.log`.
+Both independent review axes rechecked the correction. Native measurements above
+retain their v4 binary/source identity; this later persistence-failure fix is
+regression evidence, not a rewritten native measurement or new routing
+qualification. The updated head requires fresh CI.
+
+## Corrected-source native recheck, v5
+
+The post-ack-witness production source was frozen before dispatch in
+`explicit-descriptors-v5/manifest.json`. Binary SHA-256:
+`d8b10d0a438830bfc8b3c415958f5fb3c3cd945c85b487abac447df73a00fdd5`;
+source manifest SHA-256:
+`d3e2af7975466e9fbc5fcb12c1e52ba066f45df68232a6f87b98cd16dea6bbd3`.
+The source manifest and all six project hashes were rechecked unchanged afterward.
+
+Fresh native PID 42425 produced real NoMatch work
+`ee3bb22d-f6f4-444c-908a-5fd3209d9051`, request `r0`, evaluator 1 / generation 0,
+and a matching acknowledged-wait witness in rollout
+`befe52ff-5cc0-49c3-a316-7bd1b8b62c12`. After stopping only that owned process,
+fresh explicit resume PID 42844 restored the same wait and paused activity. The
+client verified absent recovered Host project authority before explicitly granting
+ReadOnly. Native single-select input `hostfs` completed that original work without
+another model call; this verifies human selection plumbing, not implementation of
+the intentionally missing Windows API used to induce NoMatch.
+
+The same recovered Root then completed semantic work
+`c62e4acf-1f15-4c46-b1ac-91407799d39e` with one real evaluation / zero generation,
+and literal work `6e83fce5-d2ce-4687-b878-7785521051d6` with zero / zero.
+Client tests passed (waiting 1.51 s, recovered wait 0.02 s, semantic 1.51 s);
+these remain diagnostic timings. All citations were rechecked against exact
+source ranges, with no assistant prose. The final native rollout
+`ec76d52a-e06e-4831-94c5-14758c85fea2` archive SHA-256 is
+`778ba936f9bdf69f3845412027d000d61e3d41438b37124723d4f44f85f6fef2`.
+`pre-crash-rollout.jsonl`, `crash-receipt.json` and `final-acceptance.json`
+retain witness, identity, attempts and source bindings. An initial copied-binary
+executable-mode mistake prevented startup; the no-socket test failure is preserved,
+and mode was corrected before any task/model dispatch. No submitted task or model
+attempt was repeated. Native exited normally after completion; owned pane `w58:pY` was closed.
+
+Updated local verification: full workspace 2,849 passed, zero failed, 14 ignored
+across 97 summaries (`mixed-owner-wait-ack-workspace.log`). The subsequent
+white-box suite extraction and extra witness-identity assertions pass all 15
+focused tests (`mixed-owner-wait-ack-extracted-tests.log`). Production code is
+unchanged from that complete run and v5 freeze. Pinned strict OpenSpec still
+validates 65 surfaces; the staged commit hook and updated remote CI remain required.
