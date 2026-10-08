@@ -7,6 +7,9 @@ use alan_agent_protocol::{OwnerCandidate, OwnerSourceRange, OwnerWorkControl, Ow
 use alan_llm::{ChoiceEvaluationRequest, ChoiceEvaluationResponse, EvaluationSelection};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "owner_work_publication.rs"]
+mod publication;
+
 struct SourceTool {
     reads: Arc<AtomicUsize>,
     revoke_after: usize,

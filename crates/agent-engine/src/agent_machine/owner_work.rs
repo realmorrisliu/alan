@@ -358,6 +358,12 @@ impl super::AgentMachine {
         recorder
             .persist_batch(vec![RolloutItem::Event(event)])
             .await?;
+        if !matches!(snapshot.outcome, Outcome::Started | Outcome::Waiting { .. }) {
+            if let Some(request_id) = &snapshot.owned_request {
+                self.take_pending(request_id);
+            }
+            self.set_turn_activity(super::TurnActivityState::Idle);
+        }
         self.owner_work = Some(snapshot);
         Ok(())
     }

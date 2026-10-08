@@ -237,3 +237,37 @@ Both independent review axes passed the correction. The preceding full workspace
 run and v5 native artifacts retain their own source identity; this later transport
 fix has focused regression evidence rather than a repeated live model measurement.
 The final commit hook and current-head remote CI remain required.
+
+## Acknowledged terminal cleanup correction
+
+Automated review of the next head identified late pending-request cleanup: a
+successful terminal persistence followed by work/UI publication failure returned
+before the owned wait was removed. The adjacent fault suite reproduced this and
+the same cancellation/API failure boundary (`mixed-owner-terminal-publication-red.log`:
+two failed, one passed before correction). Agent Machine now clears only the
+terminal work's owned pending request and sets Idle synchronously after successful
+terminal acknowledgement, before any fallible projection or cleanup. Failed
+terminal persistence retains Waiting, pending ownership and Paused activity.
+
+Cancellation retains its logical work identity for explicit prompt cleanup retries.
+Cleanup verifies live options rather than trusting the service-assigned request
+ID alone: absent or empty options and a different owner establish no work authority.
+Malformed nonempty metadata and real service failures remain errors. Independent
+review also identified recovery ID reuse; a fresh Process may allocate `r0` to
+a new ordinary interaction. Terminal work neither cancels that request nor
+captures its response. The existing accepted-submission wrapper republishes
+Cancelled even when prompt cleanup fails; no new publisher path was introduced.
+
+All 21 owner-work tests passed, including six publication/identity fault tests
+(`mixed-owner-terminal-publication-identity.log`, preceding the subsequent empty-options
+assertion). Final-source `just test` passed 2,857, zero failed, 14 ignored across
+97 summaries (`mixed-owner-terminal-final-workspace.log`), including the empty-options
+case and fresh ordinary response through the real accepted-submission path.
+That ordinary interaction generates once for its own task; the settled work's
+evaluator/generation attempts are not repeated. Actual read-only completion UI,
+failed terminal persistence, all three terminal outcomes, cleanup retry and
+later task admission are covered. Pinned strict OpenSpec passed 65 surfaces
+(`mixed-owner-terminal-final-openspec.log`). Both review axes passed the complete
+correction. Earlier v5 native evidence retains its frozen source identity; these
+fault corrections are final-source regression evidence. Current-head CI and the
+final staged commit hook remain delivery gates.

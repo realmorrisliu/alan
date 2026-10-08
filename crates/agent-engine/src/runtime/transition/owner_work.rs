@@ -23,6 +23,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     if let Op::Resume { request_id, .. } = &submission.op
+        && state.machine.pending_yield(request_id).is_none()
         && state.machine.owner_work.as_ref().is_some_and(|w| {
             w.owned_request.as_ref() == Some(request_id)
                 && !matches!(w.outcome, Outcome::Waiting { .. })
@@ -76,7 +77,6 @@ where
             None
         };
         settle(state, work, emit).await?;
-        state.machine.take_pending(request_id);
         if let Some(reason) = failure {
             anyhow::bail!(reason);
         }
@@ -632,7 +632,6 @@ where
         state.machine.set_turn_activity(TurnActivityState::Paused);
         crate::runtime::ui_surfaces::paused(&state.agent_files(), Some(&state.machine)).await?;
     } else {
-        state.machine.set_turn_activity(TurnActivityState::Idle);
         crate::runtime::ui_surfaces::turn_completed(
             &state.agent_files(),
             matches!(work.outcome, Outcome::Cancelled),

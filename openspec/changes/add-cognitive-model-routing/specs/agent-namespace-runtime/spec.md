@@ -106,6 +106,13 @@ model or effect dispatch. Recovery SHALL retain terminal evidence and owned wait
 unsettled active work SHALL be interrupted rather than retried. Unknown Tool
 effects SHALL retain the existing reconciliation contract.
 
+After successful acknowledgement of completed, failed or cancelled work, the
+Machine SHALL synchronously clear only that work's owned pending request and set
+its activity to Idle before fallible projection, UI or AgentFS cleanup operations.
+Failed or uncertain terminal persistence SHALL preserve the owned wait. Prompt
+cleanup retries SHALL verify the logical work identity; a retained request ID
+from another Process SHALL NOT authorize cancellation or capture a new interaction.
+
 #### Scenario: Structured work waits and resumes
 - **WHEN** NoMatch cannot enter a budget-qualified generation fallback
 - **THEN** a durable wait references the existing StructuredInput request
@@ -130,3 +137,19 @@ effects SHALL retain the existing reconciliation contract.
 - **WHEN** the selection names a captured candidate with validated retained evidence
 - **THEN** work completes with that owner and source citations without final prose generation
 - **AND** the same Agent Process may accept a later task
+
+#### Scenario: Terminal projection or prompt cleanup fails
+- **WHEN** work terminal evidence is acknowledged but projection, completion UI or request cancellation fails
+- **THEN** the Machine retains terminal work with no owned pending interaction and Idle activity
+- **AND** later work remains admissible without repeating the settled work's model calls
+- **AND** a later cleanup attempt may cancel only an exposed request with the same logical work identity
+
+#### Scenario: Terminal persistence fails
+- **WHEN** an owned wait receives a response but terminal persistence is unacknowledged
+- **THEN** its Waiting snapshot, pending interaction and Paused activity remain owned
+- **AND** no terminal projection is published
+
+#### Scenario: A recovered terminal request ID is reused
+- **WHEN** a fresh Process has terminal work retaining `r0` and a new ordinary interaction allocates `r0`
+- **THEN** old work cleanup does not cancel that new logical request
+- **AND** its answer resumes the current ordinary interaction rather than the settled work

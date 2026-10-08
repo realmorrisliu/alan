@@ -1,0 +1,433 @@
+use super::*;
+use crate::agent_machine::TurnActivityState;
+use crate::agent_machine::owner_work::Outcome;
+use crate::runtime::transition::owner_work::handle;
+
+#[tokio::test]
+async fn acknowledged_terminal_work_clears_its_wait_before_publication_can_fail() {
+    for (owner, cancelled) in [("hostfs", false), ("unknown", false), ("hostfs", true)] {
+        let (dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+        let mut emit = |_| async {};
+        handle(
+            &mut state,
+            &control("Who owns old fids?"),
+            &mut emit,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let original = state.machine.owner_work.clone().unwrap();
+        let request_id = original.owned_request.clone().unwrap();
+        state.environment = state
+            .environment
+            .with_work_publisher(|_| async { anyhow::bail!("projection publication unavailable") });
+        let response = Submission::new(Op::Resume {
+            request_id: request_id.clone(),
+            content: vec![alan_agent_protocol::ContentPart::structured(
+                json!({"owner":owner}),
+            )],
+        });
+        let cancel = CancellationToken::new();
+        if cancelled {
+            cancel.cancel();
+        }
+        let error = handle(&mut state, &response, &mut emit, &cancel)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("projection publication unavailable")
+        );
+        let work = state.machine.owner_work.clone().unwrap();
+        assert!(
+            matches!(&work.outcome, Outcome::Completed { .. } if owner == "hostfs" && !cancelled)
+                || matches!(&work.outcome, Outcome::Failed { .. } if owner == "unknown")
+                || (work.outcome == Outcome::Cancelled && cancelled)
+        );
+        assert!(!state.machine.has_pending_interaction());
+        assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
+        assert_eq!(work.work_id, original.work_id);
+        let recorder = state.machine.input_recorder().unwrap();
+        let recovered = AgentMachine::load_from_rollout_in_dir(
+            &recorder.path().to_path_buf(),
+            "/proc/9",
+            "mock-model",
+            dir.path(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(recovered.owner_work, Some(work));
+        assert!(!recovered.has_pending_interaction());
+        assert!(
+            handle(&mut state, &response, &mut emit, &CancellationToken::new())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("already terminal")
+        );
+        state.environment.work_publisher = None;
+        let next = control("Which crate defines HostDirFs?");
+        state.machine.accept_submission(next.id.clone());
+        handle(&mut state, &next, &mut emit, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(matches!(
+            state.machine.owner_work.as_ref().unwrap().outcome,
+            Outcome::Completed { .. }
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(generation.recorded_requests().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn acknowledged_completion_survives_a_read_only_completion_ui() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let mut emit = |_| async {};
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let request_id = state
+        .machine
+        .owner_work
+        .as_ref()
+        .unwrap()
+        .owned_request
+        .clone()
+        .unwrap();
+    let original = state.environment.clone();
+    state.environment = with_read_only_node(&original, "/agent/1/machine/ui/activity");
+    let response = Submission::new(Op::Resume {
+        request_id,
+        content: vec![alan_agent_protocol::ContentPart::structured(
+            json!({"owner":"hostfs"}),
+        )],
+    });
+    let error = handle(&mut state, &response, &mut emit, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("activity"));
+    assert!(matches!(
+        state.machine.owner_work.as_ref().unwrap().outcome,
+        Outcome::Completed { .. }
+    ));
+    assert!(!state.machine.has_pending_interaction());
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
+    state.environment = original;
+    let next = control("Which crate defines HostDirFs?");
+    state.machine.accept_submission(next.id.clone());
+    handle(&mut state, &next, &mut emit, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+#[tokio::test]
+async fn unacknowledged_terminal_work_keeps_its_owned_wait_and_activity() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let mut emit = |_| async {};
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let original = state.machine.owner_work.clone().unwrap();
+    let request_id = original.owned_request.clone().unwrap();
+    state
+        .machine
+        .input_recorder()
+        .unwrap()
+        .close()
+        .await
+        .unwrap();
+    let published = Arc::new(AtomicUsize::new(0));
+    let probe = published.clone();
+    state.environment = state.environment.with_work_publisher(move |_| {
+        probe.fetch_add(1, Ordering::SeqCst);
+        async { Ok(()) }
+    });
+    let response = Submission::new(Op::Resume {
+        request_id: request_id.clone(),
+        content: vec![alan_agent_protocol::ContentPart::structured(
+            json!({"owner":"hostfs"}),
+        )],
+    });
+    assert!(
+        handle(&mut state, &response, &mut emit, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(state.machine.owner_work, Some(original));
+    assert!(state.machine.pending_yield(&request_id).is_some());
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Paused);
+    assert_eq!(published.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+#[tokio::test]
+async fn acknowledged_cancellation_clears_the_machine_wait_and_retries_prompt_cleanup() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let mut emit = |_| async {};
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let request_id = state
+        .machine
+        .owner_work
+        .as_ref()
+        .unwrap()
+        .owned_request
+        .clone()
+        .unwrap();
+    let blocked = with_read_only_node(
+        &state.environment,
+        &format!("/agent/1/requests/{request_id}/ctl"),
+    )
+    .agent_files();
+    let files = state.agent_files();
+    let mounts = state.environment.host_mount_requests();
+    assert!(
+        crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+            &mut state.machine,
+            &blocked,
+            &mounts
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        state.machine.owner_work.as_ref().unwrap().outcome,
+        Outcome::Cancelled
+    );
+    assert!(!state.machine.has_pending_interaction());
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    assert_eq!(
+        shell
+            .cat(&format!("/agent/1/requests/{request_id}/status"))
+            .await
+            .unwrap(),
+        b"pending"
+    );
+    crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+        &mut state.machine,
+        &files,
+        &mounts,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        shell
+            .cat(&format!("/agent/1/requests/{request_id}/status"))
+            .await
+            .unwrap(),
+        b"cancelled"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+fn with_read_only_node(
+    original: &NamespaceRuntimeEnvironment,
+    path: &str,
+) -> NamespaceRuntimeEnvironment {
+    let mut ns = alan_kernel::Namespace::new();
+    ns.mount(
+        "/",
+        original.root_transport(),
+        alan_kernel::Access::ReadWrite,
+    );
+    ns.mount(
+        path,
+        alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+        alan_kernel::Access::ReadOnly,
+    );
+    let mut blocked = NamespaceRuntimeEnvironment::new(
+        alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns))),
+        "/agent/1",
+        "default",
+    )
+    .with_namespace_cwd("/mnt/source");
+    blocked.model_bindings = original.model_bindings.clone();
+    blocked.active_binding = original.active_binding.clone();
+    blocked
+}
+
+#[tokio::test]
+async fn accepted_cancellation_publishes_terminal_work_even_if_prompt_cleanup_fails() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let mut emit = |_| async {};
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let work = state.machine.owner_work.clone().unwrap();
+    let request_id = work.owned_request.as_ref().unwrap();
+    let published = Arc::new(std::sync::Mutex::new(None));
+    let probe = published.clone();
+    state.environment = with_read_only_node(
+        &state.environment,
+        &format!("/agent/1/requests/{request_id}/ctl"),
+    )
+    .with_work_publisher(move |value| {
+        *probe.lock().unwrap() = value;
+        async { Ok(()) }
+    });
+    let broker = TurnInputBroker::from_queue(state.machine.input_queue());
+    let result = advance_accepted_submission(
+        &mut state,
+        Submission::new(Op::Interrupt),
+        &broker,
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(result.result.is_err());
+    let published = published.lock().unwrap();
+    assert_eq!(published.as_ref().unwrap()["state"], "cancelled");
+    assert_eq!(published.as_ref().unwrap()["work_id"], work.work_id);
+    assert!(!state.machine.has_pending_interaction());
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+#[tokio::test]
+async fn recovered_terminal_request_id_does_not_cancel_or_steal_a_new_interaction() {
+    let (dir, mut state, _, _, _) = fixture(None, None, usize::MAX).await;
+    let mut emit = |_| async {};
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let files = state.agent_files();
+    let mounts = state.environment.host_mount_requests();
+    crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+        &mut state.machine,
+        &files,
+        &mounts,
+    )
+    .await
+    .unwrap();
+    let recorder = state.machine.input_recorder().unwrap();
+    let recovered = AgentMachine::load_from_rollout_in_dir(
+        &recorder.path().to_path_buf(),
+        "/proc/9",
+        "mock-model",
+        dir.path(),
+    )
+    .await
+    .unwrap();
+    let work = recovered.owner_work.clone().unwrap();
+    let (_fresh_dir, mut fresh, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    fresh.machine = recovered;
+    let files = fresh.agent_files();
+    let mounts = fresh.environment.host_mount_requests();
+    crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+        &mut fresh.machine,
+        &files,
+        &mounts,
+    )
+    .await
+    .unwrap();
+    let mut ordinary = work.waiting_request();
+    ordinary.request_id = "ordinary-input".into();
+    let id = files
+        .write_structured_input_request(&ordinary)
+        .await
+        .unwrap();
+    assert_eq!(
+        Some(&id),
+        work.owned_request.as_ref(),
+        "fresh AgentFS may reuse r0"
+    );
+    let shell = alan_shell::Shell::new(fresh.environment.root_transport());
+    let options_path = format!("/agent/1/requests/{id}/options");
+    let options = shell.cat(&options_path).await.unwrap();
+    shell.write(&options_path, b"").await.unwrap();
+    crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+        &mut fresh.machine,
+        &files,
+        &mounts,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        shell
+            .cat(&format!("/agent/1/requests/{id}/status"))
+            .await
+            .unwrap(),
+        b"pending"
+    );
+    shell.write(&options_path, &options).await.unwrap();
+    crate::runtime::turn_support::reset_turn_after_cancelling_host_mounts(
+        &mut fresh.machine,
+        &files,
+        &mounts,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        shell
+            .cat(&format!("/agent/1/requests/{id}/status"))
+            .await
+            .unwrap(),
+        b"pending"
+    );
+    fresh
+        .machine
+        .set_structured_input_for_request(&id, ordinary);
+    let response = Submission::new(Op::Resume {
+        request_id: id.clone(),
+        content: vec![alan_agent_protocol::ContentPart::structured(
+            json!({"owner":"hostfs"}),
+        )],
+    });
+    assert!(
+        !handle(&mut fresh, &response, &mut emit, &CancellationToken::new())
+            .await
+            .unwrap()
+    );
+    shell
+        .write(
+            &format!("/agent/1/requests/{id}/response"),
+            br#"{"owner":"hostfs"}"#,
+        )
+        .await
+        .unwrap();
+    let broker = TurnInputBroker::from_queue(fresh.machine.input_queue());
+    let result =
+        advance_accepted_submission(&mut fresh, response, &broker, &CancellationToken::new()).await;
+    assert!(result.result.is_ok(), "{:?}", result.result);
+    assert!(!fresh.machine.has_pending_interaction());
+    assert_eq!(fresh.machine.owner_work, Some(work));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        generation.recorded_requests().len(),
+        1,
+        "only the later ordinary interaction generates"
+    );
+}
