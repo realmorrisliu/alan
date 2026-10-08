@@ -112,11 +112,25 @@ its activity to Idle before fallible projection, UI or AgentFS cleanup operation
 Failed or uncertain terminal persistence SHALL preserve the owned wait. Prompt
 cleanup retries SHALL verify the logical work identity; a retained request ID
 from another Process SHALL NOT authorize cancellation or capture a new interaction.
+Acknowledged wait registration SHALL synchronously set Machine activity to Paused
+before yielding or publishing. Error rendering with a pending interaction SHALL
+publish Paused before a fallible error notice rather than report an idle Machine.
 
 #### Scenario: Structured work waits and resumes
 - **WHEN** NoMatch cannot enter a budget-qualified generation fallback
 - **THEN** a durable wait references the existing StructuredInput request
 - **AND** an accepted response resumes that work identity with its spent attempt budget
+
+#### Scenario: Waiting publication fails
+- **WHEN** wait ownership is acknowledged and registered but publication fails
+- **THEN** the Machine retains that pending interaction and Paused activity
+- **AND** outer error rendering preserves Paused even if its error notice is unwritable
+- **AND** answering the same request completes its work without repeating model calls
+
+#### Scenario: Cancellation arrives while yielding an owned wait
+- **WHEN** cancellation arrives after wait registration but before settlement
+- **THEN** acknowledged Cancelled work releases its Machine wait and cancels the same logical AgentFS request before projection
+- **AND** a failed prompt cleanup remains explicitly retryable without cancelling another owner
 
 #### Scenario: A newly created request lacks acknowledged wait ownership
 - **WHEN** AgentFS creates the request but work-wait persistence fails

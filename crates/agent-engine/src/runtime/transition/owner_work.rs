@@ -603,6 +603,7 @@ where
     state
         .machine
         .set_structured_input_for_request(&request_id, pending.clone());
+    state.machine.set_turn_activity(TurnActivityState::Paused);
     emit(Event::Yield {
         request_id,
         kind: alan_agent_protocol::YieldKind::StructuredInput,
@@ -624,12 +625,19 @@ where
     F: std::future::Future<Output = ()>,
 {
     state.machine.persist_owner_work(work.clone()).await?;
+    if matches!(work.outcome, Outcome::Cancelled)
+        && let Some(request_id) = &work.owned_request
+    {
+        state
+            .agent_files()
+            .cancel_owned_request(request_id, &work.waiting_request().request_id)
+            .await?;
+    }
     state
         .environment
         .publish_work(Some(work.projection()?))
         .await?;
     if matches!(work.outcome, Outcome::Waiting { .. }) {
-        state.machine.set_turn_activity(TurnActivityState::Paused);
         crate::runtime::ui_surfaces::paused(&state.agent_files(), Some(&state.machine)).await?;
     } else {
         crate::runtime::ui_surfaces::turn_completed(

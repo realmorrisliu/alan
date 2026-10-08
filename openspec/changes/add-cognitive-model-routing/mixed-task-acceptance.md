@@ -271,3 +271,34 @@ later task admission are covered. Pinned strict OpenSpec passed 65 surfaces
 correction. Earlier v5 native evidence retains its frozen source identity; these
 fault corrections are final-source regression evidence. Current-head CI and the
 final staged commit hook remain delivery gates.
+
+## Acknowledged wait activity and cancellation correction
+
+The following automated review identified the corresponding wait boundary:
+registration succeeded but publication failure left Machine activity Running.
+The actual Engine error path also rendered Idle while that owned request remained
+answerable. The adjacent fault suite reproduced both, plus cancellation during
+Yield leaving the AgentFS request pending (`mixed-owner-wait-publication-red-final.log`:
+three failed, six passed before correction).
+
+Wait registration now synchronously sets Paused after acknowledged persistence
+and before Yield or any publication. The existing Engine error renderer receives
+the Machine and preserves Paused when an interaction is pending, publishing activity
+before its fallible error notice. Ordinary failure still becomes Idle. Cancelled
+settlement reuses logical-owner-checked request cancellation after terminal
+acknowledgement and before projection; failed cleanup keeps the existing explicit
+retry path. No new publisher, executor, authority or model retry was introduced.
+
+All 24 owner-work tests passed (`mixed-owner-wait-publication-green.log`), including
+waiting-only publication failure, read-only error notice, same-request completion
+without model repetition, and cancellation during Yield. The spawned runtime fault
+test enables publication failure only after Ready, submits a non-effecting stale
+Resume, and joins the Engine before reading activity; observing the notice alone
+would not establish that error rendering had finished. Pinned strict OpenSpec
+passed 65 surfaces (`mixed-owner-wait-publication-openspec.log`). Full workspace,
+`just test` passed 2,860 tests, zero failed, 14 ignored across 97 summaries
+(`mixed-owner-wait-final-workspace.log`). Both independent review axes passed
+the correction. The final staged hook and current-head remote checks remain
+delivery gates. Earlier
+native v5 artifacts retain their source identity and are not new measurements
+of this correction.

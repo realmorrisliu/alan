@@ -2,6 +2,226 @@ use super::*;
 use crate::agent_machine::TurnActivityState;
 use crate::agent_machine::owner_work::Outcome;
 use crate::runtime::transition::owner_work::handle;
+use std::time::Duration;
+
+#[tokio::test]
+async fn acknowledged_wait_remains_paused_when_publication_and_error_notice_fail() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    state.environment = state.environment.with_work_publisher(|value| async move {
+        if value.is_some_and(|value| value["state"] == "waiting") {
+            anyhow::bail!("waiting publication unavailable");
+        }
+        Ok(())
+    });
+    let mut emit = |_| async {};
+    let error = handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("waiting publication unavailable")
+    );
+    let work = state.machine.owner_work.clone().unwrap();
+    let request_id = work.owned_request.clone().unwrap();
+    assert!(state.machine.pending_yield(&request_id).is_some());
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Paused);
+    let files = state.agent_files();
+    crate::runtime::ui_surfaces::turn_failed(&files, "publication failed", Some(&state.machine))
+        .await
+        .unwrap();
+    assert_eq!(
+        files.read_ui_activity_snapshot().await.unwrap().state,
+        alan_agent_protocol::UiActivityState::Paused
+    );
+    crate::runtime::ui_surfaces::turn_started(&files)
+        .await
+        .unwrap();
+    let blocked = with_read_only_node(&state.environment, "/agent/1/machine/ui/notice");
+    assert!(
+        crate::runtime::ui_surfaces::turn_failed(
+            &blocked.agent_files(),
+            "publication failed",
+            Some(&state.machine)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        files.read_ui_activity_snapshot().await.unwrap().state,
+        alan_agent_protocol::UiActivityState::Paused
+    );
+    state.environment.work_publisher = None;
+    handle(
+        &mut state,
+        &Submission::new(Op::Resume {
+            request_id,
+            content: vec![alan_agent_protocol::ContentPart::structured(
+                json!({"owner":"hostfs"}),
+            )],
+        }),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        state.machine.owner_work.as_ref().unwrap().outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(
+        state.machine.owner_work.as_ref().unwrap().work_id,
+        work.work_id
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+#[tokio::test]
+async fn runtime_error_preserves_a_recovered_owned_wait() {
+    let (dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let mut emit = |_| async {};
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let request_id = state
+        .machine
+        .owner_work
+        .as_ref()
+        .unwrap()
+        .owned_request
+        .clone()
+        .unwrap();
+    let path = state.machine.rollout_path().unwrap().clone();
+    state
+        .machine
+        .input_recorder()
+        .unwrap()
+        .close()
+        .await
+        .unwrap();
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    let files = state.agent_files();
+    let mut core = crate::Config::default();
+    core.memory.enabled = false;
+    state.environment.model_bindings.lock().await.authority = None;
+    let fail_publication = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probe = fail_publication.clone();
+    state.environment = state.environment.with_work_publisher(move |_| {
+        let fail = probe.load(Ordering::SeqCst);
+        async move {
+            if fail {
+                anyhow::bail!("waiting publication unavailable");
+            }
+            Ok(())
+        }
+    });
+    let mut runtime = crate::runtime::spawn_with_namespace_environment(
+        crate::runtime::AgentProcessConfig {
+            agent_config: crate::AgentConfig::from(core.clone()),
+            store_bindings: Some(crate::AgentRuntimeStoreBindings {
+                rollouts: dir.path().to_path_buf(),
+                checkpoints: dir.path().join("checkpoints"),
+                cache: dir.path().join("cache"),
+                tmp: dir.path().join("tmp"),
+                metadata: dir.path().join("metadata"),
+            }),
+            recovery_rollout_path: Some(path),
+            ..Default::default()
+        },
+        state.environment,
+        crate::skills::SkillHostCapabilities::default(),
+        crate::provider_capabilities_for_config(&core),
+    )
+    .unwrap();
+    runtime.wait_until_ready().await.unwrap();
+    fail_publication.store(true, Ordering::SeqCst);
+    runtime
+        .handle
+        .submission_tx
+        .send(Submission::new(Op::Resume {
+            request_id: "stale-request".into(),
+            content: vec![],
+        }))
+        .await
+        .unwrap();
+    let observed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if files
+                .read_ui_notice_snapshot()
+                .await
+                .unwrap()
+                .message
+                .contains("waiting publication unavailable")
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let request_status = shell
+        .cat(&format!("/agent/1/requests/{request_id}/status"))
+        .await
+        .unwrap();
+    runtime.shutdown().await.unwrap();
+    observed.unwrap();
+    assert_eq!(
+        files.read_ui_activity_snapshot().await.unwrap().state,
+        alan_agent_protocol::UiActivityState::Paused
+    );
+    assert_eq!(request_status, b"pending");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+#[tokio::test]
+async fn cancellation_during_wait_yield_retires_the_owned_request() {
+    let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
+    let cancel = CancellationToken::new();
+    let probe = cancel.clone();
+    let mut emit = move |event| {
+        if matches!(event, Event::Yield { .. }) {
+            probe.cancel();
+        }
+        async {}
+    };
+    handle(
+        &mut state,
+        &control("Who owns old fids?"),
+        &mut emit,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let work = state.machine.owner_work.as_ref().unwrap();
+    assert_eq!(work.outcome, Outcome::Cancelled);
+    assert!(!state.machine.has_pending_interaction());
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    assert_eq!(
+        shell
+            .cat(&format!(
+                "/agent/1/requests/{}/status",
+                work.owned_request.as_ref().unwrap()
+            ))
+            .await
+            .unwrap(),
+        b"cancelled"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+}
 
 #[tokio::test]
 async fn acknowledged_terminal_work_clears_its_wait_before_publication_can_fail() {

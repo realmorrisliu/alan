@@ -856,6 +856,7 @@ fn spawn_with_prepared_runtime_environment(
                             super::ui_surfaces::turn_failed(
                                 &namespace_heartbeat,
                                 &format!("Error handling submission: {err}"),
+                                Some(&state.machine),
                             )
                             .await
                         }
