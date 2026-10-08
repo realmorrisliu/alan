@@ -2,6 +2,9 @@
 
 Cross-change planning order and ownership: [next-planning.md](next-planning.md).
 The bounded finite-choice shadow entry is active under [entry-slice.md](entry-slice.md).
+The read-only mixed-task entry and observed pre-implementation baselines are
+prepared in [mixed-task-entry.md](mixed-task-entry.md). PR #1038 remains its
+unmerged reliability prerequisite; tasks 1.1/1.4 remain open.
 The broader mixed-Machine composition remains gated; local qualification of the
 prerequisite slices does not count as their merge or canonical spec synchronization.
 

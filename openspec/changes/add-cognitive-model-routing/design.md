@@ -70,3 +70,11 @@ the broader transitions and activation gates remain pending.
 Connection capture, durable ordering, recovery and read-only publication for the
 bounded shadow slice. It records the missing redirected response path explicitly;
 no synthetic observation can satisfy that frozen acceptance case.
+
+## Prepared read-only mixed-task entry
+
+[mixed-task-entry.md](mixed-task-entry.md) records the selected task, immutable
+source, actual generation wait/resume diagnostic, deterministic reference,
+result ownership and fallback budget. Its implementation entry remains gated
+on the reliability prerequisite merge and completed owning delta contracts.
+The existing shadow invocation remains advice-only.
