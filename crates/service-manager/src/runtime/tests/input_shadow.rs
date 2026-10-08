@@ -3,11 +3,11 @@ use alan_agent_engine::runtime::EvaluationSurface;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
-struct Evaluator(Arc<AtomicUsize>);
+struct Evaluator(Arc<AtomicUsize>, &'static str);
 #[async_trait::async_trait]
 impl LlmProvider for Evaluator {
     fn provider_name(&self) -> &'static str {
-        "typesafe"
+        self.1
     }
     fn supports_generation(&self) -> bool {
         false
@@ -32,6 +32,7 @@ impl LlmProvider for Evaluator {
 struct Factory {
     calls: Arc<AtomicUsize>,
     generation: MockLlmProvider,
+    evaluator_provider: &'static str,
 }
 impl LlmClientFactory for Factory {
     fn create(
@@ -41,7 +42,10 @@ impl LlmClientFactory for Factory {
         _: &ConnectionsFile,
     ) -> Result<LlmClient> {
         match selected {
-            Some("evaluation") => Ok(LlmClient::new(Evaluator(self.calls.clone()))),
+            Some("evaluation") => Ok(LlmClient::new(Evaluator(
+                self.calls.clone(),
+                self.evaluator_provider,
+            ))),
             Some("main") => Ok(LlmClient::new(self.generation.clone())),
             _ => anyhow::bail!("unknown test profile"),
         }
@@ -50,21 +54,29 @@ impl LlmClientFactory for Factory {
 
 #[tokio::test]
 async fn explicit_root_evaluator_publishes_advice_without_replacing_generation() {
-    for surface in [
-        EvaluationSurface::Interactive,
-        EvaluationSurface::Redirected,
+    for (surface, provider, model) in [
+        (EvaluationSurface::Interactive, "typesafe", "jev-1.13.0"),
+        (EvaluationSurface::Redirected, "typesafe", "jev-1.13.0"),
+        (EvaluationSurface::Interactive, "chatgpt", "gpt-6.1-sol"),
+        (EvaluationSurface::Redirected, "chatgpt", "gpt-6.1-sol"),
     ] {
+        let kind = if provider == "chatgpt" {
+            CredentialKind::ManagedOauth
+        } else {
+            CredentialKind::SecretString
+        };
+        let backend = crate::connection_profile::default_credential_backend(kind);
         let temp = tempfile::tempdir().unwrap();
         let metadata = temp.path().join("connections.toml");
         let connections: ConnectionsFile = serde_json::from_value(serde_json::json!({
             "version":1,"default_profile":"main",
             "profiles":{
                 "main":{"provider":"openai_responses","credential_id":"main-key","created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z","source":"managed","settings":{"model":"gpt-5.4"}},
-                "evaluation":{"provider":"typesafe","credential_id":"eval-key","created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z","source":"managed","settings":{"model":"jev-1.13.0"}}
+                "evaluation":{"provider":provider,"credential_id":"eval-key","created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z","source":"managed","settings":{"model":model}}
             },
             "credentials":{
                 "main-key":{"kind":"secret_string","provider_family":"openai_responses","label":"fixture","backend":"host_credential_store"},
-                "eval-key":{"kind":"secret_string","provider_family":"typesafe","label":"fixture","backend":"host_credential_store"}
+                "eval-key":{"kind":kind,"provider_family":provider,"label":"fixture","backend":backend}
             }
         })).unwrap();
         connections.save_to_path(&metadata).unwrap();
@@ -82,6 +94,7 @@ async fn explicit_root_evaluator_publishes_advice_without_replacing_generation()
         config.llm_factory = Arc::new(Factory {
             calls: calls.clone(),
             generation: generation.clone(),
+            evaluator_provider: provider,
         });
         config.input_shadow = Some(InputShadowSelection {
             profile: "evaluation".into(),
@@ -135,6 +148,8 @@ async fn explicit_root_evaluator_publishes_advice_without_replacing_generation()
             serde_json::to_value(surface).unwrap()
         );
         assert_eq!(observation["identity"]["callable"]["profile"], "evaluation");
+        assert_eq!(observation["identity"]["callable"]["provider"], provider);
+        assert_eq!(observation["identity"]["callable"]["model"], model);
         assert_eq!(observation["outcome"]["candidate_id"], "command");
         assert_eq!(profile.as_deref(), Some("main"));
         assert_eq!(default_profile.as_deref(), Some("main"));

@@ -643,7 +643,7 @@ impl ConnectionService {
                         .insert(profile_id.clone(), account.into());
                 }
                 let provider = Box::new(ConnectionLlmProvider { client });
-                if profile.provider == alan_agent_engine::LlmProvider::TypesafeEvaluation {
+                if provider.supports_choice_evaluation() {
                     registry.llmfs.register_connection_profile(
                         &profile_id,
                         alan_llmfs::ConnectionProfile::new(

@@ -485,3 +485,69 @@ The build receipt pins these binaries:
 | shadow_client_fixture | fb74cecff3394a2751e5752bc1c9ba658b4ca8ca10f6cef0405c40ce2ea9669c |
 | routing_generation_baseline | 8f5f02b29f6382f6e29ec10317ef338d5ece36cc663befcb8daa1bfe772267ee |
 | routing_prefix_baseline | 3a5c55020a5c6b40d76d4aaac27275f2cac383a943e679620a69cd42a8fce012 |
+
+## Candidate v3 native run — 2026-10-08
+
+Implementation `d9f632e21fb46d6af49472182a735810f25d0ab2`, freeze
+`3bc2927403080290ed3fb4c379b911b55cac042b` and binary SHA-256
+`92b0ba45c7a4672546f85ffa676e76c4bf2c8e53b1b88f52ad819850d5b8e41c`
+precede all real v3 measurements. Whole-input candidate criteria changed; corpus,
+labels, gates, repeats and effect authority did not. See
+[native baseline scope](native-baselines-entry.md) and [v3 freeze](shadow-candidate.v3.json).
+
+Typed completed 300 ordinary attempts plus 12 interactive response bypasses;
+12 actual redirected pending-response attempts remain unsupported and retained.
+Prefix completed all 300 ordinary native client attempts. These are matched
+original-input-to-completion windows, excluding Host boot and Process exit.
+
+| Same 264 non-bypass ordinary slots | TypeSafe jev-1.13.0 | Native prefix |
+| --- | ---: | ---: |
+| Correct classification | 232/264 (87.88%) | 162/264 (61.36%) |
+| False command classifications | 7 | 0 |
+| Command / Agent / ambiguous recall | 100% / 87.65% / 77.78% | 0% / 100% / 0% |
+| Full-window p50 / p95 | 1174.86 / 1409.12 ms | 29.26 / 60.13 ms |
+| Typed valid selected or NoMatch results | 264/264 | Not a model evaluator |
+
+Typed component p50/p95 is 1129/1360 ms, distinct from the full-window gate.
+Recorded token usage at the verified TypeSafe public list price yields a mean
+26.12782 microUSD per evaluated attempt; this is an estimate, not an invoice.
+The complete typed surface matrix still has 12 unsupported response slots. Neither
+those slots nor missing generation results may be fabricated to obtain a passing
+324-row score. No model-driven Tool effect was enabled: the fixture has an empty
+Tool registry, no Host project mount and fixed mock ordinary completion.
+
+Generation stopped on its first attempt (`route-001`, interactive, repeat 0).
+The nested captured ChatGPT operation returned `command`, terminal `done`, in
+4080 ms with retained event-tail close and already-terminal cleanup receipts.
+The outer Machine evaluation remained Started, no correlated completion appeared,
+and the collector rejected the attempt without retry. Its approximately 45-second
+observer timeout is failed-collection evidence, not a completed admission latency.
+No generation accuracy, relative latency or billing gate is qualified by one
+failed outer attempt; the remaining 323 slots were not run.
+
+Independent diagnosis found a shared Connection publication defect: only the
+TypeSafe provider enum received explicit llmfs model metadata. A choice-capable
+harness facade under ChatGPT was registered with no model; its successful choice
+event therefore contained `model: null`, which the Machine's typed result decoder
+rejected before acknowledging the terminal result. Abort of the already-completed
+operation then remained unconfirmed. Register explicit metadata by actual choice
+capability, preserving generation-only registration behavior. A no-network
+ServiceManager-to-llmfs-to-Machine regression covers both provider families and
+both surfaces failed before the fix with an unpublished Root evaluation and
+passed after it. The focused Service Manager suite passed 148 tests with zero
+failures. Preserve this v3 failure and freeze a new implementation before any
+new paid attempt.
+
+Decision: automatic routing remains OFF. Typed classification improves over v2
+(200/264 correct, 34 false command choices), but still fails zero false-command,
+95% accuracy, 90% class recall and 300/1000 ms full-window p50/p95 gates. Unknown
+ChatGPT per-call subscription billing continues to block relative cost qualification.
+
+Raw receipts, manifests, timings, source/binary build receipt, summaries and the
+read-only summarizer are in `~/Library/Caches/Alan/shadow-candidate-v3-20261008/`.
+Typed manifests SHA-256: ordinary
+`63bcf8965f1c5797056a443c153c3391561720b80e6729283d0234c3125405aa`, pending
+`ef0f759b8f4f8ee493caf170d29b026773fd6305bce33b3a59ef229552d9cf94`.
+Prefix manifest: `c829434acd019c94e011250ad2d2414b298c3a7067d7143e8566f75bb8c0386d`.
+Failed generation manifest:
+`cd93fa24c4cbbd4ad3c82c519d6bd9b28b82da5459a77cb0508a24f2755f0118`.
