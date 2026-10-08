@@ -4,8 +4,9 @@ Cross-change planning order and ownership: [next-planning.md](next-planning.md).
 The bounded finite-choice shadow entry is active under [entry-slice.md](entry-slice.md).
 The read-only mixed-task entry and observed pre-implementation baselines are
 prepared in [mixed-task-entry.md](mixed-task-entry.md). PR #1038 is merged at `3bee6689` and its post-merge CI passed.
-The bounded runtime entry has passed local acceptance recorded in
-[mixed-task-acceptance.md](mixed-task-acceptance.md); merge and canonical sync remain open.
+The bounded runtime entry shipped in PR #1039 at `90a05fe5`; its implemented
+owning deltas are synchronized in this follow-up. Current-head and native evidence
+are recorded in [mixed-task-acceptance.md](mixed-task-acceptance.md).
 The broader mixed-Machine composition remains gated; local qualification of the
 prerequisite slices does not count as their merge or canonical spec synchronization.
 

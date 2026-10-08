@@ -4,9 +4,9 @@
 
 This implements the bounded entry in [mixed-task-entry.md](mixed-task-entry.md),
 on merged prerequisite `3bee6689`. It is one explicit source-owner program in the
-existing Agent Machine, not a general composer or input router. Local acceptance
-is complete; current-head remote CI, merge and canonical synchronization remain
-open. Automatic routing stays disabled.
+existing Agent Machine, not a general composer or input router. PR #1039 merged reviewed head `c69cf3eb` at `90a05fe5`. Current-head remote
+checks passed; implemented owning requirements are synchronized in this follow-up.
+Automatic routing stays disabled.
 
 `agent_work` now accepts `select_owner` JSON through its existing namespace
 executable and supports `result`. The versioned `owner-work-v1 ` control enters
@@ -333,3 +333,27 @@ Both independent review axes passed the correction; pinned strict OpenSpec passe
 (`mixed-owner-evaluation-final-workspace.log`). The staged hook and current-head
 remote checks remain delivery gates. Earlier native
 artifacts remain tied to their prior source identity.
+
+## Merge and canonical synchronization receipt
+
+[PR #1039](https://github.com/realmorrisliu/alan/pull/1039) merged on
+2026-10-08 at 09:58:26 UTC. Reviewed head was
+`c69cf3ebfda8ebd52c71ec5ac46bf2de32d548eb`; merge commit is
+`90a05fe5e26efdba6186518dd58295619095bf01`. All 16 current-head checks passed,
+automated review completed without new findings, all five earlier review threads
+were resolved, and independent Spec and Standards reviews passed. The final staged
+hook passed without bypass. The final-source workspace result is 2,862 passed,
+zero failed and 14 ignored; older test counts above retain their source identity.
+
+The follow-up synchronizes only the delivered source-owner input, bounded durable
+decisions, Machine control envelope, evaluation observations and work projection
+requirements into their existing canonical owners. Native v5 model receipts retain
+their earlier source identity and do not measure the final fault corrections.
+General package candidate exposure, broader composition and the archival roadmap
+handoff remain unfinished; task 3.3 is therefore still open. Production fallback
+without a verified billing quote still waits; successful priced fallback remains
+fixture evidence. Automatic routing remains off and separately gated.
+
+Post-merge checks for the exact `90a05fe5` merge commit also passed: CI run
+37760341830, Security run 37760341781 and CodeQL run 37760341813. Local main
+was fast-forwarded to that commit with a clean checkout.

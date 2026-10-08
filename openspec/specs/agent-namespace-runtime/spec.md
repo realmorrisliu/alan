@@ -360,3 +360,140 @@ The Machine SHALL persist captured admission and evaluation identity before comm
 - **AND** request responses correlate by owning rollout and request identity across repeated deliveries and recovery, while a new rollout may reuse a request id for a distinct response
 - **AND** this evidence does not grant response acceptance, settle ordinary input or dispatch effects
 - **AND** unknown/stale response IDs and Host Mount Service controls do not reserve bypass identity
+
+### Requirement: Explicit source-owner work uses ordinary input ownership
+The bounded source-owner Machine program SHALL be selected only by an explicit
+version-1 request. The `owner-work-v1 ` Machine control SHALL carry an `id` UUID
+and `request`, containing exactly `version`, `question`, `evaluator_profile`
+and `candidates`. Each candidate SHALL contain an `id` and `sources`; each
+source SHALL contain a namespace `path`, `start_line` and `end_line`. The control
+SHALL become a ForceAgent FollowUp submission in the existing durable input queue.
+Ordinary text, JSON-looking prose and shadow advice SHALL NOT select this program.
+The existing `agent_work` executable SHALL submit that control with its
+`select_owner` JSON action and inspect the projection with `result`.
+
+The Machine SHALL validate version 1, nonempty question of at most 8192 UTF-8
+bytes, at most 16 unique component IDs, one to eight source ranges per candidate,
+a control document of at most 64 KiB, absolute normalized `/mnt/` namespace paths
+of at most 4096 bytes, and positive inclusive ranges of at most 1000 lines.
+Source reads SHALL reuse ordinary Tool resolution, policy and Process execution;
+a missing or revoked descriptor SHALL remain unavailable. Captured source content SHALL total at most 128 KiB. Each candidate's serialized
+citation descriptors SHALL occupy at most 4096 bytes. Candidate projection
+SHALL be limited to 4096 UTF-8 bytes with explicit truncation; completion SHALL
+retain the full range digest and never cite absent lines.
+
+#### Scenario: An explicit request joins the existing queue
+- **WHEN** an authorized client submits a valid source-owner control
+- **THEN** its UUID and typed payload follow ordinary ordered admission and recovery
+- **AND** no renderer, global router or new Kernel Process kind executes the work
+
+#### Scenario: Prose resembles a work control
+- **WHEN** ordinary input contains JSON resembling an owner request
+- **THEN** it remains ordinary Agent input and cannot bypass explicit admission
+
+#### Scenario: Evidence authority is unavailable
+- **WHEN** a candidate range cannot be read under the Agent's current authority
+- **THEN** the work records unavailable failure without an evaluator or fallback call
+- **AND** supplied paths and model confidence grant no authority
+
+### Requirement: Source-owner work advances with bounded durable decisions
+The Machine SHALL acknowledge a work start before source dispatch and each model
+start before model commit. Exact unique line-oriented public Rust struct, enum or trait declaration name
+ownership in the supplied evidence MAY complete the literal `Which crate defines
+NAME?` question without a model call. Other questions SHALL use at most one
+`choice.v1` evaluation through a separately captured Connection explicitly granted
+at Process launch; a request's profile name SHALL NOT acquire Connection authority.
+The current Root host selection MAY share its explicitly captured shadow evaluator
+with this explicit program; shadow advice itself SHALL remain unable to select work.
+Children SHALL receive no implicit evaluator grant. Selection SHALL
+be validated against captured candidates and retained source ranges.
+
+Only NoMatch MAY enter at most one generation fallback, with a 30,000 ms phase
+deadline and a verified pre-dispatch maximum cost of 1000 micro-USD or less.
+Quote provenance SHALL be nonempty and occupy at most 1024 UTF-8 bytes.
+Unknown billing SHALL prevent fallback dispatch. Expiry SHALL request abort through
+existing generation control; an uncertain terminal/abort result SHALL remain
+unsettled for interrupted recovery without another dispatch. Other evaluation failures SHALL
+remain typed failures. Unresolved choice SHALL wait through the existing owned
+StructuredInput request. An explicit valid candidate response SHALL complete the
+same work after current source authority and digest validation; it SHALL NOT
+repeat evaluation or replenish attempts. Cancellation SHALL prevent further
+model or effect dispatch. Recovery SHALL retain terminal evidence and owned waits;
+unsettled active work SHALL be interrupted rather than retried. Unknown Tool
+effects SHALL retain the existing reconciliation contract.
+
+After successful acknowledgement of completed, failed or cancelled work, the
+Machine SHALL synchronously clear only that work's owned pending request and set
+its activity to Idle before fallible projection, UI or AgentFS cleanup operations.
+Failed or uncertain terminal persistence SHALL preserve the owned wait. Prompt
+cleanup retries SHALL verify the logical work identity; a retained request ID
+from another Process SHALL NOT authorize cancellation or capture a new interaction.
+Acknowledged wait registration SHALL synchronously set Machine activity to Paused
+before yielding or publishing. Error rendering with a pending interaction SHALL
+publish Paused before a fallible error notice rather than report an idle Machine.
+Failure, cancellation or expiry before terminal evaluation persistence is
+acknowledged SHALL leave source-owner work unsettled with spent attempts.
+Persistence and publication SHALL share one bounded settlement window; an error
+after acknowledgement SHALL NOT be relabeled as persistence uncertainty.
+
+#### Scenario: Structured work waits and resumes
+- **WHEN** NoMatch cannot enter a budget-qualified generation fallback
+- **THEN** a durable wait references the existing StructuredInput request
+- **AND** an accepted response resumes that work identity with its spent attempt budget
+
+#### Scenario: Waiting publication fails
+- **WHEN** wait ownership is acknowledged and registered but publication fails
+- **THEN** the Machine retains that pending interaction and Paused activity
+- **AND** outer error rendering preserves Paused even if its error notice is unwritable
+- **AND** answering the same request completes its work without repeating model calls
+
+#### Scenario: Cancellation arrives while yielding an owned wait
+- **WHEN** cancellation arrives after wait registration but before settlement
+- **THEN** acknowledged Cancelled work releases its Machine wait and cancels the same logical AgentFS request before projection
+- **AND** a failed prompt cleanup remains explicitly retryable without cancelling another owner
+
+#### Scenario: A newly created request lacks acknowledged wait ownership
+- **WHEN** AgentFS creates the request but work-wait persistence fails
+- **THEN** the Machine cancels that same request and verifies its terminal status before returning failure
+- **AND** it does not register or yield an unacknowledged wait, retry the evaluator or invent successful cleanup
+
+#### Scenario: Waiting bytes survive an unacknowledged write
+- **WHEN** recovery finds Waiting evidence without its matching post-acknowledgement witness
+- **THEN** work becomes Interrupted with retained request identity and spent attempts
+- **AND** no answerable request is restored from that unacknowledged wait
+- **AND** the witness is queued only after wait persistence returns acknowledgement, through the same rollout owner and before pending-request registration
+
+#### Scenario: A work start lacks a terminal acknowledgement
+- **WHEN** explicit recovery finds active work without an acknowledged result
+- **THEN** it projects interrupted work without repeating source or model dispatch
+
+#### Scenario: Evaluation terminal acknowledgement races with cancellation or expiry
+- **WHEN** a choice operation has returned but its terminal persistence is unacknowledged when cancellation or settlement expiry wins
+- **THEN** the Machine retains unsettled work rather than recording terminal Cancelled or Failed work
+- **AND** explicit recovery interrupts that work with the same identity and spent attempts, even if evaluation bytes survived the uncertain acknowledgement
+- **AND** it does not repeat source dispatch, evaluation or fallback
+
+#### Scenario: Evaluation publication fails after terminal acknowledgement
+- **WHEN** terminal evaluation persistence is acknowledged but publication fails or expires
+- **THEN** the acknowledged evaluation remains terminal and the error is not persistence uncertainty
+
+#### Scenario: A selected member completes
+- **WHEN** the selection names a captured candidate with validated retained evidence
+- **THEN** work completes with that owner and source citations without final prose generation
+- **AND** the same Agent Process may accept a later task
+
+#### Scenario: Terminal projection or prompt cleanup fails
+- **WHEN** work terminal evidence is acknowledged but projection, completion UI or request cancellation fails
+- **THEN** the Machine retains terminal work with no owned pending interaction and Idle activity
+- **AND** later work remains admissible without repeating the settled work's model calls
+- **AND** a later cleanup attempt may cancel only an exposed request with the same logical work identity
+
+#### Scenario: Terminal persistence fails
+- **WHEN** an owned wait receives a response but terminal persistence is unacknowledged
+- **THEN** its Waiting snapshot, pending interaction and Paused activity remain owned
+- **AND** no terminal projection is published
+
+#### Scenario: A recovered terminal request ID is reused
+- **WHEN** a fresh Process has terminal work retaining `r0` and a new ordinary interaction allocates `r0`
+- **THEN** old work cleanup does not cancel that new logical request
+- **AND** its answer resumes the current ordinary interaction rather than the settled work
