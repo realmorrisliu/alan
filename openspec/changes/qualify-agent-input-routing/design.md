@@ -7,9 +7,10 @@ and their owning spec deltas. ADR-0058's accepted direction and original intervi
 remain in the predecessor; this document makes the delivery boundary explicit.
 The existing Machine is the consumer; `add-cognitive-model-routing` owns generic
 typed operations and provider capability discovery. PR #1035 delivered the
-TypeSafe finite-choice adapter and no-effect Machine shadow consumer. Frozen v2
-qualification failed and the later reviewed candidate remains unqualified;
-automatic routing is disabled.
+TypeSafe finite-choice adapter and no-effect Machine shadow consumer. Frozen v4 native qualification failed after all 948 planned attempts;
+classification, latency, redirected response parity and generation billing gates
+remain unresolved. Automatic routing is disabled; see
+[native v4 results](native-baselines-v4-results.md).
 
 ## Decisions
 

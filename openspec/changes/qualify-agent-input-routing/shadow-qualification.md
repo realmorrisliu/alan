@@ -554,3 +554,12 @@ Typed manifests SHA-256: ordinary
 Prefix manifest: `c829434acd019c94e011250ad2d2414b298c3a7067d7143e8566f75bb8c0386d`.
 Failed generation manifest:
 `cd93fa24c4cbbd4ad3c82c519d6bd9b28b82da5459a77cb0508a24f2755f0118`.
+
+## Candidate v4 results — 2026-10-08
+
+See [complete native comparison and decision](native-baselines-v4-results.md).
+All 948 planned attempts were retained without retry; 24 actual redirected
+pending responses remain unsupported. Typed is 230/264 correct with eight false
+command choices; generation is 249/264 correct with zero false command choices.
+Both exceed absolute full-window latency gates; unknown generation billing and
+response parity still block qualification. Automatic routing remains OFF.
