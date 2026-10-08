@@ -12,9 +12,11 @@ later header corrections use their recorded regressions, not that earlier binary
 
 The UI post-merge CI was superseded by #1035's newer main commit `cb0ec7ec`.
 The combined main CI is a separate receipt in
-[typed-entry-delivery.md](../add-cognitive-model-routing/typed-entry-delivery.md).
-The two delivered TUI requirements are synchronized in the closure patch;
-archive readiness requires that synchronization to merge. No archive is performed here.
+[typed-entry-delivery.md](../../add-cognitive-model-routing/typed-entry-delivery.md).
+The two delivered TUI requirements were synchronized by merged PR #1036
+(`1c53cf52`); all 15 post-merge checks passed on that commit. The 2026-10-08
+archive audit found both complete delta requirements verbatim in the canonical
+`rust-inline-tui` spec. All six owned tasks are complete.
 
 ## Historical implementation and acceptance
 

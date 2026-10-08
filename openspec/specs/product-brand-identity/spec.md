@@ -83,8 +83,9 @@ update feed from this requirement.
 ### Requirement: Terminal category is separate from shell command syntax
 Alan's supported product documentation SHALL describe the terminal-neutral CLI
 and alan9 Host without presenting a native macOS app category as the current
-product. The literal `alan shell ...` command namespace remains a command
-surface, not a product or app name.
+product. The former `alan shell ...` desktop IPC namespace SHALL be removed from the
+CLI. The file-native Alan Shell remains supported and is not that desktop
+control protocol.
 
 #### Scenario: CLI is described
 - **WHEN** current docs explain the supported user-facing product
@@ -102,9 +103,8 @@ surface, not a product or app name.
 #### Scenario: CLI syntax is documented
 - **WHEN** docs, help text, skills, scripts, or tests refer to the literal
   `alan shell ...` command namespace
-- **THEN** that command syntax remains allowed
-- **AND** the surrounding copy makes clear it is a command/control namespace,
-  not the product name
+- **THEN** they label it as retired desktop syntax or a rejection check
+- **AND** they do not advertise it as a supported control command
 
 ### Requirement: Historical AlanNative identity is removed from active surfaces
 The active repository MUST remove `AlanNative` as a product, project, target,

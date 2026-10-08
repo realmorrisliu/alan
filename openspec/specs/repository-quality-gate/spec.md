@@ -4,7 +4,7 @@
 
 Define the single non-mutating and reproducible repository gate shared by local
 development, Git hooks, and CI, including Rust quality, source-size and
-dependency ratchets, and retired-surface absence checks.
+dependency ratchets, Host-source safety, OpenSpec, and standalone distribution checks.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ clean-code, clean-architecture, or standalone-distribution check fails.
 #### Scenario: Developer runs the quality gate
 - **WHEN** a developer invokes the canonical repository quality command
 - **THEN** it checks formatting without rewriting files
-- **AND** it runs the curated Rust, source-hygiene, dependency, retired-surface absence,
+- **AND** it runs the curated Rust, source-hygiene, dependency, Host-source safety,
   OpenSpec, and standalone CLI/Host distribution checks
 
 #### Scenario: Gate composition changes
@@ -30,7 +30,7 @@ clean-code, clean-architecture, or standalone-distribution check fails.
 - **WHEN** a developer or CI environment configures another Cargo target
   directory or build target
 - **THEN** the quality gate builds into its owned Host-target directory
-- **AND** binary-surface guards inspect the executable produced by that run
+- **AND** standalone-distribution checks inspect the executable produced by that run
 
 #### Scenario: Dependency manifest and lockfile diverge
 - **WHEN** a dependency manifest requires a Cargo.lock update that is not part
@@ -238,19 +238,6 @@ baseline in the same PR. It MUST NOT increase another debt budget to compensate.
 - **WHEN** a slice reduces one budget but grows another oversized source,
   transitional dependency set, or another recorded source/dependency budget
 - **THEN** the canonical quality gate fails
-
-### Requirement: Removed desktop implementation stays absent
-The repository quality gate SHALL reject tracked Alan desktop source and
-shell-core/FFI workspace membership. It SHALL continue validating standalone
-CLI/Host and Rust platform safety without requiring Swift, Xcode or desktop UI.
-
-#### Scenario: Desktop source returns
-- **WHEN** a tracked file is added under clients/apple or either retired shell-core crate
-- **THEN** the quality gate fails
-
-#### Scenario: Developer retains local build artifacts
-- **WHEN** ignored Apple build products remain on disk without tracked desktop source
-- **THEN** their presence does not require deleting local files or running desktop verification
 
 ### Requirement: Rust oversized-source debt reaches zero
 This change SHALL reduce every Rust source under `crates/` to no more than 1,000
