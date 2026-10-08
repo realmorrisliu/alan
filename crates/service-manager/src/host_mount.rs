@@ -56,6 +56,8 @@ impl HostMountAccess {
 /// native Tool authority, but it never receives or stores the raw Host path.
 pub trait HostMountExport: std::fmt::Debug + Send + Sync {
     fn file_tree(&self) -> InProcessTransport;
+    /// Invalidate all exported fids and discard buffered writes before returning.
+    fn revoke(&self);
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -586,6 +588,7 @@ impl HostMountService {
         if !grant.public.active {
             return Ok(());
         }
+        grant.export.revoke();
         grant.public.active = false;
         let affected = grant
             .projections

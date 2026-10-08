@@ -443,8 +443,8 @@ async fn two_clients_submit_while_busy_and_receive_only_their_own_answers() {
         )
         .await
         .unwrap();
-    let a = StdioTaskWaitContext::new("client a").unwrap();
-    let b = StdioTaskWaitContext::new("client b").unwrap();
+    let a = StdioTaskWaitContext::new("same text").unwrap();
+    let b = StdioTaskWaitContext::new("same text").unwrap();
     let a_id = a.record.submission_id.clone();
     let b_id = b.record.submission_id.clone();
     assert_ne!(a_id, b_id);

@@ -8,9 +8,9 @@ use alan_agent_engine::tools::{
 };
 use alan_kernel::Namespace;
 
-#[derive(Clone)]
 struct TestExport {
-    tree: InProcessTransport,
+    tree: Arc<alan_hostfs::HostDirFs>,
+    _directory: tempfile::TempDir,
     host_root: PathBuf,
 }
 
@@ -22,7 +22,11 @@ impl std::fmt::Debug for TestExport {
 
 impl HostMountExport for TestExport {
     fn file_tree(&self) -> InProcessTransport {
-        self.tree.clone()
+        InProcessTransport::new(self.tree.clone())
+    }
+
+    fn revoke(&self) {
+        self.tree.revoke();
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -170,8 +174,14 @@ fn service() -> Arc<HostMountService> {
 }
 
 fn test_export(host_root: PathBuf) -> Arc<dyn HostMountExport> {
+    let directory = tempfile::tempdir().unwrap();
+    let tree = Arc::new(
+        alan_hostfs::HostDirFs::new(directory.path(), alan_hostfs::HostDirAccess::ReadWrite)
+            .unwrap(),
+    );
     Arc::new(TestExport {
-        tree: InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        tree,
+        _directory: directory,
         host_root,
     })
 }

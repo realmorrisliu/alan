@@ -22,11 +22,21 @@ impl LlmClientFactory for UnavailableDefaultFactory {
     }
 }
 
-#[derive(Debug)]
-struct CommandExport;
+struct CommandExport {
+    tree: Arc<alan_hostfs::HostDirFs>,
+    _directory: tempfile::TempDir,
+}
+impl std::fmt::Debug for CommandExport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CommandExport")
+    }
+}
 impl HostMountExport for CommandExport {
     fn file_tree(&self) -> InProcessTransport {
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty()))
+        InProcessTransport::new(self.tree.clone())
+    }
+    fn revoke(&self) {
+        self.tree.revoke();
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -171,9 +181,24 @@ async fn unavailable_managed_default_dispatches_direct_command_without_generatio
         .host_mount()
         .request_project_mount(manager.root_pid(), crate::HostMountAccess::ReadOnly)
         .unwrap();
+    let directory = tempfile::tempdir().unwrap();
     let grant = manager
         .host_mount()
-        .approve_export(&request, Arc::new(CommandExport), "test", "test")
+        .approve_export(
+            &request,
+            Arc::new(CommandExport {
+                tree: Arc::new(
+                    alan_hostfs::HostDirFs::new(
+                        directory.path(),
+                        alan_hostfs::HostDirAccess::ReadOnly,
+                    )
+                    .unwrap(),
+                ),
+                _directory: directory,
+            }),
+            "test",
+            "test",
+        )
         .unwrap();
     let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
     let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));

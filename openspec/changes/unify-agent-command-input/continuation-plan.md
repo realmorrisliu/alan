@@ -15,26 +15,35 @@ percentage. No parked change is activated by this plan.
   UI delta requirements with canonical specs before archiving.
 - [x] Archive both completed changes locally, preserving their evidence and
   metadata; repair relative references and reconcile stale current status.
-- [ ] Validate current surfaces, strict OpenSpec and changed links; review the
+- [x] Validate current surfaces, strict OpenSpec and changed links; review the
   exact closure patch, obtain passing CI and record merge separately.
+  PR #1037 reviewed head `d87a3d8a132f6ab1209f839a0c5294bd2f2e641d` passed all
+  16 checks with no automated review findings; the user merged it as
+  `411828d5f3ad1a6a5e60f93bee6a70ac8deadbcb`. Post-merge CI and CodeQL also passed.
 
 ## 2. Reliability qualification
 
 Owner: `unify-agent-command-input`, especially tasks 2.1, 2.4–2.7, 2.11–2.14.
+Local boundary evidence and the reproduced revocation fix are indexed in
+[reliability acceptance](reliability-acceptance.md). Current-head review, CI and
+merge remain required before this stage is delivered.
+
 Inventory existing public-boundary tests first. Keep code changes limited to
 reproduced failures at their shared owner; add only missing boundary checks.
 
-- [ ] Same-Agent clients: concurrent identical text with distinct IDs; independent
+- [x] Same-Agent clients: concurrent identical text with distinct IDs; independent
   result consumption, correlated failure/cancellation and ordered cwd changes.
   Separate foreground invocations are not evidence for this matrix.
-- [ ] Cross-grant operations: explicit and generated Tool paths, noncurrent and
+- [x] Cross-grant operations: explicit and generated Tool paths, noncurrent and
   read-only mounts, symlink escape, revocation before dispatch/during work,
   descendant cancellation, pending buffer saves and stale-edit/save failures.
   Assert effects and authoritative outcomes, not just error strings.
-- [ ] Output retention: stdout/stderr beyond the projection budget, exact retained
-  output references, missing retained evidence and a subsequent Agent question in
-  one trace; ordinary output content must not create authority.
-- [ ] Linux: run the shipped namespace/mount/network adapter on a capable Linux
+- [x] Output retention: stdout/stderr beyond the projection budget, exact retained
+  output references and a subsequent Agent question in a correlated native trace;
+  missing/expired evidence uses the existing owning
+  retention traces rather than adding a Host management API. Ordinary output
+  content must not create authority.
+- [x] Linux: run the shipped namespace/mount/network adapter on a capable Linux
   host and verify confinement, read-only and virtual-only mounts, revocation and
   explicit degradation/fail-closed behavior. A skip or macOS mock is not a pass.
 - [ ] Run owning suites, quality and required CI; review exact changes and close

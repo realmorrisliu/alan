@@ -15,12 +15,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::sync::Mutex;
 
 const MAX_BUFFERED_FILE_BYTES: usize = 64 * 1024 * 1024;
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -42,7 +42,12 @@ pub struct HostDirFs {
     root: PathBuf,
     root_dir: std::fs::File,
     access: HostDirAccess,
-    fids: Mutex<HashMap<Fid, HostFid>>,
+    state: Mutex<HostDirState>,
+}
+
+struct HostDirState {
+    active: bool,
+    fids: HashMap<Fid, HostFid>,
 }
 
 struct HostFid {
@@ -86,8 +91,30 @@ impl HostDirFs {
             root,
             root_dir,
             access,
-            fids: Mutex::new(HashMap::new()),
+            state: Mutex::new(HostDirState {
+                active: true,
+                fids: HashMap::new(),
+            }),
         })
+    }
+
+    /// Invalidate this export, including existing fids and uncommitted writes.
+    ///
+    /// Revocation and filesystem mutations share the state lock: no buffered save,
+    /// create or remove can commit after this returns. An already admitted read
+    /// may finish; subsequent requests fail with `NoAccess`.
+    pub fn revoke(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.active = false;
+        state.fids.clear();
+    }
+
+    fn live_state(&self) -> Result<MutexGuard<'_, HostDirState>, ErrorCode> {
+        let state = self.state.lock().map_err(|_| ErrorCode::Io)?;
+        if !state.active {
+            return Err(ErrorCode::NoAccess);
+        }
+        Ok(state)
     }
 
     pub fn root(&self) -> &Path {
@@ -176,11 +203,12 @@ impl HostDirFs {
 #[async_trait]
 impl FileServer for HostDirFs {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let mut fids = self.fids.lock().await;
+        let mut state = self.live_state()?;
+        let fids = &mut state.fids;
         if newfid == Fid::ROOT || fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        let mut rel = Self::rel_for_fid(&fids, fid)?;
+        let mut rel = Self::rel_for_fid(fids, fid)?;
         let base = self.existing_handle(&rel)?;
         if !names.is_empty() && !base.is_dir() {
             return Err(ErrorCode::NotDirectory);
@@ -212,8 +240,9 @@ impl FileServer for HostDirFs {
         if matches!(mode, OpenMode::Write | OpenMode::ReadWrite) && !self.access.writable() {
             return Err(ErrorCode::NoAccess);
         }
-        let mut fids = self.fids.lock().await;
-        let rel = Self::rel_for_fid(&fids, fid)?;
+        let mut state = self.live_state()?;
+        let fids = &mut state.fids;
+        let rel = Self::rel_for_fid(fids, fid)?;
         let mut write_seed = None;
         let mut write_identity = None;
         let qid = match mode {
@@ -261,17 +290,18 @@ impl FileServer for HostDirFs {
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let fids = self.fids.lock().await;
-        if fid != Fid::ROOT {
-            let fid_state = fids.get(&fid).ok_or(ErrorCode::NotFound)?;
-            if !matches!(fid_state.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
-                return Err(ErrorCode::NoAccess);
+        let handle = {
+            let state = self.live_state()?;
+            let fids = &state.fids;
+            if fid != Fid::ROOT {
+                let fid_state = fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+                if !matches!(fid_state.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
+                    return Err(ErrorCode::NoAccess);
+                }
             }
-        }
-        let rel = Self::rel_for_fid(&fids, fid)?;
-        drop(fids);
-
-        let handle = self.existing_handle(&rel)?;
+            let rel = Self::rel_for_fid(fids, fid)?;
+            self.existing_handle(&rel)?
+        };
         let bytes = if handle.metadata.is_dir() {
             directory_listing(handle.file)?
         } else if handle.metadata.is_file() {
@@ -286,7 +316,8 @@ impl FileServer for HostDirFs {
         if !self.access.writable() {
             return Err(ErrorCode::NoAccess);
         }
-        let mut fids = self.fids.lock().await;
+        let mut state = self.live_state()?;
+        let fids = &mut state.fids;
         let fid_state = fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
         if !matches!(fid_state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
@@ -310,9 +341,8 @@ impl FileServer for HostDirFs {
     }
 
     async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let fids = self.fids.lock().await;
-        let rel = Self::rel_for_fid(&fids, fid)?;
-        drop(fids);
+        let state = self.live_state()?;
+        let rel = Self::rel_for_fid(&state.fids, fid)?;
 
         if rel.is_empty() {
             let handle = self.existing_handle(&rel)?;
@@ -357,11 +387,12 @@ impl FileServer for HostDirFs {
         if !self.access.writable() {
             return Err(ErrorCode::NoAccess);
         }
-        let mut fids = self.fids.lock().await;
+        let mut state = self.live_state()?;
+        let fids = &mut state.fids;
         if newfid == Fid::ROOT || fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        let parent_rel = Self::rel_for_fid(&fids, fid)?;
+        let parent_rel = Self::rel_for_fid(fids, fid)?;
         let parent = self.parent_handle(&parent_rel, name)?;
         match kind {
             FileKind::Dir => mkdir_child(parent.file.as_raw_fd(), name)?,
@@ -394,18 +425,20 @@ impl FileServer for HostDirFs {
         if !self.access.writable() {
             return Err(ErrorCode::NoAccess);
         }
-        let mut fids = self.fids.lock().await;
-        let rel = Self::rel_for_fid(&fids, fid)?;
+        let mut state = self.live_state()?;
+        let fids = &mut state.fids;
+        let rel = Self::rel_for_fid(fids, fid)?;
         remove_entry(&self.root_dir, &rel)?;
         fids.remove(&fid);
         Ok(())
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        let mut state = self.live_state()?;
         if fid == Fid::ROOT {
             return Ok(());
         }
-        let mut fids = self.fids.lock().await;
+        let fids = &mut state.fids;
         let fid_state = fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
         if fid_state.wrote {
             let identity = fid_state.write_identity.ok_or(ErrorCode::BadRequest)?;
