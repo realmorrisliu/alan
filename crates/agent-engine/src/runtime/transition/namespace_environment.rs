@@ -176,6 +176,7 @@ pub struct NamespaceToolActionOutput {
 #[derive(Clone)]
 pub struct NamespaceRuntimeEnvironment {
     pub(crate) shadow_evaluation: Option<Arc<super::super::shadow_evaluation::ShadowEvaluation>>,
+    pub(crate) work_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     pub(crate) evaluation_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     root: InProcessTransport,
     agent_path: String,
@@ -284,6 +285,7 @@ impl NamespaceRuntimeEnvironment {
         Self {
             shadow_evaluation: None,
             evaluation_publisher: None,
+            work_publisher: None,
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),

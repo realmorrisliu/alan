@@ -26,6 +26,7 @@ use crate::rollout::{RolloutItem, RolloutRecorder};
 pub enum EvaluationSurface {
     Interactive,
     Redirected,
+    MachineControl,
 }
 
 pub(crate) type EvaluationPublisher =
@@ -68,6 +69,23 @@ impl NamespaceRuntimeEnvironment {
     {
         self.evaluation_publisher = Some(Arc::new(move |value| Box::pin(publish(value))));
         self
+    }
+
+    /// Attach the AgentFS owner's acknowledged work publisher.
+    pub fn with_work_publisher<F, Fut>(mut self, publish: F) -> Self
+    where
+        F: Fn(Option<serde_json::Value>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        self.work_publisher = Some(Arc::new(move |value| Box::pin(publish(value))));
+        self
+    }
+
+    pub(crate) async fn publish_work(&self, value: Option<serde_json::Value>) -> Result<()> {
+        if let Some(publish) = &self.work_publisher {
+            publish(value).await?;
+        }
+        Ok(())
     }
 
     pub(crate) async fn publish_evaluation(
@@ -118,6 +136,12 @@ async fn observe_input_shadow(
     let Some(shadow) = environment.shadow_evaluation.clone() else {
         return Ok(());
     };
+    // Explicit typed work has its own evaluation identity; input classification cannot reserve it.
+    if let Op::Input { parts, .. } = &submission.op
+        && matches!(parts.as_slice(), [ContentPart::Structured { data }] if data.get("owner_work_v1").is_some())
+    {
+        return Ok(());
+    }
     // Ordinary input waiting behind an interaction is not response admission.
     if machine.has_pending_interaction() && matches!(submission.op, Op::Input { .. }) {
         return Ok(());
@@ -266,17 +290,43 @@ async fn observe_input_shadow(
         })
         .await;
     }
+    evaluate_captured_choice(
+        machine,
+        environment,
+        NamespaceRuntimeEnvironment::new(
+            shadow.root.clone(),
+            environment.agent_path(),
+            shadow.identity.profile.clone(),
+        ),
+        request,
+        observation,
+        (started_at, expires),
+        cancel,
+    )
+    .await
+}
+
+pub(crate) async fn evaluate_captured_choice(
+    machine: &mut AgentMachine,
+    environment: &NamespaceRuntimeEnvironment,
+    evaluation_environment: NamespaceRuntimeEnvironment,
+    request: ChoiceEvaluationRequest,
+    mut observation: Observation,
+    window: (Instant, Instant),
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let (started_at, expires) = window;
     let remaining = expires
         .saturating_duration_since(Instant::now())
         .as_millis() as u64;
     ensure!(remaining > 0, super::NamespaceEvaluationFailure::TimedOut);
-    let evaluation_environment = NamespaceRuntimeEnvironment::new(
-        shadow.root.clone(),
-        environment.agent_path(),
-        shadow.identity.profile.clone(),
-    );
     let operation = evaluation_environment
-        .allocate_choice_evaluation(shadow.identity.clone(), request.clone(), remaining, cancel)
+        .allocate_choice_evaluation(
+            observation.identity.callable.clone(),
+            request.clone(),
+            remaining,
+            cancel,
+        )
         .await?;
     observation.identity.operation_id = Some(operation.operation_id().into());
     let acknowledgement = bounded(

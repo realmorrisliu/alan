@@ -17,6 +17,7 @@ use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
 pub(crate) mod evaluation;
 pub(crate) mod input_queue;
+pub(crate) mod owner_work;
 mod recovery;
 mod runtime_control;
 mod transition_state;
@@ -64,6 +65,7 @@ pub(crate) struct AgentMachine {
     /// Latest persisted memory-flush attempt snapshot.
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
     pub(crate) evaluation_observation: Option<serde_json::Value>,
+    pub(crate) owner_work: Option<owner_work::Snapshot>,
     /// Whether the current automatic compaction cycle already attempted a silent memory flush.
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
@@ -88,6 +90,7 @@ impl AgentMachine {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             evaluation_observation: None,
+            owner_work: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         }
@@ -221,6 +224,7 @@ impl AgentMachine {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             evaluation_observation: None,
+            owner_work: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })

@@ -10,6 +10,7 @@ mod event;
 mod host_auth;
 mod memory;
 mod op;
+mod owner_work;
 mod process;
 mod reasoning;
 mod spawn;
@@ -61,4 +62,5 @@ pub use ui_surface::{
     UiNoticeSnapshot, UiPlanSnapshot, UiQueueSnapshot, UiThinkingSnapshot, UiThinkingState,
 };
 
+pub use owner_work::{OwnerCandidate, OwnerSourceRange, OwnerWorkControl, OwnerWorkRequest};
 pub use user_input::{InputIntent, UserInputRecord, parse_input_prefix};

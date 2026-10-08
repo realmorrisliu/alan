@@ -57,3 +57,34 @@ fn selector_envelope_rejects_malformed_unknown_fields_and_size_overflow() {
         .is_some()
     );
 }
+
+#[test]
+fn owner_work_control_retains_identity_and_rejects_invalid_descriptors() {
+    let id = uuid::Uuid::new_v4();
+    let control = serde_json::json!({"id":id,"request":{"version":1,
+        "question":"Who owns fids?","evaluator_profile":"eval",
+        "candidates":[{"id":"hostfs","sources":[{"path":"/mnt/source/lib.rs",
+            "start_line":1,"end_line":2}]}]}});
+    let submission = machine_control_submission(&format!("owner-work-v1 {control}")).unwrap();
+    assert_eq!(submission.id, id.to_string());
+    assert_eq!(
+        submission.intent,
+        alan_agent_protocol::InputIntent::ForceAgent
+    );
+    assert!(matches!(
+        submission.op,
+        Op::Input {
+            mode: InputMode::FollowUp,
+            ..
+        }
+    ));
+    for field in ["extra", "id", "request"] {
+        let mut malformed = control.clone();
+        malformed[field] = serde_json::json!(true);
+        assert!(machine_control_submission(&format!("owner-work-v1 {malformed}")).is_none());
+    }
+    assert!(
+        machine_control_submission(&format!("owner-work-v1 {}{control}", " ".repeat(64 * 1024)))
+            .is_none()
+    );
+}

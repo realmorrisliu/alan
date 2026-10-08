@@ -113,5 +113,9 @@ Local logs and the file-by-file source manifest are retained under
 The source manifest binds all crate files, Cargo manifests/lock and pinned toolchain.
 `just quality` passed: source-size and architecture ratchets, Clippy/rustdoc,
 Host source/current OpenSpec guards and standalone CLI installer/release checks.
-Pinned OpenSpec 1.4.1 strict validation passes all 65 current surfaces. Exact-head
-PR review/CI and merge remain pending; local results are not merge receipts.
+Pinned OpenSpec 1.4.1 strict validation passes all 65 current surfaces. PR #1038 reviewed head `bbc407c5e09635d43e865799c1889be9294f75a9` passed all
+16 required checks and independent review; automated review completed without
+findings. The user merged it at `3bee6689a3c56fc221041d41dd19b820f6ac2aed`
+on 2026-10-08. Post-merge CI 37733031263, CodeQL 37733031260 and Security
+37733031265 all passed on that merge SHA. This closes the bounded reliability
+stage; it does not close the broader unchecked parent matrices.

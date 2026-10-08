@@ -3,16 +3,20 @@
 ## Status and entry gate
 
 The user-authorized ordered continuation selects this one task after the
-reliability stage. PR #1038, head `bbc407c5`, has passed all 16 checks and
-completed automated review without findings, but remains unmerged. Preparing
-this entry and observing the existing runtime do not activate the new runtime
-or close tasks 1.1/1.4/2.2. Verify its merge, post-merge checks and source ancestry
-before implementation; record the delivered reliability receipt separately.
+reliability stage. PR #1038, reviewed head `bbc407c5`, merged as `3bee6689` on 2026-10-08.
+All 16 head checks passed and automated review completed without findings.
+Post-merge CI run 37733031263 passed on that merge SHA; CodeQL run 37733031260 and Security run 37733031265 also passed. This activates only the bounded runtime work
+below. The reliability receipt records those final checks. Bounded implementation
+and native acceptance are now recorded in [mixed-task-acceptance.md](mixed-task-acceptance.md);
+current-head CI, merge and canonical synchronization remain open.
 
 This entry belongs to `add-cognitive-model-routing`. It does not activate the
 rest of [next-planning.md](next-planning.md) or qualify input auto-routing.
 `--shadow-evaluator` retains its advice-only contract; it must not become a
-silent live-work selector. No new global router, executor or Kernel type is needed.
+silent live-work selector. Its explicitly captured Root evaluator is also available
+for an independently submitted `owner-work-v1` control; request profile names grant
+no Connection authority, and children inherit neither the capture nor shadow setup.
+No new global router, executor or Kernel type is needed.
 
 ## Task and immutable input
 
@@ -32,7 +36,7 @@ Candidates are `hostfs`, `kernel`, `service-manager`. Expected semantic owner is
 not the owner of invalidating old HostFS fids or dropping buffered writes.
 The literal deterministic control is `Which crate defines HostDirFs?`.
 
-Source commit: `bbc407c5e09635d43e865799c1889be9294f75a9` (PR #1038, not yet merged).
+Source commit: `bbc407c5e09635d43e865799c1889be9294f75a9` (reviewed PR #1038 source, now merged).
 Runtime source manifest: `33a8bc12e3b3b2fb84aa8bf79ccd5609db4eb2688f3822172442fcb8b3c704a8`.
 Native release binary: `73c324a62f499c908188c35af0e3e9ecc5ed2b74cd6be481274aa15db16d3979`.
 The following source bytes must be identical for each baseline and mixed run.
@@ -79,7 +83,7 @@ information is an observed baseline limit, not a runtime fix authorized by this
 entry. A later comparison supplying explicit evidence descriptors must supply
 identical descriptors to both baselines and freeze a distinct case before calls.
 
-## Mixed transition and result contract to implement
+## Mixed transition and result contract
 
 Use the existing Agent Machine and its accepted submission identity:
 
@@ -116,14 +120,15 @@ writing runtime code. Do not add a public endpoint simply to manage test evidenc
 
 Initial ceiling: one evaluator attempt, at most one additional generation
 fallback, 30,000 ms active-work deadline per attempt phase, no implicit retries.
-Keep each candidate evidence projection <=4,096 UTF-8 bytes, total task document
+Keep captured source content <=128 KiB, each candidate citation descriptor document
+<=4096 bytes, each candidate evidence projection <=4,096 UTF-8 bytes, total task document
 <=64 KiB, <=16 candidate IDs, and completed result <=8 KiB. Record truncation and
 keep exact full source references; omitted bytes cannot be invented as evidence.
 Human wait remains explicit and is recorded separately from active model latency;
 resume does not replenish spent model attempts or monetary allowance.
 
 Fallback monetary ceiling: 1,000 micro-USD from verified billing/quote provenance.
-If its maximum cost cannot be established before dispatch, fallback is budget
+Quote provenance is nonempty and <=1024 UTF-8 bytes. If its maximum cost cannot be established before dispatch, fallback is budget
 unavailable and waits/fails without calling generation. Unknown subscription cost
 is not zero. The existing generation baseline remains a diagnostic with unknown
 cost; it does not prove a hard monetary bound or provider benefit. Exercise a

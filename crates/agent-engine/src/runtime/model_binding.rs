@@ -31,6 +31,13 @@ pub struct CapturedCallable {
     pub config: crate::Config,
 }
 
+/// Connection-owned pre-dispatch billing bound; a client cannot supply this evidence.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GenerationCostBound {
+    pub cost_microusd: u64,
+    pub provenance: String,
+}
+
 /// Connection-owned authorized catalog, validation, publication and restoration.
 #[async_trait::async_trait]
 pub trait ConnectionAuthority: Send + Sync {
@@ -41,6 +48,19 @@ pub trait ConnectionAuthority: Send + Sync {
     async fn capture(&self, model: Option<&str>) -> Result<CapturedCallable>;
     async fn restore(&self, identity: &CallableIdentity) -> Result<CapturedCallable>;
     async fn catalog(&self) -> Result<serde_json::Value>;
+    /// Capture an independently reachable evaluator; never mutate generation binding.
+    async fn capture_evaluation(&self, _profile: &str) -> Result<CapturedCallable> {
+        anyhow::bail!("evaluation authority unavailable")
+    }
+    /// Verified maximum total bill for this exact bounded request, including reasoning.
+    /// None means unknown; callers must not infer a quote from token usage or subscription.
+    async fn quote_generation(
+        &self,
+        _identity: &CallableIdentity,
+        _request: &alan_llm::GenerationRequest,
+    ) -> Result<Option<GenerationCostBound>> {
+        Ok(None)
+    }
 }
 
 #[derive(Default)]

@@ -57,6 +57,7 @@ impl State {
                 "tape" => Ok(Node::Tape),
                 "status" => Ok(Node::Status),
                 "evaluation" => Ok(Node::Evaluation),
+                "work" => Ok(Node::Work),
                 "ctl" => Ok(Node::MachineCtl),
                 "ui" => Ok(Node::UiDir),
                 "checkpoints" => Ok(Node::CheckpointsDir),
@@ -120,7 +121,7 @@ impl State {
             Node::Root => b"io\nmachine\nevents\nrequests\nactions\ncontext\nchildren".to_vec(),
             Node::ContextDir | Node::ChildrenDir => Vec::new(),
             Node::IoDir => b"input\noutput\nevents".to_vec(),
-            Node::MachineDir => b"tape\nstatus\nevaluation\nctl\nui\ncheckpoints".to_vec(),
+            Node::MachineDir => b"tape\nstatus\nevaluation\nwork\nctl\nui\ncheckpoints".to_vec(),
             Node::UiDir => {
                 b"activity\nplan\nthinking\nnotice\nevents\nqueue\nmodels\nskills".to_vec()
             }
@@ -128,6 +129,7 @@ impl State {
             Node::CurrentCheckpoint => format!("{}\n", self.tape_root).into_bytes(),
             Node::Status => self.status.clone().into_bytes(),
             Node::Evaluation => self.evaluation.clone(),
+            Node::Work => self.work.clone(),
             Node::UiSkills => self.ui_skills.clone().into_bytes(),
             Node::UiModels => self.ui_models.clone().into_bytes(),
             Node::UiQueue => self.ui_queue.clone().into_bytes(),
@@ -351,6 +353,7 @@ pub(super) fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::UiEvents => (FileKind::Stream, "machine/ui/events".into()),
         Node::Status => (FileKind::File, "machine/status".into()),
         Node::Evaluation => (FileKind::File, "machine/evaluation".into()),
+        Node::Work => (FileKind::File, "machine/work".into()),
         Node::MachineCtl => (FileKind::File, "machine/ctl".into()),
         Node::UiSkills => (FileKind::File, "machine/ui/skills".into()),
         Node::UiModels => (FileKind::File, "machine/ui/models".into()),

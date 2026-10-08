@@ -763,6 +763,13 @@ pub(crate) fn valid_project_directory(path: &str) -> bool {
 mod selector_tests;
 
 fn machine_control_submission(command: &str) -> Option<Submission> {
+    if let Some(json) = command.strip_prefix("owner-work-v1 ") {
+        if command.len() > 64 * 1024 {
+            return None;
+        }
+        let control: alan_agent_protocol::OwnerWorkControl = serde_json::from_str(json).ok()?;
+        return control.into_submission().ok();
+    }
     if let Some(model) = command.strip_prefix("select-model ") {
         let (id, model) = model.split_once(' ')?;
         return Some(Submission {

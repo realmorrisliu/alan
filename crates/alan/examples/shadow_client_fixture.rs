@@ -232,6 +232,9 @@ async fn main() -> Result<()> {
         });
         let redirected = surface == EvaluationSurface::Redirected;
         let client_result = match surface {
+            EvaluationSurface::MachineControl => {
+                anyhow::bail!("this fixture accepts terminal input surfaces only")
+            }
             EvaluationSurface::Interactive => {
                 alan_tui::run_file_backed(alan_tui::FileBackedRunConfig::new(root, "/agent/root"))
                     .await

@@ -412,6 +412,14 @@ impl AgentMachine {
         machine.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
         machine.recover_input_queue(&event_records)?;
         machine.evaluation_observation = super::evaluation::recover(&event_records)?;
+        machine.owner_work = super::owner_work::recover(&event_records)?;
+        if let Some(work) = machine.owner_work.clone()
+            && let super::owner_work::Outcome::Waiting { request_id, .. } = &work.outcome
+        {
+            machine.accept_submission(work.work_id.clone());
+            machine.set_structured_input_for_request(request_id, work.waiting_request());
+            machine.set_turn_activity(super::TurnActivityState::Paused);
+        }
         machine.responses_continuation =
             Self::responses_continuation_from_event_records(&event_records);
         for pending in Self::pending_host_mounts_from_event_records(&event_records) {

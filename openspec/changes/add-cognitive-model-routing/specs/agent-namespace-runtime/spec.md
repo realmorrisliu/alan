@@ -43,3 +43,79 @@ The Machine SHALL persist captured admission and evaluation identity before comm
 - **AND** request responses correlate by owning rollout and request identity across repeated deliveries and recovery, while a new rollout may reuse a request id for a distinct response
 - **AND** this evidence does not grant response acceptance, settle ordinary input or dispatch effects
 - **AND** unknown/stale response IDs and Host Mount Service controls do not reserve bypass identity
+
+
+### Requirement: Explicit source-owner work uses ordinary input ownership
+The bounded source-owner Machine program SHALL be selected only by an explicit
+version-1 request. The `owner-work-v1 ` Machine control SHALL carry an `id` UUID
+and `request`, containing exactly `version`, `question`, `evaluator_profile`
+and `candidates`. Each candidate SHALL contain an `id` and `sources`; each
+source SHALL contain a namespace `path`, `start_line` and `end_line`. The control
+SHALL become a ForceAgent FollowUp submission in the existing durable input queue.
+Ordinary text, JSON-looking prose and shadow advice SHALL NOT select this program.
+The existing `agent_work` executable SHALL submit that control with its
+`select_owner` JSON action and inspect the projection with `result`.
+
+The Machine SHALL validate version 1, nonempty question of at most 8192 UTF-8
+bytes, at most 16 unique component IDs, one to eight source ranges per candidate,
+a control document of at most 64 KiB, absolute normalized `/mnt/` namespace paths
+of at most 4096 bytes, and positive inclusive ranges of at most 1000 lines.
+Source reads SHALL reuse ordinary Tool resolution, policy and Process execution;
+a missing or revoked descriptor SHALL remain unavailable. Captured source content SHALL total at most 128 KiB. Each candidate's serialized
+citation descriptors SHALL occupy at most 4096 bytes. Candidate projection
+SHALL be limited to 4096 UTF-8 bytes with explicit truncation; completion SHALL
+retain the full range digest and never cite absent lines.
+
+#### Scenario: An explicit request joins the existing queue
+- **WHEN** an authorized client submits a valid source-owner control
+- **THEN** its UUID and typed payload follow ordinary ordered admission and recovery
+- **AND** no renderer, global router or new Kernel Process kind executes the work
+
+#### Scenario: Prose resembles a work control
+- **WHEN** ordinary input contains JSON resembling an owner request
+- **THEN** it remains ordinary Agent input and cannot bypass explicit admission
+
+#### Scenario: Evidence authority is unavailable
+- **WHEN** a candidate range cannot be read under the Agent's current authority
+- **THEN** the work records unavailable failure without an evaluator or fallback call
+- **AND** supplied paths and model confidence grant no authority
+
+### Requirement: Source-owner work advances with bounded durable decisions
+The Machine SHALL acknowledge a work start before source dispatch and each model
+start before model commit. Exact unique line-oriented public Rust struct, enum or trait declaration name
+ownership in the supplied evidence MAY complete the literal `Which crate defines
+NAME?` question without a model call. Other questions SHALL use at most one
+`choice.v1` evaluation through a separately captured Connection explicitly granted
+at Process launch; a request's profile name SHALL NOT acquire Connection authority.
+The current Root host selection MAY share its explicitly captured shadow evaluator
+with this explicit program; shadow advice itself SHALL remain unable to select work.
+Children SHALL receive no implicit evaluator grant. Selection SHALL
+be validated against captured candidates and retained source ranges.
+
+Only NoMatch MAY enter at most one generation fallback, with a 30,000 ms phase
+deadline and a verified pre-dispatch maximum cost of 1000 micro-USD or less.
+Quote provenance SHALL be nonempty and occupy at most 1024 UTF-8 bytes.
+Unknown billing SHALL prevent fallback dispatch. Expiry SHALL request abort through
+existing generation control; an uncertain terminal/abort result SHALL remain
+unsettled for interrupted recovery without another dispatch. Other evaluation failures SHALL
+remain typed failures. Unresolved choice SHALL wait through the existing owned
+StructuredInput request. An explicit valid candidate response SHALL complete the
+same work after current source authority and digest validation; it SHALL NOT
+repeat evaluation or replenish attempts. Cancellation SHALL prevent further
+model or effect dispatch. Recovery SHALL retain terminal evidence and owned waits;
+unsettled active work SHALL be interrupted rather than retried. Unknown Tool
+effects SHALL retain the existing reconciliation contract.
+
+#### Scenario: Structured work waits and resumes
+- **WHEN** NoMatch cannot enter a budget-qualified generation fallback
+- **THEN** a durable wait references the existing StructuredInput request
+- **AND** an accepted response resumes that work identity with its spent attempt budget
+
+#### Scenario: A work start lacks a terminal acknowledgement
+- **WHEN** explicit recovery finds active work without an acknowledged result
+- **THEN** it projects interrupted work without repeating source or model dispatch
+
+#### Scenario: A selected member completes
+- **WHEN** the selection names a captured candidate with validated retained evidence
+- **THEN** work completes with that owner and source citations without final prose generation
+- **AND** the same Agent Process may accept a later task

@@ -478,6 +478,22 @@ fn spawn_with_prepared_runtime_environment(
             let _ = ready_tx.send(Err(format!("publish Machine evaluation: {error:#}")));
             return;
         }
+        let work = match machine
+            .owner_work
+            .as_ref()
+            .map(|w| w.projection())
+            .transpose()
+        {
+            Ok(work) => work,
+            Err(error) => {
+                let _ = ready_tx.send(Err(format!("invalid Machine work: {error:#}")));
+                return;
+            }
+        };
+        if let Err(error) = environment.publish_work(work).await {
+            let _ = ready_tx.send(Err(format!("publish Machine work: {error:#}")));
+            return;
+        }
         let _ = runtime_recorder.set(machine.recorder());
         let environment = environment.with_action_recorder(machine.recorder());
         let completed_directory_ids = match recovery_rollout_path.as_ref() {
@@ -503,7 +519,8 @@ fn spawn_with_prepared_runtime_environment(
             .input_queue()
             .lock()
             .expect("input queue poisoned")
-            .paused;
+            .paused
+            || state.machine.has_pending_interaction();
         match super::ui_surfaces::initialize(
             &state.agent_files(),
             queue_paused,
