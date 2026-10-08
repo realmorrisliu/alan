@@ -38,4 +38,4 @@ concrete live-catalog gap, phase 3 the requested bounded rendering improvements,
 and phase 4 shadow evaluation under its existing owners. No stage enables
 unqualified automatic command execution.
 
-Current delivery refresh: see [exact merged heads and remaining boundaries](next-delivery.md#current-delivery-reconciliation--2026-10-07). The original inventory baseline remains unchanged.
+Current delivery refresh: see [exact merged heads and remaining boundaries](next-delivery.md#current-delivery-reconciliation--2026-10-08). The original inventory baseline remains unchanged.
