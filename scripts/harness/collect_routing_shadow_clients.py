@@ -49,13 +49,12 @@ def collect(binary, case, surface, report, baseline="typed"):
                         process.stdin.close()
                     if report.exists() and admission_elapsed_ms is None:
                         admission_elapsed_ms = (time.monotonic() - admission_started) * 1000
+                        report.with_suffix(".timing-ack").write_bytes(b"recorded")
                     time.sleep(.01)
                 if process.poll() is None:
                     raise TimeoutError(f"native client did not settle: {report.name}")
                 if process.returncode:
                     raise RuntimeError(f"fixture failed: {report.name}; inspect terminal artifact")
-                if report.exists() and admission_elapsed_ms is None and admission_started is not None:
-                    admission_elapsed_ms = (time.monotonic() - admission_started) * 1000
             finally:
                 if process.poll() is None:
                     process.kill()

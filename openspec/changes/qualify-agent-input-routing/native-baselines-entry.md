@@ -35,7 +35,8 @@ command execution. Neither classification nor prefix advice grants authority.
 The collector uses one monotonic clock per attempt. Redirected input waits for a
 Host-ready marker before writing stdin and EOF; interactive input waits for the
 initialized native TUI before pasting. It stops timing when the correlated Machine
-completion report is observed, before requesting terminal exit. This includes
+completion report is observed, before requesting terminal exit. Redirected fixtures wait for a timing acknowledgement
+after writing their completion report, so an after-exit timestamp is not accepted. This includes
 client parsing, queue admission, Machine processing, durable evidence, fixed mock
 completion and polling overhead. Host boot, initial TUI rendering and Process exit
 are excluded. Full-window latency is a conservative routing gate; model-only
@@ -44,8 +45,11 @@ jitter; do not turn negative differences into free latency or compare old warm
 component timing with this window.
 
 Generation is bounded to 25 seconds, then existing abort and descriptor close
-operations each have one-second bounds, inside the Machine's 30-second choice
-window. No implicit retry is permitted; a receipt already attempted is not reused.
+operations and terminal-status observation each have one-second bounds, inside the Machine's 30-second choice
+window. A fixture-owned task retains the nested operation; dropping the outer
+choice signals cancellation, and Host teardown joins its bounded abort/close and
+final receipt work before shutting down the captured generation Connection.
+No implicit retry is permitted; a receipt already attempted is not reused.
 Missing usage or per-call subscription billing remains unknown. Public TypeSafe
 list pricing can estimate recorded input tokens, but is not an invoice.
 
@@ -67,3 +71,20 @@ native result, cost provenance, budget gate or parity receipt blocks qualificati
 
 Local test/build/smoke evidence precedes candidate freeze. Independent review and
 current-head CI remain delivery gates. No automatic routing activation is authorized.
+
+## Pre-freeze review corrections
+
+Independent review of `d67f9235` found two harness gaps: an after-exit redirected
+timing fallback and a dropped outer choice future bypassing nested generation
+cleanup. The correction removes that fallback and requires a completion timing
+handshake before redirected shutdown, including the unsupported form path. The
+collector regression rejects an already-exited report as matched timing. Native
+prefix smoke passes on interactive and redirected clients with the handshake.
+
+The fixture now owns a single bounded generation task. Dropping the outer future
+signals that task; fixture shutdown joins cleanup before closing the captured
+Connection host. A real llmfs operation with a waiting fake provider verifies
+outer-future drop after generation commit and event-tail creation: abort is
+acknowledged, the tail is closed, status is aborted, the failure receipt is
+retained, billing stays unknown and provider dispatch count stays one. This is
+lifecycle fixture evidence, not a real-model correctness or price measurement.

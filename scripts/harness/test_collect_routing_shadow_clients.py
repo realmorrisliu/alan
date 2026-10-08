@@ -58,12 +58,27 @@ class CollectionEvidenceTest(unittest.TestCase):
                 timing = json.loads(report.with_suffix(".timing.json").read_text())
                 self.assertGreaterEqual(timing["elapsed_ms"], 0)
                 self.assertEqual(timing["clock"], "time.monotonic")
+                self.assertEqual(report.with_suffix(".timing-ack").read_bytes(), b"recorded")
                 with self.assertRaises(ValueError):
                     collector.collect(Path("unused"), {"input": "pwd"}, "redirected", report)
                 data["request"]["status"] = "answered"
                 report.write_text(json.dumps(data))
                 with self.assertRaises(ValueError):
                     collector.collect(Path("unused"), case, "redirected", report)
+
+    def test_after_exit_report_cannot_supply_matched_admission_timing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = Path(temp) / "case.json"
+            report.write_text("{}")
+            report.with_suffix(".ready").write_bytes(b"ready")
+            process = MagicMock()
+            process.poll.return_value = 0
+            process.returncode = 0
+            process.stdin = io.BytesIO()
+            with patch.object(collector.subprocess, "Popen", return_value=process):
+                with self.assertRaisesRegex(ValueError, "missing native admission timing"):
+                    collector.collect(Path("unused"), {"input":"pwd"}, "redirected", report)
+            self.assertFalse(report.with_suffix(".timing-ack").exists())
 
     def test_failure_retains_attempt_without_retry(self):
         with tempfile.TemporaryDirectory() as temp:

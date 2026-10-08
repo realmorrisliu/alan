@@ -82,6 +82,9 @@ pub(super) async fn generate(
         .write(&format!("{operation}/data"), &serde_json::to_vec(body)?)
         .await?;
     attempt.tail = Some(shell.tail(&format!("{operation}/events")).await?);
+    let mut receipt: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    receipt["events_tail_opened"] = json!(true);
+    std::fs::write(path, serde_json::to_vec_pretty(&receipt)?)?;
     let mut parsed = 0;
     loop {
         let bytes = attempt.tail.as_mut().unwrap().read(4096).await?;
@@ -197,6 +200,17 @@ pub(super) async fn settle_attempt(
             tokio::time::timeout(Duration::from_secs(1), root.call(Request::Clunk { fid })).await,
             Ok(Ok(_))
         ));
+    }
+    if let Some(operation) = &attempt.operation {
+        let status = tokio::time::timeout(
+            Duration::from_secs(1),
+            shell.cat(&format!("{operation}/status")),
+        )
+        .await;
+        receipt["operation_status_after_cleanup"] = match status {
+            Ok(Ok(bytes)) => serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            _ => Value::Null,
+        };
     }
     receipt
 }

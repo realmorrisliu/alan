@@ -35,6 +35,7 @@ dependencies = [
  "alan-auth",
  "alan-kernel",
  "alan-llm",
+ "alan-llmfs",
  "alan-os-host",
  "alan-service-manager",
  "alan-shell",

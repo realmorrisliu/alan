@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 struct Factory {
     generation: MockLlmProvider,
     baseline: Option<(InProcessTransport, String, PathBuf)>,
+    generation_job: native::GenerationJob,
 }
 impl std::fmt::Debug for Factory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -43,6 +44,7 @@ impl LlmClientFactory for Factory {
                     root: root.clone(),
                     connection_path: connection_path.clone(),
                     receipt: receipt.clone(),
+                    job: self.generation_job.clone(),
                 }))
             }
             Some("evaluation") => Ok(LlmClient::new(TypesafeEvaluationClient::new(
@@ -190,9 +192,11 @@ async fn main() -> Result<()> {
     );
     config.process.agent_config.core_config.memory.enabled = false;
     config.connection_store = Some(ConnectionStoreBindings::new(metadata)?);
+    let generation_job = native::GenerationJob::default();
     config.llm_factory = Arc::new(Factory {
         generation,
         baseline,
+        generation_job: generation_job.clone(),
     });
     config.input_shadow = (!prefix_baseline).then_some(InputShadowSelection {
         profile: "evaluation".into(),
@@ -373,21 +377,32 @@ async fn main() -> Result<()> {
             let request = pending_request(&shell)
                 .await?
                 .context("Machine did not create a pending request")?;
-            std::fs::write(
+            write_report(
                 &report,
-                serde_json::to_vec_pretty(&json!({
+                &json!({
                     "version":1,"unsupported":true,"client_error":"needs interactive input",
                     "request":request,"fixture_source_sha256":source_hash(),"generation_native_sha256":helper_hash(include_bytes!("routing_generation/native.rs")),"generation_operation_sha256":helper_hash(include_bytes!("routing_generation/operation.rs"))
-                }))?,
+                }),
             )?;
+            wait_for_timing_ack(&report).await?;
             return Ok(());
         }
         let observed = observer.await?;
         client_result?;
-        observed
+        observed?;
+        if redirected { wait_for_timing_ack(&report).await?; }
+        Ok(())
     }
     .await;
     let shutdown = manager.shutdown().await;
+    let job = generation_job.lock().unwrap().take();
+    let job_result = if let Some(job) = job {
+        job.await
+            .context("generation cleanup task failed")
+            .and_then(|result| result)
+    } else {
+        Ok(())
+    };
     let baseline_shutdown = if let Some(manager) = baseline_manager {
         manager.shutdown().await
     } else {
@@ -395,6 +410,7 @@ async fn main() -> Result<()> {
     };
     result?;
     shutdown?;
+    job_result?;
     baseline_shutdown
 }
 
@@ -419,8 +435,12 @@ fn save_report(
     let document = json!({"version":1,"observation":observation,"completion":completion,
         "generation":"fixed_mock","host_tools":[],"host_project_mounted":false,
         "fixture_source_sha256":source_hash(),"generation_native_sha256":helper_hash(include_bytes!("routing_generation/native.rs")),"generation_operation_sha256":helper_hash(include_bytes!("routing_generation/operation.rs")),"response_request":response,"prefix_record":prefix_record});
+    write_report(report, &document)
+}
+
+fn write_report(report: &std::path::Path, document: &Value) -> Result<()> {
     let staged = report.with_extension("partial");
-    std::fs::write(&staged, serde_json::to_vec_pretty(&document)?)?;
+    std::fs::write(&staged, serde_json::to_vec_pretty(document)?)?;
     std::fs::rename(staged, report)?;
     Ok(())
 }
@@ -472,4 +492,14 @@ mod tests {
         framed.extend(b"0\n");
         assert!(native_prefix_record(&framed).is_err());
     }
+}
+
+async fn wait_for_timing_ack(report: &std::path::Path) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !report.with_extension("timing-ack").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("collector did not acknowledge completion timing")
 }
