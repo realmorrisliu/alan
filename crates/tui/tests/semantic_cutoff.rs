@@ -207,8 +207,8 @@ fn long_word_wrapped_prose_keeps_byte_and_atom_cursors_aligned() {
 fn late_fence_close_keeps_uncommitted_literal_code() {
     let opts = RenderOpts::new(40, false);
     let mut cell = HistoryCell::Assistant(format!("```diff\n+{}", "a".repeat(77)));
-    assert_eq!(cell.render_lines(opts)[1], format!("+{}", "a".repeat(39)));
-    cell.trim_rendered_prefix(opts, 2);
+    assert_eq!(cell.render_lines(opts)[2], format!("+{}", "a".repeat(39)));
+    cell.trim_rendered_prefix(opts, 3);
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("\n``");
     }
@@ -221,7 +221,7 @@ fn late_fence_close_keeps_uncommitted_literal_code() {
     }
     assert_eq!(
         cell.render_lines(opts).concat(),
-        format!("{}```done", "a".repeat(38))
+        format!("{}╰──done", "a".repeat(38))
     );
 }
 
@@ -229,23 +229,23 @@ fn late_fence_close_keeps_uncommitted_literal_code() {
 fn partial_tab_and_unicode_cluster_have_stable_content_slots() {
     let opts = RenderOpts::new(40, false);
     let mut cell = HistoryCell::Assistant(format!("```\n{}\t界e\u{301}", "a".repeat(38)));
-    cell.trim_rendered_prefix(opts, 2);
+    cell.trim_rendered_prefix(opts, 3);
     assert_eq!(cell.render_lines(opts).concat(), "  界e\u{301}");
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("\n```\n**ok**");
     }
     assert_eq!(
         cell.render_lines(RenderOpts::new(60, false)).concat(),
-        "  界e\u{301}```ok"
+        "  界e\u{301}╰──ok"
     );
 }
 #[test]
 fn late_emphasis_close_preserves_uncommitted_content() {
     let mut cell = HistoryCell::Assistant(format!("**{}", "a".repeat(78)));
     let opts = RenderOpts::new(40, false);
-    let committed = cell.render_lines(opts)[0].clone();
+    let committed = cell.render_lines(opts)[1].clone();
     assert_eq!(committed, format!("**{}", "a".repeat(38)));
-    assert!(cell.trim_rendered_prefix(opts, 1));
+    assert!(cell.trim_rendered_prefix(opts, 2));
     if let HistoryCell::AssistantTail { text, .. } = &mut cell {
         text.push_str("**");
     } else {
@@ -294,8 +294,8 @@ fn markdown_intraword_underscores_preserve_identifiers_and_source_cut() {
             escaped_text.contains("_escaped_") && escaped_text.contains("name_with_underscores")
         );
         let before = cell.render_styled_lines(opts);
-        cell.trim_rendered_prefix(opts, 1);
-        assert_eq!(cell.render_styled_lines(opts), before[1..]);
+        cell.trim_rendered_prefix(opts, 2);
+        assert_eq!(cell.render_styled_lines(opts), before[2..]);
         let HistoryCell::AssistantTail { text, committed } = &cell else {
             panic!()
         };

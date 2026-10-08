@@ -177,4 +177,108 @@ fn lifetime_active_admission_is_not_execution() {
     assert_eq!(app.activity_label(), Some("waiting for input"));
     assert!(!app.notice.as_ref().unwrap().contains("running"));
     assert!(app.notice.as_ref().unwrap().contains("active"));
+    model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    for state in [UiActivityState::Idle, UiActivityState::Paused] {
+        app.activity.state = state;
+        for width in 16..=80 {
+            let line = app.context_line(width);
+            let text = line.to_string();
+            assert!(line.width() <= width, "{width}: {text}");
+            assert!(
+                text.split_whitespace()
+                    .any(|word| matches!(word, "active" | "act")),
+                "{width}: {text}"
+            );
+            assert!(!text.contains("working"), "{width}: {text}");
+        }
+    }
+}
+
+#[test]
+fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
+    let mut app = FileBackedApp::new("/agent/root".into());
+    model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    for (queue, cues) in [
+        (
+            UiQueueSnapshot::default(),
+            &["queue unknown", "q ?", "q?"][..],
+        ),
+        (
+            UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                uncertain_submission_ids: vec!["uncertain".into()],
+                ..Default::default()
+            },
+            &["uncertain", "unc"],
+        ),
+        (
+            UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                deferred: true,
+                ..Default::default()
+            },
+            &["deferred", "def"],
+        ),
+        (
+            UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                paused: true,
+                ..Default::default()
+            },
+            &["paused", "hold"],
+        ),
+        (
+            UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                active_submission_ids: vec!["active".into()],
+                ..Default::default()
+            },
+            &["active", "act"],
+        ),
+        (
+            UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                pending_submission_ids: vec!["pending".into()],
+                ..Default::default()
+            },
+            &["queued", "q 1", "q+"],
+        ),
+    ] {
+        assert!(queue.is_valid());
+        app.queue.apply("/agent/root", Some(queue));
+        for (state, failed, states) in [
+            (UiActivityState::Running, false, &["working", "run"][..]),
+            (UiActivityState::Idle, false, &["ready"]),
+            (UiActivityState::Paused, false, &["paused"]),
+            (UiActivityState::Idle, true, &["failed", "fail"]),
+        ] {
+            app.activity.state = state;
+            app.last_input_failed = failed;
+            for width in 16..=80 {
+                let line = app.context_line(width);
+                let text = line.to_string();
+                assert!(line.width() <= width, "{width}: {text}");
+                assert!(
+                    states
+                        .iter()
+                        .any(|s| text.split_whitespace().any(|word| word == *s)),
+                    "{width}: {text}"
+                );
+                assert!(cues.iter().any(|cue| text.contains(cue)), "{width}: {text}");
+                if state != UiActivityState::Running {
+                    assert!(
+                        !text
+                            .split_whitespace()
+                            .any(|word| matches!(word, "working" | "run")),
+                        "{width}: {text}"
+                    );
+                }
+            }
+        }
+    }
 }

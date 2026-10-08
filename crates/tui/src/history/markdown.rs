@@ -15,6 +15,10 @@ struct Atom {
 
 pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>, Key)> {
     let mut rows = Vec::new();
+    // This source-independent row has its own stable cut before the first byte.
+    if !text.is_empty() && cut < (0, 1) {
+        rows.push((Line::default(), (0, 1)));
+    }
     let mut fence: Option<(char, usize, bool)> = None;
     let mut offset = 0;
     for raw in text.split('\n') {
@@ -40,9 +44,7 @@ pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>,
         if let Some((open, length, diff)) = fence {
             if marker == open && count >= length && trimmed[count..].trim().is_empty() {
                 fence = None;
-                for atom in &mut atoms {
-                    atom.style = metadata_style();
-                }
+                decorate_fence(&mut atoms, source[..leading].chars().count(), count, false);
                 append_rows(&mut rows, atoms, width, cut, row_end, false);
                 continue;
             }
@@ -61,9 +63,7 @@ pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>,
         }
         if matches!(marker, '`' | '~') && count >= 3 {
             fence = Some((marker, count, trimmed[count..].trim() == "diff"));
-            for atom in &mut atoms {
-                atom.style = metadata_style();
-            }
+            decorate_fence(&mut atoms, source[..leading].chars().count(), count, true);
             append_rows(&mut rows, atoms, width, cut, row_end, false);
             continue;
         }
@@ -98,6 +98,23 @@ pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>,
         append_rows(&mut rows, prefix, width, cut, row_end, plain);
     }
     rows
+}
+
+fn decorate_fence(atoms: &mut [Atom], leading: usize, count: usize, opening: bool) {
+    for (index, atom) in atoms.iter_mut().enumerate() {
+        atom.style = metadata_style();
+        if index >= leading && index < leading + count {
+            atom.ch = if index == leading {
+                if opening { '╭' } else { '╰' }
+            } else if opening && index == leading + count - 1 {
+                ' '
+            } else {
+                '─'
+            };
+        } else if index >= leading + count && opening {
+            atom.style = Style::default().fg(Color::Cyan);
+        }
+    }
 }
 
 fn inline(text: &str, atoms: &[Atom], style: Style, output: &mut Vec<Atom>) {

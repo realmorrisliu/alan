@@ -42,7 +42,7 @@ fn accessibility_native_policy_covers_live_details_and_committed_output() {
         }
         let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 12));
         render_scrollback_with_policy(&mut buffer, app.styled_history_lines(80), policy);
-        assert_eq!(buffer.cell((0, 0)).unwrap().symbol(), "h");
+        assert_eq!(buffer.cell((0, 1)).unwrap().symbol(), "h");
         for cell in &buffer.content {
             assert_eq!(cell.fg, Color::Reset, "{term} scrollback");
             assert_eq!(cell.bg, Color::Reset);
@@ -116,9 +116,9 @@ fn accessibility_ordinary_code_keeps_literal_projection_and_source_slot_cutoffs(
     let mut cell = HistoryCell::Assistant(source.into());
     let opts = crate::history::RenderOpts::new(16, false);
     let before = cell.render_styled_lines(opts);
-    assert_eq!(before.first().unwrap().to_string(), "prose");
+    assert_eq!(before[1].to_string(), "prose");
     assert_eq!(before.last().unwrap().to_string(), "prose");
-    let code = &before[2..before.len() - 2];
+    let code = &before[3..before.len() - 2];
     let literal = code.iter().map(ToString::to_string).collect::<String>();
     assert_eq!(literal, "    界🙂 **literal** `tick`    tail");
     assert!(
@@ -128,20 +128,19 @@ fn accessibility_ordinary_code_keeps_literal_projection_and_source_slot_cutoffs(
         "fenced body must retain terminal-default contrast without wholesale underline"
     );
     assert!(
-        before[0]
+        before[1]
             .spans
             .iter()
             .all(|span| !span.style.add_modifier.contains(Modifier::UNDERLINED))
     );
-    for boundary in [&before[1], &before[before.len() - 2]] {
-        assert!(
-            boundary.spans.iter().all(|span| {
-                span.style.fg.is_none() && span.style.add_modifier == Modifier::DIM
-            })
-        );
+    for boundary in [&before[2], &before[before.len() - 2]] {
+        assert!(boundary.spans.iter().all(|span| {
+            (span.style.fg.is_none() && span.style.add_modifier == Modifier::DIM)
+                || span.style.fg == Some(Color::Cyan)
+        }));
     }
-    assert!(cell.trim_rendered_prefix(opts, 3));
-    assert_eq!(cell.render_styled_lines(opts), before[3..]);
+    assert!(cell.trim_rendered_prefix(opts, 4));
+    assert_eq!(cell.render_styled_lines(opts), before[4..]);
     // The committed projection must not return after resize or source hydration.
     cell.replace_assistant_source(source.into());
     let resized = cell.render_styled_lines(crate::history::RenderOpts::new(40, false));

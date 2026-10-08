@@ -12,16 +12,9 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(
-            buffer.cell((0, 0)).unwrap().symbol(),
+            buffer.cell((0, 1)).unwrap().symbol(),
             "标",
             "heading marker at {width}"
-        );
-        assert!(
-            buffer
-                .cell((0, 0))
-                .unwrap()
-                .modifier
-                .contains(Modifier::BOLD)
         );
         assert!(
             buffer
@@ -32,17 +25,24 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
         );
         assert!(
             buffer
-                .cell((11, 1))
+                .cell((0, 2))
+                .unwrap()
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            buffer
+                .cell((11, 2))
                 .unwrap()
                 .modifier
                 .contains(Modifier::ITALIC)
         );
-        assert_eq!(buffer.cell((0, 2)).unwrap().symbol(), "•");
-        assert_eq!(buffer.cell((4, 4)).unwrap().symbol(), "l");
-        assert_eq!(buffer.cell((0, 7)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((0, 7)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((0, 8)).unwrap().fg, Color::Red);
-        for row in [10, 11, 12] {
+        assert_eq!(buffer.cell((0, 3)).unwrap().symbol(), "•");
+        assert_eq!(buffer.cell((4, 5)).unwrap().symbol(), "l");
+        assert_eq!(buffer.cell((0, 8)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((0, 8)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((0, 9)).unwrap().fg, Color::Red);
+        for row in [11, 12, 13] {
             assert_eq!(
                 buffer.cell((0, row)).unwrap().fg,
                 Color::Reset,
@@ -271,7 +271,7 @@ fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
 
-    assert_eq!(drained.len(), 2);
+    assert_eq!(drained.len(), 5);
     assert_eq!(retained.len(), 1);
     assert_eq!(terminal.backend().cursor_position().y, 3);
     let prompt = (0..8)
@@ -370,12 +370,13 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
     };
 
     assert_eq!(line(0), ": pwd");
-    assert_eq!(line(1), "/workspace/alan");
-    assert!(line(2).starts_with("no project · model unknown · ready"));
-    assert_eq!(line(3), ":");
+    assert_eq!(line(1), "");
+    assert_eq!(line(2), "/workspace/alan");
+    assert!(line(3).starts_with("no project · model unknown · ready"));
+    assert_eq!(line(4), ":");
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(2, 3)
+        ratatui::layout::Position::new(2, 4)
     );
 }
 
@@ -432,6 +433,63 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             .collect::<String>();
         assert!(text.contains("next gpt-6-luna"), "{text}");
         assert!(text.ends_with(status), "{text}");
+    }
+    for queue in [
+        alan_agent_protocol::UiQueueSnapshot::default(),
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            uncertain_submission_ids: vec!["unknown".into()],
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            deferred: true,
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: true,
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            active_submission_ids: vec!["active".into()],
+            ..Default::default()
+        },
+        alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            pending_submission_ids: vec!["pending".into()],
+            ..Default::default()
+        },
+    ] {
+        assert!(queue.is_valid());
+        app.queue.apply("/agent/root", Some(queue));
+        for model in ["gpt-6-luna", "claude-sonnet-4-20250514"] {
+            crate::file_backed::model_tests::install_header_model(&mut app, model);
+            for selecting in [false, true] {
+                app.project_selection = selecting.then_some(ProjectAccess::ReadOnly);
+                for width in 16..=80 {
+                    let line = app.context_line(width);
+                    let text = line.to_string();
+                    assert!(line.width() <= width, "{width}: {text}");
+                    let action = match (selecting, width < 48) {
+                        (true, true) => "selecting",
+                        (true, false) => "selecting project",
+                        (false, true) => "approval",
+                        (false, false) => "waiting for approval",
+                    };
+                    assert!(text.contains(action), "{width}: {text}");
+                    if width >= model.len() + 3 + action.len() {
+                        assert!(text.contains(model), "{width}: {text}");
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -549,14 +607,14 @@ fn completion_candidates_render_below_the_inline_prompt_without_entering_history
             .to_string()
     };
 
-    assert_eq!(line(3), ": /");
-    assert!(line(4).contains("/project"));
-    assert!(line(5).contains("/compact"));
-    assert!(line(7).contains("/continue"));
-    assert!(line(8).contains("/discard"));
-    assert!(line(9).contains("/clear"));
+    assert_eq!(line(4), ": /");
+    assert!(line(5).contains("/project"));
+    assert!(line(6).contains("/compact"));
+    assert!(line(8).contains("/continue"));
+    assert!(line(9).contains("/discard"));
+    assert!(line(10).contains("/clear"));
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
-    assert_eq!(inline_viewport_height(&app, 80, 12), 10);
+    assert_eq!(inline_viewport_height(&app, 80, 12), 11);
 }
 
 #[test]
@@ -811,5 +869,84 @@ fn compact_header_keeps_project_access_model_and_effort_at_pane_width() {
                 assert!(text.contains("medium"), "{width}: {text}");
             }
         }
+    }
+}
+
+#[test]
+fn narrow_prompt_prioritizes_model_and_state_over_project_and_queue_detail() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    super::super::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    app.project = Some(ProjectMountReceipt {
+        grant_id: "grant".into(),
+        namespace_path: "/mnt/project".into(),
+        label: "long-project-name".into(),
+        access: ProjectAccess::ReadOnly,
+    });
+    app.namespace_cwd = "/mnt/project".into();
+    for known in [false, true] {
+        app.queue.apply(
+            "/agent/1",
+            Some(alan_agent_protocol::UiQueueSnapshot {
+                known,
+                revision: u64::from(known),
+                ..Default::default()
+            }),
+        );
+        for width in [32, 40, 53, 64, 80] {
+            let line = app.context_line(width);
+            let text = line.to_string();
+            assert!(line.width() <= width, "{width}: {text}");
+            assert!(
+                text.contains("gpt-6.1-sol") && text.contains("ready"),
+                "{width}: {text}"
+            );
+            assert!(
+                !text.contains(" ·  · ") && !text.starts_with(" · "),
+                "{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn narrow_prompt_keeps_model_with_paused_deferred_and_uncertain_queue() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    super::super::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    app.activity.state = UiActivityState::Paused;
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            paused: true,
+            deferred: true,
+            pending_submission_ids: vec!["pending".into()],
+            uncertain_submission_ids: vec!["unknown".into()],
+            ..Default::default()
+        }),
+    );
+    for width in 16..=80 {
+        let line = app.context_line(width);
+        let text = line.to_string();
+        assert!(line.width() <= width, "{width}: {text}");
+        assert!(!text.starts_with(" · "), "{width}: {text}");
+        if width < 32 {
+            let identity = text.split(" · ").next().unwrap();
+            assert!(
+                identity.starts_with('g') && identity.ends_with('l'),
+                "{width}: {text}"
+            );
+            assert!(
+                text.contains("uncertain") || text.split_whitespace().any(|word| word == "unc"),
+                "{width}: {text}"
+            );
+            assert!(text.contains("paused"), "{width}: {text}");
+            continue;
+        }
+        assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");
+        assert!(
+            text.contains("paused") && text.contains("uncertain"),
+            "{width}: {text}"
+        );
     }
 }
