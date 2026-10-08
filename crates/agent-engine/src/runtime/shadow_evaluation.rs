@@ -400,21 +400,18 @@ pub(crate) async fn evaluate_captured_choice(
     } else {
         CancellationToken::new()
     };
+    let settlement_expires = Instant::now() + Duration::from_secs(1);
+    bounded(settlement_expires, &settlement_cancel, async {
+        machine
+            .persist_evaluation_observation(serde_json::to_value(observation)?)
+            .await
+    })
+    .await
+    .context(super::NamespaceEvaluationUncertainty::Settlement)?;
     bounded(
-        Instant::now() + Duration::from_secs(1),
+        settlement_expires,
         &settlement_cancel,
-        async {
-            machine
-                .persist_evaluation_observation(serde_json::to_value(observation)?)
-                .await?;
-            ensure!(
-                !settlement_cancel.is_cancelled(),
-                super::NamespaceEvaluationFailure::Cancelled
-            );
-            environment
-                .publish_evaluation(machine.evaluation_observation.clone())
-                .await
-        },
+        environment.publish_evaluation(machine.evaluation_observation.clone()),
     )
     .await
 }

@@ -31,6 +31,62 @@ impl tokio::io::AsyncWrite for FlushFailFile {
 }
 
 impl RolloutRecorder {
+    /// Fence one terminal evaluation write or its acknowledgement; forward all other commands.
+    pub(crate) fn terminal_evaluation_gate(
+        &self,
+        persist_before_release: bool,
+    ) -> (
+        Self,
+        mpsc::UnboundedReceiver<Vec<RolloutItem>>,
+        oneshot::Sender<()>,
+    ) {
+        let backing = self.clone();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (observed_tx, observed_rx) = mpsc::unbounded_channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut release = Some(release_rx);
+            while let Some(command) = rx.recv().await {
+                let gated = matches!(&command, RolloutCmd::PersistBatch { items, .. }
+                    if release.is_some() && items.iter().any(|item| matches!(item,
+                        RolloutItem::Event(event) if event.event_type == "machine_evaluation_v1"
+                            && event.payload["outcome"]["state"] != "started")));
+                if gated {
+                    let RolloutCmd::PersistBatch { items, ack } = command else {
+                        unreachable!()
+                    };
+                    let persisted = if persist_before_release {
+                        Some(backing.persist_batch(items.clone()).await)
+                    } else {
+                        None
+                    };
+                    let _ = observed_tx.send(items.clone());
+                    let _ = release.take().unwrap().await;
+                    let result = match persisted {
+                        Some(result) => result,
+                        None => backing.persist_batch(items).await,
+                    };
+                    let _ = ack.send(result);
+                } else {
+                    let closing = matches!(command, RolloutCmd::Close { .. });
+                    backing.writer.send(command).unwrap();
+                    if closing {
+                        break;
+                    }
+                }
+            }
+        });
+        (
+            Self {
+                writer: Arc::new(RolloutWriter::new(tx, task)),
+                rollout_id: self.rollout_id.clone(),
+                rollout_path: self.rollout_path.clone(),
+            },
+            observed_rx,
+            release_tx,
+        )
+    }
+
     /// Exercise the production writer with real writes and a failed file flush.
     pub(crate) async fn flush_failure_probe(&self) -> Self {
         self.flush().await.unwrap();

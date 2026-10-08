@@ -5,6 +5,116 @@ use crate::runtime::transition::owner_work::handle;
 use std::time::Duration;
 
 #[tokio::test]
+async fn cancelled_evaluation_settlement_does_not_settle_owner_work() {
+    evaluation_settlement_race(true).await;
+}
+
+#[tokio::test]
+async fn expired_evaluation_settlement_does_not_settle_owner_work() {
+    evaluation_settlement_race(false).await;
+}
+
+async fn evaluation_settlement_race(cancel_wait: bool) {
+    for persist_before_release in [false, true] {
+        let (dir, mut state, reads, calls, generation) =
+            fixture(Some("hostfs"), Some(1000), usize::MAX).await;
+        let backing = state.machine.input_recorder().unwrap();
+        let (probe, mut observed, release) =
+            backing.terminal_evaluation_gate(persist_before_release);
+        state.machine.set_input_recorder_for_test(probe.clone());
+        let input = control("Who owns old fids?");
+        let cancel = CancellationToken::new();
+        let mut emit = |_| async {};
+        let result = {
+            let transition = handle(&mut state, &input, &mut emit, &cancel);
+            tokio::pin!(transition);
+            let batch = tokio::select! {
+                batch = observed.recv() => batch.unwrap(),
+                result = &mut transition => panic!("settlement gate not reached: {result:?}"),
+            };
+            assert!(matches!(&batch[0], RolloutItem::Event(event)
+                if event.payload["outcome"]["state"] == "selected"));
+            if cancel_wait {
+                cancel.cancel();
+            }
+            let early = tokio::time::timeout(
+                if cancel_wait {
+                    Duration::from_millis(50)
+                } else {
+                    Duration::from_millis(1200)
+                },
+                &mut transition,
+            )
+            .await;
+            release.send(()).unwrap();
+            match early {
+                Ok(result) => result,
+                Err(_) => tokio::time::timeout(Duration::from_secs(2), &mut transition)
+                    .await
+                    .unwrap(),
+            }
+        };
+        let error = result.unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<NamespaceEvaluationUncertainty>()
+                .is_some(),
+            "{error:#}"
+        );
+        assert_eq!(
+            error.downcast_ref::<NamespaceEvaluationFailure>(),
+            Some(&if cancel_wait {
+                NamespaceEvaluationFailure::Cancelled
+            } else {
+                NamespaceEvaluationFailure::TimedOut
+            })
+        );
+        let work = state.machine.owner_work.as_ref().unwrap();
+        assert_eq!(work.outcome, Outcome::Started);
+        assert_eq!(work.work_id, input.id);
+        assert_eq!(work.evaluator_calls, 1);
+        assert_eq!(work.generation_calls, 0);
+        assert_eq!(
+            state.machine.evaluation_observation.as_ref().unwrap()["outcome"]["state"],
+            "started"
+        );
+        probe.flush().await.unwrap();
+        let recovered = AgentMachine::load_from_rollout_in_dir(
+            &backing.path().to_path_buf(),
+            "/proc/9",
+            "mock-model",
+            dir.path(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            recovered.owner_work.as_ref().unwrap().outcome,
+            Outcome::Interrupted
+        );
+        assert_eq!(recovered.owner_work.as_ref().unwrap().work_id, input.id);
+        assert_eq!(recovered.owner_work.as_ref().unwrap().evaluator_calls, 1);
+        let reads_before = reads.load(Ordering::SeqCst);
+        state.machine = recovered;
+        assert!(
+            handle(&mut state, &input, &mut emit, &CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), reads_before);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(generation.recorded_requests().is_empty());
+        probe.close().await.unwrap();
+        state
+            .machine
+            .input_recorder()
+            .unwrap()
+            .close()
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn acknowledged_wait_remains_paused_when_publication_and_error_notice_fail() {
     let (_dir, mut state, _, calls, generation) = fixture(None, None, usize::MAX).await;
     state.environment = state.environment.with_work_publisher(|value| async move {

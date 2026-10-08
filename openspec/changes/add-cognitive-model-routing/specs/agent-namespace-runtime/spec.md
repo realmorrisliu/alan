@@ -115,6 +115,10 @@ from another Process SHALL NOT authorize cancellation or capture a new interacti
 Acknowledged wait registration SHALL synchronously set Machine activity to Paused
 before yielding or publishing. Error rendering with a pending interaction SHALL
 publish Paused before a fallible error notice rather than report an idle Machine.
+Failure, cancellation or expiry before terminal evaluation persistence is
+acknowledged SHALL leave source-owner work unsettled with spent attempts.
+Persistence and publication SHALL share one bounded settlement window; an error
+after acknowledgement SHALL NOT be relabeled as persistence uncertainty.
 
 #### Scenario: Structured work waits and resumes
 - **WHEN** NoMatch cannot enter a budget-qualified generation fallback
@@ -146,6 +150,16 @@ publish Paused before a fallible error notice rather than report an idle Machine
 #### Scenario: A work start lacks a terminal acknowledgement
 - **WHEN** explicit recovery finds active work without an acknowledged result
 - **THEN** it projects interrupted work without repeating source or model dispatch
+
+#### Scenario: Evaluation terminal acknowledgement races with cancellation or expiry
+- **WHEN** a choice operation has returned but its terminal persistence is unacknowledged when cancellation or settlement expiry wins
+- **THEN** the Machine retains unsettled work rather than recording terminal Cancelled or Failed work
+- **AND** explicit recovery interrupts that work with the same identity and spent attempts, even if evaluation bytes survived the uncertain acknowledgement
+- **AND** it does not repeat source dispatch, evaluation or fallback
+
+#### Scenario: Evaluation publication fails after terminal acknowledgement
+- **WHEN** terminal evaluation persistence is acknowledged but publication fails or expires
+- **THEN** the acknowledged evaluation remains terminal and the error is not persistence uncertainty
 
 #### Scenario: A selected member completes
 - **WHEN** the selection names a captured candidate with validated retained evidence

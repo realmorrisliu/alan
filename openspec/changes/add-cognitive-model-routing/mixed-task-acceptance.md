@@ -295,10 +295,41 @@ without model repetition, and cancellation during Yield. The spawned runtime fau
 test enables publication failure only after Ready, submits a non-effecting stale
 Resume, and joins the Engine before reading activity; observing the notice alone
 would not establish that error rendering had finished. Pinned strict OpenSpec
-passed 65 surfaces (`mixed-owner-wait-publication-openspec.log`). Full workspace,
+passed 65 surfaces (`mixed-owner-wait-publication-openspec.log`). Final-source
 `just test` passed 2,860 tests, zero failed, 14 ignored across 97 summaries
 (`mixed-owner-wait-final-workspace.log`). Both independent review axes passed
 the correction. The final staged hook and current-head remote checks remain
 delivery gates. Earlier
 native v5 artifacts retain their source identity and are not new measurements
 of this correction.
+
+## Evaluation terminal persistence race correction
+
+The subsequent automated review identified an unconfirmed terminal evaluation
+write being returned as ordinary cancellation or timeout. The owner program then
+settled Cancelled or Failed although its acknowledged evaluation snapshot remained
+Started. Two regression tests reproduced those outcomes before correction
+(`mixed-owner-evaluation-settlement-red.log`).
+
+The existing evaluation helper now bounds persistence and publication separately
+within the same one-second settlement deadline. A pre-acknowledgement failure gains
+the typed Settlement uncertainty context, retaining its underlying cancellation
+or timeout category. The owner program's existing uncertainty guard keeps its work
+unsettled with spent attempts. Publication failure after acknowledgement remains
+a known failure; no additional window, model retry or dispatch owner was added.
+
+A test-only gate in the existing rollout probe module fences one real terminal
+batch before write or after actual persistence but before acknowledgement. Other
+commands retain their original writer and acknowledgements. Cancellation and
+expiry each cover both variants: live work/evaluation remains Started, explicit
+recovery interrupts owner work with its original identity and attempt budget, and
+duplicate work cannot repeat source, evaluation or fallback dispatch. Surviving
+evaluation bytes follow their existing recovery contract; this evidence does not
+claim they vanish or necessarily project Interrupted. The existing post-acknowledgement
+publication fault test verifies that those failures are not persistence uncertainty.
+Both independent review axes passed the correction; pinned strict OpenSpec passed
+65 surfaces (`mixed-owner-evaluation-settlement-openspec.log`). Final-source
+`just test` passed 2,862 tests, zero failed, 14 ignored across 97 summaries
+(`mixed-owner-evaluation-final-workspace.log`). The staged hook and current-head
+remote checks remain delivery gates. Earlier native
+artifacts remain tied to their prior source identity.

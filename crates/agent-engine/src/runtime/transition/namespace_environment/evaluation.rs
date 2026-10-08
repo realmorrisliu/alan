@@ -28,13 +28,15 @@ pub enum NamespaceEvaluationFailure {
 }
 use NamespaceEvaluationFailure::*;
 
-/// Cleanup uncertainty must not be relabeled as a confirmed terminal outcome.
+/// Unconfirmed operation or persistence outcomes must not be relabeled as terminal.
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum NamespaceEvaluationUncertainty {
     #[error("evaluation abort unconfirmed")]
     Abort,
     #[error("evaluation allocation identity unconfirmed")]
     AllocationIdentity,
+    #[error("evaluation terminal persistence unconfirmed")]
+    Settlement,
 }
 
 /// A single allocated operation. Consuming commit prevents accidental redispatch.
