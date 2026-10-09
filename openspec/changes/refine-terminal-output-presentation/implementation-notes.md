@@ -94,3 +94,17 @@ generation fencing, source gaps, exact captured fallback and request priority.
 full `just quality` passed; receipts are `target/plan-tests.log` and
 `target/plan-quality.log`. Native PTY/Herdr acceptance, read-only grouping,
 Linux qualification and real-model repeats remain open.
+
+## Wide-character scrollback repair
+
+Partial real-model Herdr acceptance found a native scrollback problem missed by
+buffer-only tests: the installed Ratatui insertion path emits all cells, so a
+wide character's covered cell emitted an extra space and shifted the rest of
+the row. The native adapter now clears the covered cell's emitted symbol after
+rendering. No dependency, terminal implementation or feature flag was added.
+The regression sends the complete cell grid through the actual Crossterm backend
+and VT parser at 48/80/120 columns, checking Chinese, emoji, literal lookalikes
+and the next row. See `native-acceptance.md` for the original failure and fresh
+Herdr reacceptance. All 349 library and 12 integration tests, the fresh full
+`just quality` gate and strict OpenSpec validation (66/66) passed. Other
+qualification gaps remain open.

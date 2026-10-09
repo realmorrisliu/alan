@@ -98,6 +98,22 @@ pub(crate) fn render_scrollback_with_policy(
         .wrap(Wrap { trim: false })
         .render(buffer.area, buffer);
     policy.apply(buffer);
+    // insert_before emits every cell; covered wide-character cells must emit no bytes.
+    let width = buffer.area.width as usize;
+    if width > 0 {
+        for row in buffer.content.chunks_mut(width) {
+            let mut covered = 0;
+            for cell in row {
+                if covered > 0 {
+                    cell.set_symbol("");
+                    covered -= 1;
+                } else {
+                    covered =
+                        unicode_width::UnicodeWidthStr::width(cell.symbol()).saturating_sub(1);
+                }
+            }
+        }
+    }
 }
 
 pub fn is_interactive_terminal() -> bool {

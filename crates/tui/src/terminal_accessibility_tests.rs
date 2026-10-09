@@ -8,6 +8,35 @@ use ratatui::{
 };
 
 #[test]
+fn native_scrollback_keeps_wide_characters_and_row_boundaries() {
+    for width in [48, 80, 120] {
+        let text = "中文😀计划 · server> ready · a > b";
+        let mut buffer = Buffer::empty(Rect::new(0, 0, width, 2));
+        render_scrollback_with_policy(
+            &mut buffer,
+            vec![Line::from(text), Line::from("next row")],
+            TerminalStylePolicy::from_capabilities(false, "xterm-256color", 256),
+        );
+        let mut output = Vec::new();
+        // insert_before sends the full cell grid, unlike ordinary frame diffs.
+        CrosstermBackend::new(&mut output)
+            .draw(buffer.content.iter().enumerate().map(|(index, cell)| {
+                (
+                    (index % width as usize) as u16,
+                    (index / width as usize) as u16,
+                    cell,
+                )
+            }))
+            .unwrap();
+        let mut parser = vt100::Parser::new(2, width, 0);
+        parser.process(&output);
+        let rows = parser.screen().rows(0, width).collect::<Vec<_>>();
+        assert_eq!(rows[0].trim_end(), text);
+        assert_eq!(rows[1].trim_end(), "next row");
+    }
+}
+
+#[test]
 fn accessibility_native_lowcolor_filters_extended_styles_in_backend_output() {
     let lines = vec![Line::styled(
         "literal",
