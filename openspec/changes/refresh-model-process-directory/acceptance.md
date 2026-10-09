@@ -7,7 +7,7 @@ on the prior source: the replacement `/mnt/new` was absent from generation conte
 Receipt: `target/directory-red.log`. After the repair, all 12 directory-selection
 tests passed, including file and API controls and paused recovered work.
 
-The isolated main-based branch's full Agent Execution Engine suite passed 1,403
+The initial isolated main-based branch's full Agent Execution Engine suite passed 1,403
 tests with one existing ignored test, plus 20 dependency-boundary integration
 tests. Both new directory-context tests passed. These capture actual requests across
 changed bindings and between Tool iterations, verify JSON-escaped newline/quote/
@@ -22,7 +22,7 @@ focused receipts remain in the output-presentation worktree's ignored `target/`.
 - Candidate source: `8b7bbfe8` plus this repair; debug binary SHA-256
   `4143aea51615504611ea05fed3c1dd371848ee8e9dba4b51d5c6bb37a4b679c6`.
   This native candidate also contains the pending terminal-presentation changes;
-  the four Runtime files in the isolated main-based branch are identical to it.
+  the four Runtime files at the initial isolated commit `d0e2d564` are identical to it.
 - Owned Herdr pane `w58:p12`, 73 columns by 21 rows, no user focus change.
 - Runtime: `~/Library/Caches/Alan/o9h`; profile `chatgpt-main`, status displayed
   `gpt-6.1-sol` with `medium` effort.
@@ -51,3 +51,17 @@ main-based branch also passed full `just quality` and strict OpenSpec validation
 CI, merged delivery or general model reliability guarantee is claimed. One
 selected-directory instruction provides context; live authority still decides
 whether a Tool can access or execute anything.
+
+## PR #1043 review correction
+
+The review found that a missing PID binding could fall back to a global standalone
+Tool binding. An actual-request regression with a default-only registry failed
+before the correction (`target/default-binding-red.log`). The shared Process
+lookup now returns only that PID's binding. All namespace Runtime context callers
+use this lookup; standalone invocation's separate configured fallback remains
+unchanged. Full Runtime tests passed 1,404 library tests, one existing ignored,
+and 20 integration tests (`target/engine-review-tests.log`). Fresh full quality
+and strict OpenSpec validation passed (`target/review-quality.log`,
+`target/review-openspec.log`). The earlier native rerun exercised explicit PID
+bindings; this additional missing-binding case is deterministic qualification,
+not a new native run or current-head CI pass.
