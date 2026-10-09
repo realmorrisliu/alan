@@ -76,7 +76,7 @@ proposal are preserved.
 
 ## Current checkpoint
 
-UI tasks are 14/17 checked; completed goal deliveries remain 0/3. The fresh
+UI tasks are 15/17 checked; completed goal deliveries remain 0/3. The fresh
 canonical-installation candidate has completed all 30 native workflow slots:
 ordinary PTY and Herdr, each at actual 48/80/120 columns. Six independent fixtures
 have exact source/diff/once-only-ledger assertions after the invocations ended.
@@ -86,11 +86,12 @@ scrollback are exercised. The owned Herdr pane was closed, its caller's original
 layout restored and no candidate Alan process remains. See the final matrix in
 `acceptance-matrix.md`; older candidates and harness corrections remain separate.
 
-Head `82647a75cb321526a4a06555d4f81d432ada3ce7` has all 16 CI checks passing.
-Its Rust tree is unchanged from the built `f2a9222d` candidate. Final exact-diff
-review, required CI for the next evidence/checklist commit, user merge and
-canonical synchronization remain open. PR #1044 remains draft while those
-review/CI gates are collected. Native five-workflow closure does not claim native
+Reviewed head `3f915876e4dab8b730737685278c584a84207586` has all 16 CI checks
+passing. Its Rust tree is unchanged from the built `f2a9222d` candidate. The
+exact implementation review found no remaining blocker; see `final-review.md`.
+The review/checklist-only commit must collect current-head CI before PR #1044
+leaves draft. User merge and canonical synchronization remain open. Native
+five-workflow closure does not claim native
 cross-Process replacement, general self-development or Linux qualification;
 real Kernel/AgentFS tests remain the evidence for replacement/attachment fencing.
 

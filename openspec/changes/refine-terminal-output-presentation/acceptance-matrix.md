@@ -338,7 +338,8 @@ untracked file is effects.log. Every ledger is exactly
 `command-once\nresumed-once\n`; cancelled and unauthorized tails are absent.
 No candidate Alan process remains. This closes 30/30 native UI workflow slots
 and tasks 1.1/4.3. Rust code is unchanged from the built `f2a9222d` tree through
-`82647a75`; that documentation head has all 16 CI checks passing. Final review,
-the next documentation head's required CI, user merge and canonical spec sync
-remain delivery gates. Cross-Process replacement remains covered by real
+`3f915876`; that reviewed documentation head has all 16 CI checks passing.
+See `final-review.md` for the completed implementation review. The final
+review/checklist commit's required CI, user merge and canonical spec sync remain
+delivery gates. Cross-Process replacement remains covered by real
 Kernel/AgentFS deterministic tests, not native CLI replacement qualification.
