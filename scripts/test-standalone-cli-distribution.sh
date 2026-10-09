@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+# shellcheck source=scripts/cargo-cli-output.sh
+source "$SCRIPT_DIR/cargo-cli-output.sh"
 mkdir -p "$PROJECT_ROOT/target"
 TEST_ROOT="$(mktemp -d "$PROJECT_ROOT/target/standalone-test.XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -10,6 +13,14 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 export ALAN_STANDALONE_TARGET_DIR="${ALAN_STANDALONE_TARGET_DIR:-$TEST_ROOT/target}"
 export ALAN_CLI_INSTALL_DIR="$TEST_ROOT/bin"
 export ALAN_BUILD_PROFILE="${ALAN_BUILD_PROFILE:-release}"
+
+if [[ "${ALAN_SKIP_BUILD:-0}" != 1 ]]; then
+    build_flags=()
+    [[ "$ALAN_BUILD_PROFILE" != release ]] || build_flags+=(--release)
+    ALAN_CLI_SOURCE="$(alan_build_cli "$PROJECT_ROOT" "$ALAN_STANDALONE_TARGET_DIR" "${build_flags[@]}")"
+    export ALAN_CLI_SOURCE
+    export ALAN_SKIP_BUILD=1
+fi
 
 fail() {
     printf 'error: %s\n' "$*" >&2

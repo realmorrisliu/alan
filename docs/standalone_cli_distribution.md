@@ -20,6 +20,13 @@ channel installs `alan-dev`. Neither channel installs or starts a separate Host
 executable, registers launchd services, edits shell startup files, or touches
 System/Host Store data.
 
+Build and installation reuse Cargo's configured target directory (the checkout's
+`target` by default). `ALAN_STANDALONE_TARGET_DIR` explicitly overrides it.
+The installer selects the executable reported by that Cargo build, including
+configured cross-target output. Controlled verification callers that set
+`ALAN_SKIP_BUILD=1` must also supply `ALAN_CLI_SOURCE` from their verified build;
+the installer does not guess a binary path. These scripts require `python3`.
+
 On upgrade, the installer checks the selected channel's existing CLI and any
 legacy Host executable against its ownership manifest before changing files.
 It removes a legacy Host only when its digest still matches; a modified or

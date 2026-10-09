@@ -90,8 +90,8 @@ still represented only by contracts or partial file-server crates.
 ## Build and test
 
 Rust 2024 and the repository-pinned Rust 1.97.0 toolchain are required.
-The canonical quality gate also expects `rg` and the pinned OpenSpec CLI on
-`PATH`; CI installs both explicitly.
+The canonical quality gate also expects `python3`, `rg` and the pinned OpenSpec
+CLI on `PATH`. Python is also used to read Cargo's build-artifact reports for installation.
 
 ```bash
 just build

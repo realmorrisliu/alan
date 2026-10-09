@@ -3,12 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# shellcheck source=scripts/cargo-cli-output.sh
+source "$SCRIPT_DIR/cargo-cli-output.sh"
 
 # shellcheck source=scripts/install-channel.sh
 source "$SCRIPT_DIR/install-channel.sh"
 alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
-TARGET_DIR="${ALAN_STANDALONE_TARGET_DIR:-$PROJECT_ROOT/target/standalone-release}"
+TARGET_DIR="$(alan_cli_target_dir "$PROJECT_ROOT")"
 INSTALL_DIR="${ALAN_CLI_INSTALL_DIR:-${HOME:?}/.local/bin}"
 PROFILE="${ALAN_BUILD_PROFILE:-release}"
 
@@ -24,17 +28,14 @@ fi
 export CARGO_TARGET_DIR="$TARGET_DIR"
 if [[ "${ALAN_SKIP_BUILD:-0}" != 1 ]]; then
     if [[ "$PROFILE" == release ]]; then
-        cargo build --locked --release -p alan --bin alan
+        CLI_SOURCE="$(alan_build_cli "$PROJECT_ROOT" "$TARGET_DIR" --release)"
     else
-        cargo build --locked -p alan --bin alan
+        CLI_SOURCE="$(alan_build_cli "$PROJECT_ROOT" "$TARGET_DIR")"
     fi
+else
+    CLI_SOURCE="${ALAN_CLI_SOURCE:-}"
+    [[ -n "$CLI_SOURCE" ]] || fail "ALAN_SKIP_BUILD requires the explicit ALAN_CLI_SOURCE from the verified build"
 fi
-
-BIN_DIR="$TARGET_DIR/$PROFILE"
-if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
-    BIN_DIR="$TARGET_DIR/$CARGO_BUILD_TARGET/$PROFILE"
-fi
-CLI_SOURCE="$BIN_DIR/alan"
 [[ -x "$CLI_SOURCE" ]] || fail "missing standalone CLI: $CLI_SOURCE"
 
 sha256() {
