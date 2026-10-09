@@ -401,6 +401,19 @@ async fn main() -> Result<()> {
         "`--shadow-evaluator` only applies to bare `alan`"
     );
 
+    let uses_product_stores = matches!(
+        &cli.command,
+        None | Some(Commands::Connection { .. } | Commands::Skills { .. })
+            | Some(Commands::Host {
+                action: HostAction::LegacyState {
+                    action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. },
+                },
+            })
+    );
+    let _installation_access = uses_product_stores
+        .then(|| alan_os_host::installation::InstallationPaths::detect()?.access())
+        .transpose()?;
+
     match cli.command {
         Some(Commands::Host { action }) => match action {
             HostAction::Status { json } => {

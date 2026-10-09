@@ -1,5 +1,11 @@
 //! Product store layout and explicit historical installation inspection.
 
+mod access;
+pub use access::{
+    InstallationAccess, InstallationMigrationAccess, MigrationComponent, MigrationJournal,
+    MigrationPayload, MigrationState,
+};
+
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -68,9 +74,19 @@ impl InstallationPaths {
                 .any(|component| { matches!(component, Component::CurDir | Component::ParentDir) }),
             "platform data directory must not contain relative components"
         );
-        Ok(Self {
-            product: data_dir.join("Alan"),
-        })
+        // Resolve platform aliases such as macOS /var before checking product-owned paths.
+        for ancestor in data_dir.ancestors() {
+            match dunce::canonicalize(ancestor) {
+                Ok(base) => {
+                    return Ok(Self {
+                        product: base.join(data_dir.strip_prefix(ancestor)?).join("Alan"),
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("resolve platform data directory"),
+            }
+        }
+        anyhow::bail!("platform data directory has no existing ancestor")
     }
 
     pub fn system_root(&self) -> PathBuf {

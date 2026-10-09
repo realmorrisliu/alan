@@ -855,6 +855,7 @@ fn peer_uid(stream: &UnixStream) -> Result<u32> {
 }
 
 pub async fn run_host_process(channel_id: &str) -> Result<()> {
+    let _installation_access = crate::installation::InstallationPaths::detect()?.access()?;
     let paths = HostEndpointPaths::detect(channel_id)?;
     let config = HostBootConfig::product(channel_id)?;
     let host = AlanOsHost::boot(config, paths).await?;
