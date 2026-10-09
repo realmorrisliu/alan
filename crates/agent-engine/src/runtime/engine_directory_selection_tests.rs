@@ -384,6 +384,13 @@ async fn directory_selection_preserves_recovered_paused_work_until_continue(
     })
     .await
     .unwrap();
+    for request in mock.recorded_requests() {
+        let prompt = request.system_prompt.unwrap_or_default();
+        assert!(
+            prompt.contains("Current selected Process directory: \"/mnt/new\""),
+            "generation must use the replacement Process directory: {prompt}"
+        );
+    }
     runtime.shutdown().await.unwrap();
 }
 

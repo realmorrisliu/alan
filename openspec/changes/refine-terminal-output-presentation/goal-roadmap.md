@@ -41,6 +41,12 @@ Scripted fixture qualification, real-model task execution, and autonomous
 code authorship are separate evidence categories. Codex implements this goal;
 Alan is exercised as the product under test, not assigned this implementation.
 
+The native revoke/remount failure found during UI acceptance has the independent
+`refresh-model-process-directory` repair. Its targeted native rerun and captured
+requests are recorded in that change's `acceptance.md`; review/CI/merge remain
+separate gates. This is an observed reliability repair within delivery 1's
+qualification work, not an extra completed delivery or a replacement for grouping.
+
 ## Measurement and delivery discipline
 
 - UI progress is checked tasks out of 17, including separate local, native,

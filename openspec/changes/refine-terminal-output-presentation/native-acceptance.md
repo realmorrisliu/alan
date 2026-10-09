@@ -70,4 +70,10 @@ Herdr's recent-unwrapped capture preserved `宽字符😀编号1` through revisi
 The adapter suite passed 349 library and 12 integration tests; the focused native
 backend test covers 48/80/120 columns. The fresh full `just quality` gate and
 strict OpenSpec validation (66/66) passed. Ordinary PTY and the complete native
-workflow/width matrix remain open, as does model-visible directory propagation.
+workflow/width matrix remain open. Model-visible directory propagation was still
+unqualified on this candidate.
+
+The subsequently discovered model-directory gap has a separate repair and a
+successful targeted native rerun recorded in
+`../refresh-model-process-directory/acceptance.md`. The original failed task
+above remains part of the baseline; it is not reclassified as a pass.
