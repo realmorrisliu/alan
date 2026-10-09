@@ -7,7 +7,7 @@
 
 - [x] 2.1 Remove every typed renderer-generated role-prefix path, including details, plans, errors, pending input and thinking; preserve literal lookalikes and existing route markers with regressions.
 - [x] 2.2 Compact Action summaries, remove repeated paths/commands and per-Action hint scaffolding, and keep primitive-specific status and retained evidence accessible.
-- [ ] 2.3 Align live activity, notices, failures and request hierarchy; verify waiting, rejection, cancellation and unknown outcomes remain explicit without duplicated state lines.
+- [x] 2.3 Align live activity, notices, failures and request hierarchy; verify waiting, rejection, cancellation and unknown outcomes remain explicit without duplicated state lines.
 - [ ] 2.4 Verify the contextual detail hint and existing navigation from supported surfaces, including Host page-key aliases and restoration of the same draft/cursor.
 
 ## 3. Read-only grouping and plan history

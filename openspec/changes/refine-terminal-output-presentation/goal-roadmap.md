@@ -73,3 +73,12 @@ passing. Baseline native captures, grouping, plan-detail refinement, complete
 quality/review/CI and fresh native acceptance remain pending. No delivery is
 complete (0/3). See `implementation-notes.md` for evidence and limitations. The unrelated installation/cache worktree and main's untracked
 proposal are preserved.
+
+## Current checkpoint
+
+UI implementation tasks are 5/17 checked: source tracing, generated-label removal,
+compact Action summaries, exact compact plan history, and notice hierarchy.
+Complete native matrices, grouping, review/CI/merge and canonical spec sync remain
+open; goal deliveries remain 0/3. The observed Process-directory repair is isolated
+in PR #1043; its review correction removes global standalone binding fallback from
+namespace Process context. Its CI and user merge are separate pending gates.

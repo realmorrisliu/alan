@@ -110,11 +110,11 @@ async fn terminal_receipt_refreshes_hint_in_either_queue_event_order() {
                     assert_eq!(app.composer.text(), "new draft 🧭");
                     assert_eq!(
                         app.notice.as_deref(),
-                        Some(if unrelated_notice {
-                            "unrelated notice"
+                        if unrelated_notice {
+                            Some("unrelated notice")
                         } else {
-                            "queued 0"
-                        }),
+                            None
+                        },
                         "status={status:?}, queue_first={queue_first}, preacknowledged={preacknowledged}"
                     );
                     queue::dispatch_queue_event(
@@ -128,12 +128,13 @@ async fn terminal_receipt_refreshes_hint_in_either_queue_event_order() {
                     .await;
                     assert_eq!(
                         app.notice.as_deref(),
-                        Some(if unrelated_notice {
-                            "unrelated notice"
+                        if unrelated_notice {
+                            Some("unrelated notice")
                         } else {
-                            "queue unknown"
-                        })
+                            None
+                        }
                     );
+                    assert!(app.context_line(80).to_string().contains("unknown"));
                     assert_eq!(app.transcript, history);
                     assert_eq!(app.composer.text(), "new draft 🧭");
                     if status != UiInputStatus::Completed {
@@ -298,7 +299,8 @@ async fn lifetime_removed_receipt_hint_queue_dispatch() {
                 }
             };
             queue::dispatch_queue_event(&shell, &mut app, &pending, event).await;
-            assert_eq!(app.notice.as_deref(), Some("queue unknown"));
+            assert!(app.notice.is_none());
+            assert!(app.context_line(80).to_string().contains("unknown"));
             assert_eq!(app.transcript, history);
             app.notice = Some("unrelated notice".into());
             queue::dispatch_queue_event(

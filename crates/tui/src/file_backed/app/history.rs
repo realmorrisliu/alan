@@ -354,6 +354,7 @@ impl FileBackedApp {
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
+            UiEvent::Notice { .. } if paired_notice => {}
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
             UiEvent::Error { message, .. } => {
                 if expected_error.as_deref() != Some(message.as_str()) {
@@ -410,10 +411,6 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn apply_ui_notice_snapshot(&mut self, snapshot: UiNoticeSnapshot) {
-        self.notice = match snapshot.kind {
-            UiNoticeKind::None => None,
-            _ if snapshot.message.trim().is_empty() => None,
-            _ => Some(snapshot.message),
-        };
+        self.notice = Notice::runtime(snapshot);
     }
 }

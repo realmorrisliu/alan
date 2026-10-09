@@ -25,6 +25,8 @@ mod action_modal;
 mod attachment;
 mod history;
 mod model_control;
+mod notice;
+pub(in crate::file_backed) use notice::Notice;
 mod presentation;
 mod project;
 use project::default_commands;
@@ -95,7 +97,7 @@ pub(super) struct FileBackedApp {
     ready_project_revoke: Option<String>,
     pub(super) last_input_failed: bool,
     pub(super) expand_thinking: bool,
-    pub(super) notice: Option<String>,
+    pub(super) notice: Option<Notice>,
     pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
     /// The pure state machine reconciling the optimistic `io/output` stream
@@ -261,7 +263,7 @@ impl FileBackedApp {
                 result,
             } => {
                 match result {
-                    Ok(()) => self.notice = Some(success_notice),
+                    Ok(()) => self.notice = Some(success_notice.into()),
                     Err(error) => self.push_error(format!("{error_prefix}: {error}")),
                 }
                 None
@@ -617,7 +619,7 @@ impl FileBackedApp {
                 retry_input: option,
             }),
             Err(message) => {
-                self.notice = Some(message);
+                self.notice = Some(Notice::warning(message));
                 None
             }
         }
@@ -658,7 +660,7 @@ impl FileBackedApp {
                     });
                 }
                 Err(message) => {
-                    self.notice = Some(message);
+                    self.notice = Some(Notice::warning(message));
                     return None;
                 }
             }
@@ -713,7 +715,7 @@ impl FileBackedApp {
                 self.notice = Some("response sent".into());
             }
             Err(error) => {
-                self.notice = Some(format!("resume failed: {error}"));
+                self.notice = Some(Notice::error(format!("resume failed: {error}")));
                 if self
                     .pending_yield
                     .as_ref()
@@ -756,10 +758,9 @@ impl FileBackedApp {
                     if self.project_recovery_boundary_available(false) {
                         return Some(FileBackedAction::Project(retained.clone()));
                     }
-                    self.notice = Some(
-                        "project outcome unknown; wait, then /project retries the same selection"
-                            .into(),
-                    );
+                    self.notice = Some(Notice::warning(
+                        "project outcome unknown; wait, then /project retries the same selection",
+                    ));
                     return None;
                 }
                 if !self.project_boundary_available(false) {
@@ -776,10 +777,13 @@ impl FileBackedApp {
                             .map(|path| path.to_string_lossy().into_owned())
                             .unwrap_or_default(),
                     );
-                    self.notice = Some(format!(
-                        "project path · {} · Enter approve · Tab toggle · Esc cancel",
-                        ProjectAccess::ReadOnly.label()
-                    ));
+                    self.notice = Some(
+                        format!(
+                            "project path · {} · Enter approve · Tab toggle · Esc cancel",
+                            ProjectAccess::ReadOnly.label()
+                        )
+                        .into(),
+                    );
                 }
                 None
             }
@@ -834,12 +838,12 @@ impl FileBackedApp {
             "help" => {
                 self.notice = Some(
                     "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained details; p toggles Actions/plans; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
-                        .to_string(),
+                        .into(),
                 );
                 None
             }
             _ => {
-                self.notice = Some(format!("unknown command: /{name}"));
+                self.notice = Some(Notice::warning(format!("unknown command: /{name}")));
                 None
             }
         }

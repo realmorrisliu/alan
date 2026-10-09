@@ -30,10 +30,10 @@ impl FileBackedApp {
         };
         if self.uncertain_project_mount.is_some() {
             let unknown = "project outcome unknown; detached Root; new selections blocked; retry only with the original Root or /quit exits";
-            project_notice = Some(match project_notice {
+            project_notice = Some(Notice::warning(match project_notice {
                 Some(notice) => format!("{notice}; {unknown}"),
                 None => unknown.into(),
-            });
+            }));
         }
         self.tape_consumed_offset = 0;
         self.action_cells.clear();
@@ -51,13 +51,12 @@ impl FileBackedApp {
         self.pending_yield = None;
         self.form = None;
         self.completion = None;
-        let model_notice: Option<String> = self
-            .model_chooser
-            .uncertain
-            .as_ref()
-            .map(|_| "model selection outcome uncertain; detached Root; no retry".into());
+        let model_notice =
+            self.model_chooser.uncertain.as_ref().map(|_| {
+                Notice::warning("model selection outcome uncertain; detached Root; no retry")
+            });
         self.notice = match (project_notice, model_notice) {
-            (Some(project), Some(model)) => Some(format!("{project}; {model}")),
+            (Some(project), Some(model)) => Some(Notice::warning(format!("{project}; {model}"))),
             (project, model) => project.or(model),
         };
         self.reconciler = StreamReconciler::new();

@@ -1,5 +1,5 @@
 //! Consumer of the existing payload-free Machine projection; never queue authority.
-use super::{FileBackedApp, FileBackedEvent};
+use super::{FileBackedApp, FileBackedEvent, app::Notice};
 use alan_agent_protocol::UiQueueSnapshot;
 
 #[derive(Clone, Default)]
@@ -7,7 +7,7 @@ pub(super) struct QueueProjection {
     pub owner: String,
     pub snapshot: Option<UiQueueSnapshot>,
     revision: u64,
-    hint: Option<(String, String)>,
+    hint: Option<String>,
 }
 
 impl QueueProjection {
@@ -224,6 +224,13 @@ impl FileBackedApp {
     }
 
     pub(super) fn refresh_local_input_hint(&mut self, id: &str, owner: &str) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.submission.is_none())
+        {
+            return;
+        }
         let Some(input) = self
             .local_inputs
             .get(id)
@@ -232,20 +239,20 @@ impl FileBackedApp {
             return;
         };
         let acknowledged = input.acknowledged;
-        let state = match self.queue.snapshot.as_ref().filter(|q| q.known) {
+        let (state, uncertain) = match self.queue.snapshot.as_ref().filter(|q| q.known) {
             Some(q)
                 if q.uncertain_submission_ids
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                "uncertain · outcome unknown"
+                ("uncertain · outcome unknown", true)
             }
             Some(q)
                 if q.active_submission_ids
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                "active · admitted to queue"
+                ("active · admitted to queue", false)
             }
             Some(q)
                 if q.pending_submission_ids
@@ -253,16 +260,19 @@ impl FileBackedApp {
                     .any(|candidate| candidate == id)
                     && q.paused =>
             {
-                "paused · /continue resumes · /discard removes queued input"
+                (
+                    "paused · /continue resumes · /discard removes queued input",
+                    false,
+                )
             }
             Some(q)
                 if q.pending_submission_ids
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                "queued"
+                ("queued", false)
             }
-            _ => "unconfirmed · outcome unknown",
+            _ => ("unconfirmed · outcome unknown", true),
         };
         let notice = format!(
             "input {id} {} · {state}",
@@ -272,15 +282,20 @@ impl FileBackedApp {
                 "unconfirmed"
             }
         );
-        self.queue.hint = Some((id.into(), notice.clone()));
-        self.notice = Some(notice);
+        self.queue.hint = Some(id.into());
+        self.notice = Some(Notice::queue(notice, id, uncertain));
     }
 
     pub(super) fn refresh_queue_hint(&mut self) {
-        let Some((id, notice)) = self.queue.hint.clone() else {
+        let Some(id) = self.queue.hint.clone() else {
             return;
         };
-        if self.notice.as_ref() != Some(&notice) {
+        if self
+            .notice
+            .as_ref()
+            .and_then(|notice| notice.submission.as_deref())
+            != Some(&id)
+        {
             return;
         }
         let owner = self.queue.owner.clone();
@@ -289,10 +304,9 @@ impl FileBackedApp {
             .get(&id)
             .is_some_and(|input| input.owner == owner && !input.terminal);
         if !live {
-            let notice = self.queue.label();
-            self.notice = Some(notice.clone());
-            // Keep ownership of this label so a later queue observation can refresh it too.
-            self.queue.hint = Some((id, notice));
+            // Queue state remains in the header; completion evidence owns the outcome.
+            self.notice = None;
+            self.queue.hint = None;
         } else {
             self.refresh_local_input_hint(&id, &owner);
         }

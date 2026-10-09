@@ -97,9 +97,9 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn fail_project_control(&mut self, message: String) {
         // A transport error or owner replacement does not prove the selector
         // was rejected. Retain candidate authority: it may already be cwd.
-        self.notice = Some(format!(
+        self.notice = Some(Notice::warning(format!(
             "{message}; grant retained, cwd unconfirmed; /project revoke explicitly leaves current Root cwd before cleanup"
-        ));
+        )));
     }
 
     pub(in crate::file_backed) fn fence_project_control(&mut self) {
@@ -220,9 +220,8 @@ impl FileBackedApp {
             pending.fenced = true;
             self.pending_project_control = Some(pending);
         }
-        self.notice = Some(format!(
-            "project cwd: {cwd}; paused work requires explicit /continue"
-        ));
+        self.notice =
+            Some(format!("project cwd: {cwd}; paused work requires explicit /continue").into());
     }
 
     pub(in crate::file_backed) fn observe_action_cwd(&mut self, snapshot: &ActionSnapshot) {
@@ -258,10 +257,13 @@ impl FileBackedApp {
             KeyCode::Tab => {
                 if let Some(access) = self.project_selection.as_mut() {
                     *access = access.toggle();
-                    self.notice = Some(format!(
-                        "project path · {} · Enter approve · Tab toggle · Esc cancel",
-                        access.label()
-                    ));
+                    self.notice = Some(
+                        format!(
+                            "project path · {} · Enter approve · Tab toggle · Esc cancel",
+                            access.label()
+                        )
+                        .into(),
+                    );
                 }
                 None
             }

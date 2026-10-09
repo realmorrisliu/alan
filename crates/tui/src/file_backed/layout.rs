@@ -154,9 +154,14 @@ fn live_region_lines_at(
         ));
     }
     if let Some(notice) = &app.notice {
+        let (prefix, color) = match notice.kind {
+            alan_agent_protocol::UiNoticeKind::Error => ("Error · ", Color::Red),
+            alan_agent_protocol::UiNoticeKind::Warning => ("Warning · ", Color::Yellow),
+            _ => ("· ", Color::DarkGray),
+        };
         lines.push(Line::styled(
-            format!("· {notice}"),
-            Style::default().fg(Color::Yellow),
+            format!("{prefix}{notice}"),
+            Style::default().fg(color),
         ));
     }
     for tool in &app.running_tools {

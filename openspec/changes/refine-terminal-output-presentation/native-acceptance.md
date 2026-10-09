@@ -77,3 +77,33 @@ The subsequently discovered model-directory gap has a separate repair and a
 successful targeted native rerun recorded in
 `../refresh-model-process-directory/acceptance.md`. The original failed task
 above remains part of the baseline; it is not reclassified as a pass.
+
+## Notice and detail targeted native acceptance
+
+Fresh binary SHA-256 `132f8f2196b4917e2b7e2638053a5ad07f4a9e71437d0e9a7c05747493ea9c10`:
+source `240496a2` plus the core notice slice, before the final local model/project
+severity refinements. Those final branch refinements have deterministic tests;
+this receipt does not claim a fresh native run of them or the PR review correction.
+Owned pane `w58:p13`, 73×21, runtime `~/Library/Caches/Alan/o9n`, unchanged user
+focus `w58:pZ`; `chatgpt-main`, effective `gpt-6.1-sol`/`medium`.
+
+Selected the same disposable project read-only and asked to read both fixture
+files without supplying namespace paths. Two reads and the answer succeeded;
+`queued 0` appeared once, in the context header, with no duplicate notice row.
+Ctrl+O opened the README result; Left selected the distinct `sample.rs` result.
+Both retained literal `server> ready` and `a > b`. Esc restored the unsubmitted
+`保留草稿 中文😀`. This verifies selected member content and draft text; cursor
+identity is covered by deterministic tests. Space/b were sent, but immediate
+captures did not establish a changed viewport, so native page aliases remain
+unqualified. Receipts: `target/native-notice-success.txt`,
+`target/native-notice-detail-readme.txt`, `target/native-notice-draft.txt`.
+
+Executed the harmless explicit commands `printf ui-notice-failure` and `false`:
+respectively completed/exit 0 and failed/exit 1 remained distinct. The marker name
+is literal command output; the first command was successful. The failed Tool
+remained in permanent history after settlement. Receipt:
+`target/native-notice-failure.txt`; this does not exercise an Engine-level failure
+or unknown outcome. Fixture hashes matched the prior baseline. `/quit` ended
+Alan; the foreground returned to the owned fish PID 96637 before closing the pane.
+No self-development instance was left alive. The complete five-workflow native
+matrix, ordinary PTY, grouping and broader qualification remain open.

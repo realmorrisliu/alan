@@ -2,6 +2,98 @@ use super::*;
 use crate::composer::Composer;
 
 #[test]
+fn queue_completion_preserves_runtime_notice_with_identical_text() {
+    use alan_agent_protocol::{InputIntent, UiNoticeKind, UiNoticeSnapshot, UiQueueSnapshot};
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            active_submission_ids: vec!["q".into()],
+            ..Default::default()
+        }),
+    );
+    app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
+    app.refresh_local_input_hint("q", "/agent/1");
+    let text = app.notice.as_deref().unwrap().to_owned();
+    app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(UiNoticeKind::Warning, &text));
+    app.refresh_local_input_hint("q", "/agent/1");
+    assert_eq!(app.notice.as_ref().unwrap().kind, UiNoticeKind::Warning);
+    app.local_inputs.get_mut("q").unwrap().terminal = true;
+    app.refresh_queue_hint();
+    assert_eq!(app.notice.as_deref(), Some(text.as_str()));
+}
+
+#[test]
+fn notice_severity_survives_hydration_and_layout_without_role_labels() {
+    use alan_agent_protocol::{UiNoticeKind, UiNoticeSnapshot};
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.composer.set_text("draft 中文😀");
+    let cursor = app.composer.cursor();
+    for (kind, prefix, color) in [
+        (UiNoticeKind::Error, "Error · ", Color::Red),
+        (UiNoticeKind::Warning, "Warning · ", Color::Yellow),
+        (UiNoticeKind::Compaction, "· ", Color::DarkGray),
+        (UiNoticeKind::Rollback, "· ", Color::DarkGray),
+        (UiNoticeKind::MemoryFlush, "· ", Color::DarkGray),
+    ] {
+        app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(kind, "server> ready; a > b"));
+        for width in [48, 80, 120] {
+            let (lines, prompt) = live_region_lines_at(&app, width, 0);
+            let notice = lines
+                .iter()
+                .find(|line| line.to_string().contains("server>"))
+                .unwrap();
+            assert_eq!(notice.to_string(), format!("{prefix}server> ready; a > b"));
+            assert_eq!(notice.style.fg, Some(color));
+            assert!(prompt.is_some());
+            assert_eq!(app.composer.text(), "draft 中文😀");
+            assert_eq!(app.composer.cursor(), cursor);
+        }
+    }
+    for snapshot in [
+        UiNoticeSnapshot::none(),
+        UiNoticeSnapshot::new(UiNoticeKind::Warning, "  "),
+    ] {
+        app.apply_ui_notice_snapshot(snapshot);
+        assert!(app.notice.is_none());
+    }
+}
+
+#[test]
+fn settled_input_uses_header_queue_status_without_a_duplicate_notice() {
+    use alan_agent_protocol::{InputIntent, UiQueueSnapshot};
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            ..Default::default()
+        }),
+    );
+    app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
+    app.refresh_local_input_hint("q", "/agent/1");
+    app.local_inputs.get_mut("q").unwrap().terminal = true;
+    app.refresh_queue_hint();
+    assert!(app.notice.is_none());
+    for width in [48, 80, 120] {
+        let (lines, _) = live_region_lines_at(&app, width, 0);
+        assert!(
+            !lines
+                .iter()
+                .skip(1)
+                .any(|line| line.to_string().contains("queued 0"))
+        );
+    }
+    app.queue.apply("/agent/1", None);
+    app.refresh_queue_hint();
+    assert_eq!(app.queue.label(), "queue unknown");
+    assert!(app.context_line(80).to_string().contains("unknown"));
+}
+
+#[test]
 fn paused_status_regression() {
     use alan_agent_protocol::{UiActivitySnapshot, UiQueueSnapshot};
     let mut app = FileBackedApp::new("/agent/root".into());

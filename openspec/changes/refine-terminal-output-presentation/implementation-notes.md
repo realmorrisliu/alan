@@ -108,3 +108,28 @@ and the next row. See `native-acceptance.md` for the original failure and fresh
 Herdr reacceptance. All 349 library and 12 integration tests, the fresh full
 `just quality` gate and strict OpenSpec validation (66/66) passed. Other
 qualification gaps remain open.
+
+## Notice ownership and hierarchy
+
+The prior string-only notice slot discarded Runtime severity and used matching
+text to decide whether the queue could replace a notice. Two regressions failed
+on that source: settled input left a duplicated queue line, and a Runtime warning
+with identical text was mistaken for a queue-owned hint (`target/notice-red.log`).
+
+The existing slot now retains the Runtime kind and an optional exact local-input
+submission ID. Queue refresh/admission cannot overwrite an unrelated notice;
+terminal settlement removes only its own hint. The header remains the queue
+projection, including unknown, uncertain and paused states. Error and Warning
+notices have textual severity as well as color; routine notices are subdued.
+Local validation, model uncertainty/rejection/cancellation and recovery gaps keep
+their known severity. The immediately paired failure Notice is suppressed only
+when existing correlated-completion evidence already retained that failure in
+permanent history; independent or repeated errors remain visible.
+
+All 352 TUI library tests and 12 integration tests passed. The suite covers queue
+event order, cancellation/rejection/unknown outcomes, late acknowledgements,
+Root changes, unrelated notices with identical text, severity, literal `xxx>`
+content and unchanged Chinese/emoji draft/cursor at 48/80/120 columns. Full quality
+and strict OpenSpec (67/67) passed for the core notice slice. The final commit gate
+also validates subsequent local severity refinements. Fresh native evidence
+is a partial workflow sample; tasks for the complete matrix remain open.

@@ -54,7 +54,9 @@ async fn lifetime_queue_events_clear_stale_paused_notice() {
                 }
             };
             queue::dispatch_queue_event(&shell, &mut app, &VecDeque::new(), event).await;
-            assert!(!app.notice.as_ref().unwrap().contains("/continue"));
+            assert!(!app.notice.as_deref().unwrap_or("").contains("/continue"));
+            assert_eq!(app.notice.is_none(), terminal);
+            assert!(app.context_line(80).to_string().contains("unknown"));
             assert!(app.queue.snapshot.is_none());
             app.queue.apply("/agent/99999", None);
             app.notice = Some("new Root notice".into());
