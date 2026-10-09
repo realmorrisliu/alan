@@ -21,3 +21,9 @@ selection. Verify no old directory appears in the dynamic instruction and prompt
 overhead remains included. Native revoke/remount must read a disposable project's
 files without spelling out the replacement namespace path. This repairs context
 availability, not a guarantee that any model will choose a correct Tool argument.
+
+PR #1043 review found that the runner's Process lookup also fell back to its global
+standalone binding. Remove that fallback from the shared PID lookup used by all
+namespace Runtime context readers. Tool invocation's separate standalone default
+resolution stays unchanged. A default-only embedding test must omit the selected
+directory instruction and Host path from the actual generation request.

@@ -557,13 +557,6 @@ impl ToolProcessRunner {
             .expect("process binding mutex poisoned")
             .get(&pid)
             .cloned()
-            .or_else(|| {
-                self.inner
-                    .default_binding
-                    .lock()
-                    .expect("default binding mutex poisoned")
-                    .clone()
-            })
     }
 
     /// Install a late-bound authority resolver for one Agent Process.
