@@ -196,7 +196,9 @@ def build_lease(owner, roots, purpose):
                 lease_ancestors(path, stack, descriptors)
                 if path in records:
                     verify_receipt(owner, path, records[path][1])
-                elif owner / "target" in [path, *path.parents]:
+                elif (owner / "target" in [path, *path.parents]
+                      and not sidecar(path, "json").exists()
+                      and not sidecar(path, "json").is_symlink()):
                     identity(path)
                 else:
                     raise ValueError(f"inherited output has no ownership receipt: {path}")

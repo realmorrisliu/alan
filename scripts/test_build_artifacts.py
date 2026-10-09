@@ -84,6 +84,21 @@ class BuildArtifactTests(unittest.TestCase):
             with artifacts.build_lease(other, [self.output], "task"):
                 self.fail("ownership changed")
 
+    def test_inherited_ancestor_guard_does_not_grant_another_owners_output(self):
+        other = self.root / "other"
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        parent = self.owner / "target/shared"
+        with artifacts.build_lease(other, [parent], "task"):
+            pass
+        with artifacts.build_lease(self.owner, [parent / "nested"], "task") as descriptors:
+            inherited = json.dumps({"owner": str(self.owner), "locks": descriptors})
+            with patch.dict(os.environ, ALAN_BUILD_LEASE=inherited):
+                with self.assertRaisesRegex(ValueError, "ownership receipt"):
+                    with artifacts.build_lease(self.owner, [parent], "checkout"):
+                        self.fail("ancestor guard was mistaken for ownership")
+        receipt = artifacts.read_receipt(artifacts.sidecar(parent, "json"))
+        self.assertEqual(receipt["owner"], str(other))
+
     def test_replaced_directory_requires_reinspection(self):
         with artifacts.build_lease(self.owner, [self.output], "task"):
             pass
