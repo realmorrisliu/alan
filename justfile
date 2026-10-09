@@ -64,11 +64,7 @@ build:
 
 # Install the standalone foreground CLI locally
 install:
-    ALAN_INSTALL_CHANNEL=stable ./scripts/install-cli.sh
-
-# Install the local development CLI channel
-install-dev:
-    ALAN_INSTALL_CHANNEL=dev ./scripts/install-cli.sh
+    ./scripts/install-cli.sh
 
 # Validate the standalone CLI installer and archive contract
 standalone-distribution-test:
@@ -84,11 +80,7 @@ release:
 
 # Uninstall the owned standalone CLI without removing stores
 uninstall:
-    ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall-cli.sh
-
-# Uninstall the owned development CLI without removing stores
-uninstall-dev:
-    ALAN_INSTALL_CHANNEL=dev ./scripts/uninstall-cli.sh
+    ./scripts/uninstall-cli.sh
 
 # Report exact build output roots and ownership without changing them
 cache-status:

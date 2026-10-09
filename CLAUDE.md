@@ -8,7 +8,7 @@ language). This file is the short operational summary plus the rules that are ea
 ## Critical Workflow Rules
 
 - **OpenSpec owns all specs and design docs.** Change proposals, design docs, task lists, and spec deltas go in `openspec/changes/<change-id>/`; merged long-lived contracts live in `openspec/specs/`. Do NOT create spec files under `docs/superpowers/specs/`, `docs/spec/`, or `plans/` — this overrides any default workflow that writes design docs elsewhere. Completed changes are archived to `openspec/changes/archive/YYYY-MM-DD-<change-id>/`.
-- **Alan for macOS is retired**: use the standalone CLI/Host path (`just install`, `just install-dev`, `just standalone-distribution-test`). Desktop source is removed; do not restore its build, UI or packaging tasks.
+- **Alan for macOS is retired**: use the standalone CLI/Host path (`just install`, `just standalone-distribution-test`). Desktop source is removed; do not restore its build, UI or packaging tasks.
 - **After Rust changes**: run `just verify` (fmt + lint + test + mock smoke).
 - New/edited Rust tests follow `openspec/specs/rust-test-placement-contract/spec.md`: choose inline unit tests, extracted white-box test files, or crate-level integration tests deliberately.
 - Branch from `main`; conventional-style commit messages recommended (for example,
@@ -29,7 +29,6 @@ cargo test -p alan-llm --features mock   # with MockLlmProvider
 
 # Standalone distribution
 just install
-just install-dev
 just standalone-distribution-test
 ```
 

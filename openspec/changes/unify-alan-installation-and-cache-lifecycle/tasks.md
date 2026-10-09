@@ -34,8 +34,8 @@ These are implementation tasks. Read disposition.md before applying and implemen
 - [x] 4.2 Remove engine/auth argv/environment channel detectors and duplicated auth path construction; reject obsolete selection before writable access while preserving processless version/help, verified by subprocess and credential-path tests.
 - [x] 4.3 Remove channel suffixes and identity matching from current runtime endpoint/status handling with a bounded version transition; verify independent invocations, same-directory exclusion, peer authorization, stale/old receipt rejection and no endpoint fallback.
 - [x] 4.4 Update legacy authored-content import and historical credential discovery to explicit historical source selection; retain sandbox denies for old secret paths and verify no implicit source overlays or credential fallback.
-- [ ] 4.5 Unify install/uninstall manifests, remove dev Just recipes and archive aliases, and preflight both old manifests before retirement; extend distribution tests for modified/unowned files, dev-only/stable-only/dual installs and handled-signal rollback.
-- [ ] 4.6 Update current docs, AGENTS.md, local dev-verification guidance, scripts and fixtures to the one-product contract; verify current executable references with scoped search, keeping historical ADRs/archives unchanged and reconciling active input-lifecycle storage wording only.
+- [x] 4.5 Unify install/uninstall manifests, remove dev Just recipes and archive aliases, and preflight both old manifests before retirement; extend distribution tests for modified/unowned files, dev-only/stable-only/dual installs and handled-signal rollback.
+- [x] 4.6 Update current docs, AGENTS.md, local dev-verification guidance, scripts and fixtures to the one-product contract; verify current executable references with scoped search, keeping historical ADRs/archives unchanged and reconciling active input-lifecycle storage wording only.
 
 ## 5. Integration, review and delivery
 

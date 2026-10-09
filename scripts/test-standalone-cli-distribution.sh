@@ -10,7 +10,8 @@ mkdir -p "$PROJECT_ROOT/target"
 TEST_ROOT="$(mktemp -d "$PROJECT_ROOT/target/standalone-test.XXXXXX")"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-export ALAN_STANDALONE_TARGET_DIR="${ALAN_STANDALONE_TARGET_DIR:-$TEST_ROOT/target}"
+ALAN_STANDALONE_TARGET_DIR="$(alan_cli_target_dir "$PROJECT_ROOT")"
+export ALAN_STANDALONE_TARGET_DIR
 export ALAN_CLI_INSTALL_DIR="$TEST_ROOT/bin"
 export ALAN_BUILD_PROFILE="${ALAN_BUILD_PROFILE:-release}"
 
@@ -51,16 +52,23 @@ expect_install_failure() {
 "$TEST_ROOT/bin/alan" --version >/dev/null
 [[ ! -e "$TEST_ROOT/bin/alan-os-host" ]] || fail "stable installer created a separate Host executable"
 
-ALAN_INSTALL_CHANNEL=dev "$SCRIPT_DIR/install-cli.sh"
-"$TEST_ROOT/bin/alan-dev" --version >/dev/null
-[[ ! -e "$TEST_ROOT/bin/alan-os-host-dev" ]] || fail "dev installer created a separate Host executable"
+[[ ! -e "$TEST_ROOT/bin/alan-dev" ]] || fail "installer created a dev alias"
+"$SCRIPT_DIR/install-cli.sh"
+if ALAN_INSTALL_CHANNEL=dev "$SCRIPT_DIR/install-cli.sh" >"$TEST_ROOT/obsolete-output" 2>&1; then
+    fail "installer accepted retired channel selection"
+fi
+
+locked="$TEST_ROOT/locked"
+mkdir -p "$locked/.alan-cli-install.lock"
+expect_install_failure "$locked" "$locked/.alan-cli-install.lock"
+[[ ! -e "$locked/alan" ]] || fail "installer ignored another installer lock"
 
 conflict="$TEST_ROOT/conflict"
 mkdir -p "$conflict"
 printf 'user-owned\n' >"$conflict/alan"
 expect_install_failure "$conflict" "$conflict/alan"
 [[ "$(cat "$conflict/alan")" == "user-owned" ]] || fail "installer changed an unrelated file"
-[[ ! -e "$conflict/.alan-cli-manifest-stable" ]] || fail "installer created a manifest after conflict"
+[[ ! -e "$conflict/.alan-cli-manifest" ]] || fail "installer created a manifest after conflict"
 
 upgrade="$TEST_ROOT/upgrade"
 mkdir -p "$upgrade"
@@ -81,12 +89,21 @@ cp "$upgrade/.alan-cli-manifest-dev" "$TEST_ROOT/dev-manifest-before"
 ALAN_CLI_INSTALL_DIR="$upgrade" ALAN_SKIP_BUILD=1 "$SCRIPT_DIR/install-cli.sh"
 cmp -s "$TEST_ROOT/bin/alan" "$upgrade/alan" || fail "upgrade did not replace the owned CLI"
 [[ ! -e "$upgrade/alan-os-host" ]] || fail "upgrade retained its owned legacy Host executable"
-cmp -s "$TEST_ROOT/dev-cli-before" "$upgrade/alan-dev" || fail "stable upgrade changed the dev CLI"
-cmp -s "$TEST_ROOT/dev-host-before" "$upgrade/alan-os-host-dev" || fail "stable upgrade changed the dev Host"
-cmp -s "$TEST_ROOT/dev-manifest-before" "$upgrade/.alan-cli-manifest-dev" \
-    || fail "stable upgrade changed the dev manifest"
-[[ "$(cat "$upgrade/.alan-cli-manifest-stable")" == "alan|$(sha256 "$upgrade/alan")" ]] \
-    || fail "upgrade did not write the CLI-only ownership manifest"
+for retired in alan-dev alan-os-host-dev .alan-cli-manifest-stable .alan-cli-manifest-dev; do
+    [[ ! -e "$upgrade/$retired" ]] || fail "upgrade retained owned $retired"
+done
+[[ "$(cat "$upgrade/.alan-cli-manifest")" == "alan|$(sha256 "$upgrade/alan")" ]] \
+    || fail "upgrade did not write the canonical ownership manifest"
+for source in stable dev; do
+    single="$TEST_ROOT/only-$source"
+    mkdir -p "$single"
+    name=alan
+    [[ "$source" != dev ]] || name=alan-dev
+    printf 'old CLI\n' >"$single/$name"
+    printf '%s|%s\n' "$name" "$(sha256 "$single/$name")" >"$single/.alan-cli-manifest-$source"
+    ALAN_CLI_INSTALL_DIR="$single" "$SCRIPT_DIR/install-cli.sh"
+    [[ -x "$single/alan" && ! -e "$single/alan-dev" ]] || fail "$source-only upgrade failed"
+done
 
 modified_host="$TEST_ROOT/modified-host"
 mkdir -p "$modified_host"
@@ -121,11 +138,15 @@ fi
 exit "$status"
 EOF
 chmod +x "$signal_bin/mv"
-for signal_name in TERM HUP; do
+for signal_name in TERM HUP INT; do
     signal_upgrade="$TEST_ROOT/signal-upgrade-$signal_name"
     mkdir -p "$signal_upgrade"
     printf 'old CLI before interruption\n' >"$signal_upgrade/alan"
     printf 'old Host before interruption\n' >"$signal_upgrade/alan-os-host"
+    printf 'old dev CLI before interruption\n' >"$signal_upgrade/alan-dev"
+    printf 'alan-dev|%s\n' "$(sha256 "$signal_upgrade/alan-dev")" >"$signal_upgrade/.alan-cli-manifest-dev"
+    cp "$signal_upgrade/alan-dev" "$TEST_ROOT/signal-dev-before"
+    cp "$signal_upgrade/.alan-cli-manifest-dev" "$TEST_ROOT/signal-dev-manifest-before"
     printf 'alan|%s\nalan-os-host|%s\n' \
         "$(sha256 "$signal_upgrade/alan")" "$(sha256 "$signal_upgrade/alan-os-host")" \
         >"$signal_upgrade/.alan-cli-manifest-stable"
@@ -144,6 +165,7 @@ for signal_name in TERM HUP; do
         signal_status=$?
         expected_status=143
         [[ "$signal_name" == HUP ]] && expected_status=129
+        [[ "$signal_name" == INT ]] && expected_status=130
         [[ "$signal_status" == "$expected_status" ]] \
             || fail "installer exited with unexpected SIG$signal_name status: $signal_status"
     fi
@@ -151,6 +173,11 @@ for signal_name in TERM HUP; do
         || fail "SIG$signal_name left the old CLI replaced"
     cmp -s "$TEST_ROOT/signal-host-before" "$signal_upgrade/alan-os-host" \
         || fail "SIG$signal_name left the old Host removed"
+    cmp -s "$TEST_ROOT/signal-dev-before" "$signal_upgrade/alan-dev" \
+        || fail "SIG$signal_name changed old dev CLI"
+    cmp -s "$TEST_ROOT/signal-dev-manifest-before" "$signal_upgrade/.alan-cli-manifest-dev" \
+        || fail "SIG$signal_name changed old dev receipt"
+    [[ ! -e "$signal_upgrade/.alan-cli-manifest" ]] || fail "signal left canonical receipt"
     cmp -s "$TEST_ROOT/signal-manifest-before" "$signal_upgrade/.alan-cli-manifest-stable" \
         || fail "SIG$signal_name changed the old manifest"
 done
@@ -171,15 +198,55 @@ cmp -s "$TEST_ROOT/unowned-host-before" "$unowned_host/alan-os-host" \
 cmp -s "$TEST_ROOT/unowned-manifest-before" "$unowned_host/.alan-cli-manifest-stable" \
     || fail "unowned Host conflict changed the existing manifest"
 
+for bad_name in alan-dev alan-os-host-dev; do
+    conflict="$TEST_ROOT/unowned-$bad_name"
+    mkdir -p "$conflict"
+    printf 'unowned\n' >"$conflict/$bad_name"
+    expect_install_failure "$conflict" "$conflict/$bad_name"
+    [[ ! -e "$conflict/alan" ]] || fail "dev conflict installed alan anyway"
+done
+modified_dev="$TEST_ROOT/modified-dev"
+mkdir -p "$modified_dev"
+printf 'stable before conflict\n' >"$modified_dev/alan"
+printf 'dev before edit\n' >"$modified_dev/alan-dev"
+printf 'alan|%s\n' "$(sha256 "$modified_dev/alan")" >"$modified_dev/.alan-cli-manifest-stable"
+printf 'alan-dev|%s\n' "$(sha256 "$modified_dev/alan-dev")" >"$modified_dev/.alan-cli-manifest-dev"
+printf 'local edit\n' >>"$modified_dev/alan-dev"
+cp "$modified_dev/alan" "$TEST_ROOT/stable-before-dev-conflict"
+expect_install_failure "$modified_dev" "$modified_dev/alan-dev"
+cmp -s "$modified_dev/alan" "$TEST_ROOT/stable-before-dev-conflict" \
+    || fail "dev conflict partially replaced stable CLI"
+for malformed in traversal duplicate symlink; do
+    bad="$TEST_ROOT/manifest-$malformed"
+    mkdir -p "$bad"
+    case "$malformed" in
+        traversal) printf '../outside|%064d\n' 0 >"$bad/.alan-cli-manifest-dev" ;;
+        duplicate) printf 'alan-dev|%064d\nalan-dev|%064d\n' 0 0 >"$bad/.alan-cli-manifest-dev" ;;
+        symlink) ln -s "$modified_dev/.alan-cli-manifest-dev" "$bad/.alan-cli-manifest-dev" ;;
+    esac
+    expect_install_failure "$bad" "$bad/.alan-cli-manifest-dev"
+    [[ ! -e "$bad/alan" ]] || fail "malformed manifest partially installed alan"
+done
+
+printf 'modified CLI\n' >>"$TEST_ROOT/bin/alan"
+if "$SCRIPT_DIR/uninstall-cli.sh" >"$TEST_ROOT/uninstall-output" 2>&1; then
+    fail "uninstaller removed modified owned CLI"
+fi
+[[ -f "$TEST_ROOT/bin/alan" && -f "$TEST_ROOT/bin/.alan-cli-manifest" ]] \
+    || fail "uninstaller lost modified CLI or its receipt"
+ALAN_CLI_INSTALL_DIR="$upgrade" "$SCRIPT_DIR/uninstall-cli.sh"
+[[ ! -e "$upgrade/alan" && ! -e "$upgrade/.alan-cli-manifest" ]] \
+    || fail "uninstall retained owned canonical artifacts"
+
 ALAN_RELEASE_OUT_DIR="$TEST_ROOT/release" "$SCRIPT_DIR/assemble-cli-release.sh"
 archive=("$TEST_ROOT"/release/*.tar.gz)
 [[ -f "${archive[0]}" ]] || fail "release archive was not created"
 listing="$(tar -tzf "${archive[0]}")"
-[[ "$listing" == *"./alan"* && "$listing" == *"./alan-dev"* && "$listing" == *"./manifest.json"* ]] \
+[[ "$listing" == *"./alan"* && "$listing" != *"alan-dev"* && "$listing" == *"./manifest.json"* ]] \
     || fail "release archive is missing a CLI entry or manifest"
 [[ "$listing" != *"alan-os-host"* ]] || fail "release archive contains a separate Host executable"
 manifest_contents="$(tar -xOzf "${archive[0]}" ./manifest.json)"
-[[ "$manifest_contents" == *'"binaries": ["alan", "alan-dev"]'* ]] \
+[[ "$manifest_contents" == *'"binaries": ["alan"]'* ]] \
     || fail "release manifest does not list only CLI entry points"
 
 printf 'Standalone CLI distribution checks passed.\n'

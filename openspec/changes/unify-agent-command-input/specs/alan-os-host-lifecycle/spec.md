@@ -9,16 +9,15 @@ only one owner.
 In this contract, an invocation means that execution path; metadata,
 configuration and explicitly targeted management subcommands SHALL NOT boot an
 unrelated Root Agent.
-Install channel SHALL select persistent
-configuration and store boundaries, not a singleton live runtime. Service Manager
+Explicit Host bindings SHALL select the product or isolated test store pair,
+not a singleton live runtime. Service Manager
 SHALL retain ownership of services and the instance-local Root Agent Process.
 The renderer SHALL remain a file client of that instance. Bare `alan` MUST NOT
 launch or attach to a separate background Host, including through launchd or
 systemd. Herdr SHALL NOT be required for ordinary terminal operation.
 
 #### Scenario: Two terminal sessions start Alan
-- **WHEN** two terminal sessions start `alan` for the same user and install
-  channel without `ALAN_INSTANCE_RUNTIME_DIR`, or with distinct runtime
+- **WHEN** two terminal sessions start `alan` for the same user without `ALAN_INSTANCE_RUNTIME_DIR`, or with distinct runtime
   directories
 - **THEN** each owns an independent Root Agent, Process table, input queue, cwd,
   and runtime endpoint
@@ -52,7 +51,7 @@ report an error rather than connect to an unrelated running instance.
 ### Requirement: Host restart creates a new boot identity
 Every invocation SHALL create a fresh boot identity, Process table and Root Agent
 Process. It MUST NOT deserialize live Process state or implicitly select a
-previous channel-wide rollout. Recovery SHALL require an explicitly selected
+previous product-wide rollout. Recovery SHALL require an explicitly selected
 durable record. Recovery failure SHALL be reported without silently starting a
 fresh task. Current authority SHALL be revalidated; recorded paths or grants are
 not live capabilities. Reliable pending work SHALL remain paused, and unknown
@@ -79,7 +78,7 @@ effects MUST NOT be replayed automatically.
 ### Requirement: Product composition preserves production adapters
 Mock providers and ephemeral test stores SHALL require explicit development/test
 selection. Foreground product composition SHALL use the existing product adapters,
-channel stores and governance; running in-process SHALL NOT itself select a test
+product stores and governance; running in-process SHALL NOT itself select a test
 Host or weaken authorization.
 
 #### Scenario: Product composition fails

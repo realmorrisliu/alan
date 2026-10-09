@@ -27,7 +27,7 @@ class CargoCliOutputTests(unittest.TestCase):
         self.repo = self.root / "checkout"
         (self.repo / "scripts").mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
-        for name in ("cargo-cli-output.sh", "install-cli.sh", "install-channel.sh",
+        for name in ("cargo-cli-output.sh", "install-cli.sh", "uninstall-cli.sh", "install-ownership.sh",
                      "assemble-cli-release.sh", "test-standalone-cli-distribution.sh", "build_artifacts.py"):
             shutil.copy2(SCRIPTS / name, self.repo / "scripts" / name)
         (self.repo / "Cargo.toml").write_text(

@@ -51,7 +51,7 @@ OpenSpec and the ADRs.
   instance; a Herdr view detach may leave the native process alive (ADR-0054 and
   the lifecycle update to ADR-0056). Starting another Herdr session starts a
   separate invocation; reusing earlier durable work requires explicit user
-  selection, never automatic channel-wide recovery. PR #1011 verifies separate
+  selection, never automatic product-wide recovery. PR #1011 verifies separate
   input streams and cwd bindings across simultaneous invocations. Explicit
   durable recovery, Herdr view detach, revocation and no-repeat acceptance are
   recorded in `openspec/changes/unify-agent-command-input/next-delivery.md`
@@ -178,16 +178,16 @@ alan connection default set chatgpt-main
 alan connection test chatgpt-main
 ```
 
-Connection metadata lives in the channel Connection Service subtree of the
+Connection metadata lives in the product Connection Service subtree of the
 System Store. Credentials and managed auth state use their owning Host stores.
 Agent config may select a profile with `connection_profile = "profile-id"` but
 must not contain new inline secrets.
 
-Host-private backing is channel-isolated:
+Host-private backing has one product store pair:
 
 ```text
-~/Library/Application Support/Alan/System Store/<channel>/
-~/Library/Application Support/Alan/Host Store/<channel>/
+~/Library/Application Support/Alan/System Store/
+~/Library/Application Support/Alan/Host Store/
 ```
 
 Agent Definitions and Skills resolve only from explicit descriptors or

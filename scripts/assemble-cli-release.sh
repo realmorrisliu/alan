@@ -28,10 +28,9 @@ CLI_SOURCE="$(alan_build_cli "$PROJECT_ROOT" "$TARGET_DIR" --release --target "$
 stage="$(mktemp -d "$TARGET_DIR/cli-stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 install -m 0755 "$CLI_SOURCE" "$stage/alan"
-ln -s alan "$stage/alan-dev"
 
 manifest="$stage/manifest.json"
-printf '{\n  "product": "alan-cli",\n  "version": "%s",\n  "target": "%s",\n  "binaries": ["alan", "alan-dev"]\n}\n' \
+printf '{\n  "product": "alan-cli",\n  "version": "%s",\n  "target": "%s",\n  "binaries": ["alan"]\n}\n' \
     "$VERSION" "$TARGET" >"$manifest"
 
 archive="$OUT_DIR/alan-$VERSION-$TARGET.tar.gz"

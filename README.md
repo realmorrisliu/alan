@@ -19,7 +19,7 @@ See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
 directory not in use by another invocation boots and owns a foreground alan9
 instance and its Root Agent Process. Herdr sessions using separate runtime
-directories have separate Roots and endpoints while channel stores remain
+directories have separate Roots and endpoints while product stores remain
 shared. Reusing one explicit runtime directory allows only one owner; another
 invocation fails to acquire it rather than sharing its Root. Detaching a
 terminal view is separate from exiting the Alan process; when Alan exits, its
@@ -199,16 +199,16 @@ as `/mnt/import`.
 
 ## Configuration and state
 
-Durable state is separated by owner and install channel:
+Durable state is separated by owner:
 
 ```text
-~/Library/Application Support/Alan/System Store/<channel>/
+~/Library/Application Support/Alan/System Store/
 ├── services/agent-runtime/    # rollout, checkpoint, cache, tmp, metadata
 ├── services/connections/      # non-secret connection metadata
 ├── services/memory/           # Memory Store backing
 └── services/packages/         # package-owned state and explicit imports
 
-~/Library/Application Support/Alan/Host Store/<channel>/
+~/Library/Application Support/Alan/Host Store/
 ├── credentials/               # Host-owned secret material
 └── auth.json                  # Host-managed provider auth
 ```
@@ -218,10 +218,11 @@ mounts. Agent Definitions and Skills enter a Process only through descriptors
 or installed alan9 references. Memory Stores use explicit descriptors such
 as `/memory`; raw backing paths never enter prompts or Agent-visible files.
 
-On upgrade, recognized generated legacy state is removed and connection state
-is migrated, verified, and only then deleted. Possibly authored Agent, persona,
-policy, Skill, and Memory trees are reported but remain untouched until an
-explicit `alan host legacy-state import` succeeds.
+Old stable/dev stores remain unchanged until an explicit source is adopted with
+`alan legacy-state migrate-installation --from stable|dev`. Startup does not
+select one automatically. See the [installation and migration guide](docs/standalone_cli_distribution.md).
+Authored legacy content uses an explicit `alan legacy-state import`; it is never
+an implicit definition or Skill overlay.
 
 `ALAN_CONFIG_PATH` may point directly to an agent configuration file. New
 user-facing configuration selects a connection with `connection_profile`; it
