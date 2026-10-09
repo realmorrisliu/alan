@@ -14,7 +14,7 @@ changed bindings and between Tool iterations, verify JSON-escaped newline/quote/
 emoji paths, omit missing/non-UTF-8 bindings, account for prompt overhead and
 preserve historical Tape. The intra-turn test changes the binding in a fixture
 Tool-completion callback; it proves request refresh, not live Host Mount mutation.
-Receipt in the process-directory worktree: `target/engine-tests.log`. Earlier reproduction and
+Receipt in this worktree: `target/engine-tests.log`. Earlier reproduction and
 focused receipts remain in the output-presentation worktree's ignored `target/`.
 
 ## Native corrected rerun
@@ -53,10 +53,6 @@ selected-directory instruction provides context; live authority still decides
 whether a Tool can access or execute anything.
 
 ## PR #1043 review correction
-
-The review-correction receipts below belong to the isolated
-`process-directory-20261009` worktree; native receipts belong to
-`output-presentation-20261009`.
 
 The review found that a missing PID binding could fall back to a global standalone
 Tool binding. An actual-request regression with a default-only registry failed

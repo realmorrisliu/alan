@@ -247,3 +247,16 @@ passed all 67 current items (`target/detail-final-openspec.log`). Tasks 4.1 and
 4.2 are local gates, distinct from the still-open native matrix and current-head
 PR review/CI/merge. The ordinary PTY test invocation has exited; no development
 Agent was left running by this slice.
+
+The branch integrated merged main `105903159ae0bd4243e6226aabdfdc8a76315f22`.
+The Tool registry conflict retained both the PID-only binding lookup and positive
+read-only presentation receipts; the final Rust tree was identical to the
+already-tested slice. The independent repair's acceptance file uses the merged
+main version, keeping its document ownership out of the UI diff.
+`cargo test --workspace` then passed 2,893 tests, with zero failures and 14 existing
+ignored tests (`target/ui-main-workspace-tests.log`); strict validation passed
+67/67 (`target/ui-main-openspec.log`). Existing full-viewport tests cover both
+PageUp/PageDown and Space/b, generation/selection changes and exact draft/cursor
+return; targeted native PTY and Herdr receipts qualify Space/b interaction.
+Tasks 2.4 and 4.4 are locally closed. Full native matrix, final-head CI/review,
+merge and canonical synchronization remain separate gates.

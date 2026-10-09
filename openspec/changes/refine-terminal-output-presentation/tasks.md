@@ -8,7 +8,7 @@
 - [x] 2.1 Remove every typed renderer-generated role-prefix path, including details, plans, errors, pending input and thinking; preserve literal lookalikes and existing route markers with regressions.
 - [x] 2.2 Compact Action summaries, remove repeated paths/commands and per-Action hint scaffolding, and keep primitive-specific status and retained evidence accessible.
 - [x] 2.3 Align live activity, notices, failures and request hierarchy; verify waiting, rejection, cancellation and unknown outcomes remain explicit without duplicated state lines.
-- [ ] 2.4 Verify the contextual detail hint and existing navigation from supported surfaces, including Host page-key aliases and restoration of the same draft/cursor.
+- [x] 2.4 Verify the contextual detail hint and existing navigation from supported surfaces, including Host page-key aliases and restoration of the same draft/cursor.
 
 ## 3. Read-only grouping and plan history
 
@@ -22,7 +22,7 @@
 - [x] 4.1 Run focused TUI and affected Runtime/protocol regressions for literal text, failure visibility, stdout/stderr, diff markers, raw detail, metadata fallback and plan retention.
 - [x] 4.2 Check deterministic layout cases at 48, 80 and 120 columns, including Chinese/emoji, long paths, multiline drafts, Markdown/code, long single-line output and completion below input.
 - [ ] 4.3 Run the five workflows in ordinary PTY and Herdr on the fresh candidate; verify label removal, concise summaries, member/snapshot detail, stable input, usable scrollback and exact no-repeat effects.
-- [ ] 4.4 Run `just quality`, applicable test/check workflows and OpenSpec strict validation; record remaining environment limits rather than treating skipped native checks as passes.
+- [x] 4.4 Run `just quality`, applicable test/check workflows and OpenSpec strict validation; record remaining environment limits rather than treating skipped native checks as passes.
 
 ## 5. Review and delivery
 

@@ -76,10 +76,12 @@ proposal are preserved.
 
 ## Current checkpoint
 
-UI tasks are 10/17 checked: source tracing, generated-label removal,
+UI tasks are 12/17 checked: source tracing, generated-label removal,
 compact Action summaries, exact compact plan history, notice hierarchy, positive
 Runtime-owned read-only eligibility, rendered groups, grouped history/detail
-lifecycle and the focused regression/layout gates.
+lifecycle, contextual detail navigation and the local regression/layout/quality
+gates. Full workspace testing after integrating current main passed 2,893 tests
+with 14 existing ignored tests; strict OpenSpec validation passed 67/67.
 Grouped lifecycle/detail regressions now include concrete old-Process references,
 same-ID fencing, unavailable evidence and 27 partial-drain/resize combinations.
 Complete native matrices, review/CI/merge and canonical spec sync remain
