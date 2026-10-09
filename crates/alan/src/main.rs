@@ -459,7 +459,10 @@ async fn main() -> Result<()> {
                             anyhow::bail!("cannot determine Host home directory");
                         };
                         let source_roots = canonical_existing_roots(source_roots)?;
-                        let report = legacy_state::inspect_legacy_state(&paths, &source_roots)?;
+                        let mut report = legacy_state::inspect_legacy_state(&paths, &source_roots)?;
+                        report.installations = Some(
+                            alan_os_host::installation::InstallationPaths::detect()?.inspect()?,
+                        );
                         print_legacy_inspection(&report, json)?;
                     }
                     LegacyStateAction::Cleanup { source_roots, json } => {
@@ -781,6 +784,27 @@ fn print_legacy_inspection(report: &legacy_state::LegacyInspection, json: bool) 
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);
         return Ok(());
+    }
+    if let Some(installations) = &report.installations {
+        println!(
+            "canonical stores: system={}, host={}",
+            installations.canonical.system_present, installations.canonical.host_present
+        );
+        for source in &installations.sources {
+            println!(
+                "legacy {}: system={} ({}), host={} ({})",
+                source.source.id(),
+                source.stores.system_present,
+                source.stores.system_root.display(),
+                source.stores.host_present,
+                source.stores.host_root.display()
+            );
+        }
+        if installations.migration_journal_present {
+            println!(
+                "installation migration journal present; inspect migration status before opening stores"
+            );
+        }
     }
     for path in &report.generated_paths {
         println!("generated: {}", path.display());

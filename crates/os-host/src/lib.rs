@@ -6,6 +6,7 @@
 
 mod boot;
 pub mod host_mounts;
+pub mod installation;
 mod legacy_connections;
 mod local;
 pub mod paths;

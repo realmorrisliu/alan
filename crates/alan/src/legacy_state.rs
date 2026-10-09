@@ -89,6 +89,8 @@ pub struct LegacyInspection {
     pub generated_paths: Vec<PathBuf>,
     pub migratable_paths: Vec<PathBuf>,
     pub authored_roots: Vec<AuthoredRoot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installations: Option<alan_os_host::installation::InstallationInspection>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]

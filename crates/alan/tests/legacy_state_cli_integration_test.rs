@@ -149,3 +149,38 @@ fn legacy_skill_import_is_not_parseable() {
         "{output:?}"
     );
 }
+
+#[test]
+fn inspection_reports_installation_inputs_without_reading_or_adopting_credentials() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    std::fs::create_dir_all(&home).unwrap();
+    let data = detected_data_dir(&home, &xdg_data);
+    let product = data.join("Alan");
+    let legacy_host = product.join("Host Store/dev");
+    std::fs::create_dir_all(&legacy_host).unwrap();
+    std::fs::create_dir_all(product.join("System Store/dev/services")).unwrap();
+    std::fs::write(legacy_host.join("auth.json"), "secret that is not JSON").unwrap();
+    let output = alan_command(&home, &xdg_data)
+        .args(["host", "legacy-state", "inspect", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let rendered = String::from_utf8(output.stdout).unwrap();
+    assert!(!rendered.contains("secret that is not JSON"));
+    let report: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let installations = &report["installations"];
+    assert_eq!(installations["canonical"]["system_present"], false);
+    assert_eq!(installations["canonical"]["host_present"], false);
+    assert_eq!(installations["sources"][0]["source"], "stable");
+    assert_eq!(installations["sources"][1]["source"], "dev");
+    assert_eq!(installations["sources"][1]["system_present"], true);
+    assert_eq!(installations["sources"][1]["host_present"], true);
+    assert!(!product.join("System Store/services").exists());
+    assert!(!product.join("Host Store/auth.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(legacy_host.join("auth.json")).unwrap(),
+        "secret that is not JSON"
+    );
+}
