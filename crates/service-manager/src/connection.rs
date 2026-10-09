@@ -171,6 +171,7 @@ pub struct ConnectionService {
     metadata_path: PathBuf,
     state: Mutex<State>,
     callables: tokio::sync::Mutex<Option<CallableRegistry>>,
+    temporary_store: Option<tempfile::TempDir>,
 }
 
 struct ConnectionLlmProvider {
@@ -241,16 +242,18 @@ impl ConnectionService {
                 validation,
             }),
             callables: tokio::sync::Mutex::new(None),
+            temporary_store: None,
         }))
     }
 
-    pub fn ephemeral(channel_id: impl Into<String>) -> Arc<Self> {
-        Arc::new(Self {
+    pub fn ephemeral(channel_id: impl Into<String>) -> Result<Arc<Self>> {
+        let temporary = tempfile::Builder::new()
+            .prefix("alan-connections-")
+            .tempdir()?;
+        let metadata_path = temporary.path().join("connections.toml");
+        Ok(Arc::new(Self {
             channel_id: channel_id.into(),
-            metadata_path: std::env::temp_dir().join(format!(
-                "alan-connections-{}.toml",
-                uuid::Uuid::new_v4().simple()
-            )),
+            metadata_path,
             state: Mutex::new(State {
                 connections: ConnectionsFile::default(),
                 selections: BTreeMap::new(),
@@ -261,7 +264,21 @@ impl ConnectionService {
                 validation: BTreeMap::new(),
             }),
             callables: tokio::sync::Mutex::new(None),
-        })
+            temporary_store: Some(temporary),
+        }))
+    }
+
+    /// Close a temporary store after all consumers stop, reporting cleanup errors.
+    pub fn close_ephemeral(self: Arc<Self>) -> Result<()> {
+        let mut service = Arc::try_unwrap(self)
+            .map_err(|_| anyhow::anyhow!("Connection Service still has active consumers"))?;
+        let temporary = service
+            .temporary_store
+            .take()
+            .context("Connection Service does not own a temporary store")?;
+        temporary
+            .close()
+            .context("remove temporary Connection Store")
     }
 
     pub fn file_server(self: &Arc<Self>) -> Arc<dyn FileServer> {

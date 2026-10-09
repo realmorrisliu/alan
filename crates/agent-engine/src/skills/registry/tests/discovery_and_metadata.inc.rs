@@ -147,7 +147,8 @@ Body
 
     #[test]
     fn load_capability_view_applies_skill_overrides() {
-        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
             &[

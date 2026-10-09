@@ -212,7 +212,7 @@ impl ServiceManager {
             .clone();
         let connection_service = match config.connection_store.as_ref() {
             Some(bindings) => ConnectionService::open(&config.channel_id, bindings)?,
-            None => ConnectionService::ephemeral(&config.channel_id),
+            None => ConnectionService::ephemeral(&config.channel_id)?,
         };
         let llm_connection = preferred_connection
             .or_else(|| connection_service.default_profile())
@@ -653,8 +653,8 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     launch_context = root_template_context;
     let reference_service = package_service.clone();
     launch_context = tokio::task::spawn_blocking(move || {
-        for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-            project_package_reference(&reference_service, &mut launch_context, &source.package_id)?;
+        for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
+            project_package_reference(&reference_service, &mut launch_context, package_id)?;
         }
         Ok::<_, anyhow::Error>(launch_context)
     })
@@ -789,14 +789,13 @@ fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Resul
 fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<()> {
     package_service.retire_preinstalled("alan-shell-control")?;
     for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-        let snapshot =
-            crate::PackageSnapshot::from_directory(&source.root_dir).with_context(|| {
-                format!(
-                    "snapshot first-party package `{}` for Package Service",
-                    source.package_id
-                )
-            })?;
-        package_service.seed_preinstalled(&source.package_id, snapshot)?;
+        let snapshot = crate::PackageSnapshot::from_preinstalled(&source).with_context(|| {
+            format!(
+                "snapshot first-party package `{}` for Package Service",
+                source.package_id
+            )
+        })?;
+        package_service.seed_preinstalled(source.package_id, snapshot)?;
     }
     Ok(())
 }

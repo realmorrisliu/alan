@@ -71,7 +71,7 @@ fn capability_view_for_definition_root(
             path: definition_root.join("skills"),
             scope: SkillScope::Descriptor,
         }],
-        crate::skills::preinstalled_package_roots_for_tests(),
+        crate::skills::preinstalled_package_roots_for_tests(definition_root),
     )
 }
 

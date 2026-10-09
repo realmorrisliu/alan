@@ -11,7 +11,7 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
         ProviderId::GoogleGeminiGenerateContent,
         ProviderId::AnthropicMessages,
     ] {
-        let service = ConnectionService::ephemeral("test");
+        let service = ConnectionService::ephemeral("test").unwrap();
         let factory = Arc::new(TestLlmClientFactory::default());
         service
             .attach_callable_registry(
@@ -126,7 +126,7 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
 
 #[tokio::test]
 async fn process_initial_binding_classifies_injection_and_preserves_managed_validation() {
-    let service = ConnectionService::ephemeral("test");
+    let service = ConnectionService::ephemeral("test").unwrap();
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     service
         .attach_callable_registry(
@@ -414,7 +414,7 @@ impl LlmClientFactory for EvaluationCaptureFactory {
 #[tokio::test]
 async fn evaluation_capture_checks_callable_capability_and_preserves_generation_authority() {
     for supported in [false, true] {
-        let service = ConnectionService::ephemeral("test");
+        let service = ConnectionService::ephemeral("test").unwrap();
         service
             .apply(ConnectionCommand::AddProfile {
                 profile_id: "main".into(),

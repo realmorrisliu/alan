@@ -14,10 +14,10 @@ These are implementation tasks. Read disposition.md before applying and implemen
 
 ## 2. Embedded packages and temporary service files
 
-- [ ] 2.1 Enumerate all callers of preinstalled source/ID APIs and separate ID enumeration from asset access; verify ID-only calls perform no filesystem writes.
-- [ ] 2.2 Adapt embedded relative entries into the existing validated PackageSnapshot/seeding path without reversing crate dependencies; compare package IDs, bytes, metadata, exports and revision digests against directory-based fixtures, including bounds and path rejection.
-- [ ] 2.3 Remove static per-PID Skill extraction and migrate directory-dependent tests to scoped fixtures; verify repeated product boots and test runs leave no per-PID Skill roots while ordinary package references still resolve.
-- [ ] 2.4 Give ephemeral Connection Service a scoped directory for metadata and lock files, retaining consumer lifetime and observable explicit cleanup; verify normal shutdown, held consumers and cleanup errors alongside existing Package Service guards.
+- [x] 2.1 Enumerate all callers of preinstalled source/ID APIs and separate ID enumeration from asset access; verify ID-only calls perform no filesystem writes.
+- [x] 2.2 Adapt embedded relative entries into the existing validated PackageSnapshot/seeding path without reversing crate dependencies; compare package IDs, bytes, metadata, exports and revision digests against directory-based fixtures, including bounds and path rejection.
+- [x] 2.3 Remove static per-PID Skill extraction and migrate directory-dependent tests to scoped fixtures; verify repeated product boots and test runs leave no per-PID Skill roots while ordinary package references still resolve.
+- [x] 2.4 Give ephemeral Connection Service a scoped directory for metadata and lock files, retaining consumer lifetime and observable explicit cleanup; verify normal shutdown, held consumers and cleanup errors alongside existing Package Service guards.
 - [ ] 2.5 Add narrowly owned stale-scratch maintenance and document its limits; verify abrupt termination, PID reuse, live owners, missing markers and symlink roots never authorize deleting durable or unknown data.
 
 ## 3. Explicit adoption of legacy installation data

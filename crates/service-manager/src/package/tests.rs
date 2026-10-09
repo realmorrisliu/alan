@@ -9,6 +9,7 @@ mod bootstrap;
 #[cfg(unix)]
 mod bootstrap_wait_budget;
 mod concurrency;
+mod embedded;
 mod file_surface;
 #[cfg(unix)]
 mod lock_boundaries;
