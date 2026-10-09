@@ -4,8 +4,9 @@
 
 **Qualification failed; automatic routing remains OFF.** This delivers improved
 shadow criteria, matched native baselines and a Connection identity fix, not an
-automatic dispatcher, activation control or qualification approval. PR #1040 is
-the delivery vehicle; merge and current-head CI remain separate gates.
+automatic dispatcher, activation control or qualification approval. PR #1040
+delivered the implementation and evidence at merge `498f97e9`; its delivery
+receipt below remains separate from the failed qualification decision.
 
 Implementation `07b8c351e54e6b41a6e39aa38ee2d6bd8b390db2` was independently
 reviewed on both Spec and Standards axes. Freeze
@@ -120,8 +121,8 @@ passed; five example tests, four collector tests and scorer self-check passed.
 The missing-model and default-model defects each failed before the fix, then
 passed with the shared publication change. Mandatory quality, architecture,
 standalone CLI/distribution and current-surface checks passed on source/freeze
-commits. Exact final delivery head, independent evidence review and required CI
-must be recorded separately before merge; this receipt claims no merge or activation.
+commits. Final delivery review and CI are recorded separately below; none of those
+checks establishes qualification or activation.
 
 ## Post-measurement reader correction
 
@@ -138,3 +139,32 @@ Shared result validation also receives each caller's allowed labels: the
 three-label component baseline rejects `none`, while the native choice facade
 allows NoMatch. The contract regression fails before this correction and passes
 afterward; no frozen v4 result or classification criterion is changed.
+
+## Delivery receipt — 2026-10-09
+
+[PR #1040](https://github.com/realmorrisliu/alan/pull/1040) merged at
+00:46:51 UTC, merge `498f97e9f3604bfbc4462ea5a93155736d2591de`, from reviewed
+head `aa648f2a89a295b2e562e6da1d7b469d487e1f8a`. Its tree matches the reviewed
+head. All 16 final-head checks passed; independent Spec and Standards reviews
+passed, automated review completed without new findings, and both earlier
+findings were fixed, replied to and resolved. Final example tests passed eight
+cases, including the post-measurement reader corrections; the mandatory quality,
+architecture, OpenSpec and standalone distribution gate passed without bypass.
+
+The same merge synchronized the five delivered source-owner and Machine-file
+requirements into `agent-namespace-runtime` and `agent-file-layout-contract`.
+Future automatic-routing deltas remain unimplemented. Measured v4 source remains
+`07b8c351` with freeze `dac7802f`; delivery of later reader corrections does not
+requalify that measured candidate or attribute its numbers to the final head.
+
+Post-merge verification on the exact merge SHA passed: [CI](https://github.com/realmorrisliu/alan/actions/runs/37866506690)
+(including Linux/macOS tests, release builds, blocking harnesses, quality and
+OpenSpec), [CodeQL](https://github.com/realmorrisliu/alan/actions/runs/37866506653)
+and [Cargo Audit](https://github.com/realmorrisliu/alan/actions/runs/37866506654).
+The local strict OpenSpec check passed all 65 current surfaces.
+
+A separate [Dependabot update run](https://github.com/realmorrisliu/alan/actions/runs/37866517917)
+failed with `security_update_not_needed` while selecting rand 0.10.3. This does
+not establish that all locked rand versions are safe: [alert #8](https://github.com/realmorrisliu/alan/security/dependabot/8)
+remains open for locked rand 0.9.2 (low severity, GHSA-cq8v-f236-94qc, first fixed
+in 0.9.3). No dependency update or alert dismissal is part of this delivery.

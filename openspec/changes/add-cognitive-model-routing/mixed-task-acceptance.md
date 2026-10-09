@@ -5,7 +5,7 @@
 This implements the bounded entry in [mixed-task-entry.md](mixed-task-entry.md),
 on merged prerequisite `3bee6689`. It is one explicit source-owner program in the
 existing Agent Machine, not a general composer or input router. PR #1039 merged reviewed head `c69cf3eb` at `90a05fe5`. Current-head remote
-checks passed; implemented owning requirements are synchronized in this follow-up.
+checks passed; PR #1040 synchronized implemented owning requirements at `498f97e9`.
 Automatic routing stays disabled.
 
 `agent_work` now accepts `select_owner` JSON through its existing namespace
@@ -345,7 +345,11 @@ were resolved, and independent Spec and Standards reviews passed. The final stag
 hook passed without bypass. The final-source workspace result is 2,862 passed,
 zero failed and 14 ignored; older test counts above retain their source identity.
 
-The follow-up synchronizes only the delivered source-owner input, bounded durable
+[PR #1040](https://github.com/realmorrisliu/alan/pull/1040) merged at
+`498f97e9f3604bfbc4462ea5a93155736d2591de` on 2026-10-09 at 00:46:51 UTC,
+from reviewed head `aa648f2a`. Its 16 final-head checks, independent reviews and
+automated review passed with no unresolved threads. It synchronized only the
+delivered source-owner input, bounded durable
 decisions, Machine control envelope, evaluation observations and work projection
 requirements into their existing canonical owners. Native v5 model receipts retain
 their earlier source identity and do not measure the final fault corrections.

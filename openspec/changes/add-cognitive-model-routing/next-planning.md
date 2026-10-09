@@ -1,5 +1,13 @@
 # 下一步规划入口：Tracer bullet
 
+2026-10-09 当前交付：PR #1032/#1033/#1035 已交付显式输入与恢复、真实模型选择、
+finite-choice Connection 和 TypeSafe adapter；PR #1038 验收可靠性边界，
+PR #1039 交付受限只读混合任务，PR #1040 在 `498f97e9` 同步其 canonical requirements。
+证据见 [typed entry](typed-entry-delivery.md)、[mixed task](mixed-task-acceptance.md)
+和 [v4 routing comparison](../qualify-agent-input-routing/native-baselines-v4-results.md)。
+v4 资格验收失败，自动路由继续关闭；通用混合编排和包能力暴露仍未完成。
+下方日期化首切片记录保留其原始构建边界，不作为当前实现状态。
+
 2026-10-07 交付更新：PR #1026/#1030 已完成受监督项目使用、自开发验收和终端交付；
 验收证据见下方归档计划，当前合同见 canonical specs。无人监督自举未证明。
 
@@ -19,7 +27,8 @@
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
 ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧 Shell-first 指引。
 ADR-0058 后续接受同一 Machine 组合确定性命令与 Agent 推理；命令/输入语义由
-[unify-agent-command-input](../unify-agent-command-input/disposition.md) 接管，当前代码仍未交付该行为。
+[unify-agent-command-input](../unify-agent-command-input/disposition.md) 接管；显式输入已交付，
+无前缀自动分类仍未交付。
 
 ## 已完成与当前状态
 
@@ -86,13 +95,14 @@ fx 体验参考见 [research-jev-and-fx.md](research-jev-and-fx.md)。
 1. 已完成 [rename-alan-os-to-alan9](../archive/2026-09-25-rename-alan-os-to-alan9/)：PR #934 迁移
    README、AGENTS、指南和活动 OpenSpec 的解释性命名，PR #935 同步 canonical
    spec；保留 Alan 产品、`alan` CLI、crate/type/protocol/storage 标识、路径和历史决定。
-2. 按 ADR-0058 实施
+2. ADR-0058 的显式输入阶段已交付（PR #1032）：
    [unify-agent-command-input](../unify-agent-command-input/) 的显式输入阶段：
    `!` 原样交给受治理宿主 shell，`:` 强制 Agent，无前缀暂走 Agent；共享 cwd、
    排队/取消、证据关联与恢复不重放复用现有 Process/Machine/Host Mount/sandbox。
    不引入第二个 executor/router，不改写命令路径文本，也不把 aP 暴露为用户协议。
-3. 自动分类、typed evaluation、模型列表/选择与 Jev 仍是后续独立资格评估；
-   不因当前两个 change 的文档完成而视为已实现或已启用。
+3. typed evaluation、TypeSafe/Jev adapter 和模型列表/选择已交付。自动分类资格仍由
+   [qualify-agent-input-routing](../qualify-agent-input-routing/tasks.md) 承接；v4 未达门槛，
+   后续需新的冻结候选和完整对比，启用仍须独立授权。
 
 ## 切片 3：在已跑通任务上加入混合 Machine
 
@@ -104,6 +114,9 @@ ADR-0058 的显式 `!`/`:` 交付归属
 及 unprefixed shadow qualification 已移交活动后继
 [qualify-agent-input-routing](../qualify-agent-input-routing/tasks.md)；
 自动分类的 side-effecting route 仍须通过 false-execution 门槛并经明确启用，不能由 renderer 或候选 UI 暗中激活。
+
+受限 source-owner 程序已交付，见 [验收记录](mixed-task-acceptance.md)。下列是通用
+混合 Machine 的原路线要求；受限程序不关闭这些较宽的任务。
 
 - [ ] 定案 evaluation/generation 能力、版本化 DTO、操作生命周期、预算和 fallback。
 - [ ] 补齐 llmfs/provider、Agent Machine/AgentFS、执行证据 owning deltas。
@@ -124,8 +137,9 @@ fixtures 证明合同和恢复行为，不作为真实模型延迟或成本收�
 
 ## 切片 4：Jev shadow evaluation 与受控启用
 
-建议新建 `add-jev-evaluation-adapter`，当前尚未创建。
-复用切片 3 的 Connection、类型、治理和恢复合同。
+TypeSafe/Jev adapter 已由本 change 的 PR #1035 交付，不再新建平行 adapter change。
+真实 shadow 与基线对比由 [qualify-agent-input-routing](../qualify-agent-input-routing/tasks.md)
+统一维护；下列是历史验收范围，当前完成状态和失败门槛以该 owning checklist 为准。
 
 - [ ] 刷新供应商 API、模型版本及可用性，接入真实 adapter。
 - [ ] 在同一任务上先 shadow evaluation，覆盖错误结果、no-match、超时、取消和有界 fallback。

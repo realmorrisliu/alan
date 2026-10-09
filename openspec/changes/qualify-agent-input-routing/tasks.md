@@ -16,16 +16,18 @@
 ## 3. Delivery
 
 - [ ] 3.1 Run focused classification, governance, cancellation, fallback and interactive/redirected parity checks; record shadow measurements and activation decision separately from fixtures.
-- [ ] 3.2 Complete current-head review and required CI, merge implementation, and sync only delivered requirements.
+- [x] 3.2 Complete current-head review and required CI, merge implementation, and sync only delivered requirements.
 - [ ] 3.3 Archive after delivery or explicit active-successor handoff of every unfinished item and gate; verify incoming references.
 
-## Current evidence and open gates — 2026-10-08
+## Current evidence and open gates — 2026-10-09
 
 [V4 native comparison](native-baselines-v4-results.md) completes the planned 948
 attempted slots, focused checks and negative activation decision. It does not
 close the compound qualification/parity/cost tasks: eight typed false command
 choices, absolute latency, 24 unsupported redirected response attempts and unknown
 generation billing remain. No activation control or dispatcher is delivered.
-PR #1040 is pending final-head review/CI and merge (3.2); preserve unfinished 2.1,
-2.3, 2.4, 3.1 and archive/handoff gates rather than checking them from fixture or
-subset success.
+PR #1040 merged reviewed head `aa648f2a` at `498f97e9`; the delivered generic
+Machine requirements are synchronized in their canonical owners. Exact-head and
+merge checks are recorded in the [delivery receipt](native-baselines-v4-results.md).
+Preserve unfinished 2.1, 2.3, 2.4, 3.1 and archive/handoff gates rather than checking
+them from fixture, subset or implementation-delivery success.

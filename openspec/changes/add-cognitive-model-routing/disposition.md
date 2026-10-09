@@ -1,6 +1,6 @@
 # Disposition — 2026-09-20
 
-## Current delivery — 2026-10-08
+## Current delivery — 2026-10-09
 
 PR #1035 merged at `cb0ec7ec7746a8f5b2af77782b281bbce7a838f0`.
 Finite-choice Connection evaluation, the TypeSafe adapter and invocation-scoped
@@ -8,11 +8,13 @@ Machine shadow advice are implemented. PR #1039 merged the bounded read-only sou
 `90a05fe5e26efdba6186518dd58295619095bf01` from reviewed head
 `c69cf3ebfda8ebd52c71ec5ac46bf2de32d548eb`. It composes deterministic lookup,
 one finite-choice evaluation, an explicitly budget-gated generation fallback and
-owned wait/resume. General mixed transitions remain unfinished.
-The frozen v2 qualification failed; later reviewed source is unqualified.
-Automatic routing remains disabled. Sync only the delivered operation, adapter,
-read-only snapshot, shadow, invocation and bounded source-owner requirements; the broad
-`cognitive-model-routing` delta is still future direction.
+owned wait/resume. PR #1040 synchronized the five delivered source-owner and
+Machine-file requirements at `498f97e9f3604bfbc4462ea5a93155736d2591de`.
+General mixed transitions remain unfinished. Frozen input-routing v1–v4
+qualification failed; later reader corrections remain unqualified.
+Automatic routing remains disabled. The delivered operation, adapter, read-only
+snapshot, shadow, invocation and bounded source-owner requirements have canonical
+owners; the broad `cognitive-model-routing` delta remains future direction.
 See [typed-entry-delivery.md](typed-entry-delivery.md) and
 [mixed-task-acceptance.md](mixed-task-acceptance.md) for exact delivery evidence.
 
