@@ -18,6 +18,8 @@ use crate::flat_fs::{FlatFileService, FlatServiceFs};
 mod bootstrap;
 pub(crate) use bootstrap::PackageBootstrap;
 mod fs_safety;
+mod inspection;
+pub use inspection::validate_package_store_for_migration;
 mod materializer;
 mod store;
 

@@ -464,7 +464,7 @@ fn ensure_package_store_channel_chain(store_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn load_catalog(root: &Path) -> Result<PackageCatalog> {
+pub(super) fn load_catalog(root: &Path) -> Result<PackageCatalog> {
     let path = root.join("catalog.json");
     if !path.exists() {
         return Ok(PackageCatalog::default());
@@ -484,7 +484,7 @@ fn persist_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
     Ok(())
 }
 
-fn verify_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
+pub(super) fn verify_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
     validate_catalog_structure(catalog)?;
     for record in catalog.packages.values() {
         verify_revision(root, record)?;
@@ -512,7 +512,7 @@ fn validate_catalog_structure(catalog: &PackageCatalog) -> Result<()> {
     Ok(())
 }
 
-fn validate_revision_id(revision: &str) -> Result<()> {
+pub(super) fn validate_revision_id(revision: &str) -> Result<()> {
     ensure!(
         revision.len() == 64
             && revision

@@ -11,6 +11,7 @@ mod bootstrap_wait_budget;
 mod concurrency;
 mod embedded;
 mod file_surface;
+mod inspection;
 #[cfg(unix)]
 mod lock_boundaries;
 #[cfg(unix)]
