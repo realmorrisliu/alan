@@ -515,3 +515,58 @@ async fn dry_run_of_a_committed_receipt_never_recreates_a_removed_access_lock() 
     assert_eq!(report.state, "already-committed");
     assert!(!paths.product.join("installation.lock").exists());
 }
+
+#[tokio::test]
+async fn rollback_does_not_follow_or_require_a_valid_retained_source_root() {
+    for symlink in [false, true] {
+        let (_temp, paths) = fixture();
+        migrate(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::Apply,
+            |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+        let source = paths.system_root().join("dev");
+        fs::remove_dir_all(&source).unwrap();
+        let outside = _temp.path().join("outside");
+        fs::write(&outside, "retained independently").unwrap();
+        if symlink {
+            std::os::unix::fs::symlink(&outside, &source).unwrap();
+        } else {
+            fs::write(&source, "replaced legacy root").unwrap();
+        }
+        drop(paths.access().unwrap());
+        assert_eq!(
+            migrate(
+                &paths,
+                LegacyInstallation::Dev,
+                MigrationMode::Apply,
+                |_, _| Ok(())
+            )
+            .await
+            .unwrap()
+            .state,
+            "already-committed"
+        );
+        migrate(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::Rollback,
+            |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert!(!paths.system_root().join("services").exists());
+        assert!(!paths.journal().exists());
+        assert_eq!(
+            fs::read_to_string(&outside).unwrap(),
+            "retained independently"
+        );
+        assert_eq!(source.is_symlink(), symlink);
+        if !symlink {
+            assert_eq!(fs::read_to_string(&source).unwrap(), "replaced legacy root");
+        }
+    }
+}

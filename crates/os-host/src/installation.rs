@@ -134,16 +134,23 @@ impl InstallationPaths {
         self.product.join("installation-migration.json")
     }
 
-    pub fn inspect(&self) -> Result<InstallationInspection> {
+    /// Inspect only the canonical pair; recovery must not depend on retained source contents.
+    pub fn inspect_canonical(&self) -> Result<StorePairInspection> {
         directory_or_absent(&self.product)?;
         let system = self.system_root();
         let host = self.host_root();
-        let canonical = StorePairInspection {
+        Ok(StorePairInspection {
             system_present: has_canonical_content(&system)?,
             host_present: has_canonical_content(&host)?,
-            system_root: system.clone(),
-            host_root: host.clone(),
-        };
+            system_root: system,
+            host_root: host,
+        })
+    }
+
+    pub fn inspect(&self) -> Result<InstallationInspection> {
+        let canonical = self.inspect_canonical()?;
+        let system = &canonical.system_root;
+        let host = &canonical.host_root;
         let sources = [LegacyInstallation::Stable, LegacyInstallation::Dev]
             .into_iter()
             .map(|source| {
@@ -201,15 +208,16 @@ fn has_canonical_content(root: &Path) -> Result<bool> {
     let mut present = false;
     for entry in fs::read_dir(root)? {
         let entry = entry?;
+        if entry.file_name() == "stable" || entry.file_name() == "dev" {
+            continue;
+        }
         let metadata = entry.file_type()?;
         ensure!(
             !metadata.is_symlink(),
             "store entry is a symlink: {}",
             entry.path().display()
         );
-        if entry.file_name() != "stable" && entry.file_name() != "dev" {
-            present = true;
-        }
+        present = true;
     }
     Ok(present)
 }

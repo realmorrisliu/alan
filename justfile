@@ -48,15 +48,15 @@ install-hooks:
 
 # Show coverage summary in terminal
 coverage:
-    python3 scripts/build_artifacts.py run -- cargo llvm-cov --workspace --summary-only
+    CARGO_LLVM_COV_TARGET_DIR=target/llvm-cov-target python3 scripts/build_artifacts.py run --target-dir target/llvm-cov-target -- cargo llvm-cov --workspace --summary-only
 
 # Show detailed coverage with uncovered lines
 coverage-detail:
-    python3 scripts/build_artifacts.py run -- cargo llvm-cov --workspace
+    CARGO_LLVM_COV_TARGET_DIR=target/llvm-cov-target python3 scripts/build_artifacts.py run --target-dir target/llvm-cov-target -- cargo llvm-cov --workspace
 
 # Generate HTML coverage report (target/coverage/html)
 coverage-html:
-    python3 scripts/build_artifacts.py run -- cargo llvm-cov --workspace --html --output-dir target/coverage
+    CARGO_LLVM_COV_TARGET_DIR=target/llvm-cov-target python3 scripts/build_artifacts.py run --target-dir target/llvm-cov-target -- cargo llvm-cov --workspace --html --output-dir target/coverage
 
 # Build release
 build:

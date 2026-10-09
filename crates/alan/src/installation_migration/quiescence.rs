@@ -42,6 +42,24 @@ impl SourceLocks {
     }
 }
 
+fn is_alan_executable(executable: &str) -> bool {
+    // Linux comm truncates alan-os-host-dev to 15 bytes.
+    matches!(
+        Path::new(executable)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some(
+            "alan"
+                | "alan-dev"
+                | "alan-os-host"
+                | "alan-os-host-dev"
+                | "alan-os-host-de"
+                | "Alan"
+                | "Alan Dev"
+        )
+    )
+}
+
 fn check_processes(roots: &[PathBuf]) -> Result<()> {
     let uid = Command::new("id")
         .arg("-u")
@@ -67,14 +85,8 @@ fn check_processes(roots: &[PathBuf]) -> Result<()> {
         if pid.parse::<u32>()? == std::process::id() {
             continue;
         }
-        let name = Path::new(executable.trim())
-            .file_name()
-            .and_then(|name| name.to_str());
         ensure!(
-            !matches!(
-                name,
-                Some("alan" | "alan-dev" | "alan-os-host" | "alan-os-host-dev")
-            ),
+            !is_alan_executable(executable.trim()),
             "another Alan process is running; stop all Alan invocations before adoption"
         );
     }
@@ -111,6 +123,23 @@ fn check_processes(roots: &[PathBuf]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_cli_and_retired_desktop_process_names_are_quiescence_boundaries() {
+        for name in [
+            "alan",
+            "alan-dev",
+            "alan-os-host",
+            "alan-os-host-dev",
+            "alan-os-host-de",
+            "/Applications/Alan.app/Contents/MacOS/Alan",
+            "/Applications/Alan Dev.app/Contents/MacOS/Alan Dev",
+        ] {
+            assert!(is_alan_executable(name), "{name}");
+        }
+        assert!(!is_alan_executable("installation_migration_process_test"));
+        assert!(!is_alan_executable("python3"));
+    }
 
     #[test]
     fn retains_existing_native_lock_and_never_creates_missing_lock_files() {

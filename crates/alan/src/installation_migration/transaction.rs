@@ -72,7 +72,7 @@ async fn migrate_with_checkpoints(
     check: impl Fn(&SourceLocks, &[PathBuf]) -> Result<()>,
     checkpoint: impl Fn(&str) -> Result<()>,
 ) -> Result<MigrationReport> {
-    let report = paths.inspect()?;
+    let canonical = paths.inspect_canonical()?;
     let previous = paths.read_migration_journal()?;
     if let Some(journal) = &previous {
         ensure!(
@@ -94,7 +94,7 @@ async fn migrate_with_checkpoints(
             super::recovery::load(paths, journal)?
                 .context("committed migration recovery inventory is missing")?;
             ensure!(
-                report.canonical.system_present || report.canonical.host_present,
+                canonical.system_present || canonical.host_present,
                 "committed migration has lost its canonical stores"
             );
             return Ok(MigrationReport {
@@ -109,7 +109,7 @@ async fn migrate_with_checkpoints(
             "there is no installation migration to roll back"
         );
         ensure!(
-            !report.canonical.system_present && !report.canonical.host_present,
+            !canonical.system_present && !canonical.host_present,
             "canonical stores already contain data; whole-store merging is not supported"
         );
     }
@@ -121,6 +121,7 @@ async fn migrate_with_checkpoints(
             checkpoint,
         );
     }
+    paths.inspect()?;
     let system = paths.system_root().join(source.id());
     let host = paths.host_root().join(source.id());
     ensure!(
@@ -299,13 +300,13 @@ fn rollback(
     let native = SourceLocks::acquire(&paths.system_root(), &paths.host_root())?;
     check(&native, &[paths.system_root(), paths.host_root()])?;
     let Some(components) = super::recovery::load(paths, &journal)? else {
-        let report = paths.inspect()?;
+        let canonical = paths.inspect_canonical()?;
         ensure!(
             matches!(
                 journal.state,
                 MigrationState::Preparing | MigrationState::RollingBack
-            ) && !report.canonical.system_present
-                && !report.canonical.host_present
+            ) && !canonical.system_present
+                && !canonical.host_present
                 && stage_roots_absent(paths, journal.id)?,
             "recovery inventory is missing while migration data remains; retain it for inspection"
         );
