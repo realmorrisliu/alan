@@ -23,7 +23,7 @@ These are implementation tasks. Read disposition.md before applying and implemen
 ## 3. Explicit adoption of legacy installation data
 
 - [x] 3.1 Extend legacy-state inspection to report stable/dev paired roots and canonical-data presence without exposing secrets; add fixture tests for absent, single-source, dual-source, canonical and malformed layouts.
-- [ ] 3.2 Implement the explicit `migrate-installation --from stable|dev` operation and non-mutating dry run; verify no automatic selection, no whole-store merge, unchanged sources and rejection of populated canonical destinations.
+- [x] 3.2 Implement the explicit `migrate-installation --from stable|dev` operation and non-mutating dry run; verify no automatic selection, no whole-store merge, unchanged sources and rejection of populated canonical destinations.
 - [ ] 3.3 Implement source-writer quiescence checks and staged owner validation of metadata, credentials, package references, rollouts/checkpoints, Memory Stores and definitions; verify unknown schema, unsupported path references, missing credentials and changing source fail before publication without provider calls or replay.
 - [ ] 3.4 Implement the paired-store transaction journal and incomplete-publication guard in every data opener, including metadata and auth paths; fault-inject interruption before/between/after publication and verify resume, rollback and idempotent committed retry.
 - [ ] 3.5 Document source selection, required writer shutdown, source retention and post-write rollback limits in current CLI help/docs; run each documented flow in isolated macOS/Linux fixtures and confirm generated scratch is excluded from adoption.

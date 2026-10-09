@@ -296,3 +296,222 @@ async fn changing_source_is_detected_before_publication_without_losing_the_new_b
     assert!(!paths.system_root().join("services").exists());
     assert!(paths.access().is_err());
 }
+
+#[tokio::test]
+async fn rollback_uses_persisted_inventory_even_when_the_legacy_source_changes() {
+    for point in ["prepared", "inventory", "staged", "published", "committed"] {
+        let (_temp, paths) = fixture();
+        let result = migrate_with_checkpoints(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::Apply,
+            |_, _| Ok(()),
+            |name| {
+                anyhow::ensure!(name != point, "injected interruption");
+                Ok(())
+            },
+        )
+        .await;
+        assert!(result.is_err(), "{point}");
+        let note = paths
+            .system_root()
+            .join("dev/services/memory/stores/personal/note.md");
+        fs::write(&note, "new legacy work after interruption").unwrap();
+        migrate(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::Rollback,
+            |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "new legacy work after interruption"
+        );
+        assert!(!paths.system_root().join("services").exists());
+        assert!(!paths.journal().exists());
+    }
+}
+
+#[tokio::test]
+async fn committed_retry_and_rollback_do_not_need_the_legacy_source() {
+    let (_temp, paths) = fixture();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    fs::remove_dir_all(paths.system_root().join("dev")).unwrap();
+    assert_eq!(
+        migrate(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::Apply,
+            |_, _| Ok(())
+        )
+        .await
+        .unwrap()
+        .state,
+        "already-committed"
+    );
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Rollback,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert!(!paths.system_root().join("services").exists());
+}
+
+#[tokio::test]
+async fn interruption_after_inventory_removal_can_finish_rollback() {
+    let (_temp, paths) = fixture();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        migrate_with_checkpoints(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::Rollback,
+            |_, _| Ok(()),
+            |point| {
+                anyhow::ensure!(point != "inventory-removed", "injected interruption");
+                Ok(())
+            }
+        )
+        .await
+        .is_err()
+    );
+    assert!(paths.access().is_err());
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Rollback,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert!(!paths.journal().exists());
+}
+
+#[tokio::test]
+async fn missing_or_corrupt_inventory_never_authorizes_deleting_staged_or_canonical_data() {
+    for corrupt in [false, true] {
+        let (_temp, paths) = fixture();
+        assert!(
+            migrate_with_checkpoints(
+                &paths,
+                LegacyInstallation::Dev,
+                MigrationMode::Apply,
+                |_, _| Ok(()),
+                |point| {
+                    anyhow::ensure!(point != "published", "injected interruption");
+                    Ok(())
+                }
+            )
+            .await
+            .is_err()
+        );
+        let id = paths.read_migration_journal().unwrap().unwrap().id;
+        let inventory = paths
+            .product
+            .join(format!("installation-recovery-{id}.json"));
+        if corrupt {
+            fs::write(&inventory, "[]").unwrap();
+        } else {
+            fs::remove_file(&inventory).unwrap();
+        }
+        assert!(
+            migrate(
+                &paths,
+                LegacyInstallation::Dev,
+                MigrationMode::Rollback,
+                |_, _| Ok(())
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            paths
+                .system_root()
+                .join("services/memory/stores/personal/note.md")
+                .exists()
+        );
+        assert!(paths.access().is_err());
+    }
+}
+
+#[tokio::test]
+async fn selected_pair_never_merges_another_source_or_populated_canonical_store() {
+    let (_temp, paths) = fixture();
+    let other = paths.host_root().join("stable");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("auth.json"), "unselected bytes, not parsed").unwrap();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert!(!paths.host_root().join("auth.json").exists());
+    assert_eq!(
+        fs::read_to_string(other.join("auth.json")).unwrap(),
+        "unselected bytes, not parsed"
+    );
+
+    let (_temp, paths) = fixture();
+    let existing = paths.system_root().join("services/memory/stores/personal");
+    fs::create_dir_all(&existing).unwrap();
+    fs::write(existing.join("note.md"), "canonical work").unwrap();
+    for mode in [MigrationMode::Apply, MigrationMode::DryRun] {
+        assert!(
+            migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(existing.join("note.md")).unwrap(),
+        "canonical work"
+    );
+    assert!(!paths.journal().exists());
+    assert!(!paths.product.join("installation.lock").exists());
+}
+
+#[tokio::test]
+async fn dry_run_of_a_committed_receipt_never_recreates_a_removed_access_lock() {
+    let (_temp, paths) = fixture();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    fs::remove_file(paths.product.join("installation.lock")).unwrap();
+    let report = migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::DryRun,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.state, "already-committed");
+    assert!(!paths.product.join("installation.lock").exists());
+}

@@ -137,6 +137,40 @@ impl InstallationPaths {
         Ok(Some(journal))
     }
 
+    /// Private recovery metadata, containing inventories and hashes rather than credential bytes.
+    pub fn read_recovery_inventory(&self, id: uuid::Uuid) -> Result<Option<Vec<u8>>> {
+        use std::io::Read;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = match options.open(self.recovery_inventory(id)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error).context("open installation recovery inventory"),
+        };
+        ensure!(
+            file.metadata()?.is_file(),
+            "recovery inventory is not a regular file"
+        );
+        let mut bytes = Vec::new();
+        file.take(RECOVERY_INVENTORY_LIMIT + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 <= RECOVERY_INVENTORY_LIMIT,
+            "recovery inventory exceeds supported size"
+        );
+        Ok(Some(bytes))
+    }
+
+    fn recovery_inventory(&self, id: uuid::Uuid) -> std::path::PathBuf {
+        self.product
+            .join(format!("installation-recovery-{id}.json"))
+    }
+
     fn open_access_lock(&self) -> Result<File> {
         for ancestor in self.product.ancestors() {
             directory_or_absent(ancestor)?;
@@ -183,12 +217,36 @@ impl InstallationMigrationAccess {
         sync_directory(&self.paths.product)
     }
 
+    /// Persist once, before staging, so recovery never needs to trust a changed source.
+    pub fn write_recovery_inventory(&self, id: uuid::Uuid, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+        ensure!(
+            bytes.len() as u64 <= RECOVERY_INVENTORY_LIMIT,
+            "recovery inventory exceeds supported size"
+        );
+        let mut staged = tempfile::NamedTempFile::new_in(&self.paths.product)?;
+        staged.write_all(bytes)?;
+        staged.as_file().sync_all()?;
+        staged
+            .persist_noclobber(self.paths.recovery_inventory(id))
+            .context("persist installation recovery inventory without replacement")?;
+        sync_directory(&self.paths.product)
+    }
+
+    /// Remove recovery metadata only after all rollback work is durably complete.
+    pub fn remove_recovery_inventory(&self, id: uuid::Uuid) -> Result<()> {
+        fs::remove_file(self.paths.recovery_inventory(id))?;
+        sync_directory(&self.paths.product)
+    }
+
     /// Remove the pending receipt only after rollback has removed every published component.
     pub fn remove_journal(&self) -> Result<()> {
         fs::remove_file(self.paths.journal())?;
         sync_directory(&self.paths.product)
     }
 }
+
+const RECOVERY_INVENTORY_LIMIT: u64 = 64 * 1024 * 1024;
 
 fn sync_directory(path: &Path) -> Result<()> {
     File::open(path)?.sync_all()?;

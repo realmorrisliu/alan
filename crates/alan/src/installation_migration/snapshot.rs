@@ -8,10 +8,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Entry {
     directory: bool,
     mode: u32,
@@ -22,10 +23,43 @@ struct Entry {
 }
 
 /// Root-relative inventory; a missing component differs from an existing empty directory.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Snapshot(BTreeMap<PathBuf, Entry>);
 
 impl Snapshot {
+    pub(super) fn validate_inventory(&self) -> Result<()> {
+        ensure!(
+            self.0.contains_key(Path::new("")),
+            "recovery inventory has no root"
+        );
+        for (path, entry) in &self.0 {
+            ensure!(
+                path.components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_))),
+                "recovery inventory path escapes its component"
+            );
+            ensure!(entry.mode <= 0o7777, "unsupported recovery permission bits");
+            if !path.as_os_str().is_empty() {
+                ensure!(
+                    self.0
+                        .get(path.parent().unwrap())
+                        .is_some_and(|parent| parent.directory),
+                    "recovery inventory is missing a parent directory"
+                );
+            }
+            ensure!(
+                if entry.directory {
+                    entry.length == 0 && entry.digest.is_empty()
+                } else {
+                    entry.digest.len() == 64
+                        && entry.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                },
+                "invalid recovery content fingerprint"
+            );
+        }
+        Ok(())
+    }
+
     /// `services` selects the two runtime-generated subtrees excluded from adoption.
     pub(super) fn read(root: &Path, services: bool) -> Result<Self> {
         let mut entries = BTreeMap::new();

@@ -1,6 +1,7 @@
 //! Explicit installation adoption; all inspection is offline and source preserving.
 
 mod quiescence;
+mod recovery;
 mod snapshot;
 mod transaction;
 pub use transaction::{MigrationMode, MigrationReport, migrate_installation};

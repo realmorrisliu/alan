@@ -60,3 +60,17 @@ fn symlinks_and_missing_roots_have_distinct_results() {
     std::os::unix::fs::symlink(temp.path(), &link).unwrap();
     assert!(Snapshot::read(&link, false).is_err());
 }
+
+#[test]
+fn loaded_inventory_rejects_escaping_paths_and_missing_parents() {
+    let file = serde_json::json!({"directory": false, "mode": 384, "owner": 0, "group": 0, "length": 0, "digest": "a".repeat(64)});
+    let directory = serde_json::json!({"directory": true, "mode": 448, "owner": 0, "group": 0, "length": 0, "digest": ""});
+    for path in ["../escape", "/absolute", "missing/child"] {
+        let mut entries = serde_json::Map::new();
+        entries.insert(String::new(), directory.clone());
+        entries.insert(path.into(), file.clone());
+        let snapshot: Snapshot =
+            serde_json::from_value(serde_json::Value::Object(entries)).unwrap();
+        assert!(snapshot.validate_inventory().is_err(), "{path}");
+    }
+}

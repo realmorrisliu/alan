@@ -27,11 +27,11 @@ pub struct MigrationReport {
     pub components: usize,
 }
 
-struct Component {
-    kind: MigrationPayload,
-    source: PathBuf,
-    destination: PathBuf,
-    snapshot: Snapshot,
+pub(super) struct Component {
+    pub(super) kind: MigrationPayload,
+    pub(super) source: PathBuf,
+    pub(super) destination: PathBuf,
+    pub(super) snapshot: Snapshot,
 }
 
 impl Component {
@@ -84,11 +84,15 @@ async fn migrate_with_checkpoints(
             "migration receipt selects a different legacy source"
         );
         if journal.state == MigrationState::Committed && mode != MigrationMode::Rollback {
-            let _access = paths.access()?;
+            let _access = (mode != MigrationMode::DryRun)
+                .then(|| paths.access())
+                .transpose()?;
             ensure!(
                 paths.read_migration_journal()? == previous,
                 "installation receipt changed during retry"
             );
+            super::recovery::load(paths, journal)?
+                .context("committed migration recovery inventory is missing")?;
             ensure!(
                 report.canonical.system_present || report.canonical.host_present,
                 "committed migration has lost its canonical stores"
@@ -109,6 +113,14 @@ async fn migrate_with_checkpoints(
             "canonical stores already contain data; whole-store merging is not supported"
         );
     }
+    if mode == MigrationMode::Rollback {
+        return rollback(
+            paths,
+            previous.context("missing migration receipt")?,
+            check,
+            checkpoint,
+        );
+    }
     let system = paths.system_root().join(source.id());
     let host = paths.host_root().join(source.id());
     ensure!(
@@ -119,7 +131,6 @@ async fn migrate_with_checkpoints(
     let roots = vec![system.clone(), host.clone()];
     let native = SourceLocks::acquire(&system, &host)?;
     check(&native, &roots)?;
-    // shortcut: rollback still requires the source inventory, persist it before shipping recovery.
     let mut components = Vec::new();
     for (kind, from, to) in [
         (
@@ -196,35 +207,17 @@ async fn migrate_with_checkpoints(
         components: receipts,
     });
     ensure_destination_shape(paths, &components, journal.id)?;
-    if mode == MigrationMode::Rollback {
-        for component in &components {
-            let current = Snapshot::read(&component.destination, false)?;
-            ensure!(
-                !current.present() || current == component.snapshot,
-                "canonical data changed after adoption; rollback would lose new work"
-            );
-        }
-        journal.state = MigrationState::RollingBack;
-        exclusive.write_journal(&journal)?;
-        checkpoint("rolling-back")?;
-        for component in &components {
-            component.snapshot.discard_partial(&component.destination)?;
-            component
-                .snapshot
-                .discard_partial(&component.stage_path(journal.id))?;
-            sync_parent(&component.destination)?;
-            checkpoint("removed")?;
-        }
-        remove_stage_roots(paths, journal.id)?;
-        exclusive.remove_journal()?;
-        return Ok(MigrationReport {
-            source,
-            state: "rolled-back",
-            components: components.len(),
-        });
-    }
     exclusive.write_journal(&journal)?;
     checkpoint("prepared")?;
+    if super::recovery::load(paths, &journal)?.is_none() {
+        ensure!(
+            journal.state == MigrationState::Preparing && stage_roots_absent(paths, journal.id)?,
+            "recovery inventory is missing after staging began; retain data for inspection"
+        );
+        let bytes = super::recovery::encode(&components)?;
+        exclusive.write_recovery_inventory(journal.id, &bytes)?;
+    }
+    checkpoint("inventory")?;
     if journal.state == MigrationState::Preparing {
         prepare_stage_roots(paths, journal.id)?;
         for component in &components {
@@ -290,6 +283,78 @@ async fn migrate_with_checkpoints(
         state: "committed",
         components: components.len(),
     })
+}
+
+fn rollback(
+    paths: &InstallationPaths,
+    mut journal: MigrationJournal,
+    check: impl Fn(&SourceLocks, &[PathBuf]) -> Result<()>,
+    checkpoint: impl Fn(&str) -> Result<()>,
+) -> Result<MigrationReport> {
+    let exclusive = paths.migration_access()?;
+    ensure!(
+        paths.read_migration_journal()?.as_ref() == Some(&journal),
+        "installation receipt changed during rollback"
+    );
+    let native = SourceLocks::acquire(&paths.system_root(), &paths.host_root())?;
+    check(&native, &[paths.system_root(), paths.host_root()])?;
+    let Some(components) = super::recovery::load(paths, &journal)? else {
+        let report = paths.inspect()?;
+        ensure!(
+            matches!(
+                journal.state,
+                MigrationState::Preparing | MigrationState::RollingBack
+            ) && !report.canonical.system_present
+                && !report.canonical.host_present
+                && stage_roots_absent(paths, journal.id)?,
+            "recovery inventory is missing while migration data remains; retain it for inspection"
+        );
+        exclusive.remove_journal()?;
+        return Ok(MigrationReport {
+            source: journal.source,
+            state: "rolled-back",
+            components: journal.components.len(),
+        });
+    };
+    ensure_destination_shape(paths, &components, journal.id)?;
+    for component in &components {
+        let current = Snapshot::read(&component.destination, false)?;
+        ensure!(
+            !current.present() || current == component.snapshot,
+            "canonical data changed after adoption; rollback would lose new work"
+        );
+    }
+    journal.state = MigrationState::RollingBack;
+    exclusive.write_journal(&journal)?;
+    checkpoint("rolling-back")?;
+    for component in &components {
+        component.snapshot.discard_partial(&component.destination)?;
+        component
+            .snapshot
+            .discard_partial(&component.stage_path(journal.id))?;
+        sync_parent(&component.destination)?;
+        checkpoint("removed")?;
+    }
+    remove_stage_roots(paths, journal.id)?;
+    exclusive.remove_recovery_inventory(journal.id)?;
+    checkpoint("inventory-removed")?;
+    exclusive.remove_journal()?;
+    Ok(MigrationReport {
+        source: journal.source,
+        state: "rolled-back",
+        components: components.len(),
+    })
+}
+
+fn stage_roots_absent(paths: &InstallationPaths, id: uuid::Uuid) -> Result<bool> {
+    for parent in [paths.system_root(), paths.host_root()] {
+        match fs::symlink_metadata(parent.join(format!(".installation-{id}"))) {
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(true)
 }
 
 fn ensure_destination_shape(

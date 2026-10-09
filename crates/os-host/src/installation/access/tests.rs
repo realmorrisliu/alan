@@ -98,3 +98,33 @@ fn symlink_lock_or_product_ancestor_never_opens_other_storage() {
     std::os::unix::fs::symlink(temp.path(), &paths.product).unwrap();
     assert!(paths.migration_access().is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn recovery_inventory_is_private_never_replaced_and_rejects_symlinks() {
+    use std::os::unix::fs::PermissionsExt;
+    let (temp, paths) = fixture();
+    let guard = paths.migration_access().unwrap();
+    let id = uuid::Uuid::new_v4();
+    assert!(paths.read_recovery_inventory(id).unwrap().is_none());
+    guard.write_recovery_inventory(id, b"original").unwrap();
+    assert!(guard.write_recovery_inventory(id, b"replacement").is_err());
+    assert_eq!(
+        paths.read_recovery_inventory(id).unwrap().unwrap(),
+        b"original"
+    );
+    assert_eq!(
+        fs::metadata(paths.recovery_inventory(id))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    guard.remove_recovery_inventory(id).unwrap();
+    let unrelated = temp.path().join("unrelated");
+    fs::write(&unrelated, "keep").unwrap();
+    std::os::unix::fs::symlink(&unrelated, paths.recovery_inventory(id)).unwrap();
+    assert!(paths.read_recovery_inventory(id).is_err());
+    assert_eq!(fs::read_to_string(unrelated).unwrap(), "keep");
+}
