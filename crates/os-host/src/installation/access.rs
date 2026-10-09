@@ -30,6 +30,7 @@ pub struct MigrationComponent {
 pub enum MigrationState {
     Preparing,
     Publishing,
+    RollingBack,
     Committed,
 }
 

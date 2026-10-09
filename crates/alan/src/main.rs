@@ -2,6 +2,7 @@
 
 mod cli;
 mod foreground;
+mod legacy_cli;
 mod legacy_state;
 
 use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
@@ -32,6 +33,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Inspect or explicitly adopt historical installation data
+    LegacyState {
+        #[command(subcommand)]
+        action: LegacyStateAction,
+    },
     /// Host lifecycle, migration, and native integration operations
     Host {
         #[command(subcommand)]
@@ -106,6 +112,19 @@ enum HostMountAction {
 
 #[derive(Subcommand)]
 enum LegacyStateAction {
+    /// Adopt one historical store pair; stop every Alan invocation first. Sources are retained.
+    MigrateInstallation {
+        #[arg(long, value_parser = ["stable", "dev"])]
+        from: String,
+        /// Validate offline without creating stores or a migration journal
+        #[arg(long, conflicts_with = "rollback")]
+        dry_run: bool,
+        /// Undo this adoption only while canonical data is unchanged
+        #[arg(long)]
+        rollback: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Report fixed generated, migratable, and possibly authored paths
     Inspect {
         /// Explicit project roots to inspect; no other Host directories are scanned
@@ -404,6 +423,9 @@ async fn main() -> Result<()> {
     let uses_product_stores = matches!(
         &cli.command,
         None | Some(Commands::Connection { .. } | Commands::Skills { .. })
+            | Some(Commands::LegacyState {
+                action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. }
+            })
             | Some(Commands::Host {
                 action: HostAction::LegacyState {
                     action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. },
@@ -415,6 +437,7 @@ async fn main() -> Result<()> {
         .transpose()?;
 
     match cli.command {
+        Some(Commands::LegacyState { action }) => legacy_cli::run(action).await?,
         Some(Commands::Host { action }) => match action {
             HostAction::Status { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
@@ -464,75 +487,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            HostAction::LegacyState { action } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                match action {
-                    LegacyStateAction::Inspect { source_roots, json } => {
-                        let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
-                            anyhow::bail!("cannot determine Host home directory");
-                        };
-                        let source_roots = canonical_existing_roots(source_roots)?;
-                        let mut report = legacy_state::inspect_legacy_state(&paths, &source_roots)?;
-                        report.installations = Some(
-                            alan_os_host::installation::InstallationPaths::detect()?.inspect()?,
-                        );
-                        print_legacy_inspection(&report, json)?;
-                    }
-                    LegacyStateAction::Cleanup { source_roots, json } => {
-                        let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
-                            anyhow::bail!("cannot determine Host home directory");
-                        };
-                        let source_roots = canonical_existing_roots(source_roots)?;
-                        let system =
-                            alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
-                        let host = alan_os_host::HostStorePaths::detect(channel.descriptor().id)?;
-                        let report = legacy_state::cleanup_legacy_state(
-                            &paths,
-                            &system,
-                            &host,
-                            &source_roots,
-                        )?;
-                        print_legacy_cleanup(&report, json)?;
-                    }
-                    LegacyStateAction::Import {
-                        kind,
-                        source,
-                        name,
-                        delete_source,
-                    } => {
-                        let source = std::path::absolute(&source).with_context(|| {
-                            format!(
-                                "failed to make import source absolute: {}",
-                                source.display()
-                            )
-                        })?;
-                        let system =
-                            alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
-                        let kind = match kind {
-                            LegacyImportKind::AgentDefinition => {
-                                legacy_state::AuthoredImportKind::AgentDefinition
-                            }
-                            LegacyImportKind::MemoryStore => {
-                                legacy_state::AuthoredImportKind::MemoryStore
-                            }
-                        };
-                        let report = legacy_state::import_authored_content(
-                            kind,
-                            &source,
-                            &name,
-                            delete_source,
-                            &system,
-                        )?;
-                        println!("imported: {}", report.destination.display());
-                        if report.source_deleted {
-                            println!(
-                                "source deleted after verification: {}",
-                                report.source.display()
-                            );
-                        }
-                    }
-                }
-            }
+            HostAction::LegacyState { action } => legacy_cli::run(action).await?,
         },
         Some(Commands::Connection { action }) => match action {
             ConnectionAction::List => {

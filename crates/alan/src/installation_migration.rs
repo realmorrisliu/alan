@@ -1,5 +1,10 @@
 //! Explicit installation adoption; all inspection is offline and source preserving.
 
+mod quiescence;
+mod snapshot;
+mod transaction;
+pub use transaction::{MigrationMode, MigrationReport, migrate_installation};
+
 use std::fs;
 use std::path::{Component, Path};
 
@@ -13,8 +18,20 @@ use anyhow::{Context, Result, ensure};
 /// Validate the supported source payload through its owning readers.
 /// The transaction caller must retain writer exclusion and compare source digests.
 pub async fn validate_store_pair(system: &Path, host: &Path) -> Result<()> {
-    check_entries(system, &["services"])?;
-    check_entries(host, &["credentials", "auth.json", "auth.refresh.lock"])?;
+    validate_pair(system, host, &[]).await
+}
+
+async fn validate_pair(system: &Path, host: &Path, ignored: &[&str]) -> Result<()> {
+    let system_entries = ["services"]
+        .into_iter()
+        .chain(ignored.iter().copied())
+        .collect::<Vec<_>>();
+    let host_entries = ["credentials", "auth.json", "auth.refresh.lock"]
+        .into_iter()
+        .chain(ignored.iter().copied())
+        .collect::<Vec<_>>();
+    check_entries(system, &system_entries)?;
+    check_entries(host, &host_entries)?;
     check_entries(
         &host.join("credentials"),
         &["secrets.toml", "secrets.toml.lock"],

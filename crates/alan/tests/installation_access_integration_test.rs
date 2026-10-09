@@ -114,3 +114,39 @@ fn exclusive_migration_lock_blocks_a_separate_cli_process() {
     assert!(!fixture.paths.system_root().exists());
     assert!(!fixture.paths.host_root().exists());
 }
+
+#[test]
+fn migration_requires_explicit_source_and_dry_run_does_not_initialize_absent_data() {
+    let fixture = Fixture::new();
+    let missing_source = fixture
+        .command()
+        .args(["legacy-state", "migrate-installation", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!missing_source.status.success());
+    assert!(String::from_utf8_lossy(&missing_source.stderr).contains("--from"));
+    let output = fixture
+        .command()
+        .args([
+            "legacy-state",
+            "migrate-installation",
+            "--from",
+            "dev",
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("selected legacy installation is absent"),
+        "{output:?}"
+    );
+    assert!(!fixture.paths.product.exists());
+    let help = fixture
+        .command()
+        .args(["legacy-state", "migrate-installation", "--help"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--rollback"));
+}

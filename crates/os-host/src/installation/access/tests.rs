@@ -39,7 +39,11 @@ fn active_readers_exclude_migration_and_migration_excludes_readers() {
 #[test]
 fn incomplete_journal_blocks_after_writer_exit_until_explicit_resolution() {
     let (_temp, paths) = fixture();
-    for state in [MigrationState::Preparing, MigrationState::Publishing] {
+    for state in [
+        MigrationState::Preparing,
+        MigrationState::Publishing,
+        MigrationState::RollingBack,
+    ] {
         let migration = paths.migration_access().unwrap();
         let receipt = journal(state);
         migration.write_journal(&receipt).unwrap();
