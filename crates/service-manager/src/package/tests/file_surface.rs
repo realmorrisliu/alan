@@ -4,7 +4,7 @@ use alan_shell::Shell;
 
 #[tokio::test]
 async fn file_surface_commits_commands_on_clunk() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let shell = Shell::new(InProcessTransport::new(service.file_server()));
     shell
         .write(
@@ -25,7 +25,7 @@ async fn file_surface_commits_commands_on_clunk() {
 
 #[tokio::test]
 async fn file_surface_rejects_invalid_commands_on_clunk() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let shell = Shell::new(InProcessTransport::new(service.file_server()));
     assert_eq!(
         shell
@@ -48,7 +48,7 @@ async fn file_surface_rejects_invalid_commands_on_clunk() {
 
 #[tokio::test]
 async fn file_surface_rejects_duplicate_request_documents_on_clunk() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let shell = Shell::new(InProcessTransport::new(service.file_server()));
     let command = serde_json::to_vec(&PackageCommand::List {
         request_id: "duplicate-request".to_string(),
@@ -64,7 +64,7 @@ async fn file_surface_rejects_duplicate_request_documents_on_clunk() {
 
 #[tokio::test]
 async fn file_surface_discards_buffer_after_oversized_write_fails() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let fs = service.file_server();
     let fid = Fid(41);
     fs.walk(Fid::ROOT, fid, &["ctl".to_string()]).await.unwrap();

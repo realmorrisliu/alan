@@ -139,11 +139,11 @@ fn bounded_store_lock_transaction() {
 fn check_long_contention(opening: bool) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     let contender_root = root.clone();
     let (bounded, result, elapsed, owned) = contend(&root, Duration::from_millis(900), move || {
         if opening {
-            PackageService::open("test", contender_root).map(|_| ())
+            PackageService::open(contender_root).map(|_| ())
         } else {
             service.store.transaction().map(|_| ())
         }
@@ -158,7 +158,7 @@ fn check_long_contention(opening: bool) {
     );
     assert!(result.unwrap_err().to_string().contains("busy"));
     assert!(elapsed >= Duration::from_millis(450) && elapsed < Duration::from_millis(900));
-    assert!(PackageService::open("test", root).is_ok());
+    assert!(PackageService::open(root).is_ok());
 }
 
 #[test]
@@ -166,12 +166,12 @@ fn short_contention_serializes_open_and_transaction() {
     for opening in [true, false] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("packages");
-        let service = PackageService::open("test", root.clone()).unwrap();
+        let service = PackageService::open(root.clone()).unwrap();
         let contender_root = root.clone();
         let (early, result, elapsed, owned) =
             contend(&root, Duration::from_millis(100), move || {
                 if opening {
-                    PackageService::open("test", contender_root).map(|_| ())
+                    PackageService::open(contender_root).map(|_| ())
                 } else {
                     service.store.transaction().map(|_| ())
                 }

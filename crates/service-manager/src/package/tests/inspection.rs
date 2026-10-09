@@ -4,7 +4,7 @@ use super::*;
 fn offline_inspection_checks_revisions_without_recovering_or_writing_the_store() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     service
         .seed_preinstalled("alpha", native_snapshot("alpha", "Body"))
         .unwrap();
@@ -32,7 +32,7 @@ fn offline_inspection_checks_revisions_without_recovering_or_writing_the_store()
 fn offline_inspection_preserves_pending_staging_and_unknown_schema() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     drop(service);
     fs::write(root.join("staging/source.patch"), "authored").unwrap();
     assert!(validate_package_store_for_migration(&root).is_err());
@@ -53,7 +53,7 @@ fn offline_inspection_preserves_pending_staging_and_unknown_schema() {
 fn offline_inspection_rejects_an_active_store_writer() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     let transaction = service.store.transaction().unwrap();
     assert!(validate_package_store_for_migration(&root).is_err());
     drop(transaction);
@@ -64,7 +64,7 @@ fn offline_inspection_rejects_an_active_store_writer() {
 fn offline_inspection_rejects_live_references_without_removing_leases() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     service
         .seed_preinstalled("alpha", native_snapshot("alpha", "Body"))
         .unwrap();
@@ -80,7 +80,7 @@ fn offline_inspection_rejects_live_references_without_removing_leases() {
 fn offline_inspection_rejects_revision_parent_symlinks() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     service
         .seed_preinstalled("alpha", native_snapshot("alpha", "Body"))
         .unwrap();

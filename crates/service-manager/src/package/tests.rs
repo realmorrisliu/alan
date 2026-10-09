@@ -44,7 +44,7 @@ fn fingerprint_is_order_independent_and_materializer_scoped() {
 
 #[test]
 fn valid_source_limits_do_not_reject_duplicated_materialized_output() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let asset = vec![b'x'; 3 * 1024 * 1024 + 1];
     let result = service
         .execute(PackageCommand::Install {
@@ -81,7 +81,7 @@ fn valid_source_limits_do_not_reject_duplicated_materialized_output() {
 
 #[test]
 fn native_required_tools_are_recorded_as_package_dependencies() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let result = service
         .execute(PackageCommand::Install {
             request_id: "required-tools-install".to_string(),
@@ -111,7 +111,7 @@ fn native_required_tools_are_recorded_as_package_dependencies() {
 
 #[test]
 fn install_rejects_a_stale_file_at_the_revision_path() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let snapshot = native_snapshot("stale-file", "body");
     let revision = fingerprint(&snapshot).unwrap();
     let target = service.store.revision_root("stale-file-pack", &revision);
@@ -140,7 +140,7 @@ fn install_rejects_a_stale_file_at_the_revision_path() {
 fn install_rejects_a_stale_symlink_at_the_revision_path() {
     use std::os::unix::fs::symlink;
 
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let snapshot = native_snapshot("stale-link", "body");
     let revision = fingerprint(&snapshot).unwrap();
     let target = service.store.revision_root("stale-link-pack", &revision);
@@ -175,7 +175,7 @@ fn install_rejects_a_stale_symlink_at_the_revision_path() {
 fn install_rejects_a_symlinked_package_revision_parent() {
     use std::os::unix::fs::symlink;
 
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let parent = service.store.root().join("revisions/symlinked-parent-pack");
     symlink(outside.path(), &parent).unwrap();
@@ -246,7 +246,7 @@ fn snapshot_rejects_traversal_and_vcs_metadata() {
 
 #[test]
 fn install_rejects_case_colliding_snapshot_paths_before_materialization() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let error = service
         .execute(PackageCommand::Install {
             request_id: "case-collision-install".to_string(),
@@ -324,7 +324,7 @@ fn package_ids_use_the_exact_bounded_ascii_contract() {
 
 #[test]
 fn portable_root_uses_source_leaf_and_suppresses_nested_discovery() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let result = service
         .execute(PackageCommand::Install {
             request_id: "portable-root".to_string(),
@@ -362,7 +362,7 @@ fn portable_root_uses_source_leaf_and_suppresses_nested_discovery() {
 
 #[test]
 fn one_distribution_rejects_duplicate_runtime_skill_ids() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let document = b"---\nname: Skill\ndescription: Test Skill.\n---\n".to_vec();
     let result = service
         .execute(PackageCommand::Install {
@@ -392,7 +392,7 @@ fn one_distribution_rejects_duplicate_runtime_skill_ids() {
 
 #[test]
 fn install_upgrade_and_uninstall_are_exact() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let installed = service
         .execute(PackageCommand::Install {
             request_id: "install-1".to_string(),
@@ -433,7 +433,7 @@ fn install_upgrade_and_uninstall_are_exact() {
 
 #[test]
 fn failed_upgrade_keeps_the_current_catalog_and_revision() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     service
         .execute(PackageCommand::Install {
             request_id: "atomic-install".to_string(),
@@ -472,7 +472,7 @@ fn failed_upgrade_keeps_the_current_catalog_and_revision() {
 fn upgrade_reports_success_when_post_commit_revision_cleanup_fails() {
     use std::os::unix::fs::PermissionsExt;
 
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let installed = service
         .execute(PackageCommand::Install {
             request_id: "cleanup-install".to_string(),
@@ -510,7 +510,7 @@ fn upgrade_reports_success_when_post_commit_revision_cleanup_fails() {
 
 #[test]
 fn failed_uninstall_keeps_the_current_catalog_and_revision() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     service
         .execute(PackageCommand::Install {
             request_id: "atomic-uninstall-install".to_string(),
@@ -548,7 +548,7 @@ fn failed_uninstall_keeps_the_current_catalog_and_revision() {
 fn restart_rolls_back_revision_removal_when_catalog_is_still_old() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     service
         .execute(PackageCommand::Install {
             request_id: "crash-window-install".to_string(),
@@ -566,7 +566,7 @@ fn restart_rolls_back_revision_removal_when_catalog_is_still_old() {
     assert!(!staged.active.exists());
     drop(service);
 
-    let reopened = PackageService::open("dev", root.clone()).unwrap();
+    let reopened = PackageService::open(root.clone()).unwrap();
 
     assert_eq!(reopened.resolve("crash-window-pack").unwrap(), record);
     assert!(store::revision_root_at(&root, "crash-window-pack", &record.revision).is_dir());
@@ -575,7 +575,7 @@ fn restart_rolls_back_revision_removal_when_catalog_is_still_old() {
 
 #[test]
 fn live_reference_retains_old_revision_until_retiring_package_is_released() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let installed = service
         .execute(PackageCommand::Install {
             request_id: "lease-install".to_string(),
@@ -625,7 +625,7 @@ fn live_reference_retains_old_revision_until_retiring_package_is_released() {
 
 #[test]
 fn preinstalled_packages_update_only_through_seeding_and_cannot_be_removed() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     service
         .seed_preinstalled("alan-memory", native_snapshot("memory", "first"))
         .unwrap();
@@ -657,7 +657,7 @@ fn preinstalled_packages_update_only_through_seeding_and_cannot_be_removed() {
 fn restart_fails_closed_when_revision_content_is_tampered() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     let record = service
         .execute(PackageCommand::Install {
             request_id: "tamper-install".to_string(),
@@ -671,7 +671,7 @@ fn restart_fails_closed_when_revision_content_is_tampered() {
     let manifest =
         store::revision_root_at(&root, "tamper-pack", &record.revision).join("manifest.json");
     fs::write(manifest, b"{}").unwrap();
-    assert!(PackageService::open("dev", root).is_err());
+    assert!(PackageService::open(root).is_err());
 }
 
 #[cfg(unix)]
@@ -681,7 +681,7 @@ fn restart_rejects_symlinked_materialized_root() {
 
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     let record = service
         .execute(PackageCommand::Install {
             request_id: "symlinked-content-install".to_string(),
@@ -701,7 +701,7 @@ fn restart_rejects_symlinked_materialized_root() {
     fs::write(victim.join("SKILL.md"), b"mutable external content").unwrap();
     symlink(&victim, content).unwrap();
 
-    let error = PackageService::open("dev", root).unwrap_err();
+    let error = PackageService::open(root).unwrap_err();
     assert!(error.to_string().contains("materialized package root"));
 }
 
@@ -709,7 +709,7 @@ fn restart_rejects_symlinked_materialized_root() {
 fn restart_rejects_invalid_retiring_package_id_before_removing_revisions() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     service
         .execute(PackageCommand::Install {
             request_id: "unsafe-recovery-install".to_string(),
@@ -728,7 +728,7 @@ fn restart_rejects_invalid_retiring_package_id_before_removing_revisions() {
     record.state = PackageState::Retiring;
     store::persist_catalog_at(&root, &catalog).unwrap();
 
-    assert!(PackageService::open("dev", root).is_err());
+    assert!(PackageService::open(root).is_err());
     assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
 }
 
@@ -739,7 +739,7 @@ fn restart_rejects_symlinked_staging_without_deleting_its_target() {
 
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     drop(service);
 
     fs::remove_dir(root.join("staging")).unwrap();
@@ -748,79 +748,79 @@ fn restart_rejects_symlinked_staging_without_deleting_its_target() {
     fs::write(victim.join("sentinel"), b"keep").unwrap();
     symlink(&victim, root.join("staging")).unwrap();
 
-    let error = PackageService::open("dev", root).unwrap_err();
+    let error = PackageService::open(root).unwrap_err();
     assert!(error.to_string().contains("staging path"));
     assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
 }
 
 #[test]
-fn stable_and_dev_package_catalogs_are_isolated() {
+fn explicit_store_bindings_have_independent_catalogs() {
     let directory = tempfile::tempdir().unwrap();
-    let stable_root = directory.path().join("stable/services/packages");
-    let dev_root = directory.path().join("dev/services/packages");
-    let stable = PackageService::open("stable", stable_root.clone()).unwrap();
-    let dev = PackageService::open("dev", dev_root).unwrap();
-    stable
+    let first_root = directory.path().join("first/services/packages");
+    let second_root = directory.path().join("second/services/packages");
+    let first = PackageService::open(first_root.clone()).unwrap();
+    let second = PackageService::open(second_root).unwrap();
+    first
         .execute(PackageCommand::Install {
-            request_id: "stable-install".to_string(),
-            package_id: "stable-only".to_string(),
-            snapshot: native_snapshot("stable-skill", "body"),
+            request_id: "first-install".to_string(),
+            package_id: "first-only".to_string(),
+            snapshot: native_snapshot("first-skill", "body"),
         })
         .unwrap();
-    assert!(stable.resolve("stable-only").is_ok());
-    assert!(dev.resolve("stable-only").is_err());
-    assert!(dev.catalog().unwrap().packages.is_empty());
-    let catalog = fs::read_to_string(stable_root.join("catalog.json")).unwrap();
+    assert!(first.resolve("first-only").is_ok());
+    assert!(second.resolve("first-only").is_err());
+    assert!(second.catalog().unwrap().packages.is_empty());
+    let catalog = fs::read_to_string(first_root.join("catalog.json")).unwrap();
     let host_root = directory.path().to_string_lossy();
     assert!(!catalog.contains(host_root.as_ref()));
 }
 
 #[cfg(unix)]
 #[test]
-fn channel_rejects_a_symlinked_package_store_root() {
+fn explicit_binding_rejects_a_symlinked_package_store_root() {
     use std::os::unix::fs::symlink;
 
     let directory = tempfile::tempdir().unwrap();
-    let stable_root = directory.path().join("stable/services/packages");
-    let dev_parent = directory.path().join("dev/services");
-    fs::create_dir_all(&stable_root).unwrap();
-    fs::create_dir_all(&dev_parent).unwrap();
-    fs::write(stable_root.join("sentinel"), b"stable").unwrap();
-    symlink(&stable_root, dev_parent.join("packages")).unwrap();
+    let first_root = directory.path().join("first/services/packages");
+    let second_parent = directory.path().join("second/services");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_parent).unwrap();
+    fs::write(first_root.join("sentinel"), b"first").unwrap();
+    symlink(&first_root, second_parent.join("packages")).unwrap();
 
-    let error = PackageService::open("dev", dev_parent.join("packages")).unwrap_err();
+    let error = PackageService::open(second_parent.join("packages")).unwrap_err();
 
     assert!(error.to_string().contains("Package Store root"));
-    assert_eq!(fs::read(stable_root.join("sentinel")).unwrap(), b"stable");
-    assert!(!stable_root.join("revisions").exists());
-    assert!(!stable_root.join("staging").exists());
+    assert_eq!(fs::read(first_root.join("sentinel")).unwrap(), b"first");
+    assert!(!first_root.join("revisions").exists());
+    assert!(!first_root.join("staging").exists());
 }
 
 #[cfg(unix)]
 #[test]
-fn channel_rejects_a_symlinked_package_store_ancestor() {
+fn explicit_binding_rejects_a_symlinked_package_store_ancestor() {
     use std::os::unix::fs::symlink;
 
     let directory = tempfile::tempdir().unwrap();
-    let stable_services = directory.path().join("stable/services");
-    let stable_root = stable_services.join("packages");
-    let dev_channel = directory.path().join("dev");
-    fs::create_dir_all(&stable_root).unwrap();
-    fs::create_dir_all(&dev_channel).unwrap();
-    fs::write(stable_root.join("sentinel"), b"stable").unwrap();
-    symlink(&stable_services, dev_channel.join("services")).unwrap();
+    let first_services = directory.path().join("first/services");
+    let first_root = first_services.join("packages");
+    let second_root = directory.path().join("second");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    fs::write(first_root.join("sentinel"), b"first").unwrap();
+    symlink(&first_services, second_root.join("services")).unwrap();
 
-    let error = PackageService::open("dev", dev_channel.join("services/packages")).unwrap_err();
+    let error = PackageService::open(second_root.join("services/packages")).unwrap_err();
 
     assert!(error.to_string().contains("unsupported ancestor"));
-    assert_eq!(fs::read(stable_root.join("sentinel")).unwrap(), b"stable");
-    assert!(!stable_root.join("revisions").exists());
-    assert!(!stable_root.join("staging").exists());
+    assert_eq!(fs::read(first_root.join("sentinel")).unwrap(), b"first");
+    assert!(!first_root.join("revisions").exists());
+    assert!(!first_root.join("staging").exists());
 }
 
 #[test]
 fn command_materialization_keeps_unsupported_capability_visible() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let result = service
         .execute(PackageCommand::Install {
             request_id: "command-1".to_string(),
@@ -879,7 +879,7 @@ fn command_materialization_keeps_unsupported_capability_visible() {
 
 #[test]
 fn command_materialization_rejects_generated_skill_above_descriptor_limit() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let result = service
         .execute(PackageCommand::Install {
             request_id: "oversized-command".to_string(),
@@ -912,7 +912,7 @@ fn command_materialization_rejects_generated_skill_above_descriptor_limit() {
 
 #[test]
 fn command_skill_names_use_canonical_normalization() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let record = service
         .execute(PackageCommand::Install {
             request_id: "command-normalization".to_string(),
@@ -964,4 +964,20 @@ fn command_skill_names_use_canonical_normalization() {
         .unwrap();
         assert_eq!(metadata.id, skill_id);
     }
+}
+
+#[test]
+fn explicit_binding_rejects_relative_and_traversing_roots_before_creating_storage() {
+    let relative = std::path::PathBuf::from(format!(
+        "invalid-store-{}/services/packages",
+        uuid::Uuid::new_v4()
+    ));
+    let error = PackageService::open(relative.clone()).unwrap_err();
+    assert!(error.to_string().contains("must be absolute"));
+    assert!(!relative.ancestors().nth(2).unwrap().exists());
+    let directory = tempfile::tempdir().unwrap();
+    let escaping = directory.path().join("unused/../packages");
+    let error = PackageService::open(escaping).unwrap_err();
+    assert!(error.to_string().contains("relative components"));
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }

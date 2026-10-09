@@ -8,7 +8,7 @@ fn public_busy_catalog_and_mutation_preserve_store() {
     use alan_shell::Shell;
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     service
         .seed_preinstalled("kept", native_snapshot("kept", "body"))
         .unwrap();
@@ -62,7 +62,7 @@ fn public_busy_catalog_and_mutation_preserve_store() {
 fn busy_lease_drop_raii_then_refresh_reclaims_only_released_revision() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("test", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     for id in ["released", "live"] {
         service
             .seed_preinstalled(id, native_snapshot(id, "old"))

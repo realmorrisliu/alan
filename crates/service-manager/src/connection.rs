@@ -167,7 +167,6 @@ struct CallableRegistry {
 
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
 pub struct ConnectionService {
-    channel_id: String,
     metadata_path: PathBuf,
     state: Mutex<State>,
     callables: tokio::sync::Mutex<Option<CallableRegistry>>,
@@ -214,15 +213,7 @@ impl LlmProvider for ConnectionLlmProvider {
 }
 
 impl ConnectionService {
-    pub fn open(
-        channel_id: impl Into<String>,
-        bindings: &ConnectionStoreBindings,
-    ) -> Result<Arc<Self>> {
-        let channel_id = channel_id.into();
-        ensure!(
-            matches!(channel_id.as_str(), "stable" | "dev" | "test"),
-            "invalid Connection Service channel"
-        );
+    pub fn open(bindings: &ConnectionStoreBindings) -> Result<Arc<Self>> {
         let (connections, _) = ConnectionsFile::load_from_path(&bindings.metadata_path)?;
         let validation = connections
             .profiles
@@ -230,7 +221,6 @@ impl ConnectionService {
             .map(|profile_id| (profile_id.clone(), "unavailable".to_string()))
             .collect();
         Ok(Arc::new(Self {
-            channel_id,
             metadata_path: bindings.metadata_path.clone(),
             state: Mutex::new(State {
                 connections,
@@ -246,11 +236,10 @@ impl ConnectionService {
         }))
     }
 
-    pub fn ephemeral(channel_id: impl Into<String>) -> Result<Arc<Self>> {
+    pub fn ephemeral() -> Result<Arc<Self>> {
         let temporary = crate::temporary_store::TemporaryStore::new("connection")?;
         let metadata_path = temporary.path().join("connections.toml");
         Ok(Arc::new(Self {
-            channel_id: channel_id.into(),
             metadata_path,
             state: Mutex::new(State {
                 connections: ConnectionsFile::default(),
@@ -801,8 +790,7 @@ impl FlatFileService for ConnectionService {
             )),
             "selection" => serde_json::to_string(&state.selections),
             "status" => Ok(format!(
-                "channel={} profiles={} ready={} pending_native={} unavailable={}\n",
-                self.channel_id,
+                "profiles={} ready={} pending_native={} unavailable={}\n",
                 state.connections.profiles.len(),
                 state
                     .validation

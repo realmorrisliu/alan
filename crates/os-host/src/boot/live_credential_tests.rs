@@ -161,7 +161,6 @@ async fn live_typesafe_profile_through_mounted_connection() {
     let path = temp.path().join("connections.toml");
     evaluation_connections().save_to_path(&path).unwrap();
     let service = alan_service_manager::ConnectionService::open(
-        "test",
         &alan_service_manager::ConnectionStoreBindings::new(path).unwrap(),
     )
     .unwrap();

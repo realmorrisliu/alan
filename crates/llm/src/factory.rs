@@ -17,14 +17,15 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
     pub model: String,
     pub expected_account_id: Option<String>, // For ChatGPT managed auth
-    pub chatgpt_auth_storage_path: Option<PathBuf>, // For ChatGPT managed auth
-    pub project_id: Option<String>,          // For Google Gemini GenerateContent
-    pub location: Option<String>,            // For Google Gemini GenerateContent
+    /// Host-supplied backing path; required when selecting ChatGPT managed auth.
+    pub chatgpt_auth_storage_path: Option<PathBuf>,
+    pub project_id: Option<String>, // For Google Gemini GenerateContent
+    pub location: Option<String>,   // For Google Gemini GenerateContent
     pub custom_headers: Option<HashMap<String, String>>, // Custom HTTP headers
-    pub client_name: Option<String>,         // Client name for usage tracking
-    pub user_agent: Option<String>,          // User-Agent header
-    pub http_referer: Option<String>,        // OpenRouter HTTP-Referer metadata
-    pub x_title: Option<String>,             // OpenRouter X-Title metadata
+    pub client_name: Option<String>, // Client name for usage tracking
+    pub user_agent: Option<String>, // User-Agent header
+    pub http_referer: Option<String>, // OpenRouter HTTP-Referer metadata
+    pub x_title: Option<String>,    // OpenRouter X-Title metadata
     pub app_categories: Option<Vec<String>>, // OpenRouter app category metadata
 }
 

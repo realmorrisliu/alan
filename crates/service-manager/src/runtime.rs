@@ -175,7 +175,7 @@ impl ServiceManager {
         let boot_id = Uuid::new_v4();
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
         let package_bootstrap = crate::package::PackageBootstrap::new();
-        let open = package_bootstrap.opener(config.channel_id.clone(), config.package_store.take());
+        let open = package_bootstrap.opener(config.package_store.take());
         let package_service = tokio::task::spawn_blocking(move || {
             let service = open()?;
             seed_preinstalled_packages(&service)?;
@@ -211,8 +211,8 @@ impl ServiceManager {
             .connection_profile
             .clone();
         let connection_service = match config.connection_store.as_ref() {
-            Some(bindings) => ConnectionService::open(&config.channel_id, bindings)?,
-            None => ConnectionService::ephemeral(&config.channel_id)?,
+            Some(bindings) => ConnectionService::open(bindings)?,
+            None => ConnectionService::ephemeral()?,
         };
         let llm_connection = preferred_connection
             .or_else(|| connection_service.default_profile())

@@ -14,8 +14,8 @@ fn embedded_packages_match_directory_snapshots_and_seeded_revisions() {
             .collect::<Vec<_>>()
     );
     let fixture = tempfile::tempdir().unwrap();
-    let embedded_store = PackageService::ephemeral("test").unwrap();
-    let directory_store = PackageService::ephemeral("test").unwrap();
+    let embedded_store = PackageService::ephemeral().unwrap();
+    let directory_store = PackageService::ephemeral().unwrap();
     for source in sources {
         let root = fixture.path().join(source.source_name);
         for file in &source.files {

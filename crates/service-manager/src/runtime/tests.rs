@@ -72,7 +72,7 @@ impl LlmClientFactory for RecordingFactory {
 
 #[tokio::test]
 async fn installed_distribution_is_visible_only_after_explicit_process_reference() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let installed = service
         .execute(crate::PackageCommand::Install {
             request_id: "dogfood-install".to_string(),
@@ -439,7 +439,7 @@ async fn root_agent_is_replaced_without_pid_continuity() {
     assert!(
         String::from_utf8(shell.cat("/mnt/connections/status").await.unwrap())
             .unwrap()
-            .contains("channel=test")
+            .starts_with("profiles=")
     );
     assert_eq!(
         shell.ls("/mnt/host-mount").await.unwrap(),

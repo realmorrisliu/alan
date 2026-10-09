@@ -125,12 +125,12 @@ impl LlmClient {
         })
     }
 
-    /// Create a client from core Config
+    /// Create a client from core Config. Managed ChatGPT auth requires the explicit-binding constructor.
     pub fn from_core_config(config: &crate::config::Config) -> Result<Self> {
         Self::from_core_config_with_chatgpt_auth_storage_path(config, None)
     }
 
-    /// Create a client from core Config with an optional ChatGPT auth storage override.
+    /// Create a client with a Host auth storage binding, required for the ChatGPT provider.
     pub fn from_core_config_with_chatgpt_auth_storage_path(
         config: &crate::config::Config,
         chatgpt_auth_storage_path: Option<PathBuf>,

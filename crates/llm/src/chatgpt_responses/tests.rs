@@ -335,15 +335,9 @@ fn client_resolves_managed_account_identity_without_network() {
 }
 
 #[test]
-fn client_uses_custom_auth_storage_path_when_provided() {
-    let storage_path = std::env::temp_dir().join(format!(
-        "alan-llm-chatgpt-auth-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    let storage_path = storage_path.join("auth.json");
+fn client_uses_explicit_auth_storage_binding() {
+    let storage = TempDir::new().unwrap();
+    let storage_path = storage.path().join("auth.json");
     let client = ChatgptResponsesClient::with_params(
         "https://chatgpt.com/backend-api/codex",
         "gpt-5.3-codex",
@@ -567,12 +561,13 @@ async fn generate_rejects_previous_response_id_for_managed_chatgpt() {
 
 #[test]
 fn chatgpt_build_request_normalizes_managed_request_fields() {
+    let storage = TempDir::new().unwrap();
     let client = ChatgptResponsesClient::with_params(
         "https://chatgpt.com/backend-api/codex",
         "gpt-5.3-codex",
         HashMap::new(),
         Some("acct_123".to_string()),
-        None,
+        Some(storage.path().join("auth.json")),
     )
     .expect("client");
 
@@ -736,4 +731,22 @@ async fn implicit_account_binding_cannot_follow_replaced_auth_storage() {
             .unwrap();
     assert_eq!(replacement.account_identity(), Some("acct_replacement"));
     server.abort();
+}
+
+#[test]
+fn client_requires_host_auth_binding_instead_of_detecting_a_personal_store() {
+    let error = ChatgptResponsesClient::with_params(
+        "https://chatgpt.com/backend-api/codex",
+        "fixture-model",
+        HashMap::new(),
+        None,
+        None,
+    )
+    .err()
+    .expect("a missing Host binding must fail before auth access");
+    assert!(
+        error
+            .to_string()
+            .contains("explicit Host auth storage binding")
+    );
 }

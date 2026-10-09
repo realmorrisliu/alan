@@ -63,19 +63,17 @@ impl PackageBootstrap {
     #[cfg(test)]
     pub(crate) fn open(
         &self,
-        channel_id: String,
         store_root: Option<std::path::PathBuf>,
     ) -> Result<Arc<PackageService>> {
-        PackageService::open_bootstrap(channel_id, store_root, self.wait.clone())
+        PackageService::open_bootstrap(store_root, self.wait.clone())
     }
 
     pub(crate) fn opener(
         &self,
-        channel_id: String,
         store_root: Option<std::path::PathBuf>,
     ) -> impl FnOnce() -> Result<Arc<PackageService>> + Send + 'static {
         let wait = self.wait.clone();
-        move || PackageService::open_bootstrap(channel_id, store_root, wait)
+        move || PackageService::open_bootstrap(store_root, wait)
     }
 
     pub(crate) fn finish(self) {
@@ -92,25 +90,22 @@ impl Drop for PackageBootstrap {
 impl PackageService {
     #[cfg(test)]
     pub(crate) fn bootstrap(
-        channel_id: impl Into<String>,
         store_root: Option<std::path::PathBuf>,
     ) -> Result<(Arc<Self>, PackageBootstrap)> {
-        Self::bootstrap_with_budget(channel_id.into(), store_root, Duration::from_secs(10))
+        Self::bootstrap_with_budget(store_root, Duration::from_secs(10))
     }
 
     #[cfg(test)]
     pub(super) fn bootstrap_with_budget(
-        channel_id: String,
         store_root: Option<std::path::PathBuf>,
         budget: Duration,
     ) -> Result<(Arc<Self>, PackageBootstrap)> {
         let guard = PackageBootstrap::with_budget(budget);
-        let service = guard.open(channel_id, store_root)?;
+        let service = guard.open(store_root)?;
         Ok((service, guard))
     }
 
     fn open_bootstrap(
-        channel_id: String,
         store_root: Option<std::path::PathBuf>,
         wait: Arc<BootstrapWait>,
     ) -> Result<Arc<Self>> {
@@ -120,6 +115,6 @@ impl PackageService {
             None
         };
         let root = store_root.unwrap_or_else(|| temporary.as_ref().unwrap().path().to_path_buf());
-        Self::open_inner(channel_id, root, temporary, Some(wait))
+        Self::open_inner(root, temporary, Some(wait))
     }
 }

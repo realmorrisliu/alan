@@ -100,7 +100,7 @@ async fn real_upgrade_keeps_live_process_revision_until_lease_release() {
     let package_path = package_dir.join("package-check/SKILL.md");
     std::fs::write(&descriptor_path, body("OLD_DESCRIPTOR_SOURCE")).unwrap();
     std::fs::write(&package_path, body("OLD_PACKAGE_SOURCE")).unwrap();
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     assert!(
         service
             .execute(crate::PackageCommand::Install {

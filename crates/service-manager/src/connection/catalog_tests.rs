@@ -95,7 +95,7 @@ fn model(slug: &str) -> ProviderModel {
 async fn managed_connection(
     factory: Arc<CatalogFactory>,
 ) -> (Arc<ConnectionService>, ProcessConnection) {
-    let service = ConnectionService::ephemeral("test").unwrap();
+    let service = ConnectionService::ephemeral().unwrap();
     service
         .attach_callable_registry(
             Arc::new(alan_llmfs::LlmFs::new()),
@@ -252,7 +252,7 @@ async fn implicit_account_replacement_cannot_select_or_restore_with_old_catalog_
 
     // A new invocation with identical profile metadata binds B, so exact A recovery
     // must fail rather than reassigning old work to the newly logged-in account.
-    let replacement = ConnectionService::ephemeral("test").unwrap();
+    let replacement = ConnectionService::ephemeral().unwrap();
     replacement
         .attach_callable_registry(
             Arc::new(alan_llmfs::LlmFs::new()),

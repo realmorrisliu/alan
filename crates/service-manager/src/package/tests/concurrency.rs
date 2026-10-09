@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 
 #[test]
 fn refresh_collects_materialized_revisions_that_never_reached_the_catalog() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     assert!(
         service
             .execute(PackageCommand::Install {
@@ -35,7 +35,7 @@ fn refresh_collects_materialized_revisions_that_never_reached_the_catalog() {
 
 #[test]
 fn refresh_recovers_an_interrupted_removal_without_reopening_the_service() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     assert!(
         service
             .execute(PackageCommand::Install {
@@ -64,7 +64,7 @@ fn refresh_recovers_an_interrupted_removal_without_reopening_the_service() {
 
 #[test]
 fn catalog_refresh_does_not_read_content_but_acquisition_verifies_it() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     for id in ["intact", "tampered"] {
         assert!(
             service
@@ -89,8 +89,8 @@ fn catalog_refresh_does_not_read_content_but_acquisition_verifies_it() {
 fn independent_services_observe_mutations_and_retain_live_revisions() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let first = PackageService::open("dev", root.clone()).unwrap();
-    let second = PackageService::open("dev", root.clone()).unwrap();
+    let first = PackageService::open(root.clone()).unwrap();
+    let second = PackageService::open(root.clone()).unwrap();
     assert!(
         first
             .execute(PackageCommand::Install {
@@ -126,7 +126,7 @@ fn independent_services_observe_mutations_and_retain_live_revisions() {
             .unwrap()
             .contains("first")
     );
-    let reopened = PackageService::open("dev", root.clone()).unwrap();
+    let reopened = PackageService::open(root.clone()).unwrap();
     assert_eq!(
         reopened.catalog().unwrap().packages["shared"].reference_count,
         1
@@ -158,8 +158,8 @@ fn independent_services_observe_mutations_and_retain_live_revisions() {
 fn concurrent_services_do_not_overwrite_each_others_catalog_entries() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let first = PackageService::open("dev", root.clone()).unwrap();
-    let second = PackageService::open("dev", root).unwrap();
+    let first = PackageService::open(root.clone()).unwrap();
+    let second = PackageService::open(root).unwrap();
     let barrier = std::sync::Barrier::new(2);
     std::thread::scope(|scope| {
         for (service, id) in [(&first, "first"), (&second, "second")] {
@@ -193,7 +193,7 @@ fn crashed_process_releases_revision_and_staging_is_recovered() {
 fn verify_crash_recovery(surviving_reference: bool, retiring: bool) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     assert!(
         service
             .execute(PackageCommand::Install {
@@ -238,7 +238,7 @@ fn verify_crash_recovery(surviving_reference: bool, retiring: bool) {
         catalog.packages["crashed"].reference_count,
         1 + u64::from(surviving_reference)
     );
-    let reopened = PackageService::open("dev", root.clone()).unwrap();
+    let reopened = PackageService::open(root.clone()).unwrap();
     assert_eq!(
         reopened.catalog().unwrap().packages["crashed"].state,
         if retiring {
@@ -276,7 +276,7 @@ fn verify_crash_recovery(surviving_reference: bool, retiring: bool) {
     fs::create_dir_all(root.join("staging/interrupted/source")).unwrap();
     fs::write(root.join("staging/interrupted/source/file"), b"partial").unwrap();
     fs::write(root.join("catalog-interrupted.tmp"), b"partial").unwrap();
-    let recovered = PackageService::open("dev", root.clone()).unwrap();
+    let recovered = PackageService::open(root.clone()).unwrap();
     assert_eq!(recovered.catalog().unwrap(), refreshed);
     assert_eq!(service.catalog().unwrap(), refreshed);
     assert!(!old_revision.exists());
@@ -290,7 +290,7 @@ fn package_crash_worker() {
     let Some(root) = std::env::var_os("ALAN_PACKAGE_CRASH_TEST_ROOT") else {
         return;
     };
-    let service = PackageService::open("dev", root.into()).unwrap();
+    let service = PackageService::open(root.into()).unwrap();
     let _lease = service.acquire("crashed").unwrap();
     if std::env::var("ALAN_PACKAGE_CRASH_TEST_RETIRING").unwrap() == "1" {
         assert!(
@@ -315,25 +315,25 @@ fn package_crash_worker() {
 fn lease_scan_rejects_symlinks_without_removing_the_target() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let service = PackageService::open("dev", root.clone()).unwrap();
+    let service = PackageService::open(root.clone()).unwrap();
     let victim = directory.path().join("victim");
     fs::write(&victim, b"keep").unwrap();
     std::os::unix::fs::symlink(&victim, root.join("leases/unsafe")).unwrap();
-    assert!(PackageService::open("dev", root).is_err());
+    assert!(PackageService::open(root).is_err());
     assert_eq!(fs::read(&victim).unwrap(), b"keep");
     drop(service);
 }
 
 #[test]
 fn preinstalled_retirement_preserves_live_leases_and_operator_packages() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     service
         .seed_preinstalled("obsolete", native_snapshot("old", "body"))
         .unwrap();
     service
         .seed_preinstalled("current", native_snapshot("current", "body"))
         .unwrap();
-    let peer = PackageService::open("test", service.store.root().to_path_buf()).unwrap();
+    let peer = PackageService::open(service.store.root().to_path_buf()).unwrap();
     let lease = peer.acquire("obsolete").unwrap();
     service.retire_preinstalled("obsolete").unwrap();
     assert!(peer.resolve("obsolete").is_err());

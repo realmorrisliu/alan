@@ -48,8 +48,7 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
                 .root,
         )
     } else {
-        let service =
-            ConnectionService::open(channel.descriptor().id, &system.connection_bindings()?)?;
+        let service = ConnectionService::open(&system.connection_bindings()?)?;
         let mut namespace = alan_kernel::Namespace::new();
         namespace.mount(
             "/mnt/connections",

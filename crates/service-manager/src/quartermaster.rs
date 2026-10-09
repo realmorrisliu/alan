@@ -713,7 +713,7 @@ mod tests {
             "Use WebSearch and preserve this body.",
         )
         .unwrap();
-        let service = crate::PackageService::ephemeral("test").unwrap();
+        let service = crate::PackageService::ephemeral().unwrap();
         let shell = q_shell(&service, Some(source.path()), Access::ReadWrite).await;
 
         let installed = shell
@@ -863,7 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn q_fails_when_package_service_projection_is_read_only() {
-        let service = crate::PackageService::ephemeral("test").unwrap();
+        let service = crate::PackageService::ephemeral().unwrap();
         let shell = q_shell(&service, None, Access::ReadOnly).await;
         let result = shell
             .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
@@ -890,7 +890,7 @@ mod tests {
         )
         .unwrap();
         symlink("safe/SKILL.md", source.path().join("linked.md")).unwrap();
-        let service = crate::PackageService::ephemeral("test").unwrap();
+        let service = crate::PackageService::ephemeral().unwrap();
         let shell = q_shell(&service, Some(source.path()), Access::ReadWrite).await;
         let result = shell
             .run(
@@ -926,7 +926,7 @@ mod tests {
         )
         .unwrap();
         symlink("safe", source.path().join(".git")).unwrap();
-        let service = crate::PackageService::ephemeral("test").unwrap();
+        let service = crate::PackageService::ephemeral().unwrap();
         let shell = q_shell(&service, Some(source.path()), Access::ReadWrite).await;
 
         let result = shell

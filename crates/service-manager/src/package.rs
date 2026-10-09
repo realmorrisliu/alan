@@ -163,9 +163,8 @@ struct State {
     next_lease_id: u64,
 }
 
-/// Channel-scoped installed-package authority.
+/// Installed-package authority bound to an explicit store or owned temporary directory.
 pub struct PackageService {
-    channel_id: String,
     store: PackageStore,
     _temporary_store: Option<crate::temporary_store::TemporaryStore>,
     state: Mutex<State>,
@@ -247,35 +246,28 @@ impl std::fmt::Debug for PackageService {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PackageService")
-            .field("channel_id", &self.channel_id)
             .finish_non_exhaustive()
     }
 }
 
 impl PackageService {
-    pub fn open(channel_id: impl Into<String>, store_root: PathBuf) -> Result<Arc<Self>> {
-        Self::open_inner(channel_id.into(), store_root, None, None)
+    pub fn open(store_root: PathBuf) -> Result<Arc<Self>> {
+        Self::open_inner(store_root, None, None)
     }
 
-    pub fn ephemeral(channel_id: impl Into<String>) -> Result<Arc<Self>> {
+    pub fn ephemeral() -> Result<Arc<Self>> {
         let temporary = crate::temporary_store::TemporaryStore::new("package")?;
         let root = temporary.path().to_path_buf();
-        Self::open_inner(channel_id.into(), root, Some(temporary), None)
+        Self::open_inner(root, Some(temporary), None)
     }
 
     fn open_inner(
-        channel_id: String,
         store_root: PathBuf,
         temporary_store: Option<crate::temporary_store::TemporaryStore>,
         bootstrap: Option<Arc<bootstrap::BootstrapWait>>,
     ) -> Result<Arc<Self>> {
-        ensure!(
-            matches!(channel_id.as_str(), "stable" | "dev" | "test"),
-            "invalid Package Service channel"
-        );
         let (store, catalog) = PackageStore::open(store_root, bootstrap)?;
         Ok(Arc::new(Self {
-            channel_id,
             store,
             _temporary_store: temporary_store,
             state: Mutex::new(State {

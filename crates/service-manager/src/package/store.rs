@@ -28,7 +28,7 @@ impl PackageStore {
         store_root: PathBuf,
         bootstrap: Option<std::sync::Arc<super::bootstrap::BootstrapWait>>,
     ) -> Result<(Self, PackageCatalog)> {
-        ensure_package_store_channel_chain(&store_root)?;
+        ensure_package_store_parent_chain(&store_root)?;
         match fs::symlink_metadata(&store_root) {
             Ok(_) => {
                 ensure_owned_directory(&store_root, "Package Store root is not an owned directory")?
@@ -38,7 +38,7 @@ impl PackageStore {
             }
             Err(error) => return Err(error).context("inspect Package Store root"),
         }
-        ensure_package_store_channel_chain(&store_root)?;
+        ensure_package_store_parent_chain(&store_root)?;
         fs::create_dir_all(store_root.join("revisions"))?;
         fs::create_dir_all(store_root.join("staging"))?;
         ensure_owned_directory(
@@ -434,21 +434,32 @@ fn gc_one_package_revisions(
     Ok(())
 }
 
-fn ensure_package_store_channel_chain(store_root: &Path) -> Result<()> {
+fn ensure_package_store_parent_chain(store_root: &Path) -> Result<()> {
+    ensure!(
+        store_root.is_absolute(),
+        "Package Store binding must be absolute"
+    );
+    ensure!(
+        !store_root.components().any(|part| matches!(
+            part,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )),
+        "Package Store binding must not contain relative components"
+    );
     let services_root = store_root
         .parent()
         .context("Package Store root has no services parent")?;
-    let channel_root = services_root
+    let store_parent = services_root
         .parent()
-        .context("Package Store root has no channel parent")?;
+        .context("Package Store root has no store parent")?;
     for (path, message) in [
         (
-            channel_root,
-            "Package Store channel path contains an unsupported ancestor",
+            store_parent,
+            "Package Store path contains an unsupported ancestor",
         ),
         (
             services_root,
-            "Package Store channel path contains an unsupported ancestor",
+            "Package Store path contains an unsupported ancestor",
         ),
         (store_root, "Package Store root is not an owned directory"),
     ] {
@@ -458,7 +469,7 @@ fn ensure_package_store_channel_chain(store_root: &Path) -> Result<()> {
                 "{message}"
             ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).context("inspect Package Store channel path"),
+            Err(error) => return Err(error).context("inspect Package Store path"),
         }
     }
     Ok(())
