@@ -120,7 +120,7 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
             .await
             .unwrap();
     }
-    assert_eq!(app.drain_committed_scrollback(80, 1).len(), 6);
+    assert_eq!(app.drain_committed_scrollback(80, 1).len(), 4);
     assert!(app.action_cells.is_empty());
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     let open = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);

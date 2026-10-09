@@ -190,7 +190,7 @@ async fn actual_inline_near_bottom_retained_modal_uses_full_viewport() {
 }
 
 #[tokio::test]
-async fn action_file_metadata_and_huge_output_use_three_physical_rows() {
+async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint() {
     let result =
         serde_json::json!({"title": "Read source", "result_preview": "preview", "presentation": {
             "form": "file_content", "path": "src/main.rs", "lines": 123
@@ -204,7 +204,7 @@ async fn action_file_metadata_and_huge_output_use_three_physical_rows() {
             .unwrap();
         let rows = app.styled_history_lines(width);
         assert!(
-            rows.len() <= 3,
+            rows.len() <= 2,
             "summary has {} rows at {width}",
             rows.len()
         );
@@ -214,7 +214,7 @@ async fn action_file_metadata_and_huge_output_use_three_physical_rows() {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            text.contains("Read source") && text.contains("123") && text.contains("Ctrl+O"),
+            text.contains("Read source") && text.contains("123") && !text.contains("Ctrl+O"),
             "{text}"
         );
         let mut terminal =
@@ -225,15 +225,25 @@ async fn action_file_metadata_and_huge_output_use_three_physical_rows() {
                 terminal
                     .backend()
                     .buffer()
-                    .cell((column, 3))
+                    .cell((column, 2))
                     .unwrap()
                     .symbol()
             })
             .collect::<String>();
         assert!(header.starts_with("no project · model unknown"), "{header}");
-        assert_eq!(
-            terminal.backend().buffer().cell((0, 2)).unwrap().symbol(),
-            " "
+        let hint = (0..width as u16)
+            .map(|column| {
+                terminal
+                    .backend()
+                    .buffer()
+                    .cell((column, 4))
+                    .unwrap()
+                    .symbol()
+            })
+            .collect::<String>();
+        assert!(
+            hint.contains("Ctrl+O details"),
+            "shared hint missing: {hint}"
         );
     }
 }
@@ -313,13 +323,16 @@ fn failed_command_is_bounded_and_distinct_actions_are_preserved() {
     }
     for width in [40, 60, 80, 120] {
         let rows = app.styled_history_lines(width);
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 4);
         let text = rows
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(text.contains("exit 101") && text.contains("✗"), "{text}");
+        assert!(
+            text.contains("exit 101") && text.contains("failed"),
+            "{text}"
+        );
     }
 }
 
@@ -387,7 +400,7 @@ fn typed_diff_and_listing_metadata_and_agent_scoping_survive_drain() {
             result: String::new(),
         },
     );
-    assert_eq!(app.styled_history_lines(80).len(), 3);
+    assert_eq!(app.styled_history_lines(80).len(), 1);
 }
 
 #[test]

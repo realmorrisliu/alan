@@ -449,7 +449,7 @@ fn transcript_renders_error_style() {
     let backend = render(&app);
     let cell = backend.buffer().cell((0, 0)).unwrap();
 
-    assert_eq!(cell.symbol(), "e");
+    assert_eq!(cell.symbol(), "E");
     assert_eq!(cell.fg, Color::Red);
 }
 

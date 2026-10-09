@@ -139,7 +139,7 @@ fn live_region_lines_at(
     }
     for tool in &app.running_tools {
         lines.push(Line::styled(
-            format!("· tool running: {}", tool.title),
+            format!("{} · running", tool.title),
             Style::default().fg(Color::Cyan),
         ));
     }
@@ -194,6 +194,17 @@ fn live_region_lines_at(
                 let prefix = if idx == state.selected { "▶ " } else { "  " };
                 lines.push(Line::styled(format!("{prefix}{label}"), style));
             }
+        }
+        if app.completion.is_none()
+            && app.project_selection.is_none()
+            && app.pending_yield.is_none()
+            && !app.projected_actions.is_empty()
+        {
+            // Reuse the stable row below the composer; completion keeps priority.
+            lines.push(Line::styled(
+                "Ctrl+O details",
+                Style::default().fg(Color::DarkGray),
+            ));
         }
         (lines, Some(prompt_start))
     }

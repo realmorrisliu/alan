@@ -877,7 +877,9 @@ fn action_status_is_running(status: &str) -> bool {
 pub(super) fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
     let status = match snapshot.status.trim() {
         "completed" => ToolStatus::Complete,
-        "failed" | "rejected" => ToolStatus::Failed,
+        "failed" => ToolStatus::Failed,
+        "rejected" => ToolStatus::Rejected,
+        "cancelled" => ToolStatus::Cancelled,
         _ => return None,
     };
     let body = if !snapshot.output.trim().is_empty() {

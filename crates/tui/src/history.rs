@@ -85,6 +85,27 @@ pub struct PlanLine {
 pub enum ToolStatus {
     Complete,
     Failed,
+    Rejected,
+    Cancelled,
+}
+
+impl ToolStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Complete => "completed",
+            Self::Failed => "failed",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    fn style(self) -> Style {
+        Style::default().fg(match self {
+            Self::Complete => Color::DarkGray,
+            Self::Failed => Color::Red,
+            Self::Rejected | Self::Cancelled => Color::Yellow,
+        })
+    }
 }
 
 /// A tool call that is still running; shown in the live region only.
@@ -213,10 +234,10 @@ impl HistoryCell {
                     .map(Into::into)
                     .collect();
             }
-            return wrap_with_prefix("thinking", text, width);
+            return wrap_plain_text(text, width);
         }
 
-        let (prefix, body) = match self {
+        let body = match self {
             Self::Rendered(_)
             | Self::Styled(_)
             | Self::AssistantTail { .. }
@@ -233,11 +254,7 @@ impl HistoryCell {
                 preview,
                 presentation,
             } => {
-                let glyph = match status {
-                    ToolStatus::Complete => "✓",
-                    ToolStatus::Failed => "✗",
-                };
-                let mut body = format!("{glyph} {title}");
+                let mut body = format!("{title} · {}", status.label());
                 if let Some(presentation) = presentation {
                     for line in presentation_lines(presentation) {
                         body.push_str(&format!("\n  {line}"));
@@ -247,13 +264,13 @@ impl HistoryCell {
                 {
                     body.push_str(&format!("\n  {preview}"));
                 }
-                ("tool", body)
+                body
             }
-            Self::PendingYield(pending) => ("input", pending.render_body()),
-            Self::Error(message) => ("error", message.clone()),
+            Self::PendingYield(pending) => format!("Waiting for input\n{}", pending.render_body()),
+            Self::Error(message) => format!("Error: {message}"),
         };
 
-        wrap_with_prefix(prefix, &body, width)
+        wrap_plain_text(&body, width)
     }
 
     /// Project typed transcript roles and Markdown directly into Ratatui spans.
@@ -276,24 +293,14 @@ impl HistoryCell {
                 ..
             } => {
                 let mut lines = vec![Line::styled(
-                    format!(
-                        "tool> {} {}",
-                        if *status == ToolStatus::Complete {
-                            "✓"
-                        } else {
-                            "✗"
-                        },
-                        clean_text(title)
-                    ),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
+                    format!("{} · {}", clean_text(title), status.label()),
+                    status.style().add_modifier(Modifier::BOLD),
                 )];
                 lines.extend(
                     presentation_rows(presentation)
                         .into_iter()
                         .map(|(text, style)| {
-                            Line::styled(format!("       {}", clean_text(&text)), style)
+                            Line::styled(format!("  {}", clean_text(&text)), style)
                         }),
                 );
                 wrap_styled_lines(lines, width)
@@ -306,7 +313,8 @@ impl HistoryCell {
                     | Self::PendingYield(_) => Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
-                    Self::Tool { .. } | Self::Plan(_) => Style::default().fg(Color::Cyan),
+                    Self::Tool { status, .. } => status.style(),
+                    Self::Plan(_) => metadata_style(),
                     Self::Thinking { .. } => metadata_style().add_modifier(Modifier::ITALIC),
                     Self::Error(_) => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     _ => Style::default(),
@@ -569,44 +577,15 @@ pub(crate) fn action_detail(cell: &HistoryCell) -> Vec<Line<'static>> {
 }
 
 fn render_plan(items: &[PlanLine], width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for item in items {
-        let marker = match item.status {
-            PlanItemStatus::Completed => "[x]",
-            PlanItemStatus::InProgress => "[~]",
-            PlanItemStatus::Pending => "[ ]",
-        };
-        let body = format!("{marker} {}", item.content);
-        let wrapped = textwrap::wrap(&body, width.saturating_sub(6).max(8));
-        for (idx, line) in wrapped.into_iter().enumerate() {
-            if idx == 0 {
-                lines.push(format!("plan> {line}"));
-            } else {
-                lines.push(format!("      {line}"));
-            }
-        }
-    }
-    lines
-}
-
-fn wrap_with_prefix(prefix: &str, body: &str, width: usize) -> Vec<String> {
-    let body_width = width.saturating_sub(prefix.len() + 3).max(8);
-    body.split('\n')
-        .flat_map(|segment| {
-            let wrapped = textwrap::wrap(segment, body_width);
-            if wrapped.is_empty() {
-                vec![String::new()]
-            } else {
-                wrapped.into_iter().map(|line| line.into_owned()).collect()
-            }
-        })
-        .enumerate()
-        .map(|(idx, line)| {
-            if idx == 0 {
-                format!("{prefix}> {line}")
-            } else {
-                format!("{:width$}  {line}", "", width = prefix.len())
-            }
+    items
+        .iter()
+        .flat_map(|item| {
+            let marker = match item.status {
+                PlanItemStatus::Completed => "[x]",
+                PlanItemStatus::InProgress => "[~]",
+                PlanItemStatus::Pending => "[ ]",
+            };
+            wrap_plain_text(&format!("{marker} {}", item.content), width)
         })
         .collect()
 }

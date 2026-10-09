@@ -362,10 +362,10 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
             "l",
             "code tab indentation at {width}"
         );
-        assert_eq!(buffer.cell((12, 9)).unwrap().symbol(), "n");
-        assert_eq!(buffer.cell((12, 9)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((12, 10)).unwrap().symbol(), "o");
-        assert_eq!(buffer.cell((12, 10)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((7, 9)).unwrap().symbol(), "n");
+        assert_eq!(buffer.cell((7, 9)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((7, 10)).unwrap().symbol(), "o");
+        assert_eq!(buffer.cell((7, 10)).unwrap().fg, Color::Red);
         for row in 4..=6 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }

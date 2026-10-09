@@ -164,6 +164,7 @@ async fn generic_metadata_preview_beats_raw_fallback_in_real_action_files() {
         ("completed", serde_json::Value::Null),
         ("failed", serde_json::json!({"form":"invalid"})),
         ("rejected", serde_json::Value::Null),
+        ("cancelled", serde_json::Value::Null),
     ] {
         let result = serde_json::json!({"result_preview":"Readable cause: policy denied", "presentation":presentation}).to_string();
         let (shell, path, id) = action_fixture("RAW_ESCAPED_original_sentinel", &result).await;
@@ -186,9 +187,9 @@ async fn generic_metadata_preview_beats_raw_fallback_in_real_action_files() {
                 text.contains("Readable cause") && !text.contains("RAW_ESCAPED"),
                 "{status}: {text}"
             );
-            assert!(rows.len() <= 3 && text.len() <= 1024);
+            assert!(rows.len() <= 2 && text.len() <= 1024);
             if status != "completed" {
-                assert!(text.contains('✗'));
+                assert!(text.contains(status), "{status}: {text}");
             }
         }
         let detail = action_detail_io::read_detail(&shell, &path, &id)
