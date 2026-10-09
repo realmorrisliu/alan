@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use alan_os_host::installation::ExtendedMetadata;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,6 +21,7 @@ struct Entry {
     group: u32,
     length: u64,
     digest: String,
+    metadata_digest: String,
 }
 
 /// Root-relative inventory; a missing component differs from an existing empty directory.
@@ -37,6 +39,14 @@ impl Snapshot {
                 path.components()
                     .all(|part| matches!(part, std::path::Component::Normal(_))),
                 "recovery inventory path escapes its component"
+            );
+            ensure!(
+                entry.metadata_digest.len() == 64
+                    && entry
+                        .metadata_digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit()),
+                "invalid extended metadata fingerprint"
             );
             ensure!(entry.mode <= 0o7777, "unsupported recovery permission bits");
             if !path.as_os_str().is_empty() {
@@ -89,6 +99,12 @@ impl Snapshot {
                 "migration source contains a symlink or special file"
             );
             let (mode, owner, group) = permissions(&metadata);
+            let file = File::open(&path)?;
+            ensure!(
+                same_file(&metadata, &file.metadata()?),
+                "migration entry changed while opening metadata"
+            );
+            let metadata_digest = metadata_digest(&ExtendedMetadata::read(&file)?)?;
             let (length, digest) = if metadata.is_dir() {
                 for child in fs::read_dir(&path)? {
                     pending.push(relative.join(child?.file_name()));
@@ -117,6 +133,7 @@ impl Snapshot {
                     group,
                     length,
                     digest,
+                    metadata_digest,
                 },
             );
         }
@@ -176,6 +193,16 @@ impl Snapshot {
                 permissions(&metadata) == (expected.mode, expected.owner, expected.group),
                 "migration source permissions or ownership changed"
             );
+            let file = File::open(&from)?;
+            ensure!(
+                same_file(&metadata, &file.metadata()?),
+                "migration entry changed while opening metadata"
+            );
+            let extended = ExtendedMetadata::read(&file)?;
+            ensure!(
+                metadata_digest(&extended)? == expected.metadata_digest,
+                "migration extended metadata changed"
+            );
             if expected.directory {
                 let mut builder = fs::DirBuilder::new();
                 #[cfg(unix)]
@@ -214,6 +241,7 @@ impl Snapshot {
                     length == expected.length && hex(hasher.finalize()) == expected.digest,
                     "migration source bytes changed during staging"
                 );
+                extended.apply(&output)?;
                 output.set_permissions(metadata.permissions())?;
                 output.sync_all()?;
             }
@@ -222,6 +250,12 @@ impl Snapshot {
         for (relative, expected) in self.0.iter().rev().filter(|(_, entry)| entry.directory) {
             let path = entry_path(destination, relative);
             let directory = File::open(&path)?;
+            let extended = ExtendedMetadata::read(&File::open(entry_path(source, relative))?)?;
+            ensure!(
+                metadata_digest(&extended)? == expected.metadata_digest,
+                "migration directory metadata changed"
+            );
+            extended.apply(&directory)?;
             set_mode(&directory, expected.mode)?;
             directory.sync_all()?;
         }
@@ -255,6 +289,10 @@ fn hash_reader(reader: &mut File) -> Result<(u64, String)> {
 }
 
 #[cfg(unix)]
+fn metadata_digest(metadata: &ExtendedMetadata) -> Result<String> {
+    Ok(hex(Sha256::digest(serde_json::to_vec(metadata)?)))
+}
+
 fn permissions(metadata: &fs::Metadata) -> (u32, u32, u32) {
     use std::os::unix::fs::MetadataExt;
     (metadata.mode() & 0o7777, metadata.uid(), metadata.gid())
@@ -263,7 +301,9 @@ fn permissions(metadata: &fs::Metadata) -> (u32, u32, u32) {
 #[cfg(unix)]
 fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
-    opened.is_file() && before.dev() == opened.dev() && before.ino() == opened.ino()
+    before.file_type() == opened.file_type()
+        && before.dev() == opened.dev()
+        && before.ino() == opened.ino()
 }
 
 #[cfg(unix)]

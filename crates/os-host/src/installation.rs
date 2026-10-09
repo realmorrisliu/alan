@@ -1,10 +1,12 @@
 //! Product store layout and explicit historical installation inspection.
 
 mod access;
+mod extended_metadata;
 pub use access::{
     InstallationAccess, InstallationMigrationAccess, MigrationComponent, MigrationJournal,
     MigrationPayload, MigrationState,
 };
+pub use extended_metadata::ExtendedMetadata;
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};

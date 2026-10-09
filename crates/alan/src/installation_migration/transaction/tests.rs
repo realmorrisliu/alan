@@ -570,3 +570,47 @@ async fn rollback_does_not_follow_or_require_a_valid_retained_source_root() {
         }
     }
 }
+
+#[tokio::test]
+async fn changed_extended_metadata_prevents_rollback_without_losing_canonical_data() {
+    let (_temp, paths) = fixture();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    let file = paths
+        .system_root()
+        .join("services/memory/stores/personal/note.md");
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("chmod")
+        .args(["+a", "everyone allow read"])
+        .arg(&file)
+        .status();
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import os,sys; os.setxattr(sys.argv[1], 'user.alan-migration-test', b'new metadata')",
+        ])
+        .arg(&file)
+        .status();
+    assert!(status.unwrap().success());
+    let error = migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Rollback,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("canonical data changed"),
+        "{error:#}"
+    );
+    assert_eq!(fs::read_to_string(&file).unwrap(), "durable memory");
+    drop(paths.access().unwrap());
+}
