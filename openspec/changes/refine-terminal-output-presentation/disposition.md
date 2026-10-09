@@ -2,9 +2,10 @@
 
 2026-10-09: accepted design; implementation and acceptance authorized by the
 user's new goal. The five confirmed decisions in `decision-record.md` remain
-binding. Implementation is in progress; this disposition does not claim merged
-delivery or native acceptance. See `goal-roadmap.md` for the ordered goal and
-separate follow-up delivery boundaries.
+binding. Implementation and native five-workflow acceptance are complete at the
+current candidate; final review, current-head CI, user merge and canonical sync
+remain open. This disposition does not claim merged delivery. See `goal-roadmap.md`
+for the ordered goal and separate follow-up delivery boundaries.
 
 This change owns terminal-output presentation only. It modifies the three
 existing capabilities listed in `proposal.md`, follows the immutable archived

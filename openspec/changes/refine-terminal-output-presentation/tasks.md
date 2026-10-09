@@ -1,6 +1,6 @@
 ## 1. Baseline and implementation scope
 
-- [ ] 1.1 Freeze fixtures and native captures for the complete output inventory and five UI workflows; record source, binary, model, terminal size and expected effects.
+- [x] 1.1 Freeze fixtures and native captures for the complete output inventory and five UI workflows; record source, binary, model, terminal size and expected effects.
 - [x] 1.2 Trace rendering callers, history/drain tests, detail selection, runtime metadata and retained plan snapshots; document the smallest owner-correct implementation and affected fixtures.
 
 ## 2. Unified output presentation
@@ -21,7 +21,7 @@
 
 - [x] 4.1 Run focused TUI and affected Runtime/protocol regressions for literal text, failure visibility, stdout/stderr, diff markers, raw detail, metadata fallback and plan retention.
 - [x] 4.2 Check deterministic layout cases at 48, 80 and 120 columns, including Chinese/emoji, long paths, multiline drafts, Markdown/code, long single-line output and completion below input.
-- [ ] 4.3 Run the five workflows in ordinary PTY and Herdr on the fresh candidate; verify label removal, concise summaries, member/snapshot detail, stable input, usable scrollback and exact no-repeat effects.
+- [x] 4.3 Run the five workflows in ordinary PTY and Herdr on the fresh candidate; verify label removal, concise summaries, member/snapshot detail, stable input, usable scrollback and exact no-repeat effects.
 - [x] 4.4 Run `just quality`, applicable test/check workflows and OpenSpec strict validation; record remaining environment limits rather than treating skipped native checks as passes.
 
 ## 5. Review and delivery

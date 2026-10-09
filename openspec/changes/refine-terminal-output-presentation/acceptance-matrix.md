@@ -209,12 +209,12 @@ separate. Each new slot still requires its own actual observations and effects.
 
 | Host / columns | Fresh fixture | Reads | Commands | Edit/diff | Authority lifecycle | Long follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| Ordinary PTY / 48 | f2a-pty48 | pending | pending | pending | pending | pending |
+| Ordinary PTY / 48 | f2a-pty48 | passed supported task | passed | passed | corrected positive flow and negative control passed | passed |
 | Ordinary PTY / 80 | f2a-pty80 | passed supported task | passed | passed | positive flow and negative control passed | passed |
-| Ordinary PTY / 120 | f2a-pty120 | pending | pending | pending | pending | pending |
-| Herdr / 48 | f2a-herdr48 | pending | pending | pending | pending | pending |
-| Herdr / 80 | f2a-herdr80 | pending | pending | pending | pending | pending |
-| Herdr / 120 | f2a-herdr120 | pending | pending | pending | pending | pending |
+| Ordinary PTY / 120 | f2a-pty120 | passed supported task | passed | passed | positive flow and negative control passed | passed |
+| Herdr / 48 | f2a-herdr48 | passed supported task | passed | passed | positive flow and negative control passed | passed |
+| Herdr / 80 | f2a-herdr80 | passed supported task | passed | passed | positive flow and negative control passed | passed |
+| Herdr / 120 | f2a-herdr120 | passed supported task | passed | passed | positive flow and negative control passed | passed |
 
 ### Ordinary PTY / 80, canonical candidate
 
@@ -256,4 +256,89 @@ untracked files only effects.log, and ledger exactly
 Receipts are `target/f2p80-01-launch.json` through `f2p80-48-exit.json` and
 `target/f2p80-acceptance.json`. The VT replay uses the existing vt100 dependency;
 observation windows include capture gaps and are not model-runtime latency.
-This is 5/30 current-candidate slots, not repeated-development qualification.
+This invocation supplies 5/30 current-candidate slots. The completed matrix below
+supersedes the earlier partial count; it is not repeated-development qualification.
+
+### Ordinary PTY / 48 and 120, canonical candidate
+
+Both fresh invocations use 22 rows, the manifest's binary and effective
+`chatgpt-main` / `gpt-6.1-sol` medium. Actual selector Esc, explicit read-only
+selection, three single reads and correct 3/2/180 counts with 182 literal matches
+precede successful/failing commands, single edit_file use and authority lifecycle
+controls. Each result retains its concrete `/agent/8` owner and separate member
+details. Read, command, edit and follow-up drafts survive detail return. VT replay
+records the final Chinese/emoji follow-up cursor at (20,17), zero-based, in both
+widths. The code boundaries, +/- diff and literal content remain intact.
+
+At 48 columns the harness first submitted unsupported `/project <path>` after
+revocation. Alan reported the supported syntax and rejected commands without
+authority. This was not a successful regrant or a product defect. The same
+invocation then repeated both authority flows using the actual `/project` picker:
+revoke/reapproval preserved the paused successor and unchanged ledger; only
+`/continue` appended one `resumed-once`. A separate revoked continuation failed
+before effects. No earlier failed harness step is counted as a passed flow.
+
+Both long follow-ups read pager/sample once, correctly identify line 180 and
+subtraction, expose the pager tail and original raw bytes, and retain distinct
+plan 7/6/1 snapshots. The 48-column invocation ended after `/quit`, with no
+candidate process remaining; its exit code was not retained. The 120-column
+invocation returned exit 0. Receipts are `target/f2p48-01-launch.json` through
+`f2p48-63-exit.json`, `target/f2p120-01-launch.json` through
+`f2p120-48-exit.json`, and their `*-acceptance.json` reports.
+
+### Herdr / 48, 80 and 120, canonical candidate
+
+The owned pane `w58:p15` was created without focus. The actual terminal is 43 rows;
+`stty size` reports 48, 80 and 120 columns after calibration. Herdr layout outer
+widths are respectively 51, 83 and 123, so outer rectangle widths are not treated
+as PTY dimensions. Three separate invocations and fixtures use the same candidate
+binary, concrete `/agent/8`, profile and effective model/effort. The user's focus
+remains `w58:p1`; closing the owned pane restores its original 145×45 layout.
+
+Each invocation exercises actual selector cancel/read-only selection, the same
+supported three-read task, successful and exit-7 commands with distinct retained
+stdout/stderr, one edit, positive cancel/revoke/reapprove/continue and the revoked
+negative control, then a two-read long follow-up. Waiting commands are interrupted
+within three seconds of their 30-second delay. Reapproval leaves the successor
+paused with no new ledger entry. Explicit continuation produces its one effect;
+revoked continuation fails before the unauthorized effect. These are unrecovered
+Root dispatch controls, not durable recovery preflight/queue-retention evidence.
+
+Member details preserve sample/pager bytes and original owner; Space paging
+reveals the pager tail and raw bytes. Plans 7, 6 and 1 show their own completed,
+in-progress and original task snapshots. Draft return preserves Chinese/emoji.
+For a behavioral caret check, the draft `后续草稿 中文😀` is moved left before its
+final emoji, retained across Action/plan detail navigation and Esc, then receives
+`验` at that exact position: `后续草稿 中文验😀`. Herdr's read API does not expose
+native cursor coordinates; this insertion tests the actual caret behavior.
+
+Early asynchronous reads can precede the current frame. Outcome/member/plan
+captures therefore wait for the actual matched result. A 48-column observation
+looked for full `read-only` text elided by the narrow header; an 80-column revoke
+observation used wording Alan does not display. Both timeouts retained the same
+actual process and were resolved by inspecting its correct grant/cwd/result, not
+by resubmitting work. The 120-column model read exceeded its first 30-second
+observation; the same process later completed correctly without a restart.
+Capture gaps and observation windows are not model-runtime latency measurements.
+
+All three `/quit` invocations return to their existing fish shell with captured
+native exit status 0. Native recent-unwrapped scrollback at 80 and 120 columns
+retains each of the two eligible groups and all seven distinct plan records
+exactly once; committed rows were not duplicated by details/paging. Receipts are
+`target/f2h{48,80,120}-*.json`, including geometry, matched output, exit and
+acceptance reports; the 80/120 reports also retain actual host scrollback.
+
+### Complete current-candidate matrix
+
+The six manifest fixtures were independently rechecked after every native
+invocation had ended and the cancelled command delays had expired. README/pager
+bytes equal their Git baseline; sample contains only the one requested
+`a + b` → `a - b` replacement; the only tracked diff is sample.rs, and the only
+untracked file is effects.log. Every ledger is exactly
+`command-once\nresumed-once\n`; cancelled and unauthorized tails are absent.
+No candidate Alan process remains. This closes 30/30 native UI workflow slots
+and tasks 1.1/4.3. Rust code is unchanged from the built `f2a9222d` tree through
+`82647a75`; that documentation head has all 16 CI checks passing. Final review,
+the next documentation head's required CI, user merge and canonical spec sync
+remain delivery gates. Cross-Process replacement remains covered by real
+Kernel/AgentFS deterministic tests, not native CLI replacement qualification.

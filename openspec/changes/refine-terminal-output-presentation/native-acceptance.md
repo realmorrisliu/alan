@@ -1,4 +1,11 @@
-# Partial native acceptance — 2026-10-09
+# Native acceptance evidence — 2026-10-09
+
+The targeted and historical attempts below retain their original scope and
+limits. The complete canonical-installation candidate's 30/30 workflow matrix,
+source/binary/model/actual terminal identities, effect checks and remaining
+delivery gates are recorded in [acceptance-matrix.md](acceptance-matrix.md).
+That matrix closes tasks 1.1/4.3; it does not turn these earlier partial or failed
+attempts into passes or claim native cross-Process replacement qualification.
 
 This is partial acceptance, not the five-workflow matrix or release qualification.
 

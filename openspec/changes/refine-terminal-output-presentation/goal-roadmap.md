@@ -76,6 +76,26 @@ proposal are preserved.
 
 ## Current checkpoint
 
+UI tasks are 14/17 checked; completed goal deliveries remain 0/3. The fresh
+canonical-installation candidate has completed all 30 native workflow slots:
+ordinary PTY and Herdr, each at actual 48/80/120 columns. Six independent fixtures
+have exact source/diff/once-only-ledger assertions after the invocations ended.
+Member and historical-plan details, Chinese/emoji draft/caret return, literal
+content, command stdout/stderr, edit diff, authorization controls and native
+scrollback are exercised. The owned Herdr pane was closed, its caller's original
+layout restored and no candidate Alan process remains. See the final matrix in
+`acceptance-matrix.md`; older candidates and harness corrections remain separate.
+
+Head `82647a75cb321526a4a06555d4f81d432ada3ce7` has all 16 CI checks passing.
+Its Rust tree is unchanged from the built `f2a9222d` candidate. Final exact-diff
+review, required CI for the next evidence/checklist commit, user merge and
+canonical synchronization remain open. PR #1044 remains draft while those
+review/CI gates are collected. Native five-workflow closure does not claim native
+cross-Process replacement, general self-development or Linux qualification;
+real Kernel/AgentFS tests remain the evidence for replacement/attachment fencing.
+
+### Earlier checkpoint evidence (historical)
+
 UI tasks remain 12/17 checked; goal deliveries remain 0/3. Local tracing,
 label removal, compact Actions/plans, notices, positive read-only grouping,
 member/history lifecycle, contextual detail and regression/layout/quality gates
@@ -138,16 +158,16 @@ was performed. Goal execution resumed; source selection is no longer a blocker.
 
 Documentation head `f2a9222d` also passed all 16 CI checks. Its newly built binary
 has SHA-256 `eaf18e8264d939b2a7043ef6e4cb3554489c9ee7eefef0b163b29132ad9e182d`.
-The fresh ordinary PTY 80×22 invocation has completed all five frozen workflows
-with source/ledger assertions after normal exit: 5/30 current-candidate workflow
-slots, separate from the 10/30 older-candidate receipts. UI tasks remain 12/17;
-the other five host/width slots, final review, merge and canonical sync remain
-open. See `acceptance-matrix.md` for the current matrix and operational receipts.
+The first fresh ordinary PTY 80×22 invocation completed all five frozen workflows
+with source/ledger assertions after normal exit: 5/30 candidate slots at that
+checkpoint, separate from the 10/30 older-candidate receipts. The current matrix
+above supersedes that partial count. See `acceptance-matrix.md` for the operational
+receipts and later native closure.
 
 ## Read-only preparation for the Linux follow-up
 
-This inventory prepares delivery 2 while source selection for delivery 1 is
-pending. It neither activates delivery 2 nor changes this UI change's three
+This inventory was collected before the dev source selection and prepares
+delivery 2. It neither activates delivery 2 nor changes this UI change's three
 normative capability owners. No Linux packages, mounts or toolchains were
 installed or modified by these probes.
 
@@ -162,7 +182,9 @@ does not solve that product gap.
 On 2026-10-09, the already-running OrbStack `ubuntu` machine is aarch64, kernel
 `7.0.14-orbstack-00380-ga7e0a2dc9535`, ordinary UID 501. Shell and C compiler
 exist, but git is absent. Cargo/rustc resolve through `/home/morris/.cargo/bin`
-to rustup and report 1.96.0, while this checkout pins 1.97.0. Its PATH also
+to rustup and report 1.96.0, while this checkout pins 1.97.0. Rustup already has
+1.97.0 installed; the follow-up must select and project it rather than claim a
+new installation. Its PATH also
 contains OrbStack executable directories outside the default substrate. The
 unprivileged combined user/mount/PID/network namespace probe exits 0; this
 proves namespace creation only, not bind/remount, seccomp, full backend selection
