@@ -2,6 +2,33 @@
 
 This is partial acceptance, not the five-workflow matrix or release qualification.
 
+## Ordinary PTY: narrow member details and draft return
+
+Fresh candidate SHA-256
+`d8a23047c0ba1b7828ba84583e89be36d93945a57909dfb1e53f88677cec2205`
+was built from `cad52944` plus the concrete-Process Action-detail slice. The
+terminal was 48 columns by 22 rows, using an independent dev invocation and
+`chatgpt-main` / `gpt-6.1-sol` / medium. Its disposable runtime was
+`~/Library/Caches/Alan/o9p48`; the unchanged fixture directory was the project
+used below. This was ordinary PTY acceptance, not a Herdr window capture.
+
+After explicit read-only project approval, one task requested one read each of
+README.md, sample.rs and pager.txt. Three successful reads appeared in one group.
+The final answer reported 3/2/180 lines, matching `wc -l`. Ctrl+O displayed pager
+Action `a3` under `/agent/8`, with the Process header and navigation on separate
+fixed rows. Space advanced the body to lines 2–21 while both rows stayed visible;
+`b` returned and Left selected sample Action `a2` with its own two lines and
+original raw bytes. Literal `server> ready`, `a > b`, Chinese and emoji remained.
+Esc restored `草稿 中文😀`; the parsed native cursor was row 14, column 13
+(zero-based), matching the composer end. The owned invocation exited with status
+0 after `/quit`. All three fixture hashes matched their pre-run values.
+
+Raw chunks are ignored `target/pty48-{project,grant,task,answer,detail,page,member,draft}.json`.
+They were replayed through the existing `vt100` dependency for screen/cursor
+inspection; no terminal-parser dependency or product code was added for capture.
+Cross-Process replacement remains deterministic Kernel/AgentFS evidence rather
+than native CLI replacement qualification. This run does not complete task 4.3.
+
 ## Candidate and environment
 
 - Source: `6d89fda9`, including the historical-plan slice; macOS aarch64 debug CLI.

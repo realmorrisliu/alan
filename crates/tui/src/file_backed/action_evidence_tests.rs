@@ -57,10 +57,16 @@ async fn reopen_reads_fresh_evidence_and_stale_async_results_are_rejected() {
     app.agent_path = "/agent/other".into();
     app.handle_key(open);
     app.dispatch(FileBackedEvent::ActionDetails {
-        path: response_path,
+        path: response_path.clone(),
         generation,
-        ids: Ok(vec![id.clone()]),
-        id: Some(id),
+        actions: Ok(vec![action_detail_io::ActionEntry {
+            owner: response_path.clone(),
+            id: id.clone(),
+        }]),
+        selected: Some(action_detail_io::ActionEntry {
+            owner: response_path,
+            id,
+        }),
         rows: vec![ratatui::text::Line::from("wrong process")],
     });
     assert!(app.modal.rows.is_empty());

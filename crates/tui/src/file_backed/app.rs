@@ -199,8 +199,8 @@ impl FileBackedApp {
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
-                ids,
-                id,
+                actions,
+                selected,
                 rows,
             } => {
                 if self.modal.active
@@ -208,13 +208,13 @@ impl FileBackedApp {
                     && path == self.modal.owner_path
                     && generation == self.modal.generation
                 {
-                    match ids {
-                        Ok(ids) => {
-                            self.modal.selected = id
+                    match actions {
+                        Ok(actions) => {
+                            self.modal.selected = selected
                                 .as_ref()
-                                .and_then(|id| ids.iter().position(|v| v == id))
+                                .and_then(|selected| actions.iter().position(|v| v == selected))
                                 .unwrap_or(0);
-                            self.modal.ids = ids;
+                            self.modal.actions = actions;
                             self.modal.rows = rows;
                         }
                         Err(error) => self.modal.rows = vec![Line::from(error)],

@@ -2,6 +2,8 @@
 mod detail_polish_tests;
 #[path = "action_polish_tests.rs"]
 mod polish_tests;
+#[path = "action_process_detail_tests.rs"]
+mod process_detail_tests;
 use super::*;
 use std::time::Duration;
 #[path = "action_acceptance_tests.rs"]
@@ -112,7 +114,7 @@ async fn actual_inline_near_bottom_retained_modal_uses_full_viewport() {
         .map(|i| format!("retained row {i}\n"))
         .collect::<String>();
     let (shell, path, id) = action_fixture(&output, "retained result").await;
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         let mut app = FileBackedApp::new(path.clone());
         file_surface::sync_action_from_file(&shell, &path, &id, &mut app)
             .await
@@ -156,9 +158,9 @@ async fn actual_inline_near_bottom_retained_modal_uses_full_viewport() {
         assert_eq!(terminal.get_frame().area().y, 0);
         let before = terminal.backend().buffer().clone();
         let hint = (0..width as u16)
-            .map(|x| before.cell((x, 0)).unwrap().symbol())
+            .map(|x| before.cell((x, 1)).unwrap().symbol())
             .collect::<String>();
-        for label in ["↔ Action", "Space/b page", "Esc"] {
+        for label in ["↔", "Space/b page", "Esc"] {
             assert!(hint.contains(label), "hint clipped at {width}: {hint}");
         }
         for (forward, backward) in [
@@ -197,7 +199,7 @@ async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint(
         }})
         .to_string();
     let (shell, path, id) = action_fixture(&"escaped JSON payload ".repeat(5000), &result).await;
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let mut app = FileBackedApp::new(path.clone());
         file_surface::sync_action_from_file(&shell, &path, &id, &mut app)
             .await
@@ -250,7 +252,7 @@ async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint(
 
 #[tokio::test]
 async fn details_survive_partial_and_full_summary_drain() {
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let output = "first output\nfull output sentinel\nlast output";
         let result = "malformed result sentinel";
         let (shell, path, id) = action_fixture(output, result).await;
@@ -321,7 +323,7 @@ fn failed_command_is_bounded_and_distinct_actions_are_preserved() {
             },
         );
     }
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let rows = app.styled_history_lines(width);
         assert_eq!(rows.len(), 4);
         let text = rows
@@ -380,14 +382,23 @@ fn typed_diff_and_listing_metadata_and_agent_scoping_survive_drain() {
     app.dispatch(FileBackedEvent::ActionDetails {
         path: app.agent_path.clone(),
         generation: app.modal.generation,
-        ids: Ok(vec!["a".into(), "b".into()]),
-        id: Some("b".into()),
+        actions: Ok(["a", "b"]
+            .into_iter()
+            .map(|id| action_detail_io::ActionEntry {
+                owner: app.agent_path.clone(),
+                id: id.into(),
+            })
+            .collect()),
+        selected: Some(action_detail_io::ActionEntry {
+            owner: app.agent_path.clone(),
+            id: "b".into(),
+        }),
         rows: vec![],
     });
     app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-    assert_eq!(app.modal.ids[app.modal.selected], "a");
+    assert_eq!(app.modal.actions[app.modal.selected].id, "a");
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-    assert_eq!(app.modal.ids[app.modal.selected], "b");
+    assert_eq!(app.modal.actions[app.modal.selected].id, "b");
     app.reset_for_root_process_change();
     app.agent_path = "/agent/2".into();
     sync_action_snapshot(
@@ -430,7 +441,7 @@ fn modal_paste_preserves_unicode_draft_and_cursor() {
 
 #[test]
 fn identical_completed_snapshot_after_physical_drain_does_not_replay() {
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/1".into());
         let snapshot = ActionSnapshot {
             id: "a0".into(),

@@ -205,3 +205,45 @@ late updates, reconnect and the Root alias. See `native-acceptance.md` for the
 fresh targeted run and its earlier failed candidate. Older-Process detail
 navigation, comprehensive resize/drain/reattachment qualification and the whole
 native workflow matrix remain open; task 3.3 is not claimed complete.
+
+## Concrete Process member details and grouped resize/reconnect closure
+
+The detail catalog now uses the existing projected Action references together
+with fresh current AgentFS catalog reads. Each selectable reference contains a
+concrete Process path and Action ID; it carries no evidence body or authority.
+Historical references remain selectable after attachment replacement and physical
+drains. A fresh selected read uses that reference's original files, while reply
+application still requires the current view path, generation and complete
+selection identity. Missing files stay unavailable. A current catalog failure
+is visible even when observed references remain inspectable.
+
+Detail layout uses two fixed header rows: selected Process and navigation.
+The Process remains visible while paging at 48/80/120 columns. This reuses the
+existing detail modal, source observation map and pager; it adds neither a new
+history owner nor a cached output fallback. Existing callers, events, fixtures
+and attachment reset use the same concrete reference shape.
+
+Real Kernel/AgentFS regressions exercise two Processes with the same `a0`, old
+Process removal, current catalog failure and a paused cross-Process late read.
+Twenty-seven combinations of initial width, resized width and partial drain
+verify frozen group suffixes, identity reconciliation and a later distinct member
+with identical text. Native PTY evidence covers 48-column paging, distinct member
+selection and draft/cursor return; it does not qualify native Process replacement.
+Task 3.3 is now locally closed; the five-workflow native matrix remains task 4.3.
+
+The final suite adds explicit 48-column coverage to existing completion,
+model-header, detail and streaming/Markdown resize fixtures. Receipts are
+`target/detail-process-final-tests.log`, `target/group-resize-tests.log` and
+`target/detail-process-quality.log`; the last quality receipt precedes the final
+resize fixture and is not the final-head gate. See `native-acceptance.md` for the
+fresh candidate identity and exact native scope.
+
+Final local result for this slice: 363 TUI library and 12 integration tests
+passed, including the expanded width fixtures. The already-recorded affected
+Runtime/protocol/Service Manager/Tool regression receipts remain applicable;
+this slice changes no Runtime code. `just quality` passed after the final resize
+fixtures (`target/detail-final-quality.log`), and strict OpenSpec validation
+passed all 67 current items (`target/detail-final-openspec.log`). Tasks 4.1 and
+4.2 are local gates, distinct from the still-open native matrix and current-head
+PR review/CI/merge. The ordinary PTY test invocation has exited; no development
+Agent was left running by this slice.

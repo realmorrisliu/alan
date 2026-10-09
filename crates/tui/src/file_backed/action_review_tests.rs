@@ -60,7 +60,12 @@ async fn unresolved_root_details_schedule_no_io_and_retry_with_resolved_owner() 
         );
     }
     assert_eq!(app.modal.owner_path, owner);
-    assert!(app.modal.ids.contains(&id));
+    assert!(
+        app.modal
+            .actions
+            .iter()
+            .any(|entry| entry.owner == owner && entry.id == id)
+    );
     assert!(
         app.modal
             .rows

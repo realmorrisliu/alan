@@ -676,7 +676,7 @@ async fn read_json_file<T: DeserializeOwned>(shell: &alan_shell::Shell, path: &s
     serde_json::from_slice(&bytes).with_context(|| format!("parse {path} failed"))
 }
 
-fn request_sort_key(request_id: &str) -> u64 {
+pub(super) fn request_sort_key(request_id: &str) -> u64 {
     request_id
         .trim_start_matches(|ch: char| !ch.is_ascii_digit())
         .parse::<u64>()

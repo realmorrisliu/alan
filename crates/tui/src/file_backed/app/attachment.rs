@@ -40,7 +40,7 @@ impl FileBackedApp {
         self.modal.active = false;
         self.modal.generation += 1;
         self.modal.rows.clear();
-        self.modal.ids.clear();
+        self.modal.actions.clear();
         self.modal.plans.clear();
         self.modal.plan_mode = false;
         self.activity = UiActivitySnapshot::idle();

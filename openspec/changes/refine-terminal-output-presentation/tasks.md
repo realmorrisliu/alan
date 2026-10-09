@@ -14,13 +14,13 @@
 
 - [x] 3.1 Reuse or minimally extend Runtime-owned metadata for positive read-only eligibility; verify older/unknown results and arbitrary shell commands remain standalone.
 - [x] 3.2 Group eligible adjacent successful Actions while preserving member selection, status, chronological boundaries and authority context; test all group-ending cases.
-- [ ] 3.3 Preserve per-Action updates, attachment fencing and history reconciliation across grouping, partial drains, repeated identical content and reconnect; never rewrite committed scrollback or replay work.
+- [x] 3.3 Preserve per-Action updates, attachment fencing and history reconciliation across grouping, partial drains, repeated identical content and reconnect; never rewrite committed scrollback or replay work.
 - [x] 3.4 Render each distinct plan change as a compact permanent record; retain and expose its corresponding full snapshot through existing evidence/detail owners, with truthful loss and no latest-plan substitution.
 
 ## 4. Verification and native acceptance
 
-- [ ] 4.1 Run focused TUI and affected Runtime/protocol regressions for literal text, failure visibility, stdout/stderr, diff markers, raw detail, metadata fallback and plan retention.
-- [ ] 4.2 Check deterministic layout cases at 48, 80 and 120 columns, including Chinese/emoji, long paths, multiline drafts, Markdown/code, long single-line output and completion below input.
+- [x] 4.1 Run focused TUI and affected Runtime/protocol regressions for literal text, failure visibility, stdout/stderr, diff markers, raw detail, metadata fallback and plan retention.
+- [x] 4.2 Check deterministic layout cases at 48, 80 and 120 columns, including Chinese/emoji, long paths, multiline drafts, Markdown/code, long single-line output and completion below input.
 - [ ] 4.3 Run the five workflows in ordinary PTY and Herdr on the fresh candidate; verify label removal, concise summaries, member/snapshot detail, stable input, usable scrollback and exact no-repeat effects.
 - [ ] 4.4 Run `just quality`, applicable test/check workflows and OpenSpec strict validation; record remaining environment limits rather than treating skipped native checks as passes.
 

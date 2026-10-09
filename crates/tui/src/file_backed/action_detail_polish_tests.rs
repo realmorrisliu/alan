@@ -188,15 +188,21 @@ async fn details_polish_newest_numeric_default_navigation_and_refresh() {
         }
     }
     load(&shell, &mut app).await;
-    assert_eq!(app.modal.ids[app.modal.selected], "a10");
-    assert_eq!(&app.modal.ids[..2], &["a0", "a1"]);
+    assert_eq!(app.modal.actions[app.modal.selected].id, "a10");
+    assert_eq!(
+        app.modal.actions[..2]
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a0", "a1"]
+    );
     app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     load(&shell, &mut app).await;
-    assert_eq!(app.modal.ids[app.modal.selected], "a9");
+    assert_eq!(app.modal.actions[app.modal.selected].id, "a9");
     app.modal.pending = true;
     load(&shell, &mut app).await;
-    assert_eq!(app.modal.ids[app.modal.selected], "a9");
+    assert_eq!(app.modal.actions[app.modal.selected].id, "a9");
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     load(&shell, &mut app).await;
-    assert_eq!(app.modal.ids[app.modal.selected], "a10");
+    assert_eq!(app.modal.actions[app.modal.selected].id, "a10");
 }

@@ -136,9 +136,20 @@ semantics whether a result was displayed alone or in a group.
 
 #### Scenario: A grouped Action is selected for detail
 - **WHEN** the user selects a particular member of a read-only group
-- **THEN** the renderer reads only that member's retained detail under the current attachment
+- **THEN** the renderer reads that member's retained detail from its concrete Process/Action files while fencing the reply to the current view generation
 - **AND** unavailable or truncated evidence is reported for that member without substituting another result
 - **AND** closing detail restores the draft and does not execute any Action
+
+#### Scenario: An earlier Process member shares an ID with the current Process
+- **WHEN** an observed historical Action and a current Action have the same ID under different concrete Process paths
+- **THEN** they remain separately selectable and the selected Process remains visible while paging
+- **AND** historical detail reads use that original Process path, never the moving Root alias
+- **AND** absent historical evidence is explicitly unavailable without substituting current or cached output
+
+#### Scenario: The current Process catalog is unavailable while historical references remain
+- **WHEN** the current Action catalog cannot be read but the renderer has observed concrete historical Action references
+- **THEN** those references can still be inspected through fresh reads of their own AgentFS files
+- **AND** the current catalog failure remains explicit and a previous selection is not silently replaced
 
 #### Scenario: A late detail response belongs to an old selection
 - **WHEN** a detail response arrives after its selected member or Process attachment changed

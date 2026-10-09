@@ -98,6 +98,13 @@ Do not defer displaying a running operation while waiting for a possible group.
 Only the uncommitted inline region can be recomposed; rows already in native
 scrollback remain immutable. Further eligible work can form a new group.
 
+Detail references include the concrete Process path and Action ID. A later
+attachment can inspect an earlier observed member through its original AgentFS
+files, with the current view generation fencing the asynchronous reply. Two
+Processes with the same Action ID remain different selections. The detail header
+keeps the selected Process visible while paging; absent files report unavailable
+instead of substituting the current Process's result or an old cached body.
+
 ### Plan changes keep compact history and full snapshots
 
 Each distinct plan update commits a small history record with available progress

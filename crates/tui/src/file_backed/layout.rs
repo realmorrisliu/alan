@@ -22,7 +22,7 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         let count = if app.modal.plan_mode {
             app.modal.plans.len()
         } else {
-            app.modal.ids.len()
+            app.modal.actions.len()
         };
         let kind = if app.modal.plan_mode {
             "Plan"
@@ -38,14 +38,36 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         } else {
             ""
         };
-        let mut rows = vec![Line::from(format!(
-            "{}/{count} · ↔ {kind} · Space/b page · Esc{switch}",
-            if count == 0 {
-                0
-            } else {
-                app.modal.selected + 1
-            },
-        ))];
+        let owner = if app.modal.plan_mode {
+            app.modal
+                .plans
+                .get(app.modal.selected)
+                .map(|entry| entry.owner.as_str())
+        } else {
+            app.modal
+                .actions
+                .get(app.modal.selected)
+                .map(|entry| entry.owner.as_str())
+        }
+        .unwrap_or(&app.modal.owner_path);
+        let mut rows = vec![
+            Line::from(format!(
+                "{}/{count} · {kind} · {owner}",
+                if count == 0 {
+                    0
+                } else {
+                    app.modal.selected + 1
+                },
+            )),
+            Line::styled(
+                if width >= 32 {
+                    format!("↔ select · Space/b page · Esc{switch}")
+                } else {
+                    "↔ · Space/b · Esc".into()
+                },
+                Style::default().fg(Color::DarkGray),
+            ),
+        ];
         let detail = crate::history::wrap_styled_lines(app.modal.rows.clone(), width);
         let start = app.modal.scroll.min(detail.len().saturating_sub(1));
         if detail.is_empty() {
@@ -55,7 +77,7 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
             detail
                 .into_iter()
                 .skip(start)
-                .take(area.height.saturating_sub(1) as usize),
+                .take(area.height.saturating_sub(2) as usize),
         );
         frame.render_widget(Paragraph::new(rows), area);
         return;

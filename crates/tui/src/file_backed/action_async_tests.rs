@@ -128,7 +128,7 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
     action_detail_io::start_pending(&shell, &mut app, &tx);
     app.dispatch(receive(&mut rx).await);
     app.dispatch(receive(&mut rx).await);
-    assert_eq!(app.modal.ids[app.modal.selected], second);
+    assert_eq!(app.modal.actions[app.modal.selected].id, second);
     let (reached, resume) =
         slow.pause_read_after_matching_reads(&format!("/actions/{first}/output"), 1);
     app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
@@ -138,7 +138,10 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(app.modal.ids, vec![first.clone(), second.clone()]);
+    assert_eq!(
+        app.modal.actions.iter().map(|e| &e.id).collect::<Vec<_>>(),
+        vec![&first, &second]
+    );
     let mut tick = tokio::time::interval(Duration::from_millis(1));
     for _ in 0..3 {
         tick.tick().await;
@@ -158,7 +161,7 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
     );
     resume.send(()).unwrap();
     app.dispatch(receive(&mut rx).await);
-    assert_eq!(app.modal.ids[app.modal.selected], second);
+    assert_eq!(app.modal.actions[app.modal.selected].id, second);
     assert!(
         !app.modal
             .rows
@@ -186,7 +189,7 @@ async fn slow_read_allows_ticks_selection_escape_and_root_switch() {
             action_detail_io::start_pending(&shell, &mut app, &tx);
             app.dispatch(receive(&mut rx).await);
             app.dispatch(receive(&mut rx).await);
-            assert_eq!(app.modal.ids[app.modal.selected], second);
+            assert_eq!(app.modal.actions[app.modal.selected].id, second);
         }
     }
 }

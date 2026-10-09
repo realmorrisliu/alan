@@ -10,8 +10,8 @@ pub(in crate::file_backed) enum FileBackedEvent {
     ActionDetails {
         path: String,
         generation: u64,
-        ids: Result<Vec<String>, String>,
-        id: Option<String>,
+        actions: Result<Vec<super::super::action_detail_io::ActionEntry>, String>,
+        selected: Option<super::super::action_detail_io::ActionEntry>,
         rows: Vec<Line<'static>>,
     },
     ModelSelectionWritten {

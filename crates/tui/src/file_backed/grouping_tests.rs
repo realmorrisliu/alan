@@ -199,3 +199,57 @@ fn root_alias_groups_only_the_concretely_attached_owner() {
             .contains("read-only actions")
     );
 }
+
+#[test]
+fn grouped_partial_drains_reconcile_after_resize_without_losing_identical_later_members() {
+    for initial_width in [48, 80, 120] {
+        for next_width in [48, 80, 120] {
+            for cut in 1..=3 {
+                let mut app = FileBackedApp::new("/agent/7".into());
+                for id in ["one", "two", "three"] {
+                    let mut snapshot = read(id, "input-1", "grant-1");
+                    snapshot.name = "Read 中文😀/same.rs".into();
+                    let mut metadata: serde_json::Value =
+                        serde_json::from_str(&snapshot.result).unwrap();
+                    metadata["title"] = snapshot.name.clone().into();
+                    snapshot.result = metadata.to_string();
+                    file_surface::sync_action_snapshot(&mut app, snapshot);
+                }
+                let original = app.transcript.clone();
+                let rows = app.styled_history_lines(initial_width);
+                assert_eq!(rows.len(), 4);
+                assert_eq!(
+                    app.prune_rendered_prefix(app.render_opts(initial_width), cut),
+                    cut
+                );
+                let expected = HistoryCell::Styled(rows[cut..].to_vec())
+                    .render_styled_lines(app.render_opts(next_width));
+                assert_eq!(app.styled_history_lines(next_width), expected);
+                app.merge_reconnected_idle_history(original.clone());
+                assert_eq!(app.styled_history_lines(next_width), expected);
+                let retained = app.transcript.len();
+                let mut recovered = original;
+                let mut later = recovered.last().unwrap().clone();
+                let HistoryCell::Tool {
+                    action: Some(action),
+                    ..
+                } = &mut later
+                else {
+                    panic!("fixture must retain Action identity");
+                };
+                action.id = "four".into();
+                recovered.push(later);
+                app.merge_reconnected_idle_history(recovered.clone());
+                assert_eq!(app.transcript.len(), retained + 1);
+                assert_eq!(
+                    &app.styled_history_lines(next_width)[..expected.len()],
+                    expected
+                );
+                app.merge_reconnected_idle_history(recovered);
+                assert_eq!(app.transcript.len(), retained + 1);
+                assert!(matches!(app.transcript.last(),
+                    Some(HistoryCell::Tool { action: Some(action), .. }) if action.id == "four"));
+            }
+        }
+    }
+}
