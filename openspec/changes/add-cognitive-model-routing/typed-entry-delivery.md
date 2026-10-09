@@ -1,5 +1,15 @@
 # Finite-choice Connection entry delivery — 2026-10-07
 
+## Current delivery status — 2026-10-09
+
+PR #1036 merged the bounded typed-entry canonical synchronization at `1c53cf52`.
+PR #1039 then delivered explicit structured source-owner work at `90a05fe5`, and
+PR #1040 synchronized only its bounded requirements at `498f97e9`; see
+[mixed-task-acceptance.md](mixed-task-acceptance.md). The dated receipt below
+retains its earlier preparation state. General composition and package exposure
+remain unfinished; input-routing qualification failed through v4 and automatic
+routing remains OFF, as recorded in [v4 results](../qualify-agent-input-routing/native-baselines-v4-results.md).
+
 ## Merge and synchronization receipt — 2026-10-08
 
 PR [#1035](https://github.com/realmorrisliu/alan/pull/1035) merged at

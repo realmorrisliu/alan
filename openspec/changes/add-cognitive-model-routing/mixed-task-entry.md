@@ -8,7 +8,8 @@ All 16 head checks passed and automated review completed without findings.
 Post-merge CI run 37733031263 passed on that merge SHA; CodeQL run 37733031260 and Security run 37733031265 also passed. This activates only the bounded runtime work
 below. The reliability receipt records those final checks. Bounded implementation
 and native acceptance are now recorded in [mixed-task-acceptance.md](mixed-task-acceptance.md);
-current-head CI, merge and canonical synchronization remain open.
+PR #1039 merged at `90a05fe5` after current-head CI; PR #1040 synchronized the
+delivered canonical requirements at `498f97e9`. General mixed composition remains open.
 
 This entry belongs to `add-cognitive-model-routing`. It does not activate the
 rest of [next-planning.md](next-planning.md) or qualify input auto-routing.
