@@ -206,7 +206,7 @@ async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() 
         Some(&user_input),
     );
     let pending_prompt_tokens =
-        estimate_pending_turn_prompt_tokens(Some(&user_input), turn_recall_bundle.as_deref());
+        estimate_pending_turn_prompt_tokens(Some(&user_input), turn_recall_bundle.as_deref(), None);
     assert!(pending_prompt_tokens > 0);
 
     let base_prompt_tokens = state.machine.estimated_prompt_tokens();
@@ -305,8 +305,11 @@ async fn test_maybe_compact_mid_turn_accounts_for_runtime_prompt_overhead() {
         "Retry with a corrected answer and preserve tool intent.\n{}",
         "guardrail-overhead ".repeat(80)
     );
-    let additional_prompt_tokens =
-        estimate_request_prompt_overhead_tokens(None, Some(pending_guardrail_instruction.as_str()));
+    let additional_prompt_tokens = estimate_request_prompt_overhead_tokens(
+        None,
+        Some(pending_guardrail_instruction.as_str()),
+        None,
+    );
     assert!(additional_prompt_tokens > 0);
 
     let base_prompt_tokens = state.machine.estimated_prompt_tokens();

@@ -47,6 +47,14 @@ fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instru
     }
 }
 
+fn process_directory_instruction(execution: &NamespaceToolExecution) -> Option<String> {
+    let cwd = execution.default_cwd()?;
+    let path = serde_json::json!(cwd.to_str()?);
+    Some(format!(
+        "Current selected Process directory: {path}\nResolve relative Tool paths here; historical directories may be obsolete. This selection is context, not a grant; Tools still enforce live authority."
+    ))
+}
+
 fn estimate_runtime_system_instruction_tokens(instruction: &str) -> usize {
     crate::tape::estimate_text_tokens(instruction).saturating_add(1)
 }
@@ -54,10 +62,12 @@ fn estimate_runtime_system_instruction_tokens(instruction: &str) -> usize {
 fn estimate_request_prompt_overhead_tokens(
     turn_recall_bundle: Option<&str>,
     pending_guardrail_instruction: Option<&str>,
+    directory_instruction: Option<&str>,
 ) -> usize {
     turn_recall_bundle
         .into_iter()
         .chain(pending_guardrail_instruction)
+        .chain(directory_instruction)
         .map(estimate_runtime_system_instruction_tokens)
         .sum()
 }
@@ -65,6 +75,7 @@ fn estimate_request_prompt_overhead_tokens(
 fn estimate_pending_turn_prompt_tokens(
     pending_user_input: Option<&[crate::tape::ContentPart]>,
     turn_recall_bundle: Option<&str>,
+    directory_instruction: Option<&str>,
 ) -> usize {
     pending_user_input
         .map(crate::tape::estimate_user_message_tokens)
@@ -72,6 +83,7 @@ fn estimate_pending_turn_prompt_tokens(
         .saturating_add(estimate_request_prompt_overhead_tokens(
             turn_recall_bundle,
             None,
+            directory_instruction,
         ))
 }
 
@@ -253,11 +265,15 @@ where
     let generation = NamespaceTurnGeneration::load(&llm_generation).await;
     generation.ensure_callable()?;
 
+    let tool_execution = state.tool_execution();
+    let initial_directory_instruction = process_directory_instruction(&tool_execution);
+
     if !should_skip_auto_compaction_for_responses_continuation(state) {
         let compaction_request = CompactionRequest::automatic_pre_turn()
             .with_additional_prompt_tokens(estimate_pending_turn_prompt_tokens(
                 user_input_for_skills.as_deref(),
                 turn_recall_bundle.as_deref(),
+                initial_directory_instruction.as_deref(),
             ));
         let compaction = maybe_compact_context_with_turn_timeout(
             state,
@@ -333,7 +349,6 @@ where
     let system_prompt = prompt_build.system_prompt;
 
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
-    let tool_execution = state.tool_execution();
     let (tool_packages, tools) =
         turn_tool_definitions(include_runtime_delegated_tool, &tool_execution).await?;
     let tool_names = tools
@@ -407,6 +422,7 @@ where
                 .clear_responses_continuation("provider_capability_unavailable");
         }
 
+        let directory_instruction = process_directory_instruction(&tool_execution);
         let prompt_view = state.machine.prompt_view();
         let estimated_prompt_tokens =
             prompt_view
@@ -414,6 +430,7 @@ where
                 .saturating_add(estimate_request_prompt_overhead_tokens(
                     turn_recall_bundle.as_deref(),
                     pending_guardrail_instruction.as_deref(),
+                    directory_instruction.as_deref(),
                 ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
@@ -433,6 +450,9 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        if let Some(instruction) = directory_instruction.as_deref() {
+            append_system_instruction(&mut request, instruction);
+        }
         if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
             append_system_instruction(&mut request, recall_bundle);
         }
@@ -548,6 +568,7 @@ where
                     estimate_request_prompt_overhead_tokens(
                         turn_recall_bundle.as_deref(),
                         pending_guardrail_instruction.as_deref(),
+                        directory_instruction.as_deref(),
                     ),
                 )
                 .await?;
@@ -670,6 +691,7 @@ where
                         estimate_request_prompt_overhead_tokens(
                             turn_recall_bundle.as_deref(),
                             pending_guardrail_instruction.as_deref(),
+                            process_directory_instruction(&tool_execution).as_deref(),
                         ),
                     )
                     .await?;
