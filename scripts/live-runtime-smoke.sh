@@ -24,4 +24,6 @@ if [[ "${#configured[@]}" -eq 0 ]]; then
 fi
 
 echo "Running live runtime smoke for: ${configured[*]}"
-cargo test -p alan --test live_runtime_smoke_test -- --ignored --nocapture
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 "$ROOT/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$ROOT}" \
+    run --workspace "$ROOT" -- cargo test -p alan --test live_runtime_smoke_test -- --ignored --nocapture

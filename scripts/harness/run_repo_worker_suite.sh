@@ -90,7 +90,7 @@ for fixture_rel in "${fixtures[@]}"; do
         exit_code=1
     else
         set +e
-        (cd "$repo_root" && bash -lc "$scenario_cmd") >"$scenario_dir/event_trace.log" 2>&1
+        run_harness_command "$repo_root" "$scenario_cmd" >"$scenario_dir/event_trace.log" 2>&1
         exit_code=$?
         set -e
     fi

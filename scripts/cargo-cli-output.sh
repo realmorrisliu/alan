@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 
+alan_cli_build_lease() {
+    local root="$1" target_dir="$2" purpose="$3" script="$4"
+    shift 4
+    exec python3 "$root/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$root}" \
+        run --workspace "$root" --target-dir "$target_dir" --purpose "$purpose" \
+        -- bash -euo pipefail -c 'source "$1" "${@:2}"' -- "$script" "$@"
+}
+
 # Cargo resolves config files and both target-dir environment spellings for us.
 alan_cli_target_dir() {
     local root="$1"
@@ -16,7 +24,9 @@ alan_cli_target_dir() {
 alan_build_cli() {
     local root="$1" target_dir="$2"
     shift 2
-    cargo build --manifest-path "$root/Cargo.toml" --locked -p alan --bin alan \
+    python3 "$root/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$root}" \
+        run --workspace "$root" --target-dir "$target_dir" -- \
+        cargo build --manifest-path "$root/Cargo.toml" --locked -p alan --bin alan \
         --target-dir "$target_dir" --message-format=json-render-diagnostics "$@" \
         | python3 -c '
 import json, sys

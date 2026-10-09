@@ -41,6 +41,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          workspaces: ". -> target/quality-gate"
 
       - name: Run canonical quality gate
         run: ./scripts/check-quality.sh

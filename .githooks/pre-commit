@@ -17,6 +17,7 @@ if ! git diff --quiet || [[ -n "$untracked" ]]; then
     export ALAN_QUALITY_GIT_DIR
     ALAN_QUALITY_GIT_DIR="$(git rev-parse --absolute-git-dir)"
     export ALAN_QUALITY_TARGET_DIR="$ROOT/target/quality-gate"
+    export ALAN_BUILD_OWNER="$ROOT"
 fi
 
 "$quality_root/scripts/check-quality.sh"

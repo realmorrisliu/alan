@@ -6,7 +6,7 @@ default:
 
 # Run tests
 test:
-    cargo test --workspace
+    python3 scripts/build_artifacts.py run -- cargo test --workspace
 
 # Run the canonical non-mutating quality gate and workspace tests
 check: quality test
@@ -48,19 +48,19 @@ install-hooks:
 
 # Show coverage summary in terminal
 coverage:
-    cargo llvm-cov --workspace --summary-only
+    python3 scripts/build_artifacts.py run -- cargo llvm-cov --workspace --summary-only
 
 # Show detailed coverage with uncovered lines
 coverage-detail:
-    cargo llvm-cov --workspace
+    python3 scripts/build_artifacts.py run -- cargo llvm-cov --workspace
 
 # Generate HTML coverage report (target/coverage/html)
 coverage-html:
-    cargo llvm-cov --workspace --html --output-dir target/coverage
+    python3 scripts/build_artifacts.py run -- cargo llvm-cov --workspace --html --output-dir target/coverage
 
 # Build release
 build:
-    cargo build --release
+    python3 scripts/build_artifacts.py run -- cargo build --release
 
 # Install the standalone foreground CLI locally
 install:
@@ -76,7 +76,7 @@ standalone-distribution-test:
 
 # Check standalone release inputs without assembling an app bundle
 release-check:
-    cargo check --locked -p alan --bin alan
+    python3 scripts/build_artifacts.py run -- cargo check --locked -p alan --bin alan
 
 # Build and archive the standalone CLI release
 release:
@@ -90,14 +90,20 @@ uninstall:
 uninstall-dev:
     ALAN_INSTALL_CHANNEL=dev ./scripts/uninstall-cli.sh
 
-# Clean artifacts
-clean:
-    cargo clean
-    rm -rf target/
+# Report exact build output roots and ownership without changing them
+cache-status:
+    python3 scripts/build_artifacts.py status
+
+# Preview cleanup; use `just cache-clean --apply` to remove eligible idle output
+cache-clean *args:
+    python3 scripts/build_artifacts.py clean {{args}}
+
+# Keep the familiar clean entry point non-destructive by default
+clean: cache-clean
 
 # Mock smoke tests (CI safe, no LLM needed)
 smoke:
-    cargo test -p alan --test smoke_test -- --nocapture
+    python3 scripts/build_artifacts.py run -- cargo test -p alan --test smoke_test -- --nocapture
 
 # Live provider protocol harness (ignored tests + explicit opt-in env)
 live-providers:

@@ -160,6 +160,7 @@ sync_evaluator_assets() {
     # Keep baseline/candidate comparison fair by pinning evaluator script and fixtures
     # to the current checkout instead of each profile ref's historical copy.
     mkdir -p "$target_root/scripts/harness"
+    cp "$repo_root/scripts/build_artifacts.py" "$target_root/scripts/build_artifacts.py"
     cp "$repo_root/scripts/harness/lib.sh" \
         "$target_root/scripts/harness/lib.sh"
     cp "$repo_root/scripts/harness/run_autonomy_suite.sh" \

@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Safety tests for repository build output leases and ownership receipts."""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import build_artifacts as artifacts
+
+
+class BuildArtifactTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
+                                             if not key.startswith(("CARGO_", "ALAN_"))}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.temp = tempfile.TemporaryDirectory(prefix="alan-artifacts-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.owner = self.root / "checkout"
+        subprocess.run(["git", "init", "-q", str(self.owner)], check=True)
+        (self.owner / "Cargo.toml").write_text(
+            '[package]\nname="artifact-fixture"\nversion="0.1.0"\n'
+            '[workspace]\n[[bin]]\nname="fixture"\npath="main.rs"\n')
+        (self.owner / "main.rs").write_text("fn main() {}\n")
+        self.output = self.root / "output"
+
+    def test_new_output_is_registered_and_reusable_by_its_owner(self):
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            (self.output / "result").write_text("compiled")
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            self.assertEqual((self.output / "result").read_text(), "compiled")
+        receipt = artifacts.read_receipt(artifacts.sidecar(self.output, "json"))
+        self.assertEqual(receipt["owner"], str(self.owner))
+        self.assertEqual(receipt["identity"], artifacts.identity(self.output))
+
+    def test_nonempty_external_output_is_not_claimed(self):
+        self.output.mkdir()
+        (self.output / "source.patch").write_text("authored")
+        with self.assertRaisesRegex(ValueError, "unowned"):
+            with artifacts.build_lease(self.owner, [self.output], "task"):
+                self.fail("unowned output was granted")
+        self.assertFalse(artifacts.sidecar(self.output, "json").exists())
+        self.assertEqual((self.output / "source.patch").read_text(), "authored")
+
+    def test_different_owner_cannot_take_registered_output(self):
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            pass
+        other = self.root / "other"
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        with self.assertRaisesRegex(ValueError, "another owner"):
+            with artifacts.build_lease(other, [self.output], "task"):
+                self.fail("ownership changed")
+
+    def test_replaced_directory_requires_reinspection(self):
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            pass
+        self.output.rename(self.root / "original")
+        self.output.mkdir()
+        with self.assertRaisesRegex(ValueError, "replaced"):
+            with artifacts.build_lease(self.owner, [self.output], "task"):
+                self.fail("replacement was implicitly claimed")
+
+    def test_symlinks_and_source_ancestors_are_rejected(self):
+        self.output.symlink_to(self.owner, target_is_directory=True)
+        for path in [self.output, self.root, self.owner / ".git" / "output"]:
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                with artifacts.build_lease(self.owner, [path], "task"):
+                    self.fail("unsafe output was granted")
+
+    def test_cleaner_cannot_get_exclusive_access_during_build(self):
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            with self.assertRaises(BlockingIOError):
+                with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+                    self.fail("cleaner acquired an active output")
+        with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+            pass
+
+    def test_registered_producers_share_access_but_exclude_cleaner(self):
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            with artifacts.build_lease(self.owner, [self.output], "task"):
+                with self.assertRaises(BlockingIOError):
+                    with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+                        self.fail("cleaner acquired a shared output")
+
+    def test_child_holds_lease_after_parent_releases_its_handles(self):
+        with artifacts.build_lease(self.owner, [self.output], "task") as descriptors:
+            child = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                     pass_fds=descriptors)
+        try:
+            with self.assertRaises(BlockingIOError):
+                with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+                    self.fail("live child lost its lease")
+        finally:
+            child.communicate(timeout=5)
+        with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+            pass
+
+    def test_nested_commands_keep_the_outer_quality_lease(self):
+        script = str(Path(artifacts.__file__).resolve())
+        runner = ["python3", script, "--owner", str(self.owner), "run",
+                  "--target-dir", str(self.output)]
+        check = ("import json, os; value=json.loads(os.environ['ALAN_BUILD_LEASE']); "
+                 "[os.fstat(fd) for fd in value['locks'].values()]")
+        subprocess.run(runner + ["--purpose", "quality", "--"] + runner +
+                       ["--", "python3", "-c", check], cwd=self.owner, check=True)
+        receipt = artifacts.read_receipt(artifacts.sidecar(self.output, "json"))
+        self.assertEqual(receipt["purpose"], "quality")
+        with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+            pass
+
+    def test_existing_checkout_output_remains_unmanaged(self):
+        output = self.owner / "target"
+        output.mkdir()
+        (output / "debug").mkdir()
+        with artifacts.build_lease(self.owner, [output], "checkout"):
+            self.assertFalse(artifacts.sidecar(output, "json").exists())
+        self.assertEqual(artifacts.registered_outputs(self.owner), {})
+
+    def record(self):
+        with artifacts.build_lease(self.owner, [self.output], "task"):
+            (self.output / "debug").mkdir()
+            (self.output / "debug/result").write_text("compiled")
+        return artifacts.registered_outputs(self.owner)[self.output]
+
+    def test_dry_run_then_scoped_clean_preserves_source_and_other_output(self):
+        path, receipt = self.record()
+        unrelated = self.root / "other-build"
+        unrelated.mkdir()
+        (unrelated / "keep").write_text("other task")
+        with patch.object(artifacts, "open_paths", return_value=[]):
+            self.assertEqual(artifacts.clean_output(self.owner, self.output, path, receipt),
+                             "would-clean")
+            self.assertTrue((self.output / "debug/result").exists())
+            with patch.dict(os.environ, {"CARGO_BUILD_BUILD_DIR": str(unrelated)}):
+                self.assertEqual(artifacts.clean_output(self.owner, self.output, path, receipt, True),
+                                 "cleaned")
+        self.assertEqual((unrelated / "keep").read_text(), "other task")
+        self.assertTrue((self.owner / "main.rs").exists())
+        self.assertTrue((self.owner / ".git").exists())
+
+    def test_open_consumer_and_unclassified_source_prevent_clean(self):
+        path, receipt = self.record()
+        with patch.object(artifacts, "open_paths", return_value=[self.output / "debug/result"]):
+            with self.assertRaisesRegex(ValueError, "active process"):
+                artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        (self.output / "source.patch").write_text("uncommitted")
+        with self.assertRaisesRegex(ValueError, "unclassified"):
+            artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        self.assertEqual((self.output / "source.patch").read_text(), "uncommitted")
+
+    def test_changed_receipt_and_recreated_output_are_not_deleted(self):
+        path, receipt = self.record()
+        artifacts.write_receipt(artifacts.sidecar(self.output, "json"), receipt | {"purpose": "quality"})
+        with self.assertRaisesRegex(ValueError, "receipt changed"):
+            artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        artifacts.write_receipt(artifacts.sidecar(self.output, "json"), receipt)
+        self.output.rename(self.root / "prior-output")
+        self.output.mkdir()
+        with self.assertRaisesRegex(ValueError, "replaced"):
+            artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        self.assertTrue(self.output.is_dir())
+
+    def test_distinct_configured_intermediate_output_is_reported(self):
+        with patch.dict(os.environ, {"CARGO_TARGET_DIR": str(self.output),
+                                    "CARGO_BUILD_BUILD_DIR": str(self.root / "intermediate")}):
+            self.assertEqual(set(artifacts.output_roots(self.owner)),
+                             {self.output, self.root / "intermediate"})
+
+    def test_inventory_does_not_claim_unmanaged_output(self):
+        output = self.owner / "target"
+        output.mkdir()
+        (output / "authored.patch").write_text("keep")
+        with patch.object(artifacts, "open_paths", return_value=[]):
+            report = artifacts.inventory(self.owner)
+        self.assertEqual(next(row["state"] for row in report if row["path"] == str(output)),
+                         "unknown")
+        self.assertFalse(artifacts.sidecar(output, "json").exists())
+        self.assertFalse(artifacts.registry(self.owner).exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

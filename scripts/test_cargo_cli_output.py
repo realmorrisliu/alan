@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+import build_artifacts as artifacts
 
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -15,13 +17,18 @@ SCRIPTS = Path(__file__).resolve().parent
 
 class CargoCliOutputTests(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
+                                             if not key.startswith(("CARGO_", "ALAN_"))}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="alan-build-output-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "checkout"
         (self.repo / "scripts").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         for name in ("cargo-cli-output.sh", "install-cli.sh", "install-channel.sh",
-                     "assemble-cli-release.sh", "test-standalone-cli-distribution.sh"):
+                     "assemble-cli-release.sh", "test-standalone-cli-distribution.sh", "build_artifacts.py"):
             shutil.copy2(SCRIPTS / name, self.repo / "scripts" / name)
         (self.repo / "Cargo.toml").write_text(
             '[package]\nname = "output-fixture"\nversion = "0.1.0"\n'
@@ -59,7 +66,7 @@ import json, os, pathlib, sys
 args = sys.argv[1:]
 root = pathlib.Path(os.environ["TEST_CARGO_FIXTURE_ROOT"])
 if args[0] == "metadata":
-    print(json.dumps({"target_directory": str(root / "shared-output")}))
+    print(json.dumps({"target_directory": os.environ.get("CARGO_TARGET_DIR", str(root / "shared-output"))}))
 elif args[0] == "build":
     (root / "build-args.json").write_text(json.dumps(args))
     if os.environ.get("TEST_BUILD_FAIL"):
@@ -80,6 +87,8 @@ else:
 
     def test_installer_uses_reported_artifact_not_a_guessed_path(self):
         self.mock_cargo()
+        with artifacts.build_lease(self.repo, [self.root / "shared-output"], "checkout"):
+            pass
         stale = self.root / "shared-output/release/alan"
         stale.parent.mkdir(parents=True)
         stale.write_text("#!/bin/sh\necho stale-build\n")

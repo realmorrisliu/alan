@@ -8,6 +8,9 @@ cd "$PROJECT_ROOT"
 source "$SCRIPT_DIR/cargo-cli-output.sh"
 TARGET="${ALAN_TARGET:-$(rustc -vV | awk '/^host: / { print $2 }')}"
 TARGET_DIR="$(alan_cli_target_dir "$PROJECT_ROOT")"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    alan_cli_build_lease "$PROJECT_ROOT" "$TARGET_DIR" checkout "$SCRIPT_DIR/assemble-cli-release.sh"
+fi
 VERSION="${ALAN_RELEASE_VERSION:-$(git describe --tags --always --dirty)}"
 OUT_DIR="${ALAN_RELEASE_OUT_DIR:-$PROJECT_ROOT/target/distributions}"
 

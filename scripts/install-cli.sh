@@ -13,6 +13,9 @@ source "$SCRIPT_DIR/install-channel.sh"
 alan_install_channel_load "${ALAN_INSTALL_CHANNEL:-stable}"
 
 TARGET_DIR="$(alan_cli_target_dir "$PROJECT_ROOT")"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    alan_cli_build_lease "$PROJECT_ROOT" "$TARGET_DIR" checkout "$SCRIPT_DIR/install-cli.sh"
+fi
 INSTALL_DIR="${ALAN_CLI_INSTALL_DIR:-${HOME:?}/.local/bin}"
 PROFILE="${ALAN_BUILD_PROFILE:-release}"
 
