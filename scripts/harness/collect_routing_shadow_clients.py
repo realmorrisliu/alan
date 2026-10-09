@@ -26,22 +26,41 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def collect(binary, case, surface, report):
+def collect(binary, case, surface, report, baseline="typed"):
     command = [str(binary), surface, str(report)]
+    if baseline != "typed":
+        command.append("--" + baseline)
     pending = case.get("pending_response", False)
     initial = ":Prepare qualification response" if pending else case["input"]
     if pending:
         command.append("--pending")
+    admission_started = None
+    admission_elapsed_ms = None
     if surface == "redirected":
-        try:
-            result = subprocess.run(command, input=initial.encode(),
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
-        except subprocess.TimeoutExpired as error:
-            report.with_suffix(".terminal").write_bytes(error.stdout or b"")
-            raise
-        report.with_suffix(".terminal").write_bytes(result.stdout)
-        if result.returncode:
-            raise RuntimeError(f"fixture failed: {report.name}; inspect terminal artifact")
+        with report.with_suffix(".terminal").open("wb") as terminal:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=terminal,
+                                       stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline and process.poll() is None:
+                    if admission_started is None and report.with_suffix(".ready").exists():
+                        admission_started = time.monotonic()
+                        process.stdin.write(initial.encode())
+                        process.stdin.close()
+                    if report.exists() and admission_elapsed_ms is None:
+                        admission_elapsed_ms = (time.monotonic() - admission_started) * 1000
+                        report.with_suffix(".timing-ack").write_bytes(b"recorded")
+                    time.sleep(.01)
+                if process.poll() is None:
+                    raise TimeoutError(f"native client did not settle: {report.name}")
+                if process.returncode:
+                    raise RuntimeError(f"fixture failed: {report.name}; inspect terminal artifact")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+                if not process.stdin.closed:
+                    process.stdin.close()
     else:
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
@@ -70,14 +89,17 @@ def collect(binary, case, surface, report):
                     cursor_queries = queries
                 # The first rendered cursor-show marks an initialized native TUI.
                 if not submitted and b"\x1b[?25h" in transcript:
+                    admission_started = time.monotonic()
                     os.write(master, b"\x1b[200~" + initial.encode() + b"\x1b[201~\r")
                     submitted = True
                 if (pending and submitted and not responded
                         and report.with_suffix(".pending.json").exists()
                         and b"QUALIFICATION_RESPONSE" in transcript):
+                    admission_started = time.monotonic()
                     os.write(master, b"\x1b[200~" + case["input"].encode() + b"\x1b[201~\r")
                     responded = True
                 if report.exists() and not quitting:
+                    admission_elapsed_ms = (time.monotonic() - admission_started) * 1000
                     os.write(master, b"\x04")
                     quitting = True
                 if process.poll() is not None:
@@ -92,16 +114,38 @@ def collect(binary, case, surface, report):
             process.wait()
             os.close(master)
             report.with_suffix(".terminal").write_bytes(transcript)
+    if admission_elapsed_ms is None:
+        raise ValueError("missing native admission timing")
+    timing = {"version":1,"elapsed_ms":admission_elapsed_ms,"clock":"time.monotonic",
+              "scope":"original input write/EOF through correlated Machine completion report",
+              "includes":"client parsing, admission, Machine transition, durability, fixed mock completion and observer polling",
+              "excludes":"Host boot, TUI initialization, process exit; not model component latency",
+              "baseline":baseline,"pending_response":pending}
+    report.with_suffix(".timing.json").write_text(json.dumps(timing, indent=2) + "\n")
     data = json.loads(report.read_bytes())
     source = ROOT / "crates/alan/examples/shadow_client_fixture.rs"
     if data["fixture_source_sha256"] != digest(source.read_bytes()):
         raise ValueError("executable was built from a different fixture source")
+    for field, name in [("generation_native_sha256", "native.rs"),
+                        ("generation_operation_sha256", "operation.rs")]:
+        helper = ROOT / "crates/alan/examples/routing_generation" / name
+        if data[field] != digest(helper.read_bytes()):
+            raise ValueError("executable was built from different baseline helper source")
     if data.get("unsupported"):
         if not (pending and surface == "redirected"
                 and data["client_error"] == "needs interactive input"
                 and data["request"]["kind"] == "structured_input"
                 and data["request"]["status"] == "pending"):
             raise ValueError("invalid unsupported response evidence")
+        return data
+    if baseline == "prefix":
+        record = data["prefix_record"]
+        expected_intent = "command" if case["input"].startswith("!") else "force_agent" if case["input"].startswith(":") else "agent"
+        expected_body = case["input"][1:] if case["input"].startswith(("!", ":")) else case["input"]
+        if (record["body"] != expected_body or record["intent"] != expected_intent
+                or record["submission_id"] not in data["completion"]["submission_ids"]
+                or data["observation"] is not None):
+            raise ValueError("native prefix baseline changed input or selected an evaluator")
         return data
     observation = data["observation"]
     if observation["outcome"]["state"] == "started":
@@ -137,10 +181,13 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", help="Optional single-case capability smoke; not qualification")
+    parser.add_argument("--baseline", choices=["typed", "generation", "prefix"], default="typed")
     parser.add_argument("--pending", action="store_true", help="Collect pending-response cases")
     args = parser.parse_args()
-    if not os.environ.get("TYPESAFE_API_KEY"):
+    if args.baseline == "typed" and not os.environ.get("TYPESAFE_API_KEY"):
         parser.error("TYPESAFE_API_KEY must be supplied in the environment")
+    if args.baseline == "prefix" and args.pending:
+        parser.error("prefix baseline has no pending-response path")
     corpus_bytes = (PLAN / "shadow-corpus.v1.json").read_bytes()
     budget_bytes = (PLAN / "shadow-budgets.v1.json").read_bytes()
     corpus, budget = json.loads(corpus_bytes), json.loads(budget_bytes)
@@ -148,7 +195,7 @@ def main():
     if not cases:
         parser.error("no corpus case selected")
     args.output.mkdir(parents=True, exist_ok=False)
-    manifest = {"version": 1, "kind": "native_client_evidence_not_full_qualification",
+    manifest = {"version": 1, "kind": "native_client_shadow_matrix", "baseline":args.baseline,
                 "corpus_sha256": digest(corpus_bytes), "budgets_sha256": digest(budget_bytes),
                 "binary_sha256": digest(args.binary.read_bytes()),
                 "runtime_build_source_verified": False,
@@ -169,9 +216,12 @@ def main():
                 manifest_path = args.output / "manifest.json"
                 manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
                 try:
-                    data = collect(args.binary.resolve(), case, surface, args.output / name)
+                    data = collect(args.binary.resolve(), case, surface, args.output / name, args.baseline)
                     if data.get("unsupported"):
                         row.update(collection_state="unsupported", outcome={"state": "unavailable"})
+                    elif args.baseline == "prefix":
+                        row.update(collection_state="collected", outcome={"state":"prefix",
+                                   "route":"command" if data["prefix_record"]["intent"] == "command" else "agent"})
                     else:
                         row.update(collection_state="collected", outcome=data["observation"]["outcome"])
                 except Exception as error:

@@ -643,12 +643,16 @@ impl ConnectionService {
                         .insert(profile_id.clone(), account.into());
                 }
                 let provider = Box::new(ConnectionLlmProvider { client });
-                if profile.provider == alan_agent_engine::LlmProvider::TypesafeEvaluation {
+                if provider.supports_choice_evaluation() {
+                    let settings = crate::connection_profile::normalize_profile_settings(
+                        profile.provider,
+                        &profile.settings,
+                    );
                     registry.llmfs.register_connection_profile(
                         &profile_id,
                         alan_llmfs::ConnectionProfile::new(
                             profile.provider.as_str(),
-                            profile.settings.get("model").cloned().unwrap_or_default(),
+                            settings.get("model").cloned().unwrap_or_default(),
                             profile.credential_id.clone().unwrap_or_default(),
                         ),
                         provider,

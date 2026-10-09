@@ -40,6 +40,7 @@ toml = "1.1"
 urlencoding.workspace = true
 
 [dev-dependencies]
+alan-llmfs = { path = "../llmfs" }
 alan-llm = { workspace = true, features = ["mock"] }
 alan-agent-engine = { workspace = true, features = ["mock"] }
 async-trait.workspace = true
