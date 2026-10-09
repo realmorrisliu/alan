@@ -19,6 +19,7 @@ impl SourceLocks {
             system.join("services/packages/store.lock"),
             host.join("credentials/secrets.toml.lock"),
             host.join("auth.refresh.lock"),
+            host.join("auth.json.lock"),
         ] {
             match fs::symlink_metadata(&path) {
                 Ok(metadata) => ensure!(

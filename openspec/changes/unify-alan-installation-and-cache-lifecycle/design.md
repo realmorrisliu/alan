@@ -69,7 +69,7 @@ A small Host-owned journal outside the stores coordinates the paired publication
 
 The canonical parent directories also contain retained `stable`/`dev` inputs, so publication must not rename or replace those parents. Journal the canonical payload components (`System Store/services`, `Host Store/credentials`, and managed auth) individually; the pending-transaction reader guard supplies paired visibility across those component renames. The source parents and their historical subtrees remain in place.
 
-Keep the source stores unchanged by default, including the unselected source. A rerun of the identical committed transaction verifies the receipt and is a no-op; a different source cannot overwrite canonical data. Before any canonical writes, rollback can discard the new copy. After new writes, old sources are recovery snapshots, not automatic rollback targets; replacing them would lose new work. Source retirement is a separate explicit cleanup, never cache GC.
+Keep the source stores unchanged by default, including the unselected source. A rerun of the identical committed transaction verifies the receipt and every published component against the saved snapshot, refusing missing or changed content/permissions without overwriting data; a different source cannot overwrite canonical data. Before any canonical writes, rollback can discard the new copy. After new writes, old sources are recovery snapshots, not automatic rollback targets; replacing them would lose new work. Source retirement is a separate explicit cleanup, never cache GC.
 
 Alternatives rejected: defaulting to stable loses visibility of dev-only work; merging both stores risks ID/auth collisions; retaining a hidden stable/dev runtime selector leaves the same architectural complexity.
 

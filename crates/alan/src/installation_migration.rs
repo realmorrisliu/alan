@@ -27,10 +27,15 @@ async fn validate_pair(system: &Path, host: &Path, ignored: &[&str]) -> Result<(
         .into_iter()
         .chain(ignored.iter().copied())
         .collect::<Vec<_>>();
-    let host_entries = ["credentials", "auth.json", "auth.refresh.lock"]
-        .into_iter()
-        .chain(ignored.iter().copied())
-        .collect::<Vec<_>>();
+    let host_entries = [
+        "credentials",
+        "auth.json",
+        "auth.json.lock",
+        "auth.refresh.lock",
+    ]
+    .into_iter()
+    .chain(ignored.iter().copied())
+    .collect::<Vec<_>>();
     check_entries(system, &system_entries)?;
     check_entries(host, &host_entries)?;
     check_entries(

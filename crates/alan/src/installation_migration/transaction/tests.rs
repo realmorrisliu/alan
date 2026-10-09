@@ -614,3 +614,96 @@ async fn changed_extended_metadata_prevents_rollback_without_losing_canonical_da
     assert_eq!(fs::read_to_string(&file).unwrap(), "durable memory");
     drop(paths.access().unwrap());
 }
+
+#[tokio::test]
+async fn managed_auth_writer_locks_block_adoption_and_remain_source_only() {
+    let (_temp, paths) = fixture();
+    let host = paths.host_root().join("dev");
+    alan_auth::AuthStorage::new(host.join("auth.json"))
+        .unwrap()
+        .clear_chatgpt()
+        .unwrap();
+    let auth = fs::read(host.join("auth.json")).unwrap();
+    for name in ["auth.json.lock", "auth.refresh.lock"] {
+        fs::write(host.join(name), "").unwrap();
+        let writer = fs::File::open(host.join(name)).unwrap();
+        writer.lock().unwrap();
+        for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+            let error = migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("legacy store writer"),
+                "{error:#}"
+            );
+            assert!(!paths.journal().exists());
+        }
+        writer.unlock().unwrap();
+    }
+    for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+        migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+            .await
+            .unwrap();
+    }
+    assert_eq!(fs::read(paths.host_root().join("auth.json")).unwrap(), auth);
+    assert_eq!(fs::read(host.join("auth.json")).unwrap(), auth);
+    for name in ["auth.json.lock", "auth.refresh.lock"] {
+        assert!(host.join(name).is_file());
+        assert!(!paths.host_root().join(name).exists());
+    }
+}
+
+#[tokio::test]
+async fn committed_retry_verifies_each_destination_without_repairing_changed_data() {
+    use std::os::unix::fs::PermissionsExt;
+    for payload in ["services", "credentials", "auth.json"] {
+        for change in ["missing", "content", "permissions"] {
+            let (_temp, paths) = fixture();
+            let host = paths.host_root().join("dev");
+            fs::create_dir_all(host.join("credentials")).unwrap();
+            fs::write(host.join("credentials/secrets.toml"), "revoked = []\n").unwrap();
+            fs::write(host.join("auth.json"), "{\"version\":1}").unwrap();
+            migrate(
+                &paths,
+                LegacyInstallation::Dev,
+                MigrationMode::Apply,
+                |_, _| Ok(()),
+            )
+            .await
+            .unwrap();
+            let root = if payload == "services" {
+                paths.system_root()
+            } else {
+                paths.host_root()
+            };
+            let destination = root.join(payload);
+            let file = match payload {
+                "services" => destination.join("memory/stores/personal/note.md"),
+                "credentials" => destination.join("secrets.toml"),
+                _ => destination.clone(),
+            };
+            match change {
+                "missing" if destination.is_dir() => fs::remove_dir_all(&destination).unwrap(),
+                "missing" => fs::remove_file(&destination).unwrap(),
+                "content" => fs::write(&file, "new canonical work").unwrap(),
+                _ => {
+                    let mode = fs::metadata(&file).unwrap().permissions().mode() ^ 0o100;
+                    fs::set_permissions(&file, fs::Permissions::from_mode(mode)).unwrap();
+                }
+            }
+            let before = Snapshot::read(&destination, false).unwrap();
+            let receipt = fs::read(paths.journal()).unwrap();
+            for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+                let error = migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error.to_string().contains("committed migration component"),
+                    "{error:#}"
+                );
+                assert_eq!(Snapshot::read(&destination, false).unwrap(), before);
+                assert_eq!(fs::read(paths.journal()).unwrap(), receipt);
+            }
+        }
+    }
+}

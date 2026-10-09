@@ -91,12 +91,14 @@ async fn migrate_with_checkpoints(
                 paths.read_migration_journal()? == previous,
                 "installation receipt changed during retry"
             );
-            super::recovery::load(paths, journal)?
+            let components = super::recovery::load(paths, journal)?
                 .context("committed migration recovery inventory is missing")?;
-            ensure!(
-                canonical.system_present || canonical.host_present,
-                "committed migration has lost its canonical stores"
-            );
+            for component in components {
+                ensure!(
+                    Snapshot::read(&component.destination, false)? == component.snapshot,
+                    "committed migration component is missing or changed; canonical data was retained"
+                );
+            }
             return Ok(MigrationReport {
                 source,
                 state: "already-committed",

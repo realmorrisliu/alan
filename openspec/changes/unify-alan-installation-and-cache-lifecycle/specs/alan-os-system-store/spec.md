@@ -92,7 +92,8 @@ Adoption SHALL require quiescent writers, validate durable owners and preserve c
 
 #### Scenario: Completed adoption is retried
 - **WHEN** the same committed source transaction is requested again
-- **THEN** it verifies the receipt and makes no duplicate imports
+- **THEN** it verifies the receipt and every published component against its saved snapshot
+- **AND** missing or changed content/permissions fails without overwriting data or making duplicate imports
 
 ### Requirement: Ephemeral service files have bounded ownership
 Services SHALL retain ownership of their temporary files through their consumers' lifetime and release them on normal shutdown. Explicit cleanup SHALL report failures. Abrupt-exit reclamation SHALL target only proven generated idle roots and MUST NOT infer deletion authority solely from a PID or cache-like path.

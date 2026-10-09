@@ -86,7 +86,9 @@ alan legacy-state migrate-installation --from stable --rollback
 
 Rollback removes only the verified published copy and staging. It refuses once
 canonical data has changed or new canonical work exists, and preserves the old
-source. A committed retry is idempotent. Keep the migration receipt/recovery
+source. A committed retry verifies every published component against the receipt;
+missing or changed content/permissions returns an error without importing or
+overwriting anything. Keep the migration receipt/recovery
 inventory until the retained-source and rollback policy has been resolved;
 do not treat them as build cache.
 

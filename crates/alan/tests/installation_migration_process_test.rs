@@ -54,7 +54,10 @@ fn real_process_probe_and_source_independent_rollback() {
     let host = paths.host_root().join("dev");
     fs::create_dir_all(host.join("credentials")).unwrap();
     fs::write(host.join("credentials/secrets.toml"), "revoked = ['key']\n").unwrap();
-    fs::write(host.join("auth.json"), "{\"version\":1}").unwrap();
+    alan_auth::AuthStorage::new(host.join("auth.json"))
+        .unwrap()
+        .clear_chatgpt()
+        .unwrap();
 
     let dry = command(&home, &data).arg("--dry-run").output().unwrap();
     assert!(dry.status.success(), "{dry:?}");
