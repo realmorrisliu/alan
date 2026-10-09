@@ -12,6 +12,8 @@ import stat
 import subprocess
 import sys
 
+CACHE_TAG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
+
 
 def git(owner, *args):
     return subprocess.check_output(["git", "-C", str(owner), *args], text=True).strip()
@@ -126,6 +128,10 @@ def register_output(owner, path, purpose):
             return
         raise ValueError(f"refusing to claim nonempty unowned output: {path}")
     path.mkdir(parents=True, exist_ok=True)
+    if not any(path.iterdir()):
+        # Cargo writes this only when it creates the root itself.
+        with (path / "CACHEDIR.TAG").open("xb") as tag:
+            tag.write(CACHE_TAG)
     receipt = expected | {"identity": identity(path)}
     write_receipt(receipt_path, receipt)
     records = registry(owner)
@@ -195,7 +201,7 @@ def registered_outputs(owner):
 
 
 def open_paths():
-    result = subprocess.run(["lsof", "-nP", "-a", "-u", str(os.getuid()), "-F", "n"],
+    result = subprocess.run(["lsof", "-nP", "-a", "-u", str(os.getuid()), "-p", f"^{os.getpid()}", "-F", "n"],
                             capture_output=True, text=True)
     if result.returncode or result.stderr.strip():
         raise ValueError("cannot establish process/open-file state; cleanup skipped")
@@ -257,7 +263,8 @@ def inventory(owner):
 
 
 def clean_output(owner, root, record_path, record, apply=False):
-    with locked(sidecar(root, "lock"), create=False):
+    with ExitStack() as locks:
+        locks.enter_context(locked(sidecar(root, "lock"), create=False))
         if not root.exists():
             return "absent"
         verify_receipt(owner, root, record)
@@ -267,6 +274,15 @@ def clean_output(owner, root, record_path, record, apply=False):
         if nested:
             raise ValueError(f"contains separately owned output: {root}")
         cargo_only(root)
+        with os.fdopen(os.open(root / "CACHEDIR.TAG", os.O_RDONLY | os.O_NOFOLLOW), "rb") as tag:
+            if tag.read(len(CACHE_TAG) - 1) != CACHE_TAG.rstrip(b"\n"):
+                raise ValueError(f"invalid Cargo cache tag: {root}")
+        # Whole-directory cargo clean does not take Cargo's per-profile locks.
+        native = sorted(set(root.glob("*/.cargo-lock")) | set(root.glob("*/*/.cargo-lock")))
+        for path in native:
+            if path.resolve() != path:
+                raise ValueError(f"native Cargo lock traverses a symlink: {path}")
+            locks.enter_context(locked(path, create=False))
         if in_use(root, open_paths()):
             raise ValueError(f"active process or consumer: {root}")
         if not apply:
@@ -283,6 +299,60 @@ def clean_output(owner, root, record_path, record, apply=False):
         return "cleaned"
 
 
+def run_command(owner, workspace, roots, purpose, command, target=None, evidence=None):
+    report = None
+    if purpose == "task":
+        if evidence is None:
+            raise ValueError("disposable tasks require --evidence-dir outside compiler output")
+        evidence = evidence.absolute()
+        validate_location(owner, evidence)
+        if any(evidence == root or root in evidence.parents for root in roots):
+            raise ValueError("task evidence must be outside compiler output")
+        evidence.mkdir(parents=True, exist_ok=True)
+        identity(evidence)
+        if (evidence / "build.json").exists():
+            raise ValueError("task evidence already exists; select a new evidence directory")
+        report = {"source_sha": git(workspace, "rev-parse", "HEAD"),
+                  "source_dirty": bool(git(workspace, "status", "--porcelain")),
+                  "command": command, "workspace": str(workspace),
+                  "outputs": list(map(str, roots)), "state": "running"}
+    with ExitStack() as stack:
+        log = None
+        if report is not None:
+            log = stack.enter_context((evidence / "build.log").open("x"))
+            write_receipt(evidence / "build.json", report)
+            print(f"Disposable build diagnostics: {evidence}", flush=True)
+        descriptors = stack.enter_context(build_lease(owner, roots, purpose))
+        env = dict(os.environ)
+        locks = inherited_leases(owner) | dict(zip(map(str, roots), descriptors))
+        env["ALAN_BUILD_LEASE"] = json.dumps({"owner": str(owner), "locks": locks})
+        env["ALAN_BUILD_OWNER"] = str(owner)
+        if target is not None:
+            env["CARGO_TARGET_DIR"] = str(target)
+        if purpose == "task":
+            env["CARGO_INCREMENTAL"] = "0"
+            env["CARGO_BUILD_BUILD_DIR"] = str(target)
+        try:
+            result = subprocess.call(command, cwd=workspace, env=env, pass_fds=set(locks.values()),
+                                     stdout=log, stderr=subprocess.STDOUT if log else None)
+        except BaseException:
+            if report is not None:
+                write_receipt(evidence / "build.json", report | {"state": "interrupted"})
+            raise
+    if report is not None:
+        report.update(state="finished", exit_code=result, cleanup=[])
+        write_receipt(evidence / "build.json", report)
+        for root in roots:
+            try:
+                path, record = registered_outputs(owner)[root]
+                state = clean_output(owner, root, path, record, apply=True)
+                report["cleanup"].append({"path": str(root), "state": state})
+            except (ValueError, OSError, subprocess.CalledProcessError) as error:
+                report["cleanup"].append({"path": str(root), "state": "retained", "reason": str(error)})
+        write_receipt(evidence / "build.json", report)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owner", type=Path, default=Path.cwd())
@@ -291,6 +361,7 @@ def main():
     run.add_argument("--workspace", type=Path)
     run.add_argument("--target-dir", type=Path)
     run.add_argument("--purpose", choices=["checkout", "quality", "task"], default="checkout")
+    run.add_argument("--evidence-dir", type=Path, help="retained diagnostics for disposable tasks")
     run.add_argument("command", nargs=argparse.REMAINDER)
     sub.add_parser("status", help="report output ownership and allocated sizes as JSON")
     clean = sub.add_parser("clean", help="preview cleanup of registered idle Cargo output")
@@ -298,7 +369,8 @@ def main():
     args = parser.parse_args()
     owner = owner_root(args.owner)
     if args.action == "status":
-        print(json.dumps(inventory(owner), indent=2))
+        from service_scratch import scratch_outputs
+        print(json.dumps({"build_outputs": inventory(owner), "service_scratch": scratch_outputs()}, indent=2))
         return 0
     if args.action == "clean":
         records = registered_outputs(owner)
@@ -309,25 +381,26 @@ def main():
                 results.append({"path": str(root), "state": state})
             except (ValueError, OSError, subprocess.CalledProcessError) as error:
                 results.append({"path": str(root), "state": "skipped", "reason": str(error)})
+        from service_scratch import scratch_outputs
         print(json.dumps({"apply": args.apply, "outputs": results,
+                          "service_scratch": scratch_outputs(args.apply),
                           "unregistered_outputs": "not eligible; see status"}, indent=2))
         return 0
     workspace = (args.workspace or owner).resolve(strict=True)
-    roots = output_roots(workspace, args.target_dir)
+    target = args.target_dir
+    if target is not None:
+        target = (workspace / target).absolute()
+    if args.purpose == "task":
+        if target is None or args.evidence_dir is None:
+            parser.error("task output requires --target-dir and --evidence-dir")
+        # Disposable output never borrows an ambient intermediate directory.
+        os.environ["CARGO_BUILD_BUILD_DIR"] = str(target)
+    roots = output_roots(workspace, target)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("run requires a command after --")
-    with build_lease(owner, roots, args.purpose) as descriptors:
-        env = dict(os.environ)
-        inherited = inherited_leases(owner)
-        locks = inherited | dict(zip(map(str, roots), descriptors))
-        env["ALAN_BUILD_LEASE"] = json.dumps({"owner": str(owner), "locks": locks})
-        env["ALAN_BUILD_OWNER"] = str(owner)
-        if args.target_dir is not None:
-            env["CARGO_TARGET_DIR"] = str(args.target_dir.absolute())
-        if args.purpose == "task":
-            env["CARGO_INCREMENTAL"] = "0"
-        return subprocess.call(command, cwd=workspace, env=env, pass_fds=set(locks.values()))
+    return run_command(owner, workspace, roots, args.purpose, command, target, args.evidence_dir)
+
 
 
 if __name__ == "__main__":

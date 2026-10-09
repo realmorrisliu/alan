@@ -20,6 +20,7 @@ mod process_runner;
 mod process_spawn;
 mod quartermaster;
 mod runtime;
+mod temporary_store;
 
 pub use boot_unit::{
     BootDescriptor, BootManifest, BootMount, BootUnit, MountAccess, RestartPolicy,

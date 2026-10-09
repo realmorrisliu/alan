@@ -137,6 +137,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          cache-targets: false
 
       - name: Run self-eval gate
         run: bash scripts/harness/run_self_eval_suite.sh --mode ci

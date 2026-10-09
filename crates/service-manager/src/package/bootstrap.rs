@@ -115,11 +115,7 @@ impl PackageService {
         wait: Arc<BootstrapWait>,
     ) -> Result<Arc<Self>> {
         let temporary = if store_root.is_none() {
-            Some(
-                tempfile::Builder::new()
-                    .prefix("alan-package-service-")
-                    .tempdir()?,
-            )
+            Some(crate::temporary_store::TemporaryStore::new("package")?)
         } else {
             None
         };

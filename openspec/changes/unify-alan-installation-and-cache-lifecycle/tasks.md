@@ -8,7 +8,7 @@ These are implementation tasks. Read disposition.md before applying and implemen
 - [x] 1.2 Reuse compatible ordinary checkout output for build/install/release while preserving the quality gate's owned host-target directory; update installer/distribution tests and prove ambient target overrides cannot select an unrelated executable.
 - [x] 1.3 Add task-owned output receipts and coordinated producer/cleanup access for managed external targets, rejecting preexisting unowned paths; verify competing build/cleanup, symlink escape and changed-owner cases with a small fixture suite.
 - [x] 1.4 Add read-only `just cache-status` and dry-run-first `just cache-clean`, using supported Cargo cleanup scopes and explicit application; verify unknown, dirty-source, active-consumer and recreated paths remain intact and no branch/registration changes occur.
-- [ ] 1.5 Make disposable validation disable incremental builds, retain selected evidence outside its output, and retire its output only after consumers finish; document the lifecycle and verify interrupted/failed task teardown preserves required diagnostics.
+- [x] 1.5 Make disposable validation disable incremental builds, retain selected evidence outside its output, and retire its output only after consumers finish; document the lifecycle and verify interrupted/failed task teardown preserves required diagnostics.
 - [ ] 1.6 Map CI rust-cache to each job's actual target including quality-gate output; verify resolved paths in CI logs and keep existing required checks and toolchain pins.
 - [ ] 1.7 Measure cold build, unchanged rebuild, source-edit rebuild and two-worktree runs with allocated bytes/file counts; trial lighter debug info, verify stack trace usability and record whether to adopt or retain current defaults without adding sccache.
 
@@ -18,7 +18,7 @@ These are implementation tasks. Read disposition.md before applying and implemen
 - [x] 2.2 Adapt embedded relative entries into the existing validated PackageSnapshot/seeding path without reversing crate dependencies; compare package IDs, bytes, metadata, exports and revision digests against directory-based fixtures, including bounds and path rejection.
 - [x] 2.3 Remove static per-PID Skill extraction and migrate directory-dependent tests to scoped fixtures; verify repeated product boots and test runs leave no per-PID Skill roots while ordinary package references still resolve.
 - [x] 2.4 Give ephemeral Connection Service a scoped directory for metadata and lock files, retaining consumer lifetime and observable explicit cleanup; verify normal shutdown, held consumers and cleanup errors alongside existing Package Service guards.
-- [ ] 2.5 Add narrowly owned stale-scratch maintenance and document its limits; verify abrupt termination, PID reuse, live owners, missing markers and symlink roots never authorize deleting durable or unknown data.
+- [x] 2.5 Add narrowly owned stale-scratch maintenance and document its limits; verify abrupt termination, PID reuse, live owners, missing markers and symlink roots never authorize deleting durable or unknown data.
 
 ## 3. Explicit adoption of legacy installation data
 

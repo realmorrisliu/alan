@@ -29,7 +29,7 @@ fi
 require_jq
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-artifact_root="$repo_root/target/harness/autonomy/latest"
+artifact_root="${ALAN_AUTONOMY_ARTIFACT_ROOT:-$repo_root/target/harness/autonomy/latest}"
 harness_profile="${HARNESS_PROFILE:-default}"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*

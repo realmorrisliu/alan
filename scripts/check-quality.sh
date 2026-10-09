@@ -33,6 +33,7 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 "$ROOT/scripts/check-rust-quality.sh"
 python3 "$ROOT/scripts/test_cargo_cli_output.py"
 python3 "$ROOT/scripts/test_build_artifacts.py"
+python3 "$ROOT/scripts/test_service_scratch.py"
 
 cargo build --locked -p alan --bin alan
 "$ROOT/scripts/check-host-source-boundaries.sh"

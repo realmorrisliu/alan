@@ -44,7 +44,7 @@ If an override is missing, the suite fails instead of silently falling back to d
 
 Generated under:
 
-- `target/harness/self_eval/latest/`
+- `target/harness/self_eval/run.XXXXXX/` (the exact run directory is printed)
 
 Key files:
 
@@ -53,6 +53,13 @@ Key files:
 3. `baseline/profile_metrics.json`
 4. `candidate/profile_metrics.json`
 5. `profile_regression_report.json` (comparison + gate checks)
+
+Each profile retains `build-evidence/build.json` (source revision, command, exit
+code and cleanup outcome) and `build-evidence/build.log`. Compiler output uses
+`CARGO_INCREMENTAL=0` and is retired after the command exits if no consumer
+remains. Interrupted runs keep diagnostics and any busy output for explicit
+`just cache-clean` maintenance. Historical reports and changed worktrees are
+never force-deleted by a later run.
 
 ## Threshold Configuration
 

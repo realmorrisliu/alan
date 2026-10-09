@@ -165,7 +165,7 @@ struct State {
 pub struct PackageService {
     channel_id: String,
     store: PackageStore,
-    _temporary_store: Option<tempfile::TempDir>,
+    _temporary_store: Option<crate::temporary_store::TemporaryStore>,
     state: Mutex<State>,
     operation: Mutex<()>,
 }
@@ -256,9 +256,7 @@ impl PackageService {
     }
 
     pub fn ephemeral(channel_id: impl Into<String>) -> Result<Arc<Self>> {
-        let temporary = tempfile::Builder::new()
-            .prefix("alan-package-service-")
-            .tempdir()?;
+        let temporary = crate::temporary_store::TemporaryStore::new("package")?;
         let root = temporary.path().to_path_buf();
         Self::open_inner(channel_id.into(), root, Some(temporary), None)
     }
@@ -266,7 +264,7 @@ impl PackageService {
     fn open_inner(
         channel_id: String,
         store_root: PathBuf,
-        temporary_store: Option<tempfile::TempDir>,
+        temporary_store: Option<crate::temporary_store::TemporaryStore>,
         bootstrap: Option<Arc<bootstrap::BootstrapWait>>,
     ) -> Result<Arc<Self>> {
         ensure!(

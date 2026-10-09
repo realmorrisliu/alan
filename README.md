@@ -109,7 +109,11 @@ cargo test -p alan-terminal-ui
 `just cache-status` reports actual Cargo output roots, allocated size, ownership,
 and activity. `just cache-clean` previews eligible cleanup; add `--apply` to remove
 registered idle compiler output. Existing unregistered caches and directories
-containing harness reports or other unknown entries are retained. Build/install/
+containing harness reports or other unknown entries are retained. These commands
+also inspect marked temporary Connection/Package Service stores in the current
+Host temporary directory. Only a dead owner, exclusive marker lock, unchanged
+ownership and no open consumer permit cleanup. Reused/live PIDs, unknown content,
+and historical unmarked PID caches are retained. Build/install/
 release and quality workflows hold output leases; ordinary Cargo commands still
 use Cargo's own locks. Keep final reports outside disposable compiler directories.
 

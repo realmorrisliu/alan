@@ -3,6 +3,8 @@
 
 import json
 import os
+import signal
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,7 +17,7 @@ import build_artifacts as artifacts
 class BuildArtifactTests(unittest.TestCase):
     def setUp(self):
         environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
-                                             if not key.startswith(("CARGO_", "ALAN_"))}, clear=True)
+                                             if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}, clear=True)
         environment.start()
         self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="alan-artifacts-test-")
@@ -27,6 +29,8 @@ class BuildArtifactTests(unittest.TestCase):
             '[package]\nname="artifact-fixture"\nversion="0.1.0"\n'
             '[workspace]\n[[bin]]\nname="fixture"\npath="main.rs"\n')
         (self.owner / "main.rs").write_text("fn main() {}\n")
+        (self.owner / "rust-toolchain.toml").write_text(
+            (Path(artifacts.__file__).resolve().parent.parent / "rust-toolchain.toml").read_text())
         self.output = self.root / "output"
 
     def test_new_output_is_registered_and_reusable_by_its_owner(self):
@@ -121,6 +125,82 @@ class BuildArtifactTests(unittest.TestCase):
             self.assertFalse(artifacts.sidecar(output, "json").exists())
         self.assertEqual(artifacts.registered_outputs(self.owner), {})
 
+    def task_source(self):
+        artifacts.git(self.owner, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                      "commit", "--no-gpg-sign", "--allow-empty", "-m", "fixture")
+
+    def test_failed_disposable_build_retains_evidence_and_retires_only_output(self):
+        self.task_source()
+        evidence = self.owner / "evidence"
+        command = ["python3", "-c",
+                   "import os, pathlib; assert os.environ['CARGO_INCREMENTAL'] == '0'; "
+                   "p=pathlib.Path(os.environ['CARGO_TARGET_DIR'])/'debug'; p.mkdir(); "
+                   "(p/'result').write_text('build'); print('failure details'); raise SystemExit(7)"]
+        with patch.object(artifacts, "open_paths", return_value=[]):
+            result = artifacts.run_command(self.owner, self.owner, [self.output], "task", command,
+                                           self.output, evidence)
+        self.assertEqual(result, 7)
+        self.assertFalse(self.output.exists())
+        self.assertTrue((self.owner / "main.rs").exists())
+        self.assertEqual((evidence / "build.log").read_text(), "failure details\n")
+        report = json.loads((evidence / "build.json").read_text())
+        self.assertEqual(report["exit_code"], 7)
+        self.assertEqual(report["source_sha"], artifacts.git(self.owner, "rev-parse", "HEAD"))
+        self.assertEqual(report["cleanup"][0]["state"], "cleaned")
+
+    def test_interrupted_disposable_task_keeps_diagnostics_and_output(self):
+        self.task_source()
+        evidence = self.owner / "evidence"
+        with patch.object(artifacts.subprocess, "call", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                artifacts.run_command(self.owner, self.owner, [self.output], "task", ["false"],
+                                      self.output, evidence)
+        self.assertTrue(self.output.exists())
+        self.assertTrue((evidence / "build.log").exists())
+        self.assertEqual(json.loads((evidence / "build.json").read_text())["state"], "interrupted")
+        with self.assertRaisesRegex(ValueError, "outside compiler"):
+            artifacts.run_command(self.owner, self.owner, [self.output], "task", ["false"],
+                                  self.output, self.output / "evidence")
+
+    def test_abrupt_parent_exit_leaves_child_lease_and_diagnostics(self):
+        self.task_source()
+        evidence = self.owner / "evidence"
+        runner = subprocess.Popen([
+            "python3", str(Path(artifacts.__file__).resolve()), "--owner", str(self.owner), "run",
+            "--purpose", "task", "--target-dir", str(self.output), "--evidence-dir", str(evidence),
+            "--", "python3", "-c", "import os,time; print(os.getpid(), flush=True); time.sleep(60)",
+        ], stdout=subprocess.DEVNULL)
+        child_pid = None
+        try:
+            deadline = time.monotonic() + 10
+            log = evidence / "build.log"
+            while time.monotonic() < deadline:
+                if log.exists() and log.read_text().strip():
+                    child_pid = int(log.read_text().strip())
+                    break
+                time.sleep(0.02)
+            self.assertIsNotNone(child_pid, "task did not start")
+            runner.kill()
+            runner.wait(timeout=5)
+            path, record = artifacts.registered_outputs(self.owner)[self.output]
+            with self.assertRaises(BlockingIOError):
+                artifacts.clean_output(self.owner, self.output, path, record, True)
+            self.assertTrue(self.output.exists())
+            self.assertEqual(json.loads((evidence / "build.json").read_text())["state"], "running")
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+                runner.wait(timeout=5)
+            if child_pid is not None:
+                os.kill(child_pid, signal.SIGTERM)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+                            break
+                    except BlockingIOError:
+                        time.sleep(0.02)
+
     def record(self):
         with artifacts.build_lease(self.owner, [self.output], "task"):
             (self.output / "debug").mkdir()
@@ -152,6 +232,16 @@ class BuildArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unclassified"):
             artifacts.clean_output(self.owner, self.output, path, receipt, True)
         self.assertEqual((self.output / "source.patch").read_text(), "uncommitted")
+
+    def test_native_cargo_lock_and_missing_cache_tag_prevent_cleanup(self):
+        path, receipt = self.record()
+        with artifacts.locked(self.output / "debug/.cargo-lock"):
+            with self.assertRaises(BlockingIOError):
+                artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        (self.output / "CACHEDIR.TAG").unlink()
+        with self.assertRaises(FileNotFoundError):
+            artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        self.assertTrue((self.output / "debug/result").exists())
 
     def test_changed_receipt_and_recreated_output_are_not_deleted(self):
         path, receipt = self.record()

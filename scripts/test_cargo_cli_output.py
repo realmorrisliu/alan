@@ -18,7 +18,7 @@ SCRIPTS = Path(__file__).resolve().parent
 class CargoCliOutputTests(unittest.TestCase):
     def setUp(self):
         environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
-                                             if not key.startswith(("CARGO_", "ALAN_"))}, clear=True)
+                                             if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}, clear=True)
         environment.start()
         self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="alan-build-output-")
@@ -35,8 +35,9 @@ class CargoCliOutputTests(unittest.TestCase):
             '[workspace]\n[[bin]]\nname = "alan"\npath = "main.rs"\n'
         )
         (self.repo / "main.rs").write_text("fn main() {}\n")
+        shutil.copy2(SCRIPTS.parent / "rust-toolchain.toml", self.repo / "rust-toolchain.toml")
         self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(("CARGO_", "ALAN_"))}
+                    if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}
         self.env["ALAN_CLI_INSTALL_DIR"] = str(self.root / "bin")
 
     def run_shell(self, script, **env):

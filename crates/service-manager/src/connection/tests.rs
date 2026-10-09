@@ -833,7 +833,7 @@ async fn temporary_store_lives_until_the_last_consumer_and_removes_lock_files() 
         .await
         .unwrap();
     assert!(service.metadata_path.is_file());
-    assert!(std::fs::read_dir(&root).unwrap().count() >= 2);
+    assert!(root.join("connections.toml.lock").is_file());
     let consumer = service.file_server();
     assert!(service.close_ephemeral().is_err());
     assert!(root.is_dir());
@@ -850,7 +850,8 @@ async fn temporary_store_lives_until_the_last_consumer_and_removes_lock_files() 
 fn explicit_temporary_store_close_reports_cleanup_errors() {
     use std::os::unix::fs::PermissionsExt;
     let parent = tempfile::tempdir().unwrap();
-    let temporary = tempfile::tempdir_in(parent.path()).unwrap();
+    let temporary =
+        crate::temporary_store::TemporaryStore::new_in(parent.path(), "connection").unwrap();
     let mut service = ConnectionService::ephemeral("test").unwrap();
     Arc::get_mut(&mut service).unwrap().temporary_store = Some(temporary);
     std::fs::set_permissions(parent.path(), std::fs::Permissions::from_mode(0o500)).unwrap();

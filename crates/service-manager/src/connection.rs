@@ -171,7 +171,7 @@ pub struct ConnectionService {
     metadata_path: PathBuf,
     state: Mutex<State>,
     callables: tokio::sync::Mutex<Option<CallableRegistry>>,
-    temporary_store: Option<tempfile::TempDir>,
+    temporary_store: Option<crate::temporary_store::TemporaryStore>,
 }
 
 struct ConnectionLlmProvider {
@@ -247,9 +247,7 @@ impl ConnectionService {
     }
 
     pub fn ephemeral(channel_id: impl Into<String>) -> Result<Arc<Self>> {
-        let temporary = tempfile::Builder::new()
-            .prefix("alan-connections-")
-            .tempdir()?;
+        let temporary = crate::temporary_store::TemporaryStore::new("connection")?;
         let metadata_path = temporary.path().join("connections.toml");
         Ok(Arc::new(Self {
             channel_id: channel_id.into(),
