@@ -1,5 +1,9 @@
 # Implementation evidence
 
+## Acceptance status
+
+All 26 implementation tasks are complete at code head `224dcbadd6506ff001100d423888a2efef564b9a`, with all 16 current-head CI checks passing. The closing follow-up edits only this evidence and task checkboxes; its own head CI remains the PR delivery gate. Earlier sections below record successive implementation slices and include superseded failures/pending states. No personal installation, data adoption, merge or archival has been performed.
+
 ## Activation and baseline
 
 Implementation authorized by the user's goal request on 2026-10-09. Working branch: `codex/unify-installation-cache-20261009`; baseline `aac0e6117c3e2a629267113e3de6a418022c3b83` includes the routing delivery documentation merged after the design baseline. No installed executable or personal store is changed by this work.
@@ -223,3 +227,14 @@ Review found one remaining cleanup protection gap: empty/relative XDG_DATA_HOME 
 The follow-up head df31000a passed local `just quality` (including the real df31000a release archive), pinned full strict OpenSpec (66/66), and CI Linux tests/coverage/Repository Quality Gate. Its macOS test job failed in the new SourceLocks release assertion with WouldBlock immediately after dropping the guard; it is not passing suite evidence. A local 16-thread library sweep reproduced the same failure on iteration 2, retained in `/tmp/alan-macos-lock-reproduce.log`.
 
 The release test now permits a bounded two-second wait only for WouldBlock, retaining immediate failure for other errors and the existing assertions that competing acquisitions fail while the guard is held. Parallel subprocess creation can temporarily inherit a locked file description before exec; immediate reacquisition was a stronger timing assumption than the release contract. Production locking/quiescence behavior is unchanged. The corrected 47-test library suite and targeted all-target/all-feature strict Clippy pass; a repeated parallel sweep is running. Also removed trailing blank lines from five new spec deltas; baseline-to-head `git diff --check` now passes. Final current-head CI remains pending and task 5.3 remains open.
+
+
+## Current-code review and delivery acceptance — task 5.3
+
+Reviewed the baseline-to-current diff across build callers/receipts/cleanup, temporary service ownership, embedded Skill consumers, product data openers, fixed-path migration/recovery, native metadata preservation, installer receipts, public API callers, fixtures and active documentation. Resolved findings are recorded above: source-independent rollback when historical roots are replaced, exact coverage output ownership, extended permission metadata preservation, protected XDG data-root normalization, and the reproducible macOS lock-test timing assumption. Historical ADRs/archives are unchanged; baseline-to-head whitespace checks pass. This is the implementing agent's review, not an independent human approval.
+
+The corrected 47-test library suite passed 20 consecutive 16-thread runs (940 test executions; runner exited zero), with the final sweep log at `/tmp/alan-macos-lock-fixed-stress.log`. Targeted strict all-target/all-feature Clippy passed. Full `just quality` passed again on `224dcbad`, including its real optimized archive (`/tmp/alan-unified-quality-224dcbad.log`). Production Rust is unchanged from 94312389; later Rust changes are confined to the test assertion. The full local 2916-test result and pinned strict 66-item OpenSpec result above remain the applicable full-workspace evidence, supplemented by both final CI platform suites.
+
+All 16 checks on `224dcbadd6506ff001100d423888a2efef564b9a` passed, including required Repository Quality Gate, macOS Rust Quality, Linux Test Suite and CodeQL Analyze, plus macOS tests, both release builds, coverage, security audit and blocking harnesses. CI run: https://github.com/realmorrisliu/alan/actions/runs/37882695383; CodeQL: https://github.com/realmorrisliu/alan/actions/runs/37882695414. The macOS job log confirms both the corrected lock test and the explicit real-process migration probe passed (`/tmp/alan-ci-macos-224dcbad.log`). The failed df31000a macOS run remains failed historical evidence and is not relabeled.
+
+Task 5.3 is checked on this current-code review and passing CI. PR #1042 retains the final documentation-only follow-up head's check state as the delivery authority; readiness is not set while any required check is pending or failing. Actual installation, chosen-source migration, merge, canonical spec sync and archival remain separate post-implementation actions. New canonical writes/metadata changes still prevent destructive rollback; arbitrary renamed old writers are not guaranteed to be identified solely by process name, so operator shutdown remains required. Installer handled-signal restoration does not claim power-loss atomicity.

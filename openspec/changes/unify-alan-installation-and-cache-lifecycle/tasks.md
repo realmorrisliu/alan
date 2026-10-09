@@ -41,7 +41,7 @@ These are implementation tasks. Read disposition.md before applying and implemen
 
 - [x] 5.1 Run two simultaneous `alan` invocations against the shared canonical product stores in isolated fixtures; verify separate Root/input/cwd/endpoint state, concurrent package/connection/auth safety and explicit recovery without repeated effects.
 - [x] 5.2 Run focused Rust/service/CLI and installer tests, `just quality`, `just test`, standalone distribution checks, and strict OpenSpec validation; record exact head and distinguish local validation from current-head required CI.
-- [ ] 5.3 Review the current-head diff for store ownership, crash recovery, cleanup races and complete caller/fixture coverage; resolve findings and obtain passing required CI before implementation merge.
+- [x] 5.3 Review the current-head diff for store ownership, crash recovery, cleanup races and complete caller/fixture coverage; resolve findings and obtain passing required CI before implementation merge.
 
 ## Workflow follow-up
 
