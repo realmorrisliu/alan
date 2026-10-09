@@ -260,3 +260,48 @@ PageUp/PageDown and Space/b, generation/selection changes and exact draft/cursor
 return; targeted native PTY and Herdr receipts qualify Space/b interaction.
 Tasks 2.4 and 4.4 are locally closed. Full native matrix, final-head CI/review,
 merge and canonical synchronization remain separate gates.
+
+## Native matrix findings: result-path deduplication and revocation guidance
+
+The first frozen 80-column slot found that a relative edit argument produced
+`Edit sample.rs` while the structured diff contained the resolved
+`/mnt/project-request-2/sample.rs`. Literal title/path deduplication therefore
+correctly declined to guess equivalence, but repeated the same file inline.
+The shared Runtime mapper now uses the successful result's nonempty string path
+for existing read/write/edit/list titles; missing, empty or invalid paths retain
+argument fallback. Bash and unknown Tools retain their existing metadata.
+Original arguments, results, execution authority and side effects are unchanged;
+the TUI does not gain argument interpretation or path-resolution policy.
+
+All four mapper callers were traced: explicit commands, directory control,
+Agent file metadata and namespace Tool execution. A new table regression failed
+before the production change and passed afterward, covering the four known file
+Tools, invalid-result fallbacks and unaffected Bash/dynamic Tools. The existing
+48/80/120-column summary test now checks a resolved diff path occurs once with
+its change counts. A fresh actual 48-column model edit confirmed the inline
+summary contains one path plus `+1 -1`, while retained original diff stays
+inspectable. The earlier 80-column failure remains recorded in
+`acceptance-matrix.md` rather than reclassified as a pass.
+
+The same slot distinguished unrecovered Root dispatch from explicit durable
+recovery: an unauthorized ordinary `/continue` dispatches the queued task, which
+fails at Tool authorization without effects. Durable recovery separately checks
+authority before resuming and retains paused tasks. Existing queue policy is
+unchanged; the revocation notice now says to use `/project` before `/continue`
+for project work. Native reapproval alone left the queue paused; explicit
+continue executed its successor once. A separate negative control failed before
+effects under revoked authority.
+
+Fresh local gates passed: Engine 1,406 library tests (one existing ignored),
+TUI 363 library plus 12 integration tests, full `just quality`, strict OpenSpec
+67/67 and `git diff --check`. Receipts are `target/resolved-path-*-tests.log`,
+`resolved-path-quality.log` and `resolved-path-openspec.log`. Tasks 2.2 and 4.4
+were reopened when the native counterexample was found and are closed again
+after the repair, tests and targeted native reacceptance. The complete native
+matrix, exact final-head review/CI, merge and canonical sync remain open.
+
+After this repair, the full workspace run passed 2,894 tests, zero failures,
+14 existing ignored tests, across 98 suites including doctests
+(`target/resolved-path-workspace-tests.log`). Ignored provider probes are not
+native acceptance passes. The previous committed head `a76aa15d` had all 16 CI
+checks successful; those checks do not qualify a subsequent repair head.

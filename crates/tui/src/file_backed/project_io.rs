@@ -116,7 +116,9 @@ pub(super) fn finish(
             } else if app.retained_project_grant().as_deref() == Some(&grant_id) {
                 app.project_revoked();
             }
-            app.notice = Some("project grant revoked; /project selects a directory".into());
+            app.notice = Some(
+                "project grant revoked; use /project before /continue for project work".into(),
+            );
             None
         }
         (_, Err(error)) => {

@@ -93,3 +93,17 @@ Canonical synchronization for that repair remains a separate closure gate.
 Three-read groups and individual
 details have targeted fresh Herdr evidence; a new 48-column ordinary PTY run also
 verifies paging and draft/cursor return. Full native acceptance remains open.
+
+The frozen 80-column matrix found duplicate relative/resolved edit paths and
+clarified ordinary queue dispatch versus durable recovery preflight. Runtime
+result-title deduplication and the revocation notice were repaired; the reopened
+summary/quality tasks closed again after fresh regression and native acceptance.
+The repaired candidate completed all five workflows at 48 columns, including
+the supported read/search correction, standalone commands, edit/diff, both
+authorized once-only resume and unauthorized negative control, long output and
+three plan snapshots. Other five repaired-candidate host/width slots remain open.
+Full workspace testing now passes 2,894 tests (14 existing ignored), quality and
+strict OpenSpec 67/67. UI remains 12/17, deliveries 0/3. Draft PR #1044 exists;
+its prior head `a76aa15d` passed all 16 checks, with fresh-head CI and final review
+still required after this repair. Detailed first attempts and corrected runs are
+kept in `acceptance-matrix.md`.

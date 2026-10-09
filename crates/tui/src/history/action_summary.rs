@@ -236,6 +236,29 @@ mod tests {
                 text.contains("42 lines") && text.contains("truncated"),
                 "{text}"
             );
+            let edit = HistoryCell::Tool {
+                action: None,
+                title: "Edit /mnt/p/sample.rs".into(),
+                status: ToolStatus::Complete,
+                preview: None,
+                presentation: Some(ToolResultPresentation::Diff {
+                    path: "/mnt/p/sample.rs".into(),
+                    hunks: vec![alan_agent_protocol::DiffHunk {
+                        header: None,
+                        lines: vec![
+                            DiffLine::Added { text: "new".into() },
+                            DiffLine::Removed { text: "old".into() },
+                        ],
+                    }],
+                }),
+            };
+            let text = action_summary(&edit, width)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(text.matches("sample.rs").count(), 1, "{text}");
+            assert!(text.contains("+1 -1"), "{text}");
         }
     }
 
