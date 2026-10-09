@@ -128,3 +128,16 @@ fn recovery_inventory_is_private_never_replaced_and_rejects_symlinks() {
     assert!(paths.read_recovery_inventory(id).is_err());
     assert_eq!(fs::read_to_string(unrelated).unwrap(), "keep");
 }
+
+#[test]
+fn read_only_exclusion_never_creates_its_missing_lock_or_product_directory() {
+    let (_temp, paths) = fixture();
+    assert!(paths.migration_access_read_only().is_err());
+    assert!(!paths.product.exists());
+    drop(paths.migration_access().unwrap());
+    let inspection = paths.migration_access_read_only().unwrap();
+    assert!(paths.access().is_err());
+    assert!(paths.migration_access().is_err());
+    drop(inspection);
+    paths.access().unwrap();
+}

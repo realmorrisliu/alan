@@ -53,7 +53,10 @@ fn real_process_probe_and_source_independent_rollback() {
     fs::write(&note, "source memory").unwrap();
     let host = paths.host_root().join("dev");
     fs::create_dir_all(host.join("credentials")).unwrap();
-    fs::write(host.join("credentials/secrets.toml"), "revoked = ['key']\n").unwrap();
+    alan_os_host::SecretStore::from_directory(&host.join("credentials"))
+        .unwrap()
+        .delete("key")
+        .unwrap();
     alan_auth::AuthStorage::new(host.join("auth.json"))
         .unwrap()
         .clear_chatgpt()

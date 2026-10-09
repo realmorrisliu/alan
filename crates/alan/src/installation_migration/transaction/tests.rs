@@ -135,8 +135,14 @@ async fn every_publication_boundary_can_resume_without_exposing_partial_data() {
             let (_temp, paths) = fixture();
             let host = paths.host_root().join("dev");
             fs::create_dir_all(host.join("credentials")).unwrap();
-            fs::write(host.join("credentials/secrets.toml"), "revoked = ['key']\n").unwrap();
-            fs::write(host.join("auth.json"), "{\"version\":1}").unwrap();
+            alan_os_host::SecretStore::from_directory(&host.join("credentials"))
+                .unwrap()
+                .delete("key")
+                .unwrap();
+            alan_auth::AuthStorage::new(host.join("auth.json"))
+                .unwrap()
+                .clear_chatgpt()
+                .unwrap();
             let seen = std::cell::Cell::new(0);
             let result = migrate_with_checkpoints(
                 &paths,
@@ -191,7 +197,10 @@ async fn interrupted_rollback_stays_blocked_and_resumes_explicitly() {
     let (_temp, paths) = fixture();
     let host = paths.host_root().join("dev");
     fs::create_dir_all(&host).unwrap();
-    fs::write(host.join("auth.json"), "{\"version\":1}").unwrap();
+    alan_auth::AuthStorage::new(host.join("auth.json"))
+        .unwrap()
+        .clear_chatgpt()
+        .unwrap();
     migrate(
         &paths,
         LegacyInstallation::Dev,
@@ -504,15 +513,16 @@ async fn dry_run_of_a_committed_receipt_never_recreates_a_removed_access_lock() 
     .await
     .unwrap();
     fs::remove_file(paths.product.join("installation.lock")).unwrap();
-    let report = migrate(
-        &paths,
-        LegacyInstallation::Dev,
-        MigrationMode::DryRun,
-        |_, _| Ok(()),
-    )
-    .await
-    .unwrap();
-    assert_eq!(report.state, "already-committed");
+    assert!(
+        migrate(
+            &paths,
+            LegacyInstallation::Dev,
+            MigrationMode::DryRun,
+            |_, _| Ok(()),
+        )
+        .await
+        .is_err()
+    );
     assert!(!paths.product.join("installation.lock").exists());
 }
 
@@ -661,8 +671,14 @@ async fn committed_retry_verifies_each_destination_without_repairing_changed_dat
             let (_temp, paths) = fixture();
             let host = paths.host_root().join("dev");
             fs::create_dir_all(host.join("credentials")).unwrap();
-            fs::write(host.join("credentials/secrets.toml"), "revoked = []\n").unwrap();
-            fs::write(host.join("auth.json"), "{\"version\":1}").unwrap();
+            alan_os_host::SecretStore::from_directory(&host.join("credentials"))
+                .unwrap()
+                .delete("key")
+                .unwrap();
+            alan_auth::AuthStorage::new(host.join("auth.json"))
+                .unwrap()
+                .clear_chatgpt()
+                .unwrap();
             migrate(
                 &paths,
                 LegacyInstallation::Dev,
@@ -705,5 +721,92 @@ async fn committed_retry_verifies_each_destination_without_repairing_changed_dat
                 assert_eq!(fs::read(paths.journal()).unwrap(), receipt);
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn committed_retry_excludes_current_writers_in_both_modes() {
+    let (_temp, paths) = fixture();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    let reader = paths.access().unwrap();
+    for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+        let error = migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("active store consumers"),
+            "{error:#}"
+        );
+    }
+    drop(reader);
+    for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+        assert_eq!(
+            migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+                .await
+                .unwrap()
+                .state,
+            "already-committed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn committed_retry_ignores_rebuildable_services_scratch() {
+    let (_temp, paths) = fixture();
+    fs::create_dir_all(paths.system_root().join("dev/services/agent-runtime")).unwrap();
+    migrate(
+        &paths,
+        LegacyInstallation::Dev,
+        MigrationMode::Apply,
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    let runtime = paths.system_root().join("services/agent-runtime");
+    for name in ["cache", "tmp"] {
+        fs::create_dir(runtime.join(name)).unwrap();
+        fs::write(runtime.join(name).join("generated"), "scratch").unwrap();
+    }
+    for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+        assert_eq!(
+            migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+                .await
+                .unwrap()
+                .state,
+            "already-committed"
+        );
+    }
+    for name in ["cache", "tmp"] {
+        assert_eq!(
+            fs::read_to_string(runtime.join(name).join("generated")).unwrap(),
+            "scratch"
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_source_writer_lock_refuses_before_creating_migration_state() {
+    let (_temp, paths) = fixture();
+    let host = paths.host_root().join("dev");
+    fs::create_dir_all(&host).unwrap();
+    fs::write(host.join("auth.json"), "{\"version\":1}").unwrap();
+    for mode in [MigrationMode::DryRun, MigrationMode::Apply] {
+        let error = migrate(&paths, LegacyInstallation::Dev, mode, |_, _| Ok(()))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("missing native writer lock"),
+            "{error:#}"
+        );
+        assert!(!paths.journal().exists());
+        assert!(!paths.product.join("installation.lock").exists());
+        assert!(!host.join("auth.json.lock").exists());
     }
 }

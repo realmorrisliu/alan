@@ -92,8 +92,14 @@ Adoption SHALL require quiescent writers, validate durable owners and preserve c
 
 #### Scenario: Completed adoption is retried
 - **WHEN** the same committed source transaction is requested again
-- **THEN** it verifies the receipt and every published component against its saved snapshot
+- **THEN** it holds exclusive installation access and verifies the receipt and every published durable component against its saved snapshot
+- **AND** regenerated Services cache/tmp is excluded using the adoption filter
+- **AND** retry dry-run refuses a missing installation lock without creating it
 - **AND** missing or changed content/permissions fails without overwriting data or making duplicate imports
+
+#### Scenario: A native-owned source payload has no writer lock
+- **WHEN** an existing source payload lacks its required native write gate
+- **THEN** adoption and dry-run refuse without creating source locks or migration state
 
 ### Requirement: Ephemeral service files have bounded ownership
 Services SHALL retain ownership of their temporary files through their consumers' lifetime and release them on normal shutdown. Explicit cleanup SHALL report failures. Abrupt-exit reclamation SHALL target only proven generated idle roots and MUST NOT infer deletion authority solely from a PID or cache-like path.

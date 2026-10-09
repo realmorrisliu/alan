@@ -13,20 +13,48 @@ pub(super) struct SourceLocks {
 
 impl SourceLocks {
     pub(super) fn acquire(system: &Path, host: &Path) -> Result<Self> {
+        Self::acquire_inner(system, host, true)
+    }
+
+    pub(super) fn acquire_for_rollback(system: &Path, host: &Path) -> Result<Self> {
+        // Canonical writers are already excluded by the installation guard.
+        Self::acquire_inner(system, host, false)
+    }
+
+    fn acquire_inner(system: &Path, host: &Path, require_payload_locks: bool) -> Result<Self> {
         let mut locks = Vec::new();
-        for path in [
-            system.join("services/connections/connections.toml.lock"),
-            system.join("services/packages/store.lock"),
-            host.join("credentials/secrets.toml.lock"),
-            host.join("auth.refresh.lock"),
-            host.join("auth.json.lock"),
+        for (path, payload) in [
+            (
+                system.join("services/connections/connections.toml.lock"),
+                Some(system.join("services/connections/connections.toml")),
+            ),
+            (
+                system.join("services/packages/store.lock"),
+                Some(system.join("services/packages")),
+            ),
+            (
+                host.join("credentials/secrets.toml.lock"),
+                Some(host.join("credentials/secrets.toml")),
+            ),
+            // Refresh serialization is additional; every auth write also takes auth.json.lock.
+            (host.join("auth.refresh.lock"), None),
+            (host.join("auth.json.lock"), Some(host.join("auth.json"))),
         ] {
             match fs::symlink_metadata(&path) {
                 Ok(metadata) => ensure!(
                     metadata.is_file() && !metadata.file_type().is_symlink(),
                     "source lock is not a regular file"
                 ),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if require_payload_locks && let Some(payload) = payload {
+                        ensure!(
+                            !payload.try_exists()?,
+                            "missing native writer lock for existing legacy payload: {}",
+                            path.display()
+                        );
+                    }
+                    continue;
+                }
                 Err(error) => return Err(error.into()),
             }
             let file = File::open(path)?;
@@ -170,5 +198,46 @@ mod tests {
             }
         }
         assert_eq!(fs::read_to_string(path).unwrap(), "unchanged");
+    }
+
+    #[test]
+    fn every_persisted_native_owner_requires_its_write_gate_without_creating_one() {
+        for (payload, lock) in [
+            (
+                "system/services/connections/connections.toml",
+                "system/services/connections/connections.toml.lock",
+            ),
+            (
+                "system/services/packages",
+                "system/services/packages/store.lock",
+            ),
+            (
+                "host/credentials/secrets.toml",
+                "host/credentials/secrets.toml.lock",
+            ),
+            ("host/auth.json", "host/auth.json.lock"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let system = temp.path().join("system");
+            let host = temp.path().join("host");
+            let data = temp.path().join(payload);
+            fs::create_dir_all(data.parent().unwrap()).unwrap();
+            if payload.ends_with("packages") {
+                fs::create_dir(&data).unwrap();
+            } else {
+                fs::write(&data, "payload").unwrap();
+            }
+            let gate = temp.path().join(lock);
+            let error = SourceLocks::acquire(&system, &host).err().unwrap();
+            assert!(
+                error.to_string().contains("missing native writer lock"),
+                "{error:#}"
+            );
+            assert!(!gate.exists());
+            fs::write(&gate, "").unwrap();
+            let _guard = SourceLocks::acquire(&system, &host).unwrap();
+            assert!(File::open(&gate).unwrap().try_lock().is_err());
+            assert!(!host.join("auth.refresh.lock").exists());
+        }
     }
 }

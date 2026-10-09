@@ -74,6 +74,9 @@ then publishes the selected pair under a transaction journal. It does not call
 providers, refresh credentials or replay work. The old source remains intact;
 generated runtime cache/tmp is excluded. Populated canonical destinations,
 unknown layouts, active writers and unverified source changes refuse adoption.
+An existing native-owned payload must have its writer lock; a missing lock
+refuses adoption without creating one in the old source. Keep all old writers
+stopped throughout migration, including owners without native file locks.
 Native Keychain fallback is no longer consulted; missing credential material
 must be resolved explicitly rather than silently borrowing another source.
 
@@ -86,9 +89,11 @@ alan legacy-state migrate-installation --from stable --rollback
 
 Rollback removes only the verified published copy and staging. It refuses once
 canonical data has changed or new canonical work exists, and preserves the old
-source. A committed retry verifies every published component against the receipt;
-missing or changed content/permissions returns an error without importing or
-overwriting anything. Keep the migration receipt/recovery
+source. A committed retry excludes current store consumers while verifying every
+published durable component against the receipt; regenerated Services cache/tmp
+is excluded from this verification. Missing or changed durable content/permissions
+returns an error without importing or overwriting anything. Retry dry-run requires
+the existing installation lock and never recreates it if missing. Keep the migration receipt/recovery
 inventory until the retained-source and rollback policy has been resolved;
 do not treat them as build cache.
 

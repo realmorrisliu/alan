@@ -84,9 +84,11 @@ async fn migrate_with_checkpoints(
             "migration receipt selects a different legacy source"
         );
         if journal.state == MigrationState::Committed && mode != MigrationMode::Rollback {
-            let _access = (mode != MigrationMode::DryRun)
-                .then(|| paths.access())
-                .transpose()?;
+            let _access = if mode == MigrationMode::DryRun {
+                paths.migration_access_read_only()?
+            } else {
+                paths.migration_access()?
+            };
             ensure!(
                 paths.read_migration_journal()? == previous,
                 "installation receipt changed during retry"
@@ -95,7 +97,10 @@ async fn migrate_with_checkpoints(
                 .context("committed migration recovery inventory is missing")?;
             for component in components {
                 ensure!(
-                    Snapshot::read(&component.destination, false)? == component.snapshot,
+                    Snapshot::read(
+                        &component.destination,
+                        component.kind == MigrationPayload::Services
+                    )? == component.snapshot,
                     "committed migration component is missing or changed; canonical data was retained"
                 );
             }
@@ -299,7 +304,7 @@ fn rollback(
         paths.read_migration_journal()?.as_ref() == Some(&journal),
         "installation receipt changed during rollback"
     );
-    let native = SourceLocks::acquire(&paths.system_root(), &paths.host_root())?;
+    let native = SourceLocks::acquire_for_rollback(&paths.system_root(), &paths.host_root())?;
     check(&native, &[paths.system_root(), paths.host_root()])?;
     let Some(components) = super::recovery::load(paths, &journal)? else {
         let canonical = paths.inspect_canonical()?;

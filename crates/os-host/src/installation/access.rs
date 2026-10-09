@@ -92,7 +92,7 @@ pub struct InstallationMigrationAccess {
 impl InstallationPaths {
     /// Acquire shared product access before resolving metadata, credentials or services.
     pub fn access(&self) -> Result<InstallationAccess> {
-        let lock = self.open_access_lock()?;
+        let lock = self.open_access_lock(true)?;
         lock.try_lock_shared()
             .context("installation migration is running; retry after it finishes")?;
         if let Some(journal) = self.read_migration_journal()? {
@@ -116,7 +116,16 @@ impl InstallationPaths {
     }
 
     pub fn migration_access(&self) -> Result<InstallationMigrationAccess> {
-        let lock = self.open_access_lock()?;
+        self.migration_access_with_creation(true)
+    }
+
+    /// Exclude current writers without creating a lock or any parent directory.
+    pub fn migration_access_read_only(&self) -> Result<InstallationMigrationAccess> {
+        self.migration_access_with_creation(false)
+    }
+
+    fn migration_access_with_creation(&self, create: bool) -> Result<InstallationMigrationAccess> {
+        let lock = self.open_access_lock(create)?;
         lock.try_lock()
             .context("Alan still has active store consumers; stop them before migration")?;
         self.read_migration_journal()?;
@@ -182,7 +191,7 @@ impl InstallationPaths {
             .join(format!("installation-recovery-{id}.json"))
     }
 
-    fn open_access_lock(&self) -> Result<File> {
+    fn open_access_lock(&self, create: bool) -> Result<File> {
         for ancestor in self.product.ancestors() {
             directory_or_absent(ancestor)?;
         }
@@ -193,10 +202,16 @@ impl InstallationPaths {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder.create(&self.product)?;
+        if create {
+            builder.create(&self.product)?;
+        }
         let path = self.product.join("installation.lock");
         let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
+        options
+            .read(true)
+            .write(create)
+            .create(create)
+            .truncate(false);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
