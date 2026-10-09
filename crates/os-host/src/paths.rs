@@ -8,29 +8,23 @@ const PRODUCT_DIR: &str = "Alan";
 const SYSTEM_STORE_DIR: &str = "System Store";
 const HOST_STORE_DIR: &str = "Host Store";
 
-/// Host-only backing paths for one install channel's Alan OS System Store.
+/// Host-only backing paths for the Alan System Store.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemStorePaths {
-    pub channel_id: String,
     pub root: PathBuf,
 }
 
 impl SystemStorePaths {
-    pub fn detect(channel_id: &str) -> Result<Self> {
+    pub fn detect() -> Result<Self> {
         let data_dir =
             dirs::data_dir().context("cannot determine platform application data directory")?;
-        Self::from_data_dir(&data_dir, channel_id)
+        Self::from_data_dir(&data_dir)
     }
 
-    pub fn from_data_dir(data_dir: &Path, channel_id: &str) -> Result<Self> {
+    pub fn from_data_dir(data_dir: &Path) -> Result<Self> {
         validate_absolute_path("platform application data directory", data_dir)?;
-        validate_channel_id(channel_id)?;
         Ok(Self {
-            channel_id: channel_id.to_string(),
-            root: data_dir
-                .join(PRODUCT_DIR)
-                .join(SYSTEM_STORE_DIR)
-                .join(channel_id),
+            root: data_dir.join(PRODUCT_DIR).join(SYSTEM_STORE_DIR),
         })
     }
 
@@ -105,32 +99,20 @@ pub struct HostStorePaths {
 }
 
 impl HostStorePaths {
-    pub fn from_data_dir(data_dir: &Path, channel_id: &str) -> Result<Self> {
+    pub fn from_data_dir(data_dir: &Path) -> Result<Self> {
         validate_absolute_path("platform application data directory", data_dir)?;
-        validate_channel_id(channel_id)?;
-        let root = data_dir
-            .join(PRODUCT_DIR)
-            .join(HOST_STORE_DIR)
-            .join(channel_id);
+        let root = data_dir.join(PRODUCT_DIR).join(HOST_STORE_DIR);
         Ok(Self {
             credentials: root.join("credentials"),
             managed_auth: root.join("auth.json"),
         })
     }
 
-    pub fn detect(channel_id: &str) -> Result<Self> {
+    pub fn detect() -> Result<Self> {
         let data_dir =
             dirs::data_dir().context("cannot determine platform application data directory")?;
-        Self::from_data_dir(&data_dir, channel_id)
+        Self::from_data_dir(&data_dir)
     }
-}
-
-fn validate_channel_id(channel_id: &str) -> Result<()> {
-    ensure!(
-        matches!(channel_id, "stable" | "dev"),
-        "invalid Alan install channel `{channel_id}`"
-    );
-    Ok(())
 }
 
 fn validate_absolute_path(label: &str, path: &Path) -> Result<()> {
@@ -154,19 +136,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stable_and_dev_system_stores_are_isolated() {
+    fn canonical_store_paths_have_no_channel_suffix() {
         let data = Path::new("/Users/test/Library/Application Support");
-        let stable = SystemStorePaths::from_data_dir(data, "stable").unwrap();
-        let dev = SystemStorePaths::from_data_dir(data, "dev").unwrap();
-
-        assert_eq!(stable.root, data.join("Alan/System Store/stable"));
-        assert_eq!(dev.root, data.join("Alan/System Store/dev"));
-        assert_ne!(stable.root, dev.root);
+        let system = SystemStorePaths::from_data_dir(data).unwrap();
+        let host = HostStorePaths::from_data_dir(data).unwrap();
+        assert_eq!(system.root, data.join("Alan/System Store"));
+        assert_eq!(host.credentials, data.join("Alan/Host Store/credentials"));
+        assert_eq!(host.managed_auth, data.join("Alan/Host Store/auth.json"));
     }
 
     #[test]
     fn durable_owners_receive_separate_subtrees() {
-        let store = SystemStorePaths::from_data_dir(Path::new("/data"), "stable").unwrap();
+        let store = SystemStorePaths::from_data_dir(Path::new("/data")).unwrap();
         let runtime = store.agent_runtime().unwrap();
 
         assert_eq!(
@@ -190,8 +171,8 @@ mod tests {
     #[test]
     fn host_credentials_are_outside_system_store() {
         let data = Path::new("/data");
-        let system = SystemStorePaths::from_data_dir(data, "dev").unwrap();
-        let host = HostStorePaths::from_data_dir(data, "dev").unwrap();
+        let system = SystemStorePaths::from_data_dir(data).unwrap();
+        let host = HostStorePaths::from_data_dir(data).unwrap();
 
         assert!(!host.credentials.starts_with(&system.root));
         assert!(!host.managed_auth.starts_with(&system.root));

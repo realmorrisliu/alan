@@ -3,13 +3,13 @@ use super::*;
 #[tokio::test]
 async fn project_reply_requires_boot_operation_and_valid_error_shape() {
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     paths.prepare_private_root().unwrap();
     let boot = Uuid::new_v4();
     let mut status = HostStatus {
         version: STATUS_VERSION,
         local_attachment_protocol_version: 3,
-        channel_id: paths.channel_id.clone(),
+
         boot_id: boot,
         pid: std::process::id(),
         readiness: HostReadiness::Ready,

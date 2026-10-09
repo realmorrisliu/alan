@@ -3,7 +3,6 @@ use super::*;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn process_table_contention_does_not_restart_a_running_root() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),

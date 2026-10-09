@@ -1,3 +1,7 @@
+> Installation identity and ownership upgrade requirements are superseded by
+> [unify-alan-installation-and-cache-lifecycle](../../../unify-alan-installation-and-cache-lifecycle/specs/standalone-cli-distribution/spec.md).
+> This change retains foreground lifetime and input/recovery ownership.
+
 ## RENAMED Requirements
 
 - FROM: `### Requirement: Standalone distribution contains the CLI and Host binaries`

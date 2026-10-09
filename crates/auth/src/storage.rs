@@ -90,6 +90,56 @@ impl AuthStorage {
         }
     }
 
+    /// Validate an existing managed-auth file for offline installation adoption.
+    /// Expired access tokens remain valid migration input; no refresh is attempted.
+    pub fn validate_for_migration(&self) -> io::Result<()> {
+        let path = self.resolve_path()?;
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(io::Error::other("managed auth is not a regular file"));
+        }
+        let invalid = || {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported or invalid managed auth schema",
+            )
+        };
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path)?).map_err(|_| invalid())?;
+        validate_fields(&value, &["version", "chatgpt"])?;
+        if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+            return Err(invalid());
+        }
+        if let Some(auth) = value.get("chatgpt").filter(|value| !value.is_null()) {
+            validate_fields(
+                auth,
+                &[
+                    "tokens",
+                    "account_id",
+                    "email",
+                    "plan_type",
+                    "user_id",
+                    "access_token_expires_at",
+                    "last_refresh_at",
+                ],
+            )?;
+            validate_fields(
+                &auth["tokens"],
+                &["id_token", "access_token", "refresh_token"],
+            )?;
+        }
+        let store: AuthStore = serde_json::from_value(value).map_err(|_| invalid())?;
+        if let Some(auth) = store.chatgpt
+            && (auth.account_id.is_empty()
+                || auth.tokens.id_token.account_id.as_deref() != Some(auth.account_id.as_str())
+                || auth.tokens.access_token.is_empty()
+                || auth.tokens.refresh_token.is_empty())
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
     pub(crate) fn lock(&self, name: &str) -> io::Result<fs::File> {
         let root = self.resolve_root_dir()?;
         fs::create_dir_all(&root)?;
@@ -171,6 +221,20 @@ impl AuthStorage {
     }
 }
 
+fn validate_fields(value: &serde_json::Value, allowed: &[&str]) -> io::Result<()> {
+    if value
+        .as_object()
+        .is_some_and(|fields| fields.keys().all(|key| allowed.contains(&key.as_str())))
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported managed auth fields",
+        ))
+    }
+}
+
 fn normalize_auth_storage_root_dir(path: PathBuf) -> io::Result<PathBuf> {
     if path.file_name() != Some(OsStr::new(AUTH_STORAGE_FILE_NAME)) {
         return Err(io::Error::new(
@@ -217,6 +281,7 @@ mod tests {
     use crate::token_data::{ChatgptIdTokenInfo, ChatgptTokenData};
     use base64::Engine;
     use serde_json::json;
+    use std::fs;
     use std::io::ErrorKind;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -226,6 +291,29 @@ mod tests {
             .encode(r#"{"alg":"none","typ":"JWT"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
         format!("{header}.{payload}.sig")
+    }
+
+    #[test]
+    fn migration_validation_is_read_only_and_rejects_unknown_schema_without_secret_errors() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("auth.json");
+        let storage = AuthStorage::new(path.clone()).unwrap();
+        for bytes in [r#"{"version":1}"#, r#"{"version":1,"chatgpt":null}"#] {
+            fs::write(&path, bytes).unwrap();
+            storage.validate_for_migration().unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        }
+        for bytes in [
+            r#"{"version":2}"#,
+            r#"{"version":1,"future":"secret"}"#,
+            r#"{"version":1,"chatgpt":"secret"}"#,
+            "secret",
+        ] {
+            fs::write(&path, bytes).unwrap();
+            let error = storage.validate_for_migration().unwrap_err();
+            assert!(!error.to_string().contains("secret"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        }
     }
 
     #[test]
@@ -260,6 +348,9 @@ mod tests {
             })
             .expect("save");
 
+        storage
+            .validate_for_migration()
+            .expect("offline validation");
         let loaded = storage.load().expect("load");
         assert_eq!(loaded.chatgpt, Some(auth));
     }

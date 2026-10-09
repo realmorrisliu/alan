@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -21,13 +21,13 @@ pub struct BrowserLoginCallbackReceipt {
     pub completion: BrowserLoginCompletion,
 }
 
-const INSTALL_CHANNEL_ENV: &str = "ALAN_INSTALL_CHANNEL";
 const DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_BROWSER_CALLBACK_PORT: u16 = 1455;
 
 #[derive(Debug, Clone)]
 pub struct ChatgptAuthConfig {
+    /// Explicit Host-owned backing; auth never infers a product or home directory.
     pub storage_path: PathBuf,
     pub issuer: String,
     pub client_id: String,
@@ -35,15 +35,6 @@ pub struct ChatgptAuthConfig {
 }
 
 impl ChatgptAuthConfig {
-    pub fn detect() -> io::Result<Self> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| io::Error::other("Could not determine application data directory"))?;
-        Ok(Self::with_storage_path(default_host_store_auth_path(
-            &data_dir,
-            detected_install_channel_id(),
-        )))
-    }
-
     pub fn with_storage_path(storage_path: PathBuf) -> Self {
         Self {
             storage_path,
@@ -52,40 +43,6 @@ impl ChatgptAuthConfig {
             browser_callback_port: DEFAULT_BROWSER_CALLBACK_PORT,
         }
     }
-}
-
-fn detected_install_channel_id() -> &'static str {
-    if let Ok(channel) = std::env::var(INSTALL_CHANNEL_ENV) {
-        match channel.trim() {
-            "dev" => return "dev",
-            "stable" => return "stable",
-            _ => {}
-        }
-    }
-
-    let argv0 = std::env::args_os().next();
-    let raw_executable_name = argv0
-        .as_deref()
-        .and_then(|path| std::path::Path::new(path).file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let executable_name = raw_executable_name
-        .strip_suffix(".exe")
-        .unwrap_or(raw_executable_name);
-
-    if matches!(executable_name, "alan-dev") {
-        "dev"
-    } else {
-        "stable"
-    }
-}
-
-fn default_host_store_auth_path(data_dir: &Path, channel: &str) -> PathBuf {
-    data_dir
-        .join("Alan")
-        .join("Host Store")
-        .join(channel)
-        .join("auth.json")
 }
 
 #[derive(Debug, Clone)]
@@ -215,10 +172,6 @@ impl ChatgptAuthError {
 }
 
 impl ChatgptAuthManager {
-    pub fn detect() -> io::Result<Self> {
-        Self::new(ChatgptAuthConfig::detect()?)
-    }
-
     pub fn new(config: ChatgptAuthConfig) -> io::Result<Self> {
         Ok(Self {
             inner: Arc::new(ChatgptAuthManagerInner {

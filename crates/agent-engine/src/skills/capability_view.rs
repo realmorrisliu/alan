@@ -231,7 +231,8 @@ mod tests {
 
     #[test]
     fn resolved_capability_view_includes_builtin_packages() {
-        let view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let package_ids: Vec<_> = view
             .packages
             .iter()
@@ -247,7 +248,8 @@ mod tests {
 
     #[test]
     fn resolved_capability_view_materializes_all_builtin_packages_as_directory_backed() {
-        let view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
 
         for package in view
             .packages
@@ -269,7 +271,8 @@ mod tests {
 
     #[test]
     fn builtin_skill_creator_package_exposes_directory_backed_resources() {
-        let view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let package = view
             .packages
             .iter()
@@ -321,7 +324,8 @@ mod tests {
 
     #[test]
     fn builtin_repo_coding_package_exposes_repo_worker_resources() {
-        let view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let package = view
             .packages
             .iter()
@@ -379,7 +383,8 @@ mod tests {
 
     #[test]
     fn builtin_swebench_package_exposes_operator_resources() {
-        let view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let package = view
             .packages
             .iter()

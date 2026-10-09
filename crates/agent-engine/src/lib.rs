@@ -15,7 +15,6 @@ mod approval;
 mod config;
 mod evidence;
 mod file_tree;
-mod install_channel;
 mod llm;
 mod models;
 mod policy;
@@ -47,7 +46,6 @@ pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
 pub use file_tree::ProcessFileTree;
-pub use install_channel::{INSTALL_CHANNEL_ENV, InstallChannel, InstallChannelDescriptor};
 pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
     ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,

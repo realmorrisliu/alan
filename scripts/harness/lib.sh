@@ -59,6 +59,12 @@ build_kpi_tag_counts_json() {
     fi
 }
 
+run_harness_command() {
+    local root="$1" command="$2"
+    python3 "$root/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$root}" \
+        run --workspace "$root" -- bash -lc "$command"
+}
+
 validate_exact_cargo_filters() {
     local repo_root="$1"
     local scenario_id="$2"
@@ -71,7 +77,7 @@ validate_exact_cargo_filters() {
             continue
         fi
         if [[ "$segment" == cargo\ test* && "$segment" == *"-- --exact"* ]]; then
-            if ! list_output="$(cd "$repo_root" && bash -lc "$segment --list" 2>&1)"; then
+            if ! list_output="$(run_harness_command "$repo_root" "$segment --list" 2>&1)"; then
                 echo "Scenario ${scenario_id} has invalid exact cargo test filter: ${segment}" >&2
                 echo "$list_output" >&2
                 return 1

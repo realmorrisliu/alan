@@ -1,11 +1,8 @@
-use alan_agent_engine::{Config, InstallChannel, LlmProvider};
+use alan_agent_engine::{Config, LlmProvider};
 use alan_auth::{
     BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager, DeviceCodeLoginOptions,
 };
-use alan_os_host::{
-    HostStorePaths, LegacyConnectionPaths, SecretStore, SystemStorePaths, apply_profile_to_config,
-    migrate_legacy_connections,
-};
+use alan_os_host::{HostStorePaths, SecretStore, SystemStorePaths, apply_profile_to_config};
 use alan_service_manager::{
     ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
     default_credential_backend, normalize_profile_settings, sanitize_identifier,
@@ -26,6 +23,7 @@ use std::{
 pub const NATIVE_CONNECTION_REQUEST_ENV: &str = "ALAN_NATIVE_CONNECTION_REQUEST_ID";
 
 struct ConnectionStores {
+    _installation_access: alan_os_host::installation::InstallationAccess,
     credentials_dir: PathBuf,
     managed_auth: PathBuf,
     shell: Shell,
@@ -33,14 +31,13 @@ struct ConnectionStores {
 }
 
 async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
-    let channel = InstallChannel::detect_current();
-    let system = SystemStorePaths::detect(channel.descriptor().id)?;
-    let host = HostStorePaths::detect(channel.descriptor().id)?;
-    if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
-        migrate_legacy_connections(&legacy, &system, &host)?;
-    }
+    alan_os_host::installation::validate_current_invocation()?;
+    let installation_access = alan_os_host::installation::InstallationPaths::detect()?.access()?;
+
+    let system = SystemStorePaths::detect()?;
+    let host = HostStorePaths::detect()?;
     let shell = if std::env::var_os(NATIVE_CONNECTION_REQUEST_ENV).is_some() {
-        let paths = super::host::explicit_instance_paths(channel)?;
+        let paths = super::host::explicit_instance_paths()?;
         Shell::new(
             alan_os_host::LocalAttachment::new(paths)
                 .connect()
@@ -48,8 +45,7 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
                 .root,
         )
     } else {
-        let service =
-            ConnectionService::open(channel.descriptor().id, &system.connection_bindings()?)?;
+        let service = ConnectionService::open(&system.connection_bindings()?)?;
         let mut namespace = alan_kernel::Namespace::new();
         namespace.mount(
             "/mnt/connections",
@@ -67,6 +63,7 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
     let connections: ConnectionsFile =
         serde_json::from_slice(&bytes).context("decode Connection Service metadata")?;
     let stores = ConnectionStores {
+        _installation_access: installation_access,
         credentials_dir: host.credentials,
         managed_auth: host.managed_auth,
         shell,

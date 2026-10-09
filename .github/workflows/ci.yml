@@ -41,6 +41,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          workspaces: ". -> target/quality-gate"
 
       - name: Run canonical quality gate
         run: ./scripts/check-quality.sh
@@ -104,6 +105,13 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
+      - name: Install migration process probe tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes lsof
+
+      - name: Verify explicit migration with real process consumers
+        run: cargo test -p alan --test installation_migration_process_test -- --ignored --test-threads=1
+
   harness-autonomy:
     name: Harness Autonomy (Blocking)
     runs-on: ubuntu-latest
@@ -136,6 +144,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          cache-targets: false
 
       - name: Run self-eval gate
         run: bash scripts/harness/run_self_eval_suite.sh --mode ci
@@ -190,9 +199,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+          workspaces: ". -> target/llvm-cov-target"
 
       - name: Generate coverage report
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        env:
+          CARGO_LLVM_COV_TARGET_DIR: ${{ github.workspace }}/target/llvm-cov-target
+        run: |
+          python3 scripts/build_artifacts.py run --target-dir target/llvm-cov-target -- cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7

@@ -160,7 +160,6 @@ async fn unavailable_managed_default_dispatches_direct_command_without_generatio
     // A published unrelated managed callable must never replace the unavailable default.
     let probe = MockLlmProvider::new();
     let mut config = ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(probe.clone()),

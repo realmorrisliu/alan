@@ -19,7 +19,7 @@ See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
 directory not in use by another invocation boots and owns a foreground alan9
 instance and its Root Agent Process. Herdr sessions using separate runtime
-directories have separate Roots and endpoints while channel stores remain
+directories have separate Roots and endpoints while product stores remain
 shared. Reusing one explicit runtime directory allows only one owner; another
 invocation fails to acquire it rather than sharing its Root. Detaching a
 terminal view is separate from exiting the Alan process; when Alan exits, its
@@ -90,8 +90,8 @@ still represented only by contracts or partial file-server crates.
 ## Build and test
 
 Rust 2024 and the repository-pinned Rust 1.97.0 toolchain are required.
-The canonical quality gate also expects `rg` and the pinned OpenSpec CLI on
-`PATH`; CI installs both explicitly.
+The canonical quality gate also expects `python3`, `rg` and the pinned OpenSpec
+CLI on `PATH`. Python is also used to read Cargo's build-artifact reports for installation.
 
 ```bash
 just build
@@ -105,6 +105,17 @@ cargo test -p alan-agent-engine
 cargo test -p alan-agent-protocol
 cargo test -p alan-terminal-ui
 ```
+
+`just cache-status` reports actual Cargo output roots, allocated size, ownership,
+and activity. `just cache-clean` previews eligible cleanup; add `--apply` to remove
+registered idle compiler output. Existing unregistered caches and directories
+containing harness reports or other unknown entries are retained. These commands
+also inspect marked temporary Connection/Package Service stores in the current
+Host temporary directory. Only a dead owner, exclusive marker lock, unchanged
+ownership and no open consumer permit cleanup. Reused/live PIDs, unknown content,
+and historical unmarked PID caches are retained. Build/install/
+release and quality workflows hold output leases; ordinary Cargo commands still
+use Cargo's own locks. Keep final reports outside disposable compiler directories.
 
 `just quality` is the canonical non-mutating clean-code and architecture gate
 used by the versioned pre-commit hook and required CI. CI remains authoritative
@@ -188,16 +199,16 @@ as `/mnt/import`.
 
 ## Configuration and state
 
-Durable state is separated by owner and install channel:
+Durable state is separated by owner:
 
 ```text
-~/Library/Application Support/Alan/System Store/<channel>/
+~/Library/Application Support/Alan/System Store/
 ├── services/agent-runtime/    # rollout, checkpoint, cache, tmp, metadata
 ├── services/connections/      # non-secret connection metadata
 ├── services/memory/           # Memory Store backing
 └── services/packages/         # package-owned state and explicit imports
 
-~/Library/Application Support/Alan/Host Store/<channel>/
+~/Library/Application Support/Alan/Host Store/
 ├── credentials/               # Host-owned secret material
 └── auth.json                  # Host-managed provider auth
 ```
@@ -207,10 +218,11 @@ mounts. Agent Definitions and Skills enter a Process only through descriptors
 or installed alan9 references. Memory Stores use explicit descriptors such
 as `/memory`; raw backing paths never enter prompts or Agent-visible files.
 
-On upgrade, recognized generated legacy state is removed and connection state
-is migrated, verified, and only then deleted. Possibly authored Agent, persona,
-policy, Skill, and Memory trees are reported but remain untouched until an
-explicit `alan host legacy-state import` succeeds.
+Old stable/dev stores remain unchanged until an explicit source is adopted with
+`alan legacy-state migrate-installation --from stable|dev`. Startup does not
+select one automatically. See the [installation and migration guide](docs/standalone_cli_distribution.md).
+Authored legacy content uses an explicit `alan legacy-state import`; it is never
+an implicit definition or Skill overlay.
 
 `ALAN_CONFIG_PATH` may point directly to an agent configuration file. New
 user-facing configuration selects a connection with `connection_profile`; it

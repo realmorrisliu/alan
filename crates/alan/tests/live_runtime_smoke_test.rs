@@ -94,9 +94,9 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
         tools.register_boxed(tool);
     }
     let runtime = TempDir::new().context("create Host runtime directory")?;
-    let endpoint = HostEndpointPaths::from_runtime_dir(runtime.path(), "test")?;
+    let endpoint = HostEndpointPaths::from_runtime_dir(runtime.path())?;
     let host = AlanOsHost::boot(
-        HostBootConfig::ephemeral("test", config, client, tools),
+        HostBootConfig::ephemeral(config, client, tools),
         endpoint.clone(),
     )
     .await?;

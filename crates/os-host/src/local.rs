@@ -23,7 +23,7 @@ use crate::HostBootConfig;
 mod project_mount;
 pub use project_mount::{HostProjectMount, ProjectMountRejected};
 
-const STATUS_VERSION: u16 = 1;
+const STATUS_VERSION: u16 = 2;
 const LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 4;
 const LOCAL_PROCESSLESS_ATTACHMENT_PROTOCOL_VERSION: u16 = 2;
 const LOCAL_PROJECT_MOUNT_PROTOCOL_VERSION: u16 = 4;
@@ -66,7 +66,6 @@ struct LocalResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostEndpointPaths {
-    pub channel_id: String,
     pub root: PathBuf,
     pub socket: PathBuf,
     pub status: PathBuf,
@@ -74,18 +73,16 @@ pub struct HostEndpointPaths {
 }
 
 impl HostEndpointPaths {
-    pub fn detect(channel_id: &str) -> Result<Self> {
+    pub fn detect() -> Result<Self> {
         let base = dirs::runtime_dir()
             .unwrap_or_else(|| std::env::temp_dir().join(format!("alan-os-{}", current_uid())));
-        Self::from_runtime_dir(&base, channel_id)
+        Self::from_runtime_dir(&base)
     }
 
-    pub fn from_runtime_dir(runtime_dir: &Path, channel_id: &str) -> Result<Self> {
-        validate_channel_id(channel_id)?;
+    pub fn from_runtime_dir(runtime_dir: &Path) -> Result<Self> {
         validate_absolute_path("platform runtime directory", runtime_dir)?;
-        let root = runtime_dir.join("Alan OS").join(channel_id);
+        let root = runtime_dir.join("Alan OS");
         let paths = Self {
-            channel_id: channel_id.to_string(),
             socket: root.join(SOCKET_FILE),
             status: root.join(STATUS_FILE),
             lock: root.join(LOCK_FILE),
@@ -107,15 +104,11 @@ impl HostEndpointPaths {
     }
 
     fn prepare_private_root(&self) -> Result<()> {
-        let product_root = self
+        let runtime_root = self
             .root
             .parent()
-            .context("Host runtime root has no product parent")?;
-        let runtime_root = product_root
-            .parent()
-            .context("Host runtime root has no platform parent")?;
+            .context("Host runtime root has no parent")?;
         ensure_private_directory(runtime_root)?;
-        ensure_private_directory(product_root)?;
         ensure_private_directory(&self.root)?;
         Ok(())
     }
@@ -180,11 +173,11 @@ pub enum HostReadiness {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HostStatus {
     pub version: u16,
     #[serde(default = "legacy_local_attachment_protocol_version")]
     pub local_attachment_protocol_version: u16,
-    pub channel_id: String,
     pub boot_id: Uuid,
     pub pid: u32,
     pub readiness: HostReadiness,
@@ -219,10 +212,6 @@ impl HostStatus {
         ensure!(
             self.version == STATUS_VERSION,
             "unsupported Host status version"
-        );
-        ensure!(
-            self.channel_id == paths.channel_id,
-            "Host status channel mismatch"
         );
         ensure!(self.pid > 0, "Host status pid must be positive");
         ensure!(self.socket == paths.socket, "Host status socket mismatch");
@@ -278,10 +267,6 @@ pub struct AlanOsHost {
 
 impl AlanOsHost {
     pub async fn boot(config: HostBootConfig, paths: HostEndpointPaths) -> Result<Self> {
-        ensure!(
-            config.channel_id() == paths.channel_id,
-            "Host channel/path mismatch"
-        );
         paths.prepare_private_root()?;
         let singleton = SingletonLock::acquire(&paths.lock)?;
         remove_stale_owned_file(&paths.socket)?;
@@ -296,7 +281,6 @@ impl AlanOsHost {
         let status = HostStatus {
             version: STATUS_VERSION,
             local_attachment_protocol_version: LOCAL_ATTACHMENT_PROTOCOL_VERSION,
-            channel_id: paths.channel_id.clone(),
             boot_id: service_manager.boot_id(),
             pid: std::process::id(),
             readiness: HostReadiness::Ready,
@@ -464,8 +448,8 @@ impl LocalAttachment {
         Self { paths }
     }
 
-    pub fn detect(channel_id: &str) -> Result<Self> {
-        Ok(Self::new(HostEndpointPaths::detect(channel_id)?))
+    pub fn detect() -> Result<Self> {
+        Ok(Self::new(HostEndpointPaths::detect()?))
     }
 
     pub async fn connect(&self) -> Result<AttachedNamespace> {
@@ -563,8 +547,8 @@ impl HostCommandPlane {
         Self { paths }
     }
 
-    pub fn detect(channel_id: &str) -> Result<Self> {
-        Ok(Self::new(HostEndpointPaths::detect(channel_id)?))
+    pub fn detect() -> Result<Self> {
+        Ok(Self::new(HostEndpointPaths::detect()?))
     }
 
     async fn call(&self, request: LocalRequest) -> Result<LocalResponse> {
@@ -787,14 +771,6 @@ fn verify_owned_private_file(path: &Path, socket: bool) -> Result<()> {
     Ok(())
 }
 
-fn validate_channel_id(channel_id: &str) -> Result<()> {
-    ensure!(
-        matches!(channel_id, "stable" | "dev" | "test"),
-        "invalid channel {channel_id}"
-    );
-    Ok(())
-}
-
 fn validate_absolute_path(label: &str, path: &Path) -> Result<()> {
     ensure!(
         path.is_absolute(),
@@ -854,9 +830,11 @@ fn peer_uid(stream: &UnixStream) -> Result<u32> {
     }
 }
 
-pub async fn run_host_process(channel_id: &str) -> Result<()> {
-    let paths = HostEndpointPaths::detect(channel_id)?;
-    let config = HostBootConfig::product(channel_id)?;
+pub async fn run_host_process() -> Result<()> {
+    crate::installation::validate_current_invocation()?;
+    let _installation_access = crate::installation::InstallationPaths::detect()?.access()?;
+    let paths = HostEndpointPaths::detect()?;
+    let config = HostBootConfig::product()?;
     let host = AlanOsHost::boot(config, paths).await?;
     host.serve_until(shutdown_signal()).await
 }
@@ -908,12 +886,32 @@ mod tests {
     }
 
     #[test]
+    fn retired_channel_receipts_and_old_versions_are_rejected() {
+        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir()).unwrap();
+        let mut value = serde_json::json!({
+            "version": 1, "boot_id": Uuid::new_v4(), "pid": 1,
+            "readiness": "ready", "socket": paths.socket,
+        });
+        let status: HostStatus = serde_json::from_value(value.clone()).unwrap();
+        assert!(
+            status
+                .validate_for(&paths)
+                .unwrap_err()
+                .to_string()
+                .contains("version")
+        );
+        value["version"] = STATUS_VERSION.into();
+        value["channel_id"] = "stable".into();
+        assert!(serde_json::from_value::<HostStatus>(value).is_err());
+        assert_eq!(paths.root.file_name().unwrap(), "Alan OS");
+    }
+
+    #[test]
     fn host_status_rejects_zero_pid() {
-        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir()).unwrap();
         let status = HostStatus {
             version: STATUS_VERSION,
             local_attachment_protocol_version: LOCAL_ATTACHMENT_PROTOCOL_VERSION,
-            channel_id: paths.channel_id.clone(),
             boot_id: Uuid::new_v4(),
             pid: 0,
             readiness: HostReadiness::Ready,
@@ -928,10 +926,9 @@ mod tests {
 
     #[test]
     fn legacy_host_status_requires_an_explicit_restart_for_processless_attach() {
-        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir()).unwrap();
         let status: HostStatus = serde_json::from_value(serde_json::json!({
             "version": STATUS_VERSION,
-            "channel_id": paths.channel_id,
             "boot_id": Uuid::new_v4(),
             "pid": 1,
             "readiness": "ready",
@@ -956,7 +953,7 @@ mod tests {
     #[test]
     fn host_lock_probe_does_not_create_a_missing_lock_and_detects_a_running_host() {
         let runtime = tempfile::tempdir().unwrap();
-        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
 
         assert!(!paths.has_active_host_lock().unwrap());
         assert!(!paths.lock.exists());
@@ -973,7 +970,7 @@ mod tests {
     fn host_endpoint_rejects_socket_paths_that_exceed_the_platform_limit() {
         let runtime = PathBuf::from(format!("/{}", "x".repeat(160)));
 
-        assert!(HostEndpointPaths::from_runtime_dir(&runtime, "stable").is_err());
+        assert!(HostEndpointPaths::from_runtime_dir(&runtime).is_err());
     }
 }
 

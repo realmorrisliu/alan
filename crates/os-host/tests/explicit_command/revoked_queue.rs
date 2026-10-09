@@ -12,7 +12,7 @@ async fn paused_native_command_cannot_reuse_revoked_cwd_authority() {
     std::fs::write(readonly.path().join("manual"), "approved read").unwrap();
     std::fs::write(outside.path().join("secret"), "private").unwrap();
     std::os::unix::fs::symlink(outside.path(), project.path().join("escape")).unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let mut tools = ToolRegistry::new();
     tools.register(alan_tools::BashTool::new());
     tools.register(alan_tools::ReadFileTool::new());
@@ -31,7 +31,7 @@ async fn paused_native_command_cannot_reuse_revoked_cwd_authority() {
         ..AgentProcessConfig::default()
     };
     let host = AlanOsHost::boot(
-        HostBootConfig::ephemeral("test", process, LlmClient::new(provider), tools),
+        HostBootConfig::ephemeral(process, LlmClient::new(provider), tools),
         paths.clone(),
     )
     .await

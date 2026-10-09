@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-for command in cargo git openspec rg rustc; do
+for command in cargo git openspec python3 rg rustc; do
     if ! command -v "$command" >/dev/null 2>&1; then
         printf 'error: repository quality gate requires %s on PATH\n' "$command" >&2
         exit 1
@@ -17,6 +17,13 @@ if [[ -z "$host_target" ]]; then
     exit 1
 fi
 quality_target_dir="${ALAN_QUALITY_TARGET_DIR:-$ROOT/target/quality-gate}"
+# Keep intermediate output within the same quality isolation boundary.
+export CARGO_BUILD_BUILD_DIR="$quality_target_dir"
+# shellcheck source=scripts/cargo-cli-output.sh
+source "$ROOT/scripts/cargo-cli-output.sh"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    alan_cli_build_lease "$ROOT" "$quality_target_dir" quality "$ROOT/scripts/check-quality.sh"
+fi
 alan_binary="$quality_target_dir/$host_target/debug/alan"
 export CARGO_BUILD_TARGET="$host_target"
 export CARGO_TARGET_DIR="$quality_target_dir"
@@ -24,12 +31,16 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 "$ROOT/scripts/check-rust-source-size.sh"
 "$ROOT/scripts/check-rust-architecture.sh"
 "$ROOT/scripts/check-rust-quality.sh"
+python3 "$ROOT/scripts/test_cargo_cli_output.py"
+python3 "$ROOT/scripts/test_build_artifacts.py"
+python3 "$ROOT/scripts/test_service_scratch.py"
 
 cargo build --locked -p alan --bin alan
 "$ROOT/scripts/check-host-source-boundaries.sh"
 bash "$ROOT/scripts/check-openspec-current-surfaces.sh"
 "$ROOT/scripts/check-standalone-cli.sh" "$alan_binary"
 ALAN_STANDALONE_TARGET_DIR="$quality_target_dir" \
+ALAN_CLI_SOURCE="$alan_binary" \
 ALAN_BUILD_PROFILE=debug \
 ALAN_SKIP_BUILD=1 \
     "$ROOT/scripts/test-standalone-cli-distribution.sh"

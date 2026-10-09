@@ -10,10 +10,6 @@ license.workspace = true
 name = "alan-os-host"
 path = "src/bin/alan-os-host.rs"
 
-[[bin]]
-name = "alan-os-host-dev"
-path = "src/bin/alan-os-host-dev.rs"
-
 [dependencies]
 alan-ap = { path = "../ap" }
 alan-agent-engine.workspace = true

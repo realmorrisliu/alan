@@ -36,13 +36,10 @@ impl ChatgptResponsesClient {
         expected_account_id: Option<String>,
         auth_storage_path: Option<PathBuf>,
     ) -> Result<Self> {
-        let auth_manager = match auth_storage_path {
-            Some(path) => ChatgptAuthManager::new(ChatgptAuthConfig::with_storage_path(path))
-                .context("Failed to initialize ChatGPT auth manager")?,
-            None => {
-                ChatgptAuthManager::detect().context("Failed to initialize ChatGPT auth manager")?
-            }
-        };
+        let path =
+            auth_storage_path.context("ChatGPT requires an explicit Host auth storage binding")?;
+        let auth_manager = ChatgptAuthManager::new(ChatgptAuthConfig::with_storage_path(path))
+            .context("Failed to initialize ChatGPT auth manager")?;
         let expected_account_id = auth_manager.bound_account_id(expected_account_id.as_deref())?;
         Ok(Self {
             client: reqwest::Client::new(),

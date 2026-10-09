@@ -32,4 +32,6 @@ if [[ "${#configured[@]}" -eq 0 ]]; then
 fi
 
 echo "Running live provider harness for: ${configured[*]}"
-cargo test -p alan-llm --test live_provider_harness -- --ignored --nocapture
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 "$ROOT/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$ROOT}" \
+    run --workspace "$ROOT" -- cargo test -p alan-llm --test live_provider_harness -- --ignored --nocapture

@@ -45,7 +45,6 @@ pub struct InputShadowSelection {
 
 /// Explicit inputs supplied by the platform Host to Service Manager.
 pub struct ServiceManagerConfig {
-    pub channel_id: String,
     pub process: AgentProcessConfig,
     /// Restore the previously selected Root Agent rollout for this invocation.
     pub resume_root: bool,
@@ -88,7 +87,6 @@ impl LlmClientFactory for OneShotLlmClientFactory {
 impl ServiceManagerConfig {
     /// Explicit ephemeral/test inputs. Product callers never select this implicitly.
     pub fn ephemeral(
-        channel_id: impl Into<String>,
         process: AgentProcessConfig,
         mut launch_context: ProcessLaunchContext,
         llm_client: LlmClient,
@@ -113,7 +111,6 @@ impl ServiceManagerConfig {
             );
         }
         Self {
-            channel_id: channel_id.into(),
             launch_context,
             connection_store: None,
             package_store: None,
@@ -151,11 +148,6 @@ pub struct ServiceManager {
 impl ServiceManager {
     pub async fn boot(mut config: ServiceManagerConfig) -> Result<Self> {
         ensure!(
-            matches!(config.channel_id.as_str(), "stable" | "dev" | "test"),
-            "invalid Alan OS Host channel `{}`",
-            config.channel_id
-        );
-        ensure!(
             !config.resume_root || config.process.store_bindings.is_some(),
             "Root Agent recovery requires durable store bindings"
         );
@@ -175,7 +167,7 @@ impl ServiceManager {
         let boot_id = Uuid::new_v4();
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
         let package_bootstrap = crate::package::PackageBootstrap::new();
-        let open = package_bootstrap.opener(config.channel_id.clone(), config.package_store.take());
+        let open = package_bootstrap.opener(config.package_store.take());
         let package_service = tokio::task::spawn_blocking(move || {
             let service = open()?;
             seed_preinstalled_packages(&service)?;
@@ -211,8 +203,8 @@ impl ServiceManager {
             .connection_profile
             .clone();
         let connection_service = match config.connection_store.as_ref() {
-            Some(bindings) => ConnectionService::open(&config.channel_id, bindings)?,
-            None => ConnectionService::ephemeral(&config.channel_id),
+            Some(bindings) => ConnectionService::open(bindings)?,
+            None => ConnectionService::ephemeral()?,
         };
         let llm_connection = preferred_connection
             .or_else(|| connection_service.default_profile())
@@ -653,8 +645,8 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     launch_context = root_template_context;
     let reference_service = package_service.clone();
     launch_context = tokio::task::spawn_blocking(move || {
-        for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-            project_package_reference(&reference_service, &mut launch_context, &source.package_id)?;
+        for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
+            project_package_reference(&reference_service, &mut launch_context, package_id)?;
         }
         Ok::<_, anyhow::Error>(launch_context)
     })
@@ -789,14 +781,13 @@ fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Resul
 fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<()> {
     package_service.retire_preinstalled("alan-shell-control")?;
     for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-        let snapshot =
-            crate::PackageSnapshot::from_directory(&source.root_dir).with_context(|| {
-                format!(
-                    "snapshot first-party package `{}` for Package Service",
-                    source.package_id
-                )
-            })?;
-        package_service.seed_preinstalled(&source.package_id, snapshot)?;
+        let snapshot = crate::PackageSnapshot::from_preinstalled(&source).with_context(|| {
+            format!(
+                "snapshot first-party package `{}` for Package Service",
+                source.package_id
+            )
+        })?;
+        package_service.seed_preinstalled(source.package_id, snapshot)?;
     }
     Ok(())
 }

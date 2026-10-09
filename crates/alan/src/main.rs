@@ -2,8 +2,10 @@
 
 mod cli;
 mod foreground;
+mod legacy_cli;
 mod legacy_state;
 
+use alan_os_host::installation::LegacyInstallation;
 use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -32,6 +34,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Inspect or explicitly adopt historical installation data
+    LegacyState {
+        #[command(subcommand)]
+        action: LegacyStateAction,
+    },
     /// Host lifecycle, migration, and native integration operations
     Host {
         #[command(subcommand)]
@@ -106,8 +113,24 @@ enum HostMountAction {
 
 #[derive(Subcommand)]
 enum LegacyStateAction {
+    /// Adopt one historical store pair; stop every Alan invocation first. Sources are retained.
+    MigrateInstallation {
+        #[arg(long, value_name = "stable|dev")]
+        from: LegacyInstallation,
+        /// Validate offline without creating stores or a migration journal
+        #[arg(long, conflicts_with = "rollback")]
+        dry_run: bool,
+        /// Undo this adoption only while canonical data is unchanged
+        #[arg(long)]
+        rollback: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Report fixed generated, migratable, and possibly authored paths
     Inspect {
+        /// Select old Host-directory data; omit to inspect installation pairs only
+        #[arg(long, value_name = "stable|dev")]
+        from: Option<LegacyInstallation>,
         /// Explicit project roots to inspect; no other Host directories are scanned
         #[arg(long = "source-root")]
         source_roots: Vec<PathBuf>,
@@ -117,6 +140,9 @@ enum LegacyStateAction {
     },
     /// Migrate connections and remove only recognized generated paths
     Cleanup {
+        /// Historical Host-directory source to consume
+        #[arg(long, value_name = "stable|dev")]
+        from: LegacyInstallation,
         /// Explicit project roots whose fixed legacy paths may be cleaned
         #[arg(long = "source-root")]
         source_roots: Vec<PathBuf>,
@@ -395,32 +421,47 @@ fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = parse_cli();
+    alan_os_host::installation::validate_current_invocation()?;
     validate_resume_scope(cli.resume, cli.command.is_some())?;
     anyhow::ensure!(
         cli.shadow_evaluator.is_none() || cli.command.is_none(),
         "`--shadow-evaluator` only applies to bare `alan`"
     );
 
+    let uses_product_stores = matches!(
+        &cli.command,
+        None | Some(Commands::Connection { .. })
+            | Some(Commands::LegacyState {
+                action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. }
+            })
+            | Some(Commands::Host {
+                action: HostAction::LegacyState {
+                    action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. },
+                },
+            })
+    );
+    let _installation_access = uses_product_stores
+        .then(|| alan_os_host::installation::InstallationPaths::detect()?.access())
+        .transpose()?;
+
     match cli.command {
+        Some(Commands::LegacyState { action }) => legacy_cli::run(action).await?,
         Some(Commands::Host { action }) => match action {
             HostAction::Status { json } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = cli::host::explicit_instance_paths(channel)?;
+                let paths = cli::host::explicit_instance_paths()?;
                 let status = paths
                     .read_status()
                     .context("selected Alan instance status is unavailable")?;
                 print_host_status(&status, json)?;
             }
             HostAction::Stop { json } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = cli::host::explicit_instance_paths(channel)?;
+                let paths = cli::host::explicit_instance_paths()?;
                 let status = alan_os_host::request_host_stop(&paths).await?;
                 wait_for_host_stop(&paths).await?;
                 print_host_status(&status, json)?;
             }
             HostAction::Mount { action } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                let paths = cli::host::explicit_instance_paths(channel)?;
+                let paths = cli::host::explicit_instance_paths()?;
                 let attached = alan_os_host::LocalAttachment::new(paths.clone())
                     .connect()
                     .await?;
@@ -451,72 +492,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            HostAction::LegacyState { action } => {
-                let channel = alan_agent_engine::InstallChannel::detect_current();
-                match action {
-                    LegacyStateAction::Inspect { source_roots, json } => {
-                        let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
-                            anyhow::bail!("cannot determine Host home directory");
-                        };
-                        let source_roots = canonical_existing_roots(source_roots)?;
-                        let report = legacy_state::inspect_legacy_state(&paths, &source_roots)?;
-                        print_legacy_inspection(&report, json)?;
-                    }
-                    LegacyStateAction::Cleanup { source_roots, json } => {
-                        let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
-                            anyhow::bail!("cannot determine Host home directory");
-                        };
-                        let source_roots = canonical_existing_roots(source_roots)?;
-                        let system =
-                            alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
-                        let host = alan_os_host::HostStorePaths::detect(channel.descriptor().id)?;
-                        let report = legacy_state::cleanup_legacy_state(
-                            &paths,
-                            &system,
-                            &host,
-                            &source_roots,
-                        )?;
-                        print_legacy_cleanup(&report, json)?;
-                    }
-                    LegacyStateAction::Import {
-                        kind,
-                        source,
-                        name,
-                        delete_source,
-                    } => {
-                        let source = std::path::absolute(&source).with_context(|| {
-                            format!(
-                                "failed to make import source absolute: {}",
-                                source.display()
-                            )
-                        })?;
-                        let system =
-                            alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
-                        let kind = match kind {
-                            LegacyImportKind::AgentDefinition => {
-                                legacy_state::AuthoredImportKind::AgentDefinition
-                            }
-                            LegacyImportKind::MemoryStore => {
-                                legacy_state::AuthoredImportKind::MemoryStore
-                            }
-                        };
-                        let report = legacy_state::import_authored_content(
-                            kind,
-                            &source,
-                            &name,
-                            delete_source,
-                            &system,
-                        )?;
-                        println!("imported: {}", report.destination.display());
-                        if report.source_deleted {
-                            println!(
-                                "source deleted after verification: {}",
-                                report.source.display()
-                            );
-                        }
-                    }
-                }
-            }
+            HostAction::LegacyState { action } => legacy_cli::run(action).await?,
         },
         Some(Commands::Connection { action }) => match action {
             ConnectionAction::List => {
@@ -677,12 +653,10 @@ async fn main() -> Result<()> {
                 std::io::stdin().is_terminal(),
                 std::io::stdout().is_terminal(),
             )?;
-            let channel = alan_agent_engine::InstallChannel::detect_current();
-            let (runtime_dir, remove_runtime_dir) =
-                foreground::foreground_runtime_dir(channel.descriptor().id)?;
-            let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, channel.descriptor().id)?;
+
+            let (runtime_dir, remove_runtime_dir) = foreground::foreground_runtime_dir()?;
+            let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir)?;
             let result = foreground::run_bare_in_foreground_instance(
-                channel,
                 paths,
                 mode,
                 cli.resume,
@@ -724,7 +698,6 @@ fn print_host_status(status: &alan_os_host::HostStatus, json: bool) -> Result<()
     if json {
         println!("{}", serde_json::to_string_pretty(status)?);
     } else {
-        println!("channel: {}", status.channel_id);
         println!("state: {:?}", status.readiness);
         println!("boot: {}", status.boot_id);
         println!("host pid: {}", status.pid);
@@ -781,6 +754,27 @@ fn print_legacy_inspection(report: &legacy_state::LegacyInspection, json: bool) 
     if json {
         println!("{}", serde_json::to_string_pretty(report)?);
         return Ok(());
+    }
+    if let Some(installations) = &report.installations {
+        println!(
+            "canonical stores: system={}, host={}",
+            installations.canonical.system_present, installations.canonical.host_present
+        );
+        for source in &installations.sources {
+            println!(
+                "legacy {}: system={} ({}), host={} ({})",
+                source.source.id(),
+                source.stores.system_present,
+                source.stores.system_root.display(),
+                source.stores.host_present,
+                source.stores.host_root.display()
+            );
+        }
+        if installations.migration_journal_present {
+            println!(
+                "installation migration journal present; inspect migration status before opening stores"
+            );
+        }
     }
     for path in &report.generated_paths {
         println!("generated: {}", path.display());
@@ -893,10 +887,10 @@ mod tests {
     #[test]
     fn foreground_runtime_falls_back_when_tempdir_exceeds_socket_path_limit() {
         let long_tempdir = std::path::Path::new("/").join("x".repeat(100));
-        let runtime_dir = generated_foreground_runtime_dir(&long_tempdir, "stable").unwrap();
+        let runtime_dir = generated_foreground_runtime_dir(&long_tempdir).unwrap();
 
         assert_eq!(runtime_dir.parent(), Some(std::path::Path::new("/tmp")));
-        assert!(HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").is_ok());
+        assert!(HostEndpointPaths::from_runtime_dir(&runtime_dir).is_ok());
     }
 
     #[test]

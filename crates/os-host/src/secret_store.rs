@@ -61,10 +61,36 @@ impl SecretStore {
         Ok(store)
     }
 
-    pub(crate) fn has_local_override(&self, credential_id: &str) -> anyhow::Result<bool> {
+    /// Validate credential storage without changing secrets or consulting native providers.
+    pub fn validate_for_migration(&self) -> anyhow::Result<()> {
+        let stored = self
+            .read_secret_file()
+            .map_err(|_| anyhow::anyhow!("invalid migration credential store"))?;
+        for (id, secret) in &stored.secrets {
+            validated_identifier_component("credential id", id)?;
+            anyhow::ensure!(
+                !secret.trim().is_empty() && !stored.revoked.contains(id),
+                "invalid stored credential state"
+            );
+        }
+        for id in &stored.revoked {
+            validated_identifier_component("credential id", id)?;
+        }
+        Ok(())
+    }
+
+    /// Require local material or an explicit revocation, preserving logged-out state.
+    pub fn validate_credential_for_migration(&self, credential_id: &str) -> anyhow::Result<()> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
-        let stored = self.read_secret_file()?;
-        Ok(stored.secrets.contains_key(credential_id) || stored.revoked.contains(credential_id))
+        self.validate_for_migration()?;
+        let stored = self
+            .read_secret_file()
+            .map_err(|_| anyhow::anyhow!("invalid migration credential store"))?;
+        anyhow::ensure!(
+            stored.secrets.contains_key(credential_id) || stored.revoked.contains(credential_id),
+            "credential backing is missing"
+        );
+        Ok(())
     }
 
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {

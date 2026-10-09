@@ -17,7 +17,7 @@ async fn native_root_completes_explicit_owner_work_without_assistant_output() {
     );
     let control: OwnerWorkControl =
         serde_json::from_slice(&std::fs::read(control_path).unwrap()).unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(&runtime, "dev").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime).unwrap();
     let attached = LocalAttachment::new(paths.clone()).connect().await.unwrap();
     let shell = Shell::new(attached.root);
     let output_before = shell.cat("/agent/root/io/output").await.unwrap();

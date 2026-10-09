@@ -53,7 +53,7 @@ Fresh-state tests prove:
 - checkpoints link to current tape roots;
 - Working Memory is Process-local;
 - Episodic Memory and handoff preserve cross-Process continuity;
-- only channel-scoped current paths are read and written.
+- only explicitly bound product or temporary test stores are read and written.
 
 ## Harness
 
