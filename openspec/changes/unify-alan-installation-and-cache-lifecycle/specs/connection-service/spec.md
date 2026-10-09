@@ -9,4 +9,3 @@ connection trees. Metadata SHALL belong to the explicit product or isolated-test
 - **WHEN** its launch context passes an installed Connection reference
 - **THEN** the Agent Process receives the corresponding callable LLM tree
 - **AND** no Host config file is read
-

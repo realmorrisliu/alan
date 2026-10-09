@@ -43,4 +43,3 @@ itself select a test Host or weaken authorization.
 - **THEN** startup fails with a diagnostic
 - **AND** it does not substitute mock providers, test-only authority, or an
   ambient background Host
-

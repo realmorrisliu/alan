@@ -156,7 +156,18 @@ mod tests {
         assert!(File::open(&path).unwrap().try_lock().is_err());
         assert!(SourceLocks::acquire(&system, &host).is_err());
         drop(locks);
-        File::open(&path).unwrap().try_lock().unwrap();
+        let probe = File::open(&path).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        // Parallel subprocess tests may briefly inherit the descriptor before exec.
+        loop {
+            match probe.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("source lock was not released: {error}"),
+            }
+        }
         assert_eq!(fs::read_to_string(path).unwrap(), "unchanged");
     }
 }

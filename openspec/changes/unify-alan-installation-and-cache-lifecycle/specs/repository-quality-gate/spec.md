@@ -35,4 +35,3 @@ clean-code, clean-architecture, or standalone-distribution check fails.
 - **THEN** it resolves the actual owned host-target output directory
 - **AND** it preserves the build-artifact-lifecycle ownership and concurrency rules
 - **AND** cached artifacts never substitute for running the required current-source checks
-

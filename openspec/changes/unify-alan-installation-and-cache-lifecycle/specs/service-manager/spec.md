@@ -51,4 +51,3 @@ package handle into a Host Mount grant for Agent Runtime Service.
 - **WHEN** the Package Service Process exits
 - **THEN** `/srv/package` and new package resolution become unavailable
 - **AND** Service Manager applies the declared restart policy
-

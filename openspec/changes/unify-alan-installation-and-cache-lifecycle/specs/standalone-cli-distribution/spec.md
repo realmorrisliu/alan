@@ -75,4 +75,3 @@ will replace or retire against the applicable verified ownership manifest.
 - **AND** it retires only unchanged owned aliases and obsolete Host executables
 - **AND** a conflict in either old installation fails preflight before any replacement
 - **AND** installation does not select or migrate either old data store
-
