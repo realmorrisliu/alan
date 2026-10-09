@@ -205,7 +205,6 @@ jobs:
         env:
           CARGO_LLVM_COV_TARGET_DIR: ${{ github.workspace }}/target/llvm-cov-target
         run: |
-          cargo llvm-cov show-env
           python3 scripts/build_artifacts.py run --target-dir target/llvm-cov-target -- cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov

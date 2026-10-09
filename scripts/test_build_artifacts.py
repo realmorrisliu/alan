@@ -51,6 +51,28 @@ class BuildArtifactTests(unittest.TestCase):
         self.assertFalse(artifacts.sidecar(self.output, "json").exists())
         self.assertEqual((self.output / "source.patch").read_text(), "authored")
 
+    def test_invalid_xdg_override_still_protects_default_product_stores(self):
+        home = self.root / "home"
+        for override in ("", "relative-data"):
+            with patch.dict(os.environ, HOME=str(home), XDG_DATA_HOME=override):
+                for path in (home / ".local/share/Alan", home / ".local/share/Alan/Host Store"):
+                    with self.assertRaises(ValueError):
+                        with artifacts.build_lease(self.owner, [path], "task"):
+                            self.fail("product store was granted as compiler output")
+        self.assertFalse(home.exists())
+
+    def test_platform_data_alias_protects_both_actual_and_default_stores(self):
+        home = self.root / "home"
+        data = self.root / "data"
+        data.mkdir()
+        alias = self.root / "data-alias"
+        alias.symlink_to(data, target_is_directory=True)
+        with patch.dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(alias)):
+            for path in (data / "Alan", home / ".local/share/Alan"):
+                with self.assertRaises(ValueError):
+                    artifacts.validate_location(self.owner, path)
+        self.assertFalse((data / "Alan").exists())
+
     def test_different_owner_cannot_take_registered_output(self):
         with artifacts.build_lease(self.owner, [self.output], "task"):
             pass

@@ -99,7 +99,7 @@ Alternatives rejected: one global target couples parallel worktrees and cleanup;
 
 ### 5. Tune verification profiles only after measurement
 
-Keep ordinary dev/test profiles unchanged initially. For disposable verification, use `CARGO_INCREMENTAL=0`; CI already gets that policy from rust-cache. Trial `line-tables-only` for dev/test debug information with one consistent invocation configuration, and retain full information for interactive debugging. Adopt the lighter default only if full gates, stack traces and measured repeated-build latency remain acceptable. Do not disable assertions, overflow checks, error handling or change optimization semantics to shrink output.
+Keep ordinary dev/test profiles unchanged initially. For disposable verification, use `CARGO_INCREMENTAL=0`; CI already gets that policy from rust-cache. Trial reduced dev debug information with one consistent invocation configuration, and retain full information for interactive debugging. The implementation trial uses `debug = 1` (limited symbols); the measurements below retain the existing defaults. Adopt the lighter default only if full gates, stack traces and measured repeated-build latency remain acceptable. Do not disable assertions, overflow checks, error handling or change optimization semantics to shrink output.
 
 Keep rust-cache in CI and explicitly map the quality target as `. -> target/quality-gate` so its dependency pruning covers the actual build root. Check other jobs' actual paths and compiler settings. Preserve the pinned toolchain. sccache is a later benchmark option: bounded shared compiled-dependency cache with isolated worktree outputs, not a replacement for target retirement; no dependency/configuration is introduced now.
 

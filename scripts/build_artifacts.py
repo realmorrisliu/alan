@@ -101,10 +101,15 @@ def validate_location(owner, path):
     checkouts = [Path(line[9:]).resolve() for line in
                  git(owner, "worktree", "list", "--porcelain").splitlines()
                  if line.startswith("worktree ")]
+    data_home = Path(os.environ.get("XDG_DATA_HOME", ""))
+    if not data_home.is_absolute():
+        data_home = Path.home() / ".local/share"
     private = [Path(git(owner, "rev-parse", "--path-format=absolute", "--git-common-dir")),
                Path.home() / "Library/Application Support/Alan",
-               Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "Alan",
+               Path.home() / ".local/share/Alan",
+               data_home / "Alan",
                Path.home() / ".alan", Path.home() / ".alan-dev"]
+    private = [path.resolve() for path in private]
     protected = checkouts + private
     if any(p == path or path in p.parents for p in protected):
         raise ValueError(f"output contains source or Git state: {path}")
