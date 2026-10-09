@@ -107,3 +107,50 @@ or unknown outcome. Fixture hashes matched the prior baseline. `/quit` ended
 Alan; the foreground returned to the owned fish PID 96637 before closing the pane.
 No self-development instance was left alive. The complete five-workflow native
 matrix, ordinary PTY, grouping and broader qualification remain open.
+
+## Read-only groups: fresh targeted acceptance
+
+The first group candidate, binary SHA-256
+`792e872c1caf64325cca60ab2acaa30b1b4fe2a4e50fcdd9f52516a73f45daaf`,
+completed three reads but did not group them. Retained result metadata did contain
+concrete `/agent/8` correlation; comparison against the renderer's moving alias
+was the cause. This attempt remains an unqualified group run, not a pass.
+
+After the Root-owner repair, fresh CLI SHA-256
+`8aecb43544556ccffaf084113c2ef0ddfbfeb41ba5707eeca60abf9ae4bde49e`
+(source `d7bf9b65` plus the renderer slice) ran in the same owned Herdr pane
+`w58:p14`, 73×21, new foreground runtime `~/Library/Caches/Alan/o9g2`.
+The user focus remained `w58:pZ`; model `gpt-6.1-sol`, effort `medium`.
+A fresh read-only grant selected the disposable fixture. Without explicit
+namespace paths in the prompt, the model read `sample.rs`, `README.md`, and all
+180 lines of `pager.txt` and answered their line counts. The UI displayed
+`3 read-only actions · completed` with three ordered concrete member rows.
+
+Ctrl+O selected `pager.txt`; Space advanced from its header/line 001 to a view
+containing line 020, and `b` returned to `Action a3`/line 001. Left twice selected
+`sample.rs` (`Action a1`), with its own contents and result metadata. Esc restored
+`分组草稿 中文😀`. Cursor identity remains deterministic-test evidence. This
+qualifies same-Process member navigation and Host page aliases, not navigation
+of older Process groups after replacement.
+
+Explicit successful `printf` retained `exit 0 · stdout UI marker server> ready`
+in its default summary. A compound stderr/exit command under the read-only grant
+was refused before execution with `Working directory outside host_mount roots`;
+it does not qualify native stderr/exit behavior under that grant. After explicit
+revoke and read-write re-selection, the same requested command executed and
+its standalone failed summary showed `exit 7 · stderr failure marker`.
+The earlier refusal remains a separate failed attempt.
+
+All fixture hashes remained unchanged. Existing README/sample hashes above
+still apply; added owned pager fixture SHA-256 is
+`4117a5063a1017c2d2a62e6b5a40e950b087959bf2315d2ed3184b97f77e84cf`.
+The first invocation exited before rebuilding; the fresh invocation also exited
+via `/quit`. Receipts are ignored local files:
+`target/native-group-first-unqualified.txt`, `native-group-success.txt`,
+`native-group-page-forward-fresh.txt`, `native-group-member-sample.txt`,
+`native-group-draft.txt`, `native-group-stdout.txt`,
+`native-group-command-failure-rw.txt`, and `native-group-final.txt`
+(all under `target/`). The two 10-second group waits timed out before later
+captures showed settled results; those waits are not successful lifecycle checks.
+These are targeted Herdr observations, not the full PTY/Herdr width matrix or
+instrumented once-only effect qualification.

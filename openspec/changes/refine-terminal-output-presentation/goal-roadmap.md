@@ -76,10 +76,10 @@ proposal are preserved.
 
 ## Current checkpoint
 
-UI implementation tasks are 6/17 checked: source tracing, generated-label removal,
-compact Action summaries, exact compact plan history, notice hierarchy, and positive Runtime-owned read-only eligibility.
-Complete native matrices, grouping, review/CI/merge and canonical spec sync remain
+UI implementation tasks are 7/17 checked: source tracing, generated-label removal,
+compact Action summaries, exact compact plan history, notice hierarchy, positive Runtime-owned read-only eligibility, and rendered groups.
+Group lifecycle/detail qualification, complete native matrices, review/CI/merge and canonical spec sync remain
 open; goal deliveries remain 0/3. The observed Process-directory repair is isolated
 in PR #1043; its review correction removes global standalone binding fallback from
 namespace Process context. All 16 checks passed on its current head `1645c20b`;
-formal approval and user merge remain pending. Rendered groups are still unfinished.
+formal approval and user merge remain pending. Three-read groups and individual details now have targeted fresh Herdr evidence; task 3.3 and full native acceptance remain open.

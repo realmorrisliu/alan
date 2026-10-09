@@ -13,7 +13,10 @@ use crate::history::{HistoryCell, PendingYieldCell, RunningTool, ToolStatus};
 
 use super::app::{FileBackedApp, FileBackedEvent};
 use super::tail::tail_with_history;
+mod action_projection;
 mod attachment;
+pub(super) use action_projection::action_snapshot_to_history_cell;
+use action_projection::action_title;
 
 pub(super) use attachment::{hydrate_and_open_tails, reattach_to_current_agent};
 
@@ -46,6 +49,9 @@ pub(super) async fn sync_action_from_file(
     action_id: &str,
     app: &mut FileBackedApp,
 ) -> Result<()> {
+    if app.action_owner() != agent_path {
+        return Ok(());
+    }
     let snapshot = read_action_snapshot(shell, agent_path, action_id).await?;
     app.observe_project_action(agent_path, &snapshot);
     sync_action_snapshot(app, snapshot);
@@ -810,9 +816,10 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);
     }
-    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+    if let Some(mut cell) = action_snapshot_to_history_cell(&snapshot) {
         use std::hash::{Hash, Hasher};
-        let key = (app.agent_path.clone(), snapshot.id.clone());
+        let owner = app.action_owner().to_owned();
+        let key = (owner.clone(), snapshot.id.clone());
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         (
             &snapshot.name,
@@ -822,9 +829,29 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
         )
             .hash(&mut hash);
         let fingerprint = hash.finish();
-        let unchanged = app.projected_actions.insert(key, fingerprint) == Some(fingerprint);
+        let prior = app.projected_actions.get(&key).copied();
+        let committed = prior.is_some_and(|projection| projection.1);
+        let unchanged = prior.is_some_and(|projection| projection.0 == fingerprint);
+        app.projected_actions.insert(key, (fingerprint, committed));
+        if committed && unchanged {
+            return;
+        }
         if unchanged && !app.action_cells.contains_key(&snapshot.id) {
             return;
+        }
+        if let HistoryCell::Tool {
+            action: Some(action),
+            ..
+        } = &mut cell
+        {
+            action.owner = owner.clone();
+            action.read_only = action
+                .read_only
+                .take()
+                .filter(|context| !committed && context.owner == owner);
+        }
+        if committed && let HistoryCell::Tool { title, .. } = &mut cell {
+            title.push_str(" · updated");
         }
         app.upsert_action_cell(snapshot.id, cell);
     }
@@ -872,64 +899,6 @@ pub(super) fn action_ids_from_events(pending: &mut Vec<u8>) -> Vec<String> {
 
 fn action_status_is_running(status: &str) -> bool {
     matches!(status.trim(), "running" | "pending")
-}
-
-pub(super) fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
-    let status = match snapshot.status.trim() {
-        "completed" => ToolStatus::Complete,
-        "failed" => ToolStatus::Failed,
-        "rejected" => ToolStatus::Rejected,
-        "cancelled" => ToolStatus::Cancelled,
-        _ => return None,
-    };
-    let body = if !snapshot.output.trim().is_empty() {
-        Some(snapshot.output.clone())
-    } else if !snapshot.result.trim().is_empty() {
-        Some(snapshot.result.clone())
-    } else {
-        None
-    };
-
-    let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
-    let title = metadata
-        .as_ref()
-        .and_then(|v| v.get("title"))
-        .and_then(Value::as_str)
-        .filter(|v| !v.trim().is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| action_title(snapshot));
-    let preview = metadata
-        .as_ref()
-        .and_then(|v| v.get("result_preview"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let presentation = metadata
-        .as_ref()
-        .and_then(|v| v.get("presentation"))
-        .and_then(|v| serde_json::from_value::<ToolResultPresentation>(v.clone()).ok())
-        .or_else(|| {
-            preview
-                .as_ref()
-                .filter(|text| !text.trim().is_empty())
-                .cloned()
-                .or(body)
-                .map(|body| ToolResultPresentation::PlainText { body })
-        });
-    Some(HistoryCell::Tool {
-        title,
-        status,
-        preview,
-        presentation,
-    })
-}
-
-fn action_title(snapshot: &ActionSnapshot) -> String {
-    let trimmed = snapshot.name.trim();
-    if !trimmed.is_empty() {
-        trimmed.to_string()
-    } else {
-        format!("tool {}", snapshot.id)
-    }
 }
 
 #[derive(Debug, Clone)]

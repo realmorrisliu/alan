@@ -60,6 +60,7 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Tool {
+            action: None,
             title: "Edit".into(),
             status: ToolStatus::Complete,
             preview: None,

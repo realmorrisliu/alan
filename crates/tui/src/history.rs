@@ -1,7 +1,7 @@
 mod action_summary;
 mod literal;
 mod markdown;
-pub(crate) use action_summary::action_summary;
+pub(crate) use action_summary::{action_summary, group_summary_header, group_summary_member};
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -9,8 +9,8 @@ use ratatui::text::{Line, Span};
 use std::time::Instant;
 
 use alan_agent_protocol::{
-    ContentPart, DiffLine, PlanItemStatus, StructuredInputKind, StructuredInputQuestion,
-    ToolResultPresentation, UiPlanSnapshot, YieldKind,
+    ActionReadOnlyContext, ContentPart, DiffLine, PlanItemStatus, StructuredInputKind,
+    StructuredInputQuestion, ToolResultPresentation, UiPlanSnapshot, YieldKind,
 };
 use serde_json::{Map, Value};
 
@@ -64,6 +64,8 @@ pub enum HistoryCell {
     },
     /// A completed tool call.
     Tool {
+        /// Durable identity and optional renderer projection for an AgentFS Action.
+        action: Option<ActionHistory>,
         title: String,
         status: ToolStatus,
         preview: Option<String>,
@@ -77,6 +79,16 @@ pub enum HistoryCell {
     PendingYield(PendingYieldCell),
     /// A fatal (non-recoverable) error.
     Error(String),
+}
+
+/// Presentation state belonging to one retained AgentFS Action, not an execution record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionHistory {
+    pub owner: String,
+    pub id: String,
+    pub read_only: Option<ActionReadOnlyContext>,
+    /// Rows freeze when native scrollback consumes any part of this group/member.
+    pub frozen_rows: Option<Vec<Line<'static>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,6 +284,7 @@ impl HistoryCell {
                 status,
                 preview,
                 presentation,
+                ..
             } => {
                 let mut body = format!("{title} · {}", status.label());
                 if let Some(presentation) = presentation {

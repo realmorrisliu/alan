@@ -75,6 +75,7 @@ async fn mounted_receipt_survives_actual_ctl_lost_ack_and_late_file_settlement()
     .await
     .unwrap();
     let mut app = FileBackedApp::new("/agent/root".into());
+    app.queue.apply(&owner, None);
     app.activity.state = UiActivityState::Paused;
     let ProjectControlResult::Mounted {
         receipt,

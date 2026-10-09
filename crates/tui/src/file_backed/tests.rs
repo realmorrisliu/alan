@@ -68,6 +68,7 @@ fn root_process_reattach_preserves_prior_transcript_and_adds_current_turn() {
         vec![
             HistoryCell::User("current task".to_string()),
             HistoryCell::Tool {
+                action: None,
                 title: "bash".to_string(),
                 status: ToolStatus::Complete,
                 preview: Some("read complete".to_string()),
@@ -87,6 +88,7 @@ fn root_process_reattach_preserves_prior_transcript_and_adds_current_turn() {
             HistoryCell::Assistant("previous answer".to_string()),
             HistoryCell::User("current task".to_string()),
             HistoryCell::Tool {
+                action: None,
                 title: "bash".to_string(),
                 status: ToolStatus::Complete,
                 preview: Some("read complete".to_string()),
@@ -360,6 +362,12 @@ fn action_snapshots_track_running_and_commit_completed_tool() {
     assert_eq!(
         app.transcript,
         vec![HistoryCell::Tool {
+            action: Some(crate::history::ActionHistory {
+                owner: "/agent/1".into(),
+                id: "a0".into(),
+                read_only: None,
+                frozen_rows: None,
+            }),
             title: "edit".to_string(),
             status: ToolStatus::Complete,
             preview: None,

@@ -186,6 +186,7 @@ fn submitted_turn_reconnect_reconciles_its_streamed_assistant_preview() {
             HistoryCell::Assistant(preview.to_string()),
         ];
         let tool = HistoryCell::Tool {
+            action: None,
             title: "after answer".to_string(),
             status: ToolStatus::Complete,
             preview: None,
@@ -244,6 +245,7 @@ fn reattached_action_indices_follow_removed_error_cells() {
         HistoryCell::User("current task".to_string()),
         HistoryCell::Error("recoverable provider failure".to_string()),
         HistoryCell::Tool {
+            action: None,
             title: "bash".to_string(),
             status: ToolStatus::Complete,
             preview: Some("first result".to_string()),
@@ -267,6 +269,7 @@ fn reattached_action_indices_follow_removed_error_cells() {
     reattached.upsert_action_cell(
         "action-1".to_string(),
         HistoryCell::Tool {
+            action: None,
             title: "bash".to_string(),
             status: ToolStatus::Failed,
             preview: Some("updated result".to_string()),

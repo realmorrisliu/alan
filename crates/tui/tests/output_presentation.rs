@@ -8,6 +8,7 @@ fn semantic_output_has_no_generated_role_labels_and_keeps_literal_content() {
     let literal = "server> ready; a > b; tool> literal";
     let cells = [
         HistoryCell::Tool {
+            action: None,
             title: "Read src/main.rs".into(),
             status: ToolStatus::Complete,
             preview: Some(literal.into()),
@@ -57,6 +58,7 @@ fn semantic_output_has_no_generated_role_labels_and_keeps_literal_content() {
             assert!(text.contains("server> ready"), "{text}");
         }
         let diff = HistoryCell::Tool {
+            action: None,
             title: "Edit src/界.rs".into(),
             status: ToolStatus::Failed,
             preview: None,

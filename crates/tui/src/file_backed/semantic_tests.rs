@@ -336,6 +336,7 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
             "```rust\n\tlet 界 = 1;\u{1b}\u{7}\n```\n: prose\n! prose\ntool> prose".into(),
         ));
         app.transcript.push(HistoryCell::Tool {
+            action: None,
             title: "Edit".into(),
             status: ToolStatus::Complete,
             preview: None,

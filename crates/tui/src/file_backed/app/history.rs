@@ -9,11 +9,33 @@ impl FileBackedApp {
         if let Some(index) = self.action_cells.get(&action_id).copied()
             && let Some(existing) = self.transcript.get_mut(index)
         {
-            if matches!(existing, HistoryCell::Styled(_)) {
+            if matches!(
+                existing,
+                HistoryCell::Styled(_)
+                    | HistoryCell::Tool {
+                        action: Some(crate::history::ActionHistory {
+                            frozen_rows: Some(_),
+                            read_only: None,
+                            ..
+                        }),
+                        ..
+                    }
+            ) {
                 return;
             }
-            *existing = cell;
-            return;
+            if !matches!(
+                existing,
+                HistoryCell::Tool {
+                    action: Some(crate::history::ActionHistory {
+                        frozen_rows: Some(_),
+                        ..
+                    }),
+                    ..
+                }
+            ) {
+                *existing = cell;
+                return;
+            }
         }
         self.mark_pending_remote_turn_start_if_unbounded();
         let index = self.transcript.len();
@@ -40,12 +62,20 @@ impl FileBackedApp {
         opts: RenderOpts,
         lines_to_prune: usize,
     ) -> usize {
+        self.freeze_committing_actions(opts, lines_to_prune);
         let mut remaining = lines_to_prune;
         let mut index = 0;
         while remaining > 0 && index < self.transcript.len() {
             let is_action = self.action_cells.values().any(|i| *i == index)
                 && matches!(self.transcript[index], HistoryCell::Tool { .. });
-            let rows = if is_action {
+            let rows = if let HistoryCell::Tool {
+                action: Some(action),
+                ..
+            } = &self.transcript[index]
+                && let Some(rows) = &action.frozen_rows
+            {
+                HistoryCell::Styled(rows.clone()).render_styled_lines(opts)
+            } else if is_action {
                 crate::history::action_summary(&self.transcript[index], opts.width)
             } else {
                 self.transcript[index].render_styled_lines(opts)
@@ -61,7 +91,13 @@ impl FileBackedApp {
             if cell_lines > remaining || keep_source {
                 let count = remaining.min(cell_lines);
                 if count > 0 {
-                    if is_action {
+                    if let HistoryCell::Tool {
+                        action: Some(action),
+                        ..
+                    } = &mut self.transcript[index]
+                    {
+                        action.frozen_rows = Some(rows.into_iter().skip(count).collect());
+                    } else if is_action {
                         self.transcript[index] =
                             HistoryCell::Styled(rows.into_iter().skip(count).collect());
                     } else if !self.transcript[index].trim_rendered_prefix(opts, count) {

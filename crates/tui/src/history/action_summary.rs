@@ -7,6 +7,7 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
         status,
         preview,
         presentation,
+        ..
     } = cell
     else {
         return cell.render_styled_lines(RenderOpts::new(width, false));
@@ -61,8 +62,10 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
             },
             if *status == ToolStatus::Failed && !stderr.is_empty() {
                 format!(" · {}", bounded(stderr, 128))
-            } else if *status == ToolStatus::Failed && !stdout.is_empty() {
+            } else if !stdout.is_empty() {
                 format!(" · {}", bounded(stdout, 128))
+            } else if !stderr.is_empty() {
+                format!(" · {}", bounded(stderr, 128))
             } else {
                 String::new()
             },
@@ -85,6 +88,28 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
     rows.into_iter()
         .map(|s| summary_row(&s, width, style))
         .collect()
+}
+
+pub(crate) fn group_summary_header(count: usize, width: usize) -> Line<'static> {
+    summary_row(
+        &format!("{count} read-only actions · completed"),
+        width,
+        ToolStatus::Complete.style(),
+    )
+}
+
+pub(crate) fn group_summary_member(cell: &HistoryCell, width: usize) -> Line<'static> {
+    let HistoryCell::Tool { title, .. } = cell else {
+        unreachable!("eligible Action")
+    };
+    let rows = action_summary(cell, 512);
+    let detail = rows.get(1).map(ToString::to_string).unwrap_or_default();
+    let text = if detail.trim().is_empty() {
+        format!("  {}", bounded(title, 256))
+    } else {
+        format!("  {} · {}", bounded(title, 256), detail.trim())
+    };
+    summary_row(&text, width, ToolStatus::Complete.style())
 }
 
 pub(super) fn summary_row(text: &str, width: usize, style: Style) -> Line<'static> {
@@ -138,6 +163,7 @@ mod tests {
                 ToolStatus::Cancelled,
             ] {
                 let cell = HistoryCell::Tool {
+                    action: None,
                     title: format!("Read {}", "路径🦀".repeat(80)),
                     status,
                     preview: None,
@@ -160,6 +186,7 @@ mod tests {
         for width in [48, 80, 120] {
             for status in [ToolStatus::Complete, ToolStatus::Failed] {
                 let command = HistoryCell::Tool {
+                    action: None,
                     title: "Bash cargo test".into(),
                     status,
                     preview: None,
@@ -189,6 +216,7 @@ mod tests {
                 }
             }
             let file = HistoryCell::Tool {
+                action: None,
                 title: "Read src/main.rs".into(),
                 status: ToolStatus::Complete,
                 preview: None,
@@ -208,6 +236,51 @@ mod tests {
                 text.contains("42 lines") && text.contains("truncated"),
                 "{text}"
             );
+        }
+    }
+
+    #[test]
+    fn command_excerpt_preserves_success_output_and_failure_stderr_priority() {
+        for width in [48, 80, 120] {
+            for (status, stdout, stderr, expected) in [
+                (
+                    ToolStatus::Complete,
+                    "server> ready\na > b",
+                    "",
+                    "server> ready",
+                ),
+                (
+                    ToolStatus::Complete,
+                    "",
+                    "warning: cached",
+                    "warning: cached",
+                ),
+                (
+                    ToolStatus::Failed,
+                    "prior output",
+                    "actual failure",
+                    "actual failure",
+                ),
+            ] {
+                let cell = HistoryCell::Tool {
+                    action: None,
+                    title: "Execute fixture".into(),
+                    status,
+                    preview: None,
+                    presentation: Some(ToolResultPresentation::Command {
+                        cmdline: "fixture".into(),
+                        exit_code: Some(if status == ToolStatus::Failed { 1 } else { 0 }),
+                        stdout: stdout.into(),
+                        stderr: stderr.into(),
+                        truncated: false,
+                    }),
+                };
+                let rows = action_summary(&cell, width);
+                assert_eq!(rows.len(), 2);
+                assert!(rows[0].to_string().contains(status.label()));
+                assert!(rows[1].to_string().contains(expected), "{rows:?}");
+                assert!(rows.iter().all(|row| row.width() <= width));
+            }
         }
     }
 }

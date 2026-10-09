@@ -868,9 +868,13 @@ mod accessibility_tests;
 #[cfg(test)]
 mod action_details_tests;
 #[cfg(test)]
+#[path = "file_backed/grouping_tests.rs"]
+mod grouping_tests;
+#[cfg(test)]
 mod project_review_tests;
 #[cfg(test)]
 mod queue_tests;
+
 #[cfg(test)]
 #[path = "file_backed/semantic_tests.rs"]
 mod semantic_tests;

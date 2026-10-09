@@ -23,6 +23,7 @@ use super::{ProjectAccess, ProjectControl, ProjectMountReceipt, project_dispatch
 
 mod action_modal;
 mod attachment;
+mod grouping;
 mod history;
 mod model_control;
 mod notice;
@@ -68,7 +69,8 @@ pub(super) struct FileBackedApp {
     history_draft_intent: Option<InputIntent>,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
-    pub(super) projected_actions: BTreeMap<(String, String), u64>,
+    /// Existing observation fingerprint plus whether its rows were committed.
+    pub(super) projected_actions: BTreeMap<(String, String), (u64, bool)>,
     pub(super) modal: action_modal::ActionModal,
     pub(super) local_inputs: BTreeMap<String, super::queue::LocalInput>,
     pub(super) skills: super::skills::SkillProjection,
@@ -925,18 +927,9 @@ impl FileBackedApp {
 
     pub(super) fn styled_history_lines(&self, width: usize) -> Vec<Line<'static>> {
         let opts = self.render_opts(width);
-        self.transcript
-            .iter()
-            .enumerate()
-            .flat_map(|(index, cell)| {
-                if self.action_cells.values().any(|i| *i == index)
-                    && matches!(cell, HistoryCell::Tool { .. })
-                {
-                    crate::history::action_summary(cell, width)
-                } else {
-                    cell.render_styled_lines(opts)
-                }
-            })
+        self.history_row_projection(opts)
+            .into_iter()
+            .flatten()
             .collect()
     }
 

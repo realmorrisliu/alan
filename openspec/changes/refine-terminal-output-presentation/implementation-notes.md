@@ -164,8 +164,44 @@ concrete/bounded correlation; builtin tests keep Bash/edit/write unclassified;
 Host Mount tests check revoked/replaced grants and absence of native backing paths.
 
 Full affected suites passed: Runtime 1,405 library tests plus 20 integration tests
-(one existing ignored), protocol 57 library plus eight integration tests,
+(one existing ignored), protocol 57 library plus seven integration tests,
 Service Manager 146 library plus two integration tests, tools 138 library tests,
 TUI 352 library plus 12 integration tests. Receipt: `target/group-tests.log`.
 Full `just quality` passed (`target/group-quality.log`). This qualifies metadata,
 not rendered groups or the complete native matrix. Tasks 3.2/3.3 remain open.
+
+## Rendered read-only groups and useful command excerpts
+
+Runtime-qualified neighboring Actions now share one bounded completion header
+and one concrete operation/excerpt row per member. Their original cells retain
+concrete Process/Action identity, context and result. The existing detail catalog
+still selects each Action individually. Missing/invalid eligibility, different
+Process/submission/authority, messages, explicit commands, plan records and
+non-successful/unknown-classified Actions end the group.
+
+A physical prefix drain freezes the involved group rows before pruning any
+member. Frozen cells retain source identity for reconciliation; content equality
+cannot substitute a different Process/Action. The existing observation map also
+records committed eligible presentations. Repeated observations are suppressed;
+changed evidence becomes a standalone update, preserving both old rows and a
+new failure if reported. No operation is executed by this projection.
+
+Native acceptance found that `/agent/root` was being compared with the concrete
+metadata owner, disabling groups in the shipped entry path. A RED regression
+reproduced it. The renderer now reuses the existing attachment's concrete queue
+owner, including known-owner/unknown-queue state, and ignores stale Action file
+refreshes for another owner. Detached/mismatched metadata remains standalone.
+The existing project lost-ack fixture now supplies its actual attached owner.
+
+Command summaries preserve bounded successful stdout, falling back to stderr
+when stdout is absent; failures prioritize stderr. Actual exit/status and full
+separate streams remain authoritative and available in retained details.
+
+Current focused TUI results: 358 library and 12 integration tests passed.
+Full `just quality`, including workspace Clippy/Rustdoc, source-size/architecture
+checks and standalone distribution, passed. Tests cover 48/80/120-column group
+rows, invalid eligibility, distinct and repeated identities, partial drains,
+late updates, reconnect and the Root alias. See `native-acceptance.md` for the
+fresh targeted run and its earlier failed candidate. Older-Process detail
+navigation, comprehensive resize/drain/reattachment qualification and the whole
+native workflow matrix remain open; task 3.3 is not claimed complete.

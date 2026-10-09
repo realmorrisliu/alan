@@ -232,6 +232,9 @@ fn retained_history_matches(
             .enumerate()
             .all(|(index, (replacement, retained))| {
                 replacement == retained
+                    || matches!((replacement, retained),
+                        (HistoryCell::Tool { action: Some(full), .. }, HistoryCell::Tool { action: Some(tail), .. })
+                        if tail.frozen_rows.is_some() && full.owner == tail.owner && full.id == tail.id)
                     || matches!((replacement.assistant_source(), retained.assistant_source()),
                         (Some(full), Some(preview))
                         if !preview.is_empty() && full.starts_with(preview))
@@ -242,6 +245,21 @@ fn retained_history_matches(
 }
 
 fn rendered_history_suffix_matches(replacement: &HistoryCell, retained: &HistoryCell) -> bool {
+    if matches!(
+        replacement,
+        HistoryCell::Tool {
+            action: Some(_),
+            ..
+        }
+    ) || matches!(
+        retained,
+        HistoryCell::Tool {
+            action: Some(_),
+            ..
+        }
+    ) {
+        return false;
+    }
     // Assistant identity is source-aware, never inferred from rendered role-like prefixes.
     if replacement.assistant_source().is_some() || retained.assistant_source().is_some() {
         return false;
