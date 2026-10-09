@@ -11,6 +11,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import time
 
 CACHE_TAG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
 
@@ -44,7 +45,7 @@ def sidecar(path, suffix):
 
 
 @contextmanager
-def locked(path, exclusive=True, create=True):
+def locked(path, exclusive=True, create=True, timeout=0):
     flags = os.O_RDWR | os.O_NOFOLLOW | (os.O_CREAT if create else 0)
     fd = os.open(path, flags, 0o600)
     try:
@@ -52,7 +53,15 @@ def locked(path, exclusive=True, create=True):
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
             raise ValueError(f"unsafe build lock: {path}")
         operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(fd, operation | fcntl.LOCK_NB)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, operation | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
         yield fd
     finally:
         os.close(fd)
@@ -145,30 +154,54 @@ def register_output(owner, path, purpose):
     write_receipt(records / f"{key}.json", receipt)
 
 
+def admission_lock(owner):
+    common = Path(git(owner, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    return common / "alan-build-admission.lock"
+
+
+def lease_ancestors(path, stack, descriptors):
+    for ancestor in reversed(path.parents):
+        lock = sidecar(ancestor, "lock")
+        if str(ancestor) not in descriptors and (lock.exists() or lock.is_symlink()):
+            descriptors[str(ancestor)] = stack.enter_context(
+                locked(lock, exclusive=False, create=False))
+
+
 @contextmanager
 def build_lease(owner, roots, purpose):
-    inherited = inherited_leases(owner)
+    descriptors = inherited_leases(owner)
     with ExitStack() as stack:
-        descriptors = []
-        for path in sorted(set(roots)):
-            validate_location(owner, path)
-            if str(path) in inherited:
-                descriptors.append(inherited[str(path)])
-                continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                fd = stack.enter_context(locked(sidecar(path, "lock")))
-            except BlockingIOError:
-                fd = stack.enter_context(locked(sidecar(path, "lock"), exclusive=False))
-                record = registered_outputs(owner).get(path)
-                if record is None or record[1]["purpose"] != purpose:
-                    raise ValueError(f"busy output has no matching ownership receipt: {path}")
-                verify_receipt(owner, path, record[1])
-            else:
-                register_output(owner, path, purpose)
-            descriptors.append(fd)
-        for fd in descriptors:
-            fcntl.flock(fd, fcntl.LOCK_SH)
+        # Serialize topology changes, not compilation, across linked worktrees.
+        with locked(admission_lock(owner), timeout=30):
+            for path in sorted(set(roots)):
+                validate_location(owner, path)
+                lease_ancestors(path, stack, descriptors)
+                if str(path) in descriptors:
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    fd = stack.enter_context(locked(sidecar(path, "lock")))
+                except BlockingIOError:
+                    fd = stack.enter_context(locked(sidecar(path, "lock"), exclusive=False))
+                    record = registered_outputs(owner).get(path)
+                    if record is None or record[1]["purpose"] != purpose:
+                        raise ValueError(f"busy output has no matching ownership receipt: {path}")
+                    verify_receipt(owner, path, record[1])
+                else:
+                    register_output(owner, path, purpose)
+                descriptors[str(path)] = fd
+            records = registered_outputs(owner)
+            for path in roots:
+                # A different repository may have registered an ancestor meanwhile.
+                lease_ancestors(path, stack, descriptors)
+                if path in records:
+                    verify_receipt(owner, path, records[path][1])
+                elif owner / "target" in [path, *path.parents]:
+                    identity(path)
+                else:
+                    raise ValueError(f"inherited output has no ownership receipt: {path}")
+            for fd in descriptors.values():
+                fcntl.flock(fd, fcntl.LOCK_SH)
         yield descriptors
 
 
@@ -269,7 +302,8 @@ def inventory(owner):
 
 def clean_output(owner, root, record_path, record, apply=False):
     with ExitStack() as locks:
-        locks.enter_context(locked(sidecar(root, "lock"), create=False))
+        admission = locks.enter_context(locked(admission_lock(owner)))
+        output_lock = locks.enter_context(locked(sidecar(root, "lock"), create=False))
         if not root.exists():
             return "absent"
         verify_receipt(owner, root, record)
@@ -297,7 +331,7 @@ def clean_output(owner, root, record_path, record, apply=False):
         subprocess.run([
             "cargo", "clean", "--manifest-path", str(owner / "Cargo.toml"),
             "--target-dir", str(root), "--config", "build.build-dir=" + json.dumps(str(root)),
-        ], cwd=owner, check=True)
+        ], cwd=owner, check=True, pass_fds=(admission, output_lock))
         if root.exists():
             return "retained-or-recreated"
         record_path.unlink()
@@ -327,9 +361,8 @@ def run_command(owner, workspace, roots, purpose, command, target=None, evidence
             log = stack.enter_context((evidence / "build.log").open("x"))
             write_receipt(evidence / "build.json", report)
             print(f"Disposable build diagnostics: {evidence}", flush=True)
-        descriptors = stack.enter_context(build_lease(owner, roots, purpose))
+        locks = stack.enter_context(build_lease(owner, roots, purpose))
         env = dict(os.environ)
-        locks = inherited_leases(owner) | dict(zip(map(str, roots), descriptors))
         env["ALAN_BUILD_LEASE"] = json.dumps({"owner": str(owner), "locks": locks})
         env["ALAN_BUILD_OWNER"] = str(owner)
         if target is not None:

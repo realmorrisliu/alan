@@ -2,6 +2,8 @@
 """Safety tests for repository build output leases and ownership receipts."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import os
 import signal
 import time
@@ -113,10 +115,91 @@ class BuildArtifactTests(unittest.TestCase):
                     with artifacts.locked(artifacts.sidecar(self.output, "lock")):
                         self.fail("cleaner acquired a shared output")
 
+    def test_first_producers_wait_for_registration_then_share(self):
+        registering, release, joined = threading.Event(), threading.Event(), threading.Event()
+        original = artifacts.register_output
+
+        def register(*args):
+            registering.set()
+            self.assertTrue(release.wait(5))
+            return original(*args)
+
+        def producer(second=False):
+            with artifacts.build_lease(self.owner, [self.output], "task"):
+                if second:
+                    joined.set()
+                else:
+                    self.assertTrue(joined.wait(5))
+
+        with patch.object(artifacts, "register_output", side_effect=register):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(producer)
+                try:
+                    self.assertTrue(registering.wait(5))
+                    second = pool.submit(producer, True)
+                    self.assertFalse(joined.wait(0.1))
+                finally:
+                    release.set()
+                second.result(timeout=5)
+                first.result(timeout=5)
+
+    def test_nested_admission_waits_until_parent_cleanup_finishes(self):
+        self.task_source()
+        other = self.root / "linked"
+        subprocess.run(["git", "-C", str(self.owner), "worktree", "add", "--detach", "-q",
+                        str(other)], check=True)
+        record_path, record = self.record()
+        scanning, release, entered, finish = (threading.Event() for _ in range(4))
+        nested = self.output / "debug/nested"
+
+        def scan():
+            scanning.set()
+            self.assertTrue(release.wait(5))
+            return []
+
+        def producer():
+            with artifacts.build_lease(other, [nested], "task"):
+                (nested / "active").write_text("keep")
+                entered.set()
+                self.assertTrue(finish.wait(5))
+
+        with patch.object(artifacts, "open_paths", side_effect=scan):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                cleaner = pool.submit(artifacts.clean_output, self.owner, self.output,
+                                      record_path, record, True)
+                try:
+                    self.assertTrue(scanning.wait(5))
+                    builder = pool.submit(producer)
+                    self.assertFalse(entered.wait(0.1))
+                    release.set()
+                    self.assertEqual(cleaner.result(timeout=5), "cleaned")
+                    self.assertTrue(entered.wait(5))
+                    self.assertEqual((nested / "active").read_text(), "keep")
+                finally:
+                    release.set()
+                    finish.set()
+                builder.result(timeout=5)
+
+    def test_nested_child_retains_ancestor_lease_after_wrapper_exits(self):
+        self.record()
+        nested = self.output / "debug/nested"
+        with artifacts.build_lease(self.owner, [nested], "task") as descriptors:
+            self.assertIn(str(self.output), descriptors)
+            child = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                     pass_fds=descriptors.values())
+        try:
+            with self.assertRaises(BlockingIOError):
+                with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+                    self.fail("parent cleanup entered while a nested child was alive")
+        finally:
+            child.communicate(timeout=5)
+        with artifacts.locked(artifacts.sidecar(self.output, "lock")):
+            pass
+
     def test_child_holds_lease_after_parent_releases_its_handles(self):
         with artifacts.build_lease(self.owner, [self.output], "task") as descriptors:
             child = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                                     pass_fds=descriptors)
+                                     pass_fds=descriptors.values())
         try:
             with self.assertRaises(BlockingIOError):
                 with artifacts.locked(artifacts.sidecar(self.output, "lock")):
@@ -127,14 +210,17 @@ class BuildArtifactTests(unittest.TestCase):
             pass
 
     def test_nested_commands_keep_the_outer_quality_lease(self):
+        self.record()
+        output = self.output / "debug/quality"
         script = str(Path(artifacts.__file__).resolve())
         runner = ["python3", script, "--owner", str(self.owner), "run",
-                  "--target-dir", str(self.output)]
+                  "--target-dir", str(output)]
         check = ("import json, os; value=json.loads(os.environ['ALAN_BUILD_LEASE']); "
-                 "[os.fstat(fd) for fd in value['locks'].values()]")
+                 "[os.fstat(fd) for fd in value['locks'].values()]; "
+                 f"assert {str(self.output)!r} in value['locks']")
         subprocess.run(runner + ["--purpose", "quality", "--"] + runner +
                        ["--", "python3", "-c", check], cwd=self.owner, check=True)
-        receipt = artifacts.read_receipt(artifacts.sidecar(self.output, "json"))
+        receipt = artifacts.read_receipt(artifacts.sidecar(output, "json"))
         self.assertEqual(receipt["purpose"], "quality")
         with artifacts.locked(artifacts.sidecar(self.output, "lock")):
             pass
@@ -276,6 +362,33 @@ class BuildArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "replaced"):
             artifacts.clean_output(self.owner, self.output, path, receipt, True)
         self.assertTrue(self.output.is_dir())
+
+    def test_cleanup_child_retains_exclusion_after_wrapper_releases_handles(self):
+        record_path, record = self.record()
+        original = subprocess.run
+        children = []
+
+        def run(command, **kwargs):
+            if command[:2] != ["cargo", "clean"]:
+                return original(command, **kwargs)
+            children.append(subprocess.Popen(
+                ["cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                pass_fds=kwargs.get("pass_fds", ())))
+            return subprocess.CompletedProcess(command, 0)
+
+        try:
+            with patch.object(artifacts, "open_paths", return_value=[]), \
+                    patch.object(artifacts.subprocess, "run", side_effect=run):
+                self.assertEqual(artifacts.clean_output(
+                    self.owner, self.output, record_path, record, True), "retained-or-recreated")
+            for lock in [artifacts.admission_lock(self.owner),
+                         artifacts.sidecar(self.output, "lock")]:
+                with self.assertRaises(BlockingIOError):
+                    with artifacts.locked(lock):
+                        self.fail("live cleanup child lost exclusion")
+        finally:
+            for child in children:
+                child.communicate(timeout=5)
 
     def test_distinct_configured_intermediate_output_is_reported(self):
         with patch.dict(os.environ, {"CARGO_TARGET_DIR": str(self.output),

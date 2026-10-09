@@ -40,6 +40,15 @@ Artifact cleanup SHALL default to a dry run, require explicit application, and r
 - **WHEN** a producer acquires a managed output root before cleanup obtains exclusive access
 - **THEN** cleanup skips or waits without deleting that producer's files
 
+#### Scenario: Nested output starts while its parent is being cleaned
+- **WHEN** a builder requests an output nested beneath a managed parent being cleaned
+- **THEN** admission waits or fails before starting the build
+- **AND** an admitted nested producer retains ancestor exclusion through its consumers
+
+#### Scenario: First producers start together
+- **WHEN** concurrent producers request the same absent managed output
+- **THEN** they serialize initial registration and verify ownership before sharing build access
+
 #### Scenario: Output reappears
 - **WHEN** another task recreates a cleaned output directory
 - **THEN** cleanup reports the new activity and does not repeatedly delete it
