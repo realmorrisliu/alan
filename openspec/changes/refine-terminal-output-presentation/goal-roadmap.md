@@ -127,6 +127,23 @@ harnesses and CodeQL. PR #1044 remains draft with complete native acceptance
 and final review open. Personal-store adoption still awaits explicit source
 selection; that is an operational prerequisite, not a missing UI feature.
 
+The user explicitly selected `dev` on 2026-10-09. Fresh read-only validation
+passed, then the installation transaction committed all three components.
+Independent byte inventories verified all 2,171 service files, two credential
+files and the auth file unchanged in the old source and identical in canonical
+payload immediately after adoption. The source control lock remains in dev and
+was not copied. `connection current` resolves `chatgpt-main`; the new native
+invocation displays `gpt-6.1-sol` medium. No source cleanup or cross-source merge
+was performed. Goal execution resumed; source selection is no longer a blocker.
+
+Documentation head `f2a9222d` also passed all 16 CI checks. Its newly built binary
+has SHA-256 `eaf18e8264d939b2a7043ef6e4cb3554489c9ee7eefef0b163b29132ad9e182d`.
+The fresh ordinary PTY 80×22 invocation has completed all five frozen workflows
+with source/ledger assertions after normal exit: 5/30 current-candidate workflow
+slots, separate from the 10/30 older-candidate receipts. UI tasks remain 12/17;
+the other five host/width slots, final review, merge and canonical sync remain
+open. See `acceptance-matrix.md` for the current matrix and operational receipts.
+
 ## Read-only preparation for the Linux follow-up
 
 This inventory prepares delivery 2 while source selection for delivery 1 is

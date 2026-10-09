@@ -187,3 +187,73 @@ Code Coverage failed in an installation migration lock-release test. This is
 a real failed gate; local tests against the prior base do not override it.
 The branch is integrating the new main and diagnosing the shared guard lifetime
 before final-head gates and further native qualification.
+
+## Canonical installation candidate after explicit dev adoption
+
+User selection: `dev`, 2026-10-09. Source compatibility and lock repairs are
+committed, and head `f2a9222de62d1675233863d0c4ed0e9d9dc33352` passed all 16 CI
+checks. Real read-only validation reports three components; apply reports
+`committed`. Independent inventories confirm source payload bytes unchanged
+and canonical payload identical immediately after adoption (2,171 service
+files, two credential files, one auth file). The exact legacy control lock stays
+in the source and is not copied. Receipts are
+`target/dev-adoption-{final-dry-run,applied,source-before,verified}.json` and
+`target/dev-adoption-connection-current.log`. No source cleanup, implicit choice
+or cross-source merge occurred.
+
+Fresh binary SHA-256:
+`eaf18e8264d939b2a7043ef6e4cb3554489c9ee7eefef0b163b29132ad9e182d`.
+Six independent clean clones retain the original Git baseline and byte hashes;
+manifest is `target/f2a-native-fixtures.json`. Historical captures above remain
+separate. Each new slot still requires its own actual observations and effects.
+
+| Host / columns | Fresh fixture | Reads | Commands | Edit/diff | Authority lifecycle | Long follow-up |
+| --- | --- | --- | --- | --- | --- | --- |
+| Ordinary PTY / 48 | f2a-pty48 | pending | pending | pending | pending | pending |
+| Ordinary PTY / 80 | f2a-pty80 | passed supported task | passed | passed | positive flow and negative control passed | passed |
+| Ordinary PTY / 120 | f2a-pty120 | pending | pending | pending | pending | pending |
+| Herdr / 48 | f2a-herdr48 | pending | pending | pending | pending | pending |
+| Herdr / 80 | f2a-herdr80 | pending | pending | pending | pending | pending |
+| Herdr / 120 | f2a-herdr120 | pending | pending | pending | pending | pending |
+
+### Ordinary PTY / 80, canonical candidate
+
+Terminal 80×22; owned runtime `~/Library/Caches/Alan/f2p80`, concrete Root
+`/agent/8`, `chatgpt-main`, effective `gpt-6.1-sol` medium. Actual selector Esc
+cancelled, then explicit read-only selection preceded the first model task.
+The supported task read three files once without a standalone search Tool,
+answered 3/2/180 lines and exact literal matches, and grouped the three eligible
+reads. Distinct sample/pager details retain original bytes and concrete owner;
+Esc restored `矩阵草稿 中文😀` at cursor (20,17), zero-based.
+
+After explicit revoke and read-write selection, success and exit-7 failure are
+standalone, retain separate stdout/stderr and actual exit state. Success prints
+Chinese/emoji plus `server> ready` and adds exactly one `command-once` line.
+Command detail Esc restores its same draft/cursor (19,17). The model invokes
+edit_file once for `a + b` → `a - b`: inline title shows the resolved path once
+with `+1 -1`; retained +/- diff, rust code boundary, answer spacing and literal
+comment remain usable. Edit draft Esc restores cursor (20,17).
+
+Waiting commands were interrupted in under four seconds of their 30-second
+delay. Actual UI retains failed/unknown-effect diagnostics and pauses the
+successor. Revoke → explicit reapproval leaves it paused with unchanged ledger;
+only `/continue` appends one `resumed-once`. A separate revoked continuation
+fails at Tool authorization with no effect. The unrecovered Root consumes that
+negative-control input; it is not durable recovery preflight/retention evidence.
+
+The long follow-up reads pager/sample once each, answers exact line 180 and
+subtraction behavior, and groups those eligible reads separately. Space paging
+shows lines 173–180 followed by original raw bytes. Plans 7 and 6 have distinct
+completed/in-progress states and explanations; navigating to retained plan 1
+shows the original task's exact pending/in-progress snapshot. No latest-plan
+substitution occurs. Esc restores `后续草稿 中文😀` at cursor (20,17).
+
+The invocation exits `/quit` status 0. More than 245 seconds after the last
+cancelled command was submitted, assertions verify README/pager byte-identical,
+sample exactly one requested replacement, tracked diff only sample.rs,
+untracked files only effects.log, and ledger exactly
+`command-once\nresumed-once\n`. Cancelled and unauthorized tails are absent.
+Receipts are `target/f2p80-01-launch.json` through `f2p80-48-exit.json` and
+`target/f2p80-acceptance.json`. The VT replay uses the existing vt100 dependency;
+observation windows include capture gaps and are not model-runtime latency.
+This is 5/30 current-candidate slots, not repeated-development qualification.
