@@ -120,3 +120,46 @@ exclusion; unknown names, directories and symlinks remain rejected. No user data
 migration was executed. Native qualification needs the user's explicit choice
 of source before adoption into the canonical installation. These previews do
 not constitute successful UI or Linux qualification.
+
+Head `c473c24e26807e0847c6eb4446537559fbc9dac7` subsequently passed all 16 CI
+checks, including macOS/Ubuntu tests, coverage, both release builds, quality,
+harnesses and CodeQL. PR #1044 remains draft with complete native acceptance
+and final review open. Personal-store adoption still awaits explicit source
+selection; that is an operational prerequisite, not a missing UI feature.
+
+## Read-only preparation for the Linux follow-up
+
+This inventory prepares delivery 2 while source selection for delivery 1 is
+pending. It neither activates delivery 2 nor changes this UI change's three
+normative capability owners. No Linux packages, mounts or toolchains were
+installed or modified by these probes.
+
+The existing `reified_namespace` plan/runner and Host Mount authority remain
+the implementation owners. The runner clears inherited environment and uses a
+fixed system command PATH; its user-PATH readiness check rejects executable
+directories outside the read-only execution substrate or a changed search
+order. This conservative fallback must remain until a real toolchain projection
+passes the existing confinement and authority gates. Installing Rust alone
+does not solve that product gap.
+
+On 2026-10-09, the already-running OrbStack `ubuntu` machine is aarch64, kernel
+`7.0.14-orbstack-00380-ga7e0a2dc9535`, ordinary UID 501. Shell and C compiler
+exist, but git is absent. Cargo/rustc resolve through `/home/morris/.cargo/bin`
+to rustup and report 1.96.0, while this checkout pins 1.97.0. Its PATH also
+contains OrbStack executable directories outside the default substrate. The
+unprivileged combined user/mount/PID/network namespace probe exits 0; this
+proves namespace creation only, not bind/remount, seccomp, full backend selection
+or developer-task qualification. Raw receipts are
+`target/linux-follow-up-environment.json` and
+`target/linux-follow-up-namespace-probe.json`.
+
+The subsequent independent change therefore needs both an explicit reproducible
+Linux fixture with git and the required Rust version, and owner-correct support
+for selected shell/git/Rust paths, runtime data and isolated writable dependency
+caches. Preserve executable choice and PATH order; do not expose the whole home
+directory or silently replace tools. Test real local dependency build/test,
+git diff, absence, unsafe paths, read-only grants, revocation and descendant
+cancellation. Existing runner tests can return early when capability probes
+fail; qualification must inspect readiness and skip diagnostics, rather than
+count such an early return as a native pass. Node/Python stay outside this
+delivery until a recorded task requires them.
