@@ -25,6 +25,7 @@ pub struct ExtendedMetadata {
 impl ExtendedMetadata {
     pub fn read(file: &File) -> Result<Self> {
         let fd = file.as_raw_fd();
+        // SAFETY: File keeps fd alive; read_buffer supplies writable capacity or a zero-size query.
         let names = read_buffer(|buffer, size| unsafe {
             #[cfg(target_os = "macos")]
             {
@@ -42,6 +43,7 @@ impl ExtendedMetadata {
             .filter(|name| !name.is_empty())
         {
             let name = CString::new(bytes)?;
+            // SAFETY: name is NUL-terminated and the output buffer has the supplied capacity.
             let value = read_buffer(|buffer, size| unsafe {
                 #[cfg(target_os = "macos")]
                 {
@@ -73,12 +75,14 @@ impl ExtendedMetadata {
         let fd = file.as_raw_fd();
         let current = file.metadata()?;
         if current.uid() != self.owner || current.gid() != self.group {
+            // SAFETY: fd remains owned by File; scalar IDs are passed without pointer access.
             syscall(unsafe { libc::fchown(fd, self.owner, self.group) } as isize)
                 .context("preserve migration file ownership")?;
         }
         for name in Self::read(file)?.attributes.keys() {
             if !self.attributes.contains_key(name) {
                 let name = CString::new(name.as_bytes())?;
+                // SAFETY: fd is live and CString keeps the terminated attribute name alive.
                 let result = unsafe {
                     #[cfg(target_os = "macos")]
                     {
@@ -94,6 +98,7 @@ impl ExtendedMetadata {
         }
         for (name, value) in &self.attributes {
             let name = CString::new(name.as_bytes())?;
+            // SAFETY: fd, name and value remain live for the synchronous call; length matches value.
             let result = unsafe {
                 #[cfg(target_os = "macos")]
                 {
@@ -162,6 +167,7 @@ mod macos {
     }
     impl Drop for Allocation {
         fn drop(&mut self) {
+            // SAFETY: Allocation exclusively owns a non-null object returned by an ACL allocator.
             unsafe {
                 acl_free(self.0);
             }
@@ -169,18 +175,21 @@ mod macos {
     }
 
     pub(super) fn read(fd: c_int) -> Result<Option<String>> {
+        // SAFETY: the caller holds the File descriptor; the ACL allocation is adopted below.
         let raw = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
         if raw.is_null() && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
             return Ok(None);
         }
         let acl = Allocation::new(raw)?;
         let mut length = 0;
+        // SAFETY: acl is a live native ACL and length points to writable ssize_t storage.
         let text = Allocation::new(unsafe { acl_to_text(acl.0, &mut length) }.cast())?;
         ensure!(
             (0..=MAX_METADATA as isize).contains(&length),
             "ACL exceeds supported size"
         );
         Ok(Some(
+            // SAFETY: acl_to_text returns an owned NUL-terminated string held by text.
             unsafe { CStr::from_ptr(text.0.cast()) }
                 .to_str()?
                 .to_owned(),
@@ -190,10 +199,13 @@ mod macos {
     pub(super) fn apply(fd: c_int, text: Option<&str>) -> Result<()> {
         let acl = if let Some(text) = text {
             let text = CString::new(text)?;
+            // SAFETY: CString supplies a terminated text buffer retained through parsing.
             Allocation::new(unsafe { acl_from_text(text.as_ptr()) })?
         } else {
+            // SAFETY: zero requests an empty native ACL; Allocation checks for failure.
             Allocation::new(unsafe { acl_init(0) })?
         };
+        // SAFETY: both fd and acl remain live; acl_set_fd_np does not take allocation ownership.
         syscall(unsafe { acl_set_fd_np(fd, acl.0, ACL_TYPE_EXTENDED) } as isize)?;
         Ok(())
     }
@@ -205,8 +217,10 @@ mod tests {
 
     #[test]
     fn staging_preserves_an_alternate_group_when_the_user_has_one() {
+        // SAFETY: a zero count permits a null pointer for the group-count query.
         let count = syscall(unsafe { libc::getgroups(0, std::ptr::null_mut()) } as isize).unwrap();
         let mut groups = vec![0; count];
+        // SAFETY: groups has count initialized gid_t entries and remains allocated during the call.
         syscall(unsafe { libc::getgroups(count as i32, groups.as_mut_ptr()) } as isize).unwrap();
         let file = tempfile::tempfile().unwrap();
         let mut expected = ExtendedMetadata::read(&file).unwrap();
