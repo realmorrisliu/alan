@@ -12,6 +12,7 @@ existing capabilities listed in `proposal.md`, follows the immutable archived
 ownership of `unify-agent-command-input`.
 
 Linux toolchain expansion, broader development qualification, installation/cache
-lifecycle and input auto-routing remain with their separate work. In particular,
-this change does not activate the independently proposed
-`unify-alan-installation-and-cache-lifecycle` work.
+lifecycle and input auto-routing remain with their separate work. The independent
+`unify-alan-installation-and-cache-lifecycle` implementation merged as PR #1042.
+This branch integrates that base and fixes only compatibility and lock-lifetime
+failures exposed during qualification; it does not expand installation scope.

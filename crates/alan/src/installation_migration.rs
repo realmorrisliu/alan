@@ -23,7 +23,7 @@ pub async fn validate_store_pair(system: &Path, host: &Path) -> Result<()> {
 }
 
 async fn validate_pair(system: &Path, host: &Path, ignored: &[&str]) -> Result<()> {
-    let system_entries = ["services"]
+    let system_entries = ["services", "legacy-connections-migration.lock"]
         .into_iter()
         .chain(ignored.iter().copied())
         .collect::<Vec<_>>();
@@ -37,6 +37,14 @@ async fn validate_pair(system: &Path, host: &Path, ignored: &[&str]) -> Result<(
     .chain(ignored.iter().copied())
     .collect::<Vec<_>>();
     check_entries(system, &system_entries)?;
+    match fs::symlink_metadata(system.join("legacy-connections-migration.lock")) {
+        Ok(metadata) => ensure!(
+            metadata.is_file(),
+            "legacy migration lock is not a regular file"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     check_entries(host, &host_entries)?;
     check_entries(
         &host.join("credentials"),

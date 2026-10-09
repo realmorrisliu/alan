@@ -3,7 +3,7 @@
 The user authorized implementation of the confirmed terminal design, common
 Linux tooling and repeated real development acceptance. The execution goal is
 active. This roadmap links deliveries; it does not expand the UI change's
-normative scope or activate the independent installation/cache change.
+normative scope or expand the independently delivered installation/cache change.
 
 ## Ordered deliveries and completion gates
 
@@ -105,8 +105,18 @@ passes 2,957 tests (15 existing ignored); the separate opt-in real-process
 migration/rollback probe, full quality and strict OpenSpec 68/68 also pass.
 Fresh-head CI remains required; draft PR #1044 is not merge-ready.
 
-Further local native qualification first needs installation source compatibility:
-the new CLI refuses pre-adoption legacy stores, and read-only dry runs of both
-explicit sources reject the built-in `legacy-connections-migration.lock`.
-No user data migration was executed. Resolve that reader gap before preparing
-a concrete source selection; it is not a successful UI or Linux qualification.
+CI on `f29a0d57` passed coverage but failed the Ubuntu test suite: a manually
+acquired test probe also relied on descriptor close instead of explicit unlock.
+The macOS suite was cancelled by fail-fast, not passed. The test now releases its
+probe explicitly. Three further RED/GREEN cases qualify known legacy control
+metadata, exclusion of active connection migration and the legacy owner's lock
+release. The current compatibility candidate passes 2,959 workspace tests with
+15 existing ignored, full quality and strict OpenSpec 68/68; new-head CI is pending.
+
+Both real-store read-only dry runs now pass: `dev` reports three payload
+components and `stable` one. The exact known regular migration lock is retained
+as source control metadata, excluded from copied payload and covered by writer
+exclusion; unknown names, directories and symlinks remain rejected. No user data
+migration was executed. Native qualification needs the user's explicit choice
+of source before adoption into the canonical installation. These previews do
+not constitute successful UI or Linux qualification.

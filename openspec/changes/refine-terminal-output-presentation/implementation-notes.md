@@ -351,3 +351,39 @@ then rejected the built-in `legacy-connections-migration.lock` at the System
 Store root. No data migration was executed. This source-layout compatibility
 finding must be resolved before preparing a concrete source selection and
 resuming native UI qualification; neither refusal is a native UI pass.
+
+## Legacy control metadata compatibility and fresh qualification
+
+CI on `f29a0d57` passed coverage but failed Ubuntu job `113730282335` at
+`retains_existing_native_lock_and_never_creates_missing_lock_files`. Its manually
+held raw probe still used descriptor close; a concurrent fork could retain that
+description. The test now explicitly unlocks the probe, matching production
+guard semantics. The fail-fast macOS cancellation is not a passing test result.
+
+Three deterministic regressions failed before this slice: a known regular
+`legacy-connections-migration.lock` was rejected, an active legacy connection
+migration did not exclude adoption/rollback, and its own guard retained a lock
+through a duplicate descriptor (`target/legacy-layout-red.log`,
+`legacy-exclusion-red.log`, `legacy-lock-red.log`). The existing validator now
+accepts only that exact regular control file; directories, symlinks and unknown
+names remain rejected. SourceLocks retains its native lock for adoption and
+rollback; the existing LegacyMigrationLock owner explicitly unlocks on Drop.
+The transaction fixture verifies dry-run/apply/retry/rollback preserve source
+marker bytes and do not copy the marker into canonical payload. No dependency,
+new migration option, unknown-file exemption or retry policy was introduced.
+
+Green checks pass 49 Host tests (two existing ignored), 35 migration tests and
+2,959 workspace tests (zero failed, 15 existing ignored, 99 suites). The opt-in
+real-process exclusion/rollback probe passes separately with no other Alan
+invocation running. `just quality` and strict OpenSpec 68/68 pass. Receipts are
+`target/legacy-compat-{host-tests,migration-tests,workspace-tests,native-process,
+quality,openspec}.log`. Review and CI must qualify the next committed head.
+
+Real-store read-only dry runs now validate `dev` (three payload components) and
+`stable` (one), recorded in `target/legacy-compat-{dev,stable}-dry-run.json`.
+An initial concurrent stable probe was refused because the dev CLI was still
+running; the sequential retry passed. This refusal is retained as harness
+interference, not reclassified as a source failure or successful migration.
+No user data migration was executed. The canonical startup requires explicit
+source selection, which remains the user's choice before native qualification
+can resume. Older UI captures still do not qualify this installation candidate.

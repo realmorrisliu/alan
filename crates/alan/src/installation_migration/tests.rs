@@ -1,6 +1,30 @@
 use super::*;
 
 #[tokio::test]
+async fn known_legacy_migration_lock_is_regular_source_metadata_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let system = temp.path().join("system");
+    let host = temp.path().join("host");
+    fs::create_dir_all(&system).unwrap();
+    let lock = system.join("legacy-connections-migration.lock");
+    fs::write(&lock, "retained marker").unwrap();
+    validate_store_pair(&system, &host).await.unwrap();
+    assert_eq!(fs::read_to_string(&lock).unwrap(), "retained marker");
+    fs::remove_file(&lock).unwrap();
+    fs::create_dir(&lock).unwrap();
+    assert!(validate_store_pair(&system, &host).await.is_err());
+    fs::remove_dir(&lock).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(temp.path().join("missing"), &lock).unwrap();
+        assert!(validate_store_pair(&system, &host).await.is_err());
+        fs::remove_file(&lock).unwrap();
+    }
+    fs::write(system.join("unknown.lock"), "not a known owner").unwrap();
+    assert!(validate_store_pair(&system, &host).await.is_err());
+}
+
+#[tokio::test]
 async fn empty_pair_validation_does_not_create_stores() {
     let temp = tempfile::tempdir().unwrap();
     validate_store_pair(&temp.path().join("system"), &temp.path().join("host"))

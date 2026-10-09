@@ -32,6 +32,7 @@ impl SourceLocks {
     fn acquire_inner(system: &Path, host: &Path, require_payload_locks: bool) -> Result<Self> {
         let mut locks = Self { _locks: Vec::new() };
         for (path, payload) in [
+            (system.join("legacy-connections-migration.lock"), None),
             (
                 system.join("services/connections/connections.toml.lock"),
                 Some(system.join("services/connections/connections.toml")),
@@ -162,6 +163,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_legacy_connection_migration_excludes_adoption_and_rollback() {
+        let temp = tempfile::tempdir().unwrap();
+        let system = temp.path().join("system");
+        let host = temp.path().join("host");
+        fs::create_dir(&system).unwrap();
+        let path = system.join("legacy-connections-migration.lock");
+        fs::write(&path, "source control metadata").unwrap();
+        let writer = File::open(&path).unwrap();
+        writer.try_lock().unwrap();
+        assert!(SourceLocks::acquire(&system, &host).is_err());
+        assert!(SourceLocks::acquire_for_rollback(&system, &host).is_err());
+        writer.unlock().unwrap();
+        SourceLocks::acquire(&system, &host).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), "source control metadata");
+    }
+
+    #[test]
     fn known_cli_and_retired_desktop_process_names_are_quiescence_boundaries() {
         for name in [
             "alan",
@@ -198,6 +216,7 @@ mod tests {
         probe.try_lock().unwrap();
         drop(duplicate);
         assert!(SourceLocks::acquire(&system, &host).is_err());
+        probe.unlock().unwrap();
         drop(probe);
         SourceLocks::acquire(&system, &host).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), "unchanged");
