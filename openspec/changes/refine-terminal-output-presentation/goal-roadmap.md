@@ -76,34 +76,37 @@ proposal are preserved.
 
 ## Current checkpoint
 
-UI tasks are 12/17 checked: source tracing, generated-label removal,
-compact Action summaries, exact compact plan history, notice hierarchy, positive
-Runtime-owned read-only eligibility, rendered groups, grouped history/detail
-lifecycle, contextual detail navigation and the local regression/layout/quality
-gates. Full workspace testing after integrating current main passed 2,893 tests
-with 14 existing ignored tests; strict OpenSpec validation passed 67/67.
-Grouped lifecycle/detail regressions now include concrete old-Process references,
-same-ID fencing, unavailable evidence and 27 partial-drain/resize combinations.
-Complete native matrices, review/CI/merge and canonical spec sync remain
-open; goal deliveries remain 0/3. The observed Process-directory repair is isolated
-in PR #1043; its review correction removes global standalone binding fallback from
-namespace Process context. All 16 checks passed on head `1645c20b`; the user merged
-it as main `105903159ae0bd4243e6226aabdfdc8a76315f22` (live verification).
-Canonical synchronization for that repair remains a separate closure gate.
-Three-read groups and individual
-details have targeted fresh Herdr evidence; a new 48-column ordinary PTY run also
-verifies paging and draft/cursor return. Full native acceptance remains open.
+UI tasks remain 12/17 checked; goal deliveries remain 0/3. Local tracing,
+label removal, compact Actions/plans, notices, positive read-only grouping,
+member/history lifecycle, contextual detail and regression/layout/quality gates
+are closed. Complete native acceptance, exact final-head review/CI, merge and
+canonical synchronization remain open. Grouped lifecycle tests include concrete
+old-Process references, same-ID fencing, unavailable evidence and 27 drain/resize
+combinations. The separate Process-directory repair #1043 is merged; its canonical
+synchronization remains a separate closure gate.
 
-The frozen 80-column matrix found duplicate relative/resolved edit paths and
-clarified ordinary queue dispatch versus durable recovery preflight. Runtime
-result-title deduplication and the revocation notice were repaired; the reopened
-summary/quality tasks closed again after fresh regression and native acceptance.
-The repaired candidate completed all five workflows at 48 columns, including
-the supported read/search correction, standalone commands, edit/diff, both
-authorized once-only resume and unauthorized negative control, long output and
-three plan snapshots. Other five repaired-candidate host/width slots remain open.
-Full workspace testing now passes 2,894 tests (14 existing ignored), quality and
-strict OpenSpec 67/67. UI remains 12/17, deliveries 0/3. Draft PR #1044 exists;
-its prior head `a76aa15d` passed all 16 checks, with fresh-head CI and final review
-still required after this repair. Detailed first attempts and corrected runs are
-kept in `acceptance-matrix.md`.
+The resolved-result title repair and revocation guidance have actual 48- and
+120-column five-workflow acceptance: 10/30 workflow slots on that pre-installation
+candidate, with supported read/search corrections recorded separately from first
+attempts. Exact edits, once-only effects, unknown cancellation outcomes, distinct
+member/plan evidence and Chinese/emoji drafts/cursors were checked. The next
+80-column request returned correct reads after high observed latency, but its
+remaining interactions were not exercised; it is a partial attempt. Earlier
+failed attempts and targeted Herdr smoke receipts remain in `acceptance-matrix.md`
+and `native-acceptance.md`. They do not qualify a newly integrated candidate.
+
+Main advanced through installation/cache PR #1042 to `997ade6a`; the UI branch
+integrated it as `4378a77a`. CI for earlier repair head `55cd37fd` passed 15/16
+checks and exposed a real installation guard-release failure in coverage's test
+execution. Shared/exclusive/source guards now explicitly unlock when their owning
+scope ends, including duplicate descriptors and error paths. Deterministic
+RED/GREEN and live exclusion tests cover the repair. New-base full workspace
+passes 2,957 tests (15 existing ignored); the separate opt-in real-process
+migration/rollback probe, full quality and strict OpenSpec 68/68 also pass.
+Fresh-head CI remains required; draft PR #1044 is not merge-ready.
+
+Further local native qualification first needs installation source compatibility:
+the new CLI refuses pre-adoption legacy stores, and read-only dry runs of both
+explicit sources reject the built-in `legacy-connections-migration.lock`.
+No user data migration was executed. Resolve that reader gap before preparing
+a concrete source selection; it is not a successful UI or Linux qualification.

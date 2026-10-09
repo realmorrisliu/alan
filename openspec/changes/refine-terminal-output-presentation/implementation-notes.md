@@ -305,3 +305,49 @@ After this repair, the full workspace run passed 2,894 tests, zero failures,
 (`target/resolved-path-workspace-tests.log`). Ignored provider probes are not
 native acceptance passes. The previous committed head `a76aa15d` had all 16 CI
 checks successful; those checks do not qualify a subsequent repair head.
+
+## New-base CI finding: installation guard completion
+
+Main advanced to `997ade6a` through independent installation/cache PR #1042.
+CI for UI repair head `55cd37fd` evaluated that new merged base: 15/16 checks
+passed, while coverage's test execution failed at migration test
+`changed_extended_metadata_prevents_rollback_without_losing_canonical_data`.
+It could not reacquire shared installation access after rollback had ended.
+Receipt: `target/resolved-path-coverage-failure.log`, job `113720672706`.
+This is a failed test gate, not a coverage-upload failure or a local pass.
+
+The new installation guards relied on closing a File to release advisory locks.
+A duplicate open-file description, including a concurrently forked child's
+pre-exec descriptor, can keep that lock alive beyond guard completion. Existing
+Host singleton and Package Store guards already explicitly unlock on Drop.
+Three deterministic regressions reproduced this class without timing sleeps:
+shared access, exclusive migration and retained legacy-source locks each kept
+a duplicate descriptor alive through guard completion. All failed before the
+repair (`target/installation-lock-red.log`, `source-lock-red.log`).
+
+Those existing guard owners now explicitly unlock on completion. Acquired locks
+are immediately wrapped, so journal-validation and partial source-acquisition
+errors also release through the same Drop path. Active guards still exclude
+conflicting users, and closing an old duplicate cannot release a newer guard's
+lock. The SourceLocks test replaces its inherited-descriptor retry sleep with
+the deterministic duplicate-description check. No lock API, retry policy,
+migration authority, data operation or installation planning scope was added.
+
+Focused green checks passed eight installation-access cases, 33 migration cases
+and six installation CLI boundary cases, including the original metadata
+rollback test, malformed/incomplete journals, symlinks and live exclusion.
+The fresh full workspace passed 2,957 tests, zero failures, 15 existing ignored
+tests (`target/ui-install-workspace-tests.log`). With no other Alan invocation
+present, the opt-in real-process quiescence and source-independent rollback probe
+also passed separately (`target/installation-lock-native-process.log`). Fresh
+`just quality` passed (`target/installation-lock-quality.log`); strict OpenSpec
+passed 68/68 (`target/ui-install-openspec.log`). Task 4.4 is locally closed again;
+fresh-head CI remains required. Native UI receipts above use the older candidate
+and do not qualify the newly integrated installation layout.
+
+The real local `connection current` probe correctly refused pre-adoption legacy
+stores. Read-only migration dry runs for both explicit `dev` and `stable` sources
+then rejected the built-in `legacy-connections-migration.lock` at the System
+Store root. No data migration was executed. This source-layout compatibility
+finding must be resolved before preparing a concrete source selection and
+resuming native UI qualification; neither refusal is a native UI pass.

@@ -35,7 +35,7 @@ and corrected reruns remain separate; raw ANSI/Host captures accompany results.
 | --- | --- | --- | --- | --- | --- | --- |
 | Ordinary PTY / 48 | pty48 | passed with corrected supported task | passed | passed after repair | positive flow and negative control passed | passed |
 | Ordinary PTY / 80 | pty80 | corrected: search Tool unavailable | passed | failed: duplicate path | negative control plus corrected positive flow | passed |
-| Ordinary PTY / 120 | pty120 | pending | pending | pending | pending | pending |
+| Ordinary PTY / 120 | pty120 | passed with corrected supported task | passed | passed after repair | positive flow and negative control passed | passed |
 | Herdr / 48 | herdr48 | pending | pending | pending | pending | pending |
 | Herdr / 80 | herdr80 | pending | pending | pending | pending | pending |
 | Herdr / 120 | herdr120 | pending | pending | pending | pending | pending |
@@ -135,3 +135,55 @@ Assert-based artifact checks after exit and beyond the cancelled delay passed
 the same byte/diff/ledger conditions as the 80-column run, including absence of
 the negative-control effects. This run is native UI
 acceptance with existing core Tools, not repeated real-development qualification.
+
+## Ordinary PTY / 120: repaired candidate
+
+The same repaired binary as the 48-column run used fresh baseline fixture
+`pty120`, terminal 120×22, runtime `~/Library/Caches/Alan/o9f120`, Root `/agent/8`
+and the same real model/effort. Its Rust source is now committed as `55cd37fd`;
+the native binary was built before that commit with the identical repaired code.
+Receipts are `target/f120-01-project.json` through `f120-43-exit.json`.
+
+All five supported/corrected workflows passed: actual selector cancellation;
+three single reads with line counts and retained member selection; separate
+explicit grep, success and exit-7 failure with exact independent streams;
+one real edit with one inline path and `+1 -1`; interrupt/revoke/reapprove with
+paused work preserved until explicit once-only continue; and a separate
+unauthorized negative control failing without effects. Read draft
+`宽终端草稿 中文😀` returned with cursor row 20, column 19 (zero-based).
+Long-output details reached lines 173–180 plus raw bytes; three distinct plan
+revisions exposed their exact completed and earlier in-progress snapshots.
+Follow-up draft `后续草稿 中文😀` returned at row 20, column 17.
+Rust/text code boundaries, Chinese/emoji and literal `server>`/`a > b` remained.
+
+The owned invocation exited `/quit` status 0. Beyond the cancelled delay,
+assertions verified unchanged README/pager, exactly one requested source edit,
+only sample.rs tracked diff, only effects.log untracked, and ledger exactly
+`command-once\nresumed-once\n`. Cancelled and unauthorized markers were absent.
+Together these are 10/30 repaired-candidate workflow slots; the original
+80-column candidate remains separate, and the remaining host/width slots are open.
+
+## Repaired ordinary PTY / 80: slow partial attempt
+
+An independent clean clone of baseline `herdr80` is `pty80-repaired`; original
+`pty80` evidence remains untouched. The repaired binary above ran at 80×22 in
+`~/Library/Caches/Alan/o9f80`. Actual selector cancellation and read-only approval
+succeeded. The same corrected read task remained visibly working through at
+least 176 seconds without a displayed Tool or answer. In the final chunk around
+the attempted Ctrl+C it returned all three reads and the correct 3/2/180 answer;
+there is no retained cancellation outcome. Thus this is high observed latency,
+not a claimed cancelled/failed task. The invocation then exited `/quit` status 0.
+All three files remained byte-identical to the untouched baseline; Git was clean.
+
+Receipts `target/f80-01-project.json` through `f80-11-exit-stalled.json` preserve
+the actual observation sequence. Filenames describing the attempted interruption
+are not outcome evidence. Member/pager/draft and the other workflows were not
+exercised in this invocation, so this slot remains open and is not added to the
+10/30 complete workflow count.
+
+Merged main subsequently advanced to `997ade6a` (installation/cache lifecycle).
+CI for repair head `55cd37fd` evaluated that merged base: 15 checks passed and
+Code Coverage failed in an installation migration lock-release test. This is
+a real failed gate; local tests against the prior base do not override it.
+The branch is integrating the new main and diagnosing the shared guard lifetime
+before final-head gates and further native qualification.

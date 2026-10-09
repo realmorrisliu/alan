@@ -89,12 +89,26 @@ pub struct InstallationMigrationAccess {
     _lock: File,
 }
 
+impl Drop for InstallationAccess {
+    fn drop(&mut self) {
+        // Guard completion must also release fork-inherited descriptor copies.
+        let _ = self._lock.unlock();
+    }
+}
+
+impl Drop for InstallationMigrationAccess {
+    fn drop(&mut self) {
+        let _ = self._lock.unlock();
+    }
+}
+
 impl InstallationPaths {
     /// Acquire shared product access before resolving metadata, credentials or services.
     pub fn access(&self) -> Result<InstallationAccess> {
         let lock = self.open_access_lock(true)?;
         lock.try_lock_shared()
             .context("installation migration is running; retry after it finishes")?;
+        let access = InstallationAccess { _lock: lock };
         if let Some(journal) = self.read_migration_journal()? {
             ensure!(
                 journal.state == MigrationState::Committed,
@@ -112,7 +126,7 @@ impl InstallationPaths {
                 "legacy Alan stores exist; explicitly select a source with alan legacy-state migrate-installation --from stable|dev before starting Alan"
             );
         }
-        Ok(InstallationAccess { _lock: lock })
+        Ok(access)
     }
 
     pub fn migration_access(&self) -> Result<InstallationMigrationAccess> {
@@ -128,11 +142,12 @@ impl InstallationPaths {
         let lock = self.open_access_lock(create)?;
         lock.try_lock()
             .context("Alan still has active store consumers; stop them before migration")?;
-        self.read_migration_journal()?;
-        Ok(InstallationMigrationAccess {
+        let access = InstallationMigrationAccess {
             paths: self.clone(),
             _lock: lock,
-        })
+        };
+        self.read_migration_journal()?;
+        Ok(access)
     }
 
     /// Read-only; malformed receipts fail closed rather than exposing partially published data.

@@ -11,6 +11,14 @@ pub(super) struct SourceLocks {
     _locks: Vec<File>,
 }
 
+impl Drop for SourceLocks {
+    fn drop(&mut self) {
+        for lock in &self._locks {
+            let _ = lock.unlock();
+        }
+    }
+}
+
 impl SourceLocks {
     pub(super) fn acquire(system: &Path, host: &Path) -> Result<Self> {
         Self::acquire_inner(system, host, true)
@@ -22,7 +30,7 @@ impl SourceLocks {
     }
 
     fn acquire_inner(system: &Path, host: &Path, require_payload_locks: bool) -> Result<Self> {
-        let mut locks = Vec::new();
+        let mut locks = Self { _locks: Vec::new() };
         for (path, payload) in [
             (
                 system.join("services/connections/connections.toml.lock"),
@@ -61,9 +69,9 @@ impl SourceLocks {
             file.try_lock().context(
                 "a legacy store writer is active; stop all Alan processes before adoption",
             )?;
-            locks.push(file);
+            locks._locks.push(file);
         }
-        Ok(Self { _locks: locks })
+        Ok(locks)
     }
 
     pub(super) fn check_processes(&self, roots: &[PathBuf]) -> Result<()> {
@@ -182,21 +190,16 @@ mod tests {
         let path = host.join("credentials/secrets.toml.lock");
         fs::write(&path, "unchanged").unwrap();
         let locks = SourceLocks::acquire(&system, &host).unwrap();
+        let duplicate = locks._locks[0].try_clone().unwrap();
         assert!(File::open(&path).unwrap().try_lock().is_err());
         assert!(SourceLocks::acquire(&system, &host).is_err());
         drop(locks);
         let probe = File::open(&path).unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        // Parallel subprocess tests may briefly inherit the descriptor before exec.
-        loop {
-            match probe.try_lock() {
-                Ok(()) => break,
-                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(error) => panic!("source lock was not released: {error}"),
-            }
-        }
+        probe.try_lock().unwrap();
+        drop(duplicate);
+        assert!(SourceLocks::acquire(&system, &host).is_err());
+        drop(probe);
+        SourceLocks::acquire(&system, &host).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), "unchanged");
     }
 

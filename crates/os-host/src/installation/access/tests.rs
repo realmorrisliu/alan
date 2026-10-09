@@ -36,6 +36,36 @@ fn active_readers_exclude_migration_and_migration_excludes_readers() {
     paths.access().unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn completed_access_guard_releases_a_lock_even_with_a_duplicate_descriptor() {
+    let (_temp, paths) = fixture();
+    let reader = paths.access().unwrap();
+    let duplicate = reader._lock.try_clone().unwrap();
+    assert!(paths.migration_access().is_err());
+    drop(reader);
+    let migration = paths.migration_access().unwrap();
+    drop(duplicate);
+    assert!(paths.access().is_err());
+    drop(migration);
+    paths.access().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn completed_migration_guard_releases_a_lock_even_with_a_duplicate_descriptor() {
+    let (_temp, paths) = fixture();
+    let migration = paths.migration_access().unwrap();
+    let duplicate = migration._lock.try_clone().unwrap();
+    assert!(paths.access().is_err());
+    drop(migration);
+    let reader = paths.access().unwrap();
+    drop(duplicate);
+    assert!(paths.migration_access().is_err());
+    drop(reader);
+    paths.migration_access().unwrap();
+}
+
 #[test]
 fn incomplete_journal_blocks_after_writer_exit_until_explicit_resolution() {
     let (_temp, paths) = fixture();
