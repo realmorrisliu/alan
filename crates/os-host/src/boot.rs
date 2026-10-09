@@ -3,8 +3,7 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use alan_agent_engine::{
-    AgentProcessConfig, Config, InstallChannel, LlmClient, ProcessDescriptor, ProcessFileTree,
-    ToolRegistry,
+    AgentProcessConfig, Config, LlmClient, ProcessDescriptor, ProcessFileTree, ToolRegistry,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
@@ -15,9 +14,7 @@ use alan_service_manager::{
 use anyhow::{Context, Result, bail};
 
 use crate::paths::{HostStorePaths, SystemStorePaths};
-use crate::{
-    LegacyConnectionPaths, SecretStore, apply_profile_to_config, migrate_legacy_connections,
-};
+use crate::{SecretStore, apply_profile_to_config};
 
 /// Host-supplied adapters and durable bindings needed by Service Manager.
 pub struct HostBootConfig(ServiceManagerConfig);
@@ -25,48 +22,8 @@ pub struct HostBootConfig(ServiceManagerConfig);
 #[derive(Clone, Debug)]
 struct ProductLlmClientFactory {
     credentials_dir: std::path::PathBuf,
-    keychain_service: Option<String>,
     managed_auth: Option<std::path::PathBuf>,
-}
-
-#[cfg(target_os = "macos")]
-fn load_macos_keychain_secret(service: &str, credential_id: &str) -> Result<Option<String>> {
-    let output = std::process::Command::new("/usr/bin/security")
-        .args([
-            "find-generic-password",
-            "-s",
-            service,
-            "-a",
-            credential_id,
-            "-w",
-        ])
-        .output()
-        .context("read macOS Keychain credential")?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        if detail.contains("could not be found") {
-            return Ok(None);
-        }
-        bail!(
-            "macOS Keychain rejected credential lookup: {}",
-            detail.trim()
-        );
-    }
-    let secret = String::from_utf8(output.stdout)
-        .context("macOS Keychain credential is not UTF-8")?
-        .trim_end_matches(['\r', '\n'])
-        .to_string();
-    Ok((!secret.is_empty()).then_some(secret))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn load_macos_keychain_secret(_service: &str, _credential_id: &str) -> Result<Option<String>> {
-    Ok(None)
-}
-
-#[cfg(target_os = "macos")]
-fn macos_keychain_service(channel_id: &str) -> String {
-    format!("app.alanworks.macos.{channel_id}.connections")
+    _installation_access: Option<Arc<crate::installation::InstallationAccess>>,
 }
 
 struct UnconfiguredLlmProvider;
@@ -104,26 +61,7 @@ impl ProductLlmClientFactory {
             return Ok(LlmClient::new(UnconfiguredLlmProvider));
         };
         let mut core_config = base_config.clone();
-        let resolved = connections.resolve_profile(Some(selected_profile))?;
-        let local_store = SecretStore::from_directory(&self.credentials_dir)?;
-        let secret_store = match (
-            self.keychain_service.as_deref(),
-            resolved.credential_id.as_deref(),
-        ) {
-            (Some(service), Some(credential_id))
-                if !local_store.has_local_override(credential_id)? =>
-            {
-                match load_macos_keychain_secret(service, credential_id)? {
-                    Some(secret) => SecretStore::with_resolved_secret(
-                        &self.credentials_dir,
-                        credential_id,
-                        secret,
-                    )?,
-                    None => local_store,
-                }
-            }
-            _ => local_store,
-        };
+        let secret_store = SecretStore::from_directory(&self.credentials_dir)?;
         apply_profile_to_config(
             connections,
             Some(selected_profile),
@@ -224,21 +162,18 @@ impl LlmProvider for LiveSecretProvider {
 }
 
 impl HostBootConfig {
-    /// Build product inputs from the channel stores and native adapters.
-    pub fn product(channel_id: &str) -> Result<Self> {
-        Self::product_with_root_resume(channel_id, false)
+    /// Build product inputs from canonical stores and native adapters.
+    pub fn product() -> Result<Self> {
+        Self::product_with_root_resume(false)
     }
 
     /// Build product inputs and optionally restore the selected Root Agent rollout.
-    pub fn product_with_root_resume(channel_id: &str, resume_root: bool) -> Result<Self> {
-        let channel = InstallChannel::from_id(channel_id)
-            .with_context(|| format!("unknown Alan OS Host channel `{channel_id}`"))?;
-        let system_store = SystemStorePaths::detect(channel_id)?;
-        let host_store = HostStorePaths::detect(channel_id)?;
-        if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
-            migrate_legacy_connections(&legacy, &system_store, &host_store)
-                .context("failed to migrate legacy connections before Host boot")?;
-        }
+    pub fn product_with_root_resume(resume_root: bool) -> Result<Self> {
+        crate::installation::validate_current_invocation()?;
+        let installation_access =
+            Arc::new(crate::installation::InstallationPaths::detect()?.access()?);
+        let system_store = SystemStorePaths::detect()?;
+        let host_store = HostStorePaths::detect()?;
         let memory_store_backing = system_store.memory_stores()?.join("default");
         std::fs::create_dir_all(&memory_store_backing)
             .context("failed to prepare Memory Store backing")?;
@@ -282,21 +217,11 @@ impl HostBootConfig {
         let tools = product_tool_registry(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
             credentials_dir: host_store.credentials.clone(),
-            keychain_service: {
-                #[cfg(target_os = "macos")]
-                {
-                    Some(macos_keychain_service(channel_id))
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    None
-                }
-            },
             managed_auth: Some(host_store.managed_auth),
+            _installation_access: Some(installation_access),
         });
 
         Ok(Self(ServiceManagerConfig {
-            channel_id: channel_id.into(),
             process,
             resume_root,
             input_shadow: None,
@@ -311,13 +236,11 @@ impl HostBootConfig {
 
     /// Explicit test-only inputs. Product callers never select this implicitly.
     pub fn ephemeral(
-        channel_id: impl Into<String>,
         process: AgentProcessConfig,
         llm_client: LlmClient,
         tools: ToolRegistry,
     ) -> Self {
         let mut config = ServiceManagerConfig::ephemeral(
-            channel_id,
             process,
             ProcessLaunchContext::root(),
             llm_client,
@@ -354,10 +277,6 @@ impl HostBootConfig {
 
     pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
         self.0
-    }
-
-    pub(crate) fn channel_id(&self) -> &str {
-        &self.0.channel_id
     }
 }
 
@@ -420,7 +339,6 @@ mod tests {
         use alan_shell::Shell;
         let boot = || {
             super::HostBootConfig::ephemeral(
-                "test",
                 alan_agent_engine::AgentProcessConfig::default(),
                 alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
                 alan_agent_engine::ToolRegistry::new(),
@@ -477,8 +395,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let factory = ProductLlmClientFactory {
             credentials_dir: temp.path().to_path_buf(),
-            keychain_service: None,
             managed_auth: None,
+            _installation_access: None,
         };
 
         let mut client = factory
@@ -489,19 +407,6 @@ mod tests {
         assert_eq!(
             client.chat(None, "hello").await.unwrap_err().to_string(),
             "no Connection Service profile selected"
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn keychain_adapter_is_channel_isolated() {
-        assert_eq!(
-            macos_keychain_service("stable"),
-            "app.alanworks.macos.stable.connections"
-        );
-        assert_eq!(
-            macos_keychain_service("dev"),
-            "app.alanworks.macos.dev.connections"
         );
     }
 }

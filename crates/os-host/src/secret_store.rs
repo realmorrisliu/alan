@@ -61,12 +61,6 @@ impl SecretStore {
         Ok(store)
     }
 
-    pub(crate) fn has_local_override(&self, credential_id: &str) -> anyhow::Result<bool> {
-        let credential_id = validated_identifier_component("credential id", credential_id)?;
-        let stored = self.read_secret_file()?;
-        Ok(stored.secrets.contains_key(credential_id) || stored.revoked.contains(credential_id))
-    }
-
     /// Validate credential storage without changing secrets or consulting native providers.
     pub fn validate_for_migration(&self) -> anyhow::Result<()> {
         let stored = self

@@ -45,7 +45,6 @@ pub struct InputShadowSelection {
 
 /// Explicit inputs supplied by the platform Host to Service Manager.
 pub struct ServiceManagerConfig {
-    pub channel_id: String,
     pub process: AgentProcessConfig,
     /// Restore the previously selected Root Agent rollout for this invocation.
     pub resume_root: bool,
@@ -88,7 +87,6 @@ impl LlmClientFactory for OneShotLlmClientFactory {
 impl ServiceManagerConfig {
     /// Explicit ephemeral/test inputs. Product callers never select this implicitly.
     pub fn ephemeral(
-        channel_id: impl Into<String>,
         process: AgentProcessConfig,
         mut launch_context: ProcessLaunchContext,
         llm_client: LlmClient,
@@ -113,7 +111,6 @@ impl ServiceManagerConfig {
             );
         }
         Self {
-            channel_id: channel_id.into(),
             launch_context,
             connection_store: None,
             package_store: None,
@@ -150,11 +147,6 @@ pub struct ServiceManager {
 
 impl ServiceManager {
     pub async fn boot(mut config: ServiceManagerConfig) -> Result<Self> {
-        ensure!(
-            matches!(config.channel_id.as_str(), "stable" | "dev" | "test"),
-            "invalid Alan OS Host channel `{}`",
-            config.channel_id
-        );
         ensure!(
             !config.resume_root || config.process.store_bindings.is_some(),
             "Root Agent recovery requires durable store bindings"

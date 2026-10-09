@@ -15,11 +15,12 @@ fn config(store: &alan_os_host::SystemStorePaths) -> alan_tui::FileBackedRunConf
 }
 
 #[test]
-fn foreground_history_is_channel_system_store_owned_and_restarts_typed() {
+fn foreground_history_is_product_store_owned_and_restarts_typed() {
     let dir = tempfile::tempdir().unwrap();
-    let stable = alan_os_host::SystemStorePaths::from_data_dir(dir.path(), "stable").unwrap();
-    let dev = alan_os_host::SystemStorePaths::from_data_dir(dir.path(), "dev").unwrap();
-    let first = config(&stable);
+    let product = alan_os_host::SystemStorePaths::from_data_dir(dir.path()).unwrap();
+    let isolated =
+        alan_os_host::SystemStorePaths::from_data_dir(&dir.path().join("other-host")).unwrap();
+    let first = config(&product);
     assert_eq!(first.agent_path, "/agent/root");
     assert_eq!(first.effective_model.as_deref(), Some("model"));
     assert_eq!(
@@ -33,9 +34,12 @@ fn foreground_history_is_channel_system_store_owned_and_restarts_typed() {
         .expect("shipped interactive history configured");
     assert_eq!(
         path,
-        stable.service("shell-ui").unwrap().join("composer-history")
+        product
+            .service("shell-ui")
+            .unwrap()
+            .join("composer-history")
     );
-    assert_ne!(Some(path.clone()), config(&dev).history_path);
+    assert_ne!(Some(path.clone()), config(&isolated).history_path);
     let entries = [
         HistoryEntry {
             body: "!literal agent\n  ".into(),
@@ -51,7 +55,7 @@ fn foreground_history_is_channel_system_store_owned_and_restarts_typed() {
         composer.remember_input(&entry.body, entry.intent);
         composer.remember_input(&entry.body, entry.intent);
     }
-    let restarted_path = config(&stable).history_path.unwrap();
+    let restarted_path = config(&product).history_path.unwrap();
     assert_eq!(load_history(&restarted_path, 1000), entries);
-    assert!(load_history(&config(&dev).history_path.unwrap(), 1000).is_empty());
+    assert!(load_history(&config(&isolated).history_path.unwrap(), 1000).is_empty());
 }

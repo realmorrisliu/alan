@@ -17,35 +17,31 @@ fn interactive_config(
 #[path = "foreground_tests.rs"]
 mod tests;
 
-pub(super) fn foreground_runtime_dir(channel_id: &str) -> Result<(PathBuf, bool)> {
+pub(super) fn foreground_runtime_dir() -> Result<(PathBuf, bool)> {
     if let Some(runtime_dir) = std::env::var_os(cli::host::INSTANCE_RUNTIME_DIR_ENV) {
         return Ok((PathBuf::from(runtime_dir), false));
     }
 
     Ok((
-        generated_foreground_runtime_dir(&std::env::temp_dir(), channel_id)?,
+        generated_foreground_runtime_dir(&std::env::temp_dir())?,
         true,
     ))
 }
 
-pub(super) fn generated_foreground_runtime_dir(
-    temp_root: &Path,
-    channel_id: &str,
-) -> Result<PathBuf> {
+pub(super) fn generated_foreground_runtime_dir(temp_root: &Path) -> Result<PathBuf> {
     let instance_name = format!("alan-{}", uuid::Uuid::new_v4());
     let runtime_dir = temp_root.join(&instance_name);
-    if HostEndpointPaths::from_runtime_dir(&runtime_dir, channel_id).is_ok() {
+    if HostEndpointPaths::from_runtime_dir(&runtime_dir).is_ok() {
         return Ok(runtime_dir);
     }
 
     // macOS's sockaddr path is short; its default TMPDIR can exceed that limit.
     let runtime_dir = Path::new("/tmp").join(instance_name);
-    HostEndpointPaths::from_runtime_dir(&runtime_dir, channel_id)?;
+    HostEndpointPaths::from_runtime_dir(&runtime_dir)?;
     Ok(runtime_dir)
 }
 
 pub(super) async fn run_bare_in_foreground_instance(
-    channel: alan_agent_engine::InstallChannel,
     paths: HostEndpointPaths,
     mode: BareRunMode,
     resume_root: bool,
@@ -55,8 +51,7 @@ pub(super) async fn run_bare_in_foreground_instance(
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
-    let mut config =
-        HostBootConfig::product_with_root_resume(channel.descriptor().id, resume_root)?;
+    let mut config = HostBootConfig::product_with_root_resume(resume_root)?;
     if let Some(profile) = shadow_evaluator {
         let surface = match mode {
             BareRunMode::Interactive => alan_agent_engine::runtime::EvaluationSurface::Interactive,
@@ -80,7 +75,7 @@ pub(super) async fn run_bare_in_foreground_instance(
             let attachment = LocalAttachment::new(paths.clone()).connect().await?;
             match mode {
                 BareRunMode::Interactive => {
-                    let store = alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
+                    let store = alan_os_host::SystemStorePaths::detect()?;
                     let mut config = interactive_config(
                         attachment.root,
                         root_model,

@@ -1,7 +1,6 @@
 use super::*;
 
 pub(super) async fn run(action: LegacyStateAction) -> Result<()> {
-    let channel = alan_agent_engine::InstallChannel::detect_current();
     match action {
         LegacyStateAction::MigrateInstallation {
             from,
@@ -10,12 +9,8 @@ pub(super) async fn run(action: LegacyStateAction) -> Result<()> {
             json,
         } => {
             use alan::installation_migration::{MigrationMode, migrate_installation};
-            use alan_os_host::installation::{InstallationPaths, LegacyInstallation};
-            let source = match from.as_str() {
-                "stable" => LegacyInstallation::Stable,
-                "dev" => LegacyInstallation::Dev,
-                _ => anyhow::bail!("unsupported historical installation source"),
-            };
+            use alan_os_host::installation::InstallationPaths;
+            let source = from;
             let mode = if dry_run {
                 MigrationMode::DryRun
             } else if rollback {
@@ -35,23 +30,38 @@ pub(super) async fn run(action: LegacyStateAction) -> Result<()> {
                 );
             }
         }
-        LegacyStateAction::Inspect { source_roots, json } => {
-            let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
-                anyhow::bail!("cannot determine Host home directory");
-            };
+        LegacyStateAction::Inspect {
+            from,
+            source_roots,
+            json,
+        } => {
             let source_roots = canonical_existing_roots(source_roots)?;
-            let mut report = legacy_state::inspect_legacy_state(&paths, &source_roots)?;
+            let mut report = if let Some(source) = from {
+                let paths = legacy_state::LegacyStatePaths::detect(source)?
+                    .context("cannot determine Host home directory")?;
+                legacy_state::inspect_legacy_state(&paths, &source_roots)?
+            } else {
+                anyhow::ensure!(
+                    source_roots.is_empty(),
+                    "--source-root requires an explicit historical --from source"
+                );
+                legacy_state::LegacyInspection::default()
+            };
             report.installations =
                 Some(alan_os_host::installation::InstallationPaths::detect()?.inspect()?);
             print_legacy_inspection(&report, json)?;
         }
-        LegacyStateAction::Cleanup { source_roots, json } => {
-            let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
+        LegacyStateAction::Cleanup {
+            from,
+            source_roots,
+            json,
+        } => {
+            let Some(paths) = legacy_state::LegacyStatePaths::detect(from)? else {
                 anyhow::bail!("cannot determine Host home directory");
             };
             let source_roots = canonical_existing_roots(source_roots)?;
-            let system = alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
-            let host = alan_os_host::HostStorePaths::detect(channel.descriptor().id)?;
+            let system = alan_os_host::SystemStorePaths::detect()?;
+            let host = alan_os_host::HostStorePaths::detect()?;
             let report = legacy_state::cleanup_legacy_state(&paths, &system, &host, &source_roots)?;
             print_legacy_cleanup(&report, json)?;
         }
@@ -67,7 +77,7 @@ pub(super) async fn run(action: LegacyStateAction) -> Result<()> {
                     source.display()
                 )
             })?;
-            let system = alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
+            let system = alan_os_host::SystemStorePaths::detect()?;
             let kind = match kind {
                 LegacyImportKind::AgentDefinition => {
                     legacy_state::AuthoredImportKind::AgentDefinition

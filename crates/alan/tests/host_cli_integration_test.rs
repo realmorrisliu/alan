@@ -26,7 +26,7 @@ fn spawn_blocked_bare_cli(runtime: &Path, runtime_dir: Option<&Path>) -> Child {
     std::fs::create_dir_all(&home).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_alan"));
     command
-        .env("ALAN_INSTALL_CHANNEL", "stable")
+        .env_remove("ALAN_INSTALL_CHANNEL")
         .env("HOME", home)
         .env("XDG_DATA_HOME", runtime.join("data"))
         .env("TMPDIR", runtime)
@@ -89,7 +89,7 @@ async fn wait_for_child_exit(child: &mut Child) -> Option<ExitStatus> {
 async fn bare_cli_uses_an_independent_foreground_instance() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let base = runtime_base(runtime.path());
-    let paths = HostEndpointPaths::from_runtime_dir(&base, "stable").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&base).unwrap();
     let response = GenerationResponse {
         content: "unused".into(),
         thinking: None,
@@ -104,7 +104,6 @@ async fn bare_cli_uses_an_independent_foreground_instance() {
     };
     let host = AlanOsHost::boot(
         HostBootConfig::ephemeral(
-            "stable",
             AgentProcessConfig::default(),
             LlmClient::new(MockLlmProvider::new().with_response(response)),
             ToolRegistry::new(),
@@ -129,7 +128,7 @@ async fn bare_cli_uses_an_independent_foreground_instance() {
     let data_home = runtime.path().join("data");
     let output = tokio::task::spawn_blocking(move || {
         let mut child = Command::new(env!("CARGO_BIN_EXE_alan"))
-            .env("ALAN_INSTALL_CHANNEL", "stable")
+            .env_remove("ALAN_INSTALL_CHANNEL")
             .env("HOME", home)
             .env("TMPDIR", temporary_root)
             .env("XDG_RUNTIME_DIR", base)
@@ -209,7 +208,7 @@ async fn bare_cli_uses_an_independent_foreground_instance() {
 async fn host_stop_gracefully_stops_bare_foreground_instance() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let runtime_dir = runtime.path().join("foreground");
-    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir).unwrap();
     let home = runtime.path().join("home");
     let mut foreground = spawn_blocked_bare_cli(runtime.path(), Some(&runtime_dir));
     if !wait_for_host_ready(&paths).await {
@@ -220,7 +219,7 @@ async fn host_stop_gracefully_stops_bare_foreground_instance() {
 
     let stop = Command::new(env!("CARGO_BIN_EXE_alan"))
         .args(["host", "stop", "--json"])
-        .env("ALAN_INSTALL_CHANNEL", "stable")
+        .env_remove("ALAN_INSTALL_CHANNEL")
         .env("ALAN_INSTANCE_RUNTIME_DIR", &runtime_dir)
         .env("HOME", &home)
         .env("TMPDIR", runtime.path())
@@ -262,8 +261,7 @@ async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown
                 .filter_map(|entry| entry.ok())
                 .filter(|entry| entry.file_name().to_string_lossy().starts_with("alan-"))
                 .filter_map(|entry| {
-                    let paths =
-                        HostEndpointPaths::from_runtime_dir(&entry.path(), "stable").ok()?;
+                    let paths = HostEndpointPaths::from_runtime_dir(&entry.path()).ok()?;
                     let observed = paths.read_status();
                     last_observed.push(format!("{}: {observed:?}", entry.path().display()));
                     let status = observed.ok()?;
@@ -295,8 +293,8 @@ async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown
     assert_ne!(instances[0].1.boot_id, instances[1].1.boot_id);
     assert_ne!(instances[0].0.socket, instances[1].0.socket);
     assert!(
-        !legacy_metadata.exists(),
-        "concurrent first boot must finish shared legacy migration"
+        legacy_metadata.exists(),
+        "concurrent first boot must preserve legacy metadata until explicit migration"
     );
 
     let first_index = instances
@@ -373,7 +371,7 @@ async fn simultaneous_bare_cli_instances_have_independent_endpoints_and_shutdown
 async fn ctrl_c_stops_bare_foreground_instance_while_stdin_is_open() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let runtime_dir = runtime.path().join("foreground");
-    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir).unwrap();
     let mut foreground = spawn_blocked_bare_cli(runtime.path(), Some(&runtime_dir));
     if !wait_for_host_ready(&paths).await {
         let _ = foreground.kill();
@@ -406,7 +404,7 @@ async fn ctrl_c_stops_bare_foreground_instance_while_stdin_is_open() {
 async fn sigterm_before_one_shot_input_exits_with_signal_status_and_removes_runtime_files() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let runtime_dir = runtime.path().join("foreground");
-    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir, "stable").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime_dir).unwrap();
     let mut foreground = spawn_blocked_bare_cli(runtime.path(), Some(&runtime_dir));
     if !wait_for_host_ready(&paths).await {
         let _ = foreground.kill();
@@ -439,12 +437,12 @@ async fn sigterm_before_one_shot_input_exits_with_signal_status_and_removes_runt
 fn host_status_reports_stopping_without_attaching() {
     let runtime = tempfile::tempdir_in("/tmp").unwrap();
     let base = runtime_base(runtime.path());
-    let paths = HostEndpointPaths::from_runtime_dir(&base, "stable").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&base).unwrap();
     std::fs::create_dir_all(&paths.root).unwrap();
     let status = HostStatus {
-        version: 1,
+        version: 2,
         local_attachment_protocol_version: 2,
-        channel_id: "stable".to_string(),
+
         boot_id: uuid::Uuid::new_v4(),
         pid: std::process::id(),
         readiness: HostReadiness::Stopping,
@@ -455,7 +453,7 @@ fn host_status_reports_stopping_without_attaching() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_alan"))
         .args(["host", "status", "--json"])
-        .env("ALAN_INSTALL_CHANNEL", "stable")
+        .env_remove("ALAN_INSTALL_CHANNEL")
         .env("ALAN_INSTANCE_RUNTIME_DIR", &base)
         .env("TMPDIR", runtime.path().join("unused"))
         .env("XDG_RUNTIME_DIR", runtime.path().join("unused"))

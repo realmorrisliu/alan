@@ -3,7 +3,6 @@ use std::{
     process::Command,
 };
 
-use alan_agent_engine::InstallChannel;
 use alan_service_manager::ConnectionsFile;
 use tempfile::TempDir;
 
@@ -20,7 +19,7 @@ fn alan_command(home: &Path, xdg_data: &Path) -> Command {
     command
         .env("HOME", home)
         .env("XDG_DATA_HOME", xdg_data)
-        .env("ALAN_INSTALL_CHANNEL", "stable");
+        .env_remove("ALAN_INSTALL_CHANNEL");
     command
 }
 
@@ -42,20 +41,21 @@ fn legacy_cleanup_migrates_metadata_and_host_secrets_once() {
     std::fs::write(legacy.join("auth.json"), "{\"version\":1}").unwrap();
 
     let output = alan_command(&home, &xdg_data)
-        .args(["host", "legacy-state", "cleanup", "--json"])
+        .args([
+            "host",
+            "legacy-state",
+            "cleanup",
+            "--from",
+            "stable",
+            "--json",
+        ])
         .output()
         .unwrap();
 
     assert!(output.status.success(), "{output:?}");
     let data = detected_data_dir(&home, &xdg_data);
-    let system = alan_os_host::SystemStorePaths::from_data_dir(
-        &data,
-        InstallChannel::Stable.descriptor().id,
-    )
-    .unwrap();
-    let host_store =
-        alan_os_host::HostStorePaths::from_data_dir(&data, InstallChannel::Stable.descriptor().id)
-            .unwrap();
+    let system = alan_os_host::SystemStorePaths::from_data_dir(&data).unwrap();
+    let host_store = alan_os_host::HostStorePaths::from_data_dir(&data).unwrap();
     let connection_metadata = system.connections_metadata().unwrap();
     assert!(connection_metadata.is_file());
     assert!(
@@ -86,7 +86,14 @@ fn host_cleanup_deletes_generated_state_and_reports_authored_roots() {
     std::fs::write(legacy.join("agents/default/persona/SOUL.md"), "authored").unwrap();
 
     let output = alan_command(&home, &xdg_data)
-        .args(["host", "legacy-state", "cleanup", "--json"])
+        .args([
+            "host",
+            "legacy-state",
+            "cleanup",
+            "--from",
+            "stable",
+            "--json",
+        ])
         .output()
         .unwrap();
 

@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use alan_agent_engine::InstallChannel;
 use alan_auth::{AuthStorage, AuthStore, ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth};
 use alan_os_host::{HostEndpointPaths, SystemStorePaths};
 use base64::Engine;
@@ -33,7 +32,7 @@ fn alan_command(home: &Path, xdg_data: &Path, runtime: &Path, args: &[&str]) -> 
         .env("XDG_DATA_HOME", xdg_data)
         .env("XDG_RUNTIME_DIR", runtime_base(runtime))
         .env("TMPDIR", runtime)
-        .env("ALAN_INSTALL_CHANNEL", "dev")
+        .env_remove("ALAN_INSTALL_CHANNEL")
         .env_remove("ALAN_NATIVE_CONNECTION_REQUEST_ID")
         .env_remove("ALAN_INSTANCE_RUNTIME_DIR")
         .args(args)
@@ -51,9 +50,7 @@ fn build_jwt(payload: serde_json::Value) -> String {
 }
 
 fn seed_chatgpt_auth(data_dir: &Path) {
-    let host_store =
-        alan_os_host::HostStorePaths::from_data_dir(data_dir, InstallChannel::Dev.descriptor().id)
-            .unwrap();
+    let host_store = alan_os_host::HostStorePaths::from_data_dir(data_dir).unwrap();
     std::fs::create_dir_all(host_store.managed_auth.parent().unwrap()).unwrap();
     let storage = AuthStorage::new(host_store.managed_auth).unwrap();
     let id_token = build_jwt(json!({
@@ -95,7 +92,7 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
     let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&home).unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(&runtime_base(&runtime), "dev").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&runtime_base(&runtime)).unwrap();
 
     alan_command(
         &home,
@@ -179,8 +176,7 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
         !paths.root.exists(),
         "metadata commands created a Host endpoint"
     );
-    let system =
-        SystemStorePaths::from_data_dir(&detected_data_dir(&home, &xdg_data), "dev").unwrap();
+    let system = SystemStorePaths::from_data_dir(&detected_data_dir(&home, &xdg_data)).unwrap();
     assert!(
         system
             .connection_bindings()
@@ -195,7 +191,7 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
         .env("XDG_DATA_HOME", &xdg_data)
         .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
         .env("TMPDIR", &runtime)
-        .env("ALAN_INSTALL_CHANNEL", "dev")
+        .env_remove("ALAN_INSTALL_CHANNEL")
         .env("ALAN_NATIVE_CONNECTION_REQUEST_ID", "pending-request")
         .env_remove("ALAN_INSTANCE_RUNTIME_DIR")
         .args(["connection", "logout", "chatgpt-main"])

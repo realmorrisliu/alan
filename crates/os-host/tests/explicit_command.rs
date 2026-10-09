@@ -189,9 +189,9 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
             ..Default::default()
         })
     };
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(
-        HostBootConfig::ephemeral("test", process.clone(), LlmClient::new(provider), tools),
+        HostBootConfig::ephemeral(process.clone(), LlmClient::new(provider), tools),
         paths.clone(),
     )
     .await
@@ -472,7 +472,6 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
     server.await.unwrap().unwrap();
     let restarted = AlanOsHost::boot(
         HostBootConfig::ephemeral(
-            "test",
             process,
             LlmClient::new(MockLlmProvider::new()),
             ToolRegistry::new(),

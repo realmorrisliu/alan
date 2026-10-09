@@ -53,8 +53,8 @@ async fn captured_clients_read_rotated_secrets_and_reject_logout_on_every_reques
     })).unwrap();
     let factory = ProductLlmClientFactory {
         credentials_dir: temp.path().to_path_buf(),
-        keychain_service: None,
         managed_auth: None,
+        _installation_access: None,
     };
     let mut captured = factory
         .create(&Config::default(), Some("main"), &connections)
@@ -120,8 +120,8 @@ async fn evaluation_wrappers_preserve_capability_and_recheck_revoked_credentials
     let connections = evaluation_connections();
     let factory = ProductLlmClientFactory {
         credentials_dir: temp.path().into(),
-        keychain_service: None,
         managed_auth: None,
+        _installation_access: None,
     };
     let mut captured = factory
         .create(&Config::default(), Some("evaluation"), &connections)
@@ -170,8 +170,8 @@ async fn live_typesafe_profile_through_mounted_connection() {
             llmfs.clone(),
             Arc::new(ProductLlmClientFactory {
                 credentials_dir: temp.path().join("host-credentials"),
-                keychain_service: None,
                 managed_auth: None,
+                _installation_access: None,
             }),
             Config::default(),
             None,
@@ -276,7 +276,6 @@ async fn live_typesafe_profile_through_root_machine() {
     connections.save_to_path(&metadata).unwrap();
     let generation = MockLlmProvider::new();
     let mut host = HostBootConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         LlmClient::new(generation.clone()),
         ToolRegistry::new(),
@@ -295,8 +294,8 @@ async fn live_typesafe_profile_through_root_machine() {
     host.0.llm_factory = Arc::new(Factory(
         ProductLlmClientFactory {
             credentials_dir: credentials,
-            keychain_service: None,
             managed_auth: None,
+            _installation_access: None,
         },
         generation.clone(),
     ));

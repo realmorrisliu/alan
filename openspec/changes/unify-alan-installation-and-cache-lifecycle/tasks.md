@@ -30,10 +30,10 @@ These are implementation tasks. Read disposition.md before applying and implemen
 
 ## 4. One executable and channel-free composition
 
-- [ ] 4.1 Replace channel-bearing Host store/boot/service construction with explicit product or temporary test bindings; verify the canonical platform layout and no personal-home access from tests, updating affected public APIs and exports together.
-- [ ] 4.2 Remove engine/auth argv/environment channel detectors and duplicated auth path construction; reject obsolete selection before writable access while preserving processless version/help, verified by subprocess and credential-path tests.
-- [ ] 4.3 Remove channel suffixes and identity matching from current runtime endpoint/status handling with a bounded version transition; verify independent invocations, same-directory exclusion, peer authorization, stale/old receipt rejection and no endpoint fallback.
-- [ ] 4.4 Update legacy authored-content import and historical credential discovery to explicit historical source selection; retain sandbox denies for old secret paths and verify no implicit source overlays or credential fallback.
+- [x] 4.1 Replace channel-bearing Host store/boot/service construction with explicit product or temporary test bindings; verify the canonical platform layout and no personal-home access from tests, updating affected public APIs and exports together.
+- [x] 4.2 Remove engine/auth argv/environment channel detectors and duplicated auth path construction; reject obsolete selection before writable access while preserving processless version/help, verified by subprocess and credential-path tests.
+- [x] 4.3 Remove channel suffixes and identity matching from current runtime endpoint/status handling with a bounded version transition; verify independent invocations, same-directory exclusion, peer authorization, stale/old receipt rejection and no endpoint fallback.
+- [x] 4.4 Update legacy authored-content import and historical credential discovery to explicit historical source selection; retain sandbox denies for old secret paths and verify no implicit source overlays or credential fallback.
 - [ ] 4.5 Unify install/uninstall manifests, remove dev Just recipes and archive aliases, and preflight both old manifests before retirement; extend distribution tests for modified/unowned files, dev-only/stable-only/dual installs and handled-signal rollback.
 - [ ] 4.6 Update current docs, AGENTS.md, local dev-verification guidance, scripts and fixtures to the one-product contract; verify current executable references with scoped search, keeping historical ADRs/archives unchanged and reconciling active input-lifecycle storage wording only.
 

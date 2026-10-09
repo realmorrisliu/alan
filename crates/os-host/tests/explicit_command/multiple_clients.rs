@@ -6,7 +6,7 @@ async fn same_agent_clients_keep_results_and_ordered_cwd_after_targeted_cancel()
     let runtime = tempfile::tempdir().unwrap();
     let first_project = tempfile::tempdir().unwrap();
     let second_project = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let mut tools = ToolRegistry::new();
     tools.register(alan_tools::BashTool::new());
     let provider = MockLlmProvider::new();
@@ -22,7 +22,7 @@ async fn same_agent_clients_keep_results_and_ordered_cwd_after_targeted_cancel()
         ..AgentProcessConfig::default()
     };
     let host = AlanOsHost::boot(
-        HostBootConfig::ephemeral("test", process, LlmClient::new(provider), tools),
+        HostBootConfig::ephemeral(process, LlmClient::new(provider), tools),
         paths.clone(),
     )
     .await

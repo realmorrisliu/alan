@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     let corpus: Value = serde_json::from_slice(&raw)?;
     let output = PathBuf::from(&args[2]);
     std::fs::create_dir(&output)?;
-    let manager = alan_os_host::HostBootConfig::product("dev")?
+    let manager = alan_os_host::HostBootConfig::product()?
         .boot_foreground()
         .await?;
     let result = async {

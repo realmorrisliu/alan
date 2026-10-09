@@ -72,7 +72,7 @@ Credential bytes SHALL remain in the owning Host credential store and no
 compatibility reader SHALL remain.
 
 #### Scenario: Legacy profile is valid
-- **WHEN** upgrade finds a valid legacy profile and credential reference
+- **WHEN** an operator explicitly selects legacy authored-state cleanup and it finds a valid legacy profile and credential reference
 - **THEN** the metadata is imported and verified before the old file is deleted
 - **AND** secret bytes are never copied into System Store
 

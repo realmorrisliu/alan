@@ -101,6 +101,16 @@ impl InstallationPaths {
                 "installation migration is incomplete; resume or roll back the explicit migration before opening stores"
             );
         }
+        let inventory = self.inspect()?;
+        ensure!(
+            inventory.canonical.system_present
+                || inventory.canonical.host_present
+                || !inventory
+                    .sources
+                    .iter()
+                    .any(|source| source.stores.system_present || source.stores.host_present),
+            "legacy Alan stores exist; explicitly select a source with alan legacy-state migrate-installation --from stable|dev before starting Alan"
+        );
         Ok(InstallationAccess { _lock: lock })
     }
 

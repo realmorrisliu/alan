@@ -9,7 +9,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use alan_agent_engine::InstallChannel;
+use alan_os_host::installation::LegacyInstallation;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -27,27 +27,27 @@ const SECRET_STORE_FILE: &str = "secrets.toml";
 /// Fixed legacy roots for one channel and one Host user.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyStatePaths {
-    pub channel: InstallChannel,
+    pub source: LegacyInstallation,
     pub home_dir: PathBuf,
     pub alan_root: PathBuf,
     pub public_skills_root: PathBuf,
 }
 
 impl LegacyStatePaths {
-    pub fn detect(channel: InstallChannel) -> Result<Option<Self>> {
+    pub fn detect(channel: LegacyInstallation) -> Result<Option<Self>> {
         dirs::home_dir()
             .map(|home| Self::from_home_dir(&home, channel))
             .transpose()
     }
 
-    pub fn from_home_dir(home_dir: &Path, channel: InstallChannel) -> Result<Self> {
+    pub fn from_home_dir(home_dir: &Path, channel: LegacyInstallation) -> Result<Self> {
         validate_absolute_path("Host home directory", home_dir)?;
         let (alan_home, public_skills) = match channel {
-            InstallChannel::Stable => (LEGACY_STABLE_HOME, LEGACY_STABLE_PUBLIC_SKILLS),
-            InstallChannel::Dev => (LEGACY_DEV_HOME, LEGACY_DEV_PUBLIC_SKILLS),
+            LegacyInstallation::Stable => (LEGACY_STABLE_HOME, LEGACY_STABLE_PUBLIC_SKILLS),
+            LegacyInstallation::Dev => (LEGACY_DEV_HOME, LEGACY_DEV_PUBLIC_SKILLS),
         };
         Ok(Self {
-            channel,
+            source: channel,
             home_dir: home_dir.to_path_buf(),
             alan_root: home_dir.join(alan_home),
             public_skills_root: home_dir.join(public_skills).join("skills"),
@@ -123,8 +123,8 @@ pub fn inspect_legacy_state(
     let mut public_skill_roots = vec![paths.public_skills_root.clone()];
     for source in explicit_source_roots {
         validate_absolute_path("explicit legacy source root", source)?;
-        alan_roots.push(explicit_alan_root(source, paths.channel));
-        public_skill_roots.push(explicit_public_skills_root(source, paths.channel));
+        alan_roots.push(explicit_alan_root(source, paths.source));
+        public_skill_roots.push(explicit_public_skills_root(source, paths.source));
     }
     alan_roots.sort();
     alan_roots.dedup();
@@ -193,7 +193,7 @@ pub fn cleanup_legacy_state(
     let mut removed_generated_paths = Vec::new();
     let mut roots = vec![paths.alan_root.clone()];
     for source in explicit_source_roots {
-        roots.push(explicit_alan_root(source, paths.channel));
+        roots.push(explicit_alan_root(source, paths.source));
     }
     roots.sort();
     roots.dedup();
@@ -220,7 +220,7 @@ fn migrate_legacy_connections(
     host_store: &HostStorePaths,
 ) -> Result<ConnectionMigrationReport> {
     alan_os_host::migrate_legacy_connections(
-        &LegacyConnectionPaths::from_home_dir(&paths.home_dir, paths.channel)?,
+        &LegacyConnectionPaths::from_home_dir(&paths.home_dir, paths.source)?,
         system_store,
         host_store,
     )
@@ -375,24 +375,24 @@ fn remove_import_source_if_unchanged(source: &Path, expected_fingerprint: &[u8])
     })
 }
 
-fn explicit_alan_root(source: &Path, channel: InstallChannel) -> PathBuf {
+fn explicit_alan_root(source: &Path, channel: LegacyInstallation) -> PathBuf {
     match source.file_name().and_then(|name| name.to_str()) {
         Some(LEGACY_STABLE_HOME | LEGACY_DEV_HOME) => source.to_path_buf(),
         _ => source.join(match channel {
-            InstallChannel::Stable => LEGACY_STABLE_HOME,
-            InstallChannel::Dev => LEGACY_DEV_HOME,
+            LegacyInstallation::Stable => LEGACY_STABLE_HOME,
+            LegacyInstallation::Dev => LEGACY_DEV_HOME,
         }),
     }
 }
 
-fn explicit_public_skills_root(source: &Path, channel: InstallChannel) -> PathBuf {
+fn explicit_public_skills_root(source: &Path, channel: LegacyInstallation) -> PathBuf {
     match source.file_name().and_then(|name| name.to_str()) {
         Some("skills") => source.to_path_buf(),
         Some(LEGACY_STABLE_PUBLIC_SKILLS | LEGACY_DEV_PUBLIC_SKILLS) => source.join("skills"),
         _ => source
             .join(match channel {
-                InstallChannel::Stable => LEGACY_STABLE_PUBLIC_SKILLS,
-                InstallChannel::Dev => LEGACY_DEV_PUBLIC_SKILLS,
+                LegacyInstallation::Stable => LEGACY_STABLE_PUBLIC_SKILLS,
+                LegacyInstallation::Dev => LEGACY_DEV_PUBLIC_SKILLS,
             })
             .join("skills"),
     }

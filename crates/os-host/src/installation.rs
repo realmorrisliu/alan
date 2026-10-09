@@ -29,6 +29,39 @@ impl LegacyInstallation {
     }
 }
 
+impl std::str::FromStr for LegacyInstallation {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "stable" => Ok(Self::Stable),
+            "dev" => Ok(Self::Dev),
+            _ => Err("historical source must be stable or dev".into()),
+        }
+    }
+}
+
+/// Reject retired selectors before any command opens product data; help/version parse first.
+pub fn validate_current_invocation() -> Result<()> {
+    ensure!(
+        std::env::var_os("ALAN_INSTALL_CHANNEL").is_none(),
+        "ALAN_INSTALL_CHANNEL is retired; unset it and use alan. Select old data with alan legacy-state migrate-installation --from stable|dev"
+    );
+    let argv = std::env::args_os().next();
+    let name = argv
+        .as_deref()
+        .and_then(|arg| Path::new(arg).file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    ensure!(
+        !matches!(
+            name.strip_suffix(".exe").unwrap_or(name),
+            "alan-dev" | "alan-os-host-dev"
+        ),
+        "this executable name is retired; invoke alan and explicitly adopt old data with alan legacy-state migrate-installation"
+    );
+    Ok(())
+}
+
 /// Host-owned layout containing the canonical stores and any retained old inputs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallationPaths {

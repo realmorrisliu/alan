@@ -1,4 +1,4 @@
-//! Alan OS Host: one system authority per user, device, and install channel.
+//! Alan OS Host: one independent system instance per Alan invocation.
 //!
 //! This crate owns platform lifetime, boot identity, System/Host Store paths,
 //! native adapters, and local aP attachment. Alan OS service lifecycle belongs

@@ -3,6 +3,15 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
+fn isolated_alan(root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_alan"));
+    command
+        .env("HOME", root.join("home"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env_remove("ALAN_INSTALL_CHANNEL");
+    command
+}
+
 #[cfg(unix)]
 struct PackageBinWrapperCase {
     wrapper_name: &'static str,
@@ -199,7 +208,7 @@ fn skills_init_inline_scaffolds_and_validates_package() {
     let temp = TempDir::new().unwrap();
     let package_root = temp.path().join("doc-review");
 
-    let init = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let init = isolated_alan(temp.path())
         .args([
             "skills",
             "init",
@@ -220,7 +229,7 @@ fn skills_init_inline_scaffolds_and_validates_package() {
     assert!(package_root.join("SKILL.md").is_file());
     assert!(package_root.join("agents/openai.yaml").is_file());
 
-    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let validate = isolated_alan(temp.path())
         .args(["skills", "validate", package_root.to_str().unwrap()])
         .output()
         .unwrap();
@@ -236,7 +245,7 @@ fn skills_init_normalizes_runtime_skill_id_from_package_directory() {
     let temp = TempDir::new().unwrap();
     let package_root = temp.path().join("repo.review");
 
-    let init = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let init = isolated_alan(temp.path())
         .args([
             "skills",
             "init",
@@ -257,7 +266,7 @@ fn skills_init_normalizes_runtime_skill_id_from_package_directory() {
     let stdout = String::from_utf8_lossy(&init.stdout);
     assert!(stdout.contains("skill: repo-review"));
 
-    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let validate = isolated_alan(temp.path())
         .args(["skills", "validate", package_root.to_str().unwrap()])
         .output()
         .unwrap();
@@ -273,7 +282,7 @@ fn skills_init_delegate_scaffolds_a_delegated_package() {
     let temp = TempDir::new().unwrap();
     let package_root = temp.path().join("repo-review");
 
-    let init = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let init = isolated_alan(temp.path())
         .args([
             "skills",
             "init",
@@ -298,7 +307,7 @@ fn skills_init_delegate_scaffolds_a_delegated_package() {
             .is_file()
     );
 
-    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let validate = isolated_alan(temp.path())
         .args(["skills", "validate", package_root.to_str().unwrap()])
         .output()
         .unwrap();
@@ -328,7 +337,7 @@ Body
     std::fs::create_dir_all(package_root.join("agents/repo_review/persona")).unwrap();
     std::fs::create_dir_all(package_root.join("agents/grader/persona")).unwrap();
 
-    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let validate = isolated_alan(temp.path())
         .args(["skills", "validate", package_root.to_str().unwrap()])
         .output()
         .unwrap();
@@ -360,7 +369,7 @@ Body
     std::fs::create_dir_all(package_root.join("agents/creator/persona")).unwrap();
     std::fs::create_dir_all(package_root.join("agents/grader/persona")).unwrap();
 
-    let validate = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let validate = isolated_alan(temp.path())
         .args(["skills", "validate", package_root.to_str().unwrap()])
         .output()
         .unwrap();
@@ -393,7 +402,7 @@ Body
     )
     .unwrap();
 
-    let eval = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let eval = isolated_alan(temp.path())
         .args(["skills", "eval", package_root.to_str().unwrap()])
         .output()
         .unwrap();
@@ -497,7 +506,7 @@ Body
     )
     .unwrap();
 
-    let eval = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let eval = isolated_alan(temp.path())
         .args([
             "skills",
             "eval",
@@ -575,7 +584,7 @@ Body
     )
     .unwrap();
 
-    let eval = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let eval = isolated_alan(temp.path())
         .args([
             "skills",
             "eval",
@@ -590,7 +599,7 @@ Body
     std::fs::remove_file(output_dir.join("benchmark.json")).unwrap();
     std::fs::remove_file(output_dir.join("review/index.html")).unwrap();
 
-    let aggregate = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let aggregate = isolated_alan(temp.path())
         .args([
             "skills",
             "aggregate-benchmark",
@@ -601,7 +610,7 @@ Body
     assert!(aggregate.status.success(), "{aggregate:?}");
     assert!(output_dir.join("benchmark.json").is_file());
 
-    let review = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let review = isolated_alan(temp.path())
         .args(["skills", "generate-review", output_dir.to_str().unwrap()])
         .output()
         .unwrap();

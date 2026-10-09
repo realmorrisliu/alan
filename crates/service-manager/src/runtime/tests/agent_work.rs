@@ -26,7 +26,6 @@ async fn agent_discovers_and_invokes_work_command_through_process_namespace() {
     let provider = MockLlmProvider::new().with_responses(vec![call, answer]);
     let probe = provider.clone();
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(provider),
