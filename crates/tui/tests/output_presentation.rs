@@ -1,5 +1,7 @@
-use alan_agent_protocol::{PlanItemStatus, ToolResultPresentation, YieldKind};
-use alan_tui::history::{HistoryCell, PendingYieldCell, PlanLine, RenderOpts, ToolStatus};
+use alan_agent_protocol::{
+    PlanItem, PlanItemStatus, ToolResultPresentation, UiPlanSnapshot, YieldKind,
+};
+use alan_tui::history::{HistoryCell, PendingYieldCell, RenderOpts, ToolStatus};
 
 #[test]
 fn semantic_output_has_no_generated_role_labels_and_keeps_literal_content() {
@@ -15,10 +17,18 @@ fn semantic_output_has_no_generated_role_labels_and_keeps_literal_content() {
             text: literal.into(),
             duration_secs: 2,
         },
-        HistoryCell::Plan(vec![PlanLine {
-            status: PlanItemStatus::InProgress,
-            content: literal.into(),
-        }]),
+        HistoryCell::Plan {
+            snapshot: UiPlanSnapshot::new(
+                None,
+                vec![PlanItem {
+                    id: "step-1".into(),
+                    status: PlanItemStatus::InProgress,
+                    content: literal.into(),
+                }],
+            ),
+            owner: "/agent/1".into(),
+            revision: 1,
+        },
         HistoryCell::Error(literal.into()),
         HistoryCell::PendingYield(PendingYieldCell {
             request_id: "request-1".into(),

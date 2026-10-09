@@ -19,15 +19,37 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     let area = frame.area();
     let width = area.width as usize;
     if app.modal.active {
-        let mut rows = vec![Line::from(format!(
-            "{}/{} · ↔ Action · Space/b page · Esc",
-            app.modal.selected + 1,
+        let count = if app.modal.plan_mode {
+            app.modal.plans.len()
+        } else {
             app.modal.ids.len()
+        };
+        let kind = if app.modal.plan_mode {
+            "Plan"
+        } else {
+            "Action"
+        };
+        let switch = if width >= 48 {
+            if app.modal.plan_mode {
+                " · p Actions"
+            } else {
+                " · p Plans"
+            }
+        } else {
+            ""
+        };
+        let mut rows = vec![Line::from(format!(
+            "{}/{count} · ↔ {kind} · Space/b page · Esc{switch}",
+            if count == 0 {
+                0
+            } else {
+                app.modal.selected + 1
+            },
         ))];
         let detail = crate::history::wrap_styled_lines(app.modal.rows.clone(), width);
         let start = app.modal.scroll.min(detail.len().saturating_sub(1));
         if detail.is_empty() {
-            rows.push(Line::from("Loading retained Action files…"));
+            rows.push(Line::from("Loading retained details…"));
         }
         rows.extend(
             detail
@@ -198,11 +220,11 @@ fn live_region_lines_at(
         if app.completion.is_none()
             && app.project_selection.is_none()
             && app.pending_yield.is_none()
-            && !app.projected_actions.is_empty()
+            && (!app.projected_actions.is_empty() || !app.plan_owners.is_empty())
         {
             // Reuse the stable row below the composer; completion keeps priority.
             lines.push(Line::styled(
-                "Ctrl+O details",
+                "Ctrl+O details (p: plans)",
                 Style::default().fg(Color::DarkGray),
             ));
         }

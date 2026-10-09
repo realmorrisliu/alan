@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use alan_agent_protocol::{
     ContentPart, DiffLine, PlanItemStatus, StructuredInputKind, StructuredInputQuestion,
-    ToolResultPresentation, YieldKind,
+    ToolResultPresentation, UiPlanSnapshot, YieldKind,
 };
 use serde_json::{Map, Value};
 
@@ -69,16 +69,14 @@ pub enum HistoryCell {
         preview: Option<String>,
         presentation: Option<ToolResultPresentation>,
     },
-    Plan(Vec<PlanLine>),
+    Plan {
+        snapshot: UiPlanSnapshot,
+        owner: String,
+        revision: usize,
+    },
     PendingYield(PendingYieldCell),
     /// A fatal (non-recoverable) error.
     Error(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanLine {
-    pub status: PlanItemStatus,
-    pub content: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,8 +216,29 @@ impl HistoryCell {
                 .collect();
         }
 
-        if let Self::Plan(items) = self {
-            return render_plan(items, width);
+        if let Self::Plan {
+            snapshot, revision, ..
+        } = self
+        {
+            let completed = snapshot
+                .items
+                .iter()
+                .filter(|item| item.status == PlanItemStatus::Completed)
+                .count();
+            let current = snapshot
+                .items
+                .iter()
+                .find(|item| item.status == PlanItemStatus::InProgress);
+            let step = current.map_or(String::new(), |item| {
+                format!(" · {}", action_summary::bounded(&item.content, 256))
+            });
+            let summary = format!(
+                "Plan {revision} · {completed}/{} completed{step}",
+                snapshot.items.len()
+            );
+            return vec![
+                action_summary::summary_row(&summary, width, metadata_style()).to_string(),
+            ];
         }
 
         if let Self::Thinking {
@@ -242,7 +261,7 @@ impl HistoryCell {
             | Self::Styled(_)
             | Self::AssistantTail { .. }
             | Self::InputTail { .. }
-            | Self::Plan(_)
+            | Self::Plan { .. }
             | Self::Thinking { .. } => {
                 unreachable!("handled above")
             }
@@ -314,7 +333,7 @@ impl HistoryCell {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                     Self::Tool { status, .. } => status.style(),
-                    Self::Plan(_) => metadata_style(),
+                    Self::Plan { .. } => metadata_style(),
                     Self::Thinking { .. } => metadata_style().add_modifier(Modifier::ITALIC),
                     Self::Error(_) => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     _ => Style::default(),
@@ -574,20 +593,6 @@ pub(crate) fn action_detail(cell: &HistoryCell) -> Vec<Line<'static>> {
     } else {
         cell.render_styled_lines(RenderOpts::new(16384, false))
     }
-}
-
-fn render_plan(items: &[PlanLine], width: usize) -> Vec<String> {
-    items
-        .iter()
-        .flat_map(|item| {
-            let marker = match item.status {
-                PlanItemStatus::Completed => "[x]",
-                PlanItemStatus::InProgress => "[~]",
-                PlanItemStatus::Pending => "[ ]",
-            };
-            wrap_plain_text(&format!("{marker} {}", item.content), width)
-        })
-        .collect()
 }
 
 fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {

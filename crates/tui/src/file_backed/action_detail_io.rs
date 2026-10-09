@@ -45,6 +45,10 @@ pub(super) fn start_pending_at(
         )];
         return;
     }
+    if app.modal.plan_mode {
+        super::plan_detail_io::start(shell, app, tx, owner_path);
+        return;
+    }
     let shell = shell.clone();
     let tx = tx.clone();
     app.modal.owner_path = owner_path.into();
@@ -85,7 +89,7 @@ pub(super) fn start_pending_at(
     });
 }
 
-async fn field(shell: &alan_shell::Shell, path: &str) -> Result<String, String> {
+pub(super) async fn field(shell: &alan_shell::Shell, path: &str) -> Result<String, String> {
     let stat = shell
         .stat(path)
         .await

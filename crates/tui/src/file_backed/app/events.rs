@@ -2,6 +2,11 @@
 use super::*;
 
 pub(in crate::file_backed) enum FileBackedEvent {
+    PlanDetails {
+        path: String,
+        generation: u64,
+        entries: Vec<super::super::plan_detail_io::PlanEntry>,
+    },
     ActionDetails {
         path: String,
         generation: u64,

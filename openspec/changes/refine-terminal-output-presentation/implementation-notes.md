@@ -39,9 +39,8 @@ truncation. Existing semantic-drain, retained detail, Markdown, completion and
 accessibility suites remain the regression authority.
 
 Native captures for the full five-workflow matrix have not been taken yet.
-Task 1.1 stays open. The first renderer slice deliberately leaves full plan
-lists readable until historical snapshot selection is implemented; it must not
-be counted as compact-plan completion.
+Task 1.1 stays open. The first renderer slice left full plan lists readable;
+the subsequent historical-plan slice below supplies compact-plan behavior.
 
 ## First renderer slice: verified local results
 
@@ -70,3 +69,28 @@ Rustdoc, standalone CLI and distribution checks. Its receipt is
 `target/quality.log`; later implementation changes require a fresh gate. No fresh native acceptance, read-only
 grouping, compact historical plan detail, Linux toolchain expansion, real-model
 repeat matrix, current-head CI or merged delivery is claimed by this slice.
+
+## Historical-plan slice: verified local results
+
+Each distinct plan change, including explanation-only changes and clearing the
+plan, now appends one bounded summary row. Its semantic cell retains the exact
+snapshot and concrete Process owner. Ctrl+O opens the existing detail surface;
+`p` switches between individual Actions and historical plans. Historical reads
+use the pinned Process's existing `machine/ui/events`, never the latest
+`machine/ui/plan` projection. Exact captured snapshots remain distinguishable
+when retained history is unavailable or cannot be correlated.
+
+Reads have a five-second deadline and bounded chunks/snapshots. Invalid,
+incomplete or oversized records leave earlier complete snapshots inspectable
+and expose the gap explicitly; they never substitute another snapshot. New
+authorization/input requests close the detail surface and invalidate late
+responses so a modal cannot hide a pending request. Returning from details
+preserves the draft, cursor and intent.
+
+The focused suite passed 348 library and 12 integration tests, including plan
+changes, drained scrollback, Unicode chunk boundaries, historical owner and
+generation fencing, source gaps, exact captured fallback and request priority.
+`git diff --check`, Rust source-size and architecture checks passed. A fresh
+full `just quality` passed; receipts are `target/plan-tests.log` and
+`target/plan-quality.log`. Native PTY/Herdr acceptance, read-only grouping,
+Linux qualification and real-model repeats remain open.

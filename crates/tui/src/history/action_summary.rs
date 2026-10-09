@@ -87,7 +87,7 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
         .collect()
 }
 
-fn summary_row(text: &str, width: usize, style: Style) -> Line<'static> {
+pub(super) fn summary_row(text: &str, width: usize, style: Style) -> Line<'static> {
     let clean = clean_text(text);
     let mut row = wrap_styled_lines([Line::styled(clean.clone(), style)], width.max(1))
         .into_iter()

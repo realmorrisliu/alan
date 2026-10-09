@@ -1,6 +1,26 @@
 use super::*;
 
 impl FileBackedApp {
+    pub(in crate::file_backed) fn upsert_action_cell(
+        &mut self,
+        action_id: String,
+        cell: HistoryCell,
+    ) {
+        if let Some(index) = self.action_cells.get(&action_id).copied()
+            && let Some(existing) = self.transcript.get_mut(index)
+        {
+            if matches!(existing, HistoryCell::Styled(_)) {
+                return;
+            }
+            *existing = cell;
+            return;
+        }
+        self.mark_pending_remote_turn_start_if_unbounded();
+        let index = self.transcript.len();
+        self.transcript.push(cell);
+        self.action_cells.insert(action_id, index);
+    }
+
     pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
         for input in self.local_inputs.values_mut() {
             if let Some(index) = &mut input.cell
@@ -353,17 +373,22 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn apply_ui_plan_snapshot(&mut self, snapshot: UiPlanSnapshot) {
         let changed = self.plan != snapshot;
         self.plan = snapshot.clone();
-        if changed && !snapshot.items.is_empty() {
-            self.push_turn_preview_cell(HistoryCell::Plan(
-                snapshot
-                    .items
-                    .into_iter()
-                    .map(|item| crate::history::PlanLine {
-                        status: item.status,
-                        content: item.content,
-                    })
-                    .collect(),
-            ));
+        if changed {
+            let owner = if self.queue.owner.is_empty() {
+                &self.agent_path
+            } else {
+                &self.queue.owner
+            }
+            .clone();
+            if !self.plan_owners.contains(&owner) {
+                self.plan_owners.push(owner.clone());
+            }
+            self.plan_revision += 1;
+            self.push_turn_preview_cell(HistoryCell::Plan {
+                snapshot,
+                owner,
+                revision: self.plan_revision,
+            });
         }
     }
 

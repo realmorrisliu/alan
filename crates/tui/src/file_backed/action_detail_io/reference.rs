@@ -2,7 +2,7 @@
 use ratatui::text::Line;
 use serde_json::Value;
 
-pub(super) const DISPLAY_BYTES: u64 = 262144;
+pub(in crate::file_backed) const DISPLAY_BYTES: u64 = 262144;
 
 pub(in crate::file_backed) async fn range(
     shell: &alan_shell::Shell,

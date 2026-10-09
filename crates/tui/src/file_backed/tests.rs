@@ -384,7 +384,9 @@ fn ui_plan_event_appends_plan_cell() {
         ),
     });
 
-    assert!(matches!(app.transcript.last(), Some(HistoryCell::Plan(items)) if items.len() == 1));
+    assert!(
+        matches!(app.transcript.last(), Some(HistoryCell::Plan { snapshot, .. }) if snapshot.items.len() == 1)
+    );
 }
 
 #[test]
@@ -800,7 +802,7 @@ fn raced_turn_preview_cells_move_behind_their_user_boundary() {
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
     assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
     assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "second"));
-    assert!(matches!(app.transcript[3], HistoryCell::Plan(_)));
+    assert!(matches!(app.transcript[3], HistoryCell::Plan { .. }));
     assert!(matches!(app.transcript[4], HistoryCell::Tool { .. }));
     assert!(matches!(app.transcript[5], HistoryCell::Assistant(ref text) if text == "world"));
     assert_eq!(app.action_cells.get("a1"), Some(&4));
@@ -847,7 +849,7 @@ fn stream_append_finds_open_preview_before_interposed_cells() {
         })
         .collect();
     assert_eq!(assistant_cells, vec!["hello"]);
-    assert!(matches!(app.transcript[2], HistoryCell::Plan(_)));
+    assert!(matches!(app.transcript[2], HistoryCell::Plan { .. }));
 }
 
 #[test]
@@ -875,7 +877,7 @@ fn hydrated_assistant_seeds_pending_boundary_state() {
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
     assert!(matches!(app.transcript[1], HistoryCell::Assistant(ref text) if text == "done"));
     assert!(matches!(app.transcript[2], HistoryCell::User(ref text) if text == "second"));
-    assert!(matches!(app.transcript[3], HistoryCell::Plan(_)));
+    assert!(matches!(app.transcript[3], HistoryCell::Plan { .. }));
     assert!(matches!(app.transcript[4], HistoryCell::Assistant(ref text) if text == "wor"));
 }
 

@@ -32,6 +32,7 @@ mod model_review_tests;
 mod model_tests;
 #[cfg(test)]
 mod model_transport_tests;
+mod plan_detail_io;
 mod previous_input;
 mod project;
 mod queue;

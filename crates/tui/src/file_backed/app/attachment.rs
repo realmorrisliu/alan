@@ -41,8 +41,11 @@ impl FileBackedApp {
         self.modal.generation += 1;
         self.modal.rows.clear();
         self.modal.ids.clear();
+        self.modal.plans.clear();
+        self.modal.plan_mode = false;
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
+        self.plan_revision = 0;
         self.thinking = UiThinkingSnapshot::idle();
         self.running_tools.clear();
         self.pending_yield = None;

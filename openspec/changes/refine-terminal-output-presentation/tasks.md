@@ -15,7 +15,7 @@
 - [ ] 3.1 Reuse or minimally extend Runtime-owned metadata for positive read-only eligibility; verify older/unknown results and arbitrary shell commands remain standalone.
 - [ ] 3.2 Group eligible adjacent successful Actions while preserving member selection, status, chronological boundaries and authority context; test all group-ending cases.
 - [ ] 3.3 Preserve per-Action updates, attachment fencing and history reconciliation across grouping, partial drains, repeated identical content and reconnect; never rewrite committed scrollback or replay work.
-- [ ] 3.4 Render each distinct plan change as a compact permanent record; retain and expose its corresponding full snapshot through existing evidence/detail owners, with truthful loss and no latest-plan substitution.
+- [x] 3.4 Render each distinct plan change as a compact permanent record; retain and expose its corresponding full snapshot through existing evidence/detail owners, with truthful loss and no latest-plan substitution.
 
 ## 4. Verification and native acceptance
 

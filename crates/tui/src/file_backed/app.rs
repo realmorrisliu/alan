@@ -73,6 +73,8 @@ pub(super) struct FileBackedApp {
     pub(super) queue: super::queue::QueueProjection,
     pub(super) activity: UiActivitySnapshot,
     pub(super) plan: UiPlanSnapshot,
+    pub(super) plan_revision: usize,
+    pub(super) plan_owners: Vec<String>,
     pub(super) thinking: UiThinkingSnapshot,
     pub(super) running_tools: Vec<RunningTool>,
     pub(super) pending_yield: Option<PendingYieldCell>,
@@ -131,6 +133,8 @@ impl FileBackedApp {
             queue: super::queue::QueueProjection::default(),
             activity: UiActivitySnapshot::idle(),
             plan: UiPlanSnapshot::empty(),
+            plan_revision: 0,
+            plan_owners: Vec::new(),
             thinking: UiThinkingSnapshot::idle(),
             running_tools: Vec::new(),
             pending_yield: None,
@@ -180,6 +184,14 @@ impl FileBackedApp {
         has_pending_submission: bool,
     ) -> Option<FileBackedAction> {
         match event {
+            FileBackedEvent::PlanDetails {
+                path,
+                generation,
+                entries,
+            } => {
+                self.apply_plan_details(path, generation, entries);
+                None
+            }
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
@@ -188,6 +200,7 @@ impl FileBackedApp {
                 rows,
             } => {
                 if self.modal.active
+                    && !self.modal.plan_mode
                     && path == self.modal.owner_path
                     && generation == self.modal.generation
                 {
@@ -820,7 +833,7 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained Action details; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
+                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained details; p toggles Actions/plans; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
                         .to_string(),
                 );
                 None
@@ -833,6 +846,11 @@ impl FileBackedApp {
     }
 
     pub(super) fn set_pending_yield(&mut self, pending: PendingYieldCell) {
+        if self.modal.active {
+            self.modal.active = false;
+            self.modal.generation += 1;
+            self.modal.pending = false;
+        }
         self.pending_yield = Some(pending.clone());
         self.sync_form();
         self.completion = None;
@@ -891,22 +909,6 @@ impl FileBackedApp {
 
     pub(super) fn activity_started_at_ms(&self) -> Option<u64> {
         self.activity.started_at_ms
-    }
-
-    pub(super) fn upsert_action_cell(&mut self, action_id: String, cell: HistoryCell) {
-        if let Some(index) = self.action_cells.get(&action_id).copied()
-            && let Some(existing) = self.transcript.get_mut(index)
-        {
-            if matches!(existing, HistoryCell::Styled(_)) {
-                return;
-            }
-            *existing = cell;
-            return;
-        }
-        self.mark_pending_remote_turn_start_if_unbounded();
-        let index = self.transcript.len();
-        self.transcript.push(cell);
-        self.action_cells.insert(action_id, index);
     }
 
     #[cfg(test)]
