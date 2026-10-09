@@ -261,6 +261,16 @@ def verify_receipt(owner, root, record):
         raise ValueError(f"output was replaced: {root}")
 
 
+def reject_nested_ownership(root):
+    # Sidecars cover linked worktrees, other repositories and orphaned receipts alike.
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if entry.name.startswith(".") and entry.name.endswith(".alan-build.json"):
+                raise ValueError(f"contains separately owned output: {entry.path}")
+            if entry.is_dir(follow_symlinks=False):
+                reject_nested_ownership(entry.path)
+
+
 def cargo_only(root):
     # The outer target often also contains harness evidence; never erase that.
     known = {"debug", "release", "doc", "package", "tmp", ".rustc_info.json", "CACHEDIR.TAG"}
@@ -314,6 +324,7 @@ def clean_output(owner, root, record_path, record, apply=False):
         nested = [path for path in registered_outputs(owner) if root in path.parents]
         if nested:
             raise ValueError(f"contains separately owned output: {root}")
+        reject_nested_ownership(root)
         cargo_only(root)
         with os.fdopen(os.open(root / "CACHEDIR.TAG", os.O_RDONLY | os.O_NOFOLLOW), "rb") as tag:
             if tag.read(len(CACHE_TAG) - 1) != CACHE_TAG.rstrip(b"\n"):

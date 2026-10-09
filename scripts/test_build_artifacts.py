@@ -346,6 +346,43 @@ class BuildArtifactTests(unittest.TestCase):
         self.assertTrue((self.owner / "main.rs").exists())
         self.assertTrue((self.owner / ".git").exists())
 
+    def test_idle_nested_outputs_from_other_checkouts_prevent_parent_clean(self):
+        self.task_source()
+        for linked in [True, False]:
+            other = self.root / ("linked" if linked else "independent")
+            if linked:
+                subprocess.run(["git", "-C", str(self.owner), "worktree", "add", "--detach",
+                                "-q", str(other)], check=True)
+            else:
+                subprocess.run(["git", "init", "-q", str(other)], check=True)
+            for apply in [False, True]:
+                with self.subTest(linked=linked, apply=apply):
+                    self.output = self.root / f"output-{linked}-{apply}"
+                    path, receipt = self.record()
+                    nested = self.output / "debug/nested"
+                    with artifacts.build_lease(other, [nested], "task"):
+                        (nested / "result").write_text("other owner")
+                    child_path, child_receipt = artifacts.registered_outputs(other)[nested]
+                    with patch.object(artifacts, "open_paths", return_value=[]):
+                        with self.assertRaisesRegex(ValueError, "separately owned output"):
+                            artifacts.clean_output(self.owner, self.output, path, receipt, apply)
+                    self.assertEqual((nested / "result").read_text(), "other owner")
+                    self.assertEqual(artifacts.read_receipt(child_path), child_receipt)
+                    self.assertEqual(artifacts.read_receipt(path), receipt)
+
+    def test_orphaned_or_symlinked_nested_receipts_refuse_without_following(self):
+        path, receipt = self.record()
+        marker = self.output / "debug/.orphan.alan-build.json"
+        marker.write_text("invalid receipt")
+        with self.assertRaisesRegex(ValueError, "separately owned output"):
+            artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        marker.unlink()
+        marker.symlink_to(self.root / "absent")
+        with self.assertRaisesRegex(ValueError, "separately owned output"):
+            artifacts.clean_output(self.owner, self.output, path, receipt, True)
+        self.assertTrue(marker.is_symlink())
+        self.assertTrue((self.output / "debug/result").exists())
+
     def test_open_consumer_and_unclassified_source_prevent_clean(self):
         path, receipt = self.record()
         with patch.object(artifacts, "open_paths", return_value=[self.output / "debug/result"]):
