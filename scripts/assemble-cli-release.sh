@@ -3,8 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+# shellcheck source=scripts/cargo-cli-output.sh
+source "$SCRIPT_DIR/cargo-cli-output.sh"
 TARGET="${ALAN_TARGET:-$(rustc -vV | awk '/^host: / { print $2 }')}"
-TARGET_DIR="${ALAN_STANDALONE_TARGET_DIR:-$PROJECT_ROOT/target/standalone-release}"
+TARGET_DIR="$(alan_cli_target_dir "$PROJECT_ROOT")"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    alan_cli_build_lease "$PROJECT_ROOT" "$TARGET_DIR" checkout "$SCRIPT_DIR/assemble-cli-release.sh"
+fi
 VERSION="${ALAN_RELEASE_VERSION:-$(git describe --tags --always --dirty)}"
 OUT_DIR="${ALAN_RELEASE_OUT_DIR:-$PROJECT_ROOT/target/distributions}"
 
@@ -16,18 +22,15 @@ fail() {
 [[ -n "$TARGET" ]] || fail "could not resolve Rust target"
 mkdir -p "$OUT_DIR"
 
-cargo build --locked --release -p alan --bin alan --target "$TARGET" --target-dir "$TARGET_DIR"
-
-BIN_DIR="$TARGET_DIR/$TARGET/release"
-[[ -x "$BIN_DIR/alan" ]] || fail "missing release binary: $BIN_DIR/alan"
+CLI_SOURCE="$(alan_build_cli "$PROJECT_ROOT" "$TARGET_DIR" --release --target "$TARGET")"
+[[ -x "$CLI_SOURCE" ]] || fail "missing release binary: $CLI_SOURCE"
 
 stage="$(mktemp -d "$TARGET_DIR/cli-stage.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-install -m 0755 "$BIN_DIR/alan" "$stage/alan"
-ln -s alan "$stage/alan-dev"
+install -m 0755 "$CLI_SOURCE" "$stage/alan"
 
 manifest="$stage/manifest.json"
-printf '{\n  "product": "alan-cli",\n  "version": "%s",\n  "target": "%s",\n  "binaries": ["alan", "alan-dev"]\n}\n' \
+printf '{\n  "product": "alan-cli",\n  "version": "%s",\n  "target": "%s",\n  "binaries": ["alan"]\n}\n' \
     "$VERSION" "$TARGET" >"$manifest"
 
 archive="$OUT_DIR/alan-$VERSION-$TARGET.tar.gz"

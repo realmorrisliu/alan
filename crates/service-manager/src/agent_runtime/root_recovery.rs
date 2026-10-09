@@ -230,7 +230,6 @@ mod tests {
     #[tokio::test]
     async fn explicit_resume_requires_durable_store_bindings() {
         let mut config = crate::ServiceManagerConfig::ephemeral(
-            "test",
             AgentProcessConfig::default(),
             crate::ProcessLaunchContext::root(),
             alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),
@@ -277,7 +276,6 @@ mod tests {
         let provider = alan_llm::MockLlmProvider::new();
         let probe = provider.clone();
         let manager = crate::ServiceManager::boot(crate::ServiceManagerConfig::ephemeral(
-            "test",
             config.clone(),
             crate::ProcessLaunchContext::root(),
             alan_agent_engine::LlmClient::new(provider),
@@ -317,7 +315,6 @@ mod tests {
         let provider_b = alan_llm::MockLlmProvider::new();
         let probe_b = provider_b.clone();
         let manager_b = crate::ServiceManager::boot(crate::ServiceManagerConfig::ephemeral(
-            "test",
             config,
             crate::ProcessLaunchContext::root(),
             alan_agent_engine::LlmClient::new(provider_b),
@@ -424,7 +421,6 @@ mod tests {
         let provider = alan_llm::MockLlmProvider::new();
         let probe = provider.clone();
         let mut manager_config = crate::ServiceManagerConfig::ephemeral(
-            "test",
             config,
             crate::ProcessLaunchContext::root(),
             LlmClient::new(provider),
@@ -501,7 +497,6 @@ mod tests {
                 fs::remove_file(&source).unwrap();
             }
             let mut manager_config = crate::ServiceManagerConfig::ephemeral(
-                "test",
                 config,
                 crate::ProcessLaunchContext::root(),
                 alan_agent_engine::LlmClient::new(alan_llm::MockLlmProvider::new()),

@@ -3,7 +3,6 @@ use super::*;
 #[tokio::test]
 async fn boot_rejects_ambient_package_namespace_mounts() {
     let mut config = ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
@@ -27,7 +26,6 @@ async fn boot_rejects_ambient_package_namespace_mounts() {
 #[tokio::test]
 async fn boot_rejects_root_namespace_mount_covering_package_namespace() {
     let mut config = ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),

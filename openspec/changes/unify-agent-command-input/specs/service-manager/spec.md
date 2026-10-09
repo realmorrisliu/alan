@@ -19,10 +19,10 @@ budget exhaustion before ready SHALL fail boot; afterward it SHALL mark the
 system degraded and await explicit retry. The foreground Root Agent SHALL use
 `always` only within its live invocation. A replacement SHALL recover the latest
 rollout path held by that instance's Agent Runtime Service, and MUST NOT reread
-the channel-wide selector. A new invocation SHALL read that selector only when
+the product-wide selector. A new invocation SHALL read that selector only when
 the user explicitly requests `alan --resume`; no background Host survives the
 foreground invocation. If an instance has no durable rollout, its replacement
-SHALL start fresh without consulting the channel-wide selector. Before loading
+SHALL start fresh without consulting the product-wide selector. Before loading
 a replacement from a prior Root rollout, Agent Runtime Service SHALL wait for
 the prior Agent Machine's recorder to flush and terminate.
 
@@ -41,7 +41,7 @@ the prior Agent Machine's recorder to flush and terminate.
 
 #### Scenario: Root Agent restarts while another invocation is active
 - **WHEN** the foreground Root Agent fails after readiness while another
-  invocation has published a different channel-wide rollout
+  invocation has published a different product-wide rollout
 - **THEN** Service Manager replaces it from its own invocation's latest durable
   rollout
 - **AND** its recovery is independent of the other invocation's selector write
@@ -50,7 +50,7 @@ the prior Agent Machine's recorder to flush and terminate.
 #### Scenario: Root Agent has no durable rollout
 - **WHEN** best-effort startup succeeds without creating a durable rollout and
   the Root Agent later restarts
-- **THEN** its replacement starts without restoring any channel-wide rollout
+- **THEN** its replacement starts without restoring any product-wide rollout
 - **AND** a later successful durable startup becomes that invocation's recovery source
 
 #### Scenario: Another required service exhausts its restart budget

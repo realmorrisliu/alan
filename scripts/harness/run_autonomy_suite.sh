@@ -29,7 +29,7 @@ fi
 require_jq
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-artifact_root="$repo_root/target/harness/autonomy/latest"
+artifact_root="${ALAN_AUTONOMY_ARTIFACT_ROOT:-$repo_root/target/harness/autonomy/latest}"
 harness_profile="${HARNESS_PROFILE:-default}"
 mkdir -p "$artifact_root"
 rm -rf "$artifact_root"/*
@@ -108,7 +108,7 @@ for fixture_rel in "${fixtures[@]}"; do
         exit_code=1
     else
         set +e
-        (cd "$repo_root" && bash -lc "$scenario_cmd") >"$scenario_dir/event_trace.log" 2>&1
+        run_harness_command "$repo_root" "$scenario_cmd" >"$scenario_dir/event_trace.log" 2>&1
         exit_code=$?
         set -e
     fi

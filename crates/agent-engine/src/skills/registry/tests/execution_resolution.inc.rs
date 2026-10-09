@@ -41,12 +41,13 @@
 
     #[test]
     fn load_capability_view_does_not_track_synthetic_builtin_skill_sidecars() {
-        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
 
         assert!(registry.has(&"memory".to_string()));
         assert!(!registry.tracked_paths().iter().any(|path| {
-            path.to_string_lossy().contains("builtin-skill-packages")
+            path.starts_with(std::fs::canonicalize(builtin_packages.path()).unwrap())
                 && (path.ends_with(std::path::Path::new(SKILL_SIDECAR_FILE))
                     || path.ends_with(std::path::Path::new(PACKAGE_SIDECAR_FILE))
                     || path.ends_with(std::path::Path::new(COMPATIBILITY_METADATA_FILE)))
@@ -55,7 +56,8 @@
 
     #[test]
     fn load_capability_view_loads_builtin_skill_creator_compatibility_metadata() {
-        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
@@ -97,7 +99,8 @@
 
     #[test]
     fn load_capability_view_loads_builtin_repo_coding_compatibility_metadata() {
-        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests(builtin_packages.path());
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"repo-coding".to_string()).unwrap();
 

@@ -20,6 +20,7 @@ mod process_runner;
 mod process_spawn;
 mod quartermaster;
 mod runtime;
+mod temporary_store;
 
 pub use boot_unit::{
     BootDescriptor, BootManifest, BootMount, BootUnit, MountAccess, RestartPolicy,
@@ -44,7 +45,7 @@ pub use local_entry::LocalEntryService;
 pub use package::{
     PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageKind,
     PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry,
-    PackageState,
+    PackageState, validate_package_store_for_migration,
 };
 pub use process_launch::ProcessLaunchContext;
 pub use runtime::{

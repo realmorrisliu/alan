@@ -167,10 +167,10 @@ struct CallableRegistry {
 
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
 pub struct ConnectionService {
-    channel_id: String,
     metadata_path: PathBuf,
     state: Mutex<State>,
     callables: tokio::sync::Mutex<Option<CallableRegistry>>,
+    temporary_store: Option<crate::temporary_store::TemporaryStore>,
 }
 
 struct ConnectionLlmProvider {
@@ -213,15 +213,7 @@ impl LlmProvider for ConnectionLlmProvider {
 }
 
 impl ConnectionService {
-    pub fn open(
-        channel_id: impl Into<String>,
-        bindings: &ConnectionStoreBindings,
-    ) -> Result<Arc<Self>> {
-        let channel_id = channel_id.into();
-        ensure!(
-            matches!(channel_id.as_str(), "stable" | "dev" | "test"),
-            "invalid Connection Service channel"
-        );
+    pub fn open(bindings: &ConnectionStoreBindings) -> Result<Arc<Self>> {
         let (connections, _) = ConnectionsFile::load_from_path(&bindings.metadata_path)?;
         let validation = connections
             .profiles
@@ -229,7 +221,6 @@ impl ConnectionService {
             .map(|profile_id| (profile_id.clone(), "unavailable".to_string()))
             .collect();
         Ok(Arc::new(Self {
-            channel_id,
             metadata_path: bindings.metadata_path.clone(),
             state: Mutex::new(State {
                 connections,
@@ -241,16 +232,15 @@ impl ConnectionService {
                 validation,
             }),
             callables: tokio::sync::Mutex::new(None),
+            temporary_store: None,
         }))
     }
 
-    pub fn ephemeral(channel_id: impl Into<String>) -> Arc<Self> {
-        Arc::new(Self {
-            channel_id: channel_id.into(),
-            metadata_path: std::env::temp_dir().join(format!(
-                "alan-connections-{}.toml",
-                uuid::Uuid::new_v4().simple()
-            )),
+    pub fn ephemeral() -> Result<Arc<Self>> {
+        let temporary = crate::temporary_store::TemporaryStore::new("connection")?;
+        let metadata_path = temporary.path().join("connections.toml");
+        Ok(Arc::new(Self {
+            metadata_path,
             state: Mutex::new(State {
                 connections: ConnectionsFile::default(),
                 selections: BTreeMap::new(),
@@ -261,7 +251,21 @@ impl ConnectionService {
                 validation: BTreeMap::new(),
             }),
             callables: tokio::sync::Mutex::new(None),
-        })
+            temporary_store: Some(temporary),
+        }))
+    }
+
+    /// Close a temporary store after all consumers stop, reporting cleanup errors.
+    pub fn close_ephemeral(self: Arc<Self>) -> Result<()> {
+        let mut service = Arc::try_unwrap(self)
+            .map_err(|_| anyhow::anyhow!("Connection Service still has active consumers"))?;
+        let temporary = service
+            .temporary_store
+            .take()
+            .context("Connection Service does not own a temporary store")?;
+        temporary
+            .close()
+            .context("remove temporary Connection Store")
     }
 
     pub fn file_server(self: &Arc<Self>) -> Arc<dyn FileServer> {
@@ -786,8 +790,7 @@ impl FlatFileService for ConnectionService {
             )),
             "selection" => serde_json::to_string(&state.selections),
             "status" => Ok(format!(
-                "channel={} profiles={} ready={} pending_native={} unavailable={}\n",
-                self.channel_id,
+                "profiles={} ready={} pending_native={} unavailable={}\n",
                 state.connections.profiles.len(),
                 state
                     .validation

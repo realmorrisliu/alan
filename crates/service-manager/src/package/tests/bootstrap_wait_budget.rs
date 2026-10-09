@@ -6,7 +6,6 @@ use std::time::Duration;
 fn free_store_zero_budget_opens_seeds_and_acquires() {
     let directory = tempfile::tempdir().unwrap();
     let (service, guard) = PackageService::bootstrap_with_budget(
-        "test".into(),
         Some(directory.path().join("packages")),
         Duration::ZERO,
     )
@@ -24,12 +23,9 @@ fn free_store_zero_budget_opens_seeds_and_acquires() {
 fn exhausted_contention_budget_still_allows_free_transactions() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let (service, guard) = PackageService::bootstrap_with_budget(
-        "test".into(),
-        Some(root.clone()),
-        Duration::from_millis(40),
-    )
-    .unwrap();
+    let (service, guard) =
+        PackageService::bootstrap_with_budget(Some(root.clone()), Duration::from_millis(40))
+            .unwrap();
     let blocked = service.clone();
     let (early, result, _, owned) =
         contend(&root, Duration::from_millis(150), move || blocked.catalog());

@@ -6,7 +6,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use alan_agent_engine::InstallChannel;
+use crate::installation::LegacyInstallation;
 use alan_service_manager::{ConnectionsFile, default_credential_backend};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -15,27 +15,27 @@ use crate::{HostStorePaths, SystemStorePaths};
 
 const SECRET_STORE_FILE: &str = "secrets.toml";
 
-/// Fixed legacy connection paths for one install channel.
+/// Fixed legacy connection paths for an explicitly selected historical source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyConnectionPaths {
-    pub channel: InstallChannel,
+    pub source: LegacyInstallation,
     pub alan_root: PathBuf,
 }
 
 impl LegacyConnectionPaths {
-    pub fn detect(channel: InstallChannel) -> Result<Option<Self>> {
+    pub fn detect(source: LegacyInstallation) -> Result<Option<Self>> {
         dirs::home_dir()
-            .map(|home| Self::from_home_dir(&home, channel))
+            .map(|home| Self::from_home_dir(&home, source))
             .transpose()
     }
 
-    pub fn from_home_dir(home_dir: &Path, channel: InstallChannel) -> Result<Self> {
+    pub fn from_home_dir(home_dir: &Path, source: LegacyInstallation) -> Result<Self> {
         validate_absolute_path("Host home directory", home_dir)?;
         Ok(Self {
-            channel,
-            alan_root: home_dir.join(match channel {
-                InstallChannel::Stable => ".alan",
-                InstallChannel::Dev => ".alan-dev",
+            source,
+            alan_root: home_dir.join(match source {
+                LegacyInstallation::Stable => ".alan",
+                LegacyInstallation::Dev => ".alan-dev",
             }),
         })
     }
@@ -66,10 +66,6 @@ pub fn migrate_legacy_connections(
     system_store: &SystemStorePaths,
     host_store: &HostStorePaths,
 ) -> Result<ConnectionMigrationReport> {
-    ensure!(
-        paths.channel.descriptor().id == system_store.channel_id,
-        "legacy and System Store channels differ"
-    );
     if !ensure_real_legacy_root_or_missing(&paths.alan_root)? {
         return Ok(ConnectionMigrationReport::default());
     }

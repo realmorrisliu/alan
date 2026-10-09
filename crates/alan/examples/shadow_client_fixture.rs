@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
     }))?;
     let baseline_manager = if generation_baseline {
         Some(
-            alan_os_host::HostBootConfig::product("dev")?
+            alan_os_host::HostBootConfig::product()?
                 .boot_foreground()
                 .await?,
         )
@@ -184,7 +184,6 @@ async fn main() -> Result<()> {
         MockLlmProvider::new()
     };
     let mut config = ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(generation.clone()),

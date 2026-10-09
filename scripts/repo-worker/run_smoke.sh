@@ -38,7 +38,8 @@ esac
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 package_root="$repo_root/crates/agent-engine/skills/repo-coding"
 child_root="$package_root/agents/repo-worker"
-artifact_root="$repo_root/target/repo-worker/smoke/latest"
+mkdir -p "$repo_root/target/repo-worker/smoke"
+artifact_root="$(mktemp -d "$repo_root/target/repo-worker/smoke/run.XXXXXX")"
 workspace_dir="$artifact_root/workspace"
 trace_file="$artifact_root/loop_trace.log"
 
@@ -99,7 +100,6 @@ while IFS= read -r skill_file; do
     fi
 done < <(find "$child_root/skills" -name SKILL.md -type f | sort)
 
-rm -rf "$artifact_root"
 mkdir -p "$workspace_dir/src"
 cp -R "$package_root" "$artifact_root/package_snapshot"
 
@@ -150,7 +150,9 @@ perl -0pi -e 's/a - b/a + b/' "$workspace_dir/src/lib.rs"
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] edit: patched src/lib.rs" >>"$trace_file"
 
 set +e
-(cd "$workspace_dir" && cargo test --quiet) >"$artifact_root/verify.log" 2>&1
+python3 "$repo_root/scripts/build_artifacts.py" --owner "$repo_root" run \
+    --workspace "$workspace_dir" --target-dir "$artifact_root/cargo-target" --purpose task \
+    --evidence-dir "$artifact_root/build-evidence" -- cargo test --quiet >"$artifact_root/verify.log" 2>&1
 verify_exit=$?
 set -e
 
@@ -275,7 +277,7 @@ cat >"$artifact_root/assertion_report.json" <<ASSERT
 ASSERT
 
 cat >"$artifact_root/summary.json" <<REPORT
-{"mode":"$mode","status":"$delivery_status","verify_exit":$verify_exit,"verified":$verified,"delivery_contract_valid":$delivery_contract_valid,"delivery_contract_examples_valid":$delivery_contract_examples_valid,"evaluator_boundaries_valid":$evaluator_boundaries_valid,"passed":$smoke_passed,"artifact_root":"target/repo-worker/smoke/latest"}
+{"mode":"$mode","status":"$delivery_status","verify_exit":$verify_exit,"verified":$verified,"delivery_contract_valid":$delivery_contract_valid,"delivery_contract_examples_valid":$delivery_contract_examples_valid,"evaluator_boundaries_valid":$evaluator_boundaries_valid,"passed":$smoke_passed,"artifact_root":"$artifact_root"}
 REPORT
 
 echo "Repo worker smoke summary:"

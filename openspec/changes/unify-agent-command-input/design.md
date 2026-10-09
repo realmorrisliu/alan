@@ -50,13 +50,13 @@ process is part of this delivery.
 Recovery is opt-in and identifies existing rollout/checkpoint evidence explicitly.
 A new invocation creates fresh Process identity, validates the selected records
 and current grants, and exposes recoverable pending work paused. It does not
-select the most recent channel rollout automatically. Missing/invalid evidence
+select the most recent product rollout automatically. Missing/invalid evidence
 fails the requested recovery instead of silently starting fresh. Exact CLI syntax
 and evidence selection/discovery are delivery tasks using existing stores, not a
 new globally addressable Session/Conversation registry.
 
 Installed packages, connection profiles and credentials keep their current
-channel-isolated service/Host stores. Concurrent foreground instances must not
+the explicitly bound product service/Host stores. Concurrent foreground instances must not
 share live Process files or mutable execution pointers. Audit shared persistent
 service writes against existing locking/commit ownership before claiming safe
 concurrent instances; do not create private copies of user projects or credentials.

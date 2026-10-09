@@ -44,13 +44,10 @@ struct TestHost {
 impl TestHost {
     async fn boot(config: AgentProcessConfig, llm: LlmClient, tools: ToolRegistry) -> Self {
         let runtime = tempfile::tempdir().unwrap();
-        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
         let host = tokio::time::timeout(
             TEST_TIMEOUT,
-            AlanOsHost::boot(
-                HostBootConfig::ephemeral("test", config, llm, tools),
-                paths.clone(),
-            ),
+            AlanOsHost::boot(HostBootConfig::ephemeral(config, llm, tools), paths.clone()),
         )
         .await
         .expect("ephemeral Alan OS Host boot timed out")

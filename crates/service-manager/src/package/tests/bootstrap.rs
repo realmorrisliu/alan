@@ -6,10 +6,10 @@ use std::time::Duration;
 fn bootstrap_waits_for_peer_beyond_operator_budget_then_restores_operator_policy() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    PackageService::open("test", root.clone()).unwrap();
+    PackageService::open(root.clone()).unwrap();
     let peer_root = root.clone();
     let (early, result, _, owned) = contend(&root, Duration::from_millis(900), move || {
-        PackageService::bootstrap("test", Some(peer_root))
+        PackageService::bootstrap(Some(peer_root))
     });
     assert!(
         owned && !early,
@@ -32,12 +32,9 @@ fn bootstrap_waits_for_peer_beyond_operator_budget_then_restores_operator_policy
 fn bootstrap_budget_is_shared_across_transactions() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    let (service, guard) = PackageService::bootstrap_with_budget(
-        "test".into(),
-        Some(root.clone()),
-        Duration::from_millis(650),
-    )
-    .unwrap();
+    let (service, guard) =
+        PackageService::bootstrap_with_budget(Some(root.clone()), Duration::from_millis(650))
+            .unwrap();
     let first = service.clone();
     let (early, result, _, owned) =
         contend(&root, Duration::from_millis(350), move || first.catalog());
@@ -58,9 +55,9 @@ fn bootstrap_budget_is_shared_across_transactions() {
 async fn dropping_boot_guard_cancels_outstanding_blocking_open() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("packages");
-    PackageService::open("test", root.clone()).unwrap();
+    PackageService::open(root.clone()).unwrap();
     let guard = crate::package::PackageBootstrap::new();
-    let open = guard.opener("test".into(), Some(root.clone()));
+    let open = guard.opener(Some(root.clone()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let task = tokio::task::spawn_blocking(move || {
         contend(&root, Duration::from_millis(900), move || {

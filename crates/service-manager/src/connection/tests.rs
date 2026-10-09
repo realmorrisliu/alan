@@ -54,7 +54,7 @@ fn profile() -> ConnectionProfile {
 async fn metadata_is_persistent_and_secret_bytes_never_enter_files() {
     let temp = tempfile::tempdir().unwrap();
     let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
-    let service = ConnectionService::open("test", &bindings).unwrap();
+    let service = ConnectionService::open(&bindings).unwrap();
     let shell = Shell::new(InProcessTransport::new(service.file_server()));
     let command = serde_json::json!({
         "op": "add_profile",
@@ -99,7 +99,7 @@ async fn metadata_is_persistent_and_secret_bytes_never_enter_files() {
 
 #[tokio::test]
 async fn rejects_secret_material_instead_of_treating_it_as_reference() {
-    let service = ConnectionService::ephemeral("test");
+    let service = ConnectionService::ephemeral().unwrap();
     assert!(
         service
             .respond_native(NativeConnectionResponse {
@@ -114,7 +114,7 @@ async fn rejects_secret_material_instead_of_treating_it_as_reference() {
 
 #[tokio::test]
 async fn native_request_and_response_state_is_bounded() {
-    let pending = ConnectionService::ephemeral("test");
+    let pending = ConnectionService::ephemeral().unwrap();
     pending
         .apply(ConnectionCommand::AddProfile {
             profile_id: "main".to_string(),
@@ -147,7 +147,7 @@ async fn native_request_and_response_state_is_bounded() {
             .is_err()
     );
 
-    let completed = ConnectionService::ephemeral("test");
+    let completed = ConnectionService::ephemeral().unwrap();
     completed
         .apply(ConnectionCommand::AddProfile {
             profile_id: "main".to_string(),
@@ -189,7 +189,7 @@ async fn native_request_and_response_state_is_bounded() {
 
 #[tokio::test]
 async fn callable_profiles_follow_metadata_and_native_readiness() {
-    let service = ConnectionService::ephemeral("test");
+    let service = ConnectionService::ephemeral().unwrap();
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     let factory = Arc::new(TestLlmClientFactory::default());
     service
@@ -385,7 +385,7 @@ async fn callable_profiles_follow_metadata_and_native_readiness() {
 async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
     let temp = tempfile::tempdir().unwrap();
     let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
-    let service = ConnectionService::open("test", &bindings).unwrap();
+    let service = ConnectionService::open(&bindings).unwrap();
     service
         .apply(ConnectionCommand::AddProfile {
             profile_id: "main".into(),
@@ -463,7 +463,7 @@ async fn failed_metadata_commit_preserves_profiles_and_dependent_state() {
 async fn post_replace_error_publishes_visible_metadata_and_dependent_state() {
     let temp = tempfile::tempdir().unwrap();
     let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
-    let service = ConnectionService::open("test", &bindings).unwrap();
+    let service = ConnectionService::open(&bindings).unwrap();
     service
         .apply(ConnectionCommand::AddProfile {
             profile_id: "main".into(),
@@ -509,7 +509,7 @@ async fn post_replace_error_publishes_visible_metadata_and_dependent_state() {
 async fn metadata_replacement_rejects_stale_clients_without_losing_the_first_update() {
     let temp = tempfile::tempdir().unwrap();
     let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
-    let service = ConnectionService::open("test", &bindings).unwrap();
+    let service = ConnectionService::open(&bindings).unwrap();
     let first = Shell::new(InProcessTransport::new(service.file_server()));
     let second = Shell::new(InProcessTransport::new(service.file_server()));
     let expected: ConnectionsFile =
@@ -563,8 +563,8 @@ async fn metadata_replacement_rejects_stale_clients_without_losing_the_first_upd
 async fn independent_services_reject_stale_writes_and_refresh_for_retry() {
     let temp = tempfile::tempdir().unwrap();
     let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
-    let first = ConnectionService::open("test", &bindings).unwrap();
-    let second = ConnectionService::open("test", &bindings).unwrap();
+    let first = ConnectionService::open(&bindings).unwrap();
+    let second = ConnectionService::open(&bindings).unwrap();
     first
         .apply(ConnectionCommand::AddProfile {
             profile_id: "first".into(),
@@ -647,8 +647,8 @@ model = "gpt-5.4"
 "#,
     )
     .unwrap();
-    let first = ConnectionService::open("test", &bindings).unwrap();
-    let second = ConnectionService::open("test", &bindings).unwrap();
+    let first = ConnectionService::open(&bindings).unwrap();
+    let second = ConnectionService::open(&bindings).unwrap();
     assert_eq!(first.metadata(), second.metadata());
     first
         .apply(ConnectionCommand::SetDefault {
@@ -656,7 +656,7 @@ model = "gpt-5.4"
         })
         .await
         .unwrap();
-    let second = ConnectionService::open("test", &bindings).unwrap();
+    let second = ConnectionService::open(&bindings).unwrap();
     {
         let mut state = second.state.lock().unwrap();
         state
@@ -698,8 +698,8 @@ async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
     use alan_ap::{Fid, OpenMode};
     let temp = tempfile::tempdir().unwrap();
     let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
-    let writer = ConnectionService::open("test", &bindings).unwrap();
-    let reader = ConnectionService::open("test", &bindings).unwrap();
+    let writer = ConnectionService::open(&bindings).unwrap();
+    let reader = ConnectionService::open(&bindings).unwrap();
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     reader
         .attach_callable_registry(
@@ -752,7 +752,7 @@ async fn independent_reader_refreshes_callables_and_preserves_open_snapshot() {
 
 #[tokio::test]
 async fn evaluation_profile_cannot_replace_generation_default_or_selection() {
-    let service = ConnectionService::ephemeral("test");
+    let service = ConnectionService::ephemeral().unwrap();
     service
         .apply(ConnectionCommand::AddProfile {
             profile_id: "main".into(),
@@ -819,4 +819,43 @@ async fn evaluation_profile_cannot_replace_generation_default_or_selection() {
         service.selected_profile(42).is_none(),
         "same-ID evaluation profile must retire the generation selection"
     );
+}
+
+#[tokio::test]
+async fn temporary_store_lives_until_the_last_consumer_and_removes_lock_files() {
+    let service = ConnectionService::ephemeral().unwrap();
+    let root = service.metadata_path.parent().unwrap().to_path_buf();
+    service
+        .apply(ConnectionCommand::AddProfile {
+            profile_id: "main".to_string(),
+            profile: profile(),
+        })
+        .await
+        .unwrap();
+    assert!(service.metadata_path.is_file());
+    assert!(root.join("connections.toml.lock").is_file());
+    let consumer = service.file_server();
+    assert!(service.close_ephemeral().is_err());
+    assert!(root.is_dir());
+    drop(consumer);
+    assert!(!root.exists());
+    let service = ConnectionService::ephemeral().unwrap();
+    let root = service.metadata_path.parent().unwrap().to_path_buf();
+    service.close_ephemeral().unwrap();
+    assert!(!root.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_temporary_store_close_reports_cleanup_errors() {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = tempfile::tempdir().unwrap();
+    let temporary =
+        crate::temporary_store::TemporaryStore::new_in(parent.path(), "connection").unwrap();
+    let mut service = ConnectionService::ephemeral().unwrap();
+    Arc::get_mut(&mut service).unwrap().temporary_store = Some(temporary);
+    std::fs::set_permissions(parent.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = service.close_ephemeral();
+    std::fs::set_permissions(parent.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
 }

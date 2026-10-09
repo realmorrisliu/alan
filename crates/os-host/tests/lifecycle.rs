@@ -46,12 +46,11 @@ fn confirmation_response(id: &str, summary: &str) -> GenerationResponse {
 }
 
 fn config() -> HostBootConfig {
-    config_for("test")
+    config_for()
 }
 
-fn config_for(channel_id: &str) -> HostBootConfig {
+fn config_for() -> HostBootConfig {
     HostBootConfig::ephemeral(
-        channel_id,
         AgentProcessConfig::default(),
         LlmClient::new(
             MockLlmProvider::new().with_responses(vec![response("one"), response("two")]),
@@ -137,7 +136,6 @@ fn mount_request_config(store_root: &Path, completed: Arc<AtomicBool>) -> HostBo
     let mut tools = ToolRegistry::new();
     tools.register(MountProbeTool { completed });
     HostBootConfig::ephemeral(
-        "test",
         process,
         LlmClient::new(MockLlmProvider::new().with_responses(vec![
             request,
@@ -261,10 +259,9 @@ async fn approval_and_agent_control_writes_finish_with_renderer_tails_open() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(
         HostBootConfig::ephemeral(
-            "test",
             AgentProcessConfig::default(),
             LlmClient::new(MockLlmProvider::new().with_responses(vec![
                 confirmation_response("confirm-one", "first confirmation"),
@@ -371,7 +368,7 @@ async fn approval_and_agent_control_writes_finish_with_renderer_tails_open() {
 async fn attachment_disconnect_and_host_restart_preserve_only_durable_identity() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
     assert_eq!(
         std::fs::metadata(&paths.root).unwrap().permissions().mode() & 0o777,
@@ -486,7 +483,7 @@ async fn host_rejects_a_symlinked_runtime_root() {
     let runtime = tempfile::tempdir().unwrap();
     let redirected = runtime.path().join("redirected");
     symlink(runtime.path(), &redirected).unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(&redirected, "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(&redirected).unwrap();
 
     assert!(AlanOsHost::boot(config(), paths).await.is_err());
 }
@@ -495,7 +492,7 @@ async fn host_rejects_a_symlinked_runtime_root() {
 async fn attachment_rejects_a_symlinked_status_file() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
     let redirected = runtime.path().join("redirected-status");
     std::fs::write(&redirected, serde_json::to_vec(host.status()).unwrap()).unwrap();
@@ -510,7 +507,7 @@ async fn attachment_rejects_a_symlinked_status_file() {
 async fn attachment_times_out_when_the_host_accepts_no_requests() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let _host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
 
     let error = LocalAttachment::new(paths)
@@ -522,53 +519,57 @@ async fn attachment_times_out_when_the_host_accepts_no_requests() {
 }
 
 #[tokio::test]
-async fn stable_and_dev_hosts_stores_endpoints_and_clients_are_isolated() {
+async fn independent_invocations_share_product_layout_but_not_endpoints_or_roots() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
-    let stable_paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "stable").unwrap();
-    let dev_paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "dev").unwrap();
-    assert_ne!(stable_paths.root, dev_paths.root);
-    assert_ne!(stable_paths.socket, dev_paths.socket);
+    let first_paths = HostEndpointPaths::from_runtime_dir(&runtime.path().join("first")).unwrap();
+    let second_paths = HostEndpointPaths::from_runtime_dir(&runtime.path().join("second")).unwrap();
+    assert_ne!(first_paths.root, second_paths.root);
+    assert_ne!(first_paths.socket, second_paths.socket);
 
-    let stable_system = SystemStorePaths::from_data_dir(data.path(), "stable").unwrap();
-    let dev_system = SystemStorePaths::from_data_dir(data.path(), "dev").unwrap();
-    let stable_host_store = HostStorePaths::from_data_dir(data.path(), "stable").unwrap();
-    let dev_host_store = HostStorePaths::from_data_dir(data.path(), "dev").unwrap();
-    assert_ne!(stable_system.root, dev_system.root);
-    assert_ne!(stable_host_store.credentials, dev_host_store.credentials);
-    assert_ne!(stable_host_store.managed_auth, dev_host_store.managed_auth);
+    let first_system = SystemStorePaths::from_data_dir(data.path()).unwrap();
+    let second_system = SystemStorePaths::from_data_dir(data.path()).unwrap();
+    let first_host_store = HostStorePaths::from_data_dir(data.path()).unwrap();
+    let second_host_store = HostStorePaths::from_data_dir(data.path()).unwrap();
+    assert_eq!(first_system.root, second_system.root);
+    assert_eq!(first_host_store.credentials, second_host_store.credentials);
+    assert_eq!(
+        first_host_store.managed_auth,
+        second_host_store.managed_auth
+    );
 
-    let stable = AlanOsHost::boot(config_for("stable"), stable_paths.clone())
+    let first = AlanOsHost::boot(config_for(), first_paths.clone())
         .await
         .unwrap();
-    let dev = AlanOsHost::boot(config_for("dev"), dev_paths.clone())
+    let second = AlanOsHost::boot(config_for(), second_paths.clone())
         .await
         .unwrap();
-    let stable_shutdown = CancellationToken::new();
-    let stable_request = stable_shutdown.clone();
-    let stable_server =
-        tokio::spawn(async move { stable.serve_until(stable_request.cancelled_owned()).await });
-    let dev_shutdown = CancellationToken::new();
-    let dev_request = dev_shutdown.clone();
-    let dev_server =
-        tokio::spawn(async move { dev.serve_until(dev_request.cancelled_owned()).await });
+    let first_shutdown = CancellationToken::new();
+    let first_request = first_shutdown.clone();
+    let first_server =
+        tokio::spawn(async move { first.serve_until(first_request.cancelled_owned()).await });
+    let second_shutdown = CancellationToken::new();
+    let second_request = second_shutdown.clone();
+    let second_server =
+        tokio::spawn(async move { second.serve_until(second_request.cancelled_owned()).await });
 
-    let stable_attachment = LocalAttachment::new(stable_paths.clone())
+    let first_attachment = LocalAttachment::new(first_paths.clone())
         .connect()
         .await
         .unwrap();
-    let dev_attachment = LocalAttachment::new(dev_paths).connect().await.unwrap();
-    assert_eq!(stable_attachment.status.channel_id, "stable");
-    assert_eq!(dev_attachment.status.channel_id, "dev");
-    assert_ne!(stable_attachment.boot_id, dev_attachment.boot_id);
+    let second_attachment = LocalAttachment::new(second_paths.clone())
+        .connect()
+        .await
+        .unwrap();
+
+    assert_ne!(first_attachment.boot_id, second_attachment.boot_id);
 
     let mismatched_client = HostEndpointPaths {
-        channel_id: "dev".to_string(),
-        root: stable_paths.root,
-        socket: stable_paths.socket,
-        status: stable_paths.status,
-        lock: stable_paths.lock,
+        root: first_paths.root,
+        socket: second_paths.socket,
+        status: first_paths.status,
+        lock: first_paths.lock,
     };
     assert!(
         LocalAttachment::new(mismatched_client)
@@ -577,19 +578,19 @@ async fn stable_and_dev_hosts_stores_endpoints_and_clients_are_isolated() {
             .is_err()
     );
 
-    drop(stable_attachment);
-    drop(dev_attachment);
-    stable_shutdown.cancel();
-    dev_shutdown.cancel();
-    stable_server.await.unwrap().unwrap();
-    dev_server.await.unwrap().unwrap();
+    drop(first_attachment);
+    drop(second_attachment);
+    first_shutdown.cancel();
+    second_shutdown.cancel();
+    first_server.await.unwrap().unwrap();
+    second_server.await.unwrap().unwrap();
 }
 
 #[tokio::test]
 async fn shell_client_exit_detaches_without_stopping_host_or_root_agent() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
     let boot_id = host.status().boot_id;
     let shutdown = CancellationToken::new();
@@ -623,7 +624,7 @@ async fn native_host_mount_cancellation_settles_waiting_agent() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
     let probe_completed = Arc::new(AtomicBool::new(false));
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(
         mount_request_config(
             &runtime.path().join("system-store"),
@@ -675,7 +676,7 @@ async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
     let host_dir = tempfile::tempdir().unwrap();
     std::fs::write(host_dir.path().join("probe.txt"), "visible through grant").unwrap();
     let probe_completed = Arc::new(AtomicBool::new(false));
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(
         mount_request_config(
             &runtime.path().join("system-store"),
@@ -822,7 +823,7 @@ async fn local_project_mount_uses_the_root_process_and_revoke_removes_authority(
     let read_write_dir = tempfile::tempdir().unwrap();
     std::fs::write(read_only_dir.path().join("fixture.txt"), "readable").unwrap();
     std::fs::write(read_write_dir.path().join("editable.txt"), "").unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(
         mount_request_config(
             &runtime.path().join("system-store"),

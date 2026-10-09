@@ -60,9 +60,7 @@ pub use types::*;
 // ============================================================================
 
 use include_dir::{Dir, DirEntry};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::path::Path;
 
 pub(crate) const BUILTIN_MEMORY_PACKAGE_ID: &str = "builtin:alan-memory";
 pub(crate) const BUILTIN_PLAN_PACKAGE_ID: &str = "builtin:alan-plan";
@@ -86,60 +84,106 @@ pub(crate) struct BuiltinPackageAsset {
     pub dir: &'static Dir<'static>,
 }
 
+/// One relative file in an embedded first-party Skill package.
 #[derive(Debug, Clone)]
-pub(crate) struct MaterializedBuiltinPackage {
-    pub root_dir: PathBuf,
+pub struct PreinstalledSkillFile {
+    pub path: &'static Path,
+    pub bytes: &'static [u8],
+    pub executable: bool,
 }
 
-/// Embedded first-party Skill tree offered to Package Service for deterministic seeding.
+/// Embedded first-party Skill offered to Package Service without Host extraction.
 #[derive(Debug, Clone)]
 pub struct PreinstalledSkillPackageSource {
-    pub package_id: String,
-    pub root_dir: PathBuf,
+    pub package_id: &'static str,
+    pub source_name: &'static str,
+    pub files: Vec<PreinstalledSkillFile>,
 }
 
-/// Materialize the product's first-party Skill trees for Package Service import.
+/// Enumerate product package references without reading or writing Host files.
+pub fn preinstalled_skill_package_ids() -> impl Iterator<Item = &'static str> {
+    BUILTIN_PACKAGE_ASSETS.iter().map(product_package_id)
+}
+
+fn product_package_id(asset: &BuiltinPackageAsset) -> &'static str {
+    asset
+        .package_id
+        .strip_prefix("builtin:")
+        .unwrap_or(asset.package_id)
+}
+
+/// Offer embedded bytes for validation and seeding by Package Service.
 ///
-/// Returning source trees does not add them to any Agent capability view. The
-/// caller must seed and explicitly reference them through Package Service.
+/// This does not add packages to any Agent capability view.
 pub fn preinstalled_skill_package_sources() -> Vec<PreinstalledSkillPackageSource> {
     BUILTIN_PACKAGE_ASSETS
         .iter()
         .map(|asset| {
-            let materialized = materialized_builtin_package(asset);
+            let mut files = Vec::new();
+            collect_embedded_files(asset.dir, &mut files);
             PreinstalledSkillPackageSource {
-                package_id: asset
-                    .package_id
-                    .strip_prefix("builtin:")
-                    .unwrap_or(asset.package_id)
-                    .to_string(),
-                root_dir: materialized.root_dir,
+                package_id: product_package_id(asset),
+                source_name: asset.skill_label,
+                files,
+            }
+        })
+        .collect()
+}
+
+fn collect_embedded_files(dir: &'static Dir<'static>, files: &mut Vec<PreinstalledSkillFile>) {
+    for entry in dir.entries() {
+        if entry.path().starts_with("tooling") {
+            continue;
+        }
+        match entry {
+            DirEntry::Dir(dir) => collect_embedded_files(dir, files),
+            DirEntry::File(file) => files.push(PreinstalledSkillFile {
+                path: file.path(),
+                bytes: file.contents(),
+                executable: cfg!(unix)
+                    && file.path().components().any(|component| {
+                        component.as_os_str() == "scripts" || component.as_os_str() == "bin"
+                    }),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn preinstalled_package_roots_for_tests(root: &Path) -> Vec<ScopedPackageRoot> {
+    preinstalled_skill_package_sources()
+        .into_iter()
+        .map(|source| {
+            let path = root.join("preinstalled-skills").join(source.source_name);
+            for file in source.files {
+                let target = path.join(file.path);
+                std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+                std::fs::write(&target, file.bytes).unwrap();
+                #[cfg(unix)]
+                if file.executable {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                }
+            }
+            ScopedPackageRoot {
+                package_id: format!("builtin:{}", source.package_id),
+                path,
+                namespace_root: None,
+                scope: SkillScope::Builtin,
+                dependencies: Vec::new(),
             }
         })
         .collect()
 }
 
 #[cfg(test)]
-pub(crate) fn preinstalled_package_roots_for_tests() -> Vec<ScopedPackageRoot> {
-    preinstalled_skill_package_sources()
-        .into_iter()
-        .map(|source| ScopedPackageRoot {
-            package_id: format!("builtin:{}", source.package_id),
-            path: source.root_dir,
-            namespace_root: None,
-            scope: SkillScope::Builtin,
-            dependencies: Vec::new(),
-        })
-        .collect()
+pub(crate) fn preinstalled_capability_view_for_tests(root: &Path) -> ResolvedCapabilityView {
+    ResolvedCapabilityView::from_package_sources(
+        Vec::new(),
+        preinstalled_package_roots_for_tests(root),
+    )
 }
-
-#[cfg(test)]
-pub(crate) fn preinstalled_capability_view_for_tests() -> ResolvedCapabilityView {
-    ResolvedCapabilityView::from_package_sources(Vec::new(), preinstalled_package_roots_for_tests())
-}
-
-static MATERIALIZED_BUILTIN_PACKAGES: OnceLock<HashMap<&'static str, MaterializedBuiltinPackage>> =
-    OnceLock::new();
 
 pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 5] = [
     BuiltinPackageAsset {
@@ -168,130 +212,6 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 5] = [
         dir: &SWEBENCH_PACKAGE_DIR,
     },
 ];
-
-pub(crate) fn materialized_builtin_package(
-    asset: &BuiltinPackageAsset,
-) -> MaterializedBuiltinPackage {
-    MATERIALIZED_BUILTIN_PACKAGES
-        .get_or_init(materialize_builtin_packages)
-        .get(asset.package_id)
-        .cloned()
-        .unwrap_or_else(|| {
-            panic!(
-                "builtin package `{}` did not materialize into a directory-backed package view",
-                asset.package_id
-            )
-        })
-}
-
-fn materialize_builtin_packages() -> HashMap<&'static str, MaterializedBuiltinPackage> {
-    let mut packages = HashMap::new();
-    let base_dir = std::env::temp_dir()
-        .join("alan")
-        .join("builtin-skill-packages")
-        .join(env!("CARGO_PKG_VERSION"))
-        .join(std::process::id().to_string());
-
-    for asset in BUILTIN_PACKAGE_ASSETS {
-        let root_dir = base_dir.join(asset.skill_label);
-        materialize_builtin_package_dir(asset.dir, &root_dir).unwrap_or_else(|err| {
-            panic!(
-                "failed to materialize builtin skill package `{}` at {}: {err}",
-                asset.package_id,
-                root_dir.display()
-            )
-        });
-        let canonical_root = std::fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
-        packages.insert(
-            asset.package_id,
-            MaterializedBuiltinPackage {
-                root_dir: canonical_root,
-            },
-        );
-    }
-
-    packages
-}
-
-fn materialize_builtin_package_dir(
-    dir: &Dir<'static>,
-    destination_root: &Path,
-) -> std::io::Result<()> {
-    match std::fs::remove_dir_all(destination_root) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err),
-    }
-    std::fs::create_dir_all(destination_root)?;
-    write_embedded_dir_entries(dir.path(), dir.entries(), destination_root)
-}
-
-fn write_embedded_dir_entries(
-    base_path: &Path,
-    entries: &[DirEntry<'static>],
-    destination_root: &Path,
-) -> std::io::Result<()> {
-    for entry in entries {
-        match entry {
-            DirEntry::Dir(dir) => {
-                let relative = dir
-                    .path()
-                    .strip_prefix(base_path)
-                    .unwrap_or_else(|_| dir.path());
-                if relative.components().next().is_some_and(|component| {
-                    component.as_os_str() == std::ffi::OsStr::new("tooling")
-                }) {
-                    continue;
-                }
-                let target_dir = destination_root.join(relative);
-                std::fs::create_dir_all(&target_dir)?;
-                write_embedded_dir_entries(base_path, dir.entries(), destination_root)?;
-            }
-            DirEntry::File(file) => {
-                let relative = file
-                    .path()
-                    .strip_prefix(base_path)
-                    .unwrap_or_else(|_| file.path());
-                if relative.components().next().is_some_and(|component| {
-                    component.as_os_str() == std::ffi::OsStr::new("tooling")
-                }) {
-                    continue;
-                }
-                let target_file = destination_root.join(relative);
-                if let Some(parent) = target_file.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::write(&target_file, file.contents())?;
-                set_builtin_file_permissions(&target_file)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_builtin_file_permissions(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let in_scripts_dir = path
-        .components()
-        .any(|component| component.as_os_str() == std::ffi::OsStr::new("scripts"));
-    let in_bin_dir = path
-        .components()
-        .any(|component| component.as_os_str() == std::ffi::OsStr::new("bin"));
-    if !in_scripts_dir && !in_bin_dir {
-        return Ok(());
-    }
-
-    let mut permissions = std::fs::metadata(path)?.permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(path, permissions)
-}
-
-#[cfg(not(unix))]
-fn set_builtin_file_permissions(_path: &Path) -> std::io::Result<()> {
-    Ok(())
-}
 
 /// List resolved skills in a user-friendly format.
 pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapabilities) -> String {
@@ -461,6 +381,34 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn embedded_package_enumeration_does_not_extract_pid_directories() {
+        let legacy = std::env::temp_dir()
+            .join("alan/builtin-skill-packages")
+            .join(env!("CARGO_PKG_VERSION"))
+            .join(std::process::id().to_string());
+        let before = std::fs::metadata(&legacy)
+            .ok()
+            .map(|meta| meta.modified().unwrap());
+        for _ in 0..3 {
+            assert_eq!(preinstalled_skill_package_ids().count(), 5);
+            let sources = preinstalled_skill_package_sources();
+            assert_eq!(sources.len(), 5);
+            assert!(sources.iter().all(|source| {
+                source
+                    .files
+                    .iter()
+                    .any(|file| file.path == Path::new("SKILL.md"))
+            }));
+        }
+        assert_eq!(
+            std::fs::metadata(&legacy)
+                .ok()
+                .map(|meta| meta.modified().unwrap()),
+            before
+        );
+    }
+
+    #[test]
     fn test_list_skills() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
@@ -577,7 +525,8 @@ Body
 
     #[test]
     fn test_list_skills_keeps_enabled_non_implicit_skills_visible() {
-        let capability_view = preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let capability_view = preinstalled_capability_view_for_tests(builtin_packages.path());
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
             &[SkillOverride {
@@ -595,7 +544,8 @@ Body
 
     #[test]
     fn test_list_skills_surfaces_disabled_skills_for_operator_visibility() {
-        let capability_view = preinstalled_capability_view_for_tests();
+        let builtin_packages = tempfile::tempdir().unwrap();
+        let capability_view = preinstalled_capability_view_for_tests(builtin_packages.path());
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
             &[SkillOverride {

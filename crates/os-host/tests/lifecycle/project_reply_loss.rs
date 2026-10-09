@@ -26,7 +26,7 @@ async fn project_reply_loss_reconciles_same_grant_and_never_reauthorizes_revoked
     let _guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     let host = AlanOsHost::boot(
         mount_request_config(
             &runtime.path().join("store"),

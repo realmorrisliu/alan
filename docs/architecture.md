@@ -45,7 +45,7 @@ runs the file-backed Agent renderer against that instance's `/agent/root`;
 with redirected stdin it submits one task to the same instance and writes the
 answer to stdout and diagnostics to stderr without starting the interactive
 renderer. Herdr sessions using separate runtime directories have separate
-Roots and endpoints while using the same channel stores. Reusing one explicit
+Roots and endpoints while using the same product stores. Reusing one explicit
 runtime directory allows only one owner; another invocation fails to acquire
 it rather than sharing its Root. Actual Alan process exit shuts down its
 instance; a terminal-host view detach is separate from process exit. New
@@ -86,10 +86,10 @@ directory names, and definition layout does not imply Process ancestry.
 
 ## Persistence
 
-Durable service state is channel-isolated in the Host-selected System Store:
+Durable service state lives in the Host-selected product System Store:
 
 ```text
-Alan/System Store/<channel>/services/
+Alan/System Store/services/
 ├── agent-runtime/{rollouts,checkpoints,cache,tmp,metadata}/
 ├── connections/connections.toml
 ├── memory/stores/

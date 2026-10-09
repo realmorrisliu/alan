@@ -92,7 +92,6 @@ async fn explicit_root_evaluator_publishes_advice_without_replacing_generation()
             let calls = Arc::new(AtomicUsize::new(0));
             let generation = MockLlmProvider::new();
             let mut config = ServiceManagerConfig::ephemeral(
-                "test",
                 AgentProcessConfig::default(),
                 ProcessLaunchContext::root(),
                 LlmClient::new(generation.clone()),

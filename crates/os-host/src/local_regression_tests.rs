@@ -10,11 +10,10 @@ use uuid::Uuid;
 #[tokio::test]
 async fn processless_attach_rejects_a_live_legacy_host_without_sending_legacy_attach() {
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     std::fs::create_dir_all(&paths.root).unwrap();
     let status = serde_json::json!({
         "version": STATUS_VERSION,
-        "channel_id": paths.channel_id,
         "boot_id": Uuid::new_v4(),
         "pid": 1,
         "readiness": "ready",
@@ -37,11 +36,10 @@ async fn processless_attach_rejects_a_live_legacy_host_without_sending_legacy_at
 #[tokio::test]
 async fn stale_legacy_status_is_not_reported_as_protocol_incompatibility() {
     let runtime = tempfile::tempdir().unwrap();
-    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path()).unwrap();
     std::fs::create_dir_all(&paths.root).unwrap();
     let status = serde_json::json!({
         "version": STATUS_VERSION,
-        "channel_id": paths.channel_id,
         "boot_id": Uuid::new_v4(),
         "pid": 1,
         "readiness": "ready",

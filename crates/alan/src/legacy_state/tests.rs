@@ -6,12 +6,12 @@ use alan_service_manager::{
 };
 use chrono::Utc;
 use tempfile::TempDir;
-fn stores(root: &Path, channel: InstallChannel) -> (SystemStorePaths, HostStorePaths) {
+fn stores(root: &Path) -> (SystemStorePaths, HostStorePaths) {
     let data = root.join("data");
     fs::create_dir_all(&data).unwrap();
     (
-        SystemStorePaths::from_data_dir(&data, channel.descriptor().id).unwrap(),
-        HostStorePaths::from_data_dir(&data, channel.descriptor().id).unwrap(),
+        SystemStorePaths::from_data_dir(&data).unwrap(),
+        HostStorePaths::from_data_dir(&data).unwrap(),
     )
 }
 
@@ -40,11 +40,11 @@ fn connection_metadata_is_merged_verified_and_deleted() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     fs::create_dir_all(&home).unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
     fs::create_dir_all(&paths.alan_root).unwrap();
     let legacy = connection_file("legacy-main");
     legacy.save_to_path(&paths.connections_metadata()).unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Stable);
+    let (system, host) = stores(temp.path());
 
     let report = migrate_legacy_connections(&paths, &system, &host).unwrap();
 
@@ -63,7 +63,7 @@ fn legacy_workspace_pins_are_dropped_during_connection_migration() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     fs::create_dir_all(&home).unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
     fs::create_dir_all(&paths.alan_root).unwrap();
     let mut legacy = connection_file("legacy-main");
     legacy.credentials.insert(
@@ -88,7 +88,7 @@ fn legacy_workspace_pins_are_dropped_during_connection_migration() {
         toml::to_string_pretty(&document).unwrap(),
     )
     .unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Stable);
+    let (system, host) = stores(temp.path());
 
     let report = migrate_legacy_connections(&paths, &system, &host).unwrap();
 
@@ -110,12 +110,12 @@ fn conflicting_connection_metadata_preserves_both_files() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     fs::create_dir_all(&home).unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
     fs::create_dir_all(&paths.alan_root).unwrap();
     connection_file("legacy-main")
         .save_to_path(&paths.connections_metadata())
         .unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Stable);
+    let (system, host) = stores(temp.path());
     connection_file("current-main")
         .save_to_path(&system.connections_metadata().unwrap())
         .unwrap();
@@ -136,12 +136,12 @@ fn secrets_move_only_between_host_owned_paths() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     fs::create_dir_all(&home).unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Dev).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Dev).unwrap();
     fs::create_dir_all(paths.credential_file().parent().unwrap()).unwrap();
     fs::write(paths.credential_file(), b"[secrets]\nmain = 'secret'\n").unwrap();
     fs::create_dir_all(&paths.alan_root).unwrap();
     fs::write(paths.managed_auth(), b"{\"token\":\"secret\"}").unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Dev);
+    let (system, host) = stores(temp.path());
 
     let report = migrate_legacy_connections(&paths, &system, &host).unwrap();
 
@@ -163,7 +163,7 @@ fn cleanup_deletes_generated_state_and_preserves_authored_content() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     fs::create_dir_all(&home).unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
     fs::create_dir_all(paths.alan_root.join("runtime/stable/rollouts")).unwrap();
     fs::write(
         paths.alan_root.join("runtime/stable/rollouts/one.jsonl"),
@@ -183,7 +183,7 @@ fn cleanup_deletes_generated_state_and_preserves_authored_content() {
     )
     .unwrap();
     fs::write(paths.alan_root.join("registry.json"), "{}").unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Stable);
+    let (system, host) = stores(temp.path());
 
     let report = cleanup_legacy_state(&paths, &system, &host, &[]).unwrap();
 
@@ -225,10 +225,10 @@ fn cleanup_never_traverses_symlinked_runtime_parent() {
     let outside = temp.path().join("outside");
     fs::create_dir_all(outside.join("stable/rollouts")).unwrap();
     fs::write(outside.join("stable/rollouts/keep"), "safe").unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
     fs::create_dir_all(&paths.alan_root).unwrap();
     symlink(&outside, paths.alan_root.join("runtime")).unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Stable);
+    let (system, host) = stores(temp.path());
 
     let error = cleanup_legacy_state(&paths, &system, &host, &[]).unwrap_err();
 
@@ -247,9 +247,9 @@ fn cleanup_never_traverses_symlinked_legacy_root() {
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(outside.join("runtime/stable/rollouts")).unwrap();
     fs::write(outside.join("runtime/stable/rollouts/keep"), "safe").unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
     symlink(&outside, &paths.alan_root).unwrap();
-    let (system, host) = stores(temp.path(), InstallChannel::Stable);
+    let (system, host) = stores(temp.path());
 
     let error = cleanup_legacy_state(&paths, &system, &host, &[]).unwrap_err();
 
@@ -284,8 +284,7 @@ fn overlapping_import_does_not_create_the_system_store() {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("host-definition");
     fs::create_dir_all(source.join("persona")).unwrap();
-    let system =
-        SystemStorePaths::from_data_dir(&source, InstallChannel::Stable.descriptor().id).unwrap();
+    let system = SystemStorePaths::from_data_dir(&source).unwrap();
 
     let error = import_authored_content(
         AuthoredImportKind::AgentDefinition,
@@ -310,7 +309,7 @@ fn explicit_import_rejects_symlinks_without_installing() {
     fs::create_dir_all(source.join("persona")).unwrap();
     fs::write(temp.path().join("outside"), "secret").unwrap();
     symlink(temp.path().join("outside"), source.join("persona/SOUL.md")).unwrap();
-    let (system, _) = stores(temp.path(), InstallChannel::Stable);
+    let (system, _) = stores(temp.path());
 
     let error = import_authored_content(
         AuthoredImportKind::AgentDefinition,
@@ -334,7 +333,7 @@ fn inspection_checks_only_fixed_and_explicit_roots() {
     let unrelated = temp.path().join("unrelated/repo/.alan/agents");
     fs::create_dir_all(&unrelated).unwrap();
     fs::create_dir_all(&home).unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Stable).unwrap();
 
     let implicit = inspect_legacy_state(&paths, &[]).unwrap();
     let explicit = inspect_legacy_state(&paths, &[temp.path().join("unrelated/repo")]).unwrap();
@@ -366,7 +365,7 @@ fn dev_inspection_and_cleanup_use_dev_explicit_roots() {
     fs::write(&stable_generated, "{}").unwrap();
     fs::write(dev_skills.join("dev-skill/SKILL.md"), "dev").unwrap();
     fs::write(stable_skills.join("stable-skill/SKILL.md"), "stable").unwrap();
-    let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Dev).unwrap();
+    let paths = LegacyStatePaths::from_home_dir(&home, LegacyInstallation::Dev).unwrap();
 
     let inspection = inspect_legacy_state(&paths, std::slice::from_ref(&project)).unwrap();
 
@@ -385,7 +384,7 @@ fn dev_inspection_and_cleanup_use_dev_explicit_roots() {
             .any(|root| root.path == stable_skills)
     );
 
-    let (system, host) = stores(temp.path(), InstallChannel::Dev);
+    let (system, host) = stores(temp.path());
     let report =
         cleanup_legacy_state(&paths, &system, &host, std::slice::from_ref(&project)).unwrap();
 

@@ -44,7 +44,8 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scenario_fixture="$repo_root/docs/harness/scenarios/self_eval/profile_regression.json"
 threshold_file="$repo_root/docs/harness/self_eval/promotion_thresholds.v1.env"
-artifact_root="$repo_root/target/harness/self_eval/latest"
+mkdir -p "$repo_root/target/harness/self_eval"
+artifact_root="$(mktemp -d "$repo_root/target/harness/self_eval/run.XXXXXX")"
 
 if [[ ! -f "$scenario_fixture" ]]; then
     echo "Missing self-eval scenario fixture: $scenario_fixture" >&2
@@ -106,8 +107,6 @@ ensure_git_ref_exists() {
 ensure_git_ref_exists "$baseline_ref"
 ensure_git_ref_exists "$candidate_ref"
 
-rm -rf "$artifact_root"
-mkdir -p "$artifact_root"
 cp "$scenario_fixture" "$artifact_root/input_script.json"
 cp "$threshold_file" "$artifact_root/promotion_thresholds.env"
 
@@ -160,6 +159,7 @@ sync_evaluator_assets() {
     # Keep baseline/candidate comparison fair by pinning evaluator script and fixtures
     # to the current checkout instead of each profile ref's historical copy.
     mkdir -p "$target_root/scripts/harness"
+    cp "$repo_root/scripts/build_artifacts.py" "$target_root/scripts/build_artifacts.py"
     cp "$repo_root/scripts/harness/lib.sh" \
         "$target_root/scripts/harness/lib.sh"
     cp "$repo_root/scripts/harness/run_autonomy_suite.sh" \
@@ -190,12 +190,9 @@ run_profile() {
     local cargo_target_dir="$profile_dir/cargo-target"
 
     mkdir -p "$profile_dir"
-    rm -rf "$cargo_target_dir"
-    mkdir -p "$cargo_target_dir"
 
     if [[ "$profile_ref" != "HEAD" && "$profile_ref" != "CURRENT" ]]; then
         worktree_dir="$artifact_root/worktrees/$profile_name"
-        rm -rf "$worktree_dir"
         git -C "$repo_root" worktree add --detach "$worktree_dir" "$profile_ref" >/dev/null
         workspace_root="$worktree_dir"
         worktree_added=true
@@ -209,7 +206,10 @@ run_profile() {
     start_epoch="$(date +%s)"
 
     set +e
-    (cd "$workspace_root" && CARGO_TARGET_DIR="$cargo_target_dir" bash -lc "$command") >"$profile_dir/runner.log" 2>&1
+    python3 "$repo_root/scripts/build_artifacts.py" --owner "$repo_root" run \
+        --workspace "$workspace_root" --target-dir "$cargo_target_dir" --purpose task \
+        --evidence-dir "$profile_dir/build-evidence" -- \
+        env ALAN_AUTONOMY_ARTIFACT_ROOT="$autonomy_artifacts" bash -lc "$command" >"$profile_dir/runner.log" 2>&1
     local exit_code=$?
     set -e
 
@@ -217,21 +217,20 @@ run_profile() {
     finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     local duration_secs=$(( $(date +%s) - start_epoch ))
 
-    rm -rf "$autonomy_artifacts"
-    local autonomy_source="$workspace_root/target/harness/autonomy/latest"
-    if [[ ! -d "$autonomy_source" ]]; then
+    if [[ ! -d "$autonomy_artifacts" ]]; then
         if [[ "$worktree_added" == "true" ]]; then
-            git -C "$repo_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+            git -C "$repo_root" worktree remove "$worktree_dir" >/dev/null 2>&1 \
+                || echo "Retained worktree with changes: $worktree_dir" >&2
         fi
         echo "Missing autonomy output directory for profile: $profile_name" >&2
         exit 1
     fi
-    cp -R "$autonomy_source" "$autonomy_artifacts"
 
     local kpi_file="$autonomy_artifacts/kpi.json"
     if [[ ! -f "$kpi_file" ]]; then
         if [[ "$worktree_added" == "true" ]]; then
-            git -C "$repo_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+            git -C "$repo_root" worktree remove "$worktree_dir" >/dev/null 2>&1 \
+                || echo "Retained worktree with changes: $worktree_dir" >&2
         fi
         echo "Missing autonomy KPI output for profile: $profile_name" >&2
         exit 1
@@ -265,7 +264,8 @@ run_profile() {
         >"$profile_dir/profile_metrics.json"
 
     if [[ "$worktree_added" == "true" ]]; then
-        git -C "$repo_root" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+        git -C "$repo_root" worktree remove "$worktree_dir" >/dev/null 2>&1 \
+                || echo "Retained worktree with changes: $worktree_dir" >&2
     fi
 }
 

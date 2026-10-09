@@ -72,7 +72,7 @@ impl LlmClientFactory for RecordingFactory {
 
 #[tokio::test]
 async fn installed_distribution_is_visible_only_after_explicit_process_reference() {
-    let service = PackageService::ephemeral("test").unwrap();
+    let service = PackageService::ephemeral().unwrap();
     let installed = service
         .execute(crate::PackageCommand::Install {
             request_id: "dogfood-install".to_string(),
@@ -230,7 +230,6 @@ async fn unavailable_default_connection_does_not_prevent_system_boot() {
     connections.save_to_path(&metadata).unwrap();
 
     let mut config = ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
@@ -302,7 +301,6 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
             .unwrap(),
     );
     let mut config = ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         launch_context,
         LlmClient::new(MockLlmProvider::new()),
@@ -325,7 +323,6 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
 #[tokio::test]
 async fn root_agent_is_replaced_without_pid_continuity() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
@@ -439,7 +436,7 @@ async fn root_agent_is_replaced_without_pid_continuity() {
     assert!(
         String::from_utf8(shell.cat("/mnt/connections/status").await.unwrap())
             .unwrap()
-            .contains("channel=test")
+            .starts_with("profiles=")
     );
     assert_eq!(
         shell.ls("/mnt/host-mount").await.unwrap(),
@@ -495,7 +492,6 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
             alan_agent_engine::ProcessDescriptor::new("/memory").unwrap(),
         );
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         launch_context,
         LlmClient::new(SlowMockLlmProvider::default()),
@@ -787,7 +783,6 @@ published_handles = ["test-service"]
 #[tokio::test]
 async fn exited_file_service_is_restarted_and_republishes_handles() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
@@ -836,7 +831,6 @@ async fn exited_file_service_is_restarted_and_republishes_handles() {
 #[tokio::test]
 async fn package_service_process_restart_republishes_its_catalog_handle() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        "test",
         AgentProcessConfig::default(),
         ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),

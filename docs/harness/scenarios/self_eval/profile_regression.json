@@ -13,5 +13,5 @@
   "candidate_ref_ci": "HEAD",
   "baseline_ref_nightly": "HEAD",
   "candidate_ref_nightly": "HEAD",
-  "report": "target/harness/self_eval/latest/profile_regression_report.json"
+  "report": "target/harness/self_eval/run.*/profile_regression_report.json"
 }

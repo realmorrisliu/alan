@@ -3,7 +3,6 @@ use std::{
     process::Command,
 };
 
-use alan_agent_engine::InstallChannel;
 use alan_service_manager::ConnectionsFile;
 use tempfile::TempDir;
 
@@ -20,7 +19,7 @@ fn alan_command(home: &Path, xdg_data: &Path) -> Command {
     command
         .env("HOME", home)
         .env("XDG_DATA_HOME", xdg_data)
-        .env("ALAN_INSTALL_CHANNEL", "stable");
+        .env_remove("ALAN_INSTALL_CHANNEL");
     command
 }
 
@@ -42,20 +41,21 @@ fn legacy_cleanup_migrates_metadata_and_host_secrets_once() {
     std::fs::write(legacy.join("auth.json"), "{\"version\":1}").unwrap();
 
     let output = alan_command(&home, &xdg_data)
-        .args(["host", "legacy-state", "cleanup", "--json"])
+        .args([
+            "host",
+            "legacy-state",
+            "cleanup",
+            "--from",
+            "stable",
+            "--json",
+        ])
         .output()
         .unwrap();
 
     assert!(output.status.success(), "{output:?}");
     let data = detected_data_dir(&home, &xdg_data);
-    let system = alan_os_host::SystemStorePaths::from_data_dir(
-        &data,
-        InstallChannel::Stable.descriptor().id,
-    )
-    .unwrap();
-    let host_store =
-        alan_os_host::HostStorePaths::from_data_dir(&data, InstallChannel::Stable.descriptor().id)
-            .unwrap();
+    let system = alan_os_host::SystemStorePaths::from_data_dir(&data).unwrap();
+    let host_store = alan_os_host::HostStorePaths::from_data_dir(&data).unwrap();
     let connection_metadata = system.connections_metadata().unwrap();
     assert!(connection_metadata.is_file());
     assert!(
@@ -86,7 +86,14 @@ fn host_cleanup_deletes_generated_state_and_reports_authored_roots() {
     std::fs::write(legacy.join("agents/default/persona/SOUL.md"), "authored").unwrap();
 
     let output = alan_command(&home, &xdg_data)
-        .args(["host", "legacy-state", "cleanup", "--json"])
+        .args([
+            "host",
+            "legacy-state",
+            "cleanup",
+            "--from",
+            "stable",
+            "--json",
+        ])
         .output()
         .unwrap();
 
@@ -147,5 +154,40 @@ fn legacy_skill_import_is_not_parseable() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("invalid value 'skill'"),
         "{output:?}"
+    );
+}
+
+#[test]
+fn inspection_reports_installation_inputs_without_reading_or_adopting_credentials() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    std::fs::create_dir_all(&home).unwrap();
+    let data = detected_data_dir(&home, &xdg_data);
+    let product = data.join("Alan");
+    let legacy_host = product.join("Host Store/dev");
+    std::fs::create_dir_all(&legacy_host).unwrap();
+    std::fs::create_dir_all(product.join("System Store/dev/services")).unwrap();
+    std::fs::write(legacy_host.join("auth.json"), "secret that is not JSON").unwrap();
+    let output = alan_command(&home, &xdg_data)
+        .args(["host", "legacy-state", "inspect", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let rendered = String::from_utf8(output.stdout).unwrap();
+    assert!(!rendered.contains("secret that is not JSON"));
+    let report: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let installations = &report["installations"];
+    assert_eq!(installations["canonical"]["system_present"], false);
+    assert_eq!(installations["canonical"]["host_present"], false);
+    assert_eq!(installations["sources"][0]["source"], "stable");
+    assert_eq!(installations["sources"][1]["source"], "dev");
+    assert_eq!(installations["sources"][1]["system_present"], true);
+    assert_eq!(installations["sources"][1]["host_present"], true);
+    assert!(!product.join("System Store/services").exists());
+    assert!(!product.join("Host Store/auth.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(legacy_host.join("auth.json")).unwrap(),
+        "secret that is not JSON"
     );
 }

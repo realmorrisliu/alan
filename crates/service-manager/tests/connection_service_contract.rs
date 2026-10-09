@@ -41,7 +41,7 @@ async fn add_profile(shell: &Shell, profile_id: &str) {
 
 #[tokio::test]
 async fn process_selection_overrides_and_then_falls_back_to_service_default() {
-    let service = ConnectionService::ephemeral("test");
+    let service = ConnectionService::ephemeral().unwrap();
     let shell = Shell::new(InProcessTransport::new(service.file_server()));
     add_profile(&shell, "default-profile").await;
     add_profile(&shell, "process-profile").await;
