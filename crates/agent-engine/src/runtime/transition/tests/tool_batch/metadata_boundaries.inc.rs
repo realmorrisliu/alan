@@ -122,6 +122,7 @@ async fn action_metadata_redaction_and_recorder_failure_use_existing_durable_own
                 call_id: "uncommitted",
                 approval: "not_required",
                 arguments: &json!({"path":"safe.txt", "content":"requested"}),
+                submission_id: None,
             }),
             "/bin/write_file",
             [json!({"path":"safe.txt", "content":"requested"}).to_string()],

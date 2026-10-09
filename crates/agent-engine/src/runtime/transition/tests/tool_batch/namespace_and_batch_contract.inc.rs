@@ -304,7 +304,7 @@
             let payload = execute_tool_effect(
                 tools.clone(),
                 tool_name,
-                NamespaceToolActionEvidence { call_id: &format!("call-{idx}"), approval: "not_required", arguments: &json!({ "tool": tool_name, "call_index": idx }) },
+                NamespaceToolActionEvidence { call_id: &format!("call-{idx}"), approval: "not_required", arguments: &json!({ "tool": tool_name, "call_index": idx }), submission_id: None },
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,
                 30,

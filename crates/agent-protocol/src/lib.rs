@@ -3,6 +3,7 @@
 //! This crate defines the `Op` input alphabet, transition-local `Event` records,
 //! and AgentFS file schemas shared by the Agent Execution Engine and hosts.
 
+mod action_presentation;
 mod adaptive;
 mod compaction;
 mod content;
@@ -17,6 +18,7 @@ mod spawn;
 mod ui_surface;
 mod user_input;
 
+pub use action_presentation::ActionReadOnlyContext;
 pub use adaptive::{
     AdaptiveForm, AdaptivePresentationHint, ConfirmationYieldPayload, CustomYieldPayload,
     StructuredInputKind, StructuredInputOption, StructuredInputQuestion,

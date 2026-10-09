@@ -46,6 +46,11 @@ Action identity, status and retained detail SHALL remain accessible.
 - **THEN** the result remains standalone unless authoritative Runtime metadata independently establishes eligibility
 - **AND** ordinary content never changes authority or grouping eligibility
 
+#### Scenario: Registered semantics do not match the actual execution owner
+- **WHEN** the Runtime knows a read-only native implementation but the Tool Process executed through a different runner or has no matching execution receipt
+- **THEN** it does not export grouping eligibility for that Action
+- **AND** missing, oversized or changed authority context and an explicit human-approval boundary also disable eligibility
+
 #### Scenario: Completed group rows are already in native scrollback
 - **WHEN** another eligible Action finishes after the earlier group's rows have been committed
 - **THEN** the renderer leaves those rows intact and presents subsequent work without rewriting native scrollback

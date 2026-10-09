@@ -14,6 +14,10 @@ impl ReadFileTool {
 }
 
 impl Tool for ReadFileTool {
+    fn presentation_is_read_only(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         "read_file"
     }

@@ -133,3 +133,39 @@ content and unchanged Chinese/emoji draft/cursor at 48/80/120 columns. Full qual
 and strict OpenSpec (67/67) passed for the core notice slice. The final commit gate
 also validates subsequent local severity refinements. Fresh native evidence
 is a partial workflow sample; tasks for the complete matrix remain open.
+
+## Positive native read-only grouping evidence
+
+Only compiled ReadFile/Grep/Glob/ListDir implementations opt in; the default is
+false, and the actual invocation must also have Read capability. Tool text,
+package claims and arbitrary Bash commands cannot enable eligibility. The actual
+shared native runner records a bounded one-use Tool Process/parent/name receipt
+under unchanged live authority. A different runner, even with the same known
+registered Tool, supplies no receipt. Missing/changed bindings, adapters,
+authority, accepted submission or an explicit human-approval boundary suppress
+eligibility. Namespace Runtime consumes the matching receipt and exports an
+optional `read_only_context` only after the authoritative Action succeeds.
+
+Context retains a concrete Process owner, accepted Machine submission and an
+opaque SHA-256 identity of selected directory plus live Host Mount projection
+identities/paths/access and the existing service generation. It exports no Host
+paths and grants no authority. The transient native bridge retains at most 128
+late receipts; eviction merely leaves an Action standalone. Durable results still
+belong to the existing AgentFS Action and rollout/checkpoint owners. No new
+execution service, replay log, dependency or provider request was added.
+
+The actual Process execution fixture passes 12 eligibility cases, including
+forged Tool claims, a different actual runner, missing adapter/authority,
+wrong parent, oversized context, approval, missing submission, Write capability,
+unknown native classification, execution failure and changed live scope. It
+also checks one execution per Action, exact one-use receipt identity, bounded
+late receipts and a changed selected directory. Protocol validation checks
+concrete/bounded correlation; builtin tests keep Bash/edit/write unclassified;
+Host Mount tests check revoked/replaced grants and absence of native backing paths.
+
+Full affected suites passed: Runtime 1,405 library tests plus 20 integration tests
+(one existing ignored), protocol 57 library plus eight integration tests,
+Service Manager 146 library plus two integration tests, tools 138 library tests,
+TUI 352 library plus 12 integration tests. Receipt: `target/group-tests.log`.
+Full `just quality` passed (`target/group-quality.log`). This qualifies metadata,
+not rendered groups or the complete native matrix. Tasks 3.2/3.3 remain open.

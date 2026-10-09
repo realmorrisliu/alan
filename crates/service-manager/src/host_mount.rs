@@ -828,6 +828,25 @@ impl HostMountService {
 }
 
 impl ToolExecutionAuthority for HostMountService {
+    fn presentation_scope(&self, pid: u64) -> Option<String> {
+        let state = self.state.lock().ok()?;
+        let grants = state
+            .grants
+            .iter()
+            .flat_map(|(id, grant)| {
+                grant
+                    .projections
+                    .iter()
+                    .filter(move |p| grant.public.active && p.pid.0 == pid)
+                    .map(move |p| (id, &p.namespace_path, p.access))
+            })
+            .collect::<Vec<_>>();
+        if grants.is_empty() {
+            return None;
+        }
+        serde_json::to_string(&(self.generation(), grants)).ok()
+    }
+
     fn reconcile(
         &self,
         pid: u64,

@@ -71,6 +71,11 @@ impl std::fmt::Debug for ToolExecutionBinding {
 /// grant set, so revocation cannot leave authority in a future Tool Process.
 pub trait ToolExecutionAuthority: std::fmt::Debug + Send + Sync {
     fn reconcile(&self, pid: u64, binding: ToolExecutionBinding) -> Result<ToolExecutionBinding>;
+
+    /// Opaque live authority identity for presentation only; absence disables grouping.
+    fn presentation_scope(&self, _pid: u64) -> Option<String> {
+        None
+    }
 }
 
 impl ToolExecutionBinding {

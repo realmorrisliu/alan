@@ -256,12 +256,14 @@ fn approval_projects_an_opaque_handle_and_revocation_fails_closed() {
     );
 
     let reconciled = service.reconcile(7, binding("/mnt/project")).unwrap();
+    assert!(service.presentation_scope(7).is_some());
     assert!(reconciled.has_adapter());
     let adapter = reconciled.adapter().unwrap();
     assert_eq!(adapter.cwd().unwrap(), host.path());
     assert!(adapter.sandbox().unwrap().is_writable(host.path()));
 
     service.revoke("grant-a", "test").unwrap();
+    assert!(service.presentation_scope(7).is_none());
 
     assert!(namespace.snapshot().resolve("/mnt/project").is_err());
     assert!(!service.grant_record("grant-a").unwrap().active);
@@ -550,6 +552,10 @@ fn exact_path_replacement_retires_the_old_projection_identity() {
         old_host.path().to_path_buf(),
     );
     let old_binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+    let old_scope = service.presentation_scope(7).unwrap();
+    assert!(!old_scope.contains(old_host.path().to_string_lossy().as_ref()));
+    assert_eq!(service.presentation_scope(7).as_ref(), Some(&old_scope));
+    assert!(service.presentation_scope(999).is_none());
     assert_eq!(old_binding.cwd_grant_id.as_deref(), Some("grant-old"));
     approve(
         &service,
@@ -561,6 +567,9 @@ fn exact_path_replacement_retires_the_old_projection_identity() {
     );
 
     service.revoke("grant-old", "test").unwrap();
+    let replaced_scope = service.presentation_scope(7).unwrap();
+    assert_ne!(old_scope, replaced_scope);
+    assert!(!replaced_scope.contains(latest_host.path().to_string_lossy().as_ref()));
 
     assert!(
         service.reconcile(7, old_binding).is_err(),

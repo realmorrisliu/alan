@@ -16,6 +16,10 @@ impl GrepTool {
 }
 
 impl Tool for GrepTool {
+    fn presentation_is_read_only(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         "grep"
     }
@@ -150,6 +154,10 @@ impl GlobTool {
 }
 
 impl Tool for GlobTool {
+    fn presentation_is_read_only(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         "glob"
     }
@@ -244,6 +252,10 @@ impl ListDirTool {
 }
 
 impl Tool for ListDirTool {
+    fn presentation_is_read_only(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> &str {
         "list_dir"
     }

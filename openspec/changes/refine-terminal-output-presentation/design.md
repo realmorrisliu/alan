@@ -73,6 +73,18 @@ field only if needed. A title, arbitrary Tool output, `Listing` presentation,
 Tool-supplied claim or shell string does not prove absence of side effects.
 Missing metadata remains compatible and renders a standalone result.
 
+Native read-only opt-in is a compiled implementation guarantee, defaulting to
+false; capability or package claims alone cannot provide it. The actual native
+Tool runner supplies a matching Process/parent/Tool receipt under unchanged live
+authority. Namespace Runtime consumes it once and exports optional concrete
+Process, accepted submission and authority-digest correlation only for a successful
+Action with no human-approval boundary. The digest includes selected directory
+and the Host Mount Service's live grant identities, projected paths/access and
+existing generation. It contains no raw Host paths. A different execution runner
+or missing/changed context leaves the result standalone. The runner's bounded
+transient receipts bridge native execution to the existing durable Action owner;
+they are not an execution log, lifecycle owner or source of replay authority.
+
 Group only adjacent successful eligible Actions within the same correlated turn
 and authority context. User/assistant messages, explicit commands, plan changes,
 requests, writes, failures, cancellation, unknown outcomes and authorization
