@@ -27,8 +27,8 @@
 ## 5. Review and delivery
 
 - [x] 5.1 Review the exact implementation diff against all three spec owners, including failure/retention behavior and changes to history identity; resolve findings and collect required current-head CI.
-- [ ] 5.2 Prepare reviewable PRs and acceptance evidence; merge only with the user's applicable authorization, then verify the merged revision and required checks.
-- [ ] 5.3 Sync delivered deltas into canonical specs after implementation merge, update ADR/disposition delivery evidence, and verify archive-readiness before archiving.
+- [x] 5.2 Prepare reviewable PRs and acceptance evidence; merge only with the user's applicable authorization, then verify the merged revision and required checks.
+- [x] 5.3 Sync delivered deltas into canonical specs after implementation merge, update ADR/disposition delivery evidence, and verify archive-readiness before archiving.
 
 Linux tooling and broader repeated development qualification are intentionally
 not implementation tasks in this change. Their continuation order is recorded

@@ -144,9 +144,11 @@ Agent UI state. A renderer MUST NOT attach to another invocation as a fallback.
 
 #### Scenario: A live action status event changes only its own tool cell
 - **WHEN** an action creation or status event is observed after attachment
-- **THEN** the renderer inserts or updates only that action's Tool cell
+- **THEN** the renderer inserts or updates only that Action's presentation member
+- **AND** if that member belongs to an eligible read-only group, it recomputes only
+  the affected uncommitted group projection without changing other members' states
 - **AND** it does not append unrelated historical action snapshots or duplicate
-  the changed action's result
+  the changed Action's result
 
 #### Scenario: Hydration does not replay older errors after later turns
 - **WHEN** UI history contains an error followed by a newer `Running` event and
@@ -196,3 +198,43 @@ usable for subsequent input after a turn is interrupted.
   lifecycle boundaries
 - **AND** terminal-host view detach while retaining the process does not count
   as Alan process exit
+
+### Requirement: Grouped presentation preserves individual Action identity
+A read-only activity group SHALL remain a presentation over ordered individual
+Action references, not a new execution record or lifecycle owner. Detail selection
+and asynchronous reads SHALL retain the selected member's identity and attachment
+generation. Hydration and recovery SHALL preserve chronology and no-replay
+semantics whether a result was displayed alone or in a group.
+
+#### Scenario: A grouped Action is selected for detail
+- **WHEN** the user selects a particular member of a read-only group
+- **THEN** the renderer reads that member's retained detail from its concrete Process/Action files while fencing the reply to the current view generation
+- **AND** unavailable or truncated evidence is reported for that member without substituting another result
+- **AND** closing detail restores the draft and does not execute any Action
+
+#### Scenario: An earlier Process member shares an ID with the current Process
+- **WHEN** an observed historical Action and a current Action have the same ID under different concrete Process paths
+- **THEN** they remain separately selectable and the selected Process remains visible while paging
+- **AND** historical detail reads use that original Process path, never the moving Root alias
+- **AND** absent historical evidence is explicitly unavailable without substituting current or cached output
+
+#### Scenario: The current Process catalog is unavailable while historical references remain
+- **WHEN** the current Action catalog cannot be read but the renderer has observed concrete historical Action references
+- **THEN** those references can still be inspected through fresh reads of their own AgentFS files
+- **AND** the current catalog failure remains explicit and a previous selection is not silently replaced
+
+#### Scenario: A late detail response belongs to an old selection
+- **WHEN** a detail response arrives after its selected member or Process attachment changed
+- **THEN** it does not replace the current selection's content
+- **AND** identity is not inferred from matching titles or displayed text
+
+#### Scenario: A grouped history prefix was partially committed before reconnect
+- **WHEN** attachment recovery follows a partial history drain or terminal resize
+- **THEN** matching preserves member identities and existing semantic history boundaries
+- **AND** it neither duplicates represented members nor drops later distinct results with identical text
+- **AND** it never resubmits input or re-executes an Action
+
+#### Scenario: Historical ordering cannot be correlated
+- **WHEN** completed Action records lack sufficient turn or order evidence
+- **THEN** grouping does not guess their location or append them after an unrelated turn
+- **AND** existing unknown-position hydration behavior remains in force
