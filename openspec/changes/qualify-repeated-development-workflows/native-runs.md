@@ -277,3 +277,41 @@ source. Original F2 failure remains immutable. Fresh linked input preparation
 hashes in a new project and checker scratch; no retry generation or qualification
 is claimed here. New head CI/review, final-candidate applicability and the other
 families/platform remain required.
+
+## macOS F2 r1 linked qualification retry — 2026-10-11
+
+Fresh attempt `macos-f2-r1/a2` uses the same frozen prompt, source baseline and
+protected assertions as original a1, in a new disposable project and scratch.
+Original a1 remains FAIL with receipt `6c0336f1`; no source was operator-authored
+and no corrective model advice was supplied. Candidate source and CLI identity
+match the preceding native manifest/Seatbelt repair probe. Native model boot
+`559f312a-86cd-4957-8458-ce748bf14289`, PID 47125, Root 8 runs actual
+`gpt-6.1-sol`/medium. It updates only the requested three source files and verifies
+the library and both binaries. Seven observed Tool Processes exit. Detail return
+and logical insertion preserve `abcδXYZ`; an immediate stale terminal read is
+reobserved on the same instance without repeating input. Native `/quit` exits it.
+
+A fresh normal-CLI verifier boot `f09780cd-4843-4fb7-9d60-d0ce8cc2a47f`, PID
+49010, mounts project/assertions read-only and dedicated scratch read-write.
+The original full compound Cargo command freshly compiles the protected checker
+and both real binaries: protected behavior passes, outputs are `20` and `-1`.
+Source, driver and assertions remain unchanged. Action a1's call ID is correlated
+with its owned rollout's allow/Write/Seatbelt/projected-host-path policy audit.
+Actual Tool `/proc/9` exits and native `/quit` leaves the owned shell foreground.
+The collector first used the wrong audit field name; reading `sandbox_backend`
+on the same Action corrects that assertion without executing another command.
+
+Submission-to-final-message time is 37.656288 seconds; end-to-end receipt/cleanup
+time is 566.260430 seconds, within the frozen 600-second bound. This total includes
+operator observation/checking time; unavailable model/tool/wait partitions, usage
+and cost remain unknown. Planned authorization and lifecycle controls are retained
+and do not constitute approval-free autonomy. Receipt SHA-256:
+`c9dc9be09fee288669b6560a21e5e69f3219a68c1cc371344fe56ca02eaabe12`.
+
+Immutable aggregate `first-outcomes-v4.json`, SHA-256
+`c8d502142da869017edf440b92221c8fa1336e2339b548db5f97f6864c3051ba`,
+retains thirty initial slots: two first PASS, two first FAIL, twenty-six NOT_RUN;
+six model attempts yield four qualified slots. Task 2.2 remains open at one of
+three required F2 completions. Repair head `e9c5ace` passes all sixteen CI checks;
+this new documentation commit still requires its own checks. Linux real generation,
+other families, final-candidate applicability/review and user merge remain open.

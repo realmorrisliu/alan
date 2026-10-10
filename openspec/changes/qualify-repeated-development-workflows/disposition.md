@@ -24,7 +24,7 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are two PASS, two FAIL and twenty-six NOT_RUN; qualified slots
-are three out of thirty. See `native-runs.md`.
+are four out of thirty, including the fresh F2 linked retry. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -95,5 +95,5 @@ OpenSpec pass. A fresh independently built cace913c + UI + exact repair candidat
 now passes the original full protected-library/both-binary checking command with
 unchanged source/assertion/driver bytes and exited Tool/instance. This is a native
 repair probe, not a model slot; first F2 FAIL remains immutable and its fresh linked
-retry is prepared, not yet qualified. Earlier namespace Read operands remain an
+retry now qualifies after a full independent protected-library/both-binary check. Earlier namespace Read operands remain an
 independent finding. New head review/CI and full matrix remain open.

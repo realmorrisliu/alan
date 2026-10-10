@@ -2,7 +2,7 @@
 
 This records supported operator controls. Initial actual task outcomes are in
 `native-runs.md`: two first PASS, two first FAIL, twenty-six NOT_RUN slots and
-three qualified slots including a linked retry. Fixture
+four qualified slots including linked F1/F2 retries; six real model attempts. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
 
