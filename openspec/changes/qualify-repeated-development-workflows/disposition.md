@@ -1,7 +1,7 @@
 # Disposition — 2026-10-10
 
 The user's existing ordered goal authorizes this independent third delivery.
-Qualification is active: prerequisites/fixtures and macOS F1 are complete (4/19 tasks).
+Qualification is active: prerequisites/fixtures and macOS F1/F2 are complete (5/19 tasks).
 The observed TUI directory-context repair is implemented and native-verified;
 other production findings and the remaining matrix are still open. Three macOS F1 slots qualify through
 four real model executions; the first r1 attempt failed for incomplete prospective
@@ -23,8 +23,8 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
-First outcomes are two PASS, two FAIL and twenty-six NOT_RUN; qualified slots
-are four out of thirty, including the fresh F2 linked retry. See `native-runs.md`.
+First outcomes are four PASS, two FAIL and twenty-four NOT_RUN; qualified slots
+are six out of thirty, including fresh F1/F2 linked retries. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -79,7 +79,7 @@ corrective advice or operator source edits. Its independent compound check faile
 before compilation when Write-classified shell preflight rejected the explicitly
 read-only project manifest operand. A separate protected library check passes,
 but the original full-check failure remains FAIL and adds no qualified slot. Both
-native instances and all observed Tool Processes exited; task 2.2 remains open.
+native instances and all observed Tool Processes exited; this first attempt remains failed.
 This is a separate authority/preflight case from the earlier namespace Read-operand
 finding; inspect path role/projection separately before proposing a shared repair.
 

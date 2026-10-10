@@ -4,10 +4,10 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including the subsequent F2 attempt below, first outcomes are two PASS, two FAIL
-and twenty-six NOT_RUN. Qualified slots
-are three out of thirty, closing task 2.1 only. Linux generation readiness,
-task 1.4 and the remaining families stay open.
+Including completed macOS F2 below, eight real-model executions qualify six
+slots: four first PASS, two first FAIL and twenty-four NOT_RUN. Tasks 2.1 and
+2.2 are complete. Linux generation readiness, task 1.4, F3/F4/F5 and final
+candidate applicability remain open.
 
 ## Candidate and receipts
 
@@ -287,7 +287,7 @@ and no corrective model advice was supplied. Candidate source and CLI identity
 match the preceding native manifest/Seatbelt repair probe. Native model boot
 `559f312a-86cd-4957-8458-ce748bf14289`, PID 47125, Root 8 runs actual
 `gpt-6.1-sol`/medium. It updates only the requested three source files and verifies
-the library and both binaries. Seven observed Tool Processes exit. Detail return
+the library and both binaries. Seven observed Tool Processes, including the planned setup command, exit. Detail return
 and logical insertion preserve `abcδXYZ`; an immediate stale terminal read is
 reobserved on the same instance without repeating input. Native `/quit` exits it.
 
@@ -315,3 +315,56 @@ six model attempts yield four qualified slots. Task 2.2 remains open at one of
 three required F2 completions. Repair head `e9c5ace` passes all sixteen CI checks;
 this new documentation commit still requires its own checks. Linux real generation,
 other families, final-candidate applicability/review and user merge remain open.
+
+## macOS F2 original r2/r3 complete — 2026-10-11
+
+Both original frozen slots run through fresh ordinary Herdr Alan invocations on
+the same cace913c + UI + manifest/Seatbelt repair candidate (CLI `5715ccd9`).
+Actual selected and admitted model/effort are gpt-6.1-sol/medium. Each model
+updates only the library and both callers, retains its non-Git inspection failure
+and self-correction, and then runs library/binary verification without corrective
+advice or operator source edits. Fresh projects/Processes do not imply statistical
+independence: the same default Memory Store remains exposed and no personal
+memory or credentials are collected.
+
+| Original slot | Model boot / native PID | Verifier boot / native PID | Protected result / both outputs | Model seconds | End-to-end seconds | Receipt SHA-256 |
+| --- | --- | --- | --- | --- | --- | --- |
+| macos-f2-r2/a1 | ad6204d3-3c92-43ad-bd31-700542ecb8e4 / 49812 | deb42286-628f-4d45-b68b-91901831c5b9 / 56308 | PASS / 51, -20 | 33.284632 | 194.277512 | e3313a3ae4d0b1256ca2e35c359804494b3626d6f627f0dddf698a9b26cbea2a |
+| macos-f2-r3/a1 | 41350ec1-b753-451e-b897-a784077c08b8 / 56534 | 40ff340e-f4e5-4efc-b5fd-b077170eb999 / 57058 | PASS / 3, -5 | 37.480905 | 251.475340 | 42c7ae59e90a6e32dab5d619041a28124802cf4beb2dc737595f94ad2d105420 |
+
+Each separate verifier receives only project/assertions read-only and its own
+checker scratch read-write. The original full compound checking command freshly
+compiles the checker and both real binaries; source/assertion/driver hashes stay
+unchanged. Actual Action/call IDs correlate to each verifier's owned rollout and
+Seatbelt/projected-host-path audit. Seven observed Action Tool Processes (including setup) and the
+verifier Tool exit, followed by both native `/quit`/PID-gone checks. Detail return
+preserves the draft and insertion yields `abcδXYZ`. Existing Space paging handles
+the multi-page r3 Action; a first-page-only collector assertion is corrected by
+observing the same detail, not repeating the Tool. An r2 collector version check
+initially used the observer's repository cwd; before any model launch it was
+corrected to the frozen native cwd/PATH and the exact tool bytes/versions match.
+
+Exact non-build source inventories match the frozen paths. r1 retry/r2 additionally
+retain post-exit source-inventory supplements linked to their unchanged receipts;
+these are later audits, not retroactive timestamps. Planned approvals/lifecycle
+controls remain visible. Usage/cost and precise model/Tool/wait partitions remain
+unknown; end-to-end time includes operator observation and independent checking.
+
+Immutable `first-outcomes-v6.json`, SHA-256
+`a298dabf883e4d446ef75a134b10deb94db8658760885ef688edeb4cd4cf53bd`,
+retains thirty original slots: four first PASS, two first FAIL, twenty-four NOT_RUN;
+eight real model attempts qualify six slots. All three macOS F2 slots now qualify,
+closing task 2.2 and reaching 5/19 tasks. Earlier failed attempts remain unchanged.
+F3/F4/F5 and all Linux real-model families, final-candidate applicability, formal
+review/current-head CI and user merge remain required; this is not full self-bootstrap.
+
+Linux readiness is rechecked on OrbStack ubuntu: the owning Connection metadata
+file is still absent. An SSH query of the saved officelab machine is a separate
+environment and supplies no Linux qualification evidence. No provider state or
+private credentials have been copied between Hosts.
+
+F2 tool-origin audits clarify the immutable receipts: their legacy
+`model_tool_processes_exited` field counts all observed Action Tools, including
+one planned version-setup Tool per invocation. Each run has six model-originated
+Tool Processes and one setup Tool; all exit. This clarification changes no model
+authorship, outcome or lifecycle proof and does not overwrite original receipts.
