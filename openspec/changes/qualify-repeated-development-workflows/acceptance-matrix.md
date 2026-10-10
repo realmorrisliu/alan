@@ -2,9 +2,11 @@
 
 The layout, thirty fixture inputs/prompts, bounds and measurement fields are
 frozen at five families x two platforms x three repetitions. Runtime readiness
-is frozen separately before each Host's generation. Two macOS F1 first attempts
-have executed: one PASS and one FAIL for incomplete prospective tool identity;
-twenty-eight slots remain NOT_RUN. See `native-runs.md` for retained receipts.
+is frozen separately before each Host's generation. Three macOS F1 first attempts
+have executed: two PASS and one FAIL for incomplete prospective tool identity.
+A fresh linked retry qualifies that failed slot without replacing its first
+outcome. Three slots qualify and twenty-seven remain NOT_RUN. See `native-runs.md`
+for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
 ## Entry, identity and bounds
@@ -51,9 +53,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 
 | Slot | Platform / Host | Family | Repetition | First outcome | Final qualified evidence |
 | --- | --- | --- | --- | --- | --- |
-| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | coding/checker evidence retained; fresh retry required |
+| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; fresh a2 PASS `71e2e625`; a1 retained |
 | macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; a1 receipt `02cf4ac6` |
-| macos-f1-r3 | macos / Herdr | F1 | 3 | NOT_RUN | absent |
+| macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; a1 receipt `9c9a1a6f` |
 | macos-f2-r1 | macos / Herdr | F2 | 1 | NOT_RUN | absent |
 | macos-f2-r2 | macos / Herdr | F2 | 2 | NOT_RUN | absent |
 | macos-f2-r3 | macos / Herdr | F2 | 3 | NOT_RUN | absent |

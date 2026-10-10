@@ -1,52 +1,55 @@
 # Initial native development runs — 2026-10-10
 
-Two frozen macOS F1 inputs have executed through the normal CLI in Herdr. Both
-models repaired their project without corrective advice or operator source edits.
-Only the second attempt qualifies: the first omitted prospective exact PATH and
-executable identity. Keep that failure; successful coding alone cannot repair a
-missing precondition. The matrix has one PASS, one FAIL and twenty-eight NOT_RUN
-slots, with one qualified completion out of thirty. Task 2.1 remains open until
-all three F1 repetitions have qualified evidence, including a fresh linked retry
-for r1. Linux generation readiness and task 1.4 remain open.
+All three frozen macOS F1 inputs qualify through four normal-CLI real-model
+executions in Herdr, without corrective model advice or operator source edits.
+The original r1 attempt omitted prospective exact PATH/executable identity and
+remains FAIL; its fresh linked retry passes without replacing that first outcome.
+First outcomes are two PASS, one FAIL and twenty-seven NOT_RUN. Qualified slots
+are three out of thirty, closing task 2.1 only. Linux generation readiness,
+task 1.4 and the remaining families stay open.
 
 ## Candidate and receipts
 
 Production source is unchanged #1046 `cace913c`; the clean native checkout's CLI
 SHA-256 is `b66362691d83e8f63867058b3a15afd9ddbbbc721ef151a23b93b2ef53c8d6fd`.
-Both actual admitted callable bindings and generation contexts confirm
+All four actual admitted callable bindings and generation contexts confirm
 `chatgpt-main`, provider `chatgpt`, model `gpt-6.1-sol`, reasoning effort `medium`.
-Both instances expose the same default Memory Store; no personal memory bodies
+These instances expose the same default Memory Store; no personal memory bodies
 were collected or cleared, and statistical independence is not claimed.
 
 Owned evidence root:
 `~/Library/Caches/Alan/qualification/dev-20261010-10332030`.
 The immutable thirty-input fixture manifest is `fixtures-v3/manifest.json`,
 SHA-256 `b64ad0126be948a69d46f4936cf25caacc6ff8d69b61bcda6e2b37229c32b25e`.
-`first-outcomes-v1.json` preserves all thirty slots, SHA-256
+The original `first-outcomes-v1.json` preserves the first two attempts, SHA-256
 `d8689edaed159ed8777bc5fe3f3e2d35c1189ce65d6f00ce07d7195da387c81b`.
+The complete updated thirty-slot snapshot is `first-outcomes-v2.json`, SHA-256
+`8ce517dae2373e453e2585ce9fadcc57a365ccf7c97362a4b0484dc3f8babe1d`.
 
-| Slot / attempt | First outcome | Model task time | Submission through verified cleanup | Receipt SHA-256 |
+| Slot / attempt | Attempt outcome | Model task time | Submission through verified cleanup | Receipt SHA-256 |
 | --- | --- | --- | --- | --- |
 | macos-f1-r1 / a1 | FAIL: incomplete prospective tool identity | 31.88 s | 227.34 s | `343e968cf9d5f89eba55d1051974fd807262b2ccc0f02239d05cf440f3db2e2d` |
 | macos-f1-r2 / a1 | PASS | 31.50 s | 228.62 s | `02cf4ac6e0c66483e771591db2f4882a3bb4d9742fbc7931e22adbb6d5f37841` |
+| macos-f1-r3 / a1 | PASS | 29.20 s | 269.60 s | `9c9a1a6f46c6992d3e42e8ccfbb30623d5c7155a858cd06d2befc38cf2ab758b` |
+| macos-f1-r1 / a2 | PASS retry; original FAIL retained | 31.30 s | 263.19 s | `71e2e6256265cefbbe25ddaba7eb6bae178a4a2d1809c285152d51aa2bfe2725` |
 
-Receipts are `attempts/<slot>/a1/receipt.json`. Model task time ends at the
+Receipts are `attempts/<slot>/<attempt>/receipt.json`. Model task time ends at the
 retained final assistant message. Total time includes observation, planned detail
 checks, instance exit and independent native verification. Model/Tool/wait time
-partition, usage and cost remain unknown. Both attempts have zero unplanned model
+partition, usage and cost remain unknown. All four attempts have zero unplanned model
 steering and zero operator source edits; planned grants, the setup Tool approval,
 detail observations and verifier lifecycle are recorded, not approval-free autonomy.
 
 ## Authorship, independent checks and lifecycle
 
-Each model first ran `cargo test --locked --offline`, retained a genuine contract
+Each execution first ran `cargo test --locked --offline`, retained a genuine contract
 failure, changed only `src/lib.rs` with EditFile, then reran Cargo successfully.
 The original tests, Cargo files and fixture data matched their frozen hashes.
-The first restored addition; the second removed the extra one from absolute
-difference. Both also encountered and independently recovered from a Git command
-in a non-Git fixture. Those Tool failures remain in the receipts.
+The inputs exercise addition, absolute difference and an inclusive clamp; the
+fresh retry repeats the original addition defect. Non-Git fixture command
+failures and any failed absolute namespace operands remain in the receipts.
 
-After each model invocation actually exited, a separate normal native invocation
+After every model invocation actually exited, a separate normal native invocation
 received the project read-only, protected assertions read-only and dedicated
 checker scratch read-write. From that scratch, ordinary explicit Cargo compiled
 both the real project and protected checker into a previously absent target and
@@ -64,6 +67,13 @@ Both model and verifier native PIDs were confirmed gone after `/quit`. r2 also
 retains explicit exited status for every Tool Process before model exit and the
 verifier Tool before verifier exit.
 
+The subsequent r3 model boot is `bac46fe7-acb8-4e23-bc04-f4b089f8927c`, native
+PID 86973, Root 8, rollout `c163ad6a-a07d-4177-b663-69952aaecce1`. The r1 retry
+boot is `732b4f58-07ed-4b99-998d-f80d23e4be35`, native PID 88547, Root 8,
+rollout `de12f59b-6629-423d-b2e3-935f2e8b2350`. Both retain exited Tool status,
+draft/logical-cursor restoration and verifier call-ID correlation against the
+actual SDK Action. Both model and verifier native PIDs exited after `/quit`.
+
 r2 opened the final Cargo Action details with a nonempty draft and a cursor in
 its middle. After returning, inserting a character produced `abcδXYZ`, proving
 the same draft and logical insertion point survived. Raw detail and terminal
@@ -73,11 +83,15 @@ replace the later long-output family or broad UI qualification.
 ## Collector correction and observed product limitation
 
 r1 did not freeze exact selected PATH/executable digests before generation. The
-next run captured selected paths, rustup proxy and real compiler/Cargo digests,
+next runs captured selected paths, rustup proxy and real compiler/Cargo digests,
 Git digest, versions and platform/kernel, then explicitly supplied that captured
 PATH to the native invocation. Tool versions were independently checked through
-the actual product before submitting generation. A future r1 retry needs a fresh
-fixture; neither its original source nor its first outcome may be overwritten.
+the actual product before submitting generation. The fresh r1 retry uses only its
+slot from `fixtures-r1-retry-v1`; duplicate unused prepared inputs add no matrix
+slots. Its original prompt, source baseline and protected assertion hashes match
+the first attempt, with distinct native project/checker paths and fresh targets.
+The original first-attempt files/receipt remain unchanged. Selected proxy,
+compiler, Cargo and Git hashes were rechecked unchanged after the later runs.
 
 The qualification-only SDK observer now supports explicit bounded `read --list`
 to discover actual Action/request IDs, using existing `Shell::ls_bounded` with
@@ -90,6 +104,10 @@ binary SHA-256 `6437f1fcb05ecca90f159083a103823321f3749f4ade0c3cad10303a810aaead
 The runs recorded this then-uncommitted collector separately from production.
 Its exact source and binary are preserved under `observer-builds/1b7834bd/` in
 the owned evidence cache; future rebuilds cannot erase the original client.
+Later runs use published collector `8540cf75`, with source SHA-256
+`8346bb55e301572bcf042e14e6892d0a8a54fc2f0b00f424fa59c49022a61d4c`
+and binary SHA-256 `6ff28b7f931ff806bdb837a8909e36af195e78d701dd1fee4127353165df9784`.
+That head passed all sixteen CI checks, including both platform suites and CodeQL.
 
 r1 Action a4 rejected an absolute `/mnt/project-request-1/src/lib.rs` operand in
 a read-only `sed` command as outside host_mount; relative operands subsequently
@@ -99,3 +117,12 @@ while file Tools use the Host adapter's namespace path resolution. Retain this a
 an observed shell projection limitation to reproduce and review in the Host/Tool
 owner before a repair. Do not replace strings indiscriminately, weaken containment
 or grant native backing paths to the model. No production fix is claimed here.
+
+The SDK-authorized r3 and r1 retry also expose a concrete UI location problem:
+the successful namespace `cd` Action and subsequent Tools use the granted project,
+but the context line still says `no project`. `observe_action_cwd` already retains
+the correct public namespace cwd; `context_line` chooses `no project` whenever
+the local picker receipt is absent. A repair belongs to `rust-inline-tui` and
+must preserve local picker labels, narrow model/state priority and draft/detail
+behavior while displaying observed cwd without claiming grant access. This
+finding does not change F1 behavior outcomes or qualify the unfinished UI repair.

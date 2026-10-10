@@ -1,7 +1,8 @@
 # Native execution and evidence map — 2026-10-10
 
 This records supported operator controls. Initial actual task outcomes are in
-`native-runs.md`: one PASS, one FAIL and twenty-eight NOT_RUN slots. Fixture
+`native-runs.md`: two first PASS, one first FAIL, twenty-seven NOT_RUN slots and
+three qualified slots including a linked retry. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
 

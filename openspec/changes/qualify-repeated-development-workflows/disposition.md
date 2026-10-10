@@ -1,9 +1,10 @@
 # Disposition — 2026-10-10
 
 The user's existing ordered goal authorizes this independent third delivery.
-Preparation is active: prerequisite tracing and executable fixtures are implemented (3/19 tasks).
-Production runtime repairs have not started. Two macOS F1 first attempts have
-executed; one qualifies and one fails for incomplete prospective tool identity.
+Qualification is active: prerequisites/fixtures and macOS F1 are complete (4/19 tasks).
+Production runtime repairs have not started. Three macOS F1 slots qualify through
+four real model executions; the first r1 attempt failed for incomplete prospective
+tool identity and remains retained alongside its fresh qualified retry.
 Planning artifacts and offline fixture checks do not prove completed real-model
 development tasks or passed native slots. No superseded or archived change is reactivated.
 
@@ -21,7 +22,8 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
-One slot is PASS, one is FAIL and twenty-eight are NOT_RUN; see `native-runs.md`.
+First outcomes are two PASS, one FAIL and twenty-seven NOT_RUN; qualified slots
+are three out of thirty. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -53,9 +55,9 @@ unconfigured; no Linux generation or real-development task is implied.
 
 The subsequent macOS native runs use the unchanged `cace913c` production binary.
 `native-runs.md` retains their model authorship, protected independent tests,
-first outcomes, planned approvals and exact receipt hashes. r1 needs a fresh
-linked qualification retry; r2 passes with frozen native PATH/tool identities and
-observed draft/logical-cursor preservation. No task 2.x is closed yet. The small
+first outcomes, planned approvals and exact receipt hashes. r1's fresh linked
+qualification retry and r3 pass with frozen native PATH/tool identities and
+observed draft/logical-cursor preservation, closing task 2.1 only. The small
 SDK observer bounded-list extension has three passing tests and Clippy; its new
 commit requires current-head CI. The observed absolute namespace Bash operand
 rejection remains a Host/Tool finding, without a claimed production repair.
