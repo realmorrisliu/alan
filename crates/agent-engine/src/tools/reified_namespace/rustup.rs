@@ -7,7 +7,7 @@ use super::{
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // shortcut: standard Rustup ELF layouts only; extend for a recorded linked/custom runtime task.
 const PROXIES: &[&str] = &[
@@ -172,52 +172,75 @@ pub(super) fn discover(
             .push((path.clone(), executable_digest(&path)?));
     }
     if let Some((input, commands)) = input {
+        let mut directories = Some(vec![input.cwd.clone()]);
         for words in commands {
             let Some((name, args)) = super::super::sandbox::command_and_args(words) else {
                 continue;
             };
             let prefix = &words[..words.len() - args.len() - 1];
+            if name == "cd" {
+                directories =
+                    directories.and_then(|directories| cd_directories(input, &directories, args));
+            }
             if PROXIES.contains(&name) && name != "rustup" {
-                let selector =
-                    if let Some(selector) = args.first().and_then(|word| word.strip_prefix('+')) {
-                        selector.to_string()
-                    } else if let Some(selector) = prefix
-                        .iter()
-                        .rev()
-                        .find_map(|word| word.strip_prefix("RUSTUP_TOOLCHAIN="))
-                    {
-                        selector.to_string()
-                    } else {
-                        active_selector(input, &mut environment)?
-                    };
-                let root = runtime_for_selector(&selector, &environment)?
-                    .host_path
-                    .clone();
-                let subcommand = args
-                    .get(if args.first().is_some_and(|word| word.starts_with('+')) {
-                        1
-                    } else {
-                        0
-                    })
-                    .map(String::as_str);
-                let required: &[&str] = match (name, subcommand) {
-                    ("cargo", Some("fmt")) | ("cargo-fmt", _) => &["cargo-fmt", "rustfmt"],
-                    ("cargo", Some("clippy")) | ("cargo-clippy", _) => {
-                        &["cargo-clippy", "clippy-driver"]
+                let explicit_selector = args
+                    .first()
+                    .and_then(|word| word.strip_prefix('+'))
+                    .or_else(|| {
+                        prefix
+                            .iter()
+                            .rev()
+                            .find_map(|word| word.strip_prefix("RUSTUP_TOOLCHAIN="))
+                    });
+                let selectors = if let Some(selector) = explicit_selector {
+                    vec![selector.to_string()]
+                } else if let Some(selector) = &environment.toolchain_override {
+                    vec![selector.clone()]
+                } else {
+                    let directories = directories.as_ref().ok_or(
+                        "Rust selection after shell cd needs a fixed selector or standalone cd",
+                    )?;
+                    let mut inspection = input.clone();
+                    let mut selectors = Vec::new();
+                    for directory in directories {
+                        inspection.cwd = directory.clone();
+                        let selector = active_selector(&inspection, &mut environment)?;
+                        if !selectors.contains(&selector) {
+                            selectors.push(selector);
+                        }
                     }
-                    _ => &[name],
+                    selectors
                 };
-                for name in required {
-                    let path = root.join("bin").join(name);
-                    validate_executable(&path, &root)?;
-                    if !environment
-                        .executable_hashes
-                        .iter()
-                        .any(|(existing, _)| *existing == path)
-                    {
-                        environment
+                for selector in selectors {
+                    let root = runtime_for_selector(&selector, &environment)?
+                        .host_path
+                        .clone();
+                    let subcommand = args
+                        .get(if args.first().is_some_and(|word| word.starts_with('+')) {
+                            1
+                        } else {
+                            0
+                        })
+                        .map(String::as_str);
+                    let required: &[&str] = match (name, subcommand) {
+                        ("cargo", Some("fmt")) | ("cargo-fmt", _) => &["cargo-fmt", "rustfmt"],
+                        ("cargo", Some("clippy")) | ("cargo-clippy", _) => {
+                            &["cargo-clippy", "clippy-driver"]
+                        }
+                        _ => &[name],
+                    };
+                    for name in required {
+                        let path = root.join("bin").join(name);
+                        validate_executable(&path, &root)?;
+                        if !environment
                             .executable_hashes
-                            .push((path.clone(), executable_digest(&path)?));
+                            .iter()
+                            .any(|(existing, _)| *existing == path)
+                        {
+                            environment
+                                .executable_hashes
+                                .push((path.clone(), executable_digest(&path)?));
+                        }
                     }
                 }
             } else if name == "rustup" && args.first().is_some_and(|word| word == "run") {
@@ -229,6 +252,38 @@ pub(super) fn discover(
         }
     }
     Ok(Some(environment))
+}
+
+fn cd_directories(
+    input: &ReifiedNamespacePlanInput,
+    directories: &[PathBuf],
+    args: &[String],
+) -> Option<Vec<PathBuf>> {
+    let [path] = args else { return None };
+    if path.is_empty() || path.starts_with(['-', '~']) {
+        return None;
+    }
+    // Keep both outcomes: a shell cd may fail or be conditional.
+    let mut possible = directories.to_vec();
+    for directory in directories {
+        let target = std::fs::canonicalize(directory.join(path)).ok()?;
+        if !input.declarations.iter().any(|mount| match &mount.source {
+            ReifiedMountSource::Host(root) => {
+                target.starts_with(canonicalize_existing_host_path(root))
+            }
+            ReifiedMountSource::Virtual => false,
+        }) || !target.is_dir()
+        {
+            return None;
+        }
+        if !possible.contains(&target) {
+            possible.push(target);
+            if possible.len() > 64 {
+                return None;
+            }
+        }
+    }
+    Some(possible)
 }
 
 fn validate_command_environment(words: &[String]) -> Result<(), String> {

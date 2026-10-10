@@ -135,6 +135,108 @@ fn refuses_environment_changes_that_escape_the_inspected_selection() {
     }
 }
 
+#[test]
+fn shell_directory_changes_inspect_possible_project_selections() {
+    let (_fixture, proxies, home, project) = installation();
+    let input = input(&project);
+    let child = project.join("child");
+    std::fs::create_dir(&child).unwrap();
+    std::fs::write(child.join("rust-toolchain"), "missing\n").unwrap();
+    let mut commands = vec![
+        vec!["cd".into(), "child".into()],
+        vec!["cargo".into(), "test".into()],
+    ];
+    let error = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap_err();
+    assert!(error.contains("selected Rust runtime absent"), "{error}");
+    std::fs::write(child.join("rust-toolchain"), "1.97.0\n").unwrap();
+    let environment = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        environment
+            .metadata_hashes
+            .iter()
+            .any(|(path, _)| path == &child.join("rust-toolchain"))
+    );
+    revalidate(&environment).unwrap();
+    std::fs::write(child.join("rust-toolchain"), "missing\n").unwrap();
+    assert!(
+        revalidate(&environment)
+            .unwrap_err()
+            .contains("metadata changed")
+    );
+    commands[0] = vec!["cd".into()];
+    assert!(
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands))
+        )
+        .unwrap_err()
+        .contains("Rust selection after shell cd")
+    );
+    discover(
+        proxies.to_str().unwrap(),
+        &home,
+        Some("1.97.0".into()),
+        Some((&input, &commands)),
+    )
+    .unwrap();
+    for words in [
+        vec!["cargo", "+1.97.0", "test"],
+        vec!["RUSTUP_TOOLCHAIN=1.97.0", "cargo", "test"],
+        vec!["printf", "cargo"],
+    ] {
+        commands[1] = words.iter().map(|word| (*word).into()).collect();
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap();
+    }
+    commands.swap(0, 1);
+    commands[0] = vec!["cargo".into(), "test".into()];
+    discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap();
+}
+
+#[test]
+fn shell_directory_inspection_stays_bounded_and_inside_grants() {
+    let (_fixture, _, _, project) = installation();
+    let input = input(&project);
+    let outside = project.parent().unwrap().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    symlink(outside, project.join("escape")).unwrap();
+    assert!(cd_directories(&input, std::slice::from_ref(&project), &["escape".into()]).is_none());
+    let directories = (0..64)
+        .map(|index| {
+            let directory = project.join(index.to_string());
+            std::fs::create_dir_all(directory.join("child")).unwrap();
+            directory
+        })
+        .collect::<Vec<_>>();
+    assert!(cd_directories(&input, &directories, &["child".into()]).is_none());
+}
+
 fn input(project: &Path) -> ReifiedNamespacePlanInput {
     ReifiedNamespacePlanInput::new(
         vec![super::super::ReifiedMountDeclaration::host(

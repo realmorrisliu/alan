@@ -133,6 +133,21 @@ This does not relax the existing Linux full command-shape guard: native shell
 wrappers remain rejected before effects. Normalized wrapper inspection is tested
 independently and does not imply newly admitted wrapper execution.
 
+A compound shell `cd` changes a child-local directory, not the Agent Process
+binding. Reuse the normalized command reader and inspect both the existing and
+canonical literal target directories, retaining both possible success/failure
+paths. Limit the set to 64 directories and require each target to remain inside
+explicit Host mount authority before reading project selection. Inspect every
+possible implicit runtime/component/helper selection and retain each selection
+file hash for runner revalidation. This preserves ordinary literal subdirectory
+builds without pretending a conditional `cd` necessarily succeeded.
+
+Directory options, missing/escaping targets, home expansion or excessive state
+make implicit selection unavailable before effects; fixed CLI/inline/inherited
+selection remains independent of that unknown cwd. The existing standalone
+Process directory change remains available. No shell control-flow interpreter,
+extra mount authority or autonomous Linux bash is introduced.
+
 Missing selectors/components/targets fail before user effects. Selected fmt/Clippy helpers
 must be executable ELF files contained in their runtime. Freeze selection metadata,
 component manifests and executable contents, then recheck identity, containment and

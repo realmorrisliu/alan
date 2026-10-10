@@ -43,7 +43,10 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         let toolchain = project.join("rust-toolchain.toml");
         std::fs::write(
             &toolchain,
-            if matches!(case.as_str(), "env" | "cli" | "inline" | "inline_cli") {
+            if matches!(
+                case.as_str(),
+                "env" | "cli" | "inline" | "inline_cli" | "cwd_cli" | "cwd_env" | "cwd_inline"
+            ) {
                 "[toolchain]\nchannel = \"missing\"\n"
             } else {
                 "[toolchain]\nchannel = \"1.97.0\"\ncomponents = [\"clippy\", \"rustfmt\"]\n"
@@ -57,9 +60,47 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             )
             .unwrap();
         }
+        let mut child_files = Vec::new();
+        let changes_cwd = matches!(
+            case.as_str(),
+            "changed_cwd" | "cwd_cli" | "cwd_env" | "cwd_inline" | "cwd_project"
+        );
+        if changes_cwd {
+            let child = project.join("child");
+            std::fs::create_dir_all(child.join("src")).unwrap();
+            for (path, bytes) in &files {
+                if matches!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some("Cargo.toml" | "Cargo.lock" | "lib.rs")
+                ) && path.starts_with(&project)
+                {
+                    let target = child.join(path.strip_prefix(&project).unwrap());
+                    let content = bytes.replace("../dependency", "../../dependency");
+                    std::fs::write(&target, &content).unwrap();
+                    child_files.push((target, content));
+                }
+            }
+            std::fs::write(
+                child.join("rust-toolchain"),
+                if case == "cwd_project" {
+                    "1.97.0\n"
+                } else {
+                    "missing\n"
+                },
+            )
+            .unwrap();
+        }
         let positive = matches!(
             case.as_str(),
-            "project" | "env" | "cli" | "inline" | "inline_cli"
+            "project"
+                | "env"
+                | "cli"
+                | "inline"
+                | "inline_cli"
+                | "cwd_cli"
+                | "cwd_env"
+                | "cwd_inline"
+                | "cwd_project"
         );
         let sandbox = Sandbox::from_spec_with_backend(
             SandboxSpec::from_host_mounts(&[
@@ -88,18 +129,19 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
                 "{readiness:?}"
             );
-            let selector = if case == "cli" || case == "inline_cli" {
+            let selector = if matches!(case.as_str(), "cli" | "inline_cli" | "cwd_cli") {
                 " +1.97.0"
             } else {
                 ""
             };
             let prefix = match case.as_str() {
-                "inline" => "RUSTUP_TOOLCHAIN=1.97.0 ",
+                "inline" | "cwd_inline" => "RUSTUP_TOOLCHAIN=1.97.0 ",
                 "inline_cli" => "RUSTUP_TOOLCHAIN=missing ",
                 _ => "",
             };
+            let directory = if changes_cwd { "cd child && " } else { "" };
             let command = format!(
-                "{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked -- -D warnings"
+                "{directory}{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked -- -D warnings"
             );
             let result = sandbox.exec(&command, &project).await.unwrap();
             assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
@@ -118,6 +160,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             );
             assert!(!project.join("target").exists());
             assert!(!dependency.join("target").exists());
+            assert!(!project.join("child/target").exists());
             eprintln!(
                 "native automatic Rustup {case}:\n{}{}",
                 result.stdout, result.stderr
@@ -129,7 +172,9 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 assert!(result.stdout.contains("rustc 1.97.0"));
                 std::fs::write(&toolchain, "[toolchain]\nchannel = \"missing\"\n").unwrap();
             }
-            let cargo = if case == "missing_cli" {
+            let cargo = if case == "changed_cwd" {
+                "cd child; cargo test"
+            } else if case == "missing_cli" {
                 "cargo +missing test"
             } else if case == "missing_inline" {
                 "RUSTUP_TOOLCHAIN=missing cargo test"
@@ -166,6 +211,19 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         }
         for (path, bytes) in &files {
             assert_eq!(std::fs::read_to_string(path).unwrap(), *bytes);
+        }
+        for (path, bytes) in &child_files {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), *bytes);
+        }
+        if changes_cwd {
+            assert_eq!(
+                std::fs::read_to_string(project.join("child/rust-toolchain")).unwrap(),
+                if case == "cwd_project" {
+                    "1.97.0\n"
+                } else {
+                    "missing\n"
+                }
+            );
         }
         return;
     }
@@ -206,6 +264,11 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         "cli",
         "inline",
         "inline_cli",
+        "cwd_cli",
+        "cwd_env",
+        "cwd_inline",
+        "cwd_project",
+        "changed_cwd",
         "missing_env",
         "missing_cli",
         "missing_inline",
@@ -233,10 +296,13 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 },
             )
             .env_remove("RUSTUP_TOOLCHAIN");
-        if case == "env" {
+        if matches!(case, "env" | "cwd_env") {
             child.env("RUSTUP_TOOLCHAIN", "1.97.0");
         }
-        if matches!(case, "cli" | "inline" | "inline_cli" | "missing_env") {
+        if matches!(
+            case,
+            "cli" | "inline" | "inline_cli" | "cwd_cli" | "cwd_inline" | "missing_env"
+        ) {
             child.env("RUSTUP_TOOLCHAIN", "missing");
         }
         let output = child.output().unwrap();

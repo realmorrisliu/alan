@@ -498,3 +498,68 @@ the delivery workflow. No Host grant policy changed: 3.2/3.3 still require actua
 cross-grant product qualification, and the thirty real-model repetitions remain
 open. This repair supplements the existing supported-tool inspection tasks; it
 does not mark the remaining final-delivery checklist complete.
+
+## Shell-local directory selection boundary
+
+Published `81af8fdd` passed all sixteen exact-head checks. Further review
+reproduced a second admission gap: `printf effect > marker; cd child; cargo test`
+inspected the initial project selection, then the actual shell entered a child
+whose toolchain file requested a missing runtime. The old native result was
+exit 1 after a marker write, not a pre-admission refusal. A separate owned-TMPDIR
+observer records the actual marker bytes and failing test-binary digest in
+`cwd-selector-red-effects.json`; `alan-rust-cwd-red-build.log`,
+`alan-rust-cwd-red.log` and `alan-rust-cwd-effect-red.log` retain the RED attempt.
+
+The repair reuses the normalized command reader and existing selection validator.
+Literal `cd` targets inside delegated Host mount authority add both the old and
+canonical target directory to a bounded possible-state set, retaining conditional
+or failed-cd outcomes rather than guessing shell control flow. Every potential
+implicit runtime/component/helper selection is checked and its selection metadata
+is retained for runner revalidation. This supports normal literal child-project
+builds without changing the Agent Process directory binding or Host grant policy.
+Unknown, missing, escaping or more than 64 possible directory states require a
+fixed CLI/inline/inherited selector or refuse before user effects with guidance to
+use the existing standalone Process directory change. Existing wrapper restrictions
+and no-autonomous-Linux-bash policy remain unchanged.
+
+Four positive native child-project cases exercise implicit project selection and
+fixed CLI, command-local and inherited selection after `cd child`. All execute
+exact rustc/cargo/rustdoc 1.97, compile with a separate lower-layer read-only
+dependency, pass unit/doctests/fmt/Clippy, retain exact root/child/dependency sources
+and create no project/child/dependency target. The missing child selection refuses
+before the preceding marker. Portable regressions additionally verify changed
+child selection metadata, unknown cwd, escaping aliases and the state bound.
+
+The initial blanket-cd refusal candidate passed its narrower suites but did not
+preserve ordinary implicit subdirectory builds. Its receipts/logs remain separate;
+it is superseded by this supported-literal implementation. A normal macOS commit
+attempt also caught non-idempotent formatting in a nested expression; it failed
+without creating a commit or bypassing the hook. Factoring the selection expression
+made repeated fmt/check stable before freezing the final source.
+
+The supported-literal focused native/portable Rustup candidate passes 12 tests in
+128.13 seconds (`alan-rust-cwd-supported-focused.log`). Final frozen-source Linux
+engine passes **1430/0/1 in 144.59 seconds**
+(`alan-rust-cwd-supported-final-engine.log`), including observed-live descendant
+cancel/timeout and unsupported-PATH refusal assertions. Rebuilt actual live-service
+Bash plus full Host passes **49/0/2 in 23.98 seconds**
+(`alan-rust-cwd-supported-final-host.log`). Linux engine/Host all-target/all-feature
+Clippy with warnings denied passes in 22.18 seconds
+(`alan-rust-cwd-supported-final-clippy.log`). The same source's macOS portable
+namespace/Rustup suite passes **46/0/0 in 0.10 seconds**; Linux-specific claims
+remain separate from portable tests and existing ignored live Connection probes.
+
+`native-rust-cwd-supported-acceptance.json` retains 23 frozen Rust source hashes,
+actual native engine/Host binary digests, final logs, the failing observer and scope
+limits. Complete original installation/settings/proxy inventory remains **379
+nodes, identical to the retained post-provisioning baseline**
+(`native-rust-cwd-supported-stores-after.json`, SHA-256
+`118fea4c93ee341a24f3757175fc76aa7e0562ae7335ba257a6127c647e72b46`). Original provisioning caveats
+and personal Cargo registry/credential exclusions remain. Native engine SHA-256:
+`b38740d162e346761d5696282501dd3b05086a9c7bb9dba0d6f49b2adac2f75f`;
+native Host SHA-256:
+`de271f90c425ff8b8f1a22a1d21155d20383e285db4c1f53a96ad2dfcf77be3f`.
+
+Normal full pre-commit quality/distribution, pinned strict OpenSpec and fresh
+exact-head CI are required to publish this follow-up. This repair does not close
+cross-grant Bash delivery, user merge/canonical closure or thirty real-model runs.

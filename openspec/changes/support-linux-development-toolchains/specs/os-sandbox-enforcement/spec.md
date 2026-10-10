@@ -34,6 +34,12 @@ safe-degradation rules, never silent replacement or wider ambient access.
 - **AND** a command selector takes precedence over the last command-local override, which takes precedence over the inherited override and project selection
 - **AND** environment-clearing wrappers or command-local PATH/Rustup-home and persistent selection changes that cannot preserve the inspected view refuse explicitly before effects
 
+#### Scenario: A native script changes directory before a Rust invocation
+- **WHEN** a compound native script uses literal directory changes before invoking a standard Rustup proxy
+- **THEN** admission checks every bounded possible directory selection inside delegated project authority, retaining both success and failure paths rather than reusing only the initial cwd
+- **AND** all potentially selected runtimes, components, helpers and project selection metadata are validated and rechecked before user effects
+- **AND** an uninspectable, escaping or excessive directory state requires explicit command, command-local or inherited Rust selection, or refuses before effects without inferring another grant
+
 #### Scenario: Inspected Rust selection changes before admission
 - **WHEN** selection metadata, component metadata or an inspected executable changes after the Host adapter constructs its environment
 - **THEN** runner preparation rechecks the inspected content and path containment before user effects
