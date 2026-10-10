@@ -163,6 +163,20 @@ control. Lookup is read-only and keeps input/quit responsive; stale responses
 send no mutation. Retain the existing uncertainty/retry behavior until actual
 Host revocation acknowledgment. Host Mount remains the authority owner.
 
+### Clarify the existing native shell path contract before new qualification
+
+F4 r1 a2 reproduces a namespace-absolute Bash refusal and an unnecessary duplicate
+mount request for already active authority. Bash passes command text unchanged to
+native execution, while file Tools and selected cwd use the existing Host adapter
+resolver. Its model-visible description currently fails to explain this difference.
+State the supported cwd-relative shell operand path and use of file Tools for
+absolute Alan namespace paths in the existing Bash definition/schema. A namespace
+shell refusal alone must not imply that another project grant is needed. This
+guidance introduces no path rewrite, broad authority, new parser or runtime option.
+It does not implement general namespace-absolute native shell operands. Retain
+that limitation explicitly and rerun the unchanged real-model task on a fresh
+candidate to measure whether model use of the supported boundary actually works.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and

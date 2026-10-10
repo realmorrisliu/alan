@@ -114,3 +114,11 @@ up the attempt. Immutable aggregate v11 records thirteen real-model task attempt
 with nine qualified slots; original first outcomes remain seven PASS, three FAIL,
 twenty NOT_RUN. The absolute namespace Bash/path guidance boundary is the next
 repair investigation; task 2.4 remains open.
+
+
+Bash definition and command-schema guidance now explain the supported cwd-relative
+native shell path contract and distinguish namespace operand refusal from missing
+authority. Execution/command text, authority and policy are unchanged; general
+namespace-absolute shell operand support is still absent. Existing Tool tests and
+strict OpenSpec pass. Fresh-candidate real-model qualification is required before
+claiming this guidance resolves the observed duplicate-mount behavior.

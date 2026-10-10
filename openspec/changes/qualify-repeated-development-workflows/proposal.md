@@ -28,6 +28,10 @@ None.
 
 ### Modified Capabilities
 
+- `host-mount-tool-process-sandbox-projection`: clarify the existing native Bash
+  operand contract in model-visible Tool guidance, without changing authority or
+  silently rewriting namespace paths in shell command text.
+
 - `os-sandbox-enforcement`: distinguish finite Cargo manifest read inputs under an
   enforcing backend, preserving output checks, grant access and safe degradation.
 
