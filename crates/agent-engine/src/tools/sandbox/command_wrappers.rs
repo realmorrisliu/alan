@@ -317,7 +317,7 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     }
 }
 
-pub(super) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {
+pub(in crate::tools) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {
     let view = nested_evaluator_view(words)?;
     Some((view.command, view.args))
 }
@@ -363,6 +363,9 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
         break;
     }
 
+    while args.get(index).is_some_and(|arg| is_env_assignment(arg)) {
+        index += 1;
+    }
     args.get(index)?;
     Some(index)
 }

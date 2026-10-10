@@ -6,6 +6,8 @@
 mod plan;
 #[cfg(target_os = "linux")]
 mod runner;
+#[cfg(any(target_os = "linux", all(test, unix)))]
+mod rustup;
 #[cfg(any(target_os = "linux", test))]
 mod toolchain;
 
@@ -37,7 +39,11 @@ use super::sandbox_backend::{LinuxReificationCapability, LinuxReificationCapabil
 use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
+#[cfg(test)]
+use plan::LINUX_REIFIED_COMMAND_PATH;
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
+use plan::ReifiedRustupEnvironment;
 #[cfg(target_os = "linux")]
 use plan::canonicalize_existing_host_path;
 pub use plan::{
@@ -48,6 +54,8 @@ pub use plan::{
 };
 #[cfg(target_os = "linux")]
 use plan::{contains_parent_component, paths_overlap};
+#[cfg(target_os = "linux")]
+pub(crate) use toolchain::configure_linux_command_environment;
 #[cfg(target_os = "linux")]
 pub(crate) use toolchain::smoke_linux_reified_namespace_user_path;
 
@@ -179,7 +187,9 @@ fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
         vec![
             "sh".to_string(),
             "-c".to_string(),
-            "test -d /mnt/source && test ! -e /home".to_string(),
+            "test -d /mnt/source && test ! -e /home && test -r /proc/self/status && test -d /proc/1/root && test ! -e \"/proc/1/root$1\" && ! (: >> /proc/self/comm)".to_string(),
+            "alan-runner-smoke".to_string(),
+            host_mount.root.display().to_string(),
         ],
         NetworkPosture::Deny,
     )
@@ -250,83 +260,25 @@ const SETUP_FAILURE_PREFIX: &str = "alan reified namespace setup failed:";
 #[cfg(target_os = "linux")]
 const TRUSTED_LINUX_SETUP_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
-#[cfg(any(target_os = "linux", test))]
-macro_rules! linux_reified_command_path {
-    () => {
-        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    };
+#[cfg(target_os = "linux")]
+// Older mount helpers can ignore ro=recursive; remount every entry in the private tree.
+pub(super) const LINUX_READ_ONLY_MOUNT_TREE: &str = r#"
+readonly_tree() {
+  tree="$1"
+  while read -r mount_id parent_id device source encoded_path mount_options; do
+    decoded_path=$("$printf_bin" '%b.' "$encoded_path") || return 1
+    decoded_path=${decoded_path%.}
+    case "$decoded_path" in
+      "$tree"|"$tree"/*)
+        "$mount_bin" -o remount,bind,ro "$decoded_path" || return 1
+        ;;
+    esac
+  done < /proc/self/mountinfo
 }
-
-#[cfg(any(target_os = "linux", test))]
-const LINUX_REIFIED_COMMAND_PATH: &str = linux_reified_command_path!();
+"#;
 
 #[cfg(target_os = "linux")]
-const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = concat!(
-    r#"
-set -u
-PATH='"#,
-    linux_reified_command_path!(),
-    r#"'
-export PATH
-fail() {
-  printf '%s %s\n' 'alan reified namespace setup failed:' "$*" >&2
-  exit 125
-}
-
-root="$1"; shift
-setup_marker="$1"; shift
-mount_bin="$1"; shift
-chroot_bin="$1"; shift
-namespace_shell="$1"; shift
-namespace_setpriv="$1"; shift
-
-"$mount_bin" --make-rprivate / || fail "make root private"
-"$mount_bin" --bind "$root" "$root" || fail "bind root"
-"$mount_bin" -o remount,bind,ro "$root" || fail "remount root read-only"
-
-scratch_tmp="$1"; shift
-scratch_destination="${root}${scratch_tmp}"
-"$mount_bin" -t tmpfs tmpfs "$scratch_destination" || fail "mount scratch tmp"
-
-mount_count="$1"; shift
-while [ "$mount_count" -gt 0 ]; do
-  namespace_path="$1"; shift
-  host_path="$1"; shift
-  access="$1"; shift
-  destination="${root}${namespace_path}"
-  if [ ! -e "$destination" ]; then
-    if [ -f "$host_path" ]; then
-      mkdir -p "${destination%/*}" && : > "$destination" || fail "prepare file ${namespace_path}"
-    else
-      mkdir -p "$destination" || fail "prepare directory ${namespace_path}"
-    fi
-  fi
-  "$mount_bin" --bind "$host_path" "$destination" || fail "bind mount ${namespace_path}"
-  if [ "$access" = "read_only" ]; then
-    "$mount_bin" -o remount,bind,ro "$destination" || fail "remount ${namespace_path} read-only"
-  fi
-  mount_count=$((mount_count - 1))
-done
-
-substrate_count="$1"; shift
-while [ "$substrate_count" -gt 0 ]; do
-  namespace_path="$1"; shift
-  host_path="$1"; shift
-  destination="${root}${namespace_path}"
-  "$mount_bin" --bind "$host_path" "$destination" || fail "bind substrate ${namespace_path}"
-  "$mount_bin" -o remount,bind,ro "$destination" || fail "remount substrate ${namespace_path} read-only"
-  substrate_count=$((substrate_count - 1))
-done
-
-"$mount_bin" --bind /dev/null "${root}/dev/null" || fail "bind /dev/null"
-"$mount_bin" --bind /proc/self/fd/0 "${root}/dev/stdin" || fail "bind /dev/stdin"
-"$mount_bin" --bind /proc/self/fd/1 "${root}/dev/stdout" || fail "bind /dev/stdout"
-"$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
-
-cwd="$1"; shift
-"$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
-"#,
-);
+use runner::{LINUX_REIFIED_COMMAND_SCRIPT, LINUX_REIFIED_NAMESPACE_SCRIPT};
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,6 +286,7 @@ struct LinuxSetupHelpers {
     unshare: PathBuf,
     host_shell: PathBuf,
     mount: PathBuf,
+    printf: PathBuf,
     chroot: PathBuf,
     namespace_shell: PathBuf,
     namespace_setpriv: PathBuf,
@@ -349,6 +302,7 @@ impl LinuxSetupHelpers {
             )?,
             host_shell: resolve_trusted_linux_helper("sh", &["/bin/sh", "/usr/bin/sh"])?,
             mount: resolve_trusted_linux_helper("mount", &["/usr/bin/mount", "/bin/mount"])?,
+            printf: resolve_trusted_linux_helper("printf", &["/usr/bin/printf", "/bin/printf"])?,
             chroot: resolve_trusted_linux_helper(
                 "chroot",
                 &[
@@ -694,6 +648,64 @@ fn build_linux_reified_namespace_command_with_helpers(
     if plan.argv.is_empty() {
         return Err("argv must not be empty".to_string());
     }
+    toolchain::validate_linux_command_path(
+        Some(plan.command_path.clone().into()),
+        &plan.execution_substrate,
+    )?;
+    if let Some(environment) = &plan.rustup {
+        rustup::revalidate(environment)?;
+        if environment
+            .proxy_mounts
+            .iter()
+            .chain(&environment.toolchain_mounts)
+            .any(|mount| !plan.execution_substrate.contains(mount))
+        {
+            return Err("Rustup runtime projection differs from its inspected environment".into());
+        }
+    }
+    if plan
+        .declared_host_mounts
+        .iter()
+        .map(|mount| &mount.namespace_path)
+        .chain(
+            plan.execution_substrate
+                .iter()
+                .map(|mount| &mount.namespace_path),
+        )
+        .chain(std::iter::once(&plan.scratch_tmp.namespace_path))
+        .any(|path| paths_overlap(path, Path::new("/proc")))
+    {
+        return Err("namespace path conflicts with private native proc".to_string());
+    }
+    for path in std::iter::once(temp_root.root.as_path())
+        .chain(std::iter::once(plan.cwd.as_path()))
+        .chain(std::iter::once(plan.scratch_tmp.namespace_path.as_path()))
+        .chain(
+            plan.declared_host_mounts
+                .iter()
+                .flat_map(|mount| [mount.host_path.as_path(), mount.namespace_path.as_path()]),
+        )
+        .chain(
+            plan.execution_substrate
+                .iter()
+                .flat_map(|mount| [mount.host_path.as_path(), mount.namespace_path.as_path()]),
+        )
+    {
+        if path.to_str().is_none() {
+            return Err("reified execution path is not UTF-8".to_string());
+        }
+        if path.to_str().is_some_and(|path| path.contains('\0')) {
+            return Err("reified execution path contains NUL".to_string());
+        }
+    }
+    for mount in &plan.execution_substrate {
+        if canonicalize_existing_host_path(&mount.host_path) != mount.host_path {
+            return Err(format!(
+                "execution substrate source changed: {}",
+                mount.host_path.display()
+            ));
+        }
+    }
     prepare_reified_root(plan, &temp_root.root)?;
 
     let mut args = vec![
@@ -711,14 +723,16 @@ fn build_linux_reified_namespace_command_with_helpers(
         "--".to_string(),
         helpers.host_shell.display().to_string(),
         "-c".to_string(),
-        LINUX_REIFIED_NAMESPACE_SCRIPT.to_string(),
+        format!("{LINUX_READ_ONLY_MOUNT_TREE}\n{LINUX_REIFIED_NAMESPACE_SCRIPT}"),
         "alan-reified-runner".to_string(),
         temp_root.root.display().to_string(),
         temp_root.setup_marker.display().to_string(),
         helpers.mount.display().to_string(),
+        helpers.printf.display().to_string(),
         helpers.chroot.display().to_string(),
         helpers.namespace_shell.display().to_string(),
         helpers.namespace_setpriv.display().to_string(),
+        LINUX_REIFIED_COMMAND_SCRIPT.to_string(),
         plan.scratch_tmp.namespace_path.display().to_string(),
         plan.declared_host_mounts.len().to_string(),
     ]);
@@ -736,6 +750,42 @@ fn build_linux_reified_namespace_command_with_helpers(
     }
 
     args.push(plan.cwd.display().to_string());
+    args.push(plan.command_path.clone());
+    args.push(plan.private_environment_root().display().to_string());
+    let writable_cwd = plan
+        .declared_host_mounts
+        .iter()
+        .any(|mount| mount.access.is_writable() && plan.cwd.starts_with(&mount.namespace_path));
+    args.push(if writable_cwd { "0" } else { "1" }.to_string());
+    args.push(
+        plan.rustup
+            .as_ref()
+            .map(|environment| environment.settings.clone())
+            .unwrap_or_default(),
+    );
+    args.push(
+        plan.rustup
+            .as_ref()
+            .and_then(|environment| environment.toolchain_override.clone())
+            .unwrap_or_default(),
+    );
+    let runtime_mounts = plan
+        .rustup
+        .as_ref()
+        .map(|environment| environment.toolchain_mounts.as_slice())
+        .unwrap_or_default();
+    args.push(runtime_mounts.len().to_string());
+    for mount in runtime_mounts {
+        args.push(
+            mount
+                .namespace_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("unsafe Rustup runtime name")?
+                .to_string(),
+        );
+        args.push(mount.namespace_path.display().to_string());
+    }
     args.extend(plan.argv.iter().cloned());
 
     Ok(ReifiedNamespaceCommandSpec {
@@ -828,6 +878,8 @@ fn prepare_reified_root(plan: &ReifiedNamespacePlan, root: &Path) -> Result<(), 
 
 #[cfg(target_os = "linux")]
 fn prepare_standard_device_destinations(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("proc"))
+        .map_err(|err| format!("create private proc mountpoint failed: {err}"))?;
     let dev_dir = root.join("dev");
     std::fs::create_dir_all(&dev_dir)
         .map_err(|err| format!("create /dev mountpoint parent failed: {err}"))?;
@@ -902,3 +954,7 @@ fn namespace_path_under_root(root: &Path, namespace_path: &Path) -> Result<PathB
 #[cfg(test)]
 #[path = "reified_namespace_runner_tests.rs"]
 mod runner_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "reified_namespace/development_tests.rs"]
+mod development_tests;

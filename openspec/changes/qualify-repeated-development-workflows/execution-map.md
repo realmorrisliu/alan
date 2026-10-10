@@ -15,6 +15,12 @@ task outcomes.
   native positive/negative toolchain evidence precede these disposable tests.
   The proposed ADR-0058 grant extension, formal review, user merge and canonical
   synchronization remain final-delivery gates.
+- Qualification #1047 incorporates that exact parent and requires #1046 to merge
+  first. Its PR base remains main because the complete CI workflows filter
+  pull_request bases to main/master. Crate/workspace-manifest comparison covers
+  all 827 native candidate files, with no missing or differing files; only the
+  qualification SDK example is additional. New-head quality/CI and final
+  user-merged main verification remain distinct gates.
 - macOS native CLI: cace913c plus the exact production repairs and 35-file
   inventory recorded in `native-runs.md`, built in the owned
   `responses-native-verify-20261011` worktree at
@@ -117,6 +123,15 @@ Retain intent before effects; reconcile uncertain transport with that same UUID,
 never allocate a replacement operation blindly. Record the observer source/binary
 separately from the production CLI. Any explicit shell observer input remains a
 timeline event and must not become invisible model steering.
+The current Linux observer SHA-256 is
+`9e47877d62ca50440504edc425cfe410413ad8e753bbd3713560cc8322264368`,
+built separately on the unchanged native source with observer source `8346bb55`.
+Its three tests, offline locked build, warnings-denied Clippy and actual native
+attachment pass. Initial Actions include static `clone/events/help` entries and
+the initial revision-zero queue is unknown; do not treat either as a published
+task. After one explicit cd, bounded listing includes actual a0 and the settled
+queue is known empty. Wrong boot/Root alias refusal, same-ID read-only mount
+reconciliation and actual child-exit propagation are recorded in `native-runs.md`.
 
 ## Host terminal and fixture preparation
 

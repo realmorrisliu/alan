@@ -10,6 +10,13 @@ explicit-command PTY preflight, including actual read-only write denial and exit
 Those receipts add no real-model slots. Linux generation remains unconfigured;
 actual task-cwd tool versions, final phase/merged-source checks and the fifteen
 Linux tasks still require their own evidence.
+The qualification branch now incorporates its reviewed Linux predecessor
+`cace913c`; #1047 depends on #1046 rather than relying on a separately composed
+native candidate. The PR retains main as its base so the existing complete CI
+workflows continue to run; #1046 must merge first. All 827 crate/workspace-manifest
+files match the frozen native source, with only the separately qualified SDK
+observer added. This does not adopt ADR-0058, merge either PR or close final
+main-source verification.
 Original failures, including F1 r1's incomplete prospective tool identity, remain
 retained alongside their successful fresh retries.
 Planning artifacts and offline fixture checks do not prove completed real-model

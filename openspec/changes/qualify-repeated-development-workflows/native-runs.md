@@ -1491,3 +1491,62 @@ stays 8/19. Head 02010e6a passes all sixteen completed checks before this
 evidence-only update; the new head requires its own checks and review. Linux
 generation readiness, full cross-Host qualification, final phase/merged-source
 validation, formal review, user merge and canonical closure remain open.
+
+## Linux bounded observer and candidate branch alignment — 2026-10-11
+
+The existing public SDK observer is built in a separate owned Linux source/output
+tree, preserving all 35 production source hashes. Observer source SHA-256
+`8346bb55e301572bcf042e14e6892d0a8a54fc2f0b00f424fa59c49022a61d4c`
+matches #1047; its three validation tests, offline locked build and warnings-denied
+Clippy pass. Actual Linux observer SHA-256 is
+`9e47877d62ca50440504edc425cfe410413ad8e753bbd3713560cc8322264368`.
+This executable attaches through the existing public SDK and never replaces the
+native CLI or generates model work.
+
+A fresh normal CLI invocation uses unchanged native binary `6b756582`, boot
+`2257937c-ca5c-41e4-9f7c-7482beacd023` and Host PID 3581959. Bounded numeric-Agent
+listing initially returns static clone/events/help entries. The initial queue
+has revision zero and known false; no settled-empty claim is made from it.
+The SDK rejects an incorrect boot before attachment and refuses /agent/root
+observation. One frozen operation UUID grants the owned Source read-only; a
+same-ID reconciliation returns exactly the same acknowledged grant. One explicit
+`!cd /` publishes Action a0. A bounded reread includes a0; the numeric Action
+result exits zero, and the actual queue becomes known with no pending/active/
+uncertain work. Its exact call ID selects only the owning durable rollout,
+which has one cd Action and no model turn contexts. `/quit` exits the child zero
+through `script --return`; the Host PID is verified gone, both binaries unchanged.
+
+Collector/setup errors remain retained. The first launch lacked the exact owned
+runtime parent and terminated with an error before starting an instance; the
+original script did not propagate its child failure. A new launch follows only
+after the actual terminal failure, creates the owned parent and enables explicit
+child-exit propagation. Initial assumptions that the Action directory was empty
+and that its untouched queue was already known fail before any mount or input.
+Their observations are retained and corrected on the same live instance, without
+duplicating a model task or replacing an uncertain operation.
+
+Immutable owning-cache receipts:
+
+- `linux-sdk-observer-v1/receipt.json` SHA-256
+  `412c5ee9f1b08be0431a64aa7f285e36aab12026b8990743bc03567f7c03dc66`;
+  source identity, actual binary, build/test/Clippy log; native attachment was
+  not run at that receipt's creation.
+- `linux-sdk-attachment-v1/receipt.json` SHA-256
+  `f4b35c680aae0bee3ae08c4c5b562c091965cfc86181f7ec05dcb4e21889b618`;
+  34 retained artifacts, boot/grant/Action/queue correlations, failure/correction
+  history and actual child/Host exit. Both receipts count zero model tasks.
+
+#1047 previously targeted main while qualifying a composed Linux-predecessor
+candidate. The reviewed predecessor #1046 head cace913c still passes all sixteen
+checks. A prospective conflict-free merge compares all 827 crate/workspace
+manifest files with the actual frozen native source, with no absent or differing
+files; only the qualification observer example is additional. The qualification
+branch incorporates that exact predecessor without rewriting published history.
+The existing complete CI workflows filter pull_request bases to main/master, so
+#1047 keeps main as its base and explicitly requires #1046 to merge first. This
+makes source applicability explicit before Linux generation while preserving
+current-head CI; it does not adopt ADR-0058 or merge/deploy either PR. Parent
+first, user merge and final main-source validation remain gates.
+The new integration head requires full quality, strict OpenSpec and its own CI.
+All fifteen Linux real-model slots, cross-Host audit, usage/cost and final delivery
+remain open; checklist and matrix counts are unchanged.
