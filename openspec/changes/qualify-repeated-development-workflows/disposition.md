@@ -24,13 +24,13 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
-are fifteen out of thirty through twenty-eight development task attempts, retaining
+are fifteen out of thirty through thirty-one development task attempts, retaining
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
-Matching final-candidate source/binary evidence currently covers nine slots:
-all macOS F1, F2 and F5 repetitions. F1 r1's a3 collector-identity failure stays retained.
-Six earlier macOS F3/F4 slots need final-candidate reruns; all Linux slots remain open.
+Matching final-candidate source/binary evidence currently covers twelve slots:
+all macOS F1, F2, F3 and F5 repetitions. F1 r1's a3 collector-identity failure stays retained.
+Three earlier macOS F4 slots need final-candidate reruns; all Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -222,3 +222,21 @@ Linux real-model tasks remain NOT_RUN. Receipts, exact identities and limitation
 are in native-runs.md. db94f855's sixteen green checks precede these evidence-only
 updates; publication needs fresh current-head CI. User merge, predecessor closure
 and merged-source applicability remain final delivery gates.
+
+## Latest final-candidate F3 evidence
+
+All three compiler-correction repetitions now pass on the unchanged 35-file native
+candidate and CLI. Actual E0425, E0583 and E0308 errors are retained before the
+model fixes only src/lib.rs. Original contract tests and independent read-only
+protected behavior pass; exact file inventories, native original-error details,
+draft/logical-cursor/scrollback and actual Tool/native exit checks pass within
+the frozen bounds. No operator solution, corrective advice, task restart or extra
+verifier generation occurs. The r2/r3 non-Git inspection failures stay recorded.
+Immutable v29 has thirty-one development attempts, fifteen historical qualified
+slots and twelve matching-final-candidate slots, preserving all first outcomes
+and the earlier separate unintended diff-verifier turn. Memory remains enabled;
+usage/cost and time partitions are unknown. Three macOS F4 reruns and all fifteen
+Linux tasks remain open; checklist stays 8/19. Prior head c5f9b924 passes all
+sixteen current-head CI checks, including CodeQL; these evidence-only updates
+require their own publication/checks. No final cross-Host delivery or unattended
+self-bootstrap claim is made. Native identities and receipts are in native-runs.md.

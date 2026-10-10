@@ -4,12 +4,12 @@ The original three frozen macOS F1 inputs qualify through four normal-CLI real-m
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-The latest immutable aggregate v26 retains twenty-eight development task attempts
+The latest immutable aggregate v29 retains thirty-one development task attempts
 and fifteen historically qualified slots: eleven first PASS, four first FAIL and
-fifteen NOT_RUN. Nine slots match the final candidate: all macOS F1, F2 and F5
+fifteen NOT_RUN. Twelve slots match the final candidate: all macOS F1, F2, F3 and F5
 repetitions. One unintended verifier generation stays separate. Task attempts are
 not API-call counts; F4 includes explicit continuation. Tasks 2.1 through 2.5 have
-historical macOS evidence, while six older F3/F4 slots need final-candidate reruns.
+historical macOS evidence, while three older F4 slots need final-candidate reruns.
 Linux generation readiness, task 1.4 and cross-platform delivery remain open.
 
 ## Candidate and receipts
@@ -1253,3 +1253,76 @@ reconciliation still remains. Cached linux-final-candidate-v1/receipt.json
 SHA-256 `9282ddb02551cb8f8c08ed874344f678e1289bd93f1fd7f5dd594260f3713e3a`
 pins public source/transfer/build/test/readiness/quality artifacts and the first
 offline failure. Linux model/profile readiness and all fifteen tasks remain open.
+
+## Final-candidate F3 r1/r2/r3 PASS — actual compiler causes corrected
+
+All three fresh tasks preserve the original fixture, prompt and protected assertion
+hashes. The task/slot/runtime fields agree before generation, stale project/runtime
+negative checks pass, and the same 35-file cace913c candidate, CLI/config/tool
+digests and actual 80x24 geometry are checked. Own Machine Meta and every turn
+context confirm gpt-6.1-sol/medium. No original receipt or first outcome is replaced.
+
+F3 r1 a2: a2's actual Cargo failure is E0425, cannot find BTreeSet. After reading
+the library/contract, a4 adds its missing std::collections import, retaining the
+original collection/counting body; a5 passes the unchanged contract. Only
+src/lib.rs changes, with no new files, dependency edits or weakened tests.
+
+F3 r2 a2: a2 retains E0583 for the missing operation module. a3 reads the library,
+contract and manifest but ends with the real non-Git failure; a4/a5 inspect the
+actual source directory and existing operations.rs. a6 changes the module
+declaration and call to operations, leaving operations.rs and its generic
+value * 2 + 1 implementation byte-identical. a7 passes the original contract.
+Exact inventories again show only src/lib.rs changed.
+
+F3 r3 a2: a2 retains E0308 because parse returns a Result rather than the declared
+i32. a3's actual source/test inspection and non-Git failure stay recorded. a4
+retains parse::<i32>() and adds unwrap_or(0), following the invalid-input contract
+instead of the compiler's panic-producing expect suggestion. a5 passes the
+unchanged contract. Only src/lib.rs changes.
+
+| Slot / attempt | Model PID / boot | Verifier PID / boot | Submission through verified cleanup |
+| --- | --- | --- | --- |
+| F3 r1 / a2 | 68195 / db9ec378-7711-42f4-8775-14b7ad971bfc | 69298 / fb97e97c-1070-4c2e-a8e9-c6987f91743b | 237.970639 seconds |
+| F3 r2 / a2 | 69786 / 307057fd-15da-474f-8fe1-37c2e21d3f98 | 70151 / 703003fc-5784-4e1e-8380-d93f4fb1f363 | 200.697360 seconds |
+| F3 r3 / a2 | 70295 / 9c16b5e9-c965-4f44-a1af-0608785300dd | 70573 / b8788162-eb89-4f80-b4ac-217dbfb7fadf | 159.668232 seconds |
+
+Each native Ctrl+O error detail shows the original Command stderr and actual
+compiler code. Escape restores abcXYZ; insertion at the saved logical cursor
+produces abcδXYZ. Host scrollback retains RED/inspection/edit/GREEN/answer.
+All model Tool Process paths come from actual Action records and are observed
+exited. After actual model exit, a separate native verifier receives project and
+protected assertions read-only, with checker scratch read-write. The frozen Cargo
+command compiles the actual library and passes protected_behavior under its own
+correlated Seatbelt allow audit: duplicate/empty counting, the existing operation,
+and valid/invalid parsing respectively. Project/assertion/driver inventories stay
+byte-identical through checking. The actual checker Tool is exited, both native
+PIDs per task are verified gone, and fish 72808 is foreground. One planned setup
+approval per task, no corrective advice, operator solution edit, task restart or
+extra verifier generation. Memory remains enabled, user stores are not cleared,
+and no statistical-independence claim is made.
+
+Receipts under the owned qualification cache:
+
+- attempts/macos-f3-r1/a2/receipt.json SHA-256
+  `8386abe992537ed45b0574b686f98e1f65aa37f76fa15afbf3e9120fa930452d`;
+  first-outcomes-v27.json SHA-256
+  `5344193277316665b9122a5acd4c6da9dcf16714e99bf65cba24fd685a09d1e9`.
+- attempts/macos-f3-r2/a2/receipt.json SHA-256
+  `c1eaa46363161dfa684bc0141a4224a7c09578c223b9c11cb6a7c198002b3000`;
+  first-outcomes-v28.json SHA-256
+  `9f8bd835947e26c23fb7b754fe90c2d1c14934df47b5da85683223f51f4dc83b`.
+- attempts/macos-f3-r3/a2/receipt.json SHA-256
+  `58da21c8e9b1d3acc81523f8180d66ba9995967f751577a3141713541607cd96`;
+  first-outcomes-v29.json SHA-256
+  `28c360fce3f8d37276caca49bbda88189412645af3f685be5920270afdb67357`.
+
+Aggregate v29 retains thirty-one development attempts, fifteen historically
+qualified slots, original first outcomes eleven PASS/four FAIL/fifteen NOT_RUN,
+and the one separate earlier unintended diff-verifier generation. Comparing
+actual qualified receipt inventories and binary hashes proves twelve slots on
+the same final candidate: all macOS F1/F2/F3/F5 repetitions. Three older macOS F4
+slots and all fifteen Linux slots remain open; checklist stays 8/19. Usage/cost
+and model/Tool/wait partitions remain unknown. Head c5f9b924 passes all sixteen
+checks, including completed CodeQL, before these evidence-only updates. Their
+new head requires its own checks; no final merged-source/cross-Host qualification
+or unattended self-bootstrap is claimed.
