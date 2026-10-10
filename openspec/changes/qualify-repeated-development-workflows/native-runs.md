@@ -4,9 +4,9 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including completed macOS F2 below, eight real-model executions qualify six
-slots: four first PASS, two first FAIL and twenty-four NOT_RUN. Tasks 2.1 and
-2.2 are complete. Linux generation readiness, task 1.4, F3/F4/F5 and final
+Including completed macOS F2/F3 below, eleven real-model executions qualify nine
+slots: seven first PASS, two first FAIL and twenty-one NOT_RUN. Tasks 2.1, 2.2
+and 2.3 are complete. Linux generation readiness, task 1.4, F4/F5 and final
 candidate applicability remain open.
 
 ## Candidate and receipts
@@ -368,3 +368,94 @@ F2 tool-origin audits clarify the immutable receipts: their legacy
 one planned version-setup Tool per invocation. Each run has six model-originated
 Tool Processes and one setup Tool; all exit. This clarification changes no model
 authorship, outcome or lifecycle proof and does not overwrite original receipts.
+
+## macOS F3 original r1 compiler correction — 2026-10-11
+
+Fresh original `macos-f3-r1/a1` uses the unchanged repaired native candidate and
+actual gpt-6.1-sol/medium. Boot `fbaa9c96-c100-4981-9a4b-4780331d5346`, native
+PID 62059, Root 8. Model Action a2 runs the frozen Cargo command and actually
+fails with exit 101 / E0425, missing `BTreeSet`. Action a5 adds the import in
+`src/lib.rs`; Action a6 reruns Cargo and passes the unchanged contract test.
+Only that allowed source changes; no added non-build files appear.
+
+Action a3 also reproduces the known absolute namespace Bash-operand refusal;
+a4 self-corrects to relative paths, reads source/tests and retains the non-Git
+status failure. These are real model self-corrections, not operator advice or a
+claimed path repair. A collector initially compared lowercase Action names with
+display titles; the same retained records correct that assertion before evaluating
+the actual diagnostic/Edit/GREEN sequence. Public SDK activity is idle and queue
+has no active/pending/deferred work after completion.
+
+A separate normal-CLI verifier boot `204520ed-e79c-4743-9e4b-5133da7dbda6`,
+native PID 63950, mounts project/assertions read-only and dedicated scratch
+read-write. Fresh Cargo compilation passes protected behavior; exact project
+inventory, public contract, protected assertion and driver hashes remain unchanged.
+Action a1's call ID correlates to its owning rollout's Seatbelt policy audit.
+Four model-originated Tool Processes, one planned version-setup Tool and the
+verifier Tool exit; both native `/quit`/PID-gone checks pass. Detail Action a6
+returns with logical draft insertion `abcδXYZ`.
+
+Model time: 26.484270 seconds; submission through verified cleanup/receipt:
+290.993904 seconds, within 600. No corrective advice or operator source edits;
+planned controls remain recorded. Usage/cost and exact model/Tool/wait partitions
+are unknown. Receipt SHA-256:
+`41bc46fa1b861547a64de62b253514c67740d2039e684d68dd3449c1fb16c933`.
+Immutable aggregate `first-outcomes-v7.json`, SHA-256
+`f1527cca5ac0000d9f26533f21dc60b9b5253930c1ec68ee84984de753a93b66`,
+retains thirty slots: five first PASS, two first FAIL, twenty-three NOT_RUN; nine
+real model attempts qualify seven slots. F3 is one of three required completions,
+so task 2.3 stays open and progress remains 5/19.
+
+## macOS F3 original r2 module correction — 2026-10-11
+
+Original `macos-f3-r2/a1` runs on the same frozen candidate with actual
+gpt-6.1-sol/medium: model boot `fa76453a-914c-491c-8fa3-9cf576abcbcf`, PID
+64258. Action a2 actually fails Cargo with exit 101 / E0583 (missing module
+`operation`). The model reads the existing `operations.rs`, updates only the
+module declaration/reference in `src/lib.rs` (a8), and reruns Cargo GREEN (a9).
+Existing module content, tests, Cargo files and exact non-build inventory remain
+unchanged. No source is operator-authored and no corrective advice is supplied.
+
+Fresh independent normal-CLI verifier boot `c93f7379-155d-46b5-8827-0a8c6a874047`,
+PID 65523, uses read-only project/assertions and dedicated writable scratch.
+Fresh compilation/protected behavior passes, source/assertion/driver bytes remain
+unchanged, and actual Action/call ID correlates to its Seatbelt policy audit.
+Five model-originated Tool Processes, one planned setup Tool and the checker Tool
+exit. Both native `/quit`/PID-gone checks pass; Action a9 detail returns to draft
+`abcδXYZ` at the preserved insertion position. Model time 35.000430 seconds;
+submission through verified cleanup/receipt 262.193911 seconds, within 600.
+Usage/cost and precise model/Tool/wait partitions remain unknown.
+Receipt SHA-256 `a6e6c0511e18296a200854317caecd43dd6664a35ec8a7cec81ced5a1e672f42`.
+Immutable `first-outcomes-v8.json` SHA-256
+`fb9f1c769329391093fcfb7fce3a1c9523a74bdb8b11762a26c69452833e71db`
+retains six first PASS, two first FAIL, twenty-two NOT_RUN; ten model attempts
+qualify eight slots. F3 is two of three completions; task 2.3 remains open.
+
+## macOS F3 original r3 and family closure — 2026-10-11
+
+Original `macos-f3-r3/a1` uses the unchanged candidate and actual
+gpt-6.1-sol/medium. Model boot `dd4de43b-fae7-4aab-860f-ee7fac8b4c92`, PID
+65748. Action a2 actually fails Cargo with exit 101 / E0308: `parse::<i32>()`
+returns a Result instead of i32. Action a4 adds `unwrap_or(0)` only in the allowed
+`src/lib.rs`; a5 reruns the unchanged contract GREEN, preserving successful
+negative parsing and invalid-input zero behavior. No added non-build files,
+operator source edits or corrective model advice.
+
+Fresh verifier boot `1006ddf1-b879-4e30-a317-954dd26159a4`, PID 66203, receives
+project/assertions read-only and scratch read-write. Fresh dependency/checker
+compilation passes protected behavior; exact source/assertion/driver hashes stay
+unchanged. The Action/call ID matches its owning rollout's Seatbelt audit.
+Four model Tool Processes, one planned setup Tool and the verifier Tool exit;
+both native instances exit normally and detail Action a5 preserves `abcδXYZ`.
+Model time 28.682936 seconds; end-to-end 401.419416 seconds, within 600. Usage,
+cost and exact model/Tool/wait portions remain unknown. Receipt SHA-256:
+`0ef06fc97996cf963ca23952b167a73a31450dcb4ed021b914095a4b6bfea2d4`.
+
+Immutable aggregate `first-outcomes-v9.json`, SHA-256
+`79c2892f84eb61a127942a574bd6a4ab8be5e0080b8d61bafb7b23b396379b2b`,
+retains thirty slots: seven first PASS, two first FAIL, twenty-one NOT_RUN; eleven
+model executions qualify nine slots. All three macOS F3 repetitions now qualify,
+closing task 2.3 and reaching 6/19 tasks. F4/F5, all Linux generation families,
+final-candidate applicability, review/merge and the absolute namespace Bash
+operand finding remain open. Published F2 evidence head `ebbeaffb` passed all
+sixteen CI checks; this newer evidence commit requires its own CI.

@@ -7,8 +7,9 @@ have executed: two PASS and one FAIL for incomplete prospective tool identity.
 A fresh linked retry qualifies that failed slot without replacing its first
 outcome. The first F2 attempt also executed and remains FAIL after native preflight rejected
 the independent binary-check operand. A fresh linked F2 retry and original F2 r2/r3 now pass the complete independent
-checks on the repaired candidate. Six slots qualify through eight real model
-attempts: four first PASS, two first FAIL and twenty-four NOT_RUN. See `native-runs.md`
+checks on the repaired candidate. All three macOS F3 compiler-correction tasks
+also qualify. Nine slots qualify through eleven real model attempts: seven first
+PASS, two first FAIL and twenty-one NOT_RUN. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
@@ -62,9 +63,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; fresh a2 PASS `c9dc9be0`; a1 `6c0336f1` retained |
 | macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; a1 receipt `e3313a3a` |
 | macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; a1 receipt `42c7ae59` |
-| macos-f3-r1 | macos / Herdr | F3 | 1 | NOT_RUN | absent |
-| macos-f3-r2 | macos / Herdr | F3 | 2 | NOT_RUN | absent |
-| macos-f3-r3 | macos / Herdr | F3 | 3 | NOT_RUN | absent |
+| macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; a1 receipt `41bc46fa` |
+| macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; a1 receipt `a6e6c051` |
+| macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; a1 receipt `0ef06fc9` |
 | macos-f4-r1 | macos / Herdr | F4 | 1 | NOT_RUN | absent |
 | macos-f4-r2 | macos / Herdr | F4 | 2 | NOT_RUN | absent |
 | macos-f4-r3 | macos / Herdr | F4 | 3 | NOT_RUN | absent |
