@@ -24,7 +24,7 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are nine PASS, four FAIL and seventeen NOT_RUN; qualified slots
-are twelve out of thirty, including fresh F1/F2/F4 linked retries and all macOS F3. See `native-runs.md`.
+are thirteen out of thirty, including fresh F1/F2/F4 linked retries and all macOS F3, plus the fresh F5 stdout retry. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -176,3 +176,18 @@ provider normalization remains a causal inference pending native retry. Both
 loop-guard branches reuse the existing AgentFS error surfaces for visible retained
 stop reasons. These unpublished repairs need quality/review/CI and a fresh unchanged
 task retry; prior head 51408b8c's green checks do not qualify them.
+
+
+Fresh unchanged F5 r1 a3 now qualifies: gpt-6.1-sol/medium reads two bounded byte
+ranges from the original a2 result, finds QVALUE in a5, edits only src/lib.rs and
+corrects its own verification-command error. Producer execution remains once.
+An independent native read-only project/protected check passes under Seatbelt,
+with unchanged source/assertion/driver bytes, readable original detail, restored
+draft/cursor, retained scrollback and both native instances/Tools exited in
+389.100920 seconds. Immutable aggregate v17 records nineteen attempts and thirteen
+qualified slots; first outcomes remain nine PASS, four FAIL and seventeen NOT_RUN.
+F5 is 1/3 and tasks remain 7/19. Original a1/a2 failures and collector corrections
+are retained. Local repairs were committed normally as 948c6b70; current-head
+publication/CI, remaining F5 and Linux tasks, older final-candidate applicability
+and user merge/canonical closure remain open. Linux catalog was rechecked in the
+actual ubuntu guest at 2026-10-10T20:43:26Z and is still absent.

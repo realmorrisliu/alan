@@ -900,3 +900,59 @@ callers, owner/range/expiry/UTF-8 boundaries, shared official/managed wire mappe
 and both guard surfaces. No new external runtime dependency or authority/config
 is introduced. Publication/current-head CI and unchanged-task native evidence
 remain separate gates; local verification adds no qualified matrix slot.
+
+
+## macOS F5 r1 a3 PASS — original retained result acquired without rerun
+
+Fresh detached cace913c plus the exact qualification, reader, Responses optionality
+and loop-guard publication repairs uses CLI SHA-256
+`1b609034eea7c8c2a7f7f5a1725d14fb6ed5165ec4776a196bd7237162a2495e`,
+source diff SHA-256
+`60fbb03ab93f2d1a6d94cc924a064fd12dae38052cd25c9615608e3da8085608`,
+and a 35-file prospective source inventory. Both this candidate and the delivery
+checkout pass normal full quality/standalone/distribution. Original fixture,
+prompt, assertions, config, PATH/selected tools and 80x24 geometry are unchanged.
+Model PID 13419, boot `4f8ac0f1-d150-4fc2-8f46-1c2383ae0295`, Root 8.
+Own rollout Meta and every actual turn_context confirm gpt-6.1-sol/medium.
+
+Original producer a2 executes exactly once. ReadFile a3 and a5 read its concrete
+AgentFS output with only path/byte_offset/byte_limit; no line fields, extra Host
+grant or producer rerun. a5's 4096-byte original range from offset 156900 contains
+QVALUE=42137; the model cites original a2 and read a5, changes only src/lib.rs,
+runs ordinary Cargo tests and corrects its own relative-include stdin verifier
+error from a7 with successful a8 compilation/assertion. The original compiler
+failure remains in visible history; it is not operator-corrected or erased.
+
+Actual original detail a2 exposes the standalone QVALUE at line 2807 through
+supported Space paging; server> ready and a > b stay literal. Separately delivered
+Escape returns to abcXYZ and subsequent unicode insertion produces abcδXYZ at the
+saved logical cursor. Host scrollback retains task, original/read/edit Actions,
+compiler error/correction and final answer. The collector notes retain early
+not-yet-published observations, virtual cd's still-running Root mistaken for a
+Tool, expected Cargo compilation stderr, combined Escape/unicode ambiguity and
+Ctrl-U prefix-only clearing. Corrections affect collection/terminal gestures only;
+there is no new model prompt, operator solution edit or corrective advice.
+
+After model exit, independent verifier PID 21470, boot
+`c8baf160-e738-4d5c-9190-6c6a80582340`, receives the actual project and protected
+assertion tree read-only, fresh checker scratch read-write. Ordinary Cargo test
+compiles the real dependency and passes protected_behavior. Its exact Action call
+ID correlates to the owning rollout's Seatbelt allow audit. All source/assertion/
+driver inventories stay unchanged by checking. Actual observed Tool Processes are
+exited, both native PIDs are gone and foreground is fish 72808.
+
+Submission through verified final cleanup takes 389.100920 seconds (bound 600).
+Receipt SHA-256 `ffa059564404cac3902df9c09616dd90bd90db4b61ae5064d7c06e4a1ffe3ad8`
+at attempts/macos-f5-r1/a3/receipt.json. Immutable first-outcomes-v17.json SHA-256
+`64e8ed842109b41f1a6b3f716e458eee5828a90c4d2215e57ebc371483d5b86b`
+records nineteen model-task attempts and thirteen qualified slots; first outcomes
+remain nine PASS, four FAIL and seventeen NOT_RUN. Earlier F5 a1/a2 and aggregates
+remain immutable. Usage/cost and model/tool/wait partitions remain unknown.
+
+This native success qualifies the corrected stdout task and actual reader/provider
+integration, not a direct server-normalization trace or unattended self-development.
+It does not independently force a native loop-guard stop; both guard branches have
+actual AgentFS RED/GREEN regression evidence and reuse the existing terminal-error
+renderer. F5 stderr/diff repetitions, all Linux generation, final-candidate
+applicability for older tasks, review/current-head CI and user delivery remain.
+Checklist remains 7/19; automatic routing stays disabled.

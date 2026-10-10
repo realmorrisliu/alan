@@ -201,3 +201,15 @@ v16 retains eighteen attempts and twelve qualifications. This does not yet quali
 model use of the reader. A fresh candidate must include the Responses optionality
 and AgentFS guard-error publication repairs, freeze all identities again, then
 retry the unchanged original task without operator advice or source edits.
+
+
+Fresh unchanged macOS F5 r1 a3 now qualifies the actual own-Action byte reader:
+original a2 runs once, a5 acquires QVALUE from its retained bytes, and independent
+read-only native verification/draft/details/scrollback/exit proof passes. Aggregate
+v17 is nineteen attempts/thirteen qualified slots, retaining both failed retries.
+The observer reads actual Tool Process status separately from virtual cd's Root;
+observe asynchronous Action/detail publication before dependent gestures. Send
+Escape separately from Unicode to avoid terminal Alt-key ambiguity, and move to
+the end before Ctrl-U when clearing the complete draft. These collection controls
+are not model advice or substitute Tool execution. Remaining frozen tasks and
+final-candidate/delivery gates are unchanged.
