@@ -4,8 +4,8 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including macOS F2/F3/F4 and retained failed attempts below, sixteen real-model
-task attempts qualify twelve slots: nine first PASS, three first FAIL and eighteen
+Including macOS F2/F3/F4 and retained failed attempts below, seventeen real-model
+task attempts qualify twelve slots: nine first PASS, four first FAIL and seventeen
 NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2,
 2.3 and 2.4 are complete. Linux generation readiness, task 1.4, F5 and final
 candidate applicability remain open.
@@ -745,3 +745,89 @@ this new evidence commit needs its own review/CI. F5, all Linux generation,
 final-candidate applicability for older runs and user merge/canonical closure
 remain open. This bounded result does not qualify general namespace-absolute
 shell support, unattended self-development or automatic routing.
+
+
+## macOS F5 r1 first FAIL — retained-reference access and command readability
+
+The original frozen stdout task uses the same CLI 52325439/source diff 4810c786,
+with prospective source/file/config/observer/PATH/selected-tool identity, original
+fixture/assertion/driver bytes and actual gpt-6.1-sol/medium/Seatbelt readiness.
+Model boot `e4aa64ae-e108-4b30-9c64-51a0e26e901d`, PID 32541, Root 8. Action a2 runs the exact original command and retains 168363 bytes of original JSON, including QVALUE=42137 beyond the bounded preview.
+
+The model follows the runtime-provided /agent/8/actions/a2/output reference
+with ReadFile Action a3. NativeToolExecutionAdapter rejects it as outside delegated
+Host Mounts. The model truthfully explains that it could not inspect the original
+and reruns the producing test through rg QVALUE in a4. It then edits only src/lib.rs,
+verifies Cargo and cites the separate original/read-denial/rerun Actions. The
+expected value and exact production diff pass independent checks, but rerunning
+the producer does not fulfill the frozen retained-original dependency. This
+original attempt is FAIL and adds no qualified slot; no operator correction or
+source edit was supplied.
+
+Ctrl+O selects original a2. The bounded Command presentation shows initial stdout
+and a truncation cue; beyond it, the original JSON is present but rendered with
+escaped newline characters. Supported Space/b paging reaches QVALUE and preserves
+literal server> ready and a > b, correlating the full original to a2. Detail return
+and insertion restore abcδXYZ. Host scrollback retains the input, actions and final
+explanation. An unsupported Herdr Home key was rejected before any input; the
+retained failed collector intent is followed by supported b/Space navigation.
+This is an observed readability defect, not evidence loss or permission to strip
+literal content.
+
+Independent verifier boot `ef151743-4e46-4744-8eff-1f981d5fd6e9`, PID 34422, Root 8, uses read-only project/assertions and writable scratch. Fresh dependency/checker compilation passes protected_behavior; its call ID matches Seatbelt allow audit. All project/assertion/driver bytes stay unchanged by checking; actual Tool status records are exited, both native PIDs are gone and foreground returns to fish 72808.
+
+Submission through verified cleanup takes 351.374980 seconds, below the frozen 600-second limit. Receipt SHA-256 `c614c2284c1ec70f621f9babe5247083e17c30721a781414038f7bcc4d08b51b`. Immutable first-outcomes-v15.json SHA-256 `dd6cf36b3d76b8f77e506734d5e4cc1c1eb821e3dbe8cec122bfebe30ee1c96d` retains nine first PASS, four first FAIL and seventeen NOT_RUN: seventeen model task attempts, twelve qualified slots. Usage/cost and time partitions remain unknown.
+
+The reader gap belongs to ordinary namespace evidence access and the existing
+Tool Process/AgentFS boundaries, not Host Mount authorization. Do not add a native
+store path, broaden Host grants, replace the producing command or claim the
+published reference is usable merely because an operator SDK can read it. The UI
+repair belongs to existing generic presentation of acquired retained Command
+stdout/stderr, preserving raw evidence and all current display bounds. Both
+findings need implementation, applicable tests/native acceptance and a fresh
+unchanged-task retry before F5 can qualify. F4 remains 3/3 and checklist 7/19;
+Linux generation and final-candidate/delivery gates remain open.
+
+## Native retained Command readability repair — no model task
+
+The shared acquired-content presenter now recognizes complete generic Command
+stdout/stderr/exit-code JSON and displays the acquired streams as readable lines,
+with separate labels and exit status. Original raw bytes remain separately
+available. It does not inspect Tool identity or arguments, substitute bounded
+metadata for original output, change the display bound or modify reference,
+expiry/redaction or malformed-shape handling. The change is nineteen production
+lines in the existing presenter, with three adjacent tests. Two actual Action
+detail regressions fail on the old source before the repair. Complete TUI testing
+passes 381 unit and 12 integration tests; warnings-denied Clippy passes and pinned
+strict OpenSpec validates 69/69 surfaces.
+
+A fresh detached candidate outside /tmp uses cace913c plus the exact earlier
+qualification repairs and this presenter/test slice. CLI SHA-256
+`c2eca9e549811d66a438e1b25ad69cc40757122c34dc7471c13699d2ec02236b`,
+source diff SHA-256
+`a2e471119ef5493a2eb3950ffa554c791127a5dc6b868efe509396461c452640`.
+Native PID 41920, boot `03169084-2e8a-4af2-a6c2-05f152d7247e`, Root 8,
+actual Herdr terminal 80x24. Public SDK grants two separately prepared projects;
+ordinary explicit cd and Cargo commands produce independent 3000-line stdout
+Action a1 and stderr Action a3. Actual retained outputs contain QVALUE=42137 and
+QVALUE=42274 at stream line 2807. Ctrl+O shows the actual retained streams, and
+supported Space paging reaches both values as standalone readable lines. Literal
+server> ready and a > b remain content. Closing each detail and inserting at the
+saved draft position produces abcδXYZ; Host scrollback retains both command/result
+summaries. Original project inventories remain byte-identical, both Tool status
+records are exited, each result call ID matches Seatbelt allow audit, and /quit
+ends the native instance and returns foreground to fish 72808.
+
+Receipt SHA-256
+`4b4d2e9237bed8b1d2565296d150b7f240502a696811a71211914f2d91fa9e78`
+at the owned qualification cache `command-detail-native-v1/receipt.json` retains
+source/binary identity, original output hashes, captions, draft/cursor, audit,
+unchanged inventories and lifecycle evidence. Collector CLI access spelling and
+an unscoped observer /proc listing were refused before their requested operations;
+the retained corrected intents use documented access spelling and actual numeric
+Tool paths. The rollout contains only four explicit cd/Bash Tool calls and no
+generation. This is a native UI repair probe, not a model-authored development
+attempt: aggregate v15, twelve qualified slots and checklist 7/19 are unchanged.
+The model's retained-reference reader remains unimplemented; this presentation
+repair does not qualify F5 or repair its first failure. Fresh head review/CI and
+the unchanged-task real-model retry remain required.

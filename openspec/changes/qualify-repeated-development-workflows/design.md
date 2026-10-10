@@ -177,6 +177,29 @@ It does not implement general namespace-absolute native shell operands. Retain
 that limitation explicitly and rerun the unchanged real-model task on a fresh
 candidate to measure whether model use of the supported boundary actually works.
 
+### Repair real retained-output access and readability in existing owners
+
+Native F5 r1 proves the full original Action output survives, while the model's
+published namespace-reference read incorrectly falls through the Host-only file
+adapter. Ordinary Tool Process execution must read its owning Agent's emitted
+Action output through bounded read-only namespace descriptors, independently of
+native Host backing. Scope the actual receiving Process/namespace, reject other
+Agent owners and traversal/control paths, preserve expiry/redaction and bounded
+range semantics, and never authorize writes or broaden project/native grants.
+Long JSON output needs usable bounded range access within the prompt-facing
+budget; another oversized projection or producer rerun is not successful reading.
+Reuse existing namespace/evidence IO and Tool execution rather than an artifact
+registry or globally addressed controller. The exact reader implementation and
+native qualification remain open.
+
+The same run shows retained Command JSON displayed as escaped raw bytes after
+its bounded structured preview. Extend the existing pure acquired-content
+presentation to recognize the generic stdout/stderr/exit result shape and show
+full acquired streams with separate labels, preserving raw bytes below them.
+Keep bounds, reference resolution, redaction/expiry and malformed fallback intact;
+interpret no Tool arguments or tool identity. A failing actual Action-detail
+regression precedes the repair, with native acceptance on a fresh candidate.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and

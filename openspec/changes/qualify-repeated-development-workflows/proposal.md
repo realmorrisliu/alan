@@ -28,6 +28,12 @@ None.
 
 ### Modified Capabilities
 
+- `evidence-retention-and-projection`: make published retained Action output
+  references actually readable by the receiving Agent through bounded namespace
+  reads, preserving ordinary Process and Host grant boundaries.
+- `tool-result-presentation`: render acquired retained Command stdout/stderr as
+  readable text beyond bounded previews while preserving original raw bytes.
+
 - `host-mount-tool-process-sandbox-projection`: clarify the existing native Bash
   operand contract in model-visible Tool guidance, without changing authority or
   silently rewriting namespace paths in shell command text.

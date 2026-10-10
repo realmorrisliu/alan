@@ -23,7 +23,7 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
-First outcomes are nine PASS, three FAIL and eighteen NOT_RUN; qualified slots
+First outcomes are nine PASS, four FAIL and seventeen NOT_RUN; qualified slots
 are twelve out of thirty, including fresh F1/F2/F4 linked retries and all macOS F3. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
@@ -133,3 +133,22 @@ first outcomes stay seven PASS, three FAIL, twenty NOT_RUN. F4 is 1/3 qualified,
 so task 2.4 and final-candidate applicability remain open. This native corrected
 run does not implement general namespace-absolute shell operands. User merge,
 new-head review/CI, Linux generation and the rest of the thirty-slot matrix remain.
+
+
+The first macOS F5 stdout task fails its retained-original dependency: a2 retains
+the full output, but the model's a3 read of its published AgentFS reference is
+rejected as outside Host Mounts. The model reruns the producer in a4, then completes
+correct source behavior; independent protected checking passes but does not erase
+the original reference-access failure. Native detail retains the value in poorly
+readable escaped JSON beyond the bounded Command preview. Both actual instances
+and all observed Tools exit. Aggregate v15 has seventeen attempts and twelve
+qualified slots; 7/19 tasks stay complete. Owning evidence/presentation deltas
+record the narrow reader/readability repairs before implementation; neither
+requires broader Host authority, raw private backing or an easier frozen task.
+
+The acquired Command readability slice now passes three adjacent regressions,
+381 TUI unit tests, 12 integration tests, Clippy, strict OpenSpec and a fresh
+80x24 native stdout/stderr probe with raw-result correlation, retained literal
+content, draft/cursor return, unchanged project bytes and actual Tool/instance
+exits. This no-generation probe adds no qualified matrix slot. The model reader
+gap and unchanged F5 task retry remain open; new-head review/CI are required.
