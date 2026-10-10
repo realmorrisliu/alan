@@ -66,7 +66,7 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; a1 receipt `41bc46fa` |
 | macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; a1 receipt `a6e6c051` |
 | macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; a1 receipt `0ef06fc9` |
-| macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` retained; no qualified completion |
+| macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` FAIL retained; fresh a3 PASS `bd740877` |
 | macos-f4-r2 | macos / Herdr | F4 | 2 | NOT_RUN | absent |
 | macos-f4-r3 | macos / Herdr | F4 | 3 | NOT_RUN | absent |
 | macos-f5-r1 | macos / Herdr | F5 | 1 | NOT_RUN | absent |

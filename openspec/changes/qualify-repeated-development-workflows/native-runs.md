@@ -4,8 +4,8 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including macOS F2/F3 and the failed F4 original attempt below, thirteen real-model
-task attempts qualify nine slots: seven first PASS, three first FAIL and twenty
+Including macOS F2/F3 and the failed F4 original attempt below, fourteen real-model
+task attempts qualify ten slots: seven first PASS, three first FAIL and twenty
 NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2
 and 2.3 are complete. Linux generation readiness, task 1.4, F4/F5 and final
 candidate applicability remain open.
@@ -588,9 +588,86 @@ verified failure cleanup takes 257.709124 seconds. Cost/usage remains unknown.
 Receipt SHA-256 `2730d877697be9a081206e2f318624536a29db2fab1bce89fb44cbd60569d4bb`.
 Immutable aggregate `first-outcomes-v11.json`, SHA-256
 `06df3af55f5166c0d25543147026fa2170dd0ab817d3d813e57e45ff64712364`,
-retains seven first PASS, three first FAIL and twenty NOT_RUN; thirteen real-model
-task attempts qualify nine slots. The original a1 remains unchanged. The UI
+retains seven first PASS, three first FAIL and twenty NOT_RUN; fourteen real-model
+task attempts qualify ten slots. The original a1 remains unchanged. The UI
 revocation fix has positive and negative native proof; the namespace-absolute
 Bash finding now prevents this real model's F4 task instead of being corrected
 by the model. Resolve the path/authority contract before another linked retry;
 do not approve redundant authority or replace the frozen task with an easier one.
+
+
+## Bash guidance repair and macOS F4 r1 linked a3 PASS — 2026-10-11
+
+The existing Bash description and command schema now distinguish supported
+cwd-relative shell operands from file Tools' absolute Alan namespace paths.
+ToolRegistry exposes those same definitions to the model; execution, policy,
+Host authority and shell command text remain unchanged. This does not implement
+arbitrary namespace-absolute shell mapping. Existing Tool tests pass 138/0/0;
+strict OpenSpec passes 69/69. Normal commit hooks run full quality and standalone
+distribution successfully. UI repair head beff562e passed all sixteen checks;
+guidance/evidence head 8116a8d5 has its own required review/CI.
+
+Fresh a3 keeps the original task/follow-up hashes and exact original project
+baseline, with fresh project/checker paths. Native candidate retains the Linux
+predecessor, previous exact repairs and new Bash guidance; prospective freeze
+includes all source files/diff, CLI/config/observer, PATH, resolved/selected tool
+executables and SHA-256, native Rust/Cargo 1.93.0 and Git 2.54.0 identities.
+CLI SHA-256 `52325439c5958f531464969dcfa0979cb48eb4b56f2cccd28e730bc33b8cd4d1`,
+source diff `4810c786729b77b8ab18bc6abce6427d2374c73bee4a0a319962179e16b0c634`.
+Native originals and earlier-source receipts remain preserved.
+
+Initial boot `edc569fb-f1bc-40f6-ac3d-49da9210c63c`, PID 16072, Root 8,
+rollout `671bca2f-7af7-4cc6-b140-cc6103ba2327`. The actual real model uses relative
+shell operands, self-corrects a non-Git inspection failure and invokes start_work
+once without requesting duplicate authority. Live writer PID 16471, parent 16468,
+process group 16426 are observed; planned Ctrl+C precedes its forty-second
+scheduled write. The writer, parent and group exit; beyond the deadline there is
+no late effect and exactly one completed ledger entry. The settled paused queue
+has no active/pending work before `/project revoke`. Correlated successful cwd
+Action a4 selects `/`, Host request-1 becomes inactive, and UI acknowledges
+revocation without a CLI fallback. The unchanged denied-read follow-up is admitted
+paused and explicitly continued alone: Read Action a5 returns no project content
+and a truthful authority/adapter denial; no new grant or work is requested.
+
+The operator verifies that metadata selects this exact owning rollout, records
+its hash, exits PID 16072 and explicitly starts --resume. Boot
+`b63581f0-5d5e-4fa6-a490-6279148e699e`, PID 16892, Root 8, new rollout
+`6304d995-f7c7-47f4-80bb-7de0a4b35449` retains the original frozen task. Before
+regrant there is no admitted/active work. Explicit regrant, actual cwd Action a6
+and the unchanged continuation prompt are followed by a real structured request
+r0 for reapproval; the planned operator confirmation is sent once. Read a7,
+EditFile a8 and Cargo a9 update only src/lib.rs and pass the immutable contract.
+The new rollout's actual Bash executions contain only that contract command;
+start_work never reruns, lifecycle files stay intact and the ledger remains one.
+
+Resumed AgentFS retains older Action IDs. The collector records an origin audit
+and correlates only new a6-a9 to resumed execution, avoiding reused numerical
+Process references as origin proof. Two Process references retained by new
+Actions (10 and 11) are observed exited; the initial observed 9/10/11 statuses
+and native cancellation-group exits are separately retained. Read result evidence
+without a retained Process reference is not assigned an invented PID. Detail a9
+shows its original Cargo result and returns to logical draft abcδXYZ; clearing
+the draft precedes native exit. Both model invocations exit.
+
+Separate ordinary native verifier boot `489985b9-36b9-4953-b0f9-ae4da1893e6c`,
+PID 17466, Root 8, mounts project/assertions read-only and dedicated scratch
+read-write. Fresh Cargo dependency/checker compilation passes protected_behavior;
+its actual call ID correlates to Seatbelt policy audit. All project/protected/
+driver bytes remain unchanged by checking, the referenced Tool exits and /quit
+ends the verifier, returning foreground to owned fish PID 72808. Actual model
+contexts remain gpt-6.1-sol/medium. Usage/cost and exact model/Tool/wait partitions
+are unknown; the same default Memory Store remains exposed, not independent
+statistical sampling. No operator source edits, corrective model advice,
+unplanned regrant or revoke fallback occurs; planned controls remain counted.
+
+Submission through verified cleanup/receipt: 528.041471 seconds, within the
+frozen 600-second bound. Receipt SHA-256
+`bd74087709fcc720fe77a987451bb8ef10dd4d60b9cc718f1719aad6524125ba`.
+Immutable aggregate first-outcomes-v12.json SHA-256
+`de7d799d38b5aa209461ad4bb859eea794bdfbbbe02c69346f15bf60949b2670`
+retains seven first PASS, three first FAIL, twenty NOT_RUN; fourteen real-model
+task attempts qualify ten slots. Original a1 and a2 remain immutable. F4 now has
+one of three qualified repetitions; task 2.4 stays open and progress remains 6/19.
+This supports this bounded corrected task, not general namespace-absolute shell
+support, general autonomous development or final-candidate applicability for
+older runs. F4 r2/r3, F5, all Linux generation, final review/CI/user merge remain.

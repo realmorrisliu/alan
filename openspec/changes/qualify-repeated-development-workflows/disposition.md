@@ -24,7 +24,7 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are seven PASS, three FAIL and twenty NOT_RUN; qualified slots
-are nine out of thirty, including fresh F1/F2 linked retries and all macOS F3. See `native-runs.md`.
+are ten out of thirty, including fresh F1/F2 linked retries and all macOS F3. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -122,3 +122,14 @@ authority. Execution/command text, authority and policy are unchanged; general
 namespace-absolute shell operand support is still absent. Existing Tool tests and
 strict OpenSpec pass. Fresh-candidate real-model qualification is required before
 claiming this guidance resolves the observed duplicate-mount behavior.
+
+
+Fresh F4 r1 a3 now qualifies the full frozen lifecycle task after UI revocation
+repair and corrected Bash guidance, with actual cancellation/no-late-effect,
+revocation/denied read, explicit selected recovery/reapproval/no-repeat, protected
+independent checking and detail/draft/cursor proof within 528.041471 seconds.
+Immutable v12 records fourteen real-model task attempts and ten qualified slots;
+first outcomes stay seven PASS, three FAIL, twenty NOT_RUN. F4 is 1/3 qualified,
+so task 2.4 and final-candidate applicability remain open. This native corrected
+run does not implement general namespace-absolute shell operands. User merge,
+new-head review/CI, Linux generation and the rest of the thirty-slot matrix remain.
