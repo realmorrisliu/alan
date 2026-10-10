@@ -1,33 +1,38 @@
 # Disposition — 2026-10-10
 
 Implementation is authorized by the user's ordered development-qualification
-goal. This is the independent second delivery, following UI implementation
-PR #1044. Post-merge UI/directory canonical closure is prepared separately and
-still requires its own reviewed PR/CI/user merge.
+goal. This independent second delivery follows merged UI implementation PR #1044;
+post-merge UI/directory canonical closure remains separate in PR #1045.
 
-Initial code/live Linux inventory and planning are complete. Native mount safety,
-supported PATH and private per-command environment are published in draft PR #1046
-at `80f8585`, with all 16 checks passing on that exact head. They are not merged
-or a complete development qualification. Task-owned git extraction remains distinct from system
-installation. Automatic standard-Rustup projection now passes actual Sandbox
-build/test/fmt/Clippy and selection/refusal acceptance, including metadata/helper
-containment revalidation. Tasks are 10/15 complete. Normal-commit full quality and
-standalone distribution have passed, and the Rustup slice is published with
-current-head CI passing. The live-service/Bash fixture slice is outside that earlier-head
-CI evidence; its own final review/publication/current-head CI remain required. The native
-development fixture now passes actual RED/GREEN/git, declaration-based dependency
-denial, isolation/network and Cargo-descendant cancellation/timeout with private
-runner cleanup. This closes task 3.5. The final engine suite has 1426 passes,
-zero failures and one existing ignore. Complete installation inventory now verifies
-379 nodes unchanged across native execution, retaining the earlier provisioning
-metadata correction. Actual Bash Tool with a live selected read-only grant passes
-two private-output builds, isolation/network assertions and selected-grant revocation
-refusal; Linux Host tests pass 49 with two existing live-provider ignores. Tasks
-3.1 and 3.4 are complete. Disjoint dependency/live-grant qualification and independent
-repeated real-model work remain open.
-The actual Bash Tool still uses the ADR-0058 single-active-grant shell adapter;
-combined-grant Sandbox fixtures alone cannot qualify separate dependency grants
-through that product entry. A narrow explicit read-only-grant exception awaits
-the user's design decision before changing the accepted authority boundary.
-Keep existing fallback/approval rules until supported execution is proved. Do
-not enable automatic input routing or delegate implementation to Alan.
+The supported PATH, nested-mount safety, installed standard-Rustup selection,
+private per-command environment, read-only project builds and descendant
+cancellation/timeout slices are implemented and actually exercised on Linux.
+Normal live-service Bash now runs Git 2.53/Rust 1.97, RED/EditFileTool/GREEN and
+exact diff/status through the selected project grant. Original Rust installations,
+settings/proxies and the task-owned Git runtime retain their recorded inventories.
+Unsupported private-root Git PATH and native wrappers remain explicit refusals;
+no silent executable substitution or whole-home projection is inferred.
+
+Latest actual live-service negatives exercise missing/revoked external dependency
+access with retained in-grant build output, explicit read-only file read/write
+authority, and an ungranted source symlink reaching rustc. These fail without
+unauthorized access or cached false success. Native diagnostic projection now
+conceals normalized private ancestors, preserves known namespace path components
+and avoids cascading replacements. Final frozen Linux suites are engine 1430/0/1
+and Host 55/0/2; native macOS Host is 54/0/2. Exact source/binary/log identity,
+first failures, corrected retries and limits are in implementation-evidence.md.
+
+Draft PR #1046 remains unmerged. Its previously published `4212e7cb` head passed
+all 16 distinct checks. The diagnostic repair and refreshed disposition require
+their own publication-head CI; those earlier checks do not qualify later commits.
+Normal-commit full quality and standalone distribution accompany publication.
+Tasks remain **10/15 complete**: the independent read-only dependency positive,
+its cached-success/revocation continuation, final review/CI and merge/canonical
+closure are not claimed complete.
+
+Actual Bash still follows ADR-0058's selected-single-grant boundary. A narrow
+exception for additional explicitly held read-only grants awaits the user's design
+choice; lower-runner combined-grant positives do not prove product entry support.
+Thirty repeated real-model development tasks remain a later independent delivery.
+Keep fallback/approval rules and automatic input routing unchanged, and do not
+start Alan self-development instances in place of direct implementation.
