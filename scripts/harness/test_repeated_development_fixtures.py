@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 import repeated_development_fixtures as fixtures
@@ -22,6 +23,15 @@ class DevelopmentFixturesTest(unittest.TestCase):
                 self.assertFalse(verifier.is_relative_to(project))
                 self.assertEqual(fixtures.inventory(project), row["baseline"])
                 self.assertEqual(fixtures.digest(verifier.read_bytes()), row["verifier_sha256"])
+                self.assertEqual(fixtures.inventory(verifier.parent), row["protected_baseline"])
+                self.assertEqual(set(row["protected_baseline"]), {"verify.rs"})
+                scratch = Path(row["checker_scratch"])
+                self.assertFalse(scratch.is_relative_to(project))
+                self.assertEqual(fixtures.inventory(scratch), row["checker_baseline"])
+                self.assertEqual(set(row["checker_baseline"]), {"Cargo.toml", "Cargo.lock"})
+                driver = tomllib.loads((scratch / "Cargo.toml").read_text())
+                self.assertEqual(driver["lib"]["path"], str(verifier))
+                self.assertEqual(driver["dependencies"]["qualification"]["path"], str(project))
                 self.assertEqual(fixtures.digest(row["prompt"].encode()), row["prompt_sha256"])
                 self.assertEqual(row["first_outcome"], "NOT_RUN")
                 if row["family"] == 5 and row["repeat"] == 3:

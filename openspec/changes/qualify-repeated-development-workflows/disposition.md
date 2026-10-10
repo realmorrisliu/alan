@@ -30,3 +30,15 @@ start Alan production self-development in place of Codex implementing this goal.
 selection limitations. Thirty disposable inputs are prepared with protected Rust
 assertions and exact file/prompt inventories; six offline self-checks pass, including
 fifteen seeded failure/corrected behavior pairs. These checks are not model authorship.
+
+Preparation head `ef11495e` passed all sixteen CI checks. Subsequent local checker
+and attachment changes require their own commit/checks; those prior checks do not
+qualify an unpublished diff. Actual Herdr PTY and Host geometry now agree at
+80x24 in an owned isolated session. A separate macOS native preflight compiled a
+read-only dependency and protected assertions from writable checker scratch,
+denied writes to both source and checker, and retained all file hashes. Earlier
+read-only cwd/manifest refusals remain failures rather than reclassified passes.
+The qualification-only public SDK observer has two passing validation tests and
+warnings-denied Clippy; wrong boot and same-operation reconciliation were also
+exercised against the native instance. None of this fills a real-development slot.
+Task 1.4 remains open for Linux generation readiness and complete cross-Host freeze.

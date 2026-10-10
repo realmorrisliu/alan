@@ -78,8 +78,16 @@ the actual XDG data root, ordinarily `~/.local/share/Alan`.
 
 There is no generic `alan host fs cat` command. Use supported TUI details and
 instance status/mount commands, plus read-only observation of the owned durable
-records. If an explicit shell read is required, record it as an observer input;
-it changes the timeline and must not become invisible model steering.
+records. The qualification-only `development_observer` example connects through
+the existing public `LocalAttachment` SDK to the already-running native instance;
+it never boots an Agent or runs a model. Its `read` command requires a numeric
+Process path and verifies the expected Host boot before and after connection.
+Its explicit `mount` command uses existing `HostCommandPlane::mount_project`,
+with a frozen operation UUID, expected boot, absolute owned directory and access.
+Retain intent before effects; reconcile uncertain transport with that same UUID,
+never allocate a replacement operation blindly. Record the observer source/binary
+separately from the production CLI. Any explicit shell observer input remains a
+timeline event and must not become invisible model steering.
 
 ## Host terminal and fixture preparation
 
@@ -91,8 +99,12 @@ qualification; current caller layout and viewport disagree, so neither alone
 proves the test dimensions. A task-owned calibration pane (`w58:p18`) reported
 120x40 from its actual stdin PTY while the Host layout reported 60x40 for that
 pane. This is not an 80x24 acceptance; the pane was closed after confirming its
-foreground was only the owned shell, leaving the caller focused. Linux uses the
-native CLI in an ordinary PTY with
+foreground was only the owned shell, leaving the caller focused. The mismatch
+was resolved in isolated named session `alan-development-10332030`: task-only
+headless geometry was set to 80x24 with pane scrollbars disabled, then a new
+owned pane `w4:p1` reported actual stdin PTY 80x24 and Host geometry 80x24. No user
+session configuration or focus changed. The earlier mismatch remains retained;
+the final calibration is not a task outcome. Linux uses the native CLI in an ordinary PTY with
 the independently qualified enforcing backend and exact tool environment.
 
 Prepare all thirty inputs in a new cache directory:
@@ -102,9 +114,10 @@ python3 scripts/harness/repeated_development_fixtures.py --output <new-absolute-
 python3 -m unittest discover -s scripts/harness -p test_repeated_development_fixtures.py
 ```
 
-The manifest hashes each prompt, follow-up, baseline file and protected verifier.
-Only `projects/<slot>` is granted; never grant the parent cache, protected verifier,
-operator metadata or Alan production checkout. The long-diff fixtures contain a
+The manifest hashes each prompt, follow-up, baseline file, protected verifier and
+independent checker driver. The model's Root is granted only `projects/<slot>`;
+never grant it the parent cache, protected verifier, checker scratch, operator
+metadata or Alan production checkout. The long-diff fixtures contain a
 local Git baseline and a separately frozen 3000-line working diff. Git setup uses
 no global config, hooks, templates or commit signing. The original diff is Host
 fixture setup, not model authorship.
@@ -113,8 +126,30 @@ The self-check authors disposable corrected examples only to prove that the
 protected assertions distinguish failure from correct behavior. These examples
 never enter the qualification manifest or model project. Independent runtime
 verification must keep these protected assertions outside model authority and
-execute model-authored code through the qualified isolation boundary. A model's
-own test claim or this offline self-check cannot fill that requirement.
+execute model-authored code through the qualified isolation boundary. After the
+model invocation exits, a separate owned native verifier invocation receives only
+the original project read-only, `protected/<slot>` read-only and its dedicated
+`checker-scratch/<slot>` read-write. The driver manifest in that scratch directory
+references the protected assertion source and project dependency; run explicit
+`cargo test --offline --locked --target-dir target` there. Expected assertions
+remain outside both model write authority and verifier write authority. Keep
+source/driver hashes and compiler/test output before and after checking, not just
+exit zero. Linux's reified path mode requires rebinding the two driver manifest
+paths to the acknowledged grant namespaces before execution; retain the original
+driver and freeze the exact rewritten manifest, access and backend first. Do not
+alter assertions, copy dependency contents or broaden grants to make a run pass.
+
+A macOS native preflight exercised this driver arrangement with separate live
+read-only project/checker grants and writable scratch, actual fresh compilation
+and assertions that attempts to open both source and checker for writing fail.
+All source/checker/driver hashes remained unchanged. Wrong-boot mounting failed
+before intent; repeated same-operation mounting returned the original grant.
+Earlier direct `cargo test` from read-only cwd and an explicit read-only
+`--manifest-path` were refused before execution and remain retained boundaries.
+The writable driver uses ordinary granted dependency reads, without weakening
+those guards. This is candidate preflight, not a matrix slot or macOS general
+read-isolation claim. A model's own test claim or offline self-check cannot fill
+the independent runtime verification requirement.
 
 F4's ignored Rust lifecycle test appends its completed entry, spawns an observable
 child and schedules a write after forty seconds. Observe `writer.started` and the

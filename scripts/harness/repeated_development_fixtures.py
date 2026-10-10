@@ -213,6 +213,17 @@ def prepare(output):
                 protected = output / "protected" / slot
                 protected.mkdir(parents=True)
                 (protected / "verify.rs").write_text(verifier)
+                scratch = output / "checker-scratch" / slot
+                scratch.mkdir(parents=True)
+                (scratch / "Cargo.toml").write_text(
+                    '[package]\nname="qualification_checker"\nversion="0.1.0"\nedition="2024"\n'
+                    '[lib]\npath=' + json.dumps(str(protected / "verify.rs"), ensure_ascii=False)
+                    + '\n[dependencies]\nqualification={path='
+                    + json.dumps(str(root), ensure_ascii=False) + '}\n')
+                (scratch / "Cargo.lock").write_text(
+                    'version = 4\n[[package]]\nname="qualification"\nversion="0.1.0"\n'
+                    '[[package]]\nname="qualification_checker"\nversion="0.1.0"\n'
+                    'dependencies=["qualification"]\n')
                 initial_diff = seed_long_diff(root) if family == 5 and repeat == 3 else None
                 row = {"slot": slot, "platform": host, "family": family, "repeat": repeat,
                        "first_outcome": "NOT_RUN", "project": str(root),
@@ -222,6 +233,9 @@ def prepare(output):
                        "baseline": inventory(root), "allowed_changes": allowed,
                        "verifier": str(protected / "verify.rs"),
                        "verifier_sha256": digest(verifier.encode()),
+                       "protected_baseline": inventory(protected),
+                       "checker_scratch": str(scratch),
+                       "checker_baseline": inventory(scratch),
                        "initial_git_diff": initial_diff,
                        "terminal_size": [80, 24], "wall_limit_seconds": 600}
                 rows.append(row)
