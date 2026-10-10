@@ -8,8 +8,8 @@
 ## 2. Supported tool environment
 
 - [x] 2.0 Repair native inherited-submount projection and recursively enforce read-only access; reproduce before fixing, then verify root/child write denial, escaped paths and unavailable handling for failed child remounts.
-- [ ] 2.1 Carry supported PATH unchanged into user execution, separate from trusted helper PATH; verify same-name ordering, aliases, unset/empty/relative/unsafe entries with focused regressions.
-- [ ] 2.2 Make readiness and per-command plan construction agree and revalidate changed inputs before effects; verify unsupported paths retain an explicit safe fallback reason.
+- [x] 2.1 Carry supported PATH unchanged into user execution, separate from trusted helper PATH; verify same-name ordering, aliases, unset/empty/relative/unsafe entries with focused regressions.
+- [x] 2.2 Make readiness and per-command plan construction agree and revalidate changed inputs before effects; verify unsupported paths retain an explicit safe fallback reason.
 - [ ] 2.3 Project selected installed Rust executables and required runtime files read-only through the existing Host adapter/plan; verify exact selected version, missing runtime, symlink escape and unchanged installed content.
 - [ ] 2.4 Provide private home/Cargo/build scratch with existing Process lifetime; verify personal credentials/caches remain absent and unchanged, authorized configuration is preserved, and read-only projects build with private output.
 

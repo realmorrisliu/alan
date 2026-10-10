@@ -37,6 +37,8 @@ use super::sandbox_backend::{LinuxReificationCapability, LinuxReificationCapabil
 use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
+#[cfg(test)]
+use plan::LINUX_REIFIED_COMMAND_PATH;
 
 #[cfg(target_os = "linux")]
 use plan::canonicalize_existing_host_path;
@@ -48,6 +50,8 @@ pub use plan::{
 };
 #[cfg(target_os = "linux")]
 use plan::{contains_parent_component, paths_overlap};
+#[cfg(target_os = "linux")]
+pub(crate) use toolchain::current_linux_command_path;
 #[cfg(target_os = "linux")]
 pub(crate) use toolchain::smoke_linux_reified_namespace_user_path;
 
@@ -267,23 +271,10 @@ readonly_tree() {
 }
 "#;
 
-#[cfg(any(target_os = "linux", test))]
-macro_rules! linux_reified_command_path {
-    () => {
-        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    };
-}
-
-#[cfg(any(target_os = "linux", test))]
-const LINUX_REIFIED_COMMAND_PATH: &str = linux_reified_command_path!();
-
 #[cfg(target_os = "linux")]
-const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = concat!(
-    r#"
+const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = r#"
 set -u
-PATH='"#,
-    linux_reified_command_path!(),
-    r#"'
+PATH='/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH
 fail() {
   printf '%s %s\n' 'alan reified namespace setup failed:' "$*" >&2
@@ -342,9 +333,9 @@ done
 "$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
 
 cwd="$1"; shift
-"$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
-"#,
-);
+command_path="$1"; shift
+"$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; PATH="$1"; export PATH; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$command_path" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
+"#;
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -714,6 +705,39 @@ fn build_linux_reified_namespace_command_with_helpers(
     if plan.argv.is_empty() {
         return Err("argv must not be empty".to_string());
     }
+    toolchain::validate_linux_command_path(
+        Some(plan.command_path.clone().into()),
+        &plan.execution_substrate,
+    )?;
+    for path in std::iter::once(temp_root.root.as_path())
+        .chain(std::iter::once(plan.cwd.as_path()))
+        .chain(std::iter::once(plan.scratch_tmp.namespace_path.as_path()))
+        .chain(
+            plan.declared_host_mounts
+                .iter()
+                .flat_map(|mount| [mount.host_path.as_path(), mount.namespace_path.as_path()]),
+        )
+        .chain(
+            plan.execution_substrate
+                .iter()
+                .flat_map(|mount| [mount.host_path.as_path(), mount.namespace_path.as_path()]),
+        )
+    {
+        if path.to_str().is_none() {
+            return Err("reified execution path is not UTF-8".to_string());
+        }
+        if path.to_str().is_some_and(|path| path.contains('\0')) {
+            return Err("reified execution path contains NUL".to_string());
+        }
+    }
+    for mount in &plan.execution_substrate {
+        if canonicalize_existing_host_path(&mount.host_path) != mount.host_path {
+            return Err(format!(
+                "execution substrate source changed: {}",
+                mount.host_path.display()
+            ));
+        }
+    }
     prepare_reified_root(plan, &temp_root.root)?;
 
     let mut args = vec![
@@ -757,6 +781,7 @@ fn build_linux_reified_namespace_command_with_helpers(
     }
 
     args.push(plan.cwd.display().to_string());
+    args.push(plan.command_path.clone());
     args.extend(plan.argv.iter().cloned());
 
     Ok(ReifiedNamespaceCommandSpec {

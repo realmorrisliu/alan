@@ -281,6 +281,155 @@ exec "$3" --exact tools::reified_namespace::runner_tests::linux_runner_smoke_pre
 
 #[cfg(target_os = "linux")]
 #[test]
+fn linux_runner_preserves_command_path_order_and_aliases() {
+    if !linux_reified_runner_ready_for_smoke() {
+        return;
+    }
+    let project = tempfile::tempdir().unwrap();
+    let runtime = tempfile::tempdir().unwrap();
+    for name in ["first", "second"] {
+        let bin = runtime.path().join(name);
+        std::fs::create_dir(&bin).unwrap();
+        for command in ["alan-path-choice", "setpriv", "mount", "mkdir"] {
+            let file = bin.join(command);
+            std::fs::write(&file, format!("#!/bin/sh\nprintf '%s\\n' '{name}'\n")).unwrap();
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    std::os::unix::fs::symlink("first", runtime.path().join("alias")).unwrap();
+    let mut substrate = default_execution_substrate();
+    substrate.push(ReifiedExecutionSubstrateMount::new(
+        "/opt/alan-runtime",
+        runtime.path(),
+    ));
+    for (path, first, expected) in [
+        (
+            "/opt/alan-runtime/second:/opt/alan-runtime/first",
+            "second",
+            "second",
+        ),
+        (
+            "/opt/alan-runtime/first:/opt/alan-runtime/second",
+            "first",
+            "first",
+        ),
+        (
+            "/opt/alan-runtime/alias:/opt/alan-runtime/second",
+            "alias",
+            "first",
+        ),
+    ] {
+        let plan = ReifiedNamespacePlan::derive(
+            ReifiedNamespacePlanInput::new(
+                vec![ReifiedMountDeclaration::host(
+                    "/mnt/project",
+                    project.path(),
+                    ReifiedMountAccess::ReadWrite,
+                )],
+                project.path(),
+                vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "printf '%s\\n' \"$PATH\"; command -v alan-path-choice; alan-path-choice"
+                        .to_string(),
+                ],
+                NetworkPosture::Deny,
+            )
+            .with_execution_substrate(substrate.clone())
+            .with_command_path(path),
+        )
+        .unwrap();
+        let result = run_linux_reified_smoke(&plan);
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert_eq!(
+            result.stdout,
+            format!("{path}\n/opt/alan-runtime/{first}/alan-path-choice\n{expected}\n")
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_runner_revalidates_command_path_before_user_effects() {
+    if !probe_linux_reification().is_selectable() {
+        return;
+    }
+    let project = tempfile::tempdir().unwrap();
+    let runtime = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(runtime.path().join("bin")).unwrap();
+    let mut substrate = default_execution_substrate();
+    substrate.push(ReifiedExecutionSubstrateMount::new(
+        "/opt/alan-runtime",
+        runtime.path(),
+    ));
+    let plan = ReifiedNamespacePlan::derive(
+        ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(
+                "/mnt/project",
+                project.path(),
+                ReifiedMountAccess::ReadWrite,
+            )],
+            project.path(),
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "printf effect > marker".to_string(),
+            ],
+            NetworkPosture::Deny,
+        )
+        .with_execution_substrate(substrate)
+        .with_command_path("/opt/alan-runtime/bin"),
+    )
+    .unwrap();
+    toolchain::validate_linux_command_path(
+        Some(plan.command_path.clone().into()),
+        &plan.execution_substrate,
+    )
+    .unwrap();
+    use std::os::unix::ffi::OsStringExt;
+    for (bytes, reason) in [
+        (b"/mnt/project/\xff".to_vec(), "not UTF-8"),
+        (b"/mnt/project/\0".to_vec(), "contains NUL"),
+    ] {
+        let mut changed = plan.clone();
+        changed.cwd = std::ffi::OsString::from_vec(bytes).into();
+        let error =
+            LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                .run(&changed)
+                .unwrap_err();
+        assert!(error.reason.contains(reason), "{}", error.reason);
+        assert!(!project.path().join("marker").exists());
+    }
+    std::fs::remove_dir(runtime.path().join("bin")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), runtime.path().join("bin")).unwrap();
+    let error = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+        .run(&plan)
+        .unwrap_err();
+    assert!(error.reason.contains("absolute PATH alias"));
+    assert!(!project.path().join("marker").exists());
+    for path in ["", ":/bin", "relative", "/bin/../sbin", "/bin\0"] {
+        let mut changed = plan.clone();
+        changed.command_path = path.to_string();
+        assert!(
+            LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                .run(&changed)
+                .is_err()
+        );
+        assert!(!project.path().join("marker").exists());
+    }
+    std::fs::remove_file(runtime.path().join("bin")).unwrap();
+    std::fs::remove_dir(runtime.path()).unwrap();
+    std::os::unix::fs::symlink(outside.path(), runtime.path()).unwrap();
+    let error = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+        .run(&plan)
+        .unwrap_err();
+    assert!(error.reason.contains("execution substrate source changed"));
+    assert!(!project.path().join("marker").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn linux_runner_smoke_enforces_mount_visibility_and_access() {
     if !linux_reified_runner_ready_for_smoke() {
         return;
@@ -455,7 +604,8 @@ fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
         .with_execution_substrate(vec![ReifiedExecutionSubstrateMount::new(
             "/bin",
             substrate.path(),
-        )]),
+        )])
+        .with_command_path("/bin"),
     )
     .unwrap();
     let temp_root = ReifiedRunnerTemp::create(&plan).unwrap();
@@ -489,7 +639,8 @@ fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
         .iter()
         .find(|arg| arg.contains("alan reified namespace setup failed"))
         .unwrap();
-    assert!(script.contains(&format!("PATH='{LINUX_REIFIED_COMMAND_PATH}'")));
+    assert!(script.contains(&format!("PATH='{TRUSTED_LINUX_SETUP_PATH}'")));
+    assert!(command.args.contains(&plan.command_path));
     assert!(script.contains("\"$mount_bin\" --make-rprivate / || fail \"make root private\""));
     assert!(!script.contains("--make-rprivate / 2>/dev/null || true"));
     assert!(script.contains("\"$mount_bin\" --bind /dev/null \"${root}/dev/null\""));

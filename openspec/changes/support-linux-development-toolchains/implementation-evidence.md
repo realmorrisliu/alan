@@ -118,3 +118,75 @@ Linux engine all-target/all-feature Clippy with `-D warnings` passed
 trusted-helper resolution and argument assembly, startup and per-command probes,
 setup-marker ordering and shared synchronous/cancellable setup. Root/device binds
 stay nonrecursive because their fresh/file sources have no child mounts.
+
+## Supported PATH and per-command validation slice
+
+Published mount-only head `5b3f514a` passed all 16 PR checks. The next slice
+carries PATH as an explicit pure plan input, resolved by the Linux Host adapter;
+startup and per-command construction share validation. Execution transports the
+exact string as an argument after setup, while trusted setup retains its own
+system PATH and absolute helpers. It removes directory executable scans and
+the old fixed-order comparison. No Kernel/environment owner or dependency was added.
+
+Two disposable providers of the same command verify both orders and relative
+alias selection under the actual namespace runner. Their fake `mount`, `mkdir`
+and `setpriv` never replace trusted setup. Invalid PATH, changed directory/root
+aliases and non-UTF-8/NUL execution paths refuse before the fixture marker.
+Unknown entries remain unavailable, including absent/empty directories, because
+namespace mounts or scratch may otherwise make them executable providers.
+Absolute aliases in remapped roots fail explicitly; identical roots retain safe
+absolute aliases. Missing directories within known substrate are preserved.
+
+The pre-review candidate passed 1409 engine tests; it does not qualify the later
+revision. Added chained-alias regressions exposed a trailing-separator issue in
+alias inspection (`alan-path-reviewed-engine.log`: 1409 passed, one failed, one
+ignored). Component traversal now retains link inspection, including link chains,
+cycles and trailing separators. The alias-slice suite `alan-path-alias-final-engine.log`
+passed 1411 tests, zero failures, one existing ignored live-provider test in
+13.95 seconds, with zero native early-return diagnostics. Receipt
+`native-path-acceptance.json` freezes all six changed Rust source hashes, Linux
+test binary and log digests. This remains a PATH slice, not a Rust build or
+real-model development qualification. Current-head CI must qualify its commit.
+
+The earlier cross-checkout commit attempt also left a duplicate Mac output
+receipt in the Linux checkout registry. Under the existing admission lock,
+byte equality and validation of the authoritative Mac receipt were verified;
+only the foreign duplicate was moved to ignored
+`target/misfiled-macos-quality-receipt-20261010.json`. Both output trees and the
+authoritative registry were unchanged. Normal commits use the byte-identical
+Mac verification checkout to avoid checkout-local Git environment contamination.
+
+Linux all-target/all-feature engine Clippy with warnings denied passed on the
+alias-slice sources (`alan-path-final-clippy.log`, 19.43 seconds).
+
+### Actual Sandbox adapter and final candidate
+
+Review added a child-process test through the actual Sandbox API: a supported
+current PATH appears byte-for-byte in `printenv PATH`, and an unknown missing
+entry refuses before a requested file effect. Child environments are explicit;
+the parent environment is never mutated. An assertion on one executed child test
+caught an initial incorrect test filter rather than accepting zero tests. The
+next fixture used shell-variable expansion, which the existing conservative
+parser intentionally rejects; it now uses `printenv` without weakening parsing.
+Unsuccessful attempts remain in `alan-path-adapter-final-engine.log` and
+`alan-path-adapter-verified-engine.log`.
+
+The final alias checks also reject an external link chain that returns into the
+same substrate and parent-traversing targets. The first macOS identity-root
+fixture failed because `/var` resolves to `/private/var`; it now uses canonical
+roots and confined absolute targets, matching actual plan normalization. That
+failure remains `target/linux-path-current-macos-tests.log` in the Mac verification
+checkout. Verified Mac suites pass 33 namespace tests and six Sandbox adapter
+tests, including non-Linux refusal, without ignored cases.
+
+Final native engine suite `alan-path-entry-final-engine.log` passes 1412 tests,
+zero failures, one existing ignored live-provider test, in 16.26 seconds. No
+mount, network or current-PATH native test returned early. Receipt
+`native-path-entry-acceptance.json` freezes seven Rust source hashes, the actual
+Linux test binary and log digest; earlier receipts retain their earlier scope.
+Normal commit quality and current-head CI remain separate gates. Tasks 2.1/2.2
+are closed for supported PATHs; installed Rust/runtime and private caches remain
+tasks 2.3/2.4, so this is not complete Linux development qualification.
+
+Final Linux all-target/all-feature engine Clippy with warnings denied also
+passes (`alan-path-entry-final-clippy.log`, 19.69 seconds).

@@ -1,6 +1,72 @@
 use super::super::*;
 use tempfile::TempDir;
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn test_reified_backend_carries_current_path_and_rejects_unknown_entries() {
+    const CASE: &str = "ALAN_TEST_REIFIED_PATH_CASE";
+    if let Ok(case) = std::env::var(CASE) {
+        let project = TempDir::new().unwrap();
+        let sandbox = Sandbox::with_backend(
+            project.path().to_path_buf(),
+            crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+        );
+        if case == "supported" {
+            let result = sandbox.exec("printenv PATH", project.path()).await.unwrap();
+            assert_eq!(result.exit_code, 0, "{}", result.stderr);
+            assert_eq!(
+                result.stdout,
+                format!("{}\n", std::env::var("PATH").unwrap())
+            );
+        } else {
+            assert_eq!(case, "unsupported");
+            let error = sandbox
+                .exec("printf effect > marker", project.path())
+                .await
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("linux command environment unavailable"),
+                "{error:#}"
+            );
+            assert!(!project.path().join("marker").exists());
+        }
+        return;
+    }
+    if !crate::tools::sandbox_backend::probe_linux_reification().is_selectable() {
+        eprintln!("skipping native current-PATH adapter test: namespace unavailable");
+        return;
+    }
+    let runtime = TempDir::new().unwrap();
+    let name = concat!(
+        module_path!(),
+        "::test_reified_backend_carries_current_path_and_rejects_unknown_entries"
+    );
+    let (_, name) = name.split_once("::").unwrap();
+    for (case, path) in [
+        ("supported", "/bin:/usr/bin:/sbin:/usr/sbin".to_string()),
+        (
+            "unsupported",
+            format!("/bin:{}/missing:/usr/bin", runtime.path().display()),
+        ),
+    ] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CASE, case)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+}
+
 #[tokio::test]
 async fn test_reified_backend_keeps_shape_parser_for_opaque_writers() {
     // Linux reified namespace still bind-mounts the writable host_mount as a whole,

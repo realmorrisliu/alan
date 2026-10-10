@@ -15,6 +15,9 @@ pub const DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH: &str = "/mnt/source";
 /// Default namespace path for the private scratch/tmp mount.
 pub const DEFAULT_SCRATCH_TMP_NAMESPACE_PATH: &str = "/tmp";
 
+pub(super) const LINUX_REIFIED_COMMAND_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 /// Access mode for a declared host-backed mount in the reified namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReifiedMountAccess {
@@ -116,6 +119,7 @@ pub struct ReifiedNamespacePlan {
     pub execution_substrate: Vec<ReifiedExecutionSubstrateMount>,
     pub cwd: PathBuf,
     pub argv: Vec<String>,
+    pub command_path: String,
     pub scratch_tmp: ReifiedScratchTmpMount,
     pub network: NetworkPosture,
 }
@@ -196,6 +200,7 @@ impl ReifiedNamespacePlan {
             execution_substrate,
             cwd,
             argv: input.argv,
+            command_path: input.command_path,
             scratch_tmp: ReifiedScratchTmpMount {
                 namespace_path: input.scratch_tmp_namespace_path,
             },
@@ -241,6 +246,7 @@ pub struct ReifiedNamespacePlanInput {
     pub declarations: Vec<ReifiedMountDeclaration>,
     pub cwd: PathBuf,
     pub argv: Vec<String>,
+    pub command_path: String,
     pub network: NetworkPosture,
     pub execution_substrate: Vec<ReifiedExecutionSubstrateMount>,
     pub scratch_tmp_namespace_path: PathBuf,
@@ -281,10 +287,17 @@ impl ReifiedNamespacePlanInput {
             declarations,
             cwd: cwd.into(),
             argv,
+            command_path: LINUX_REIFIED_COMMAND_PATH.to_string(),
             network,
             execution_substrate,
             scratch_tmp_namespace_path: scratch,
         }
+    }
+
+    /// Preserve the explicitly selected command PATH; the native adapter validates visibility.
+    pub fn with_command_path(mut self, path: impl Into<String>) -> Self {
+        self.command_path = path.into();
+        self
     }
 
     /// Override the read-only execution substrate list.

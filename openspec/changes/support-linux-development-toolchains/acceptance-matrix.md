@@ -19,13 +19,13 @@ native execution is not real-model code-authorship qualification.
 | Row | Operation | Required assertion | Status |
 | --- | --- | --- | --- |
 | Readiness | Run actual full namespace/runner/toolchain probes | Required enforcing backend selected; fallback reasons separately retained | Baseline failed library bind; repaired native runner executed; complete toolchain selection remains pending |
-| PATH order | Two supported providers of the same executable | Exact original first provider; trusted helpers unchanged | Not run |
+| PATH order | Two supported providers of the same executable | Exact original first provider; trusted helpers unchanged | Passed native fixture: both orders and relative alias; PATH exact; fake setup helpers ignored. See PATH slice evidence |
 | Rust identity | Run selected cargo/rustc through supported installed selection | Exact 1.97 identity and required runtime files; no auto-install or default rewrite | Not run |
 | Local build | Build project with independent explicitly read-only mounted dependency | Successful actual compile; source/dependency unchanged; output authorized/private | Not run |
 | RED/GREEN | Run failing test, make one authorized bounded source fix, rerun test | Failure observed first; exact one-change diff; successful corrected test | Not run |
 | Git diff | Read actual project diff | Exact requested source change; unrelated files absent | Not run |
 | Read-only project | Build/test read-only project with private output | Successful compile/test; all project hashes unchanged | Not run |
-| PATH rejection | Unset, empty, relative, escaping and unsupported executable entries | Explicit unavailable/refusal before user effect; no substitution | Not run |
+| PATH rejection | Unset, empty, relative, escaping and unsupported executable entries | Explicit unavailable/refusal before user effect; no substitution | Passed focused pure/native regressions including dangling/chained aliases, NUL/non-UTF-8 and changed backing; broader selected Rust rows remain open |
 | Runtime loss | Remove fixture runtime input or change selection after readiness | Per-command refusal; no stale-startup authority | Not run |
 | Dependency missing | Build without separate dependency authority | No dependency read; explicit failure; cache not accepted as new execution | Not run |
 | Dependency revoked | Revoke prior dependency then request next build | No stale grant, ambient path or retained-output false success | Not run |

@@ -58,6 +58,18 @@ independent of user PATH. Missing runtime content fails before the setup marker
 admits user execution. Backend selection and per-command planning must agree;
 a startup probe cannot authorize a changed environment later.
 
+The first PATH slice retains exact entry order, duplicates and alias spelling.
+Unknown entries fail even when absent or currently empty: a delegated mount or
+private scratch could make the same namespace path visible. Absent directories
+inside a known substrate remain harmless search entries. Dangling aliases fail.
+Relative directory aliases are supported; absolute aliases within a remapped
+substrate are unavailable because Host and namespace resolution can differ.
+Identical Host/namespace roots retain absolute aliases confined to that root;
+parent-traversing and externally chained targets stay unavailable. Bounded alias
+traversal checks chains and trailing separators without changing the returned
+PATH. The runner also refuses changed substrate roots and non-representable
+execution paths before command effects. This is not installed Rust qualification.
+
 ### Keep runtime read-only and caches private
 
 Only supported executable/runtime inputs enter the read-only substrate. Never

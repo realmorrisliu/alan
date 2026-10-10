@@ -478,6 +478,12 @@ impl Sandbox {
         allow_network: bool,
     ) -> Result<ExecResult> {
         let plan = self.reified_namespace_plan_for_command(cmd, cwd, allow_network)?;
+        #[cfg(target_os = "linux")]
+        let plan = super::reified_namespace::ReifiedNamespacePlan {
+            command_path: super::reified_namespace::current_linux_command_path()
+                .map_err(|reason| anyhow!("linux command environment unavailable: {reason}"))?,
+            ..plan
+        };
         let runner = super::reified_namespace::LinuxReifiedNamespaceRunner::with_fallback_backend(
             super::sandbox_backend::detect_projection_backend(),
         );
@@ -503,21 +509,20 @@ impl Sandbox {
         } else {
             NetworkPosture::Deny
         };
-        let plan = super::reified_namespace::ReifiedNamespacePlan::derive(
-            super::reified_namespace::ReifiedNamespacePlanInput::new(
-                self.reified_mount_declarations(),
-                cwd,
-                vec![
-                    "/bin/sh".to_string(),
-                    "-p".to_string(),
-                    "-f".to_string(),
-                    "-c".to_string(),
-                    cmd.to_string(),
-                ],
-                network,
-            ),
-        )
-        .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
+        let input = super::reified_namespace::ReifiedNamespacePlanInput::new(
+            self.reified_mount_declarations(),
+            cwd,
+            vec![
+                "/bin/sh".to_string(),
+                "-p".to_string(),
+                "-f".to_string(),
+                "-c".to_string(),
+                cmd.to_string(),
+            ],
+            network,
+        );
+        let plan = super::reified_namespace::ReifiedNamespacePlan::derive(input)
+            .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
         Ok(plan)
     }
 
