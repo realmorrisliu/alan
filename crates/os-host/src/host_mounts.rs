@@ -212,8 +212,11 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                 );
                 // Sandbox construction must not move authority to a retargeted root.
                 anyhow::ensure!(
-                    canonical_host_path(&export.host_path)
-                        .is_ok_and(|path| path == export.host_path && path.is_dir()),
+                    canonical_host_path(&export.host_path).is_ok_and(|path| {
+                        path == export.host_path
+                            && export.tree.root() == path
+                            && export.tree.backing_root_is_current()
+                    }),
                     "Host Mount backing changed or is unavailable at {}",
                     projection.namespace_path.display()
                 );

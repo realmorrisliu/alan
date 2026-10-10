@@ -828,3 +828,63 @@ macOS foreign-reader OS confinement and concurrent Host path replacement are not
 claimed. Tasks 3.2/3.3 now have their required live-service native positive and
 negative evidence; final publication quality/current-head CI/user merge/canonical
 closure remain separate. No real-model qualification slot is completed.
+
+
+### Absolute manifests and retained-directory identity follow-up
+
+The first absolute-manifest probe passes Host 58/0/2 in 86.06 seconds, but Cargo
+reuses the relative build output. Its complete-scope frozen source and raw logs
+remain retained; no separate native Host binary digest was frozen before the next
+rebuild. The strengthened fixture uses a fresh target/absolute-dependency directory
+and requires actual `Compiling alan_git_fixture_dep` plus the compiled authority
+test. This fresh-build candidate passes Host **58/0/2 in 96.37 seconds** and
+warnings-denied Clippy. `native-bash-readonly-grants-absolute-fresh-acceptance.json`
+retains its 25 source/binary/log hashes and exact original inventories.
+Its engine result reuses the unchanged source and identical engine ELF from the
+132.84-second root-checked suite; it does not claim another engine execution.
+
+Further shared-boundary review follows HostDirFs's existing retained directory
+handle. `alan-native-bash-replaced-directory-red.log` shows a same-path replacement
+directory still passes canonical validation even though the exported file tree
+remains attached to the original directory (**0/1/0 in 0.01 seconds**). No exact
+RED binary digest was frozen before rebuilding. The fix reuses the retained handle's
+device/inode metadata to ensure the native backing still names that same directory;
+HostDirFs exposes only a boolean check, with no new registry or identity manager.
+The constructor also checks canonical spelling agrees with the retained tree root.
+The portable grant test covers replacement for both RO/RW grants and original-root
+restoration. Missing/non-directory/symlink cases and public-only errors remain.
+
+Root identity is checked at reconciliation; concurrent changes after that check
+are not a descriptor-bound native-launch guarantee. The existing aP file server
+continues using its already retained directory handle. New native HostFs/Host and
+macOS HostFs/Host checks below qualify this identity-checked production candidate;
+older receipts above remain scoped to their actual sources.
+
+
+### Final retained-root candidate verification
+
+Final Linux Host is **58/0/2 in 86.64 seconds**,
+HostFs **23/0/0 in 0.01 seconds**, and warnings-denied
+all-target/all-feature Clippy covers engine, Host and HostFs. Actual Bash executes
+both relative and absolute native dependency manifest paths, with a fresh absolute
+build output directory and observed dependency compilation. macOS passes HostFs
+**23/0/0 in 0.06 seconds** and Host **57/0/2 in 4.09 seconds**. The three portable
+Service tests pass, including same-path directory replacement and restoration.
+
+`native-bash-readonly-grants-identity-checked-acceptance.json` freezes **26 source
+hashes**, all three native test binaries, final and retained-attempt logs. Engine
+**1430/0/1 in 132.84 seconds** is reused only after checking all unchanged engine/
+Tool hashes and its exact ELF; HostFs is absent from the engine's dependency tree.
+It is explicitly retained execution evidence, not a new engine run. Native Host
+ELF SHA-256: `9552c02079c9824256c594fb06325278aa792215158454498cc5622081ded7bb`.
+Original Rust's 379-node inventory still has SHA-256
+`118fea4c93ee341a24f3757175fc76aa7e0562ae7335ba257a6127c647e72b46`; all 217 task-owned Git runtime entries and
+installed packages match their recorded baselines. Previous provisioning and
+personal-store/access-time exclusions remain unchanged.
+
+The common constructor compares canonical path, retained file-tree root and
+existing directory handle identity. The only additional HostFs public API is its
+boolean backing-root check; AP, Kernel and Agent Process types remain unchanged.
+No registry, configuration or dependency is added. This repairs observed path/
+identity divergence before native Tool projection, while concurrent post-check
+Host mutation remains outside the claimed guarantee.

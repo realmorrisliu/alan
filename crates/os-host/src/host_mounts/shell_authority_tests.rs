@@ -135,6 +135,15 @@ async fn retargeted_backing_root_does_not_move_grant_authority() {
         std::fs::write(&dependency, "not a directory").unwrap();
         assert!(service.reconcile(7, current.clone()).is_err());
         std::fs::remove_file(&dependency).unwrap();
+        std::fs::create_dir(&dependency).unwrap();
+        let replaced = service.reconcile(7, current.clone());
+        if replaced.is_ok() {
+            eprintln!(
+                "same-path replacement directory accepted despite retained original file tree"
+            );
+        }
+        assert!(replaced.is_err());
+        std::fs::remove_dir(&dependency).unwrap();
         std::fs::rename(&original, &dependency).unwrap();
         assert!(service.reconcile(7, current).is_ok());
     }

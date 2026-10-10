@@ -604,6 +604,36 @@ fn external_authority_is_read_only_and_process_scoped() {
                     .unwrap()
                     .contains("external_authority_is_read_only_and_process_scoped ... ok")
             );
+            let absolute_dependency = format!("path = \"{}\"", outside.display());
+            EditFileTool::new().execute(
+                serde_json::json!({"path": "/mnt/project/Cargo.toml", "old_string": "path = \"../outside-dependency\"", "new_string": absolute_dependency}),
+                &context,
+            ).await.unwrap();
+            let absolute = BashTool::new()
+                .execute(
+                    serde_json::json!({"command": "cargo test --offline --locked --target-dir target/absolute-dependency"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            eprintln!("native Bash absolute dependency: {absolute}");
+            assert_eq!(absolute["exit_code"], 0, "{absolute}");
+            assert!(
+                absolute["stderr"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Compiling alan_git_fixture_dep")
+            );
+            assert!(
+                absolute["stdout"]
+                    .as_str()
+                    .unwrap()
+                    .contains("external_authority_is_read_only_and_process_scoped ... ok")
+            );
+            EditFileTool::new().execute(
+                serde_json::json!({"path": "/mnt/project/Cargo.toml", "old_string": absolute_dependency, "new_string": "path = \"../outside-dependency\""}),
+                &context,
+            ).await.unwrap();
             std::fs::remove_file(project.join("tests/external_authority.rs")).unwrap();
             std::fs::remove_dir(project.join("tests")).unwrap();
             service

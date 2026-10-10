@@ -42,7 +42,7 @@ requires review and user merge of this delivery.
 
 #### Scenario: A project builds against its separately granted read-only dependency
 - **WHEN** the Process holds the selected project and a live separate read-only dependency grant
-- **THEN** the enforcing native build can read that dependency and complete its tests
+- **THEN** the enforcing native build can read that dependency through supported relative or absolute native manifest paths and complete its tests
 - **AND** native writes to the dependency, reads/writes in another writable project and projection of another Process's grant remain denied
 
 #### Scenario: An external dependency grant is revoked after successful compilation
@@ -62,6 +62,6 @@ requires review and user merge of this delivery.
 - **AND** an unrelated live writable grant is not silently substituted for that cwd
 
 #### Scenario: An approved backing root is retargeted or unavailable
-- **WHEN** a live grant's approved canonical backing root is missing, is no longer a directory or resolves to a different root before Tool adapter construction
+- **WHEN** a live grant's approved canonical backing root is missing, is no longer a directory, resolves to a different root or names a replacement directory instead of the retained file-tree root before Tool adapter construction
 - **THEN** the native Host adapter refuses projection before deriving sandbox authority
 - **AND** the failure identifies the public namespace without exposing private backing paths or granting the new target

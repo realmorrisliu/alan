@@ -133,8 +133,9 @@ escaping source rejection and failure after successful-cache grant revocation.
 Actual proof and exact candidate identities belong to that change's evidence.
 An invalid non-root cwd must fail rather than silently choosing another writable
 grant; explicit cwd selection remains the user-visible recovery step. Both native
-sandbox projections revalidate the approved canonical backing roots and refuse
-missing, non-directory or retargeted roots before construction. This is a
+sandbox projections revalidate the approved canonical backing roots against the
+existing file-server directory handles and refuse missing, non-directory, retargeted
+or replaced roots before construction. This is a
 reconciliation-time check, not an atomic concurrent Host-mutation guarantee.
 
 This extension is a reviewable implementation candidate in draft PR #1046, not a

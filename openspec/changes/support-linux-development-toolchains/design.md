@@ -184,9 +184,10 @@ or previous cache adds authority. Reconciliation happens before each normal Tool
 Process launch. ADR-0058's first-slice single-grant decision remains the shipped
 baseline until the user adopts this narrowly scoped candidate delivery. Lower
 Sandbox positives alone cannot prove this live-service behavior. Validate each
-approved canonical backing root again before deriving either structured or shell
-sandbox authority: missing, non-directory or retargeted roots fail with the public
-namespace only. This catches changes observable at reconciliation; it does not
+approved canonical backing root and the existing file-server directory handle
+identity again before deriving either structured or shell sandbox authority:
+missing, non-directory, retargeted or replaced roots fail with the public namespace
+only. Reuse HostDirFs retained-handle metadata rather than a new identity registry. This catches changes observable at reconciliation; it does not
 claim atomic protection against concurrent Host path replacement after that check.
 
 A manifest does not grant access. Keep project and outside local dependency mounts

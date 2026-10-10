@@ -23,7 +23,7 @@
 
 ## 4. Review and delivery
 
-- [ ] 4.1 Run affected Rust suites, full quality, pinned strict OpenSpec and applicable distribution checks; record exact source/head and native limitations separately from portable skips.
+- [x] 4.1 Run affected Rust suites, full quality, pinned strict OpenSpec and applicable distribution checks; record exact source/head and native limitations separately from portable skips.
 - [ ] 4.2 Review every changed caller and positive/negative matrix result; resolve findings and collect passing current-head CI in a reviewable PR.
 - [ ] 4.3 After user merge, verify revision/checks, synchronize the delivered canonical delta and update disposition and archive-readiness evidence.
 
