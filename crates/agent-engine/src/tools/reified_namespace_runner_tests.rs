@@ -6,6 +6,7 @@ fn test_linux_setup_helpers() -> LinuxSetupHelpers {
         unshare: PathBuf::from("/usr/bin/unshare"),
         host_shell: PathBuf::from("/bin/sh"),
         mount: PathBuf::from("/usr/bin/mount"),
+        printf: PathBuf::from("/usr/bin/printf"),
         chroot: PathBuf::from("/usr/sbin/chroot"),
         namespace_shell: PathBuf::from("/bin/sh"),
         namespace_setpriv: PathBuf::from("/usr/bin/setpriv"),
@@ -172,6 +173,110 @@ fn run_linux_reified_smoke(plan: &ReifiedNamespacePlan) -> ExecResult {
             err.audit_fields
         )
     })
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_runner_smoke_preserves_readonly_submounts() {
+    if let Some(source) = std::env::var_os("ALAN_TEST_REIFIED_SUBMOUNT") {
+        let source = PathBuf::from(source);
+        for access in [ReifiedMountAccess::ReadOnly, ReifiedMountAccess::ReadWrite] {
+            let script = if access == ReifiedMountAccess::ReadOnly {
+                r#"
+set -eu
+test "$(cat root-canary)" = root
+test "$(cat nested/canary)" = nested
+if sh -c 'printf changed > root-canary' 2>/dev/null; then exit 41; fi
+if sh -c 'printf changed > nested/canary' 2>/dev/null; then exit 42; fi
+test "$(cat root-canary)" = root
+test "$(cat nested/canary)" = nested
+"#
+            } else {
+                r#"
+set -eu
+printf authorized > writable-marker
+printf changed > nested/canary
+test "$(cat nested/canary)" = changed
+test "$(cat nested-readonly/canary)" = readonly
+if sh -c 'printf changed > nested-readonly/canary' 2>/dev/null; then exit 43; fi
+"#
+            };
+            let plan = ReifiedNamespacePlan::derive(ReifiedNamespacePlanInput::new(
+                vec![ReifiedMountDeclaration::host(
+                    "/mnt/readonly space\\tab\tline\n",
+                    &source,
+                    access,
+                )],
+                &source,
+                vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
+                NetworkPosture::Deny,
+            ))
+            .unwrap();
+            let result = run_linux_reified_smoke(&plan);
+            assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        }
+        return;
+    }
+
+    let capabilities = probe_linux_reification();
+    if !capabilities.is_selectable() {
+        eprintln!(
+            "skipping submount fixture: {:?}",
+            capabilities.audit_fields()
+        );
+        return;
+    }
+    let helpers = LinuxSetupHelpers::resolve().unwrap();
+    let source = tempfile::Builder::new()
+        .prefix("alan-submount space\\tab\tline\n")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir(source.path().join("nested")).unwrap();
+    std::fs::create_dir(source.path().join("nested-readonly")).unwrap();
+    std::fs::write(source.path().join("root-canary"), "root").unwrap();
+    std::fs::write(source.path().join("nested/canary"), "underlay").unwrap();
+
+    // An outer namespace makes the nested mount locked in the runner's child namespace.
+    let output = Command::new(&helpers.unshare)
+        .args(["--user", "--map-root-user", "--mount", "--"])
+        .arg(&helpers.host_shell)
+        .args(["-c", r#"
+set -eu
+"$1" --make-rprivate /
+"$1" -t tmpfs tmpfs "$2/nested"
+printf nested > "$2/nested/canary"
+"$1" -t tmpfs tmpfs "$2/nested-readonly"
+printf readonly > "$2/nested-readonly/canary"
+"$1" -o remount,bind,ro "$2/nested-readonly"
+exec "$3" --exact tools::reified_namespace::runner_tests::linux_runner_smoke_preserves_readonly_submounts --nocapture
+"#, "alan-submount-fixture"])
+        .arg(&helpers.mount)
+        .arg(source.path())
+        .arg(std::env::current_exe().unwrap())
+        .env_clear()
+        .env("PATH", TRUSTED_LINUX_SETUP_PATH)
+        .env("ALAN_TEST_REIFIED_SUBMOUNT", source.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.path().join("root-canary")).unwrap(),
+        "root"
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.path().join("nested/canary")).unwrap(),
+        "underlay"
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.path().join("writable-marker")).unwrap(),
+        "authorized"
+    );
+    assert!(!source.path().join("nested-readonly/canary").exists());
 }
 
 #[cfg(target_os = "linux")]
@@ -391,7 +496,7 @@ fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
     assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/0 \"${root}/dev/stdin\""));
     assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/1 \"${root}/dev/stdout\""));
     assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/2 \"${root}/dev/stderr\""));
-    assert!(script.contains("\"$mount_bin\" --bind \"$host_path\" \"$destination\""));
+    assert!(script.contains("\"$mount_bin\" --rbind \"$host_path\" \"$destination\""));
     assert!(script.contains("\"$chroot_bin\" \"$root\" \"$namespace_shell\""));
     assert!(!script.contains("chroot \"$root\""));
     assert!(!script.contains("exec setpriv --no-new-privs"));

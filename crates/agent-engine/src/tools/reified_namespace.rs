@@ -250,6 +250,23 @@ const SETUP_FAILURE_PREFIX: &str = "alan reified namespace setup failed:";
 #[cfg(target_os = "linux")]
 const TRUSTED_LINUX_SETUP_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
+#[cfg(target_os = "linux")]
+// Older mount helpers can ignore ro=recursive; remount every entry in the private tree.
+pub(super) const LINUX_READ_ONLY_MOUNT_TREE: &str = r#"
+readonly_tree() {
+  tree="$1"
+  while read -r mount_id parent_id device source encoded_path mount_options; do
+    decoded_path=$("$printf_bin" '%b.' "$encoded_path") || return 1
+    decoded_path=${decoded_path%.}
+    case "$decoded_path" in
+      "$tree"|"$tree"/*)
+        "$mount_bin" -o remount,bind,ro "$decoded_path" || return 1
+        ;;
+    esac
+  done < /proc/self/mountinfo
+}
+"#;
+
 #[cfg(any(target_os = "linux", test))]
 macro_rules! linux_reified_command_path {
     () => {
@@ -276,6 +293,7 @@ fail() {
 root="$1"; shift
 setup_marker="$1"; shift
 mount_bin="$1"; shift
+printf_bin="$1"; shift
 chroot_bin="$1"; shift
 namespace_shell="$1"; shift
 namespace_setpriv="$1"; shift
@@ -301,9 +319,9 @@ while [ "$mount_count" -gt 0 ]; do
       mkdir -p "$destination" || fail "prepare directory ${namespace_path}"
     fi
   fi
-  "$mount_bin" --bind "$host_path" "$destination" || fail "bind mount ${namespace_path}"
+  "$mount_bin" --rbind "$host_path" "$destination" || fail "bind mount ${namespace_path}"
   if [ "$access" = "read_only" ]; then
-    "$mount_bin" -o remount,bind,ro "$destination" || fail "remount ${namespace_path} read-only"
+    readonly_tree "$destination" || fail "remount ${namespace_path} recursively read-only"
   fi
   mount_count=$((mount_count - 1))
 done
@@ -313,8 +331,8 @@ while [ "$substrate_count" -gt 0 ]; do
   namespace_path="$1"; shift
   host_path="$1"; shift
   destination="${root}${namespace_path}"
-  "$mount_bin" --bind "$host_path" "$destination" || fail "bind substrate ${namespace_path}"
-  "$mount_bin" -o remount,bind,ro "$destination" || fail "remount substrate ${namespace_path} read-only"
+  "$mount_bin" --rbind "$host_path" "$destination" || fail "bind substrate ${namespace_path}"
+  readonly_tree "$destination" || fail "remount substrate ${namespace_path} recursively read-only"
   substrate_count=$((substrate_count - 1))
 done
 
@@ -334,6 +352,7 @@ struct LinuxSetupHelpers {
     unshare: PathBuf,
     host_shell: PathBuf,
     mount: PathBuf,
+    printf: PathBuf,
     chroot: PathBuf,
     namespace_shell: PathBuf,
     namespace_setpriv: PathBuf,
@@ -349,6 +368,7 @@ impl LinuxSetupHelpers {
             )?,
             host_shell: resolve_trusted_linux_helper("sh", &["/bin/sh", "/usr/bin/sh"])?,
             mount: resolve_trusted_linux_helper("mount", &["/usr/bin/mount", "/bin/mount"])?,
+            printf: resolve_trusted_linux_helper("printf", &["/usr/bin/printf", "/bin/printf"])?,
             chroot: resolve_trusted_linux_helper(
                 "chroot",
                 &[
@@ -711,11 +731,12 @@ fn build_linux_reified_namespace_command_with_helpers(
         "--".to_string(),
         helpers.host_shell.display().to_string(),
         "-c".to_string(),
-        LINUX_REIFIED_NAMESPACE_SCRIPT.to_string(),
+        format!("{LINUX_READ_ONLY_MOUNT_TREE}\n{LINUX_REIFIED_NAMESPACE_SCRIPT}"),
         "alan-reified-runner".to_string(),
         temp_root.root.display().to_string(),
         temp_root.setup_marker.display().to_string(),
         helpers.mount.display().to_string(),
+        helpers.printf.display().to_string(),
         helpers.chroot.display().to_string(),
         helpers.namespace_shell.display().to_string(),
         helpers.namespace_setpriv.display().to_string(),
