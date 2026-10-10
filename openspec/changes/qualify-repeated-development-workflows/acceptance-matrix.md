@@ -9,11 +9,12 @@ outcome. The first F2 attempt also executed and remains FAIL after native prefli
 the independent binary-check operand. A fresh linked F2 retry and original F2 r2/r3 now pass the complete independent
 checks on the repaired candidate. All three macOS F3 compiler-correction tasks
 also qualify. All three macOS F4 slots now qualify, retaining both failed r1
-attempts before its successful fresh retry. Fifteen slots qualify through twenty-five
+attempts before its successful fresh retry. Fifteen slots qualify through twenty-eight
 real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
 One unintended verifier model turn is recorded separately; the long-diff run is
-not zero-unplanned-intervention. Six slots now have matching final-candidate
-source/binary proof; nine older macOS slots require applicability reruns, and
+not zero-unplanned-intervention. Nine slots now have matching final-candidate
+source/binary proof: all macOS F1, F2 and F5 repetitions. Six older macOS F3/F4
+slots require applicability reruns, and
 all fifteen Linux slots remain unexecuted. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
@@ -65,9 +66,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; final-candidate a3 FAIL `7f7ddbdb` retained, fresh a4 PASS `7b2e4c0c`; a1 retained |
 | macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; final-candidate a2 PASS `1e499e15` |
 | macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; original a1 `9c9a1a6f`; final-candidate a2 PASS `997fd0dd` |
-| macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; fresh a2 PASS `c9dc9be0`; a1 `6c0336f1` retained |
-| macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; a1 receipt `e3313a3a` |
-| macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; a1 receipt `42c7ae59` |
+| macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained |
+| macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; original a1 `e3313a3a`; final-candidate a2 PASS `330cd58d` |
+| macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; original a1 `42c7ae59`; final-candidate a2 PASS `a8f7da36` |
 | macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; a1 receipt `41bc46fa` |
 | macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; a1 receipt `a6e6c051` |
 | macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; a1 receipt `0ef06fc9` |

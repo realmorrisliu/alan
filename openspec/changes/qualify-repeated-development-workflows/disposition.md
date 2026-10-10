@@ -24,13 +24,13 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
-are fifteen out of thirty through twenty-five development task attempts, retaining
+are fifteen out of thirty through twenty-eight development task attempts, retaining
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
-Matching final-candidate source/binary evidence currently covers six slots:
-all macOS F1 and F5 repetitions. F1 r1's a3 collector-identity failure stays retained.
-Nine earlier macOS slots need final-candidate reruns; all Linux slots remain open.
+Matching final-candidate source/binary evidence currently covers nine slots:
+all macOS F1, F2 and F5 repetitions. F1 r1's a3 collector-identity failure stays retained.
+Six earlier macOS F3/F4 slots need final-candidate reruns; all Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
@@ -197,3 +197,28 @@ are retained. Local repairs were committed normally as 948c6b70; current-head
 publication/CI, remaining F5 and Linux tasks, older final-candidate applicability
 and user merge/canonical closure remain open. Linux catalog was rechecked in the
 actual ubuntu guest at 2026-10-10T20:43:26Z and is still absent.
+
+## Latest delivery evidence — final-candidate F2 and Linux Rust checks
+
+All three macOS F2 repetitions now pass on the same 35-file native candidate and
+CLI used by final F1/F5. The model edits the actual library and both callers;
+independent read-only checking compiles all three and confirms outputs 20/-1,
+51/-20 and 3/-5. Native diff/draft/logical-cursor/scrollback and actual Tool/native
+exit checks pass within the frozen bounds. Original failed attempts and collector
+corrections stay retained; no corrective advice or operator-authored solution is
+supplied. Immutable v26 has twenty-eight development attempts, fifteen historical
+qualified slots and nine matching-final-candidate slots. Six older macOS F3/F4
+slots still need reruns. The checklist remains 8/19; no final qualification is claimed.
+
+The exact public native source candidate is transferred into an owned Ubuntu
+cache without credentials, private Stores, model solutions or installed deployment.
+Build, 2372 affected Rust tests (ten existing ignores), workspace format and the
+five affected crates' warnings-denied Clippy pass; source hashes remain unchanged.
+The first missing offline test dependency is retained before the locked registry
+download/retry. Actual new CLI connection current remains effective_profile none.
+Required normal-quality commands are still missing from the qualified Linux PATH,
+so neither full Linux quality nor generation readiness is closed. All fifteen
+Linux real-model tasks remain NOT_RUN. Receipts, exact identities and limitations
+are in native-runs.md. db94f855's sixteen green checks precede these evidence-only
+updates; publication needs fresh current-head CI. User merge, predecessor closure
+and merged-source applicability remain final delivery gates.

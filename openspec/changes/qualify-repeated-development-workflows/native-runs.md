@@ -1,14 +1,16 @@
 # Initial native development runs — 2026-10-10
 
-All three frozen macOS F1 inputs qualify through four normal-CLI real-model
+The original three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including macOS F2/F3/F4 and retained failed attempts below, seventeen real-model
-task attempts qualify twelve slots: nine first PASS, four first FAIL and seventeen
-NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2,
-2.3 and 2.4 are complete. Linux generation readiness, task 1.4, F5 and final
-candidate applicability remain open.
+The latest immutable aggregate v26 retains twenty-eight development task attempts
+and fifteen historically qualified slots: eleven first PASS, four first FAIL and
+fifteen NOT_RUN. Nine slots match the final candidate: all macOS F1, F2 and F5
+repetitions. One unintended verifier generation stays separate. Task attempts are
+not API-call counts; F4 includes explicit continuation. Tasks 2.1 through 2.5 have
+historical macOS evidence, while six older F3/F4 slots need final-candidate reruns.
+Linux generation readiness, task 1.4 and cross-platform delivery remain open.
 
 ## Candidate and receipts
 
@@ -1152,3 +1154,102 @@ final candidate: all macOS F1 and F5 repetitions. Nine older macOS slots and all
 fifteen Linux slots remain open; checklist remains 8/19. Head 1d6aa632 passes all
 sixteen CI checks before these evidence-only updates; the next head needs its own
 checks. Actual Ubuntu connection current still reports effective_profile none.
+
+## Final-candidate F2 r1/r2/r3 PASS — all declared callers independently checked
+
+All three fresh projects preserve the original source/prompt/assertion hashes from
+fixtures-v3 (manifest SHA-256
+`b64ad0126be948a69d46f4936cf25caacc6ff8d69b61bcda6e2b37229c32b25e`).
+Only project/cache/Process locations change. Task fields, including the actual
+runtime, are reconciled before submission; stale project/runtime negative checks
+pass. The same cace913c plus 35-file candidate, CLI SHA-256
+`1b609034eea7c8c2a7f7f5a1725d14fb6ed5165ec4776a196bd7237162a2495e`,
+config, selected/resolved tools and actual 80x24 geometry are checked. Own Machine
+Meta and every turn context confirm gpt-6.1-sol/medium.
+
+Each model records an actual non-Git inspection failure, inspects through its
+granted project, then edits a4's library API/body and a5/a6's two callers. Exact
+file inventories show only src/lib.rs, src/main.rs and src/bin/report.rs changed.
+The recorded source calls the new API with (17,3) and (-5,4), rather than replacing
+the programs with hardcoded answers. Model a7 compiles the library and runs both
+binaries. Zero library tests are acknowledged, not used as sole success evidence.
+After model exit, a separate native instance mounts project/protected assertions
+read-only and checker scratch read-write. The prospectively frozen compound check
+compiles the real library, passes protected_behavior and separately compiles/runs
+both actual binaries under its correlated Seatbelt allow audit. All source,
+assertion and driver bytes remain unchanged by checking.
+
+| Slot / attempt | Model PID / boot | Verifier PID / boot | Actual binary outputs | Submission through verified cleanup |
+| --- | --- | --- | --- | --- |
+| F2 r1 / a3 | 56279 / fe0b07ad-3259-4fd2-b066-be54f1665c65 | 56662 / 1f02c063-9782-4240-8024-e37f56014879 | 20, -1 | 266.367256 seconds |
+| F2 r2 / a2 | 58132 / 5324a47e-a5c8-4392-8be1-9b0a3f590f12 | 59220 / 07939874-c661-443e-a3fa-1eb6076f7558 | 51, -20 | 120.020108 seconds |
+| F2 r3 / a2 | 59607 / 3c7528f9-9476-4a66-93a0-f57dce30d53b | 60243 / 999403c4-d4d9-477e-baf0-d2be907a392b | 3, -5 | 197.772676 seconds |
+
+Native Ctrl+O details expose all three actual edits with removed/added markers.
+The callers' substring edits correctly show changed calls rather than an invented
+whole-function hunk. The r3 library's closing brace wraps at 80 columns but remains
+present. Escape restores abcXYZ; insertion at the saved logical cursor yields
+abcδXYZ. Host scrollback retains inspection failure/edit/verification/answer.
+Actual Tool Processes are observed exited; both native PIDs per attempt are
+verified gone and fish 72808 is foreground. Each task has one planned setup
+approval, no corrective model advice, operator solution edit, task restart or
+unintended verifier generation. Memory remains enabled, stores are not cleared,
+and no statistical-independence claim is made. Collector notes retain rejected
+observer paths/metadata queries and corrected diff assertions; the r3 verifier's
+initial unpublished host.json is reconciled with the same live PID, not restarted.
+
+Receipts under the owned qualification cache:
+
+- attempts/macos-f2-r1/a3/receipt.json SHA-256
+  `c1db69522a272104a9b8bad32372ae4aa18bd09add90d5e8b8da506a95aaa42b`;
+  first-outcomes-v24.json SHA-256
+  `8ff02c5f7631db6fff24b1be56f00ca0271dac0bdcb172d6b4fcfe84b206fe94`.
+- attempts/macos-f2-r2/a2/receipt.json SHA-256
+  `330cd58dab826450513999cca544c0754864be9754ecd7170a3555ca9b514242`;
+  first-outcomes-v25.json SHA-256
+  `47c1619f29f6287df489d5044a1935772ed53c2c806db00c6b4f441b76e1c3f7`.
+- attempts/macos-f2-r3/a2/receipt.json SHA-256
+  `a8f7da36f872ba858265311573136deff65fa16abb11637c9560dbff13eccdb3`;
+  first-outcomes-v26.json SHA-256
+  `2d74fe3cf8e2b79ec8d94b035975abe9f6c1770372564af20e6eeb12afd3002b`.
+
+Aggregate v26 retains twenty-eight development attempts and fifteen historically
+qualified slots, original first outcomes eleven PASS/four FAIL/fifteen NOT_RUN,
+and one separately recorded earlier unintended diff-verifier generation. Actual
+receipt source inventories and binary hashes match nine slots: all macOS F1/F2/F5
+repetitions. Six older macOS F3/F4 slots and all fifteen Linux slots remain open;
+checklist stays 8/19. Usage/cost and model/Tool/wait partitions remain unknown.
+Head db94f855 passes all sixteen checks before these evidence-only updates; their
+new head needs its own CI. No unattended self-bootstrap or merged delivery is claimed.
+
+## Same-source Linux candidate build and affected Rust checks — no model task
+
+An archive starts from exact cace913c and replaces/adds the same 35 frozen native
+candidate files, including untracked repair modules. Every archive member is a
+unique relative regular file/directory, with no traversal or links. Only public
+repository source is transferred to the owned Ubuntu UID501 cache
+/home/morris/.cache/Alan/qdev-final-candidate-20261011-v1. No private Stores,
+credentials or model solutions are copied, and no installed runtime is deployed.
+Source archive SHA-256
+`228b952c00512adcf62ee60f0243cb67e73bad53923a2498e09529d7f8916540`;
+all 35 file hashes match both after extraction and after tests/Clippy.
+
+Actual cargo build --locked --offline -p alan --bin alan passes. CLI SHA-256
+`3754e37f1660489f170d67242563c09e50a3ceace16b63afa5a29d9553c70ec0`;
+--version succeeds, and actual connection current reports effective_profile none.
+The selected qualification Git prefix and existing task-owned Cargo registry
+cache are reused. A first offline test command fails because arrayvec 0.7.6 is
+absent; the log is retained. The same locked five-crate test command then downloads
+locked registry dependencies and passes 2372 tests, with ten existing provider/doc
+or other ignores retained: Engine 1435 unit + 20 integration; LLM 212 + 8;
+Service Manager 158 + 2; TUI 381 + 12; Tools 144. Workspace cargo fmt --check and
+those five crates' all-targets/all-features Clippy with warnings denied pass.
+
+The qualified PATH still lacks rg, just, openspec, node, npm and npx. Thus these
+affected Rust checks are not a complete Linux normal-quality gate. No Linux
+generation, matrix slot or final cross-Host qualification is inferred. The
+candidate combines #1046's base with the observed repair files; final merged-source
+reconciliation still remains. Cached linux-final-candidate-v1/receipt.json
+SHA-256 `9282ddb02551cb8f8c08ed874344f678e1289bd93f1fd7f5dd594260f3713e3a`
+pins public source/transfer/build/test/readiness/quality artifacts and the first
+offline failure. Linux model/profile readiness and all fifteen tasks remain open.
