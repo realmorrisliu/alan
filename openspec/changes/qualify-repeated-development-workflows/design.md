@@ -3,8 +3,13 @@
 This is delivery 3 of the user's ordered goal, after terminal presentation and
 Linux toolchain/authority qualification. UI implementation is merged in PR #1044;
 canonical closure is prepared in #1045. Linux toolchain #1046 is still draft and
-its ADR-0058 disjoint read-only dependency decision is outstanding. Planning is
-authorized now; the live matrix starts after that prerequisite closes.
+its ADR-0058 disjoint read-only dependency adoption remains outstanding. Controlled
+candidate qualification is authorized by the goal: the live matrix starts after
+the predecessor candidate's native qualification, code review and current-head CI
+pass, with source/binary/authority scope frozen. User merge and canonical closure
+remain required final-delivery gates rather than prerequisites for disposable
+candidate tests. Testing does not adopt the proposed grant policy. If review
+changes its production behavior, rerun affected rows on the final candidate.
 
 Existing `scripts/harness/run_repo_worker_suite.sh` collects executable scenario
 results but primarily runs scripted/CI commands. Its exit-zero score cannot prove
@@ -120,8 +125,10 @@ results and rerun affected rows. No speculative rewrite follows from this plan.
 
 ## Migration Plan
 
-No product-state migration is needed. First close the Linux predecessor, freeze
-candidate/provider/fixture identities and readiness, then run the matrix serially.
+No product-state migration is needed. First qualify the Linux predecessor
+candidate, freeze candidate/provider/fixture identities and readiness, then run
+the matrix serially in disposable projects. Preserve outstanding user adoption,
+merge and canonical closure explicitly until final delivery.
 Review repairs and rerun affected rows, publish evidence with current-head CI and
 let the user merge. After merge, sync the harness delta to canonical specs and
 archive only after verified delivery. Remove only exact owned stopped fixtures;
@@ -129,7 +136,8 @@ retain unsuccessful attempts and evidence until their disposition is reviewed.
 
 ## Open Questions
 
-- The predecessor's explicit disjoint read-only shell grant decision must close
-  before Linux live qualification; this change does not decide it.
+- The predecessor's explicit disjoint read-only shell grant adoption remains a
+  user review/merge decision. Controlled candidate tests state that proposed
+  boundary and do not decide adoption or deploy it to an installed runtime.
 - Provider access and exact supported model/effort on each Host need live inventory
   before freezing tasks; current macOS profile history is not Linux credential proof.

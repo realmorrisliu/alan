@@ -1,8 +1,8 @@
 ## 1. Preconditions and executable evidence
 
-- [ ] 1.1 Verify predecessor Linux toolchain/ADR-0058 authority qualification and merged-source delivery; pin UI/toolchain revisions without substituting prior scripted/native UI receipts.
-- [ ] 1.2 Trace existing CLI/Process/AgentFS/rollout, Host grant controls, harness collectors and terminal evidence paths; freeze supported operator controls and actual owned stores.
-- [ ] 1.3 Prepare five-family disposable fixture variants, protected expected-result checks and exact baseline/effect inventories; self-check new nontrivial collection/assertion logic for missing and duplicate evidence.
+- [x] 1.1 Verify predecessor Linux toolchain/ADR-0058 candidate authority qualification, code review and current-head CI; keep user merge/canonical closure as final-delivery gates; pin UI/toolchain revisions without substituting prior scripted/native UI receipts.
+- [x] 1.2 Trace existing CLI/Process/AgentFS/rollout, Host grant controls, harness collectors and terminal evidence paths; freeze supported operator controls and actual owned stores.
+- [x] 1.3 Prepare five-family disposable fixture variants, protected expected-result checks and exact baseline/effect inventories; self-check new nontrivial collection/assertion logic for missing and duplicate evidence.
 - [ ] 1.4 Verify actual model/profile/medium effort and enforcing backend on both Hosts; freeze source/binary identities, thirty slot prompts/inputs, bounds and measurement fields before first generation.
 
 ## 2. macOS real-model tasks in Herdr

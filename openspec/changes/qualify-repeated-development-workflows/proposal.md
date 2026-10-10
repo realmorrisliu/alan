@@ -35,8 +35,9 @@ None.
 
 Existing harness fixtures/collection, supported CLI and Root Agent Process
 surfaces, native macOS/Herdr and Linux/ordinary PTY acceptance. This is the third
-ordered goal delivery; Linux toolchain/authority closure in PR #1046 precedes live
-runs, and UI canonical closure remains separate in PR #1045. No new provider,
+ordered goal delivery; Linux candidate toolchain/authority qualification and current-head CI in PR #1046
+precede live runs, and user merge/canonical closure remain final-delivery gates.
+UI canonical closure remains separate in PR #1045. No new provider,
 execution manager, terminal host, broad tool installation or automatic routing.
 Observed production defects require their existing owning capability delta before
 implementation; this proposal does not authorize speculative UI redesign.
