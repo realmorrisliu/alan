@@ -30,6 +30,8 @@ None. Native tool execution already has a durable owner.
 
 - `os-sandbox-enforcement`: selected Linux development tools, read-only runtime
   projection, private writable scratch, and truthful execution qualification.
+- `host-mount-tool-process-sandbox-projection`: native diagnostic paths preserve
+  namespace boundaries and conceal normalized private backing ancestors.
 
 ## Impact
 

@@ -15,7 +15,7 @@ to rustup. PATH includes OrbStack and user executable directories outside the
 fixed substrate. The prior namespace-creation probe is not full runner evidence.
 Receipt: output-presentation worktree `target/linux-environment-20261010.json`.
 
-See proposal.md for motivation and the sole spec owner for requirements.
+See proposal.md for motivation and the capability spec owners for requirements.
 
 ## Goals / Non-Goals
 
@@ -160,6 +160,18 @@ non-overlapping scratch root when an installed Rust input occupies default scrat
 The native namespace backend can execute from a read-only project with private
 output; weaker backends retain their existing writable-cwd requirement. Both bash
 preflight and command execution use that shared cwd decision.
+
+### Preserve public boundaries in native diagnostics
+
+Host-private output projection remains in NativeHostMountExportAdapter, shared by
+stdout, stderr and Tool error results. Match complete path-component prefixes,
+prefer the most specific known mount, and project the original text once so a
+replacement cannot be rewritten by another native prefix. Known mounted paths
+remain shell-usable; normalized paths outside known mounts redact private backing
+ancestors with the existing explicit `<unmapped-host-path>` marker and retain the
+relative diagnostic suffix. This never infers a grant or invents a usable namespace
+for an unavailable dependency. Top-level OS paths remain ordinary text; literal
+role lookalikes, comparisons and Markdown quotes retain their content.
 
 ### Use live project mounts for local dependencies
 

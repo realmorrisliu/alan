@@ -3,6 +3,9 @@
 //! Runtime grant authority and live namespace projection belong to Host Mount
 //! Service. This adapter alone retains native backing paths.
 
+#[path = "host_mounts/text_projection.rs"]
+mod text_projection;
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -176,16 +179,7 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn project_text(&self, text: &str) -> String {
-        let mut projected = text.to_string();
-        let mut mounts = self.mounts.iter().collect::<Vec<_>>();
-        mounts.sort_by_key(|mount| std::cmp::Reverse(mount.host_path.as_os_str().len()));
-        for mount in mounts {
-            projected = projected.replace(
-                mount.host_path.to_string_lossy().as_ref(),
-                mount.namespace_path.to_string_lossy().as_ref(),
-            );
-        }
-        projected
+        text_projection::project_text(text, &self.mounts)
     }
 
     fn sandbox(&self) -> Result<Sandbox> {

@@ -3,7 +3,7 @@ use super::*;
 use alan_agent_engine::Config;
 use alan_agent_engine::tools::{Tool, ToolContext, ToolExecutionAuthority};
 use alan_kernel::{LiveNamespace, Namespace, Pid};
-use alan_tools::{BashTool, EditFileTool};
+use alan_tools::{BashTool, EditFileTool, ReadFileTool};
 use std::net::TcpListener;
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn native_bash_git_red_green_uses_selected_project_grant() {
         ("src/lib.rs", source),
         (
             "dependency/Cargo.toml",
-            "[package]\nname = \"alan_git_fixture_dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            "[package]\nname = \"alan_git_fixture_dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/lib.rs\"\n",
         ),
         ("dependency/src/lib.rs", "pub fn answer() -> u32 { 3 }\n"),
     ];
@@ -398,6 +398,128 @@ async fn native_bash_git_red_green_uses_selected_project_grant() {
     assert_eq!(
         std::fs::read(project.join(".git/config")).unwrap(),
         git_config
+    );
+    let outside = fixture.path().join("outside-dependency");
+    std::fs::create_dir_all(outside.join("src")).unwrap();
+    std::fs::write(outside.join("Cargo.toml"), files[5].1).unwrap();
+    std::fs::write(outside.join("src/lib.rs"), files[6].1).unwrap();
+    current = service.reconcile(7, current).unwrap();
+    let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
+    EditFileTool::new().execute(serde_json::json!({"path": "/mnt/project/Cargo.toml", "old_string": "path = \"dependency\"", "new_string": "path = \"../outside-dependency\""}), &context).await.unwrap();
+    for case in ["missing", "revoked"] {
+        if case == "revoked" {
+            let dependency = approve(
+                &service,
+                7,
+                "/mnt/dependency",
+                HostMountAccess::ReadOnly,
+                &outside,
+            )
+            .await;
+            current = service.reconcile(7, current).unwrap();
+            let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
+            let result = ReadFileTool::new()
+                .execute(
+                    serde_json::json!({"path": "/mnt/dependency/src/lib.rs"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            assert_eq!(result["content"], files[6].1.trim_end());
+            assert!(EditFileTool::new().execute(serde_json::json!({"path": "/mnt/dependency/src/lib.rs", "old_string": "3", "new_string": "4"}), &context).await.is_err());
+            service
+                .revoke(&dependency.id, "native dependency negative")
+                .unwrap();
+        }
+        current = service.reconcile(7, current).unwrap();
+        let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
+        assert!(
+            ReadFileTool::new()
+                .execute(
+                    serde_json::json!({"path": "/mnt/dependency/src/lib.rs"}),
+                    &context
+                )
+                .await
+                .is_err()
+        );
+        let result = BashTool::new()
+            .execute(
+                serde_json::json!({"command": "cargo test --offline --locked"}),
+                &context,
+            )
+            .await
+            .unwrap();
+        eprintln!("native Bash dependency {case}: {result}");
+        assert_eq!(result["exit_code"], 101, "{result}");
+        assert_eq!(result["success"], false);
+        assert!(!result["stdout"].as_str().unwrap().contains("1 passed"));
+        let stderr = result["stderr"].as_str().unwrap();
+        assert!(
+            stderr.contains("failed to load source for dependency"),
+            "{result}"
+        );
+        assert!(!stderr.contains(project.to_str().unwrap()), "{result}");
+        assert!(!stderr.contains(outside.to_str().unwrap()), "{result}");
+        assert!(project.join("target").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("Cargo.toml")).unwrap(),
+            files[5].1
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("src/lib.rs")).unwrap(),
+            files[6].1
+        );
+    }
+    current = service.reconcile(7, current).unwrap();
+    let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
+    EditFileTool::new().execute(serde_json::json!({"path": "/mnt/project/Cargo.toml", "old_string": "path = \"../outside-dependency\"", "new_string": "path = \"dependency\""}), &context).await.unwrap();
+    let escaped = fixture.path().join("ungranted-source.rs");
+    let payload = "compile_error!(\"ALAN_ESCAPED_DEPENDENCY_PAYLOAD\");\n";
+    std::fs::write(&escaped, payload).unwrap();
+    let dependency_source = project.join("dependency/src/lib.rs");
+    std::fs::remove_file(&dependency_source).unwrap();
+    std::os::unix::fs::symlink(&escaped, &dependency_source).unwrap();
+    assert!(
+        ReadFileTool::new()
+            .execute(
+                serde_json::json!({"path": "/mnt/project/dependency/src/lib.rs"}),
+                &context
+            )
+            .await
+            .is_err()
+    );
+    let result = BashTool::new()
+        .execute(
+            serde_json::json!({"command": "cargo test --offline --locked"}),
+            &context,
+        )
+        .await
+        .unwrap();
+    eprintln!("native Bash dependency escape: {result}");
+    assert_eq!(result["exit_code"], 101, "{result}");
+    assert_eq!(result["success"], false);
+    assert!(!result["stdout"].as_str().unwrap().contains("1 passed"));
+    assert!(
+        !result["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("ALAN_ESCAPED_DEPENDENCY_PAYLOAD")
+    );
+    assert_eq!(std::fs::read_to_string(&escaped).unwrap(), payload);
+    std::fs::remove_file(dependency_source).unwrap();
+    std::fs::write(project.join("dependency/src/lib.rs"), files[6].1).unwrap();
+    for (path, content) in &files {
+        assert_eq!(
+            std::fs::read_to_string(project.join(path)).unwrap(),
+            if *path == "src/lib.rs" {
+                corrected.as_str()
+            } else {
+                content
+            }
+        );
+    }
+    eprintln!(
+        "native Bash dependency negatives complete: missing/revoked external grant refused despite retained in-grant build cache; live read-only file read allowed and edit denied before revocation; ungranted source alias denied without executing payload; no cross-grant Bash positive inferred"
     );
     service
         .revoke(&grant.id, "native Bash Git fixture")

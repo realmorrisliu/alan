@@ -634,3 +634,89 @@ and Git network/Perl helpers are untested. Final review/full quality/pinned stri
 validation/current-head CI must accompany publication. Tasks 3.2/3.3 retain their
 actual disjoint read-only dependency requirement, and thirty real-model development
 repetitions remain open. Do not equate scripted Tool results with code authorship.
+
+
+## Actual live dependency negatives and diagnostic projection repair
+
+The next actual HostMountService/Bash fixture extends the selected writable Git
+project with missing/revoked external dependency and ungranted source-alias cases.
+The earlier GREEN output is retained inside the project: these are cached
+**in-grant** builds, not a previously successful external dependency build.
+Without an external grant, ReadFile denies access and Cargo exits 101. A separate
+explicit read-only grant then permits actual ReadFile and denies EditFile; after
+revocation/reconciliation, both ReadFile and the next Cargo access fail. External
+manifest/source bytes remain exact. No active disjoint read-only grant is used by
+Bash, and no shell grant policy is changed.
+
+After restoring the original manifest, the Host fixture replaces the in-grant
+library source with a symlink into an ungranted sibling containing a compile_error
+canary. The dependency has an explicit [lib] path so this case reaches rustc,
+rather than stopping at Cargo target discovery. ReadFile rejects the alias and
+actual Bash/rustc reports missing source without consuming the canary; the sibling
+payload remains exact. The fixture restores the source and rechecks all seven
+source/config files with only the original authorized expression correction.
+
+The first test-only attempt against production revision `4212e7cb` exposed a real
+shared projection defect: Cargo correctly refused the ungranted manifest but its
+stderr named the normalized private sibling `/tmp/<fixture>/outside-dependency`.
+The retained `alan-native-bash-dependency-first.log` includes this response and an
+initial fixture assertion expecting "failed to load manifest" instead of Cargo's
+actual "failed to load source for dependency". That assertion was corrected; no
+old native binary digest was frozen before rebuilding, so the raw log and stated
+base/test-only scope are the RED evidence, not an invented exact RED binary proof.
+
+The Host adapter now projects the original output in one pass. Known mounted
+roots take precedence and require a complete component boundary; private ancestors
+of unavailable sibling paths use the existing `<unmapped-host-path>` marker while
+retaining the diagnostic suffix. This also prevents prefix-colliding siblings
+from acquiring a fabricated namespace and avoids cascading a replacement back
+through another native prefix. Filesystem-root projection preserves relative text
+and URI schemes. Five local regressions cover these cases, Unicode/color/file URI
+text and literal role/comparison/quote content. No grant, public API, configuration
+or dependency was added. Bash stdout/stderr, ToolContext JSON projection and Tool
+registry errors continue to reach the same NativeToolExecutionAdapter method;
+standalone/test adapters are outside this native Host repair.
+
+The initial four projection tests and focused native fixture passed (52.13 seconds
+for the fixture); after explicit library target selection, the focused fixture
+passed in **51.91 seconds** (`alan-native-bash-dependency-explicit-lib.log`). The
+final five projection tests pass with zero failures
+(`alan-native-bash-dependency-projection-final.log`). Final frozen Linux source
+passes engine **1430/0/1 in 129.85 seconds** and Host **55/0/2 in 52.71 seconds**
+(`alan-native-bash-dependency-final-engine.log` and
+`alan-native-bash-dependency-final-host.log`). Both actual Host development cases
+execute without their opt-in early-return diagnostics. Linux engine/Host
+all-target/all-feature Clippy with warnings denied passes in **1.60 seconds**.
+Native macOS Host passes **54/0/2 in 4.47 seconds** from its own Apple-target artifact
+owner; portable macOS coverage does not qualify Linux execution.
+
+`native-bash-dependency-acceptance.json` freezes **24 Rust source hashes**, actual
+Linux engine/Host binaries and logs. The original **379 installation/settings/proxy
+nodes** and **217 copied Git runtime entries** remain exact; installed package
+inventory is unchanged. The retained installation baseline SHA-256 is
+`118fea4c93ee341a24f3757175fc76aa7e0562ae7335ba257a6127c647e72b46`.
+Linux engine SHA-256:
+`b38740d162e346761d5696282501dd3b05086a9c7bb9dba0d6f49b2adac2f75f`;
+Linux Host SHA-256:
+`fcf2199cb3aa502bf1d53bcf4e2479181977ef4a599cd945751384228b2b6ed4`.
+The earlier provisioning hardlink correction and access-time/personal Cargo store
+exclusions still apply. The receipt collector's expected Host count was corrected
+from 54 to the actual 55 after the fifth local regression was added; this changes
+only the ignored evidence collector and does not rerun or relabel product tests.
+
+These scripted native Tool negatives close the actual missing/revoked/alias slots,
+not complete external read-only dependency support or real-model development.
+Tasks 3.2/3.3 remain open for the disjoint read-only positive and its following
+revocation/cache acceptance. ADR-0058 retains the selected-single-grant shell
+boundary pending the user's design choice. Thirty repeated real-model development
+runs and final review/full quality/strict validation/current-head CI remain open.
+
+Pinned OpenSpec 1.4.1 strict validation passes **69/69 items** with both existing
+capability owners in the proposal. Final source review followed every production
+projection caller above, constructor canonical-path invariants and the native
+fixture's live reconcile/revoke sequence. Known-mount priority and one-pass
+replacement preserve overlapping namespace names; the negative cache assertions
+remain explicitly scoped to the earlier in-grant build. No additional grant or
+standalone adapter change is claimed. Full quality and current publication-head CI
+are recorded separately at publication; they cannot be inferred from the earlier
+`4212e7cb` checks.
