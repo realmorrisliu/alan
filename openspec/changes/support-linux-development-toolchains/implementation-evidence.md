@@ -438,3 +438,63 @@ Host/Tool source hashes, the unchanged engine source hashes, actual binary/log
 identity, grant/entry scope and outcomes. The complete 379-node installation
 inventory is still exact after the Bash runs (`native-bash-stores-after.json`).
 These remain scripted native tests; thirty repeated real-model runs are open.
+
+## Command-local Rust selection repair
+
+Published Bash-isolation head `a947948b` passed all sixteen checks. Subsequent
+review reproduced a pre-admission selection gap: `printf effect > marker;
+RUSTUP_TOOLCHAIN=missing cargo test` skipped Rust inspection because the parser's
+first word was the environment assignment. Native execution wrote the marker
+before Cargo reported the missing runtime. A task-owned TMPDIR observer retained
+the actual `effect` bytes in `inline-selector-red-effects.json`; portable and
+native RED logs are `alan-rust-inline-red-compiled.log`,
+`alan-rust-inline-native-red.log` and `alan-rust-inline-effect-red.log`.
+
+The repair reuses the existing normalized command/argument view, handles `env --`
+assignment operands there, and validates the effective Rust invocation. Explicit
+`+selector` wins over the last literal command-local override, which wins over
+inherited/project selection. PATH/Rustup-home replacements and persistent shell
+selection changes refuse before effects. Ordinary output containing these words
+and unrelated assignments remain content. The internal helper export follows
+Rust inspection's Linux/Unix-test compilation conditions; macOS Clippy exposed
+the initial unconditional unused import and passes after that repair.
+
+This does not admit native shell wrappers or enable autonomous Linux bash. The
+first full native attempt failed because its new positive fixture assumed `env`
+was admitted; the existing full shape guard correctly refused it. That failure
+is retained in `alan-rust-prefix-final-engine.log` (1427 passed, one failed, one
+ignored). Corrected literal-prefix and explicit-CLI native builds pass exact
+rustc/cargo/rustdoc 1.97, unit/doctests/fmt/Clippy, with no source/dependency target
+output. Missing inline and persistent selection changes refuse before the
+preceding marker; actual `env`/environment-reset shapes are refused by the
+existing shape guard before the marker. Normalized wrapper inspection remains a
+portable test, not a claim of new native wrapper support.
+
+The focused repair suite passes ten tests in 75.13 seconds. Intermediate native
+full-source verification passes 1428/0/1 in 145.95 seconds; after the macOS-only
+conditional-import fix, final-source native engine passes **1428 tests, zero
+failures and one existing ignore in 141.96 seconds**
+(`alan-rust-prefix-final-engine-v3.log`). The actual live-service Bash entry
+is rebuilt with the new engine; full Host passes **49/0/2 in 25.02 seconds**
+(`alan-rust-prefix-final-host.log`), preserving its recorded isolation/revocation
+assertions. Linux engine and Host all-target/all-feature Clippy with warnings
+denied pass in 20.42 seconds (`alan-rust-prefix-final-clippy.log`). macOS passes
+43 portable namespace/Rustup tests with zero failures in 0.06 seconds, and its
+engine all-target/all-feature Clippy passes in 10.15 seconds. Native Linux
+claims do not derive from macOS tests or existing ignored live-provider probes.
+
+`native-rust-prefix-acceptance.json` freezes 23 source hashes, both actual native
+binaries, final logs, prior attempts and scope limits. Complete original
+installation inventory remains 379 nodes and byte-identical to the retained
+baseline after all final native execution (`native-rust-prefix-stores-after.json`,
+SHA-256 `118fea4c93ee341a24f3757175fc76aa7e0562ae7335ba257a6127c647e72b46`). Earlier
+provisioning metadata caveats remain in force. Native engine binary SHA-256:
+`81f5254758fc7c62457d57e3529f819f83b24f95352221dd8cba146ccb89c0b5`;
+native Host binary SHA-256:
+`faccba3a99066c065cc24ea3f7c38979f8ec5e6eeee32b0c6f5f6da0ba34f811`.
+
+Normal pre-commit quality/distribution enforcement and fresh exact-head CI remain
+the delivery workflow. No Host grant policy changed: 3.2/3.3 still require actual
+cross-grant product qualification, and the thirty real-model repetitions remain
+open. This repair supplements the existing supported-tool inspection tasks; it
+does not mark the remaining final-delivery checklist complete.

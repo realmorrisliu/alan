@@ -37,6 +37,104 @@ fn executable(path: &Path) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+#[test]
+fn command_prefixes_preserve_rustup_selection_and_validate_before_effects() {
+    let (_fixture, proxies, home, project) = installation();
+    let input = input(&project);
+    std::fs::write(project.join("rust-toolchain"), "missing\n").unwrap();
+    for words in [
+        vec!["RUSTUP_TOOLCHAIN=missing", "cargo", "test"],
+        vec!["env", "--", "RUSTUP_TOOLCHAIN=missing", "cargo", "test"],
+        vec![
+            "env",
+            "RUSTUP_TOOLCHAIN=missing",
+            "timeout",
+            "10",
+            "cargo",
+            "test",
+        ],
+        vec!["command", "cargo", "+missing", "test"],
+        vec!["rustup", "run", "missing", "cargo", "test"],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        let error = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("selected Rust runtime absent"),
+            "{words:?}: {error}"
+        );
+    }
+    for words in [
+        vec!["RUSTUP_TOOLCHAIN=1.97.0", "cargo", "test"],
+        vec![
+            "RUSTUP_TOOLCHAIN=missing",
+            "RUSTUP_TOOLCHAIN=1.97.0",
+            "cargo",
+            "test",
+        ],
+        vec!["env", "--", "RUSTUP_TOOLCHAIN=1.97.0", "cargo", "test"],
+        vec![
+            "env",
+            "RUSTUP_TOOLCHAIN=1.97.0",
+            "timeout",
+            "--preserve-status",
+            "10",
+            "cargo",
+            "test",
+        ],
+        vec![
+            "RUSTUP_TOOLCHAIN=missing",
+            "command",
+            "cargo",
+            "+1.97.0",
+            "test",
+        ],
+        vec!["FOO=anything", "printf", "RUSTUP_TOOLCHAIN=missing"],
+        vec!["printf", "PATH=anything"],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            Some("missing".into()),
+            Some((&input, &commands)),
+        )
+        .unwrap_or_else(|error| panic!("{words:?}: {error}"));
+    }
+}
+
+#[test]
+fn refuses_environment_changes_that_escape_the_inspected_selection() {
+    let (_fixture, proxies, home, project) = installation();
+    let input = input(&project);
+    for words in [
+        vec!["PATH=/bin", "cargo", "test"],
+        vec!["env", "RUSTUP_HOME=/tmp/other", "cargo", "test"],
+        vec!["RUSTUP_TOOLCHAIN=1.97.0"],
+        vec!["export", "RUSTUP_TOOLCHAIN=1.97.0"],
+        vec!["unset", "PATH"],
+        vec!["read", "RUSTUP_TOOLCHAIN"],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        let error = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("inspected Linux tool environment"),
+            "{words:?}: {error}"
+        );
+    }
+}
+
 fn input(project: &Path) -> ReifiedNamespacePlanInput {
     ReifiedNamespacePlanInput::new(
         vec![super::super::ReifiedMountDeclaration::host(

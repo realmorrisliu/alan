@@ -20,6 +20,8 @@ mod path_safety;
 mod sandbox_spec;
 mod shell_syntax;
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) use command_wrappers::command_and_args;
 pub(crate) use path_safety::protected_path_component;
 pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 

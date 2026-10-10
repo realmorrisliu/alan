@@ -123,8 +123,17 @@ toolchain file outside delegated authority does not infer another grant. Existin
 Linux shell-shape, protected-path, approval and network rules remain unchanged;
 this slice does not qualify arbitrary shell evaluators or custom runtimes.
 
-Inspect literal Rust invocations using the existing command parser. Missing
-selectors/components/targets fail before user effects. Selected fmt/Clippy helpers
+Inspect literal Rust invocations using the existing command parser and normalized
+command/wrapper view. Honor the last literal command-local Rustup selector beneath
+an explicit `+selector`, ahead of inherited/project selection. Refuse changes to
+PATH/Rustup home, persistent shell selection mutations and environment-reset
+wrappers before user effects instead of executing against an uninspected view.
+Ordinary content and unrelated wrapper options are not environment mutations.
+This does not relax the existing Linux full command-shape guard: native shell
+wrappers remain rejected before effects. Normalized wrapper inspection is tested
+independently and does not imply newly admitted wrapper execution.
+
+Missing selectors/components/targets fail before user effects. Selected fmt/Clippy helpers
 must be executable ELF files contained in their runtime. Freeze selection metadata,
 component manifests and executable contents, then recheck identity, containment and
 hashes in runner preparation. Component-manifest parent aliases must stay inside

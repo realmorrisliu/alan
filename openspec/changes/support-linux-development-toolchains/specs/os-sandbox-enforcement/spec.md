@@ -28,6 +28,12 @@ safe-degradation rules, never silent replacement or wider ambient access.
 - **AND** private Rustup settings expose neither unrelated overrides nor the Host management tree
 - **AND** a missing requested runtime, component or target refuses before user effects
 
+#### Scenario: Rust selection uses a literal command-local override or wrapper
+- **WHEN** a literal Rust invocation uses command-local `RUSTUP_TOOLCHAIN` assignments or a transparent wrapper admitted by the existing command-shape rules
+- **THEN** inspection resolves the effective Rust command and validates its selected runtime before any user effects
+- **AND** a command selector takes precedence over the last command-local override, which takes precedence over the inherited override and project selection
+- **AND** environment-clearing wrappers or command-local PATH/Rustup-home and persistent selection changes that cannot preserve the inspected view refuse explicitly before effects
+
 #### Scenario: Inspected Rust selection changes before admission
 - **WHEN** selection metadata, component metadata or an inspected executable changes after the Host adapter constructs its environment
 - **THEN** runner preparation rechecks the inspected content and path containment before user effects

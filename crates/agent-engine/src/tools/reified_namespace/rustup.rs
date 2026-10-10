@@ -33,6 +33,11 @@ pub(super) fn discover(
     toolchain_override: Option<String>,
     input: Option<(&ReifiedNamespacePlanInput, &[Vec<String>])>,
 ) -> Result<Option<ReifiedRustupEnvironment>, String> {
+    if let Some((_, commands)) = input {
+        for words in commands {
+            validate_command_environment(words)?;
+        }
+    }
     let mut proxies = Vec::new();
     let system = super::default_execution_substrate();
     for entry in std::env::split_paths(path) {
@@ -168,16 +173,19 @@ pub(super) fn discover(
     }
     if let Some((input, commands)) = input {
         for words in commands {
-            let Some(name) = words
-                .first()
-                .and_then(|word| Path::new(word).file_name())
-                .and_then(|name| name.to_str())
-            else {
+            let Some((name, args)) = super::super::sandbox::command_and_args(words) else {
                 continue;
             };
+            let prefix = &words[..words.len() - args.len() - 1];
             if PROXIES.contains(&name) && name != "rustup" {
                 let selector =
-                    if let Some(selector) = words.get(1).and_then(|word| word.strip_prefix('+')) {
+                    if let Some(selector) = args.first().and_then(|word| word.strip_prefix('+')) {
+                        selector.to_string()
+                    } else if let Some(selector) = prefix
+                        .iter()
+                        .rev()
+                        .find_map(|word| word.strip_prefix("RUSTUP_TOOLCHAIN="))
+                    {
                         selector.to_string()
                     } else {
                         active_selector(input, &mut environment)?
@@ -185,11 +193,11 @@ pub(super) fn discover(
                 let root = runtime_for_selector(&selector, &environment)?
                     .host_path
                     .clone();
-                let subcommand = words
-                    .get(if words.get(1).is_some_and(|word| word.starts_with('+')) {
-                        2
-                    } else {
+                let subcommand = args
+                    .get(if args.first().is_some_and(|word| word.starts_with('+')) {
                         1
+                    } else {
+                        0
                     })
                     .map(String::as_str);
                 let required: &[&str] = match (name, subcommand) {
@@ -212,15 +220,46 @@ pub(super) fn discover(
                             .push((path.clone(), executable_digest(&path)?));
                     }
                 }
-            } else if name == "rustup" && words.get(1).is_some_and(|word| word == "run") {
+            } else if name == "rustup" && args.first().is_some_and(|word| word == "run") {
                 validate_selector(
-                    words.get(2).ok_or("missing Rustup run selector")?,
+                    args.get(1).ok_or("missing Rustup run selector")?,
                     &environment,
                 )?;
             }
         }
     }
     Ok(Some(environment))
+}
+
+fn validate_command_environment(words: &[String]) -> Result<(), String> {
+    let view = super::super::sandbox::command_and_args(words);
+    let prefix = view.map_or(words, |(_, args)| &words[..words.len() - args.len() - 1]);
+    let state_change = view.is_none()
+        || view.is_some_and(|(name, _)| {
+            matches!(
+                name,
+                "export"
+                    | "unset"
+                    | "readonly"
+                    | "declare"
+                    | "typeset"
+                    | "local"
+                    | "read"
+                    | "getopts"
+            )
+        });
+    let operands = if state_change { words } else { prefix };
+    for word in operands {
+        let name = word.split_once('=').map_or(word.as_str(), |(name, _)| name);
+        if matches!(name.trim_end_matches('+'), "PATH" | "RUSTUP_HOME")
+            || (state_change && name.trim_end_matches('+') == "RUSTUP_TOOLCHAIN")
+        {
+            return Err(format!(
+                "command-local {name} cannot replace the inspected Linux tool environment"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn active_selector(

@@ -43,7 +43,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         let toolchain = project.join("rust-toolchain.toml");
         std::fs::write(
             &toolchain,
-            if case == "env" || case == "cli" {
+            if matches!(case.as_str(), "env" | "cli" | "inline" | "inline_cli") {
                 "[toolchain]\nchannel = \"missing\"\n"
             } else {
                 "[toolchain]\nchannel = \"1.97.0\"\ncomponents = [\"clippy\", \"rustfmt\"]\n"
@@ -57,7 +57,10 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             )
             .unwrap();
         }
-        let positive = matches!(case.as_str(), "project" | "env" | "cli");
+        let positive = matches!(
+            case.as_str(),
+            "project" | "env" | "cli" | "inline" | "inline_cli"
+        );
         let sandbox = Sandbox::from_spec_with_backend(
             SandboxSpec::from_host_mounts(&[
                 SandboxHostMount {
@@ -85,9 +88,18 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
                 "{readiness:?}"
             );
-            let selector = if case == "cli" { " +1.97.0" } else { "" };
+            let selector = if case == "cli" || case == "inline_cli" {
+                " +1.97.0"
+            } else {
+                ""
+            };
+            let prefix = match case.as_str() {
+                "inline" => "RUSTUP_TOOLCHAIN=1.97.0 ",
+                "inline_cli" => "RUSTUP_TOOLCHAIN=missing ",
+                _ => "",
+            };
             let command = format!(
-                "rustc{selector} --version && cargo{selector} --version && rustdoc{selector} --version && cargo{selector} test --offline --locked && cargo{selector} fmt -- --check && cargo{selector} clippy --offline --locked -- -D warnings"
+                "{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked -- -D warnings"
             );
             let result = sandbox.exec(&command, &project).await.unwrap();
             assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
@@ -119,6 +131,14 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             }
             let cargo = if case == "missing_cli" {
                 "cargo +missing test"
+            } else if case == "missing_inline" {
+                "RUSTUP_TOOLCHAIN=missing cargo test"
+            } else if case == "missing_wrapped" {
+                "env -- RUSTUP_TOOLCHAIN=missing timeout --preserve-status 10 cargo test"
+            } else if case == "persistent_selector" {
+                "export RUSTUP_TOOLCHAIN=missing; cargo test"
+            } else if case == "environment_reset" {
+                "env -i cargo test"
             } else {
                 "cargo test"
             };
@@ -130,6 +150,10 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             assert!(
                 reason.contains(if case == "alias" {
                     "unsafe alias"
+                } else if case == "environment_reset" || case == "missing_wrapped" {
+                    "rejects shell wrappers like env"
+                } else if case == "persistent_selector" {
+                    "inspected Linux tool environment"
                 } else if case == "missing_component" {
                     "required Rust component/target absent"
                 } else {
@@ -180,8 +204,14 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         "project",
         "env",
         "cli",
+        "inline",
+        "inline_cli",
         "missing_env",
         "missing_cli",
+        "missing_inline",
+        "missing_wrapped",
+        "environment_reset",
+        "persistent_selector",
         "missing_component",
         "changed",
         "alias",
@@ -206,7 +236,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         if case == "env" {
             child.env("RUSTUP_TOOLCHAIN", "1.97.0");
         }
-        if case == "cli" || case == "missing_env" {
+        if matches!(case, "cli" | "inline" | "inline_cli" | "missing_env") {
             child.env("RUSTUP_TOOLCHAIN", "missing");
         }
         let output = child.output().unwrap();
