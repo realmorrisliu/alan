@@ -23,7 +23,7 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
-First outcomes are two PASS, one FAIL and twenty-seven NOT_RUN; qualified slots
+First outcomes are two PASS, two FAIL and twenty-six NOT_RUN; qualified slots
 are three out of thirty. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
@@ -72,3 +72,13 @@ insertion and resize, root-cwd return and native exit. This UI probe is not a
 model task and adds no qualified slot. Prior evidence head `2d700742` passed all
 16 CI checks; the new repair head requires its own checks and review. See
 `native-runs.md` for the immutable receipt and source/binary identity.
+
+The first macOS F2 run on the exact UI-patched candidate completed all three
+model-authored source edits and actual library/binary Cargo verification, without
+corrective advice or operator source edits. Its independent compound check failed
+before compilation when Write-classified shell preflight rejected the explicitly
+read-only project manifest operand. A separate protected library check passes,
+but the original full-check failure remains FAIL and adds no qualified slot. Both
+native instances and all observed Tool Processes exited; task 2.2 remains open.
+This is a separate authority/preflight case from the earlier namespace Read-operand
+finding; inspect path role/projection separately before proposing a shared repair.

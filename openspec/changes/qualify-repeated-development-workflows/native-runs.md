@@ -4,15 +4,16 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-First outcomes are two PASS, one FAIL and twenty-seven NOT_RUN. Qualified slots
+Including the subsequent F2 attempt below, first outcomes are two PASS, two FAIL
+and twenty-six NOT_RUN. Qualified slots
 are three out of thirty, closing task 2.1 only. Linux generation readiness,
 task 1.4 and the remaining families stay open.
 
 ## Candidate and receipts
 
-Production source is unchanged #1046 `cace913c`; the clean native checkout's CLI
+The original four F1 executions use unchanged #1046 `cace913c`; the clean native checkout's CLI
 SHA-256 is `b66362691d83e8f63867058b3a15afd9ddbbbc721ef151a23b93b2ef53c8d6fd`.
-All four actual admitted callable bindings and generation contexts confirm
+All four F1 admitted callable bindings and generation contexts confirm
 `chatgpt-main`, provider `chatgpt`, model `gpt-6.1-sol`, reasoning effort `medium`.
 These instances expose the same default Memory Store; no personal memory bodies
 were collected or cleared, and statistical independence is not claimed.
@@ -23,7 +24,7 @@ The immutable thirty-input fixture manifest is `fixtures-v3/manifest.json`,
 SHA-256 `b64ad0126be948a69d46f4936cf25caacc6ff8d69b61bcda6e2b37229c32b25e`.
 The original `first-outcomes-v1.json` preserves the first two attempts, SHA-256
 `d8689edaed159ed8777bc5fe3f3e2d35c1189ce65d6f00ce07d7195da387c81b`.
-The complete updated thirty-slot snapshot is `first-outcomes-v2.json`, SHA-256
+The preserved F1 thirty-slot snapshot is `first-outcomes-v2.json`, SHA-256
 `8ce517dae2373e453e2585ce9fadcc57a365ccf7c97362a4b0484dc3f8babe1d`.
 
 | Slot / attempt | Attempt outcome | Model task time | Submission through verified cleanup | Receipt SHA-256 |
@@ -171,3 +172,53 @@ still required by the full qualification change.
 
 Evidence head `2d700742` passed all sixteen current-head CI checks, retained in
 `ci-2d700742-all16-final.json`. Those checks do not qualify the later UI repair.
+
+
+## First cross-file model task — macOS F2 r1 / a1
+
+First outcome is FAIL, with no qualified completion added. Receipt SHA-256:
+`6c0336f1f3bc3712c30db4308ff05bad88112db6b490a4d7d15fb43954c1ac03`.
+The original thirty-input manifest is unchanged. Updated complete snapshot
+`first-outcomes-v3.json` SHA-256 is
+`911b7cebb5d4f4371a925061be609097fa77c6b50dbb0bdbe18322dd68658857`:
+four executed original slots, five real model attempts, two first PASS, two first
+FAIL, twenty-six NOT_RUN, three qualified completions.
+
+The new native candidate is `cace913c` plus the exact three-file cwd UI patch,
+source diff SHA-256
+`e5bc7140588213752878ba8da9d3c1322d97693fabde7a78666571048515666c`;
+CLI SHA-256 remains `a16fec426a74682348ce293d741b569f4c8c14cd062a806dadef9ac99305abf3`.
+The patch is delivered in qualification branch commit `3dd629bd`. Prelaunch and
+ready receipts freeze prospective tools/PATH/config/source, actual Seatbelt,
+model gpt-6.1-sol/medium and all original fixture hashes. Model boot
+`e7060042-85fc-43f3-9ffa-2a8961eecb77`, native PID `17681`, Root PID `8`,
+ran in the same owned 80x24 Herdr pane. The source diff changes exactly
+`src/lib.rs`, `src/main.rs` and `src/bin/report.rs`. Actual Action `a7` compiles
+library and both binaries, runs both Cargo binaries with output `20` and `-1`,
+and reads back source. Original failed non-repository Tool evidence also remains.
+No tests/config/input files changed, and all seven Tool Processes exited before
+model `/quit`. Detail Action a7 and draft insertion `abcδXYZ` pass; the context
+line shows the externally authorized cwd. Model task time is 37.35 seconds;
+submission through observed verifier exit is 376.80 seconds, below the frozen
+600-second bound. Zero corrective model advice and zero operator source edits.
+
+Fresh verifier boot `6dcf80dc-d309-49a4-9345-4afb87d9b4fd`, native PID `18585`,
+receives project/assertions read-only and checker scratch read-write. The original
+compound command combines protected Cargo test and both binaries via explicit
+manifest operands. Policy allows it as Write under Seatbelt/projected_host_paths;
+Action a1 then fails preflight with `Command references path outside host_mount`
+for the read-only project manifest before any checker compilation. The SDK and
+rollout retain the original command, policy, result and exited Tool Process.
+Current shared guard validates non-Read command operands as writable; this
+read-only operand case must be reviewed separately from the earlier absolute
+namespace operand in a Read command. No production path/authority repair is claimed.
+
+A separately recorded library-only diagnostic command freshly compiles both
+packages and passes three protected library assertions under the same verifier.
+Its call ID correlates the public SDK Action to that verifier's rollout; all
+protected/checker inputs and post-model source hashes remain unchanged. Both
+verifier Tool Processes and the native instance exit. That narrower diagnostic
+success does not erase the original full-check failure or qualify F2. The receipt
+records observation-schema mistakes and this diagnostic follow-up separately;
+no repeated generation or operator solution occurred. Task 2.2 and a full linked
+retry remain open after owner-correct path/authority review and repair.
