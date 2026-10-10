@@ -189,8 +189,17 @@ range semantics, and never authorize writes or broaden project/native grants.
 Long JSON output needs usable bounded range access within the prompt-facing
 budget; another oversized projection or producer rerun is not successful reading.
 Reuse existing namespace/evidence IO and Tool execution rather than an artifact
-registry or globally addressed controller. The exact reader implementation and
-native qualification remain open.
+registry or globally addressed controller. The existing ReadFile Tool receives
+the actual invocation namespace from the Service Manager, scoped to the real
+parent Process rather than a Tool argument. Only concrete own-Agent Action output
+paths use this read-only route; Host paths keep their existing adapter and
+line-range behavior. Evidence uses byte_offset and byte_limit with a 4096-byte
+bound, reports total_bytes and next_byte_offset, and preserves UTF-8 boundaries
+so repeated ranges return original text without another oversized Tape projection.
+The bound leaves room for worst-case JSON escaping. Missing/expired records,
+cross-owner/control/traversal attempts and absent descriptors fail truthfully
+without Host fallback. Native qualification and final-candidate task retries
+remain open.
 
 The same run shows retained Command JSON displayed as escaped raw bytes after
 its bounded structured preview. Extend the existing pure acquired-content
@@ -199,6 +208,35 @@ full acquired streams with separate labels, preserving raw bytes below them.
 Keep bounds, reference resolution, redaction/expiry and malformed fallback intact;
 interpret no Tool arguments or tool identity. A failing actual Action-detail
 regression precedes the repair, with native acceptance on a fresh candidate.
+
+### Preserve declared Tool schema optionality at the Responses boundary
+
+The first native reader candidate fails the unchanged F5 retry: four ReadFile
+calls combine line and byte ranges, despite the model-visible guidance and an
+error requiring distinct modes. The shared Responses wire Tool definition emits
+no strict field. OpenAI's function-calling contract states that omission permits
+provider normalization into strict schemas, making all fields required. This is
+a plausible shared cause of the observed forced-looking arguments, not a proven
+server trace. Preserve the supplied Tool schema and its optional fields by
+explicitly selecting non-strict function arguments in the existing Responses
+wire adapter. Both official and managed Responses use this mapper; retain engine
+schema validation before Tool execution, typed-evaluation/output contracts,
+provider auth/profile/model/effort and all Process/grant/range boundaries. Do not
+silently ignore mixed ranges or remove the failed retry. Require serialized-wire
+regressions and a fresh unchanged-task native retry to qualify the finding.
+
+Reference: [OpenAI function-calling strict-mode contract](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
+
+### Retain loop-guard stop reasons through existing file-backed error surfaces
+
+The same failed F5 retry also reveals a loop-guard visibility gap: both guard
+branches emit legacy Error/TextDelta events without publishing an AgentFS UI
+error. Reuse the existing error_notice helper, whose notice and Error event
+already feed file-backed live state and retained transcript history. Preserve
+existing guard thresholds, Process/Action effects and turn settlement; do not
+add a synthetic model answer or another history owner. Stop copy must describe
+the reason and supported next-input action without obsolete environment advice.
+Regressions exercise both guard branches through real AgentFS-backed orchestration.
 
 ## Risks / Trade-offs
 

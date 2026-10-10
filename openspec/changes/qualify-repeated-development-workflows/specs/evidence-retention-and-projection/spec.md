@@ -29,3 +29,14 @@ NOT identifiers of a separate artifact-read API.
 - **WHEN** a read requests another Agent owner, traversal/control paths, unavailable evidence or an expired range
 - **THEN** it refuses unsupported authority or returns truthful missing/expiry evidence without a Host fallback
 - **AND** no evidence read creates write authority or exposes private backing paths
+
+#### Scenario: Original ranges fit the prompt-facing budget
+- **WHEN** ReadFile follows its concrete own-Agent Action output path using byte_offset and byte_limit
+- **THEN** each read acquires at most 4096 original bytes and reports total_bytes and the next UTF-8-safe byte offset
+- **AND** worst-case JSON escaping still leaves the ordinary Tool result below the inline budget
+- **AND** Host files retain line offset/limit behavior; mixed range modes and unsupported paths do not silently fall back to Host access
+
+#### Scenario: An old range refers to expired evidence
+- **WHEN** the storing service replaces an original output with its structured expiry record
+- **THEN** reading an obsolete byte offset returns that expiry record truthfully
+- **AND** it does not report successful acquisition of the previous original range

@@ -152,3 +152,27 @@ The acquired Command readability slice now passes three adjacent regressions,
 content, draft/cursor return, unchanged project bytes and actual Tool/instance
 exits. This no-generation probe adds no qualified matrix slot. The model reader
 gap and unchanged F5 task retry remain open; new-head review/CI are required.
+
+The reader repair now has a local implementation using the real Tool invocation
+namespace and parent identity, reusing existing guarded namespace IO. A ReadFile
+regression first fails through the old Host-only route, then passes without Host
+authority. Six focused Tool tests cover reconstruction within the Tape budget,
+worst-case escaping, owner/control/traversal boundaries, expired offsets, UTF-8,
+absent descriptors and ordinary runner schema validation. The actual Service
+Manager dispatch test verifies the real parent/namespace boundary. Engine testing
+passes 1406 unit tests (one existing ignored) and 20 integration tests; targeted
+Clippy passes. Fresh native candidate qualification, unchanged-task retry and
+new-head quality/review/CI are still required; no qualified slot is added here.
+
+
+Fresh unchanged F5 r1 a2 remains FAIL: four mixed line/byte range ReadFile calls
+are correctly refused, then the guard ends the turn without a file-backed stop
+explanation. No solution, advice, duplicate grant or producer rerun occurs.
+Aggregate v16 records eighteen attempts and twelve qualified slots; first outcomes
+stay nine PASS, four FAIL and seventeen NOT_RUN. Native receipt and source/binary
+identity are recorded in native-runs.md. The local shared Responses mapper now
+explicitly preserves non-strict Tool arguments, with passing wire/LLM tests;
+provider normalization remains a causal inference pending native retry. Both
+loop-guard branches reuse the existing AgentFS error surfaces for visible retained
+stop reasons. These unpublished repairs need quality/review/CI and a fresh unchanged
+task retry; prior head 51408b8c's green checks do not qualify them.

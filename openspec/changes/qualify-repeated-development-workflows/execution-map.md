@@ -191,3 +191,13 @@ remain required. The preparation fixture manifest explicitly says
 `runtime_readiness_frozen: false` and cannot substitute for a Host readiness receipt.
 Missing usage/cost stays unknown. Capture first outcomes and linked retries without
 turning a final answer, command exit or preflight into a qualification pass.
+
+
+The receiving Agent's concrete Action output can now be acquired locally through
+ReadFile byte_offset/byte_limit (maximum 4096), using the actual invocation's
+namespace/parent; Host files keep line ranges and mixed modes remain invalid.
+Native reader candidate F5 r1 a2 fails through four mixed-mode calls; aggregate
+v16 retains eighteen attempts and twelve qualifications. This does not yet qualify
+model use of the reader. A fresh candidate must include the Responses optionality
+and AgentFS guard-error publication repairs, freeze all identities again, then
+retry the unchanged original task without operator advice or source edits.

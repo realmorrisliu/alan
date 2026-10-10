@@ -831,3 +831,72 @@ attempt: aggregate v15, twelve qualified slots and checklist 7/19 are unchanged.
 The model's retained-reference reader remains unimplemented; this presentation
 repair does not qualify F5 or repair its first failure. Fresh head review/CI and
 the unchanged-task real-model retry remain required.
+
+
+## macOS F5 r1 a2 FAIL — mixed range arguments and invisible guard stop
+
+The fresh independently built reader candidate uses cace913c plus the earlier
+qualification repairs and the actual Process-scoped namespace reader. CLI
+SHA-256 `5629d84bf0218606ea978efabfac17ec807e7a2d37fb789ed31ad00b1e84ac17`,
+source diff SHA-256 `ac0c9d9068b68bf06652f309c6e7c76d96a81f22b188d2cb7d646ad20aa61639`.
+All five fixture files, the original prompt and protected assertions match the
+frozen r1 input. gpt-6.1-sol/medium, actual Seatbelt, selected tools/config,
+80x24 native terminal and source/binary identities are frozen before generation.
+Native PID 74988, boot `2800371a-c96e-4a94-8047-a4465af11d49`, Root 8.
+
+The original producer executes exactly once in a2, retaining the full stdout.
+Four actual ReadFile Actions a3–a6 request that same /agent/8/actions/a2/output
+with byte_offset=164300, byte_limit=4096 AND offset=1, limit=100. The original
+mixed-mode validation correctly rejects all four; no additional authority,
+producer rerun, operator advice or solution edit occurs. The fifth identical
+invocation is stopped before Tool execution by the existing repeated-call guard.
+The task settles to idle with an empty known queue and no visible stop notice.
+Code inspection confirms both loop-guard branches publish only legacy events,
+not AgentFS terminal error surfaces. Protected behavior checking is NOT_RUN:
+the retained-original dependency already failed and no solution was authored.
+
+The original Action detail remains readable, reaches QVALUE=42137 through
+supported paging and returns to abcδXYZ with the saved logical cursor. Source
+files remain byte-identical; actual observed Tools are exited, PID 74988 is gone,
+and foreground returns to fish 72808. Submission through verified cleanup takes
+378.941501 seconds, within the frozen 600-second bound. Receipt SHA-256
+`98ad52944ccac9fb9b726b396d6c61e78416fb5c56a2ad7e70b15b351ee0e659`
+at attempts/macos-f5-r1/a2/receipt.json. The retained collection notes distinguish
+a pre-generation toolchain-cwd mismatch and asynchronous detail selection from
+model steering; corrected collection changes no prompt, solution or authority.
+
+Immutable first-outcomes-v16.json SHA-256
+`2a7dc09dbf6f2c1a5223d661dc4037a9999adc614684348efd6cb17001a300d2`
+records eighteen model-task attempts, twelve qualified slots, and original first
+outcomes nine PASS, four FAIL and seventeen NOT_RUN. Usage/cost and time partitions
+remain unknown. The shared Responses adapter's omitted strict field is a plausible
+cause of required-looking optional arguments, not a captured server trace. The
+local explicit non-strict wire repair passes serialized streaming/non-streaming
+regressions and 212 LLM unit plus eight integration tests; existing provider-live
+and doc checks remain ignored. Both provider and stop-visibility repairs require
+fresh unchanged-task native qualification, new-head review/quality/CI and final
+candidate applicability. Checklist stays 7/19; no F5 slot is qualified.
+
+
+## Reader / provider / guard repair local verification
+
+The existing AgentFS error_notice helper now publishes both loop-guard stop
+branches as a current notice and retained terminal Error event. Thresholds,
+legacy events, Process/Action effects and turn settlement stay unchanged; no
+synthetic model answer or second history owner is introduced. Two production
+calls and corrected unsupported-environment advice implement the visibility fix.
+The actual AgentFS-backed orchestration regression first fails with notice None,
+then passes both repeat and batch limits, verifies no refused Action, original
+Tool exit, idle settlement and exactly one retained error after the next input.
+
+Complete affected-crate testing passes Engine 1407 plus 20 integration tests
+(one existing ignored unit), Tools 144, Service Manager 158 plus two integrations,
+and LLM 212 plus eight integrations. Existing live-provider/doc cases stay ignored.
+Normal full quality, standalone checks and distribution pass; pinned OpenSpec
+1.4.1 validates 69/69. The initial new delta failed the legacy validator because
+SHALL was not on its first requirement line; the corrected normative sentence
+passes without changing implementation. Review traces all namespace-bearing
+callers, owner/range/expiry/UTF-8 boundaries, shared official/managed wire mapper
+and both guard surfaces. No new external runtime dependency or authority/config
+is introduced. Publication/current-head CI and unchanged-task native evidence
+remain separate gates; local verification adds no qualified matrix slot.

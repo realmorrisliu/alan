@@ -28,6 +28,9 @@ None.
 
 ### Modified Capabilities
 
+- `provider-connection-contract`: preserve Tool parameter optionality in
+  Responses adapters instead of leaving provider-side strict normalization implicit.
+
 - `evidence-retention-and-projection`: make published retained Action output
   references actually readable by the receiving Agent through bounded namespace
   reads, preserving ordinary Process and Host grant boundaries.

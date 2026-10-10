@@ -398,6 +398,8 @@ version = "0.1.0"
 dependencies = [
  "alan-agent-engine",
  "alan-agent-protocol",
+ "alan-ap",
+ "alan-kernel",
  "anyhow",
  "dunce",
  "glob",

@@ -11,6 +11,8 @@ pub(crate) use agent_files::{NamespaceTapeWriter, PendingActionPublication};
 mod child_launch;
 mod client;
 mod evaluation;
+mod evidence_read;
+pub(crate) use evidence_read::read_action_evidence;
 mod generation;
 pub use evaluation::{
     NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,

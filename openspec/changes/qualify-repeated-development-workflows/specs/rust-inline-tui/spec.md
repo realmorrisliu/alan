@@ -72,6 +72,25 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 
 ## ADDED Requirements
 
+### Requirement: Tool loop guard stops remain visible in file-backed history
+The runtime SHALL publish the actual stop reason through the existing AgentFS
+notice and terminal-error event surfaces when repeated identical Tool calls or
+the configured Tool batch limit stops a turn. The reason SHALL
+remain in transcript history after the turn settles and after a subsequent
+input clears the current notice. The stop MUST NOT execute the refused Tool,
+replay earlier effects, imply successful task completion or advertise unsupported
+environment overrides.
+
+#### Scenario: Repeated call is refused before execution
+- **WHEN** the repeated-call guard prevents the next identical Tool invocation
+- **THEN** the file-backed terminal receives a retained error and current notice explaining the stop
+- **AND** no Action or Process is created for the refused invocation
+
+#### Scenario: Batch limit stops further advancement
+- **WHEN** the configured Tool batch limit ends the current turn
+- **THEN** the completed batch's original results remain and its stop reason is published through the same file-backed error surfaces
+- **AND** settling the turn or starting another input does not erase its historical error or replay the completed batch
+
 ### Requirement: Explicit project revocation uses authoritative current-Root evidence
 The terminal UI SHALL discover the current Root's active project grant for
 `/project revoke` when no retained project-picker or recovery receipt exists, using bounded public
