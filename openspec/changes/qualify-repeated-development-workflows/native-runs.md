@@ -1326,3 +1326,96 @@ and model/Tool/wait partitions remain unknown. Head c5f9b924 passes all sixteen
 checks, including completed CodeQL, before these evidence-only updates. Their
 new head requires its own checks; no final merged-source/cross-Host qualification
 or unattended self-bootstrap is claimed.
+
+
+## Final-candidate macOS F4 lifecycle reruns complete — 2026-10-11
+
+All three original cancel/revoke/explicit-recovery tasks now pass on the same
+candidate as the final F1/F2/F3/F5 runs: CLI SHA-256 `1b609034`, tracked diff
+`60fbb03a`, and the unchanged 35-file source inventory on cace913c. Each fresh
+project is reconstructed with the existing fixture generator and checked against
+the original fixtures-v3 project, prompt, follow-up and protected-assertion hashes
+before generation. Original fixture defects, allowed files, 80x24 geometry and
+600-second bounds are unchanged. Native versions, executable hashes, config,
+observer and call-correlated Seatbelt setup approval establish actual readiness.
+All initial and resumed model contexts retain gpt-6.1-sol/medium. Memory remains
+enabled and uncleared; these repetitions are not independent statistical samples.
+
+Each initial model invokes the frozen start_work command once. Actual delayed
+writer, parent and process group are observed live before planned Ctrl+C, then
+observed gone. After the original forty-second deadline, late.txt is absent and
+the completed ledger entry occurs exactly once. Source remains defective before
+recovery. At a settled paused boundary, /project revoke selects cwd / and the
+owning Host grant becomes inactive. The unchanged denied-read follow-up is
+continued alone; actual Read output contains an authority/adapter error and no
+ledger content. Neither new authority nor additional work is requested.
+
+Before /quit and again before --resume, the shared durable selector is compared
+to the exact owning initial rollout. A fresh boot retains the frozen task, with
+no active or pending work before explicit regrant. A newly correlated cwd Action
+precedes the unchanged continuation and one actual structured reapproval request.
+After planned approval, Read/EditFile/Cargo change only src/lib.rs to x + y and
+pass the original contract. Newly owned Action IDs and call IDs distinguish new
+execution from copied recovery history and virtual cd. The only resumed native
+Bash command is the contract test; start_work is not replayed, the ledger stays
+one entry, and writer.pid/writer.started stay unchanged through recovery.
+
+| Slot / attempt | Initial PID / boot | Resumed PID / boot | Verifier PID / boot | Submission through verified cleanup |
+| --- | --- | --- | --- | --- |
+| F4 r1 / a4 | 78910 / 4d424946-cae0-4ca0-b431-01cafe39728a | 79205 / 5d262211-6d1e-441a-b3f6-82cd75d53628 | 79491 / 9f5b8599-8cf6-4ac7-98be-8040998dd00c | 270.090501 seconds |
+| F4 r2 / a2 | 80506 / 96ac4b3b-9493-4b8c-abe3-1317bcdaa868 | 80685 / 07cc1491-5da5-495b-b196-98fd24cacbaf | 80857 / bb11f58a-a993-4d8f-92c3-7c8727813cfd | 197.574830 seconds |
+| F4 r3 / a2 | 81020 / a33067c9-38d5-47e9-8adc-7af62145ab45 | 81200 / 662ac31f-31e9-40c9-8b60-d2d118742ac8 | 81355 / 9ea9b6bd-264c-4452-be63-50b715747e91 | 191.562333 seconds |
+
+Cancelled writer/parent/group identities are respectively 79087/79084/79041,
+80598/80596/80552 and 81124/81122/81079. Each resumed Root is instance-local 8;
+new Read/EditFile/Bash references 9/10/11 are observed exited in that boot.
+Original Cargo detail correlates to a7/a8/a9 respectively. Escape returns the
+draft abcXYZ; insertion at its retained logical cursor produces abcδXYZ, and
+Host scrollback retains task/control/answer history. The emptied draft precedes
+actual native exit. Separate native verifiers grant project/assertions read-only
+and dedicated checker scratch read-write. Fresh protected_behavior compilation
+passes, with actual call ID matched to its Seatbelt allow audit. Project,
+assertion and driver inventories stay byte-identical through checking; each
+verifier Tool exits, all nine native invocation PIDs are gone, and fish 72808 is
+foreground before reuse. No operator solution edits, corrective model advice,
+unplanned revoke fallback, task restart or verifier model generation occurs.
+Planned setup approvals, cancellation, revoke, queue control, regrant and
+reapproval remain explicit human interventions.
+
+Collection limitations stay explicit. The cancelled native Tool has no published
+Action, and its individual Kernel Tool status was not collected before initial
+instance exit; that status is not claimed as observed. Actual cancelled native
+descendants/group and initial-instance exit are independently verified. r3 also
+collects exited statuses for the published initial Tool references. r1 retains
+pre-generation source-path/event-shape/queue/model-field corrections and a later
+valid observation beyond its deadline. Recovery command checking initially
+included copied history and virtual cd, then used actual new Action/call origin.
+r2 retains an early approval observation and an incorrect expected detail ID;
+the same live request was reobserved and actual a8 derived from its own Action.
+None of those collector corrections restarts or steers a model task.
+
+Receipts under the owned qualification cache:
+
+- attempts/macos-f4-r1/a4/receipt.json SHA-256
+  `ec82476c586d4bf88a7575634d5492e300b9aa7ffbf2fa1d63c70a645121e7d8`;
+  first-outcomes-v30.json SHA-256
+  `dee0a8cfd8a70c155fc16af1f0167910c16f1c81e10c4534744e0147a53055c5`.
+- attempts/macos-f4-r2/a2/receipt.json SHA-256
+  `2884136889bdbdf7f9422ff80bab83e485def86cc6c1675e16870a02eff65cd1`;
+  first-outcomes-v31.json SHA-256
+  `ef76a94c4f61bb5b705ea9dfaa6c4399338ffc5b379069c0b35db6e522012be9`.
+- attempts/macos-f4-r3/a2/receipt.json SHA-256
+  `104cf4014dae776123a1603b3b724a343f3c024b6c8f0805b431529fab36fd49`;
+  first-outcomes-v32.json SHA-256
+  `2e0ce1b0772255aa1accb777d08051e09fd46329af6a648ef90e6ecea121466c`.
+
+Aggregate v32 retains thirty-four development task attempts, fifteen qualified
+slots and original first outcomes eleven PASS/four FAIL/fifteen NOT_RUN, plus the
+one separate earlier unintended diff-verifier generation. All fifteen macOS
+slots now match the exact final candidate; all fifteen Linux slots remain open.
+Checklist stays 8/19: cross-Host readiness, final repair/qualification audit,
+complete quality and user merge/canonical closure remain requirements. Usage,
+cost and model/Tool/wait partitions remain unknown. Previous head 803b49be passes
+all sixteen checks, including completed CodeQL; this evidence-only update
+requires its own current-head checks. No merged-source/cross-Host qualification,
+general autonomous self-bootstrap or automatic routing is claimed.

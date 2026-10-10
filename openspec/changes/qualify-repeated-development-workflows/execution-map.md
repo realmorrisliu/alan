@@ -1,8 +1,9 @@
 # Native execution and evidence map — 2026-10-10
 
-This records supported operator controls. Initial actual task outcomes are in
-`native-runs.md`: nine first PASS, four first FAIL, seventeen NOT_RUN slots and
-twelve qualified slots including linked F1/F2/F4 retries; seventeen real model task attempts. Fixture
+This records supported operator controls. Current actual task outcomes are in
+`native-runs.md`: eleven first PASS, four first FAIL, fifteen NOT_RUN slots and
+fifteen qualified slots through thirty-four development task attempts. All
+fifteen macOS slots now match the final candidate; Linux generation is open. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
 
@@ -14,16 +15,22 @@ task outcomes.
   native positive/negative toolchain evidence precede these disposable tests.
   The proposed ADR-0058 grant extension, formal review, user merge and canonical
   synchronization remain final-delivery gates.
-- macOS native CLI: the candidate's owned
+- macOS native CLI: cace913c plus the exact production repairs and 35-file
+  inventory recorded in `native-runs.md`, built in the owned
+  `responses-native-verify-20261011` worktree at
   `target/quality-gate/aarch64-apple-darwin/debug/alan`; SHA-256
-  `b66362691d83e8f63867058b3a15afd9ddbbbc721ef151a23b93b2ef53c8d6fd`.
+  `1b609034eea7c8c2a7f7f5a1725d14fb6ed5165ec4776a196bd7237162a2495e`;
+  tracked source diff `60fbb03ab93f2d1a6d94cc924a064fd12dae38052cd25c9615608e3da8085608`.
+  The separate source-file inventory also covers new files; the diff hash alone
+  is insufficient. This is qualification evidence, not an installed deployment.
 - Actual macOS generation preflight succeeded in 14.23 seconds. Its own rollout
   `32a46d54-3cc1-412c-b43c-b6d9d27f2876` records model `gpt-6.1-sol`, reasoning
   effort `medium`, and Process path `/proc/8`. This is not a matrix slot and has
   no retained live boot-status receipt. An earlier setup failure remains retained.
-- Linux's candidate CLI builds natively, but no Connection metadata or Host
-  credential store was present at inventory. Linux generation readiness remains
-  unverified; no macOS credential or private store has been copied.
+- The same public candidate builds in Linux and passes the affected Rust checks;
+  its latest native `connection current` reports `effective_profile none`.
+  Linux generation readiness and the complete normal-quality gate remain open;
+  no macOS credential or private store has been copied.
 
 ## Supported product controls
 

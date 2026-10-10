@@ -2,10 +2,11 @@
 
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five macOS families are complete (8/19 tasks).
-The observed TUI directory-context repair is implemented and native-verified;
-other production findings and the remaining matrix are still open. Three macOS F1 slots qualify through
-four real model executions; the first r1 attempt failed for incomplete prospective
-tool identity and remains retained alongside its fresh qualified retry.
+All fifteen macOS slots now have matching final-candidate source/binary evidence.
+Observed production repairs and linked retries are recorded in `native-runs.md`;
+Linux generation, complete cross-Host qualification and delivery remain open.
+Original failures, including F1 r1's incomplete prospective tool identity, remain
+retained alongside their successful fresh retries.
 Planning artifacts and offline fixture checks do not prove completed real-model
 development tasks or passed native slots. No superseded or archived change is reactivated.
 
@@ -24,13 +25,13 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
-are fifteen out of thirty through thirty-one development task attempts, retaining
+are fifteen out of thirty through thirty-four development task attempts, retaining
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
-Matching final-candidate source/binary evidence currently covers twelve slots:
-all macOS F1, F2, F3 and F5 repetitions. F1 r1's a3 collector-identity failure stays retained.
-Three earlier macOS F4 slots need final-candidate reruns; all Linux slots remain open.
+Matching final-candidate source/binary evidence covers all fifteen macOS slots,
+including three fresh cancel/revoke/explicit-recovery reruns. F1 r1's a3
+collector-identity failure stays retained. All Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native

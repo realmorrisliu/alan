@@ -9,13 +9,12 @@ outcome. The first F2 attempt also executed and remains FAIL after native prefli
 the independent binary-check operand. A fresh linked F2 retry and original F2 r2/r3 now pass the complete independent
 checks on the repaired candidate. All three macOS F3 compiler-correction tasks
 also qualify. All three macOS F4 slots now qualify, retaining both failed r1
-attempts before its successful fresh retry. Fifteen slots qualify through thirty-one
+attempts before its successful fresh retry. Fifteen slots qualify through thirty-four
 real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
 One unintended verifier model turn is recorded separately; the long-diff run is
-not zero-unplanned-intervention. Twelve slots now have matching final-candidate
-source/binary proof: all macOS F1, F2, F3 and F5 repetitions. Three older macOS F4
-slots require applicability reruns, and
-all fifteen Linux slots remain unexecuted. See `native-runs.md`
+not zero-unplanned-intervention. All fifteen macOS slots now have matching
+final-candidate source/binary proof, including the three F4 lifecycle reruns.
+All fifteen Linux slots remain unexecuted. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
@@ -72,9 +71,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; original a1 `41bc46fa`; final-candidate a2 PASS `8386abe9` |
 | macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; original a1 `a6e6c051`; final-candidate a2 PASS `c1eaa463` |
 | macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; original a1 `0ef06fc9`; final-candidate a2 PASS `58da21c8` |
-| macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` FAIL retained; fresh a3 PASS `bd740877` |
-| macos-f4-r2 | macos / Herdr | F4 | 2 | PASS | native-runs.md; a1 receipt `4abcf29e` |
-| macos-f4-r3 | macos / Herdr | F4 | 3 | PASS | native-runs.md; a1 receipt `04dcb923` |
+| macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` FAIL retained; fresh a3 PASS `bd740877`; final-candidate a4 PASS `ec82476c` |
+| macos-f4-r2 | macos / Herdr | F4 | 2 | PASS | native-runs.md; original a1 `4abcf29e`; final-candidate a2 PASS `28841368` |
+| macos-f4-r3 | macos / Herdr | F4 | 3 | PASS | native-runs.md; original a1 `04dcb923`; final-candidate a2 PASS `104cf401` |
 | macos-f5-r1 | macos / Herdr | F5 | 1 | FAIL: published retained reference denied; producer rerun | native-runs.md; a1 `c614c228`, a2 `98ad5294` FAIL retained; fresh a3 PASS `ffa05956` |
 | macos-f5-r2 | macos / Herdr | F5 | 2 | PASS | native-runs.md; original a1 receipt `e1514200` |
 | macos-f5-r3 | macos / Herdr | F5 | 3 | PASS | native-runs.md; original a1 receipt `95dbbfd9`; auxiliary lookup and unintended verifier turn disclosed |
