@@ -24,10 +24,13 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
-are fifteen out of thirty through twenty-one development task attempts, retaining
+are fifteen out of thirty through twenty-three development task attempts, retaining
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
+Matching final-candidate source/binary evidence currently covers four slots,
+including fresh F1 r1 a4; its a3 collector-identity failure stays retained.
+Eleven earlier macOS slots need final-candidate reruns; all Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native

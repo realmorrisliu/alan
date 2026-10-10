@@ -9,10 +9,12 @@ outcome. The first F2 attempt also executed and remains FAIL after native prefli
 the independent binary-check operand. A fresh linked F2 retry and original F2 r2/r3 now pass the complete independent
 checks on the repaired candidate. All three macOS F3 compiler-correction tasks
 also qualify. All three macOS F4 slots now qualify, retaining both failed r1
-attempts before its successful fresh retry. Fifteen slots qualify through twenty-one
+attempts before its successful fresh retry. Fifteen slots qualify through twenty-three
 real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
 One unintended verifier model turn is recorded separately; the long-diff run is
-not zero-unplanned-intervention. See `native-runs.md`
+not zero-unplanned-intervention. Four slots now have matching final-candidate
+source/binary proof; eleven older macOS slots require applicability reruns, and
+all fifteen Linux slots remain unexecuted. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
@@ -60,7 +62,7 @@ content; generated role-prefix regression checks follow ADR-0059.
 
 | Slot | Platform / Host | Family | Repetition | First outcome | Final qualified evidence |
 | --- | --- | --- | --- | --- | --- |
-| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; fresh a2 PASS `71e2e625`; a1 retained |
+| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; final-candidate a3 FAIL `7f7ddbdb` retained, fresh a4 PASS `7b2e4c0c`; a1 retained |
 | macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; a1 receipt `02cf4ac6` |
 | macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; a1 receipt `9c9a1a6f` |
 | macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; fresh a2 PASS `c9dc9be0`; a1 `6c0336f1` retained |

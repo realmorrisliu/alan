@@ -1048,3 +1048,55 @@ Head 186358e3 passed all sixteen checks before these evidence-only updates; the
 next published head needs its own checks/review. Linux generation/profile setup,
 final audit, user merge and canonical closure remain; no automatic routing or
 production self-development is enabled.
+
+## Final-candidate F1 r1 applicability — collector failure retained, fresh a4 PASS
+
+The first applicability rerun a3 has correct separately frozen original F1 inputs
+and actual source/tool identities, but its copied prelaunch-freeze.json still
+contains F5 runtime/project/input fields. This conflicts with the task identity;
+do not retrospectively rewrite the freeze or count a3 as qualification. The model
+actually observes contract RED, changes only src/lib.rs and obtains ordinary
+contract GREEN. No protected checker qualification is attempted after the collector
+finding. All observed Tool Processes are exited, native PID 39754 is gone and
+foreground is fish. Cleanup elapsed 75.788421 seconds. Failed receipt SHA-256
+`7f7ddbdb3a0ee1e7a675ee4953128c48ae9485048b354e3471c31737c766a3a5`
+at attempts/macos-f1-r1/a3/receipt.json. Immutable v20 SHA-256
+`d4ab13450a2a650eea9054fee237a5f725ac09eebada6e235a0942b9d75b18b0`
+records twenty-two development attempts, retaining the original first outcomes
+and fifteen historically qualified slots. Pre-task approval syntax rejection is
+also retained separately; it did not submit a model task.
+
+Fresh a4 preserves the exact original F1 source/test/prompt/assertion hashes in a
+new disposable fixture. All prospective task fields are reconciled with slot.json
+before generation; assertions reject a stale project and runtime. The same final
+35-file candidate, binary/config, PATH/tool digests and actual 80x24 geometry are
+verified. Model PID 40172, boot `daa7186c-9989-4323-a746-991111008d64`, Root 8.
+Own Meta and every turn context confirm gpt-6.1-sol/medium. Original a2 contract
+failure records left 5/right 9, a3 retains the actual diagnostic that this fixture
+has no Git repository, a4 changes only src/lib.rs, and a5 passes the unchanged
+original contract. No repository is synthesized, test weakened, operator solution
+edited or corrective model advice supplied.
+
+Native detail exposes the original assertion failure; closing detail restores
+abcXYZ and insertion at the saved cursor produces abcδXYZ. Host scrollback retains
+failure/edit/GREEN/answer history. All actual model Tools are observed exited;
+exact source paths remain unchanged apart from the allowed file. After actual
+model exit, verifier PID 40578, boot
+`b3b402d6-7b3c-42ef-9dc3-a87cc00cad0a`, receives project/protected roots read-only and checker
+scratch read-write. Supported explicit !cd and Cargo a1 compile the actual library
+and pass protected_behavior under the correlated Seatbelt allow audit. Tool /proc/9
+is observed exited; all source/assertion/driver bytes stay unchanged. Both native
+PIDs are verified gone and foreground is fish. Cleanup elapsed 117.915001 seconds.
+Receipt attempts/macos-f1-r1/a4/receipt.json SHA-256
+`7b2e4c0cfdebea90bfd94b479825b04b73cf5fe23af8fd5e6c1c2ca62f37f2e6`.
+
+Immutable first-outcomes-v21.json SHA-256
+`bec151bf36c520cce0b236266bc3160447a135acbe0f73047e0953555206aa7c`
+records twenty-three development attempts plus the separately disclosed unintended
+diff-verifier generation. Historical qualification remains fifteen slots and
+original first outcomes eleven PASS/four FAIL/fifteen NOT_RUN. Comparing the actual
+qualified receipt source-file inventories and binary hashes proves four slots on
+the matching final candidate: F1 r1 and F5 r1/r2/r3. Eleven older macOS slots still
+need applicability reruns; all fifteen Linux slots remain unexecuted. Usage/cost
+and exact time partitions remain unknown. The checklist stays 8/19; this is not a
+final cross-platform qualification or unattended self-bootstrap claim.
