@@ -129,6 +129,24 @@ when a receipt exists. Do not infer authority or Native Host paths from cwd. Cle
 the previous observed cwd at Root replacement while retaining grant/control fencing.
 Existing narrow-line priorities and the editable draft remain unchanged.
 
+### Observed Cargo manifest input reuses finite operand roles
+
+The first F2 independent compound check is classified Write and rejects an explicit
+read-only project manifest before execution, although the same grant can be read
+by the protected library checker. Extend the existing token path-role parser only
+for Cargo build/check/test/run `--manifest-path` inputs before `--`; use readable
+authority for that operand in both direct-path and absolute-literal checks when
+an OS enforcing backend is active. Keep command policy, writable cwd, output and
+redirection checks, read-deny/protected/symlink validation, Host grant projection
+and parser-only degradation unchanged. Unknown Cargo commands and program arguments
+receive no exception. Do not rewrite command text or add a native authority root.
+A native spoofed-Cargo regression additionally exposed Seatbelt shared-temp write
+allowances overriding read-only roots. Add explicit native read-only write denies
+from the same SandboxSpec, preserving existing writable descendant exceptions.
+The native regression must prove permitted scratch writes and denied source writes
+with source bytes unchanged, including a read-only ancestor of writable scratch.
+This fixes the manifest preflight/temporary-root findings, not the earlier namespace Read operand.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and

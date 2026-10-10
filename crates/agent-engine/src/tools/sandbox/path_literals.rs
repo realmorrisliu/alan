@@ -1,13 +1,29 @@
 use super::path_safety::PROTECTED_SUBPATHS;
 use super::shell_syntax::{ShellToken, shell_commands};
+use alan_agent_protocol::ToolCapability;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TokenPathRole {
     Check,
+    Read,
     Data,
     ExecutableData(usize),
+}
+
+impl TokenPathRole {
+    pub(super) fn capability(
+        self,
+        command: Option<ToolCapability>,
+        os_enforced: bool,
+    ) -> Option<ToolCapability> {
+        if self == Self::Read && os_enforced {
+            Some(ToolCapability::Read)
+        } else {
+            command
+        }
+    }
 }
 
 pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRole {
@@ -29,6 +45,20 @@ pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRol
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command_name);
+
+    // shortcut: only direct Cargo build/check/test/run manifest inputs before --;
+    // extend operand roles when another real supported command needs them.
+    if command_name == "cargo"
+        && matches!(
+            args.first().map(String::as_str),
+            Some("build" | "check" | "test" | "run")
+        )
+        && !args.iter().any(|word| word == "--")
+        && (args.last().is_some_and(|word| word == "--manifest-path")
+            || token.decoded.starts_with("--manifest-path="))
+    {
+        return TokenPathRole::Read;
+    }
 
     if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk") {
         return match super::command_interpreters::awk_next_argument_role(args, &token.decoded) {

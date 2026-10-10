@@ -10,6 +10,9 @@ mod reified_tests;
 #[path = "sandbox/spec_tests.rs"]
 mod spec_tests;
 
+#[path = "sandbox/manifest_operand_tests.rs"]
+mod manifest_operand_tests;
+
 #[path = "sandbox/command_shape_tests.rs"]
 mod command_shape_tests;
 

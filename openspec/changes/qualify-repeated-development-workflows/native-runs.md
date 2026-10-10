@@ -222,3 +222,58 @@ success does not erase the original full-check failure or qualify F2. The receip
 records observation-schema mistakes and this diagnostic follow-up separately;
 no repeated generation or operator solution occurred. Task 2.2 and a full linked
 retry remain open after owner-correct path/authority review and repair.
+
+
+## Manifest preflight and temporary read-only root repair — 2026-10-11
+
+The existing finite token-role parser now treats Cargo build/check/test/run
+`--manifest-path` before `--` as an input read only with an OS-enforced backend.
+Both direct-path and absolute-literal checks use the same role; overall command
+policy remains Write. Other operands, outputs/redirections, unknown commands,
+read-deny/protected paths, revocation/symlink escape and parser-only degradation
+retain conservative checks. No command text or Host grant authority is rewritten.
+
+The original-source positive regression fails before the repair. Added safety
+coverage found a separate real Seatbelt gap: common temporary-directory write
+allowances permit program-internal writes to an explicitly read-only source there.
+The profile now denies writes to explicit read-only roots while preserving
+explicit writable descendants. A Cargo-named fixture program actually reads its
+manifest, writes only allowed scratch, attempts a source overwrite and receives
+native denial; source bytes remain unchanged, including the read-only-ancestor
+case. This is a security regression fixture, not a model or native Cargo success.
+The initial failing profile test and corrected five-test runs remain in build logs.
+A revocation test initially compared canonical roots with a noncanonical temporary
+alias; that test fixture comparison was corrected without changing production
+revocation behavior.
+
+Complete engine tests pass 1406 with zero failures and one existing ignored test;
+20 integration tests pass. Normal `just quality`, standalone/distribution and
+CI-pinned OpenSpec 1.4.1 strict validation pass 69/69. Sandbox source remains below
+the 1000-line gate, including the predecessor's retained-directory implementation.
+Evidence head `5e600532` passed all sixteen CI checks; its immutable receipt is
+`ci-5e600532-all16-final.json`. Those checks do not qualify this newer repair.
+
+A separate native candidate combines cace913c, the prior UI patch and this exact
+repair, source diff SHA-256
+`ed033e32fd4f751dfad139440526233a65002d3c9e390c80165faed21be071fd`;
+all nine changed/new file hashes are retained separately. CLI SHA-256:
+`5715ccd9723a608cddc874806302d44370f17d63cdc07b21c5fe4681edf90654`.
+Ordinary Herdr boot `d5f1e684-2c26-49de-989a-2357c4086a24`, native PID `40510`,
+Root PID `8`, receives the original F2 project/assertions read-only and fresh
+checker scratch read-write. The original compound check now freshly compiles
+both packages, passes three protected library assertions and runs both real
+Cargo binaries with output `20` and `-1`. Source, driver and assertion hashes
+remain unchanged; actual Tool Process exits before native `/quit`, and PID 40510
+is gone. No generation was submitted and no matrix slot is added by this probe.
+
+Owned `manifest-native-v1/` retains freeze, grant intents/acknowledgements, original
+command intent, public SDK Action output/result, terminal capture, exit and receipt
+SHA-256 `98b35bd352c8c428aff6691480bb25ab3bfec9d668dc76ec71e9cd1872789597`.
+Two initial collector source-equality assertions failed before CLI launch because
+predecessor-specific sandbox files differ from main; the corrected collector pins
+actual base/delta/file identities. It does not omit predecessor changes or alter
+source. Original F2 failure remains immutable. Fresh linked input preparation
+`linked-f2-r1-retry-input-freeze-v1.json` uses identical prompt/source/assertion
+hashes in a new project and checker scratch; no retry generation or qualification
+is claimed here. New head CI/review, final-candidate applicability and the other
+families/platform remain required.

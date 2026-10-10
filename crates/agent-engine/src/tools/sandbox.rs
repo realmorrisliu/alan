@@ -421,6 +421,7 @@ impl Sandbox {
                     &self.spec.read_denylist,
                     allow_network,
                 );
+                profile.push_str(&super::sandbox_backend::seatbelt_read_only(&self.spec));
                 profile.push_str(&super::sandbox_backend::seatbelt_host_mount_exclusions(
                     &self.excluded_host_roots,
                     &self.spec.readable_roots,
@@ -635,9 +636,10 @@ impl Sandbox {
                 continue;
             }
 
-            if role != TokenPathRole::Check {
+            if !matches!(role, TokenPathRole::Check | TokenPathRole::Read) {
                 continue;
             }
+            let capability = role.capability(capability, self.active_backend().is_os_enforced());
             for candidate in path_like_subtokens(token) {
                 self.validate_command_path_candidate(candidate, cwd, capability)?;
             }
@@ -881,6 +883,7 @@ impl Sandbox {
             if role == TokenPathRole::Data {
                 continue;
             }
+            let capability = role.capability(capability, self.active_backend().is_os_enforced());
             let path_literals = if let TokenPathRole::ExecutableData(offset) = role {
                 let Some(getline_paths) =
                     command_interpreters::awk_getline_file_paths(&token.decoded[offset..])

@@ -82,3 +82,18 @@ but the original full-check failure remains FAIL and adds no qualified slot. Bot
 native instances and all observed Tool Processes exited; task 2.2 remains open.
 This is a separate authority/preflight case from the earlier namespace Read-operand
 finding; inspect path role/projection separately before proposing a shared repair.
+
+The subsequent OS/manifest slice distinguishes Cargo build/check/test/run manifest
+input reads under an enforcing backend, leaving global policy, writable cwd/output,
+redirection, sensitive/protected paths and parser-only fallback conservative.
+A native regression additionally exposed Seatbelt shared-temp writes overriding
+read-only input roots; explicit read-only write denies now preserve only existing
+writable descendant exceptions. Five new tests pass, including actual Seatbelt
+source-write denial and permitted scratch writes. Full engine tests pass 1406/0/1
+and 20 integration checks; normal quality/standalone/distribution and pinned strict
+OpenSpec pass. A fresh independently built cace913c + UI + exact repair candidate
+now passes the original full protected-library/both-binary checking command with
+unchanged source/assertion/driver bytes and exited Tool/instance. This is a native
+repair probe, not a model slot; first F2 FAIL remains immutable and its fresh linked
+retry is prepared, not yet qualified. Earlier namespace Read operands remain an
+independent finding. New head review/CI and full matrix remain open.

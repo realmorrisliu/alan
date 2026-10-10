@@ -28,6 +28,9 @@ None.
 
 ### Modified Capabilities
 
+- `os-sandbox-enforcement`: distinguish finite Cargo manifest read inputs under an
+  enforcing backend, preserving output checks, grant access and safe degradation.
+
 - `runtime-harness-contract`: repeated real-development qualification through the
   native product entry, honest outcome/intervention metrics and exact effect proof.
 - `rust-inline-tui`: show observed namespace cwd without a local picker receipt
