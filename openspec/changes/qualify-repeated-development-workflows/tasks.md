@@ -10,7 +10,7 @@
 - [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.
 - [x] 2.2 Run cross-file changes three times with all required callers updated and no unrelated edits.
 - [x] 2.3 Run actual compiler/test/tool failure correction three times with retained diagnostic and cause verification.
-- [ ] 2.4 Run cancel/revoke/explicit recovery three times, observing live descendants and once-only completed effects.
+- [x] 2.4 Run cancel/revoke/explicit recovery three times, observing live descendants and once-only completed effects.
 - [ ] 2.5 Run long stdout/stderr/diff follow-up three times with retained details, result correlation and independent bounded edit/answer verification.
 
 ## 3. Linux real-model tasks in ordinary PTY

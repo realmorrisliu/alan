@@ -4,10 +4,10 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including macOS F2/F3 and the failed F4 original attempt below, fourteen real-model
-task attempts qualify ten slots: seven first PASS, three first FAIL and twenty
-NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2
-and 2.3 are complete. Linux generation readiness, task 1.4, F4/F5 and final
+Including macOS F2/F3/F4 and retained failed attempts below, sixteen real-model
+task attempts qualify twelve slots: nine first PASS, three first FAIL and eighteen
+NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2,
+2.3 and 2.4 are complete. Linux generation readiness, task 1.4, F5 and final
 candidate applicability remain open.
 
 ## Candidate and receipts
@@ -588,8 +588,8 @@ verified failure cleanup takes 257.709124 seconds. Cost/usage remains unknown.
 Receipt SHA-256 `2730d877697be9a081206e2f318624536a29db2fab1bce89fb44cbd60569d4bb`.
 Immutable aggregate `first-outcomes-v11.json`, SHA-256
 `06df3af55f5166c0d25543147026fa2170dd0ab817d3d813e57e45ff64712364`,
-retains seven first PASS, three first FAIL and twenty NOT_RUN; fourteen real-model
-task attempts qualify ten slots. The original a1 remains unchanged. The UI
+retains seven first PASS, three first FAIL and twenty NOT_RUN; thirteen real-model
+task attempts qualify nine slots. The original a1 remains unchanged. The UI
 revocation fix has positive and negative native proof; the namespace-absolute
 Bash finding now prevents this real model's F4 task instead of being corrected
 by the model. Resolve the path/authority contract before another linked retry;
@@ -671,3 +671,77 @@ one of three qualified repetitions; task 2.4 stays open and progress remains 6/1
 This supports this bounded corrected task, not general namespace-absolute shell
 support, general autonomous development or final-candidate applicability for
 older runs. F4 r2/r3, F5, all Linux generation, final review/CI/user merge remain.
+
+
+## macOS F4 r2/r3 complete — 2026-10-11
+
+Both remaining original F4 inputs pass on the same frozen guidance/repair native
+candidate as r1 a3: CLI `52325439`, source diff `4810c786`. Each prospectively
+checks exact source files, CLI/config/observer identities, selected/resolved
+Rust/Cargo/Git and PATH, original fixture/assertion/driver inventories, prompt
+and follow-up hashes. Actual setup Tool output and call-correlated Seatbelt
+policy audit establish readiness before generation. No candidate source change,
+model substitution, new authority contract or installed-runtime deployment occurs.
+
+| Slot / attempt | First and attempt outcome | Submission through verified cleanup | Receipt SHA-256 |
+| --- | --- | --- | --- |
+| macos-f4-r2 / a1 | PASS | 251.302363 s | `4abcf29edccc22811cbc5128a58623660c2c1c2af06f8ee2be2a1f72dc5c9929` |
+| macos-f4-r3 / a1 | PASS | 213.503111 s | `04dcb923c75cf79fe864aa80b5e9bf2fd89b07d55b3dac0a9166236aed0adc3e` |
+
+Both actual models use supported relative shell inspection and invoke start_work
+once, without duplicate mount requests or operator correction. r2 self-corrects
+an initial non-Git inspection failure. Live writers, parents and process groups
+are observed before planned Ctrl+C, then observed gone. Beyond each original
+forty-second deadline, late.txt is absent and the completed ledger entry occurs
+exactly once. The source still has its original defect before explicit recovery.
+At a settled paused boundary, /project revoke succeeds through its actual cwd
+Action and Host active:false acknowledgment. The original denied-read follow-up
+is queued paused and continued alone; its real Read result returns an authority/
+adapter denial without file contents, new grant or further work.
+
+r2: initial boot `beb77926-5621-4a50-869b-14a3b07b2a93`, native PID 26084; writer/parent/group 26247/26246/26204. Explicit resumed boot `1ed52ff2-b82a-41fd-922d-ebc9414a04fe`, PID 26363; new Actions a6, a7, a8, a9, with observed exited Tool references 10, 11. Independent verifier boot `08b3d8f5-8baf-4bb1-a1ad-751a0bf8ac8b`, PID 26560. Every Root is instance-local Process 8.
+
+r3: initial boot `61dabf9d-b47a-4e3a-9572-7aac97954558`, native PID 26805; writer/parent/group 26902/26901/26859. Explicit resumed boot `fe9c89f0-d96f-4492-9761-2b0358186fb8`, PID 27001; new Actions a5, a6, a7, a8, with observed exited Tool references 10, 11. Independent verifier boot `0010b771-fd41-4fb5-aca5-27c5bc2920c9`, PID 27192. Every Root is instance-local Process 8.
+
+The selected durable rollout is checked against the exact interrupted attempt
+before native exit and --resume. A fresh boot retains the original task without
+active/admitted work before regrant. Explicit regrant and a newly correlated cd
+Action precede the unchanged continuation prompt. Actual structured request r0
+asks for reapproval; its planned confirmation is sent once. Read/EditFile/Cargo
+then change only src/lib.rs to x + y and run the immutable contract successfully.
+The resumed rollout's Bash commands contain only that contract command, with no
+start_work replay. All initial/resumed model contexts confirm gpt-6.1-sol/medium.
+Retained older Actions remain distinct from the newly observed Action IDs and
+call IDs; no old numerical Process reference supplies resumed-origin proof.
+
+Original Cargo detail correlates to a9 for r2 and a8 for r3. Both return to the
+same logical draft abcδXYZ after insertion in its middle. Separate native
+verifiers receive only read-only project/protected assertions and writable
+checker scratch; fresh dependency/checker compilation passes protected_behavior.
+Actual calls match Seatbelt allow audits, all project/assertion/driver bytes
+remain unchanged by checking, and referenced Tool statuses are exited. Initial,
+resumed and verifier native PIDs and cancellation descendants/group are gone;
+foreground returns to owned fish PID 72808. Neither run uses operator source
+edits, corrective model advice or an unplanned revoke fallback. Planned setup,
+authorization, cancellation, queue/recovery and verifier controls remain counted.
+Usage/cost and model/Tool/wait partitions remain unknown; the same default Memory
+Store stays exposed, without claiming independent statistical samples.
+
+r2's prelaunch collector initially dereferenced the rustup shim pathname before
+comparing it to the prior literal invoked pathname. Actual selected binary hashes
+and versions were unchanged; the corrected collector preserves both identities
+before any native launch or generation. r3 retains its raw-text Action-ID artifact
+and a separate valid JSON origin audit rather than overwriting evidence. These
+operator collection corrections do not steer the model or change fixture inputs.
+
+Immutable first-outcomes-v13.json SHA-256 `4b3599821506f4f012fbfa584142ac8190a6af87b30a7abbb3fade7acc6daaf2` records 15 model task attempts and 11 qualified slots; first outcomes 8 PASS, 3 FAIL, 19 NOT_RUN.
+
+Immutable first-outcomes-v14.json SHA-256 `f2a164ca7e942a2679dd523b9192f3819e3d870c309f4167d0c5a11576465d83` records 16 model task attempts and 12 qualified slots; first outcomes 9 PASS, 3 FAIL, 18 NOT_RUN.
+
+All three macOS F4 repetitions now qualify, closing task 2.4 and bringing this
+change to 7/19 completed tasks. Original r1 a1/a2 and earlier aggregates remain
+immutable. Evidence head ed3f7281 passed all sixteen current-head CI checks;
+this new evidence commit needs its own review/CI. F5, all Linux generation,
+final-candidate applicability for older runs and user merge/canonical closure
+remain open. This bounded result does not qualify general namespace-absolute
+shell support, unattended self-development or automatic routing.
