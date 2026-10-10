@@ -327,3 +327,58 @@ code authorship. Git/RED-GREEN, live dependency grant/revocation/escape, complet
 developer-entry isolation/network and descendant cancellation remain open.
 Portable CI without explicit native fixture inputs skips the real Rust case;
 its green test count cannot replace the recorded native execution above.
+
+## Native development and descendant lifecycle slice
+
+The added opt-in adjacent Sandbox fixture uses task-owned git 2.53.0 and the
+selected installed Rust 1.97 runtime through the normal enforcing execution API.
+It provisions seven exact project/dependency files and a local Git baseline;
+Host provisioning is distinct from confined developer execution. The actual
+RED run observes a failing assertion and successful isolation test. A bounded
+Sandbox write corrects one production expression, GREEN passes, and native
+git diff/porcelain show exactly that source change. Read-only project builds
+use private output. All seven original file contents are rechecked afterward.
+
+The independent dependency is read-only. Removing its Sandbox declaration after
+cached success fails to load its manifest; an initially missing declaration also
+fails with fresh private output. A dependency source alias into an ungranted
+sibling cannot execute its compile-error payload. Compiled tests deny fixture
+credentials, runtime/dependency/source writes and connection to a live Host
+loopback listener. Each command has fresh private Cargo state. These are manual
+Sandbox declaration tests: they are not evidence of HostMountService live-grant
+admission or actual Bash Tool support for a disjoint dependency.
+
+The first compile attempt failed on a fixture assertion's String/reference type;
+`alan-development-first.log` retains it. The first compiled lifecycle attempt
+passed cancellation but failed timeout before observing the developer descendant
+(`alan-development-compiled.log`, 85.78 seconds). The diagnostic retry preserves
+the actual two-second deadline error and about six-second end-to-end startup
+(`alan-development-diagnostic.log`, 99.70 seconds). The corrected fixture allows
+ten seconds for the command and schedules the descendant effect after fifteen.
+It must observe actual live developer processes before either interruption, so
+an early deadline never counts as descendant qualification. Both abort and
+timeout wait beyond the scheduled delay and verify one start, no later write,
+no surviving project process and removal of the runner directory that existed
+while the command was live. The focused lifecycle run passed in 118.87 seconds
+(`alan-development-lifecycle.log`); final-source full-suite evidence is separate.
+
+An independent child with an unsupported PATH entry records actual readiness:
+namespace capabilities and runner smoke pass, tool visibility fails, and Landlock
+is selected with the explicit PATH reason. Requiring the namespace backend refuses
+before the fixture marker. This is fallback evidence, not a namespace success.
+
+Final native source passes 1426 engine tests, zero failures and one existing
+live-provider ignore in 137.73 seconds (`alan-development-final-engine.log`), with
+no relevant native early returns. Linux all-target/all-feature Clippy with warnings
+denied passes in 19.56 seconds (`alan-development-final-clippy.log`). The task-owned
+`native-development-acceptance.json` retains twelve Rust source hashes, test binary,
+logs/failed attempts, platform/PATH/tool identities and bounded original runtime
+and settings hashes, which match the prior receipt. The previous provisioning
+hardlink metadata correction remains a limitation, not an unchanged-metadata claim.
+
+This closes task 3.5. Tasks 3.1–3.4 remain open for complete provisioning and real
+product-entry/live-grant qualification. ADR-0058's single-active-grant native shell
+excludes the disjoint dependency despite the combined Sandbox fixture succeeding;
+a narrow explicit read-only-grant exception is awaiting the user's design choice.
+Do not change that accepted boundary or claim Bash support from the lower-layer run.
+The independent thirty real-model development repetitions have not started.
