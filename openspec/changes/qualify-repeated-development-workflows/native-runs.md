@@ -1100,3 +1100,55 @@ the matching final candidate: F1 r1 and F5 r1/r2/r3. Eleven older macOS slots st
 need applicability reruns; all fifteen Linux slots remain unexecuted. Usage/cost
 and exact time partitions remain unknown. The checklist stays 8/19; this is not a
 final cross-platform qualification or unattended self-bootstrap claim.
+
+## Final-candidate F1 r2/r3 PASS — all three small repairs requalified
+
+Both fresh repetitions keep the original fixture source/test/prompt/assertion
+hashes. Their prospective input metadata agrees with the separately frozen slot
+records; stale project/runtime negative assertions pass. Before generation, the
+same 35-file candidate, CLI/config, actual selected/resolved tool digests and
+80x24 geometry are checked. No earlier qualified receipt is replaced.
+
+F1 r2 a2 model PID 48350, boot `e1f6439e-8336-4385-af48-2d8f7f4a9113`, Root 8:
+a2's actual contract RED records left 6/right 5, a3 retains the real non-Git
+diagnostic, a4 edits only src/lib.rs to remove the extra addition, and a5 passes
+the original contract. The answer acknowledges that Git verification is unavailable;
+the collector does not synthesize a repository. Verifier PID 48696, boot
+`aafddd99-b53b-43f7-8b87-167c6c198e91`, receives project/protected inputs read-only
+and checker scratch read-write. Explicit Cargo compiles the actual library and
+passes protected_behavior under its own correlated Seatbelt allow audit.
+Cleanup elapsed 130.840066 seconds. Receipt attempts/macos-f1-r2/a2/receipt.json
+SHA-256 `1e499e15c3c49d7fa137e7db9980b5aac8ef441f432c86d85042252456f9c63d`.
+Immutable first-outcomes-v22.json SHA-256
+`f2654fa0b3a3b774b7418c2fcaccd706874d2be3fa34ee8208b6d6f301a3cfe8`.
+
+F1 r3 a2 model PID 48825, boot `695e328b-fb1d-4e1b-8586-2dfcec3d1da1`, Root 8:
+a2's actual contract RED records left -5/right 5, a3 inspects the project, a4
+edits only src/lib.rs to clamp x and ignore y, and a5 passes the original contract.
+Verifier PID 49201, boot `09f56ac5-e0a9-4db7-8214-cb6bcb7ce108`, independently
+compiles the read-only library and passes protected_behavior, with the actual
+exited Tool and correlated Seatbelt allow audit. Cleanup elapsed 199.570367 seconds.
+Receipt attempts/macos-f1-r3/a2/receipt.json SHA-256
+`997fd0ddcc9e11ba9489803de52842015543e58b1fc3417f941b53539abb36ba`.
+Immutable first-outcomes-v23.json SHA-256
+`eb5a7c125953ca5215a3f89cf64a5cc646b1009c3db275b2ea3d412091fa9c09`.
+
+For both tasks, original detail shows the actual failed assertion, Escape restores
+abcXYZ, insertion at the saved logical cursor produces abcδXYZ, and host scrollback
+retains RED/edit/GREEN/answer. Exact source paths are unchanged except the allowed
+file; all project/assertion/driver bytes stay unchanged by independent checking.
+All observed model/checker Tool Processes are exited, both pairs of native PIDs
+are verified gone, and fish 72808 is foreground. There is one planned setup approval
+per model instance, no corrective advice, operator solution edit, restart or extra
+verifier generation. Own Meta and every turn context confirm gpt-6.1-sol/medium.
+Memory remains enabled, stores are not cleared, and repetitions are not claimed
+as independent statistical samples. Usage/cost and exact time partitions remain unknown.
+
+Aggregate v23 retains twenty-five development attempts, fifteen historically
+qualified slots, first outcomes eleven PASS/four FAIL/fifteen NOT_RUN, and the one
+separately disclosed earlier unintended verifier generation. Actual qualified
+receipt source-file inventories and binary hashes now match six slots on the same
+final candidate: all macOS F1 and F5 repetitions. Nine older macOS slots and all
+fifteen Linux slots remain open; checklist remains 8/19. Head 1d6aa632 passes all
+sixteen CI checks before these evidence-only updates; the next head needs its own
+checks. Actual Ubuntu connection current still reports effective_profile none.
