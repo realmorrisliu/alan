@@ -27,3 +27,41 @@ namespace for an unavailable resource, or alter native execution authority.
 #### Scenario: Literal output remains readable
 - **WHEN** captured text contains ordinary role lookalikes, comparisons, Markdown quotes, Unicode, color sequences or file URI paths
 - **THEN** ordinary literal text retains its content and known native diagnostic paths use the same namespace mapping
+
+
+### Requirement: Native shell reads explicitly delegated read-only dependencies
+For supported enforcing native execution, the Host adapter SHALL retain the cwd
+selected grant first and SHALL additionally project live read-only Host Mounts
+explicitly held by the same Process. Only the selected grant SHALL contribute
+native writable authority. Other writable grants and grants held only by another
+Process MUST NOT gain native access through this projection. The Host adapter
+SHALL preserve each grant's effective access, current reconciliation and native
+path containment without command rewriting or inferred common-parent authority.
+This is a proposed extension to ADR-0058's delivered single-grant slice; adoption
+requires review and user merge of this delivery.
+
+#### Scenario: A project builds against its separately granted read-only dependency
+- **WHEN** the Process holds the selected project and a live separate read-only dependency grant
+- **THEN** the enforcing native build can read that dependency and complete its tests
+- **AND** native writes to the dependency, reads/writes in another writable project and projection of another Process's grant remain denied
+
+#### Scenario: An external dependency grant is revoked after successful compilation
+- **WHEN** the Process revokes its read-only dependency grant and requests the next build with retained successful output
+- **THEN** launch reconciles current authority and cannot read the revoked dependency
+- **AND** the cached earlier success does not become a new successful execution
+
+#### Scenario: A read-only dependency source escapes through a symlink
+- **WHEN** a live read-only dependency resolves a source outside its granted backing
+- **THEN** structured access rejects the escaped path and enforcing native compilation fails without consuming the outside source
+- **AND** no extra root or writable authority is inferred from the dependency manifest or symlink
+
+
+#### Scenario: A stale or unknown cwd cannot select another writable grant
+- **WHEN** a non-root requested cwd is outside every live same-Process Host Mount
+- **THEN** Host reconciliation refuses and requires an explicit directory selection
+- **AND** an unrelated live writable grant is not silently substituted for that cwd
+
+#### Scenario: An approved backing root is retargeted or unavailable
+- **WHEN** a live grant's approved canonical backing root is missing, is no longer a directory or resolves to a different root before Tool adapter construction
+- **THEN** the native Host adapter refuses projection before deriving sandbox authority
+- **AND** the failure identifies the public namespace without exposing private backing paths or granting the new target

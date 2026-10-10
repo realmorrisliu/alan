@@ -16,8 +16,8 @@
 ## 3. Real Linux execution and authority
 
 - [x] 3.1 Provision a task-owned shell/git/Rust 1.97 fixture and actual backend readiness receipt; verify original personal Rust defaults/stores are unchanged and report unsupported enforcing-backend slots.
-- [ ] 3.2 Run actual local dependency build, failing/corrected test and git diff under the enforcing backend; assert exact source/artifact diffs and selected executable/version rather than version-only output.
-- [ ] 3.3 Exercise separate read-only dependency grants, missing/revoked authority and escaping paths against native execution; verify no unauthorized access and no cached false success.
+- [x] 3.2 Run actual local dependency build, failing/corrected test and git diff under the enforcing backend; assert exact source/artifact diffs and selected executable/version rather than version-only output.
+- [x] 3.3 Exercise separate read-only dependency grants, missing/revoked authority and escaping paths against native execution; verify no unauthorized access and no cached false success.
 - [x] 3.4 Verify native unrelated-home/credential canaries absent, read-only source/runtime writes denied and network denied; recheck original files and cache isolation after exit.
 - [x] 3.5 Cancel/time out a development command with descendants; wait beyond its delayed effect and assert no later or duplicated effect and correct scratch lifetime.
 

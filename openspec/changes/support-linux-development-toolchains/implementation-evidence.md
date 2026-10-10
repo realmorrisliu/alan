@@ -720,3 +720,111 @@ remain explicitly scoped to the earlier in-grant build. No additional grant or
 standalone adapter change is claimed. Full quality and current publication-head CI
 are recorded separately at publication; they cannot be inferred from the earlier
 `4212e7cb` checks.
+
+
+## Explicit read-only dependency candidate and discovered authority boundaries
+
+The delivered ADR-0058 single-grant boundary cannot complete the independent
+read-only dependency positive. This draft implementation candidate projects the
+selected cwd grant first plus live same-Process read-only grants from Host Mount
+Service. Only the selected grant contributes writable authority; other writable
+and foreign-Process grants remain unavailable to shell execution. Structured file
+Tool scope is unchanged. This extension is pending user adoption/merge and is not
+reported as shipped policy. No manifest, prior output, common parent or personal
+store adds a grant.
+
+Retained attempts are separate and remain unsuccessful where stated:
+
+- `alan-native-bash-readonly-grants-red.log`: test-only fixture over production
+  `ce7aa5dd`, **42.47 seconds**, fails the shell readable-root assertion after
+  the separate grant permits structured ReadFile. This is projection RED, before
+  the external native Bash build; it does not prove an old external Cargo attempt.
+  `native-bash-readonly-grants-red-identity.json` freezes its native binary,
+  test-source and log identity.
+- `alan-native-bash-readonly-grants-first.log`: initial candidate, **74.31
+  seconds**, runs the actual external RED/correction/GREEN, compiled OS authority
+  checks, live-RO source escape, restored GREEN and cached-success revocation.
+  It then fails the old fixture's final expectation: a fresh revoked project cwd
+  silently selects the newly added other writable project. The run remains failed.
+- `alan-native-bash-missing-cwd-red.log`: actual Service reproduction, **0.01
+  seconds**, prints `missing cwd unexpectedly selected /mnt/other; other writable:
+  true`. Reconciliation must refuse unknown non-root cwd, keeping explicit valid
+  selection and the special namespace-root setup intact.
+- `alan-native-bash-readonly-grants-fixed.log`: a mechanical fixture adjustment
+  matched two identical blocks and was not applied; the next run failed an old
+  `unwrap()` because the corrected constructor now properly refuses missing cwd.
+  It is retained separately rather than reported as another production defect.
+- `alan-native-bash-readonly-grants-complete.log`: the corrected focused fixture
+  completes **1/0/0 in 81.85 seconds**. The initial full candidate subsequently
+  passes Linux engine **1430/0/1 in 133.36 seconds**, Host **57/0/2 in 79.81
+  seconds**, warnings-denied Clippy, and macOS Host **56/0/2 in 4.11 seconds**.
+  `native-bash-readonly-grants-acceptance.json` retains that pre-root-check source,
+  binary and log evidence; it does not qualify the following newly added check.
+- `alan-native-bash-retargeted-root-red.log`: a new review reproduction,
+  **0.01 seconds**, renames an approved canonical read-only root and replaces it
+  with an outside symlink. Reconciliation accepts it and reports `ungranted
+  outside readable: true`; SandboxSpec's canonicalization moved authority.
+  This is an uncommitted candidate/test reproduction with retained raw log;
+  no exact RED binary identity was frozen before its corrected rebuild.
+
+The common native Host constructor now validates every approved canonical root
+before deriving either sandbox. Retargeted, missing or non-directory roots fail
+with only the public namespace in the diagnostic. Three portable Service tests
+cover same-Process read-only scope with selected-first ordering, invalid cwd, and
+both RO/RW root replacement/missing/non-directory cases plus original restoration.
+This is a reconciliation-time validation, not an atomic concurrent Host path
+replacement or inode-pinning claim.
+
+The actual Linux external fixture observes a semantic test failure, uses real
+EditFileTool to correct the authorized expression, compiles against the explicit
+read-only dependency and checks the exact source git diff. A compiled integration
+test reads that dependency and verifies OS-level write denial, other same-Process
+writable-project read/write denial and foreign-Process read denial. Dependency
+source aliases into an ungranted sibling fail without consuming the canary. After
+restored external GREEN, revocation is tested with that successful external output
+still present: structured read denies and actual Cargo exits 101. Host setup of
+those immutable test assertions is distinct from Tool-authored source edits.
+The final exact source inventory restores the original seven files apart from the
+one authorized expression correction; dependency/canary bytes remain exact.
+
+macOS Host suites exercise the portable shared adapter. These are not actual
+compiled arbitrary-reader Seatbelt confinement qualification; Linux is the native
+external-dependency proof. None of these scripted Tool tests fills a real-model
+qualification slot. Thirty generation-authored tasks remain NOT_RUN in the
+independent `qualify-repeated-development-workflows` proposal PR #1047.
+
+
+### Final root-checked native candidate
+
+The final frozen candidate passes Linux engine **1430/0/1
+in 132.84 seconds** and Host **58/0/2 in
+80.06 seconds**. Both opt-in Host development cases actually
+execute; no unavailable-fixture early return is counted as native acceptance.
+All-target/all-feature Linux engine/Host Clippy with warnings denied passes.
+macOS Host passes **57/0/2 in 3.87 seconds**, using its own Apple-target build
+artifact owner. Pinned OpenSpec 1.4.1 strict validation passes **69/69 items**.
+
+`native-bash-readonly-grants-root-checked-acceptance.json` freezes **25 source
+hashes**, test binaries, new logs and retained first attempts including the
+root-retarget RED; previous `native-bash-readonly-grants-acceptance.json` remains
+unchanged as pre-root-check evidence. Final Linux engine binary SHA-256:
+`b38740d162e346761d5696282501dd3b05086a9c7bb9dba0d6f49b2adac2f75f`;
+final Linux Host binary SHA-256:
+`8c6b9d32490e37e9b13ff056ea59fd6a69261bc7647943125dbaff9b7449233a`.
+The **379 original Rust installation/settings/proxy nodes** still match the
+recorded post-provisioning baseline, SHA-256
+`118fea4c93ee341a24f3757175fc76aa7e0562ae7335ba257a6127c647e72b46`; all **217** task-owned standard-prefix Git
+runtime entries and the installed package inventory remain exact. Personal Cargo
+registry/credential contents and read access times retain their prior exclusions;
+the original provisioning hardlink correction remains part of history.
+
+Review traces Host Mount Service's active same-PID projection selection and
+per-launch Tool registry reconciliation into the common native constructor.
+Selected-first ordering preserves cwd/runtime inspection, writable authority comes
+only from the selected grant, and existing mixed-access overlap checks remain.
+The missing-cwd and root-validation fixes do not add a registry, config or public
+API. Native proof covers the Linux compiled readers and cached external build;
+macOS foreign-reader OS confinement and concurrent Host path replacement are not
+claimed. Tasks 3.2/3.3 now have their required live-service native positive and
+negative evidence; final publication quality/current-head CI/user merge/canonical
+closure remain separate. No real-model qualification slot is completed.

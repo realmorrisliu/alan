@@ -175,6 +175,20 @@ role lookalikes, comparisons and Markdown quotes retain their content.
 
 ### Use live project mounts for local dependencies
 
+Candidate extension for review: derive the shell sandbox from the selected cwd
+grant first, followed only by live same-Process read-only projections supplied by
+Host Mount Service. Other read-write roots remain excluded, and grants belonging
+only to another Process are absent before the Host adapter is called. This retains
+selected cwd, writable-root and standard Rustup inspection behavior; no manifest
+or previous cache adds authority. Reconciliation happens before each normal Tool
+Process launch. ADR-0058's first-slice single-grant decision remains the shipped
+baseline until the user adopts this narrowly scoped candidate delivery. Lower
+Sandbox positives alone cannot prove this live-service behavior. Validate each
+approved canonical backing root again before deriving either structured or shell
+sandbox authority: missing, non-directory or retargeted roots fail with the public
+namespace only. This catches changes observable at reconciliation; it does not
+claim atomic protection against concurrent Host path replacement after that check.
+
 A manifest does not grant access. Keep project and outside local dependency mounts
 separate, with their original effective access. Do not copy a missing dependency
 into scratch to bypass revocation or widen a mount to a common parent. Exercise

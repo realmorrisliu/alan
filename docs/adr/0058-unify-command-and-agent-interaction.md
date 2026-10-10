@@ -114,3 +114,30 @@ retains the confirmed choices. Generic typed evaluation remains with
 [add-cognitive-model-routing](../../openspec/changes/add-cognitive-model-routing/).
 Current code forwards `!` text into Agent input; the old bash specification is
 not evidence of a delivered deterministic command path.
+
+
+## Proposed development dependency extension — 2026-10-10
+
+The independent `support-linux-development-toolchains` delivery proposes a narrow
+extension for real local dependencies: native shell authority retains its cwd
+selected grant first and additionally reads only live read-only grants explicitly
+held by that same Process. Other writable grants stay outside the shell action;
+no manifest-derived, common-parent, foreign-Process or cached authority is added.
+Only the selected grant can contribute writable roots, and each next Tool launch
+reconciles live Service-owned projections. Native path resolution remains behind
+the Host adapter without command rewriting or mount aliases.
+
+Its controlled fixture exercises actual separate-grant compilation, readonly write
+denial, unrelated writable-project and foreign-Process access denial on Linux,
+escaping source rejection and failure after successful-cache grant revocation.
+Actual proof and exact candidate identities belong to that change's evidence.
+An invalid non-root cwd must fail rather than silently choosing another writable
+grant; explicit cwd selection remains the user-visible recovery step. Both native
+sandbox projections revalidate the approved canonical backing roots and refuse
+missing, non-directory or retargeted roots before construction. This is a
+reconciliation-time check, not an atomic concurrent Host-mutation guarantee.
+
+This extension is a reviewable implementation candidate in draft PR #1046, not a
+change to the delivered single-grant baseline above. Adoption requires the user's
+review/merge decision and subsequent canonical synchronization. Existing fallback,
+approval, network, durable recovery and automatic-routing posture are unchanged.

@@ -4,35 +4,40 @@ Implementation is authorized by the user's ordered development-qualification
 goal. This independent second delivery follows merged UI implementation PR #1044;
 post-merge UI/directory canonical closure remains separate in PR #1045.
 
-The supported PATH, nested-mount safety, installed standard-Rustup selection,
-private per-command environment, read-only project builds and descendant
-cancellation/timeout slices are implemented and actually exercised on Linux.
-Normal live-service Bash now runs Git 2.53/Rust 1.97, RED/EditFileTool/GREEN and
-exact diff/status through the selected project grant. Original Rust installations,
-settings/proxies and the task-owned Git runtime retain their recorded inventories.
-Unsupported private-root Git PATH and native wrappers remain explicit refusals;
-no silent executable substitution or whole-home projection is inferred.
+Supported PATH, nested-mount safety, installed standard-Rustup selection, private
+per-command environment, read-only project builds and descendant cancellation/
+timeout are implemented and actually exercised on Linux. Live-service Bash runs
+Git 2.53/Rust 1.97, semantic RED/EditFileTool/GREEN and exact diff/status. The
+candidate additionally reads live same-Process read-only dependency grants while
+retaining only the selected cwd grant's writable authority. Linux compiled tests
+verify dependency write denial and other writable/foreign grant access denial;
+source aliases and revocation after successful external compilation fail without
+consuming canaries or accepting retained output as a new success.
 
-Latest actual live-service negatives exercise missing/revoked external dependency
-access with retained in-grant build output, explicit read-only file read/write
-authority, and an ungranted source symlink reaching rustc. These fail without
-unauthorized access or cached false success. Native diagnostic projection now
-conceals normalized private ancestors, preserves known namespace path components
-and avoids cascading replacements. Final frozen Linux suites are engine 1430/0/1
-and Host 55/0/2; native macOS Host is 54/0/2. Exact source/binary/log identity,
-first failures, corrected retries and limits are in implementation-evidence.md.
+Acceptance found and repaired two shared authority issues: invalid non-root cwd
+could silently choose another writable project, and canonical root retargeting
+could move sandbox authority. The common Host constructor now refuses those
+states, missing roots and non-directories with public-only diagnostics. Root
+validation is a reconciliation-time check, not an atomic concurrent Host-mutation
+or inode-pinning guarantee. Native diagnostic projection continues to conceal
+private backing ancestors without inventing authority.
 
-Draft PR #1046 remains unmerged. Its previously published `4212e7cb` head passed
-all 16 distinct checks. The diagnostic repair and refreshed disposition require
-their own publication-head CI; those earlier checks do not qualify later commits.
-Normal-commit full quality and standalone distribution accompany publication.
-Tasks remain **10/15 complete**: the independent read-only dependency positive,
-its cached-success/revocation continuation, final review/CI and merge/canonical
-closure are not claimed complete.
+Final root-checked candidate passes Linux engine 1430/0/1, Host 58/0/2 and
+warnings-denied Clippy; macOS Host passes 57/0/2 portable shared-adapter coverage.
+Pinned strict OpenSpec is 69/69. Exact source/binary/log hashes, retained failures,
+unchanged 379-node Rust and 217-entry Git inventories, and limitations are in
+implementation-evidence.md. macOS arbitrary-reader OS confinement is not inferred.
+Original private-root Git PATH and native wrappers remain explicit refusals.
 
-Actual Bash still follows ADR-0058's selected-single-grant boundary. A narrow
-exception for additional explicitly held read-only grants awaits the user's design
-choice; lower-runner combined-grant positives do not prove product entry support.
-Thirty repeated real-model development tasks remain a later independent delivery.
-Keep fallback/approval rules and automatic input routing unchanged, and do not
-start Alan self-development instances in place of direct implementation.
+Draft PR #1046 remains unmerged. Its previously published ce7aa5dd head passed all
+16 distinct checks; they do not qualify this new candidate. Publication requires
+normal-commit full quality and standalone distribution, followed by its own
+current-head CI. Tasks are **12/15 complete**; final gates, review/CI and user
+merge/canonical closure remain open.
+
+The ADR-0058 dependency extension is a reviewable draft candidate pending user
+adoption/merge; the delivered main single-grant baseline is unchanged. Wider
+qualification is independently planned in draft PR #1047: thirty real-model
+slots remain NOT_RUN. Keep fallback/approval, network and automatic-routing
+posture unchanged; do not start Alan self-development instances in place of
+Codex-authored implementation.

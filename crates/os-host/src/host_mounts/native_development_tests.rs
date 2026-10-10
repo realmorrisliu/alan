@@ -406,6 +406,29 @@ async fn native_bash_git_red_green_uses_selected_project_grant() {
     current = service.reconcile(7, current).unwrap();
     let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
     EditFileTool::new().execute(serde_json::json!({"path": "/mnt/project/Cargo.toml", "old_string": "path = \"dependency\"", "new_string": "path = \"../outside-dependency\""}), &context).await.unwrap();
+    let other = fixture.path().join("other-writable");
+    let foreign = fixture.path().join("foreign-read-only");
+    for root in [&other, &foreign] {
+        std::fs::create_dir(root).unwrap();
+        std::fs::write(root.join("canary"), "unchanged").unwrap();
+    }
+    approve(
+        &service,
+        7,
+        "/mnt/other",
+        HostMountAccess::ReadWrite,
+        &other,
+    )
+    .await;
+    service.register_process(Pid(8), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        8,
+        "/mnt/foreign",
+        HostMountAccess::ReadOnly,
+        &foreign,
+    )
+    .await;
     for case in ["missing", "revoked"] {
         if case == "revoked" {
             let dependency = approve(
@@ -427,6 +450,162 @@ async fn native_bash_git_red_green_uses_selected_project_grant() {
                 .unwrap();
             assert_eq!(result["content"], files[6].1.trim_end());
             assert!(EditFileTool::new().execute(serde_json::json!({"path": "/mnt/dependency/src/lib.rs", "old_string": "3", "new_string": "4"}), &context).await.is_err());
+            std::fs::create_dir(project.join("tests")).unwrap();
+            std::fs::write(project.join("tests/external_authority.rs"), r#"
+#[test]
+fn external_authority_is_read_only_and_process_scoped() {
+    assert_eq!(std::fs::read_to_string("../outside-dependency/src/lib.rs").unwrap(), "pub fn answer() -> u32 { 3 }\n");
+    assert!(std::fs::write("../outside-dependency/src/lib.rs", "changed").is_err());
+    assert!(std::fs::read("../other-writable/canary").is_err());
+    assert!(std::fs::write("../other-writable/canary", "changed").is_err());
+    assert!(std::fs::read("../foreign-read-only/canary").is_err());
+}
+"#).unwrap();
+            EditFileTool::new().execute(
+                serde_json::json!({"path": "/mnt/project/src/lib.rs", "old_string": "::answer()", "new_string": "::answer() - 1"}),
+                &context,
+            ).await.unwrap();
+            let red = BashTool::new()
+                .execute(
+                    serde_json::json!({"command": "cargo test --offline --locked"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            eprintln!("native Bash external dependency RED: {red}");
+            assert_eq!(red["exit_code"], 101, "{red}");
+            assert!(
+                red["stdout"]
+                    .as_str()
+                    .unwrap()
+                    .contains("expected_answer ... FAILED")
+            );
+            EditFileTool::new().execute(
+                serde_json::json!({"path": "/mnt/project/src/lib.rs", "old_string": "::answer() - 1", "new_string": "::answer()"}),
+                &context,
+            ).await.unwrap();
+            assert_eq!(
+                std::fs::read_to_string(project.join("src/lib.rs")).unwrap(),
+                corrected
+            );
+            let shell = context.shell_sandbox().unwrap();
+            assert!(shell.is_readable(&outside));
+            assert!(!shell.is_writable(&outside));
+            assert!(!shell.is_readable(&other));
+            assert!(!shell.is_writable(&other));
+            assert!(!shell.is_readable(&foreign));
+            let result = BashTool::new()
+                .execute(
+                    serde_json::json!({"command": "cargo test --offline --locked"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            eprintln!("native Bash dependency authorized: {result}");
+            assert_eq!(result["exit_code"], 0, "{result}");
+            assert_eq!(result["success"], true);
+            assert!(
+                result["stdout"]
+                    .as_str()
+                    .unwrap()
+                    .contains("external_authority_is_read_only_and_process_scoped ... ok"),
+                "{result}"
+            );
+            assert!(
+                !result["stderr"]
+                    .as_str()
+                    .unwrap()
+                    .contains(outside.to_str().unwrap()),
+                "{result}"
+            );
+            for root in [&other, &foreign] {
+                assert_eq!(
+                    std::fs::read_to_string(root.join("canary")).unwrap(),
+                    "unchanged"
+                );
+            }
+            assert_eq!(
+                std::fs::read_to_string(outside.join("src/lib.rs")).unwrap(),
+                files[6].1
+            );
+            let diff = BashTool::new()
+                .execute(
+                    serde_json::json!({"command": "git diff -- src/lib.rs"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            assert_eq!(diff["exit_code"], 0, "{diff}");
+            let diff_text = diff["stdout"].as_str().unwrap();
+            assert_eq!(
+                diff_text
+                    .lines()
+                    .filter(|line| line.starts_with("diff --git"))
+                    .count(),
+                1
+            );
+            assert!(
+                diff_text
+                    .contains("-pub fn answer() -> u32 { alan_git_fixture_dep::answer() - 1 }")
+            );
+            assert!(
+                diff_text.contains("+pub fn answer() -> u32 { alan_git_fixture_dep::answer() }")
+            );
+            eprintln!("native Bash external dependency git diff: {diff}");
+            let escaped_source = fixture.path().join("external-ungranted-source.rs");
+            let escaped_payload = "compile_error!(\"ALAN_EXTERNAL_DEPENDENCY_ESCAPE\");\n";
+            std::fs::write(&escaped_source, escaped_payload).unwrap();
+            std::fs::remove_file(outside.join("src/lib.rs")).unwrap();
+            std::os::unix::fs::symlink(&escaped_source, outside.join("src/lib.rs")).unwrap();
+            assert!(
+                ReadFileTool::new()
+                    .execute(
+                        serde_json::json!({"path": "/mnt/dependency/src/lib.rs"}),
+                        &context,
+                    )
+                    .await
+                    .is_err()
+            );
+            let escaped = BashTool::new()
+                .execute(
+                    serde_json::json!({"command": "cargo test --offline --locked"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            eprintln!("native Bash read-only dependency escape: {escaped}");
+            assert_eq!(escaped["exit_code"], 101, "{escaped}");
+            assert_eq!(escaped["success"], false);
+            assert!(!escaped["stdout"].as_str().unwrap().contains("1 passed"));
+            assert!(
+                !escaped["stderr"]
+                    .as_str()
+                    .unwrap()
+                    .contains("ALAN_EXTERNAL_DEPENDENCY_ESCAPE")
+            );
+            assert_eq!(
+                std::fs::read_to_string(&escaped_source).unwrap(),
+                escaped_payload
+            );
+            std::fs::remove_file(outside.join("src/lib.rs")).unwrap();
+            std::fs::write(outside.join("src/lib.rs"), files[6].1).unwrap();
+            let restored = BashTool::new()
+                .execute(
+                    serde_json::json!({"command": "cargo test --offline --locked"}),
+                    &context,
+                )
+                .await
+                .unwrap();
+            eprintln!("native Bash dependency restored: {restored}");
+            assert_eq!(restored["exit_code"], 0, "{restored}");
+            assert!(
+                restored["stdout"]
+                    .as_str()
+                    .unwrap()
+                    .contains("external_authority_is_read_only_and_process_scoped ... ok")
+            );
+            std::fs::remove_file(project.join("tests/external_authority.rs")).unwrap();
+            std::fs::remove_dir(project.join("tests")).unwrap();
             service
                 .revoke(&dependency.id, "native dependency negative")
                 .unwrap();
@@ -519,25 +698,17 @@ async fn native_bash_git_red_green_uses_selected_project_grant() {
         );
     }
     eprintln!(
-        "native Bash dependency negatives complete: missing/revoked external grant refused despite retained in-grant build cache; live read-only file read allowed and edit denied before revocation; ungranted source alias denied without executing payload; no cross-grant Bash positive inferred"
+        "native Bash dependency negatives complete: missing external grant and revoked external grant refused with retained build cache; successful external read-only Cargo build and compiled OS read/write/process-scope checks before revocation; live read-only file read allowed and edit denied before revocation; ungranted source alias denied without executing payload; actual cross-grant Bash positive and revoked cached-success refusal"
     );
     service
         .revoke(&grant.id, "native Bash Git fixture")
         .unwrap();
     assert!(service.reconcile(7, current).is_err());
-    let missing = service.reconcile(7, binding("/mnt/project")).unwrap();
-    let context = ToolContext::from_binding(missing, config);
-    assert!(
-        BashTool::new()
-            .execute(
-                serde_json::json!({"command": "printf effect > marker"}),
-                &context
-            )
-            .await
-            .is_err()
-    );
+    assert!(service.reconcile(7, binding("/mnt/project")).is_err());
+    assert!(!other.join("marker").exists());
+    assert!(service.reconcile(7, binding("/mnt/other")).is_ok());
     assert!(!project.join("marker").exists());
     eprintln!(
-        "native Bash Git complete: actual Bash RED/GREEN, EditFileTool one-line fix, exact git diff/status and sources; selected writable grant revoked before next effect; in-grant dependency, not disjoint read-only authority"
+        "native Bash Git complete: actual Bash RED/GREEN, EditFileTool one-line fix, exact git diff/status and sources; selected writable grant revoked before next effect without changing to another writable grant; live disjoint read-only dependency RED/GREEN, cached revocation and source alias denial"
     );
 }

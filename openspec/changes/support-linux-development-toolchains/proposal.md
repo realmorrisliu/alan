@@ -14,7 +14,10 @@ that a confined command can build, test or inspect a project.
 - Provide private writable Cargo/build scratch through the existing native-runner
   lifetime, without inheriting credentials or granting the user's whole home.
 - Resolve external local dependencies through explicitly delegated project mounts;
-  refuse missing, escaping or revoked dependencies without substitute tools.
+  read additional live same-Process read-only grants while retaining only the cwd
+  selected grant's writable authority. Refuse missing, escaping, revoked or
+  retargeted backing without substitute tools or another writable cwd. This is a
+  proposed ADR-0058 extension pending user review/merge.
 - Freeze a reproducible Linux fixture with git and the repository's Rust 1.97,
   and verify real dependency builds/tests, git diff and negative authority cases.
 - Keep wider real-model repetitions in a later independent change. Node/Python
@@ -31,7 +34,9 @@ None. Native tool execution already has a durable owner.
 - `os-sandbox-enforcement`: selected Linux development tools, read-only runtime
   projection, private writable scratch, and truthful execution qualification.
 - `host-mount-tool-process-sandbox-projection`: native diagnostic paths preserve
-  namespace boundaries and conceal normalized private backing ancestors.
+  namespace boundaries and conceal normalized private backing ancestors; same-Process
+  explicit read-only dependencies with selected writable authority and current root
+  revalidation.
 
 ## Impact
 
