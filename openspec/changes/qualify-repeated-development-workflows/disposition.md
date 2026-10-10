@@ -5,6 +5,11 @@ Qualification is active: prerequisites/fixtures and all five macOS families are 
 All fifteen macOS slots now have matching final-candidate source/binary evidence.
 Observed production repairs and linked retries are recorded in `native-runs.md`;
 Linux generation, complete cross-Host qualification and delivery remain open.
+The frozen public candidate now passes complete normal Linux quality and a fresh
+explicit-command PTY preflight, including actual read-only write denial and exit.
+Those receipts add no real-model slots. Linux generation remains unconfigured;
+actual task-cwd tool versions, final phase/merged-source checks and the fifteen
+Linux tasks still require their own evidence.
 Original failures, including F1 r1's incomplete prospective tool identity, remain
 retained alongside their successful fresh retries.
 Planning artifacts and offline fixture checks do not prove completed real-model

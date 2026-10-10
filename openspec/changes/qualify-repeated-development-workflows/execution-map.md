@@ -27,10 +27,26 @@ task outcomes.
   `32a46d54-3cc1-412c-b43c-b6d9d27f2876` records model `gpt-6.1-sol`, reasoning
   effort `medium`, and Process path `/proc/8`. This is not a matrix slot and has
   no retained live boot-status receipt. An earlier setup failure remains retained.
-- The same public candidate builds in Linux and passes the affected Rust checks;
-  its latest native `connection current` reports `effective_profile none`.
-  Linux generation readiness and the complete normal-quality gate remain open;
-  no macOS credential or private store has been copied.
+- The same public candidate passes the complete normal Linux `just quality` in
+  its own real Git checkout, including standalone/distribution checks. The gate
+  uses the cace913c candidate's quality script; phase-specific fixture checks and
+  final merged-source applicability remain separate requirements. The unchanged
+  35-file inventory and all 2283 tracked source files match the public archive.
+  The actual quality-built CLI SHA-256 is
+  `6b7565827d0b8479d2a6d6315deb51e71a1c9c2eaa8c8982171fd9f4f95ae125`.
+  Its fresh 80x24 ordinary-PTY explicit-command preflight passes Git
+  version/status/diff and protected read-only Cargo compilation/write denial;
+  both Tool Processes exit, the queue empties and the owning invocation exits.
+  The compound Git/version command requires one human approval under existing
+  safe degradation; Cargo is classified write and allowed. No blanket autonomous
+  Bash or full protected-subpath confinement is implied.
+  Actual Tool stdout selects Git 2.53.0 and Rust/Cargo 1.96.0 in checker scratch,
+  while the repository quality gate selects Rust/Cargo 1.97.0. Freeze actual
+  task-cwd selections before Linux generation rather than inheriting the gate's
+  versions. Its latest native `connection current` reports `effective_profile
+  none`; Linux generation readiness and all fifteen slots remain open. No macOS
+  credential or private store has been copied. See the latest `native-runs.md`
+  receipts; neither preflight nor quality closes a real-model slot.
 
 ## Supported product controls
 

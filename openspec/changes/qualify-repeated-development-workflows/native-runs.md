@@ -1419,3 +1419,75 @@ cost and model/Tool/wait partitions remain unknown. Previous head 803b49be passe
 all sixteen checks, including completed CodeQL; this evidence-only update
 requires its own current-head checks. No merged-source/cross-Host qualification,
 general autonomous self-bootstrap or automatic routing is claimed.
+
+## Complete Linux candidate quality and fresh native preflight — 2026-10-11
+
+The same frozen cace913c plus 35-file production candidate now passes actual
+`just quality` in a real, owned public Git checkout and separate output directory.
+The terminal command exits zero; Rust architecture/size, format, Clippy, rustdoc,
+script checks, Host-source boundary, current OpenSpec guard and standalone CLI /
+distribution checks pass. All 2283 tracked source files and the 35-file inventory
+match the earlier public archive and remain unchanged after the gate. This uses
+the cace913c candidate's quality script; it does not substitute for phase-specific
+fixture checks or final merged-source qualification. Actual quality-built CLI
+SHA-256 is `6b7565827d0b8479d2a6d6315deb51e71a1c9c2eaa8c8982171fd9f4f95ae125`.
+
+The tooling setup retains its first stale-APT-index failure before refresh and
+its incomplete private-prefix Git HTTPS helper failure. Standard Git 2.53.0 with
+its required runtime dependencies restores actual public HTTPS clone. This Host
+clone is not confined Tool Git-network qualification. Isolated OpenSpec 1.4.1
+uses Node/npm for the repository workflow only; no Node/Python task qualification
+is implied. A first diff-hash comparison used Linux's default seven-character
+abbreviation versus the original eight; explicit `git diff --binary --abbrev=8
+HEAD` matches `60fbb03a`. File identities stayed unchanged; the initial comparison
+failure remains retained rather than presented as a source mismatch or a pass.
+
+A fresh ordinary native 80x24 PTY uses the actual quality-built CLI, boot
+`014268f4-674b-4a99-ba44-da3ebfbfdf7e`, Host PID 3561564 and instance Root 8. Three
+acknowledged grants mount Source and protected assertions read-only and dedicated
+checker scratch read-write. These operator-authored preflight files are separate
+from all frozen matrix inputs. Explicit cd settles at `/mnt/project-request-3/`.
+One compound version/status/diff command receives actual human approval once;
+Action a1 and call `e4cdcabd-5e94-48bd-bb15-27dcc8a04bae` report exit zero and
+retain the before/after Git diff. Its policy is `safe_degradation`, unknown,
+`human-bash-unconfined`, under `linux_reified_namespace`. This is the existing
+conservative classification boundary, not an unattended/full-confinement claim.
+
+The next explicit `cargo test --offline --locked --target-dir target` is
+classified write and allowed by `builtin_autonomous` under that same backend.
+Action a2 and call `398ac58e-4deb-4d98-84e0-b50d7ab34d3a` report exit zero.
+The actual compiled protected test reads both read-only trees and requires
+PermissionDenied/ReadOnlyFilesystem on attempted append to source and assertions.
+All seven original file hashes remain unchanged. Published Tool references
+`/proc/9` and `/proc/10` are observed exited before native exit; the actual queue
+has no pending/active/uncertain submissions. `/quit` exits the PTY zero and Host
+PID 3561564 is gone. Neither command is duplicated or sent to a model.
+
+Actual Tool stdout selects Git 2.53.0 and Rust/Cargo 1.96.0 in checker scratch;
+the repository quality gate uses its Rust/Cargo 1.97.0 toolchain. Future model
+readiness must freeze actual task-cwd selections, not assume these are identical.
+There is no selected Linux generation profile, no model turn context and no
+credential/private-store copy. The displayed fallback model is not a substituted
+qualification model. Collector errors are retained: the older SDK observer has
+no `--list`, Action a1 has no `record` leaf, and durable `agent_action_v1` belongs
+to `event_type`, not `type`; the corrected collection contains all three Actions.
+
+Immutable receipts in the owning qualification cache:
+
+- `linux-quality-cli-v2/receipt.json` SHA-256
+  `c142a35bd7791b8baf06d9c5fba5e117ff510a9c2bcc7d055684a81816a55ac9`;
+  setup/source identity, with quality still running at that receipt's creation.
+- `linux-full-quality-v1/receipt.json` SHA-256
+  `b33b46b59663460a1699df7e1a85fcba0c36d54820c0dca27ecb3d7c8adcd179`;
+  complete candidate normal gate, source-after-gate proof and retained log hashes.
+- `linux-final-native-preflight-v1/receipt.json` SHA-256
+  `587a914083904b6db03c3d1670db66751b423e6e067a9bcefe8f1f1ba69ae2ed`;
+  27 artifacts including policy/call-correlated Actions, Tool statuses, PTY,
+  queue, baseline proof, collector corrections and actual exit.
+
+No matrix count changes: thirty-four development attempts, fifteen qualified
+macOS slots on the final candidate and fifteen Linux NOT_RUN slots. Checklist
+stays 8/19. Head 02010e6a passes all sixteen completed checks before this
+evidence-only update; the new head requires its own checks and review. Linux
+generation readiness, full cross-Host qualification, final phase/merged-source
+validation, formal review, user merge and canonical closure remain open.
