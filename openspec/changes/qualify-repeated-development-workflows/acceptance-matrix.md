@@ -1,9 +1,11 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
-The layout is frozen at five families x two platforms x three repetitions.
-Executable fixture contents, prompts, source/binary/model identity and supported
-operator controls remain to be frozen before any live run. All thirty slots below
-are NOT_RUN; no earlier UI, Sandbox, Tool or CI receipt fills a slot.
+The layout, thirty fixture inputs/prompts, bounds and measurement fields are
+frozen at five families x two platforms x three repetitions. Runtime readiness
+is frozen separately before each Host's generation. Two macOS F1 first attempts
+have executed: one PASS and one FAIL for incomplete prospective tool identity;
+twenty-eight slots remain NOT_RUN. See `native-runs.md` for retained receipts.
+No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
 ## Entry, identity and bounds
 
@@ -49,8 +51,8 @@ content; generated role-prefix regression checks follow ADR-0059.
 
 | Slot | Platform / Host | Family | Repetition | First outcome | Final qualified evidence |
 | --- | --- | --- | --- | --- | --- |
-| macos-f1-r1 | macos / Herdr | F1 | 1 | NOT_RUN | absent |
-| macos-f1-r2 | macos / Herdr | F1 | 2 | NOT_RUN | absent |
+| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | coding/checker evidence retained; fresh retry required |
+| macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; a1 receipt `02cf4ac6` |
 | macos-f1-r3 | macos / Herdr | F1 | 3 | NOT_RUN | absent |
 | macos-f2-r1 | macos / Herdr | F2 | 1 | NOT_RUN | absent |
 | macos-f2-r2 | macos / Herdr | F2 | 2 | NOT_RUN | absent |

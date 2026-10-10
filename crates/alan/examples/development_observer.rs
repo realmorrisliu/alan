@@ -19,6 +19,8 @@ struct Args {
 enum Command {
     Read {
         path: String,
+        #[arg(long)]
+        list: bool,
     },
     Mount {
         operation: Uuid,
@@ -59,12 +61,24 @@ async fn main() -> Result<()> {
     );
     tokio::time::timeout(Duration::from_secs(10), async {
         match args.command {
-            Command::Read { path } => {
+            Command::Read { path, list } => {
                 validate_observation_path(&path)?;
                 let attached = LocalAttachment::new(paths).connect().await?;
                 ensure!(attached.boot_id == args.boot, "attachment boot changed");
-                let bytes = alan_shell::Shell::new(attached.root).cat(&path).await?;
-                print!("{}", String::from_utf8(bytes)?);
+                let shell = alan_shell::Shell::new(attached.root);
+                if list {
+                    let entries =
+                        shell
+                            .ls_bounded(&path, 1024, 1 << 20)
+                            .await
+                            .map_err(|error| {
+                                anyhow::anyhow!("bounded observation failed: {error:?}")
+                            })?;
+                    println!("{}", serde_json::to_string(&entries)?);
+                } else {
+                    let bytes = shell.cat(&path).await?;
+                    print!("{}", String::from_utf8(bytes)?);
+                }
             }
             Command::Mount {
                 operation,
@@ -159,5 +173,21 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn directory_observation_requires_explicit_listing_and_pinned_owner() {
+        let args = Args::try_parse_from([
+            "observer",
+            "/owned/runtime",
+            "a925a8d1-3b47-4725-ac90-875dd08e6afb",
+            "read",
+            "/agent/8/actions",
+            "--list",
+        ])
+        .unwrap();
+        assert!(matches!(args.command, Command::Read { list: true, .. }));
+        assert!(validate_observation_path("/agent/8/actions").is_ok());
+        assert!(validate_observation_path("/agent/root/actions").is_err());
     }
 }

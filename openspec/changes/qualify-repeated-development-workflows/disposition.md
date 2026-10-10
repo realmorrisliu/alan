@@ -2,7 +2,8 @@
 
 The user's existing ordered goal authorizes this independent third delivery.
 Preparation is active: prerequisite tracing and executable fixtures are implemented (3/19 tasks).
-Production runtime repairs and live task qualification have not started.
+Production runtime repairs have not started. Two macOS F1 first attempts have
+executed; one qualifies and one fails for incomplete prospective tool identity.
 Planning artifacts and offline fixture checks do not prove completed real-model
 development tasks or passed native slots. No superseded or archived change is reactivated.
 
@@ -18,12 +19,14 @@ qualification. Proposed read-only disjoint-grant adoption remains outstanding;
 these tests do not adopt ADR-0058 or deploy a candidate to an installed runtime.
 UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
-`cace913c`. Final runtime/terminal/collector readiness is not frozen.
-Thirty slots are NOT_RUN. macOS public Connection metadata confirms default chatgpt-main and selected
+`cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
+qualification remain open.
+One slot is PASS, one is FAIL and twenty-eight are NOT_RUN; see `native-runs.md`.
+macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
-confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux
-has no canonical Connection metadata or Host credential store. Native CLI candidate
-build succeeds; credentials have not been imported or copied. Do not auto-merge, enable automatic routing, substitute mocks or
+confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
+preflight had no selected generation profile; native CLI candidate build succeeds
+and credentials have not been imported or copied. Do not auto-merge, enable automatic routing, substitute mocks or
 start Alan production self-development in place of Codex implementing this goal.
 
 `execution-map.md` records supported controls, actual store owners and recovery
@@ -47,3 +50,12 @@ and protected-checker compilation under audited `linux_reified_namespace`, with
 successful reads followed by kernel write denial and unchanged file inventories.
 Its initial operator fixture path error is retained separately. Provider remains
 unconfigured; no Linux generation or real-development task is implied.
+
+The subsequent macOS native runs use the unchanged `cace913c` production binary.
+`native-runs.md` retains their model authorship, protected independent tests,
+first outcomes, planned approvals and exact receipt hashes. r1 needs a fresh
+linked qualification retry; r2 passes with frozen native PATH/tool identities and
+observed draft/logical-cursor preservation. No task 2.x is closed yet. The small
+SDK observer bounded-list extension has three passing tests and Clippy; its new
+commit requires current-head CI. The observed absolute namespace Bash operand
+rejection remains a Host/Tool finding, without a claimed production repair.

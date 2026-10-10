@@ -1,8 +1,9 @@
 # Native execution and evidence map — 2026-10-10
 
-This is operator preparation for this change, not a qualification report. The
-matrix still has thirty NOT_RUN slots. Fixture self-checks and provider preflight
-are separate from model-authored task outcomes.
+This records supported operator controls. Initial actual task outcomes are in
+`native-runs.md`: one PASS, one FAIL and twenty-eight NOT_RUN slots. Fixture
+self-checks and provider/backend preflights remain separate from model-authored
+task outcomes.
 
 ## Candidate and prerequisite evidence
 
@@ -82,6 +83,10 @@ records. The qualification-only `development_observer` example connects through
 the existing public `LocalAttachment` SDK to the already-running native instance;
 it never boots an Agent or runs a model. Its `read` command requires a numeric
 Process path and verifies the expected Host boot before and after connection.
+`read <path> --list` lists actual Action/request names through the existing bounded
+Shell API (1,024 entries / 1 MiB), without allocating clone endpoints. Ordinary
+directory or Action publication can lag admission; reobserve the same owned
+instance after a not-found response, never repeat an input to manufacture an ID.
 Its explicit `mount` command uses existing `HostCommandPlane::mount_project`,
 with a frozen operation UUID, expected boot, absolute owned directory and access.
 Retain intent before effects; reconcile uncertain transport with that same UUID,

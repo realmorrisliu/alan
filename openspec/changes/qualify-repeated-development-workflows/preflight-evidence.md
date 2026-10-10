@@ -1,7 +1,8 @@
 # Native preparation evidence — 2026-10-10
 
-This evidence qualifies operator preparation only. All thirty real-development
-slots remain NOT_RUN and task 1.4 remains open. No model authored these preflight
+This evidence qualifies operator preparation only. At preflight capture all thirty
+real-development slots were NOT_RUN; later actual outcomes are in `native-runs.md`.
+Task 1.4 remains open. No model authored these preflight
 fixtures; no production Runtime or policy behavior was changed by this slice.
 
 ## macOS independent checker
