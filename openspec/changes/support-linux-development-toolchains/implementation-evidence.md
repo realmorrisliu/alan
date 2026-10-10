@@ -382,3 +382,59 @@ excludes the disjoint dependency despite the combined Sandbox fixture succeeding
 a narrow explicit read-only-grant exception is awaiting the user's design choice.
 Do not change that accepted boundary or claim Bash support from the lower-layer run.
 The independent thirty real-model development repetitions have not started.
+
+## Complete installation inventory and actual Bash entry
+
+Published lifecycle head `80f8585` passes all sixteen checks on that exact head.
+The following independent native evidence extends its qualification without
+changing production authority or enabling automatic routing.
+
+The frozen engine test binary is invoked directly, avoiding a Host Cargo/Rustup
+build between inventory snapshots. All installed toolchain trees, the original
+Cargo proxy directory and Rustup settings are inventoried without following
+symlinks: 379 nodes, including content hashes, link targets, mode, UID/GID,
+device/inode/link count and modification/change times. Access time is excluded
+because reads update it. Before/after inventories are byte-identical; the fixture
+passes in 120.973 seconds. Installed shell package identity is
+`dash 0.5.12-12ubuntu3`; selected git/Rust identities and unsupported PATH fallback
+remain in the earlier receipt. The task-owned records are
+`native-development-stores-before.json`, `native-development-stores-after.json`,
+`native-development-stores-acceptance.json` and
+`alan-development-stores-verification.log`.
+
+This comparison starts after owned fixture provisioning. It does not erase the
+earlier hardlink metadata correction or claim unchanged access times. Personal
+Cargo registry/credential trees are neither inventoried nor projected. This
+closes task 3.1 with the provisioning caveat retained.
+
+An adjacent opt-in Linux Host test reuses the existing service/approval/binding
+fixtures. It registers a Process namespace, approves one read-only project grant,
+reconciles the live service before each invocation and calls the actual Bash Tool
+through ToolContext and the native Host adapter. Backend selection is normal,
+not forced; the actual readiness report selects `linux_reified_namespace`.
+Version output is rustc/cargo 1.97.0. Two actual offline builds/unit tests use
+private output and fresh per-command Cargo state. Compiled tests deny ungranted
+home credentials, project/in-project dependency/runtime writes and a connection
+to a live Host loopback listener. The Host accepts no connection; all six source
+files and runtime/canary bytes remain exact; no project target is created.
+Adapter-captured stderr contains no native project backing root. Revoking the
+selected grant rejects its pinned future binding; a fresh binding without an
+adapter makes the next Bash invocation fail before its marker.
+
+The dependency in this Bash fixture is inside the selected read-only project;
+it is not a disjoint grant and does not resolve the outstanding ADR-0058 choice.
+This exercises the actual Bash/service adapter boundary, not Agent generation,
+policy admission or the full Root workflow. It closes task 3.4, while 3.2/3.3
+retain the actual disjoint-dependency/live-grant requirement.
+
+The focused Bash fixture passes in 22.31 seconds (`alan-native-bash-first.log`).
+Full Linux Host tests pass 49, zero failures and two existing explicitly ignored
+TypeSafe mounted-Connection/Root probes in 22.73 seconds
+(`alan-native-bash-final-host.log`); the Bash fixture does not return early.
+Actual version/build/build command durations are 5.594/6.053/5.618 seconds.
+Host all-target/all-feature Clippy with warnings denied passes in 23.74 seconds
+(`alan-native-bash-final-clippy.log`). `native-bash-acceptance.json` freezes nine
+Host/Tool source hashes, the unchanged engine source hashes, actual binary/log
+identity, grant/entry scope and outcomes. The complete 379-node installation
+inventory is still exact after the Bash runs (`native-bash-stores-after.json`).
+These remain scripted native tests; thirty repeated real-model runs are open.

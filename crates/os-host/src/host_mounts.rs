@@ -423,7 +423,7 @@ mod tests {
     use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
     use alan_kernel::{LiveNamespace, MountFs, Namespace, Pid};
 
-    fn service() -> Arc<HostMountService> {
+    pub(super) fn service() -> Arc<HostMountService> {
         HostMountService::new(Arc::new(NativeHostMountExportAdapter))
     }
 
@@ -482,7 +482,7 @@ mod tests {
         request_id
     }
 
-    async fn approve(
+    pub(super) async fn approve(
         service: &Arc<HostMountService>,
         pid: u64,
         namespace_path: &str,
@@ -500,7 +500,7 @@ mod tests {
         .unwrap()
     }
 
-    fn binding(namespace_cwd: &str) -> ToolExecutionBinding {
+    pub(super) fn binding(namespace_cwd: &str) -> ToolExecutionBinding {
         ToolExecutionBinding::awaiting_host_projection(
             PathBuf::from(namespace_cwd),
             PathBuf::from("/tmp/alan-native-host-mount-test-scratch"),
@@ -969,3 +969,7 @@ mod tests {
         assert_eq!(data, expected);
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "host_mounts/native_development_tests.rs"]
+mod native_development_tests;
