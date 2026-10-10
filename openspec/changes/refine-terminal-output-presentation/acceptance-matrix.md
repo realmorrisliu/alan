@@ -356,3 +356,13 @@ A related read failure no longer disappears behind captured snapshots. See
 merging and read diagnostics; the 30-slot native matrix above remains scoped to
 its frozen earlier source/binary. Fresh current-head CI is required for this
 patch, and merge/canonical sync remain open.
+
+The subsequent review of `8824362d` found that the initial sent notice lacked
+submission ownership and could survive both queued admission and a terminal
+receipt arriving before the first queue event. The ordinary input writer now
+establishes notice/hint ownership together. Queued/paused, direct completed/failed/
+cancelled, newer-draft, older-completion and same-text Runtime-warning regressions
+pass; the full focused suite is now 368 library and 12 integration tests. See
+`final-review.md` and the submission-notice RED/GREEN receipts. This follow-up
+also requires fresh current-head CI and does not upgrade the earlier native
+matrix to a fresh-source qualification.

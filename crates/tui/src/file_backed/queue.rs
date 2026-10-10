@@ -223,6 +223,15 @@ impl FileBackedApp {
         );
     }
 
+    pub(super) fn show_submission_sent(&mut self, id: &str) {
+        self.queue.hint = Some(id.into());
+        self.notice = Some(Notice::queue(
+            "submission sent; admission unconfirmed".into(),
+            id,
+            true,
+        ));
+    }
+
     pub(super) fn refresh_local_input_hint(&mut self, id: &str, owner: &str) {
         if self
             .notice

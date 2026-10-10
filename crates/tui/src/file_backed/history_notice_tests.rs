@@ -15,7 +15,7 @@ fn queue_completion_preserves_runtime_notice_with_identical_text() {
         }),
     );
     app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
-    app.refresh_local_input_hint("q", "/agent/1");
+    app.show_submission_sent("q");
     let text = app.notice.as_deref().unwrap().to_owned();
     app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(UiNoticeKind::Warning, &text));
     app.refresh_local_input_hint("q", "/agent/1");

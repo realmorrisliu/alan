@@ -75,3 +75,24 @@ Receipts: `target/plan-history-merge-red.log`,
 the 30 native UI slots remain evidence for the earlier `f2a9222d` candidate, not
 a fresh native run of this patch. The follow-up requires its own normal quality
 gate and current-head CI before merge; no durable events or Tool effects change.
+
+### Initial submission notice ownership
+
+The automatic review of `8824362d` raised comment `4235779335`. It is valid:
+the successful input writer installed an unowned local notice, so the queue's
+guard for unrelated Runtime notices rejected subsequent admission updates.
+It also left no queue-hint reference for a terminal receipt arriving before the
+first queue event to retire. The RED regression reproduces this direct-completion
+residue without relying on a later `turn_started` notice.
+
+The production submission path now installs the initial notice and its queue
+hint together through the existing typed notice representation. Both use the
+actual submission ID; queue admission can update it and direct terminal receipts
+can clear it. The guard for unrelated Runtime notices remains unchanged.
+Regression cases cover queued/paused admission, direct completion/failure/cancel
+before any queue event, newer drafts, older completions and a Runtime warning
+with identical displayed text. All 368 TUI library and 12 integration tests pass;
+receipts are `target/submission-notice-red.log` and
+`target/submission-notice-green.log`. Other local notices belong to request,
+model or project controls and must remain protected from queue updates; no other
+ordinary input producer requiring this repair was found.

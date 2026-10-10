@@ -92,8 +92,11 @@ exact implementation review found no remaining blocker; see `final-review.md`.
 The review/checklist-only head `300ccfa3` subsequently passed all 16 distinct
 checks and PR #1044 left draft. A new review finding exposed duplicate plan
 details at a retained-history display bound; its narrow repair and related
-read-error visibility regression are recorded in `final-review.md`. Its focused
-TUI tests pass, but the follow-up requires fresh quality/current-head CI. User
+read-error visibility regression are recorded in `final-review.md`. The next
+review identified an unowned initial submission notice; its repair preserves
+exact submission ownership through queued/paused admission and direct terminal
+receipts without weakening Runtime-warning protection. All 368 library/12
+integration TUI tests pass, but the follow-up requires fresh quality/current-head CI. User
 merge and canonical synchronization remain open. Native
 five-workflow closure does not claim native
 cross-Process replacement, general self-development or Linux qualification;
