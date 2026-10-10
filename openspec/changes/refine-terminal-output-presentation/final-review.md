@@ -43,3 +43,35 @@ the PR is made ready; it changes no candidate Rust or native fixtures. User merg
 and post-merge canonical synchronization remain open tasks. No native
 cross-Process replacement qualification, broad Linux toolchain support or
 repeated autonomous development qualification is claimed by this review.
+
+## PR review follow-up — 2026-10-10
+
+Comment `4229713588` correctly identifies an overlap missed by the review above:
+when retained plan history ends at its display bound but the UI captured later
+snapshots, whole-collection concatenation duplicates the shared prefix and puts
+the retained gap after newer captured snapshots. The real Kernel/AgentFS
+regression reproduces seven entries instead of the expected five.
+
+Plan detail now merges on concrete owner, revision and exact snapshot. A matching
+retained snapshot appears once with retained provenance; unmatched captured
+prefixes/tails remain exact, and the retained gap stays at its original boundary.
+Without an exact shared identity, the two histories remain explicitly distinct;
+matching revision numbers or content alone cannot substitute another snapshot.
+The related error branch also discarded the retained read diagnostic whenever
+captured snapshots existed. A second RED regression reproduces one entry instead
+of the expected captured snapshot plus explicit read error; both are now retained.
+
+All 366 TUI library and 12 integration tests pass after these repairs. New tests
+cover cumulative display bounds, gap navigation, retained provenance, unmatched
+captured prefixes, different owners/revisions/snapshots and a removed Process's
+event history. The Action catalog merge already excludes the current owner from
+observed references and retains its catalog failure warning; attachment/history
+merges retain concrete identities and generation fences. No equivalent
+whole-cache concatenation path requiring another repair was found there.
+
+Receipts: `target/plan-history-merge-red.log`,
+`target/plan-history-read-failure-red.log` and
+`target/plan-history-review-green.log`. This is a narrow plan-detail follow-up;
+the 30 native UI slots remain evidence for the earlier `f2a9222d` candidate, not
+a fresh native run of this patch. The follow-up requires its own normal quality
+gate and current-head CI before merge; no durable events or Tool effects change.

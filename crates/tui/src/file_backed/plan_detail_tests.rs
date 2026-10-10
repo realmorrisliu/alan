@@ -343,3 +343,154 @@ async fn snapshot_without_old_events_never_substitutes_new_stream_plan_one() {
             .any(|line| line.to_string().contains("original observed snapshot"))
     );
 }
+
+#[tokio::test]
+async fn bounded_retained_plan_history_merges_captured_tail_once_in_order() {
+    let (shell, _, _, pid) = crate::file_backed::stdio_tests::live_root_agent().await;
+    let owner = format!("/agent/{pid}");
+    let snapshots = (1..=4)
+        .map(|revision| {
+            plan(
+                &format!("exact snapshot {revision}"),
+                &"x".repeat(100_000),
+                PlanItemStatus::Pending,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut app = FileBackedApp::new(owner.clone());
+    for snapshot in &snapshots {
+        shell
+            .write(
+                &format!("{owner}/machine/ui/events"),
+                format!(
+                    "{}\n",
+                    serde_json::to_string(&UiEvent::Plan {
+                        snapshot: snapshot.clone()
+                    })
+                    .unwrap()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        app.apply_ui_plan_snapshot(snapshot.clone());
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    super::super::action_detail_io::start_pending(&shell, &mut app, &tx);
+    app.dispatch(
+        tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    assert_eq!(app.modal.plans.len(), 5);
+    for (entry, snapshot) in app.modal.plans[..2].iter().zip(&snapshots[..2]) {
+        assert_eq!(entry.snapshot.as_ref().unwrap(), snapshot);
+        assert!(!entry.observed_only);
+    }
+    assert!(
+        app.modal.plans[2]
+            .snapshot
+            .as_ref()
+            .unwrap_err()
+            .contains("display bound")
+    );
+    for (entry, snapshot) in app.modal.plans[3..].iter().zip(&snapshots[2..]) {
+        assert_eq!(entry.snapshot.as_ref().unwrap(), snapshot);
+        assert!(entry.observed_only);
+    }
+    assert_eq!(app.modal.selected, 4);
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(
+        app.modal
+            .rows
+            .iter()
+            .any(|row| row.to_string().contains("display bound"))
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(
+        app.modal
+            .rows
+            .iter()
+            .any(|row| row.to_string().contains("exact snapshot 2"))
+    );
+}
+
+#[test]
+fn plan_merge_requires_exact_identity_and_keeps_unmatched_captured_prefix() {
+    let captured = PlanEntry {
+        owner: "/agent/7".into(),
+        revision: 1,
+        snapshot: Ok(plan("original", "step", PlanItemStatus::Pending)),
+        observed_only: true,
+    };
+    for field in ["same", "owner", "revision", "snapshot"] {
+        let mut retained = captured.clone();
+        retained.observed_only = false;
+        match field {
+            "owner" => retained.owner = "/agent/8".into(),
+            "revision" => retained.revision = 2,
+            "snapshot" => {
+                retained.snapshot = Ok(plan("different", "step", PlanItemStatus::Pending))
+            }
+            _ => {}
+        }
+        let entries = merge_plans(vec![retained], vec![captured.clone()]);
+        assert_eq!(
+            entries.len(),
+            if field == "same" { 1 } else { 2 },
+            "{field}"
+        );
+        assert_eq!(entries[0].observed_only, field != "same", "{field}");
+    }
+    let mut common = captured.clone();
+    common.revision = 2;
+    let mut retained = common.clone();
+    retained.observed_only = false;
+    let entries = merge_plans(vec![retained], vec![captured.clone(), common]);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].snapshot, captured.snapshot);
+    assert!(entries[0].observed_only);
+    assert_eq!(entries[1].revision, 2);
+    assert!(!entries[1].observed_only);
+}
+
+#[tokio::test]
+async fn captured_plan_does_not_hide_retained_history_read_failure() {
+    let (shell, root, _, pid) = crate::file_backed::stdio_tests::live_root_agent().await;
+    let owner = format!("/agent/{pid}");
+    let original = plan("captured original", "exact step", PlanItemStatus::Pending);
+    let mut app = FileBackedApp::new(owner.clone());
+    app.apply_ui_plan_snapshot(original.clone());
+    assert!(root.unbind_process(&pid).await);
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    super::super::action_detail_io::start_pending(&shell, &mut app, &tx);
+    app.dispatch(
+        tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    assert_eq!(app.modal.plans.len(), 2);
+    assert_eq!(app.modal.plans[0].snapshot.as_ref().unwrap(), &original);
+    assert!(app.modal.plans[0].observed_only);
+    assert!(
+        app.modal.plans[1]
+            .snapshot
+            .as_ref()
+            .unwrap_err()
+            .contains("Plan history unavailable")
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(
+        app.modal
+            .rows
+            .iter()
+            .any(|row| row.to_string().contains("captured original"))
+    );
+}

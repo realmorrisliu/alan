@@ -89,8 +89,12 @@ layout restored and no candidate Alan process remains. See the final matrix in
 Reviewed head `3f915876e4dab8b730737685278c584a84207586` has all 16 CI checks
 passing. Its Rust tree is unchanged from the built `f2a9222d` candidate. The
 exact implementation review found no remaining blocker; see `final-review.md`.
-The review/checklist-only commit must collect current-head CI before PR #1044
-leaves draft. User merge and canonical synchronization remain open. Native
+The review/checklist-only head `300ccfa3` subsequently passed all 16 distinct
+checks and PR #1044 left draft. A new review finding exposed duplicate plan
+details at a retained-history display bound; its narrow repair and related
+read-error visibility regression are recorded in `final-review.md`. Its focused
+TUI tests pass, but the follow-up requires fresh quality/current-head CI. User
+merge and canonical synchronization remain open. Native
 five-workflow closure does not claim native
 cross-Process replacement, general self-development or Linux qualification;
 real Kernel/AgentFS tests remain the evidence for replacement/attachment fencing.

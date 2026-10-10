@@ -21,6 +21,35 @@ fn limited(mut entries: Vec<PlanEntry>, owner: &str, reason: &str) -> Vec<PlanEn
     entries
 }
 
+fn merge_plans(retained: Vec<PlanEntry>, mut captured: Vec<PlanEntry>) -> Vec<PlanEntry> {
+    let same_snapshot = |left: &PlanEntry, right: &PlanEntry| {
+        left.owner == right.owner
+            && left.revision == right.revision
+            && left.snapshot == right.snapshot
+    };
+    // Only exact snapshot matches correlate the two histories.
+    let Some(first_common) = captured
+        .iter()
+        .position(|entry| retained.iter().any(|plan| same_snapshot(entry, plan)))
+    else {
+        captured.extend(retained);
+        return captured;
+    };
+    let mut entries = captured.drain(..first_common).collect::<Vec<_>>();
+    for plan in retained {
+        if let Some(index) = captured
+            .iter()
+            .position(|entry| same_snapshot(entry, &plan))
+        {
+            entries.extend(captured.drain(..index));
+            captured.remove(0);
+        }
+        entries.push(plan);
+    }
+    entries.extend(captured);
+    entries
+}
+
 pub(super) fn start(
     shell: &alan_shell::Shell,
     app: &mut FileBackedApp,
@@ -67,30 +96,12 @@ pub(super) fn start(
                 .collect::<Vec<_>>();
             match read(&shell, &owner).await {
                 Ok(plans) if !plans.is_empty() => {
-                    let correlated = cached.iter().all(|entry| {
-                        plans.iter().any(|retained| {
-                            retained.revision == entry.revision
-                                && retained.snapshot == entry.snapshot
-                        })
-                    });
-                    if !correlated {
-                        entries.extend(cached);
-                    }
-                    entries.extend(plans);
+                    entries.extend(merge_plans(plans, cached));
                 }
                 result => {
-                    if cached.is_empty() {
-                        if let Err(error) = result {
-                            entries.push(PlanEntry {
-                                owner,
-                                revision: 0,
-                                snapshot: Err(error),
-                                observed_only: false,
-                            });
-                        }
-                    } else {
-                        // Captured snapshots remain exact even if the stream is missing or uncorrelated.
-                        entries.extend(cached);
+                    entries.extend(cached);
+                    if let Err(error) = result {
+                        entries = limited(entries, &owner, &error);
                     }
                 }
             }

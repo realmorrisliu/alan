@@ -3,9 +3,10 @@
 2026-10-09: accepted design; implementation and acceptance authorized by the
 user's new goal. The five confirmed decisions in `decision-record.md` remain
 binding. Implementation and native five-workflow acceptance are complete at the
-current candidate. Exact implementation review and all 16 checks at `3f915876`
-are complete; the review/checklist-only commit still requires current-head CI
-before PR readiness. User merge and canonical sync remain open. This disposition
+`f2a9222d` candidate; the review/checklist head `300ccfa3` passed all 16 distinct
+checks and PR #1044 became ready for review. The subsequent plan-detail review
+repair is recorded in `final-review.md` and requires fresh current-head CI.
+User merge and canonical sync remain open. This disposition
 does not claim merged delivery. See `goal-roadmap.md`
 for the ordered goal and separate follow-up delivery boundaries.
 

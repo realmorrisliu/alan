@@ -343,3 +343,16 @@ See `final-review.md` for the completed implementation review. The final
 review/checklist commit's required CI, user merge and canonical spec sync remain
 delivery gates. Cross-Process replacement remains covered by real
 Kernel/AgentFS deterministic tests, not native CLI replacement qualification.
+
+### Plan-detail PR review follow-up
+
+Review comment `4229713588` exposed duplicate shared snapshots when retained
+history hits its cumulative display bound and the renderer has captured later
+plans. The fix retains one exact owner/revision/snapshot entry, keeps the retained
+gap before the correlated captured tail and preserves uncorrelated snapshots.
+A related read failure no longer disappears behind captured snapshots. See
+`final-review.md` for two RED/GREEN receipts, identity/navigation coverage and
+366 library/12 integration passing tests. This follow-up changes only plan-detail
+merging and read diagnostics; the 30-slot native matrix above remains scoped to
+its frozen earlier source/binary. Fresh current-head CI is required for this
+patch, and merge/canonical sync remain open.
