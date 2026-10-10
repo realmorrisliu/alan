@@ -250,3 +250,80 @@ failures/ignored. Source-size and architecture gates pass. Pinned OpenSpec 1.4.1
 strict validation remains the normative CLI gate, separate from the newer global
 CLI. A normal commit will run full quality and standalone distribution; current
 head CI is required before considering this slice reviewed for delivery.
+
+The private-environment slice was committed as `8d9e371` and published to draft
+PR #1046. All 16 distinct checks passed on that exact head. The preceding pending
+publication paragraphs are historical; they do not qualify the next candidate.
+
+## Automatic standard-Rustup Host adapter slice
+
+The existing Host adapter now inspects standard Rustup proxies, whitelisted
+selection settings and bounded installed runtime roots. It preserves original
+PATH and explicit Rustup override while creating an independent private catalog;
+neither Host Cargo home nor the Rustup management directory is mounted. Selection
+metadata, component manifests and executable digests are revalidated before
+admission. Missing components/targets and selected fmt/Clippy helper loss/escape
+have explicit refusal paths. The pure plan still performs no Host inspection.
+
+Actual Sandbox execution first exposed its default writable-cwd admission guard,
+which blocked a valid read-only Cargo build. Bash preflight and execution now share
+the native namespace readable-cwd decision; weaker backends retain their existing
+writable-cwd requirement. Private build output and read-only mounts enforce the
+source boundary. Host inspection/hashing runs on a blocking worker without user
+execution, preserving cancellable Process ownership.
+
+Three actual namespace-backed Sandbox cases exercise project-file, original
+environment and command `+selector` precedence. Each reports rustc/cargo/rustdoc
+1.97.0, compiles the independently read-only local dependency, passes one unit
+test and one real doctest, runs `cargo fmt -- --check` and offline Clippy with
+warnings denied. Required project rustflags/rustdocflags remain effective. All
+six source files remain byte-identical and neither project nor dependency gets
+a target directory. Original Rustup settings and proxy bytes remain unchanged.
+
+Five native negatives refuse before a writable project's `marker` can be created:
+missing environment selector, missing command selector, missing project component,
+a project selection changed after successful execution, and a runtime-root alias.
+Portable regressions also check nearest directory override/legacy-file precedence,
+undelegated parent configuration, runtime loss and byte changes, unknown wrappers,
+private metadata exclusion, changed helper authority and changed component metadata.
+Review found an escaping component-manifest parent could be read by Host inspection;
+it now refuses before metadata reading and has a dedicated regression. Linux's
+existing full shell/protected-path checks still reject opaque/control-flow scripts;
+the exploratory heredoc case is unsupported, not native development acceptance.
+
+First attempts remain separately recorded: `alan-rustup-first.log` (TOML document
+parsing and a pure scratch contract regression), `alan-rustup-adapter-first.log`
+(read-only cwd admission), `alan-rustup-components-final.log` (wrong test enum),
+`alan-rustup-components-checked.log` (fixture missing fmt proxy),
+`alan-rustup-helper-proxies.log` (older fixture's exact four-entry assertion),
+`alan-rustup-reviewed-engine.log` (unsupported heredoc/control flow), and
+`alan-rustup-final-clippy.log` (unused import and two collapsible branches).
+The task-owned proxy now contains eight known entries. Only four helper symlinks
+were added to that owned directory; `rust-helper-proxy-provisioning.json` records
+the operation. The earlier independent-copy/hardlink metadata caveat remains.
+
+The pre-platform-import native suite `alan-rustup-lint-checked-engine.log` has
+1425 passed, zero failed, one existing live-provider ignore, 64.35 seconds.
+Final source `alan-rustup-final-crosshost-engine.log` repeats 1425 passed, zero
+failed, one ignore in 71.32 seconds; no relevant native case returned early.
+`native-rustup-acceptance.json` freezes eleven source hashes, binary/log identity,
+original runtime/default/proxy evidence and the eight actual cases. The earlier
+1424-pass pre-lint receipt remains `native-rustup-pre-lint-acceptance.json`, and
+the pre-platform-import receipt is `native-rustup-pre-macos-export-acceptance.json`.
+The byte-identical macOS snapshot passes 41 namespace tests and seven Sandbox
+adapter tests, zero failures/ignores. Source-size and pinned strict OpenSpec
+1.4.1 validation (69/69) pass. Linux all-target/all-feature engine Clippy with
+warnings denied passed in 20.23 seconds before the final platform-import adjustment;
+the final source passes in 32.85 seconds (`alan-rustup-final-crosshost-clippy.log`).
+The initial macOS normal-commit gate caught an unused non-Linux import; the type
+import now follows the same Linux/Unix-test boundary as the inspector. The next
+normal commit passed full quality and standalone distribution without bypass;
+receipts are `target/linux-rustup-quality-commit.log` and
+`target/linux-rustup-quality-commit-final.log` in the macOS verification worktree.
+New-head CI remains a separate gate before publication can qualify this candidate.
+
+This closes task 2.3, not complete Linux development qualification or real-model
+code authorship. Git/RED-GREEN, live dependency grant/revocation/escape, complete
+developer-entry isolation/network and descendant cancellation remain open.
+Portable CI without explicit native fixture inputs skips the real Rust case;
+its green test count cannot replace the recorded native execution above.

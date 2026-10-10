@@ -12,7 +12,96 @@ use super::{ReifiedExecutionSubstrateMount, default_execution_substrate};
 /// Resolve the current supported command PATH without changing its order or spelling.
 #[cfg(target_os = "linux")]
 pub(crate) fn current_linux_command_path() -> Result<String, String> {
-    validate_linux_command_path(std::env::var_os("PATH"), &default_execution_substrate())
+    let (path, substrate, _) = current_environment(None)?;
+    validate_linux_command_path(Some(path.into()), &substrate)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) async fn configure_linux_command_environment(
+    input: super::ReifiedNamespacePlanInput,
+    commands: Vec<Vec<String>>,
+) -> Result<super::ReifiedNamespacePlanInput, String> {
+    tokio::task::spawn_blocking(move || configure_input(input, &commands))
+        .await
+        .map_err(|error| format!("Linux tool environment inspection failed: {error}"))?
+}
+
+#[cfg(target_os = "linux")]
+fn configure_input(
+    mut input: super::ReifiedNamespacePlanInput,
+    commands: &[Vec<String>],
+) -> Result<super::ReifiedNamespacePlanInput, String> {
+    let (path, substrate, rustup) = current_environment(Some((&input, commands)))?;
+    input = input
+        .with_execution_substrate(substrate)
+        .with_command_path(path);
+    if rustup.is_some()
+        && input.execution_substrate.iter().any(|mount| {
+            super::plan::paths_overlap(&input.scratch_tmp_namespace_path, &mount.namespace_path)
+        })
+    {
+        input.scratch_tmp_namespace_path = (0..=input.declarations.len()
+            + input.execution_substrate.len())
+            .map(|index| std::path::PathBuf::from(format!("/.alan-tmp-{index}")))
+            .find(|candidate| {
+                input
+                    .declarations
+                    .iter()
+                    .map(|mount| &mount.namespace_path)
+                    .chain(
+                        input
+                            .execution_substrate
+                            .iter()
+                            .map(|mount| &mount.namespace_path),
+                    )
+                    .filter(|path| path.as_path() != std::path::Path::new("/"))
+                    .all(|path| !super::plan::paths_overlap(path, candidate))
+            })
+            .expect("more scratch candidates than reserved mount roots");
+    }
+    input.rustup = rustup;
+    Ok(input)
+}
+
+#[cfg(target_os = "linux")]
+fn current_environment(
+    input: Option<(&super::ReifiedNamespacePlanInput, &[Vec<String>])>,
+) -> Result<
+    (
+        String,
+        Vec<ReifiedExecutionSubstrateMount>,
+        Option<super::ReifiedRustupEnvironment>,
+    ),
+    String,
+> {
+    let path = std::env::var("PATH").map_err(|_| "current PATH is unset or not UTF-8")?;
+    if path.contains('\0') {
+        return Err("current PATH contains NUL".into());
+    }
+    let home = std::env::var_os("RUSTUP_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
+        .unwrap_or_default();
+    let selector = std::env::var_os("RUSTUP_TOOLCHAIN")
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "Rustup override is not UTF-8")
+        })
+        .transpose()?;
+    let rustup = super::rustup::discover(&path, &home, selector, input)?;
+    let mut substrate = default_execution_substrate();
+    if let Some(environment) = &rustup {
+        substrate.extend(
+            environment
+                .proxy_mounts
+                .iter()
+                .chain(&environment.toolchain_mounts)
+                .cloned(),
+        );
+    }
+    let path = validate_linux_command_path(Some(path.into()), &substrate)?;
+    Ok((path, substrate, rustup))
 }
 
 /// Startup selection and per-command construction share the same validation.

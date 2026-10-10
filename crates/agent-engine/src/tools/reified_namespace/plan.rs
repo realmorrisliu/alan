@@ -112,6 +112,23 @@ pub struct ReifiedScratchTmpMount {
     pub namespace_path: PathBuf,
 }
 
+/// Host-inspected Rustup metadata for an isolated native execution environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReifiedRustupEnvironment {
+    /// Selected non-secret settings copied into private Rustup scratch.
+    pub settings: String,
+    /// Original explicit Rustup selector, if present.
+    pub toolchain_override: Option<String>,
+    /// Validated proxy-only directories, preserving PATH spelling.
+    pub proxy_mounts: Vec<ReifiedExecutionSubstrateMount>,
+    /// Installed runtime roots projected independently of management state.
+    pub toolchain_mounts: Vec<ReifiedExecutionSubstrateMount>,
+    /// Frozen selection file identities, rechecked before command effects.
+    pub metadata_hashes: Vec<(PathBuf, String)>,
+    /// Frozen executable contents, rechecked before command effects.
+    pub executable_hashes: Vec<(PathBuf, String)>,
+}
+
 /// Pure plan consumed by the future Linux namespace runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReifiedNamespacePlan {
@@ -120,6 +137,8 @@ pub struct ReifiedNamespacePlan {
     pub cwd: PathBuf,
     pub argv: Vec<String>,
     pub command_path: String,
+    /// Host-inspected Rust inputs; neither agent state nor mount authority.
+    pub rustup: Option<ReifiedRustupEnvironment>,
     pub scratch_tmp: ReifiedScratchTmpMount,
     pub network: NetworkPosture,
 }
@@ -217,6 +236,7 @@ impl ReifiedNamespacePlan {
             cwd,
             argv: input.argv,
             command_path: input.command_path,
+            rustup: input.rustup,
             scratch_tmp: ReifiedScratchTmpMount {
                 namespace_path: input.scratch_tmp_namespace_path,
             },
@@ -263,6 +283,8 @@ pub struct ReifiedNamespacePlanInput {
     pub cwd: PathBuf,
     pub argv: Vec<String>,
     pub command_path: String,
+    /// Optional Host inspection passed to the native runner without Host IO in plan derivation.
+    pub rustup: Option<ReifiedRustupEnvironment>,
     pub network: NetworkPosture,
     pub execution_substrate: Vec<ReifiedExecutionSubstrateMount>,
     pub scratch_tmp_namespace_path: PathBuf,
@@ -304,6 +326,7 @@ impl ReifiedNamespacePlanInput {
             cwd: cwd.into(),
             argv,
             command_path: LINUX_REIFIED_COMMAND_PATH.to_string(),
+            rustup: None,
             network,
             execution_substrate,
             scratch_tmp_namespace_path: scratch,

@@ -224,7 +224,20 @@ mkdir -m 700 "${root}${private_env}" || fail "create private environment"
 for name in home cargo rustup tmp cache target; do
   mkdir -m 700 "${root}${private_env}/${name}" || fail "create private ${name}"
 done
-exec "$chroot_bin" "$root" "$namespace_shell" -c "$command_script" alan-reified-command "$cwd" "$command_path" "$private_env" "$private_output" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
+rustup_settings="$1"; shift
+toolchain_override="$1"; shift
+runtime_count="$1"; shift
+if [ -n "$rustup_settings" ]; then
+  printf '%s' "$rustup_settings" > "${root}${private_env}/rustup/settings.toml" || fail "write private Rustup settings"
+  mkdir -m 700 "${root}${private_env}/rustup/toolchains" || fail "create private Rustup catalog"
+fi
+while [ "$runtime_count" -gt 0 ]; do
+  name="$1"; shift
+  target="$1"; shift
+  ln -s "$target" "${root}${private_env}/rustup/toolchains/${name}" || fail "link private Rustup runtime"
+  runtime_count=$((runtime_count - 1))
+done
+exec "$chroot_bin" "$root" "$namespace_shell" -c "$command_script" alan-reified-command "$cwd" "$command_path" "$private_env" "$private_output" "$toolchain_override" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
 "#;
 
 #[cfg(target_os = "linux")]
@@ -243,6 +256,11 @@ export PATH HOME CARGO_HOME RUSTUP_HOME TMPDIR XDG_CACHE_HOME RUSTUP_AUTO_INSTAL
 if [ "$private_output" = 1 ]; then
   CARGO_TARGET_DIR="${private_env}/target"
   export CARGO_TARGET_DIR
+fi
+toolchain_override="$1"; shift
+if [ -n "$toolchain_override" ]; then
+  RUSTUP_TOOLCHAIN="$toolchain_override"
+  export RUSTUP_TOOLCHAIN
 fi
 setpriv_bin="$1"; shift
 shell_bin="$1"; shift

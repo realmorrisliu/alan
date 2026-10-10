@@ -102,6 +102,41 @@ cancellation owns descendants and tmpfs lifetime. System `cc` requires the
 read-only `/etc/alternatives` links and `/usr/libexec` GCC runtime directory.
 These prerequisites do not complete automatic installed-Rust projection.
 
+### Inspect standard installed Rustup inputs at the Host boundary
+
+The Host adapter recognizes standard ELF Rustup proxy directories in the original
+PATH. It preserves their namespace spelling/order, validates the bounded known
+proxy names and their shared executable identity, and adds each installed standard
+runtime root independently to the read-only substrate. The catalog is bounded to
+64 roots; metadata reads are bounded to 64 KiB and each executable digest to
+256 MiB. Unsupported extra proxy entries, wrappers, linked/custom runtime roots
+and escaping aliases remain explicitly unavailable. No complete Cargo home or
+Rustup management directory is mounted.
+
+Private Rustup scratch receives only whitelisted settings and directory overrides
+relevant to delegated projects, plus links to the independently projected runtimes.
+Preserve the original explicit `RUSTUP_TOOLCHAIN`; ordinary command `+selector`
+takes priority over that override. Otherwise inspect the nearest directory override
+or project toolchain file before the original default. At the same directory the
+override takes priority, and the legacy file wins over the TOML file. A project
+toolchain file outside delegated authority does not infer another grant. Existing
+Linux shell-shape, protected-path, approval and network rules remain unchanged;
+this slice does not qualify arbitrary shell evaluators or custom runtimes.
+
+Inspect literal Rust invocations using the existing command parser. Missing
+selectors/components/targets fail before user effects. Selected fmt/Clippy helpers
+must be executable ELF files contained in their runtime. Freeze selection metadata,
+component manifests and executable contents, then recheck identity, containment and
+hashes in runner preparation. Component-manifest parent aliases must stay inside
+the runtime before any metadata read. Host metadata/hash inspection runs on a
+blocking worker; cancellation cannot leave a user command executing there.
+
+The pure plan stays free of Host inspection. The Host adapter chooses another
+non-overlapping scratch root when an installed Rust input occupies default scratch.
+The native namespace backend can execute from a read-only project with private
+output; weaker backends retain their existing writable-cwd requirement. Both bash
+preflight and command execution use that shared cwd decision.
+
 ### Use live project mounts for local dependencies
 
 A manifest does not grant access. Keep project and outside local dependency mounts
@@ -168,6 +203,7 @@ to the existing unavailable/fallback behavior and must not remove user artifacts
 
 Primary Rust documentation confirms runtime-home and cache semantics:
 [rustup environment](https://rust-lang.github.io/rustup/environment-variables.html),
+[rustup selection precedence](https://rust-lang.github.io/rustup/overrides.html),
 [Cargo home](https://doc.rust-lang.org/cargo/guide/cargo-home.html), and
 [Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
 Executable inventory is current fixture evidence, not inferred from these docs.

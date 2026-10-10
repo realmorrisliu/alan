@@ -22,7 +22,17 @@ fn native_readonly_rust_build_uses_private_output_and_project_config() {
     names.sort();
     assert_eq!(
         names,
-        ["cargo", "rustc", "rustdoc", "rustup"].map(std::ffi::OsString::from)
+        [
+            "cargo",
+            "cargo-clippy",
+            "cargo-fmt",
+            "clippy-driver",
+            "rustc",
+            "rustdoc",
+            "rustfmt",
+            "rustup",
+        ]
+        .map(std::ffi::OsString::from)
     );
     let fixture = tempfile::tempdir().unwrap();
     let project = fixture.path().join("project");

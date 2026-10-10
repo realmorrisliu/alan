@@ -22,6 +22,17 @@ safe-degradation rules, never silent replacement or wider ambient access.
 - **THEN** execution reports that unsupported input before user effects
 - **AND** it does not substitute another installed tool or weaken confinement
 
+#### Scenario: A supported installed Rustup toolchain is selected
+- **WHEN** a literal Rust invocation selects an installed standard runtime through a command selector, original environment override, directory override or delegated project toolchain file
+- **THEN** confined execution preserves that selection precedence and exact runtime
+- **AND** private Rustup settings expose neither unrelated overrides nor the Host management tree
+- **AND** a missing requested runtime, component or target refuses before user effects
+
+#### Scenario: Inspected Rust selection changes before admission
+- **WHEN** selection metadata, component metadata or an inspected executable changes after the Host adapter constructs its environment
+- **THEN** runner preparation rechecks the inspected content and path containment before user effects
+- **AND** an escaping component-metadata parent or helper alias cannot gain access outside the inspected runtime
+
 #### Scenario: A runtime or delegated tree contains nested mounts
 - **WHEN** a supported runtime or delegated tree includes nested mounted content
 - **THEN** native projection preserves the visible mounted subtree

@@ -6,6 +6,8 @@
 mod plan;
 #[cfg(target_os = "linux")]
 mod runner;
+#[cfg(any(target_os = "linux", all(test, unix)))]
+mod rustup;
 #[cfg(any(target_os = "linux", test))]
 mod toolchain;
 
@@ -40,6 +42,8 @@ use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_lin
 #[cfg(test)]
 use plan::LINUX_REIFIED_COMMAND_PATH;
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
+use plan::ReifiedRustupEnvironment;
 #[cfg(target_os = "linux")]
 use plan::canonicalize_existing_host_path;
 pub use plan::{
@@ -51,7 +55,7 @@ pub use plan::{
 #[cfg(target_os = "linux")]
 use plan::{contains_parent_component, paths_overlap};
 #[cfg(target_os = "linux")]
-pub(crate) use toolchain::current_linux_command_path;
+pub(crate) use toolchain::configure_linux_command_environment;
 #[cfg(target_os = "linux")]
 pub(crate) use toolchain::smoke_linux_reified_namespace_user_path;
 
@@ -648,6 +652,17 @@ fn build_linux_reified_namespace_command_with_helpers(
         Some(plan.command_path.clone().into()),
         &plan.execution_substrate,
     )?;
+    if let Some(environment) = &plan.rustup {
+        rustup::revalidate(environment)?;
+        if environment
+            .proxy_mounts
+            .iter()
+            .chain(&environment.toolchain_mounts)
+            .any(|mount| !plan.execution_substrate.contains(mount))
+        {
+            return Err("Rustup runtime projection differs from its inspected environment".into());
+        }
+    }
     if plan
         .declared_host_mounts
         .iter()
@@ -742,6 +757,35 @@ fn build_linux_reified_namespace_command_with_helpers(
         .iter()
         .any(|mount| mount.access.is_writable() && plan.cwd.starts_with(&mount.namespace_path));
     args.push(if writable_cwd { "0" } else { "1" }.to_string());
+    args.push(
+        plan.rustup
+            .as_ref()
+            .map(|environment| environment.settings.clone())
+            .unwrap_or_default(),
+    );
+    args.push(
+        plan.rustup
+            .as_ref()
+            .and_then(|environment| environment.toolchain_override.clone())
+            .unwrap_or_default(),
+    );
+    let runtime_mounts = plan
+        .rustup
+        .as_ref()
+        .map(|environment| environment.toolchain_mounts.as_slice())
+        .unwrap_or_default();
+    args.push(runtime_mounts.len().to_string());
+    for mount in runtime_mounts {
+        args.push(
+            mount
+                .namespace_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("unsafe Rustup runtime name")?
+                .to_string(),
+        );
+        args.push(mount.namespace_path.display().to_string());
+    }
     args.extend(plan.argv.iter().cloned());
 
     Ok(ReifiedNamespaceCommandSpec {
