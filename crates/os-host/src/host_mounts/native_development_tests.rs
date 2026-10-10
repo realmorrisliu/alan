@@ -3,7 +3,7 @@ use super::*;
 use alan_agent_engine::Config;
 use alan_agent_engine::tools::{Tool, ToolContext, ToolExecutionAuthority};
 use alan_kernel::{LiveNamespace, Namespace, Pid};
-use alan_tools::BashTool;
+use alan_tools::{BashTool, EditFileTool};
 use std::net::TcpListener;
 
 #[tokio::test]
@@ -179,5 +179,243 @@ fn authorized_build_is_isolated() {{
     assert!(!project.join("marker").exists());
     eprintln!(
         "native Bash isolation complete: live read-only grant, private output/cache, no home/runtime/source/network effects; revoked selected grant refused before next execution"
+    );
+}
+
+#[tokio::test]
+async fn native_bash_git_red_green_uses_selected_project_grant() {
+    const CHILD: &str = "ALAN_TEST_NATIVE_BASH_GIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let (Some(proxy), Some(runtime), Some(git_root)) = (
+            std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),
+            std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME"),
+            std::env::var_os("ALAN_LINUX_QUALIFICATION_GIT_ROOT"),
+        ) else {
+            eprintln!("skipping native Bash Git: explicit task-owned Rust/Git inputs absent");
+            return;
+        };
+        let runtime = PathBuf::from(runtime);
+        let home = runtime.parent().unwrap().parent().unwrap();
+        let settings = std::fs::read(home.join("settings.toml")).unwrap();
+        let git_root = PathBuf::from(git_root);
+        let git_bytes = std::fs::read(git_root.join("bin/git")).unwrap();
+        let name = concat!(
+            module_path!(),
+            "::native_bash_git_red_green_uses_selected_project_grant"
+        );
+        let (_, name) = name.split_once("::").unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, "1")
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                    PathBuf::from(proxy).display(),
+                    git_root.display()
+                ),
+            )
+            .env("RUSTUP_HOME", home)
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        assert_eq!(std::fs::read(home.join("settings.toml")).unwrap(), settings);
+        assert_eq!(std::fs::read(git_root.join("bin/git")).unwrap(), git_bytes);
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+    let readiness = alan_agent_engine::tools::linux_reified_namespace_backend_readiness();
+    assert_eq!(
+        readiness.selected_backend,
+        alan_agent_engine::tools::SandboxBackendKind::LinuxReifiedNamespace,
+        "{readiness:?}"
+    );
+    eprintln!("native Bash Git actual readiness: {readiness:?}");
+    let fixture = tempfile::tempdir().unwrap();
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::create_dir_all(project.join("dependency/src")).unwrap();
+    let source = "pub fn answer() -> u32 { alan_git_fixture_dep::answer() - 1 }\n#[test]\nfn expected_answer() { assert_eq!(answer(), 3); }\n";
+    let corrected = source.replace("::answer() - 1", "::answer()");
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"alan_git_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nalan_git_fixture_dep = { path = \"dependency\" }\n",
+        ),
+        (
+            "Cargo.lock",
+            "version = 4\n[[package]]\nname = \"alan_git_fixture\"\nversion = \"0.1.0\"\ndependencies = [\"alan_git_fixture_dep\"]\n[[package]]\nname = \"alan_git_fixture_dep\"\nversion = \"0.1.0\"\n",
+        ),
+        ("rust-toolchain.toml", "[toolchain]\nchannel = \"1.97.0\"\n"),
+        (".gitignore", "/target/\n"),
+        ("src/lib.rs", source),
+        (
+            "dependency/Cargo.toml",
+            "[package]\nname = \"alan_git_fixture_dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        ),
+        ("dependency/src/lib.rs", "pub fn answer() -> u32 { 3 }\n"),
+    ];
+    for (path, content) in &files {
+        std::fs::write(project.join(path), content).unwrap();
+    }
+    let git_root = PathBuf::from(std::env::var_os("ALAN_LINUX_QUALIFICATION_GIT_ROOT").unwrap());
+    let git = git_root.join("bin/git");
+    for args in [
+        vec![
+            "init".to_string(),
+            "--initial-branch=main".into(),
+            format!(
+                "--template={}",
+                git_root.join("share/git-core/templates").display()
+            ),
+        ],
+        vec!["add".into(), ".".into()],
+        vec![
+            "-c".into(),
+            "user.name=Alan fixture".into(),
+            "-c".into(),
+            "user.email=fixture@example.invalid".into(),
+            "commit".into(),
+            "--no-gpg-sign".into(),
+            "-m".into(),
+            "fixture baseline".into(),
+        ],
+    ] {
+        let output = std::process::Command::new(&git)
+            .args(args)
+            .current_dir(&project)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_EXEC_PATH", git_root.join("lib/git-core"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let git_config = std::fs::read(project.join(".git/config")).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    let grant = approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        &project,
+    )
+    .await;
+    let config = Arc::new(Config::default());
+    let mut current = service.reconcile(7, binding("/mnt/project")).unwrap();
+    for (command, exit, expected) in [
+        (
+            "git --version && rustc --version && cargo --version",
+            0,
+            "git version 2.53.0",
+        ),
+        ("git status --porcelain && git diff -- src/lib.rs", 0, ""),
+        ("cargo test --offline --locked", 101, "FAILED"),
+        ("cargo test --offline --locked", 0, "1 passed; 0 failed"),
+        ("git diff -- src/lib.rs", 0, "@@ -1,3 +1,3 @@"),
+        ("git status --porcelain", 0, " M src/lib.rs\n"),
+    ] {
+        current = service.reconcile(7, current).unwrap();
+        let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
+        assert!(context.shell_sandbox().unwrap().is_writable(&project));
+        let started = std::time::Instant::now();
+        let result = BashTool::new()
+            .execute(serde_json::json!({"command": command}), &context)
+            .await
+            .unwrap();
+        assert_eq!(result["exit_code"], exit, "{result}");
+        assert_eq!(result["success"], exit == 0);
+        let stdout = result["stdout"].as_str().unwrap();
+        if command.contains("--version") {
+            assert!(stdout.contains("rustc 1.97.0") && stdout.contains("cargo 1.97.0"));
+        }
+        if expected.is_empty() || command == "git status --porcelain" {
+            assert_eq!(stdout, expected);
+        } else {
+            assert!(stdout.contains(expected), "{result}");
+        }
+        if command == "git diff -- src/lib.rs" {
+            assert_eq!(
+                stdout
+                    .lines()
+                    .filter(|line| line.starts_with("diff --git"))
+                    .count(),
+                1
+            );
+            assert!(
+                stdout.contains("-pub fn answer() -> u32 { alan_git_fixture_dep::answer() - 1 }")
+            );
+            assert!(stdout.contains("+pub fn answer() -> u32 { alan_git_fixture_dep::answer() }"));
+        }
+        assert!(
+            !result["stderr"]
+                .as_str()
+                .unwrap()
+                .contains(project.to_str().unwrap())
+        );
+        eprintln!(
+            "native Bash Git {command} after {:?}: {result}",
+            started.elapsed()
+        );
+        if exit == 101 {
+            current = service.reconcile(7, current).unwrap();
+            let context = ToolContext::from_binding(current.clone(), Arc::clone(&config));
+            let result = EditFileTool::new().execute(serde_json::json!({"path": "/mnt/project/src/lib.rs", "old_string": "::answer() - 1", "new_string": "::answer()"}), &context).await.unwrap();
+            assert_eq!(result["success"], true);
+            assert_eq!(result["path"], "/mnt/project/src/lib.rs");
+            assert_eq!(result["replacements"], 1);
+            assert_eq!(
+                std::fs::read_to_string(project.join("src/lib.rs")).unwrap(),
+                corrected
+            );
+        }
+    }
+    assert!(project.join("target").is_dir());
+    for (path, content) in &files {
+        assert_eq!(
+            std::fs::read_to_string(project.join(path)).unwrap(),
+            if *path == "src/lib.rs" {
+                corrected.as_str()
+            } else {
+                content
+            }
+        );
+    }
+    assert_eq!(
+        std::fs::read(project.join(".git/config")).unwrap(),
+        git_config
+    );
+    service
+        .revoke(&grant.id, "native Bash Git fixture")
+        .unwrap();
+    assert!(service.reconcile(7, current).is_err());
+    let missing = service.reconcile(7, binding("/mnt/project")).unwrap();
+    let context = ToolContext::from_binding(missing, config);
+    assert!(
+        BashTool::new()
+            .execute(
+                serde_json::json!({"command": "printf effect > marker"}),
+                &context
+            )
+            .await
+            .is_err()
+    );
+    assert!(!project.join("marker").exists());
+    eprintln!(
+        "native Bash Git complete: actual Bash RED/GREEN, EditFileTool one-line fix, exact git diff/status and sources; selected writable grant revoked before next effect; in-grant dependency, not disjoint read-only authority"
     );
 }

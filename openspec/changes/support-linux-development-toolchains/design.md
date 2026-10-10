@@ -183,6 +183,16 @@ acceptance. Positive tasks include build, failing/corrected test and git diff;
 negative tasks include absent/unsafe PATH, runtime loss, read-only writes, external
 secret absence, network denial, dependency revocation and delayed descendant effects.
 
+Actual Bash Git qualification uses an explicitly selected task-owned standard
+`/usr/local/lib/alan-qualification/.../git-2.53.0` prefix under the existing
+read-only `/usr` substrate. Its executable bytes match the original private
+fixture Git; runtime entries, selected PATH and ownership are recorded. APT
+simulation would upgrade unrelated curl packages, so no system packages or global
+PATH are changed. The original outside-substrate custom Git PATH remains unavailable
+to the native namespace and is recorded separately; no custom-root discovery or
+Host grant exception is inferred. Only executed Git version/status/diff operations
+are qualified; Host baseline setup is not a confined Git commit acceptance.
+
 After this independent delivery passes review/CI/user merge and canonical sync,
 freeze the five real-development task families at three repetitions per platform.
 Report first attempts and interventions independently. Alan is the product under

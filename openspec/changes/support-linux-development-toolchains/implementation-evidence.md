@@ -563,3 +563,74 @@ native Host SHA-256:
 Normal full pre-commit quality/distribution, pinned strict OpenSpec and fresh
 exact-head CI are required to publish this follow-up. This repair does not close
 cross-grant Bash delivery, user merge/canonical closure or thirty real-model runs.
+
+## Actual Bash Git and RED/GREEN qualification
+
+Published `8f11102b` passed all sixteen checks. The Git fixture previously used
+manual read-only Sandbox declarations for its task-private install root; actual
+Host shell projection does not infer that runtime mount. APT simulation would
+upgrade installed curl/libcurl while adding Git dependencies, so no package
+installation was performed. Instead the verified Git 2.53 binary and its three
+existing runtime/template directories were copied to the unique task-owned prefix
+`/usr/local/lib/alan-qualification/linux-toolchain-20261010-af1df75053/git-2.53.0`.
+It is inside the already read-only `/usr` substrate. The prefix was absent before
+provisioning, records its owner/source and 217 runtime file/link entries, and uses
+identical Git executable bytes. No global PATH, package registration, personal
+Rust default or Host project was changed by this provisioning. Ancestor directory
+metadata changes from creating the new prefix are not an unchanged-filesystem claim.
+The before/after installed package inventory is exact.
+
+The original private Git PATH is still outside the native execution substrate.
+An independent invocation of the actual Host test binary captures readiness
+selecting Landlock with its explicit PATH reason; its native precondition fails
+before this fixture creates a project or invokes Bash. The expected exit 101 and
+binary/log identity are in `native-bash-git-private-root-unavailable.json` and
+`alan-native-bash-git-private-root-unavailable.log`. This is an unsupported native
+startup slot, not a Tool success, a new runtime defect, or qualification of the
+weaker backend. The standard-prefix positive explicitly chooses its original PATH
+and Git identity; product execution does not rewrite an unsupported PATH.
+
+The new adjacent native Host fixture registers a Process namespace, approves a
+selected writable project and reconciles HostMountService before each Tool call.
+Normal backend readiness selects `linux_reified_namespace`; no force-backend path
+is used. Actual Bash observes Git 2.53 and Rust 1.97, checks a clean baseline, runs
+the failing test, then EditFileTool replaces exactly one expression through the
+same live binding. Bash reruns GREEN and obtains exact diff/status: only
+`src/lib.rs` changed. Seven expected source/config files and `.git/config` are
+checked; Cargo output is authorized within the writable project and ignored by
+Git. Selected-grant revocation rejects the pinned binding and prevents the next
+Bash marker. Its dependency is inside that selected writable grant; it does not
+replace the independent read-only dependency/live-grant requirement.
+
+The first focused native fixture passes in 36.26 seconds
+(`alan-native-bash-git-first.log`). Final frozen source passes Linux engine
+**1430/0/1 in 135.62 seconds**
+(`alan-native-bash-git-final-engine.log`) and full Linux Host
+**50/0/2 in 36.55 seconds**
+(`alan-native-bash-git-final-host.log`), including actual Bash read-only isolation
+and descendant cancellation/timeout assertions. Linux engine/Host all-target,
+all-feature Clippy with warnings denied passes in 1.60 seconds
+(`alan-native-bash-git-final-clippy.log`). macOS Host passes **49/0/2 in 4.32
+seconds** using its native Apple target; these portable regressions do not qualify
+Linux Tool execution. An initial macOS command used the Linux-owned artifact path
+and was refused before build; it was rerun from the dedicated macOS verification
+worktree without borrowing native output.
+
+`native-bash-git-acceptance.json` freezes 23 source hashes, both actual native
+binary digests, logs, prefix runtime inventory and unchanged installation/package
+records. The original **379 Rust installation/settings/proxy nodes** remain exact
+against the retained post-provisioning baseline, and all 217 copied Git entries
+remain exact. Read access times and personal Cargo registry/credentials retain the
+previous exclusions; the earlier proxy hardlink provisioning correction remains
+part of history. Native engine SHA-256:
+`b38740d162e346761d5696282501dd3b05086a9c7bb9dba0d6f49b2adac2f75f`;
+native Host SHA-256:
+`9c5fc29b2c5c6cacdca96373cb691b44eedf76b2d9dbf2f508194d19312fe304`.
+
+Only the acceptance fixture and evidence changed; production authority,
+configuration, dependencies, runtime projection and automatic routing are unchanged.
+Native Git version/status/diff are qualified; Host baseline init/commit are setup,
+and Git network/Perl helpers are untested. Final review/full quality/pinned strict
+validation/current-head CI must accompany publication. Tasks 3.2/3.3 retain their
+actual disjoint read-only dependency requirement, and thirty real-model development
+repetitions remain open. Do not equate scripted Tool results with code authorship.
