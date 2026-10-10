@@ -88,7 +88,11 @@ Use a task-owned sibling pane with `--no-focus`, returned opaque IDs, raw pane
 input/read APIs and a terminal capture. Do not use Herdr Agent idle/done as Alan
 completion. Record the actual PTY winsize and visible Host geometry before 80x24
 qualification; current caller layout and viewport disagree, so neither alone
-proves the test dimensions. Linux uses the native CLI in an ordinary PTY with
+proves the test dimensions. A task-owned calibration pane (`w58:p18`) reported
+120x40 from its actual stdin PTY while the Host layout reported 60x40 for that
+pane. This is not an 80x24 acceptance; the pane was closed after confirming its
+foreground was only the owned shell, leaving the caller focused. Linux uses the
+native CLI in an ordinary PTY with
 the independently qualified enforcing backend and exact tool environment.
 
 Prepare all thirty inputs in a new cache directory:
