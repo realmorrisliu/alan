@@ -42,3 +42,8 @@ The qualification-only public SDK observer has two passing validation tests and
 warnings-denied Clippy; wrong boot and same-operation reconciliation were also
 exercised against the native instance. None of this fills a real-development slot.
 Task 1.4 remains open for Linux generation readiness and complete cross-Host freeze.
+Linux normal-CLI explicit-command preflight now passes actual fresh dependency
+and protected-checker compilation under audited `linux_reified_namespace`, with
+successful reads followed by kernel write denial and unchanged file inventories.
+Its initial operator fixture path error is retained separately. Provider remains
+unconfigured; no Linux generation or real-development task is implied.

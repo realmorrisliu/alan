@@ -44,6 +44,15 @@ answers and verifier state remain outside the granted project. Preserve model
 supply it; any unavailable profile/model is an environment-blocked slot, never an
 unannounced substitute. Record effective model/effort for every resumed segment.
 
+Freeze the complete thirty-slot inputs, bounds and measurement fields first, then
+gate live generation separately on each Host's actual model/backend readiness.
+An unavailable Linux Connection does not prevent a ready macOS Host from running
+its fifteen slots. Keep unavailable prerequisites explicit and task 1.4 open until
+both Hosts are ready; do not replace Linux slots, reduce the denominator or infer
+their completion from macOS results. Final qualification still requires three
+proven completions of every family on each Host. This staging changes no success
+criterion and avoids making external login a prerequisite for unrelated evidence.
+
 Fresh invocations are separate Process/boot identities, not proof of statistically
 independent model samples. Record exposed Memory Store/definition/config identity;
 do not clear personal memory to manufacture independence. A recovery-family run

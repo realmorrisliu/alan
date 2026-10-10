@@ -134,10 +134,13 @@ references the protected assertion source and project dependency; run explicit
 `cargo test --offline --locked --target-dir target` there. Expected assertions
 remain outside both model write authority and verifier write authority. Keep
 source/driver hashes and compiler/test output before and after checking, not just
-exit zero. Linux's reified path mode requires rebinding the two driver manifest
-paths to the acknowledged grant namespaces before execution; retain the original
-driver and freeze the exact rewritten manifest, access and backend first. Do not
-alter assertions, copy dependency contents or broaden grants to make a run pass.
+exit zero. These operator-owned driver manifests use native backing paths on both
+Hosts: `Sandbox::reified_mount_declarations` preserves granted Host paths in the
+Linux runner too. Alan namespace paths remain the Agent's command/file surface,
+not implicit replacements inside arbitrary file contents. Freeze the exact driver,
+its acknowledged grants and backend before execution; never inject private backing
+paths into model prompts or grant manifests to the model. Do not alter assertions,
+copy dependency contents or broaden grants to make a run pass.
 
 A macOS native preflight exercised this driver arrangement with separate live
 read-only project/checker grants and writable scratch, actual fresh compilation
@@ -148,8 +151,23 @@ Earlier direct `cargo test` from read-only cwd and an explicit read-only
 `--manifest-path` were refused before execution and remain retained boundaries.
 The writable driver uses ordinary granted dependency reads, without weakening
 those guards. This is candidate preflight, not a matrix slot or macOS general
-read-isolation claim. A model's own test claim or offline self-check cannot fill
-the independent runtime verification requirement.
+read-isolation claim. Linux's separate normal-CLI preflight also compiled both
+packages under the audited `linux_reified_namespace` backend and passed protected
+behavior/read/write-denial checks. Its initial incorrect operator fixture paths
+remain retained; provider was unconfigured and no generation occurred. See
+`preflight-evidence.md`. A model's own test claim or offline self-check cannot
+fill the independent runtime verification requirement.
+
+Build output ownership is Host-specific even when source worktrees are shared.
+Use the Linux toolchain checkout as explicit build owner with this qualification
+checkout as workspace and a new native output path for future Linux SDK builds;
+keep macOS quality output registered only to its macOS owner. An initial Linux
+SDK build registered its guest-only output in this shared qualification checkout,
+so the next Mac commit correctly refused it. After verified native build/CLI exit,
+read-only Linux process/handle inspection and admission/output locks, only that
+foreign registry entry was archived in the owned Linux cache. Its output tree,
+sidecar and qualification receipts were preserved; no output was cleaned or
+reassigned. The next normal commit must rerun the gate.
 
 F4's ignored Rust lifecycle test appends its completed entry, spawns an observable
 child and schedules a write after forty seconds. Observe `writer.started` and the
@@ -159,8 +177,11 @@ reapprove and run only the contract test. Missing/duplicate ledger entries or an
 QVALUE is beyond inline bounds. Tool/action correlation, retained detail, dependent
 edit, draft/detail return and scrollback remain live assertions, not fixture checks.
 
-Before the first task, freeze runtime/tool/backend identities, actual terminal
-calibration, evidence collection and per-Host model readiness alongside the thirty
-inputs. The fixture manifest explicitly says `runtime_readiness_frozen: false`.
+Before the first task, freeze all thirty inputs, bounds and evidence collection;
+freeze runtime/tool/backend identities, actual terminal calibration and model
+readiness before execution on each Host. An unavailable Host remains explicit and
+does not prevent ready-Host runs; all thirty slots and full completion criteria
+remain required. The preparation fixture manifest explicitly says
+`runtime_readiness_frozen: false` and cannot substitute for a Host readiness receipt.
 Missing usage/cost stays unknown. Capture first outcomes and linked retries without
 turning a final answer, command exit or preflight into a qualification pass.

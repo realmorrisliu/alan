@@ -60,9 +60,49 @@ remain outside model grants and are never counted as real-model development.
 
 The separate actual generation preflight confirmed `gpt-6.1-sol`/medium; it does
 not turn the explicit-command checker into a generation run. Linux generation
-access remains unavailable, and the reified checker driver has not yet received
-its own native CLI preflight. Both Host identities, grant namespaces, complete
-measurement collection and enforcing backends must be frozen before the matrix.
-Published preparation head `ef11495e` has sixteen passing CI checks; later local
-changes require their own current-head checks and review. User adoption/merge of
+access remains unavailable. Freeze all thirty inputs and measurement fields before
+generation, then actual Host identities, grant namespaces, model and enforcing
+backend before that Host's runs. Ready macOS execution can proceed while Linux
+readiness remains open; the thirty-slot completion criterion is unchanged.
+Published preparation head `f3985923` has sixteen passing CI checks; later local
+documentation requires its own current-head checks and review. User adoption/merge of
 #1046 and canonical UI closure #1045 remain separate final-delivery gates.
+
+## Linux normal-CLI checker
+
+The normal product CLI from `cace913c` ran in an ordinary native 80x24 PTY, without
+a selected Connection profile. Its provider was unconfigured; no model request
+or model/tool substitution occurred. CLI SHA-256:
+`6dfeb29543ed050d116623d8d4bc3f2a2265c07b973c4ad04a740e6b0f512dd2`.
+Public SDK observer source was `f3985923`, binary SHA-256:
+`a679746322f5b9cb4a0e5f74b2cd83e521da37ca226017291899a11a477b151d`.
+Host boot `4460152e-f319-456c-9850-524ba76f9021`, native PID 3457085, Root Process 8
+and grants `request-1/2/3` had the same read-only source/assertions and writable
+scratch arrangement as the macOS preflight.
+
+The first command failed because the operator's Cargo manifest mistakenly named
+Alan namespace paths in file contents. The current native runner preserves
+granted Host paths internally; shell command projection does not rewrite arbitrary
+manifest contents. Action `a1`, original driver/assertions and baseline remain
+retained. Correcting this operator-only fixture to native paths required no
+production change, additional grant or copied dependency.
+
+Explicit `cargo test --offline --locked --target-dir target-corrected` actually
+compiled source and protected checks. Action `a2`/Tool Process 10 exited with code
+0 and one passed test. The audit records `linux_reified_namespace` and
+`reified_namespace_paths`. The test first successfully read both real source
+files, then required PermissionDenied or ReadOnlyFilesystem errors when opening
+them for writing; absent paths cannot manufacture a write-denial pass. Original
+source and corrected source/assertion/driver hashes remained unchanged. `/quit`
+ended the native invocation and its supervised terminal command exited 0.
+
+Owned cache: `/home/morris/.cache/Alan/qdev-10332030`.
+`native-checker-preflight.receipt.json` SHA-256:
+`dd5ca4a5ef00bb4b3f2860e72c4a6127416aba5a87f54c37bb92921be88fd642`.
+Its native terminal capture SHA-256:
+`c985024d9325f03012190fb3dec7f3b962cddac738aa2754145a22069007a94b`.
+Owned durable rollout:
+`services/agent-runtime/rollouts/rollout-20261010-224340-1a052713-178b-4d51-be40-7bc7970d4b24.jsonl`,
+SHA-256 `a46ed939d1b6083797b68a69fd1744bdfd23bf53478922941c0ce40334a500ba`.
+This bounded CLI/backend preparation adds zero matrix completions and proves no
+Linux model/effort or general autonomous development readiness.
