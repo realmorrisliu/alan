@@ -2,7 +2,8 @@
 
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and macOS F1 are complete (4/19 tasks).
-Production runtime repairs have not started. Three macOS F1 slots qualify through
+The observed TUI directory-context repair is implemented and native-verified;
+other production findings and the remaining matrix are still open. Three macOS F1 slots qualify through
 four real model executions; the first r1 attempt failed for incomplete prospective
 tool identity and remains retained alongside its fresh qualified retry.
 Planning artifacts and offline fixture checks do not prove completed real-model
@@ -43,7 +44,7 @@ qualify an unpublished diff. Actual Herdr PTY and Host geometry now agree at
 read-only dependency and protected assertions from writable checker scratch,
 denied writes to both source and checker, and retained all file hashes. Earlier
 read-only cwd/manifest refusals remain failures rather than reclassified passes.
-The qualification-only public SDK observer has two passing validation tests and
+The qualification-only public SDK observer has three passing validation tests and
 warnings-denied Clippy; wrong boot and same-operation reconciliation were also
 exercised against the native instance. None of this fills a real-development slot.
 Task 1.4 remains open for Linux generation readiness and complete cross-Host freeze.
@@ -61,3 +62,13 @@ observed draft/logical-cursor preservation, closing task 2.1 only. The small
 SDK observer bounded-list extension has three passing tests and Clippy; its new
 commit requires current-head CI. The observed absolute namespace Bash operand
 rejection remains a Host/Tool finding, without a claimed production repair.
+
+The subsequent directory-context slice reuses observed Action cwd, clears it at
+Root replacement, and adds the `rust-inline-tui` owner delta. Two regressions
+fail on the original source and pass with the fix; the complete TUI suite passes
+370 unit and 12 integration tests. An independently built `cace913c` plus exact
+UI patch passes actual 80/48-column external read-only mount/cd, detail/draft
+insertion and resize, root-cwd return and native exit. This UI probe is not a
+model task and adds no qualified slot. Prior evidence head `2d700742` passed all
+16 CI checks; the new repair head requires its own checks and review. See
+`native-runs.md` for the immutable receipt and source/binary identity.

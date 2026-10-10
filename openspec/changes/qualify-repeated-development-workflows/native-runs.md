@@ -126,3 +126,48 @@ the local picker receipt is absent. A repair belongs to `rust-inline-tui` and
 must preserve local picker labels, narrow model/state priority and draft/detail
 behavior while displaying observed cwd without claiming grant access. This
 finding does not change F1 behavior outcomes or qualify the unfinished UI repair.
+
+
+## Observed directory-context repair — 2026-10-11
+
+The native r3 and r1 retry finding is repaired at the existing TUI owner. When
+there is no local picker receipt, the header uses an observed namespace cwd other
+than `/`; it does not manufacture a project label or access claim. Root replacement
+clears previous cwd through the existing attachment reset. Picker receipt labels,
+access and grant/control fencing retain their existing behavior.
+
+Two new tests independently reproduce the original header and Root-reset failures.
+After the repair, the complete TUI suite passes 370 unit and 12 integration tests;
+normal `just quality` (including standalone/distribution) and CI-pinned OpenSpec
+1.4.1 strict validation pass, 69/69. This owner delta preserves every existing
+contextual-prompt scenario and adds external ordinary-cd/Root-reset cases.
+
+Native acceptance uses a separate checkout based on `cace913c`, with only the exact
+three-file TUI implementation/test patch; production execution policy is unchanged.
+Its ordinary CLI SHA-256 is
+`a16fec426a74682348ce293d741b569f4c8c14cd062a806dadef9ac99305abf3`.
+Boot `eecf9e9d-b213-4710-847a-3ac462ab1928`, native PID `10608`, Root PID `8`,
+ran in the existing owned Herdr pane. The public Host read-only grant is
+`request-1`; actual completed Action `a0` selects `/mnt/project-request-1/src`.
+The header displays that cwd and does not infer a friendly label or read-only
+claim. Actual control frames prove 80x24 and 48x24 geometry. Detail retains Action
+identity/original output, and cursor insertion produces `abcδXYZ` then `abcδεXYZ`
+across detail return and resize. Completed Action `a1` returns cwd to `/`, restoring
+the default `no project` context. `/quit` ends native PID 10608 and returns the
+owned pane to its shell; the fixture marker and candidate/helper binary hashes
+remain unchanged. Root replacement is proven by RED/GREEN regression, not claimed
+as a native Root-switch test.
+
+Owned cache `cwd-native-v1/` retains source/binary freeze, mount intent/ack,
+public-SDK Action evidence, terminal captures/control frames and receipt SHA-256
+`8dd76bdc57ad3ad8a0ebd5104e16793df5a5c26c576513e7c8afe89e46cda135`.
+Two operator collection/control mistakes are retained separately: an initial wrong
+Host readiness key failed before mount, and an unrecognized resize variant was
+rejected before using the accepted terminal.resize command. The same native
+instance was retained. This probe submits no generation, fills no matrix slot and
+does not replace original model outcomes. Original four model executions remain
+on the unchanged earlier runtime. Exact final-candidate applicability/reruns are
+still required by the full qualification change.
+
+Evidence head `2d700742` passed all sixteen current-head CI checks, retained in
+`ci-2d700742-all16-final.json`. Those checks do not qualify the later UI repair.

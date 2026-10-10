@@ -100,7 +100,13 @@ impl FileBackedApp {
             );
         }
         let location = self.project.as_ref().map_or_else(
-            || "no project".to_string(),
+            || {
+                if self.namespace_cwd == std::path::Path::new("/") {
+                    "no project".to_string()
+                } else {
+                    self.namespace_cwd.display().to_string()
+                }
+            },
             |project| {
                 if self
                     .pending_project_control

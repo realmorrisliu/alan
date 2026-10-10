@@ -119,6 +119,16 @@ and freeze a new source/binary identity. Every final qualification slot must hav
 applicable final-candidate evidence; retain earlier-source attempts as historical
 results and rerun affected rows. No speculative rewrite follows from this plan.
 
+### Observed directory context uses existing Action evidence
+
+Native F1 r3 and r1 retry show `no project` after public Host authorization and a
+successful ordinary `cd`: the TUI tracks the correct namespace cwd but its header
+requires a local picker receipt. Reuse that observed cwd as the fallback location
+when it differs from `/`; keep the existing default at `/` and picker labels/access
+when a receipt exists. Do not infer authority or Native Host paths from cwd. Clear
+the previous observed cwd at Root replacement while retaining grant/control fencing.
+Existing narrow-line priorities and the editable draft remain unchanged.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and
