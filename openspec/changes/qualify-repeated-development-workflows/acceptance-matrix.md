@@ -9,8 +9,10 @@ outcome. The first F2 attempt also executed and remains FAIL after native prefli
 the independent binary-check operand. A fresh linked F2 retry and original F2 r2/r3 now pass the complete independent
 checks on the repaired candidate. All three macOS F3 compiler-correction tasks
 also qualify. All three macOS F4 slots now qualify, retaining both failed r1
-attempts before its successful fresh retry. Thirteen slots qualify through nineteen
-real model task attempts: nine first PASS, four first FAIL and seventeen NOT_RUN. See `native-runs.md`
+attempts before its successful fresh retry. Fifteen slots qualify through twenty-one
+real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
+One unintended verifier model turn is recorded separately; the long-diff run is
+not zero-unplanned-intervention. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
@@ -71,8 +73,8 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f4-r2 | macos / Herdr | F4 | 2 | PASS | native-runs.md; a1 receipt `4abcf29e` |
 | macos-f4-r3 | macos / Herdr | F4 | 3 | PASS | native-runs.md; a1 receipt `04dcb923` |
 | macos-f5-r1 | macos / Herdr | F5 | 1 | FAIL: published retained reference denied; producer rerun | native-runs.md; a1 `c614c228`, a2 `98ad5294` FAIL retained; fresh a3 PASS `ffa05956` |
-| macos-f5-r2 | macos / Herdr | F5 | 2 | NOT_RUN | absent |
-| macos-f5-r3 | macos / Herdr | F5 | 3 | NOT_RUN | absent |
+| macos-f5-r2 | macos / Herdr | F5 | 2 | PASS | native-runs.md; original a1 receipt `e1514200` |
+| macos-f5-r3 | macos / Herdr | F5 | 3 | PASS | native-runs.md; original a1 receipt `95dbbfd9`; auxiliary lookup and unintended verifier turn disclosed |
 | linux-f1-r1 | linux / ordinary PTY | F1 | 1 | NOT_RUN | absent |
 | linux-f1-r2 | linux / ordinary PTY | F1 | 2 | NOT_RUN | absent |
 | linux-f1-r3 | linux / ordinary PTY | F1 | 3 | NOT_RUN | absent |

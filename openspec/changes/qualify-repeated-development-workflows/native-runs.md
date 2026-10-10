@@ -956,3 +956,95 @@ actual AgentFS RED/GREEN regression evidence and reuse the existing terminal-err
 renderer. F5 stderr/diff repetitions, all Linux generation, final-candidate
 applicability for older tasks, review/current-head CI and user delivery remain.
 Checklist remains 7/19; automatic routing stays disabled.
+
+## macOS F5 r2 PASS — original long stderr
+
+The unchanged 35-file reader/provider/guard candidate, CLI SHA-256
+`1b609034eea7c8c2a7f7f5a1725d14fb6ed5165ec4776a196bd7237162a2495e`,
+executes the original frozen stderr task with gpt-6.1-sol/medium, 80x24 geometry
+and the same config/tool identities. Model PID 29675, boot
+`fc4b26e0-f30a-4ad8-9428-0176b4d7c7c5`, Root 8. Original producer a2 executes
+once; QVALUE=42274 is in stderr, not stdout. ReadFile a3 reads the original a2
+output at byte offset 156900 with byte limit 4096 and obtains the value. Only
+src/lib.rs changes. The model's a7 stdin include verification fails, then its own
+a8 correction passes; no operator solution or corrective advice is supplied.
+
+Original a2 detail exposes line 2807 after 282 Space page steps, preserves literal
+server> ready and a > b, and returns to abcXYZ. Separate Unicode insertion at the
+saved cursor produces abcδXYZ; 160-line host scrollback is retained. The collector
+records acquisition/paging lag and a short capture that omitted the header.
+Actual real Tool Processes 9–16 are exited; virtual cd's Root 8 is excluded.
+
+After actual model exit, independent verifier PID 30806, boot
+`16da11fd-479f-4fed-9942-2396fc7eef8c`, receives project/protected roots read-only
+and checker scratch read-write. Explicit Cargo compilation passes protected_behavior
+with its actual exited Tool and owning Seatbelt audit. Exact source paths, all
+other baseline files, assertions and checker driver remain unchanged. Both native
+PIDs are gone and fish 72808 is foreground. Elapsed time is 324.910807 seconds.
+Receipt attempts/macos-f5-r2/a1/receipt.json SHA-256
+`e151420044a076f3ff31eeaac6d19e30916424efc759860fca8b1d0a1b200b2d`.
+Immutable first-outcomes-v18.json SHA-256
+`1e66a4d536b935dcf39bb0a5c775f550d5c6890a28b77150645e79f5dfa3d016`
+records twenty development attempts, fourteen qualified slots and first outcomes
+ten PASS/four FAIL/sixteen NOT_RUN. Usage/cost and time partitions stay unknown.
+
+## macOS F5 r3 PASS — original long diff, with collector intervention disclosed
+
+The same unchanged candidate executes the original frozen long-diff task. Model
+PID 31284, boot `94281dbd-a1e7-4ebd-806b-419f856700f7`, Root 8, and its own Meta
+and turn context confirm gpt-6.1-sol/medium. Initial Git HEAD is
+`300cd5f1468b15d6cec170c52e3253259c035371`; the 138113-byte setup diff SHA-256 is
+`0957f9f97b77fa0c87ad8a0f6cadc1cdf5617b0fa58ba03b7f633b0522c65a1a`.
+Both are frozen before generation and unchanged after development and checking.
+
+Original a2 runs git diff -- data/long.txt exactly once. ReadFile a3 reads its
+last range without the key. Auxiliary a4 also rg-reads QVALUE from the already
+granted project, alongside source/config/status inspection. This lookup is retained
+and is not represented as original-result acquisition. Before editing, a5 reads
+4096 original a2 bytes from offset 135000 and obtains +QVALUE=42411. The final
+answer cites a2/a5. Only src/lib.rs changes; a7 Cargo succeeds with zero project
+tests, a8's namespace include fails, and a9's model-authored assertion harness
+succeeds. Independent protected behavior, not zero-test Cargo exit, proves correctness.
+
+Native original a2 detail retains both removed and added diff lines. 582 Space
+steps reach new line 2808; one b step reveals +QVALUE=42411 with its adjacent
+literal server> ready/a > b. Escape and subsequent Unicode insertion separately
+prove abcXYZ and abcδXYZ; host scrollback is saved. The initial page timeout and
+Herdr's atomic rejection of an invalid multi-character key are retained collector
+errors, corrected without restarting or steering the development task. Actual
+model Tool Processes 10–17 are observed exited; source inventory has no extra
+non-target/non-.git paths. Native model exit and foreground fish are verified
+before independent checker launch.
+
+Independent verifier PID 32730, boot `7150c67e-18d8-4eea-809d-f0efb63e8cdd`,
+receives project/protected roots read-only and checker scratch read-write. The
+collector mistakenly submits cd without the explicit ! marker: one unintended
+model turn unsuccessfully attempts Bash cd and directory ReadFile. The subsequent
+explicit Cargo command also fails outside delegated cwd. These failures and the
+extra model turn remain in the receipt, with no source/assertion changes. The
+supported !cd route then sets checker cwd, and explicit Cargo a4 actually compiles
+the dependency and passes protected_behavior under its own correlated Seatbelt
+allow audit. Tool /proc/12 is observed exited. The failed verifier calls lack a
+complete pre-exit Process inventory; do not claim that missing observation passed.
+Both native PIDs are verified gone, foreground is fish 72808, and all project,
+protected assertion and driver bytes stay unchanged by verification.
+
+Elapsed submission through verified cleanup is 398.497340 seconds, within the
+frozen 600-second bound. Receipt attempts/macos-f5-r3/a1/receipt.json SHA-256
+`95dbbfd95aae9427a16f82aed6675eee8abd1a05e5f85366abd34b192e7564ef`.
+Immutable first-outcomes-v19.json SHA-256
+`ebd336f637cc627e9556aa182cd8adb89890ecbc07e20e470a5b4584147b06a1`
+records twenty-one development attempts and fifteen qualified slots; first outcomes
+are eleven PASS/four FAIL/fifteen NOT_RUN. The unintended verifier model turn is
+an additional generation, not another development repetition or a hidden retry.
+This run is not zero-unplanned-intervention. Usage/cost/time partitions are unknown.
+
+All macOS families now have three qualified repetitions, closing task 2.5 and
+bringing the checklist to 8/19. Earlier-candidate applicability and complete
+cross-Host qualification remain open. Actual Ubuntu candidate connection list
+returns no configured profiles and connection current reports effective_profile
+none; filesystem catalog absence is no longer the only readiness evidence.
+Head 186358e3 passed all sixteen checks before these evidence-only updates; the
+next published head needs its own checks/review. Linux generation/profile setup,
+final audit, user merge and canonical closure remain; no automatic routing or
+production self-development is enabled.

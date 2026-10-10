@@ -1,7 +1,7 @@
 # Disposition — 2026-10-10
 
 The user's existing ordered goal authorizes this independent third delivery.
-Qualification is active: prerequisites/fixtures and macOS F1/F2/F3/F4 are complete (7/19 tasks).
+Qualification is active: prerequisites/fixtures and all five macOS families are complete (8/19 tasks).
 The observed TUI directory-context repair is implemented and native-verified;
 other production findings and the remaining matrix are still open. Three macOS F1 slots qualify through
 four real model executions; the first r1 attempt failed for incomplete prospective
@@ -23,8 +23,11 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
-First outcomes are nine PASS, four FAIL and seventeen NOT_RUN; qualified slots
-are thirteen out of thirty, including fresh F1/F2/F4 linked retries and all macOS F3, plus the fresh F5 stdout retry. See `native-runs.md`.
+First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
+are fifteen out of thirty through twenty-one development task attempts, retaining
+linked retries and all original failures. One unintended verifier model turn is
+separate from development attempts and prevents a zero-unplanned-intervention claim
+for long diff. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
 confirms gpt-6.1-sol/medium. It does not fill a matrix slot. Linux's last native
