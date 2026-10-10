@@ -7,7 +7,7 @@ use ratatui::{
 
 #[test]
 fn semantic_empty_tail_does_not_block_completed_action_drain() {
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let source = "```diff\n+committed";
         let delta = "\n-literal\n+next\n```";
         let full = format!("{source}{delta}");
@@ -133,7 +133,7 @@ fn semantic_empty_tail_does_not_block_completed_action_drain() {
 
 #[test]
 fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let source = "```diff\n+committed";
         let delta = "\n-\t**literal**\n+new\n```\n**done**";
         let full = format!("{source}{delta}");
@@ -207,7 +207,7 @@ fn semantic_whole_streaming_cell_drain_keeps_open_fence_context() {
 #[test]
 fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
     use crate::history::RenderOpts;
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         for fenced in [false, true] {
             let opening = if fenced { "```diff\n**" } else { "**" };
             let source = format!("{opening}{}", "a".repeat(238));
@@ -295,7 +295,7 @@ fn semantic_late_closures_repeated_drain_and_hydration_own_content() {
 
 #[test]
 fn semantic_idle_hydration_does_not_replay_drained_heading() {
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let source = "# head\n**one**\n**two**";
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(source.into()));
@@ -330,12 +330,13 @@ fn semantic_idle_hydration_does_not_replay_drained_heading() {
 fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
     use crate::history::ToolStatus;
     use alan_agent_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(
             "```rust\n\tlet 界 = 1;\u{1b}\u{7}\n```\n: prose\n! prose\ntool> prose".into(),
         ));
         app.transcript.push(HistoryCell::Tool {
+            action: None,
             title: "Edit".into(),
             status: ToolStatus::Complete,
             preview: None,
@@ -362,10 +363,10 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
             "l",
             "code tab indentation at {width}"
         );
-        assert_eq!(buffer.cell((12, 9)).unwrap().symbol(), "n");
-        assert_eq!(buffer.cell((12, 9)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((12, 10)).unwrap().symbol(), "o");
-        assert_eq!(buffer.cell((12, 10)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((7, 9)).unwrap().symbol(), "n");
+        assert_eq!(buffer.cell((7, 9)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((7, 10)).unwrap().symbol(), "o");
+        assert_eq!(buffer.cell((7, 10)).unwrap().fg, Color::Red);
         for row in 4..=6 {
             assert_eq!(buffer.cell((0, row)).unwrap().fg, Color::Reset);
         }
@@ -379,7 +380,7 @@ fn semantic_tabs_survive_production_code_and_typed_diff_projection() {
 
 #[test]
 fn semantic_second_drain_stream_tape_and_both_merges_keep_fence_context() {
-    for width in [40, 60, 80, 120] {
+    for width in [40, 48, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         let source = "# head\n```diff\n+\tone\n-\ttwo\n+\tthree";
         app.transcript.push(HistoryCell::User("task".into()));

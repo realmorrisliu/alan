@@ -60,6 +60,7 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Tool {
+            action: None,
             title: "Edit".into(),
             status: ToolStatus::Complete,
             preview: None,
@@ -97,12 +98,12 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((7, 3)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((7, 3)).unwrap().fg, Color::Red);
-        assert_eq!(buffer.cell((12, 4)).unwrap().symbol(), "新");
-        assert_eq!(buffer.cell((12, 4)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((12, 5)).unwrap().symbol(), "!");
-        assert_eq!(buffer.cell((12, 5)).unwrap().fg, Color::Reset);
+        assert_eq!(buffer.cell((2, 3)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((2, 3)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((7, 4)).unwrap().symbol(), "新");
+        assert_eq!(buffer.cell((7, 4)).unwrap().fg, Color::Green);
+        assert_eq!(buffer.cell((7, 5)).unwrap().symbol(), "!");
+        assert_eq!(buffer.cell((7, 5)).unwrap().fg, Color::Reset);
         assert!(
             retained
                 .iter()

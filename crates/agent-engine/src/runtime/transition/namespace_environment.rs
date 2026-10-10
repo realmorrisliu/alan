@@ -94,6 +94,7 @@ pub(crate) struct NamespaceToolActionEvidence<'a> {
     pub(crate) call_id: &'a str,
     pub(crate) approval: &'a str,
     pub(crate) arguments: &'a serde_json::Value,
+    pub(crate) submission_id: Option<&'a str>,
 }
 
 /// A yield/request record written by the engine under `requests/<id>/`.

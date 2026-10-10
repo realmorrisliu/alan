@@ -25,6 +25,27 @@ impl NamespaceToolExecution {
             .map(|binding| binding.namespace_cwd)
     }
 
+    fn read_only_context(
+        &self,
+        name: &str,
+        evidence: NamespaceToolActionEvidence<'_>,
+    ) -> Option<alan_agent_protocol::ActionReadOnlyContext> {
+        if evidence.approval != "not_required" {
+            return None;
+        }
+        let context = self.tool_process_context.as_ref()?;
+        let value = alan_agent_protocol::ActionReadOnlyContext {
+            owner: format!("/agent/{}", context.pid),
+            submission: evidence.submission_id?.into(),
+            authority: context.tool_runner.read_only_presentation_scope(
+                context.pid,
+                name,
+                evidence.arguments,
+            )?,
+        };
+        value.is_valid().then_some(value)
+    }
+
     pub(crate) fn change_process_directory(
         &self,
         path: &std::path::Path,
@@ -129,6 +150,8 @@ impl NamespaceToolExecution {
         if cancel.is_cancelled() {
             bail!("tool process cancelled before spawn");
         }
+        let read_only_before =
+            evidence.and_then(|evidence| self.read_only_context(tool_name, evidence));
         let pid = self.process_files.spawn_process(executable, args).await?;
         let result = tokio::select! {
             _ = cancel.cancelled() => {
@@ -159,6 +182,11 @@ impl NamespaceToolExecution {
             }
         };
         let action_exit_code = logical_tool_action_exit_code(&result);
+        let native_receipt = self.tool_process_context.as_ref().and_then(|context| {
+            context
+                .tool_runner
+                .take_read_only_receipt(pid.parse().ok()?, context.pid, tool_name)
+        });
         let action_status = if action_exit_code == 0 {
             "completed"
         } else {
@@ -183,6 +211,14 @@ impl NamespaceToolExecution {
                 evidence.arguments,
                 &payload,
             )?;
+            if action_exit_code == 0
+                && executable == format!("/bin/{tool_name}")
+                && let Some(context) = read_only_before
+                && native_receipt.as_ref() == Some(&context.authority)
+                && self.read_only_context(tool_name, evidence).as_ref() == Some(&context)
+            {
+                result_doc["read_only_context"] = serde_json::to_value(context)?;
+            }
         }
         if action_exit_code != result.exit_code
             && let Some(object) = result_doc.as_object_mut()

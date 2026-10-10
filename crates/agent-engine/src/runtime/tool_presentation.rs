@@ -15,7 +15,17 @@ pub(crate) fn write_action_metadata(
     args: &Value,
     result: &Value,
 ) -> serde_json::Result<()> {
-    if let Some(title) = tool_title(name, args) {
+    let title_args = if matches!(name, "read_file" | "write_file" | "edit_file" | "list_dir")
+        && result
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| !path.is_empty())
+    {
+        result
+    } else {
+        args
+    };
+    if let Some(title) = tool_title(name, title_args) {
         envelope["title"] = Value::String(title);
     }
     if let Some(preview) = crate::runtime::turn_support::tool_result_preview(result) {

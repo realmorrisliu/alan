@@ -357,10 +357,9 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             })
             .collect::<Vec<_>>();
         if reattached.notice.as_ref().is_some_and(|notice| {
-            current_transcript
-                .iter()
-                .any(|cell| matches!(cell, HistoryCell::Error(message) if message == notice))
-                && ui_task.error.as_ref() != Some(notice)
+            current_transcript.iter().any(
+                |cell| matches!(cell, HistoryCell::Error(message) if message.as_str() == &**notice),
+            ) && ui_task.error.as_deref() != Some(&**notice)
         }) {
             reattached.notice = None;
         }
@@ -441,7 +440,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
                     let message =
                         super::super::interrupt::render_input_completion(event, &mut reattached)
                             .expect("non-completed status has a completion message");
-                    reattached.notice = Some(message);
+                    reattached.notice = Some(super::super::app::Notice::warning(message));
                 }
             }
         }
@@ -455,7 +454,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             let message =
                 "Root Agent changed without correlated completion evidence; outcome is unknown"
                     .to_string();
-            reattached.notice = Some(message.clone());
+            reattached.notice = Some(super::super::app::Notice::warning(message.clone()));
             reattached.transcript.push(HistoryCell::Error(message));
         }
     } else {

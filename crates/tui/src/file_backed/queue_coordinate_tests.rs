@@ -88,7 +88,7 @@ async fn hydrated_preview_boundary_survives_public_reattach() {
                 assert_eq!(app.transcript[2].input_source().unwrap().0, "new");
                 assert!(matches!(
                     app.transcript[3],
-                    HistoryCell::Plan(_) | HistoryCell::Thinking { .. }
+                    HistoryCell::Plan { .. } | HistoryCell::Thinking { .. }
                 ));
                 assert_eq!(app.transcript.len(), 4);
             }

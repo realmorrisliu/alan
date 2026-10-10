@@ -288,6 +288,12 @@ struct LegacyMigrationLock {
     _file: fs::File,
 }
 
+impl Drop for LegacyMigrationLock {
+    fn drop(&mut self) {
+        let _ = self._file.unlock();
+    }
+}
+
 impl LegacyMigrationLock {
     fn acquire(system_store_root: &Path) -> Result<Self> {
         fs::create_dir_all(system_store_root).with_context(|| {
@@ -363,6 +369,7 @@ mod tests {
     fn migration_lock_serializes_independent_open_files() {
         let temp = TempDir::new().unwrap();
         let lock = LegacyMigrationLock::acquire(temp.path()).unwrap();
+        let duplicate = lock._file.try_clone().unwrap();
         let path = temp.path().join("legacy-connections-migration.lock");
         let waiter = OpenOptions::new()
             .read(true)
@@ -372,5 +379,13 @@ mod tests {
         assert!(waiter.try_lock().is_err(), "another caller holds the lock");
         drop(lock);
         waiter.try_lock().unwrap();
+        drop(duplicate);
+        assert!(
+            fs::File::open(temp.path().join("legacy-connections-migration.lock"))
+                .unwrap()
+                .try_lock()
+                .is_err()
+        );
+        waiter.unlock().unwrap();
     }
 }

@@ -6,7 +6,7 @@ fn model_picker_real_inline_preserves_absolute_anchor_and_history() {
         Terminal, TerminalOptions, Viewport,
         backend::{Backend, TestBackend},
     };
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         for pane in [3, 5, 10, 22] {
             for bottom in [false, true] {
                 let mut app = super::model_tests::ready();

@@ -583,9 +583,19 @@ pub(crate) async fn create_test_state_with_machine_tools_and_provider<P: LlmProv
 
 async fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
     machine: AgentMachine,
+    tools: ToolRegistry,
+    provider: P,
+    agent_path: &str,
+) -> RuntimeLoopState {
+    create_test_state_with_native_runner(machine, tools, provider, agent_path, None).await
+}
+
+async fn create_test_state_with_native_runner<P: LlmProvider + 'static>(
+    machine: AgentMachine,
     mut tools: ToolRegistry,
     provider: P,
     agent_path: &str,
+    native_runner: Option<crate::tools::ToolProcessRunner>,
 ) -> RuntimeLoopState {
     let process_pid = agent_path
         .rsplit('/')
@@ -644,8 +654,12 @@ async fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProv
     );
     spawn_parent_process(&procfs, &process_namespace, process_pid).await;
 
-    let procfs = procfs.with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
-    let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
+    let tool_runner = native_runner.clone().unwrap_or_else(|| crate::tools::ToolProcessRunner::from_registry(&tools));
+    let runner: Arc<dyn ProcessRunner> = match native_runner {
+        Some(runner) => Arc::new(runner),
+        None => Arc::new(RegistryToolRunner::new(tools.clone())),
+    };
+    let procfs = procfs.with_runner(runner);
     tool_runner.register_process_binding(process_pid, binding);
     let spawn_namespace = process_namespace.clone();
     process_namespace.unmount("/proc");

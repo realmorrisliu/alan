@@ -220,6 +220,10 @@ fn matching_non_success_completion_is_visible_before_pending_is_released() {
                     "Error handling submission: reason",
                 ),
             });
+            assert!(
+                app.notice.is_none(),
+                "paired failure is already in permanent history"
+            );
             app.apply_ui_event(UiEvent::Error {
                 message: "Error handling submission: reason".into(),
                 recoverable: true,

@@ -14,7 +14,7 @@ impl FileBackedApp {
         self.input_intent == InputIntent::Agent && self.composer.text().trim() == "/model"
     }
     pub(super) fn model_status_command(&mut self) -> Option<FileBackedAction> {
-        self.notice = Some(self.model.status());
+        self.notice = Some(self.model.status().into());
         None
     }
     fn model_control_available(&self) -> bool {
@@ -40,7 +40,9 @@ impl FileBackedApp {
             return None;
         }
         let Some(catalog) = self.model.known().and_then(|s| s.catalog.as_ref()) else {
-            self.notice = Some("Process model catalog unknown or unavailable".into());
+            self.notice = Some(Notice::warning(
+                "Process model catalog unknown or unavailable",
+            ));
             return None;
         };
         if catalog.models.is_empty() {
@@ -165,9 +167,9 @@ impl FileBackedApp {
             self.model_chooser.explicit = false;
             self.model_chooser.catalog = None;
             self.completion = None;
-            self.notice = Some(
-                "model catalog changed or unavailable; reopen /model and explicitly choose".into(),
-            );
+            self.notice = Some(Notice::warning(
+                "model catalog changed or unavailable; reopen /model and explicitly choose",
+            ));
         }
     }
     pub(in crate::file_backed) fn lose_model_receipts(&mut self, owner: &str) {
@@ -178,9 +180,9 @@ impl FileBackedApp {
             .is_some_and(|(expected, _)| expected == owner)
         {
             self.model_chooser.uncertain = self.model_chooser.pending.take();
-            self.notice = Some(
-                "model selection outcome uncertain; receipt owner unavailable; no retry".into(),
-            );
+            self.notice = Some(Notice::warning(
+                "model selection outcome uncertain; receipt owner unavailable; no retry",
+            ));
         }
     }
     pub(in crate::file_backed) fn observe_model_receipt(
@@ -207,16 +209,13 @@ impl FileBackedApp {
         if owner != expected_owner || !submission_ids.contains(id) {
             return false;
         }
-        self.notice = Some(
-            match status {
-                UiInputStatus::Completed => {
-                    "model selection completed; projection owns selected-next"
-                }
-                UiInputStatus::Failed => "model selection rejected",
-                UiInputStatus::Cancelled => "model selection cancelled",
+        self.notice = Some(match status {
+            UiInputStatus::Completed => {
+                "model selection completed; projection owns selected-next".into()
             }
-            .into(),
-        );
+            UiInputStatus::Failed => Notice::warning("model selection rejected"),
+            UiInputStatus::Cancelled => Notice::warning("model selection cancelled"),
+        });
         self.model_chooser.pending = None;
         self.model_chooser.uncertain = None;
         true

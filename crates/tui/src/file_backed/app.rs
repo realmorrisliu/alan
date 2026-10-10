@@ -23,8 +23,11 @@ use super::{ProjectAccess, ProjectControl, ProjectMountReceipt, project_dispatch
 
 mod action_modal;
 mod attachment;
+mod grouping;
 mod history;
 mod model_control;
+mod notice;
+pub(in crate::file_backed) use notice::Notice;
 mod presentation;
 mod project;
 use project::default_commands;
@@ -66,13 +69,16 @@ pub(super) struct FileBackedApp {
     history_draft_intent: Option<InputIntent>,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
-    pub(super) projected_actions: BTreeMap<(String, String), u64>,
+    /// Existing observation fingerprint plus whether its rows were committed.
+    pub(super) projected_actions: BTreeMap<(String, String), (u64, bool)>,
     pub(super) modal: action_modal::ActionModal,
     pub(super) local_inputs: BTreeMap<String, super::queue::LocalInput>,
     pub(super) skills: super::skills::SkillProjection,
     pub(super) queue: super::queue::QueueProjection,
     pub(super) activity: UiActivitySnapshot,
     pub(super) plan: UiPlanSnapshot,
+    pub(super) plan_revision: usize,
+    pub(super) plan_owners: Vec<String>,
     pub(super) thinking: UiThinkingSnapshot,
     pub(super) running_tools: Vec<RunningTool>,
     pub(super) pending_yield: Option<PendingYieldCell>,
@@ -93,7 +99,7 @@ pub(super) struct FileBackedApp {
     ready_project_revoke: Option<String>,
     pub(super) last_input_failed: bool,
     pub(super) expand_thinking: bool,
-    pub(super) notice: Option<String>,
+    pub(super) notice: Option<Notice>,
     pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
     /// The pure state machine reconciling the optimistic `io/output` stream
@@ -131,6 +137,8 @@ impl FileBackedApp {
             queue: super::queue::QueueProjection::default(),
             activity: UiActivitySnapshot::idle(),
             plan: UiPlanSnapshot::empty(),
+            plan_revision: 0,
+            plan_owners: Vec::new(),
             thinking: UiThinkingSnapshot::idle(),
             running_tools: Vec::new(),
             pending_yield: None,
@@ -180,24 +188,33 @@ impl FileBackedApp {
         has_pending_submission: bool,
     ) -> Option<FileBackedAction> {
         match event {
+            FileBackedEvent::PlanDetails {
+                path,
+                generation,
+                entries,
+            } => {
+                self.apply_plan_details(path, generation, entries);
+                None
+            }
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
-                ids,
-                id,
+                actions,
+                selected,
                 rows,
             } => {
                 if self.modal.active
+                    && !self.modal.plan_mode
                     && path == self.modal.owner_path
                     && generation == self.modal.generation
                 {
-                    match ids {
-                        Ok(ids) => {
-                            self.modal.selected = id
+                    match actions {
+                        Ok(actions) => {
+                            self.modal.selected = selected
                                 .as_ref()
-                                .and_then(|id| ids.iter().position(|v| v == id))
+                                .and_then(|selected| actions.iter().position(|v| v == selected))
                                 .unwrap_or(0);
-                            self.modal.ids = ids;
+                            self.modal.actions = actions;
                             self.modal.rows = rows;
                         }
                         Err(error) => self.modal.rows = vec![Line::from(error)],
@@ -248,7 +265,7 @@ impl FileBackedApp {
                 result,
             } => {
                 match result {
-                    Ok(()) => self.notice = Some(success_notice),
+                    Ok(()) => self.notice = Some(success_notice.into()),
                     Err(error) => self.push_error(format!("{error_prefix}: {error}")),
                 }
                 None
@@ -604,7 +621,7 @@ impl FileBackedApp {
                 retry_input: option,
             }),
             Err(message) => {
-                self.notice = Some(message);
+                self.notice = Some(Notice::warning(message));
                 None
             }
         }
@@ -645,7 +662,7 @@ impl FileBackedApp {
                     });
                 }
                 Err(message) => {
-                    self.notice = Some(message);
+                    self.notice = Some(Notice::warning(message));
                     return None;
                 }
             }
@@ -700,7 +717,7 @@ impl FileBackedApp {
                 self.notice = Some("response sent".into());
             }
             Err(error) => {
-                self.notice = Some(format!("resume failed: {error}"));
+                self.notice = Some(Notice::error(format!("resume failed: {error}")));
                 if self
                     .pending_yield
                     .as_ref()
@@ -743,10 +760,9 @@ impl FileBackedApp {
                     if self.project_recovery_boundary_available(false) {
                         return Some(FileBackedAction::Project(retained.clone()));
                     }
-                    self.notice = Some(
-                        "project outcome unknown; wait, then /project retries the same selection"
-                            .into(),
-                    );
+                    self.notice = Some(Notice::warning(
+                        "project outcome unknown; wait, then /project retries the same selection",
+                    ));
                     return None;
                 }
                 if !self.project_boundary_available(false) {
@@ -763,10 +779,13 @@ impl FileBackedApp {
                             .map(|path| path.to_string_lossy().into_owned())
                             .unwrap_or_default(),
                     );
-                    self.notice = Some(format!(
-                        "project path · {} · Enter approve · Tab toggle · Esc cancel",
-                        ProjectAccess::ReadOnly.label()
-                    ));
+                    self.notice = Some(
+                        format!(
+                            "project path · {} · Enter approve · Tab toggle · Esc cancel",
+                            ProjectAccess::ReadOnly.label()
+                        )
+                        .into(),
+                    );
                 }
                 None
             }
@@ -820,19 +839,24 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained Action details; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
-                        .to_string(),
+                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained details; p toggles Actions/plans; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
+                        .into(),
                 );
                 None
             }
             _ => {
-                self.notice = Some(format!("unknown command: /{name}"));
+                self.notice = Some(Notice::warning(format!("unknown command: /{name}")));
                 None
             }
         }
     }
 
     pub(super) fn set_pending_yield(&mut self, pending: PendingYieldCell) {
+        if self.modal.active {
+            self.modal.active = false;
+            self.modal.generation += 1;
+            self.modal.pending = false;
+        }
         self.pending_yield = Some(pending.clone());
         self.sync_form();
         self.completion = None;
@@ -893,22 +917,6 @@ impl FileBackedApp {
         self.activity.started_at_ms
     }
 
-    pub(super) fn upsert_action_cell(&mut self, action_id: String, cell: HistoryCell) {
-        if let Some(index) = self.action_cells.get(&action_id).copied()
-            && let Some(existing) = self.transcript.get_mut(index)
-        {
-            if matches!(existing, HistoryCell::Styled(_)) {
-                return;
-            }
-            *existing = cell;
-            return;
-        }
-        self.mark_pending_remote_turn_start_if_unbounded();
-        let index = self.transcript.len();
-        self.transcript.push(cell);
-        self.action_cells.insert(action_id, index);
-    }
-
     #[cfg(test)]
     pub(super) fn rendered_history_lines(&self, width: usize) -> Vec<String> {
         self.styled_history_lines(width)
@@ -919,18 +927,9 @@ impl FileBackedApp {
 
     pub(super) fn styled_history_lines(&self, width: usize) -> Vec<Line<'static>> {
         let opts = self.render_opts(width);
-        self.transcript
-            .iter()
-            .enumerate()
-            .flat_map(|(index, cell)| {
-                if self.action_cells.values().any(|i| *i == index)
-                    && matches!(cell, HistoryCell::Tool { .. })
-                {
-                    crate::history::action_summary(cell, width)
-                } else {
-                    cell.render_styled_lines(opts)
-                }
-            })
+        self.history_row_projection(opts)
+            .into_iter()
+            .flatten()
             .collect()
     }
 

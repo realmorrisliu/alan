@@ -6,6 +6,20 @@ mod presentation;
 pub(super) mod reference;
 use reference::resolve as resolve_reference;
 
+/// A selectable reference to one Process-owned Action; it carries no result or authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ActionEntry {
+    pub owner: String,
+    pub id: String,
+}
+
+fn concrete_owner(owner: &str) -> bool {
+    owner
+        .strip_prefix("/agent/")
+        .and_then(|pid| pid.parse::<u64>().ok())
+        .is_some_and(|pid| pid > 0 && owner == format!("/agent/{pid}"))
+}
+
 pub(super) fn start_pending_for_pid(
     shell: &alan_shell::Shell,
     app: &mut FileBackedApp,
@@ -45,47 +59,93 @@ pub(super) fn start_pending_at(
         )];
         return;
     }
+    if app.modal.plan_mode {
+        super::plan_detail_io::start(shell, app, tx, owner_path);
+        return;
+    }
     let shell = shell.clone();
     let tx = tx.clone();
     app.modal.owner_path = owner_path.into();
     let path = owner_path.to_string();
     let generation = app.modal.generation;
-    let selected = app.modal.ids.get(app.modal.selected).cloned();
+    let selected = app.modal.actions.get(app.modal.selected).cloned();
+    let mut observed = app
+        .projected_actions
+        .keys()
+        .filter(|(owner, _)| owner != &path && concrete_owner(owner))
+        .map(|(owner, id)| ActionEntry {
+            owner: owner.clone(),
+            id: id.clone(),
+        })
+        .collect::<Vec<_>>();
+    observed.sort_by_key(|entry| {
+        (
+            entry
+                .owner
+                .strip_prefix("/agent/")
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            super::file_surface::request_sort_key(&entry.id),
+        )
+    });
     tokio::spawn(async move {
-        let ids = read_action_ids(&shell, &path)
-            .await
-            .map_err(|e| e.to_string());
-        let id = selected.or_else(|| ids.as_ref().ok().and_then(|v| v.last().cloned()));
+        let (mut actions, warning) = match read_action_ids(&shell, &path).await {
+            Ok(ids) => {
+                observed.extend(ids.into_iter().map(|id| ActionEntry {
+                    owner: path.clone(),
+                    id,
+                }));
+                (Ok(observed), None)
+            }
+            Err(error) if !observed.is_empty() => (
+                Ok(observed),
+                Some(format!(
+                    "Current Process Action catalog unavailable ({path}); observed references only: {error}"
+                )),
+            ),
+            Err(error) => (Err(error.to_string()), None),
+        };
+        // A previously selected reference stays explicit if its file disappears.
+        if let (Ok(entries), Some(selected)) = (&mut actions, &selected)
+            && !entries.contains(selected)
+        {
+            entries.push(selected.clone());
+        }
+        let selected = selected.or_else(|| actions.as_ref().ok().and_then(|v| v.last().cloned()));
         if tx
             .send(FileBackedEvent::ActionDetails {
                 path: path.clone(),
                 generation,
-                ids: ids.clone(),
-                id: id.clone(),
-                rows: Vec::new(),
+                actions: actions.clone(),
+                selected: selected.clone(),
+                rows: warning.iter().cloned().map(Line::from).collect(),
             })
             .await
             .is_err()
         {
             return;
         }
-        let rows = match &id {
-            Some(id) => read_detail(&shell, &path, id).await,
+        let mut rows = match &selected {
+            Some(entry) => read_detail(&shell, &entry.owner, &entry.id).await,
             None => vec![Line::from("No retained Actions")],
         };
+        if let Some(warning) = warning {
+            rows.insert(0, Line::from(warning));
+        }
         let _ = tx
             .send(FileBackedEvent::ActionDetails {
                 path,
                 generation,
-                ids,
-                id,
+                actions,
+                selected,
                 rows,
             })
             .await;
     });
 }
 
-async fn field(shell: &alan_shell::Shell, path: &str) -> Result<String, String> {
+pub(super) async fn field(shell: &alan_shell::Shell, path: &str) -> Result<String, String> {
     let stat = shell
         .stat(path)
         .await
@@ -152,7 +212,7 @@ pub(super) async fn read_detail(
             }
         }
     }
-    let mut header = vec![Line::from(format!("Action {id}"))];
+    let mut header = vec![Line::from(format!("Action {id} · {path}"))];
     if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
         let mut detail = crate::history::action_detail(&cell);
         if readable {

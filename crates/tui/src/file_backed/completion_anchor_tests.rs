@@ -55,7 +55,7 @@ fn rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
 
 #[test]
 fn actual_inline_first_ready_reserves_selected_row_even_without_spare() {
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         for pane in [3, 5, 10] {
             for trigger in ['/', '$', '@'] {
                 for text in [String::new(), "界🙂 wrapped ".repeat(25)] {
@@ -138,7 +138,7 @@ fn actual_inline_first_ready_reserves_selected_row_even_without_spare() {
 
 #[test]
 fn real_inline_absolute_anchor_survives_transient_candidates() {
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         for pane in [3, 5, 10, 22] {
             for spare in [0, 1, 2] {
                 let mut terminal = inline(width, pane, pane.saturating_sub(2 + spare));
@@ -188,7 +188,7 @@ fn real_inline_absolute_anchor_survives_transient_candidates() {
 
 #[test]
 fn real_inline_unicode_reference_menu_clips_below_visible_composer() {
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         for pane in [3, 5, 10, 22, 30] {
             for bottom in [true, false] {
                 for trigger in ['$', '@'] {
@@ -260,7 +260,7 @@ fn real_inline_unicode_reference_menu_clips_below_visible_composer() {
 
 #[test]
 fn transient_menu_does_not_permanently_drain_near_full_history() {
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         for pane in [3, 5, 10, 22] {
             for trigger in ['/', '$', '@'] {
                 let mut app = FileBackedApp::new("/agent/root".into());

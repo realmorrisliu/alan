@@ -14,6 +14,10 @@ fn fixture() -> (tempfile::TempDir, InstallationPaths) {
 #[tokio::test]
 async fn dry_run_is_read_only_and_apply_preserves_source_and_supports_retry_and_rollback() {
     let (_temp, paths) = fixture();
+    let source_lock = paths
+        .system_root()
+        .join("dev/legacy-connections-migration.lock");
+    fs::write(&source_lock, "source control metadata").unwrap();
     let dry = migrate(
         &paths,
         LegacyInstallation::Dev,
@@ -25,6 +29,10 @@ async fn dry_run_is_read_only_and_apply_preserves_source_and_supports_retry_and_
     assert_eq!(dry.state, "validated");
     assert!(!paths.journal().exists());
     assert!(!paths.product.join("installation.lock").exists());
+    assert_eq!(
+        fs::read_to_string(&source_lock).unwrap(),
+        "source control metadata"
+    );
     let report = migrate(
         &paths,
         LegacyInstallation::Dev,
@@ -34,6 +42,12 @@ async fn dry_run_is_read_only_and_apply_preserves_source_and_supports_retry_and_
     .await
     .unwrap();
     assert_eq!(report.state, "committed");
+    assert!(
+        !paths
+            .system_root()
+            .join("legacy-connections-migration.lock")
+            .exists()
+    );
     let relative = "services/memory/stores/personal/note.md";
     assert_eq!(
         fs::read(paths.system_root().join(relative)).unwrap(),
@@ -76,6 +90,10 @@ async fn dry_run_is_read_only_and_apply_preserves_source_and_supports_retry_and_
     assert!(!paths.system_root().join("services").exists());
     assert!(paths.system_root().join("dev").join(relative).exists());
     assert!(!paths.journal().exists());
+    assert_eq!(
+        fs::read_to_string(source_lock).unwrap(),
+        "source control metadata"
+    );
 }
 
 #[tokio::test]

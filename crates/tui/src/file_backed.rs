@@ -32,6 +32,7 @@ mod model_review_tests;
 mod model_tests;
 #[cfg(test)]
 mod model_transport_tests;
+mod plan_detail_io;
 mod previous_input;
 mod project;
 mod queue;
@@ -316,7 +317,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Ok(()) => {
                                             let owner = if follows_root_agent { watchers.root_agent_pid.map(|pid| format!("/agent/{pid}")).unwrap_or_else(|| app.agent_path.clone()) } else { app.agent_path.clone() };
                                             app.track_local_input(&record.submission_id, owner, text.clone(), record.intent);
-                                            app.notice = Some("submission sent; admission unconfirmed".into());
+                                            app.show_submission_sent(&record.submission_id);
                                             pending_root_agent_turns.push_back(PendingRootAgentTurn {
                                                 input: text.clone(),
                                                 submission_id: record.submission_id.clone(),
@@ -867,9 +868,13 @@ mod accessibility_tests;
 #[cfg(test)]
 mod action_details_tests;
 #[cfg(test)]
+#[path = "file_backed/grouping_tests.rs"]
+mod grouping_tests;
+#[cfg(test)]
 mod project_review_tests;
 #[cfg(test)]
 mod queue_tests;
+
 #[cfg(test)]
 #[path = "file_backed/semantic_tests.rs"]
 mod semantic_tests;

@@ -7,24 +7,21 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
         status,
         preview,
         presentation,
+        ..
     } = cell
     else {
         return cell.render_styled_lines(RenderOpts::new(width, false));
     };
     let width = width.max(1);
-    let style = Style::default().fg(if *status == ToolStatus::Failed {
-        Color::Red
-    } else {
-        Color::Cyan
-    });
-    let title = format!(
-        "tool> {} {}",
-        if *status == ToolStatus::Failed {
-            "✗"
-        } else {
-            "✓"
-        },
-        bounded(title, 256)
+    let style = status.style();
+    let header = format!(
+        "{} · {}",
+        summary_row(
+            &bounded(title, 256),
+            width.saturating_sub(status.label().len() + 3),
+            style
+        ),
+        status.label()
     );
     let child = match presentation {
         Some(ToolResultPresentation::Diff { path, hunks }) => {
@@ -37,31 +34,42 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
                     _ => {}
                 }
             }
-            format!("{} · +{added} -{removed}", bounded(path, 256))
+            format!("{}+{added} -{removed}", distinct_path(title, path))
         }
         Some(ToolResultPresentation::FileContent {
             path,
             lines,
             truncated,
         }) => format!(
-            "{} · {lines} lines{}",
-            bounded(path, 256),
+            "{}{lines} lines{}",
+            distinct_path(title, path),
             if *truncated { " · truncated" } else { "" }
         ),
         Some(ToolResultPresentation::Command {
             cmdline,
             exit_code,
+            stdout,
             stderr,
+            truncated,
             ..
         }) => format!(
-            "exit {} · $ {}{}",
+            "exit {}{}{}{}",
             exit_code.map_or("unknown".into(), |v| v.to_string()),
-            bounded(cmdline, 160),
+            if title.contains(cmdline.lines().next().unwrap_or(cmdline)) {
+                String::new()
+            } else {
+                format!(" · $ {}", bounded(cmdline, 160))
+            },
             if *status == ToolStatus::Failed && !stderr.is_empty() {
+                format!(" · {}", bounded(stderr, 128))
+            } else if !stdout.is_empty() {
+                format!(" · {}", bounded(stdout, 128))
+            } else if !stderr.is_empty() {
                 format!(" · {}", bounded(stderr, 128))
             } else {
                 String::new()
-            }
+            },
+            if *truncated { " · truncated" } else { "" }
         ),
         Some(ToolResultPresentation::PlainText { body }) => bounded(body, 256),
         Some(ToolResultPresentation::Listing { rows }) => format!(
@@ -73,27 +81,60 @@ pub(crate) fn action_summary(cell: &HistoryCell, width: usize) -> Vec<Line<'stat
             .as_deref()
             .map_or(String::new(), |v| bounded(v, 256)),
     };
-    [title, format!("  {child}"), "  details: Ctrl+O".into()]
-        .into_iter()
-        .map(|s| {
-            let mut row = wrap_styled_lines([Line::styled(clean_text(&s), style)], width)
-                .into_iter()
-                .next()
-                .unwrap_or_default();
-            if unicode_width::UnicodeWidthStr::width(clean_text(&s).as_str()) > width && width > 1 {
-                let mut text = row.to_string();
-                while unicode_width::UnicodeWidthStr::width(text.as_str()) >= width {
-                    text.pop();
-                }
-                text.push('…');
-                row = Line::styled(text, style);
-            }
-            wrap_styled_lines([row], width)
-                .into_iter()
-                .next()
-                .unwrap_or_default()
-        })
+    let mut rows = vec![header];
+    if !child.trim().is_empty() {
+        rows.push(format!("  {child}"));
+    }
+    rows.into_iter()
+        .map(|s| summary_row(&s, width, style))
         .collect()
+}
+
+pub(crate) fn group_summary_header(count: usize, width: usize) -> Line<'static> {
+    summary_row(
+        &format!("{count} read-only actions · completed"),
+        width,
+        ToolStatus::Complete.style(),
+    )
+}
+
+pub(crate) fn group_summary_member(cell: &HistoryCell, width: usize) -> Line<'static> {
+    let HistoryCell::Tool { title, .. } = cell else {
+        unreachable!("eligible Action")
+    };
+    let rows = action_summary(cell, 512);
+    let detail = rows.get(1).map(ToString::to_string).unwrap_or_default();
+    let text = if detail.trim().is_empty() {
+        format!("  {}", bounded(title, 256))
+    } else {
+        format!("  {} · {}", bounded(title, 256), detail.trim())
+    };
+    summary_row(&text, width, ToolStatus::Complete.style())
+}
+
+pub(super) fn summary_row(text: &str, width: usize, style: Style) -> Line<'static> {
+    let clean = clean_text(text);
+    let mut row = wrap_styled_lines([Line::styled(clean.clone(), style)], width.max(1))
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    if unicode_width::UnicodeWidthStr::width(clean.as_str()) > width && width > 1 {
+        let mut text = row.to_string();
+        while unicode_width::UnicodeWidthStr::width(text.as_str()) >= width {
+            text.pop();
+        }
+        text.push('…');
+        row = Line::styled(text, style);
+    }
+    row
+}
+
+fn distinct_path(title: &str, path: &str) -> String {
+    if path.is_empty() || title.contains(path) {
+        String::new()
+    } else {
+        format!("{} · ", bounded(path, 256))
+    }
 }
 
 pub(crate) fn bounded(text: &str, bytes: usize) -> String {
@@ -106,4 +147,163 @@ pub(crate) fn bounded(text: &str, bytes: usize) -> String {
             }
             line[..end].to_string()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_unicode_titles_do_not_hide_terminal_outcomes() {
+        for width in [48, 80, 120] {
+            for status in [
+                ToolStatus::Complete,
+                ToolStatus::Failed,
+                ToolStatus::Rejected,
+                ToolStatus::Cancelled,
+            ] {
+                let cell = HistoryCell::Tool {
+                    action: None,
+                    title: format!("Read {}", "路径🦀".repeat(80)),
+                    status,
+                    preview: None,
+                    presentation: None,
+                };
+                let rows = action_summary(&cell, width);
+                assert_eq!(rows.len(), 1);
+                assert!(
+                    rows[0].to_string().contains(status.label()),
+                    "{:?}",
+                    rows[0]
+                );
+                assert!(rows[0].width() <= width);
+            }
+        }
+    }
+
+    #[test]
+    fn routine_summaries_keep_status_without_repeating_command_path_or_hint() {
+        for width in [48, 80, 120] {
+            for status in [ToolStatus::Complete, ToolStatus::Failed] {
+                let command = HistoryCell::Tool {
+                    action: None,
+                    title: "Bash cargo test".into(),
+                    status,
+                    preview: None,
+                    presentation: Some(ToolResultPresentation::Command {
+                        cmdline: "cargo test".into(),
+                        exit_code: Some(101),
+                        stdout: String::new(),
+                        stderr: "compiler diagnostic".into(),
+                        truncated: false,
+                    }),
+                };
+                let rows = action_summary(&command, width);
+                let text = rows
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(rows.len() <= 2, "{text}");
+                assert_eq!(text.matches("cargo test").count(), 1, "{text}");
+                assert!(text.contains("exit 101"), "{text}");
+                assert!(
+                    !text.contains("tool>") && !text.contains("details:"),
+                    "{text}"
+                );
+                if status == ToolStatus::Failed {
+                    assert!(text.contains("failed"), "{text}");
+                }
+            }
+            let file = HistoryCell::Tool {
+                action: None,
+                title: "Read src/main.rs".into(),
+                status: ToolStatus::Complete,
+                preview: None,
+                presentation: Some(ToolResultPresentation::FileContent {
+                    path: "src/main.rs".into(),
+                    lines: 42,
+                    truncated: true,
+                }),
+            };
+            let text = action_summary(&file, width)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(text.matches("src/main.rs").count(), 1, "{text}");
+            assert!(
+                text.contains("42 lines") && text.contains("truncated"),
+                "{text}"
+            );
+            let edit = HistoryCell::Tool {
+                action: None,
+                title: "Edit /mnt/p/sample.rs".into(),
+                status: ToolStatus::Complete,
+                preview: None,
+                presentation: Some(ToolResultPresentation::Diff {
+                    path: "/mnt/p/sample.rs".into(),
+                    hunks: vec![alan_agent_protocol::DiffHunk {
+                        header: None,
+                        lines: vec![
+                            DiffLine::Added { text: "new".into() },
+                            DiffLine::Removed { text: "old".into() },
+                        ],
+                    }],
+                }),
+            };
+            let text = action_summary(&edit, width)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(text.matches("sample.rs").count(), 1, "{text}");
+            assert!(text.contains("+1 -1"), "{text}");
+        }
+    }
+
+    #[test]
+    fn command_excerpt_preserves_success_output_and_failure_stderr_priority() {
+        for width in [48, 80, 120] {
+            for (status, stdout, stderr, expected) in [
+                (
+                    ToolStatus::Complete,
+                    "server> ready\na > b",
+                    "",
+                    "server> ready",
+                ),
+                (
+                    ToolStatus::Complete,
+                    "",
+                    "warning: cached",
+                    "warning: cached",
+                ),
+                (
+                    ToolStatus::Failed,
+                    "prior output",
+                    "actual failure",
+                    "actual failure",
+                ),
+            ] {
+                let cell = HistoryCell::Tool {
+                    action: None,
+                    title: "Execute fixture".into(),
+                    status,
+                    preview: None,
+                    presentation: Some(ToolResultPresentation::Command {
+                        cmdline: "fixture".into(),
+                        exit_code: Some(if status == ToolStatus::Failed { 1 } else { 0 }),
+                        stdout: stdout.into(),
+                        stderr: stderr.into(),
+                        truncated: false,
+                    }),
+                };
+                let rows = action_summary(&cell, width);
+                assert_eq!(rows.len(), 2);
+                assert!(rows[0].to_string().contains(status.label()));
+                assert!(rows[1].to_string().contains(expected), "{rows:?}");
+                assert!(rows.iter().all(|row| row.width() <= width));
+            }
+        }
+    }
 }

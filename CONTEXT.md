@@ -272,6 +272,22 @@ Mount. Its identifier carries no authority; access requires explicitly
 projecting the granted file-server handle or mount into a Process namespace.
 _Avoid_: Host path binding, Permission ID
 
+## Terminal presentation
+
+**Renderer-generated role label** — An Alan-authored category label attached to
+displayed content, such as `tool>` or `plan>`. Identical text inside user or Tool
+content is literal content, not a role label.
+
+**Action summary** — A compact human-readable presentation of an Action's
+operation and known outcome. It is distinct from the Action's retained evidence.
+
+**Read-only activity group** — A presentation of adjacent successful read-only
+Actions whose individual identities and results remain distinct.
+
+**Retained detail** — The inspectable evidence behind a presentation summary,
+such as an Action result or a particular plan snapshot. It may be truncated or
+unavailable without changing the known execution outcome.
+
 ## Current implementation names
 
 **Agent Execution Engine (`alan-agent-engine`)** — The current model-call,

@@ -36,7 +36,7 @@ pub(super) fn render_at(
 
 #[test]
 fn project_per_key_anchor_and_menu_order() {
-    for width in [40, 60, 73, 80, 120] {
+    for width in [40, 48, 60, 73, 80, 120] {
         for pane in [3, 5, 10, 24] {
             let mut app = FileBackedApp::new("/agent/root".into());
             let mut anchor = None;

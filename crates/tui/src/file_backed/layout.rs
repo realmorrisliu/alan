@@ -19,21 +19,65 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     let area = frame.area();
     let width = area.width as usize;
     if app.modal.active {
-        let mut rows = vec![Line::from(format!(
-            "{}/{} · ↔ Action · Space/b page · Esc",
-            app.modal.selected + 1,
-            app.modal.ids.len()
-        ))];
+        let count = if app.modal.plan_mode {
+            app.modal.plans.len()
+        } else {
+            app.modal.actions.len()
+        };
+        let kind = if app.modal.plan_mode {
+            "Plan"
+        } else {
+            "Action"
+        };
+        let switch = if width >= 48 {
+            if app.modal.plan_mode {
+                " · p Actions"
+            } else {
+                " · p Plans"
+            }
+        } else {
+            ""
+        };
+        let owner = if app.modal.plan_mode {
+            app.modal
+                .plans
+                .get(app.modal.selected)
+                .map(|entry| entry.owner.as_str())
+        } else {
+            app.modal
+                .actions
+                .get(app.modal.selected)
+                .map(|entry| entry.owner.as_str())
+        }
+        .unwrap_or(&app.modal.owner_path);
+        let mut rows = vec![
+            Line::from(format!(
+                "{}/{count} · {kind} · {owner}",
+                if count == 0 {
+                    0
+                } else {
+                    app.modal.selected + 1
+                },
+            )),
+            Line::styled(
+                if width >= 32 {
+                    format!("↔ select · Space/b page · Esc{switch}")
+                } else {
+                    "↔ · Space/b · Esc".into()
+                },
+                Style::default().fg(Color::DarkGray),
+            ),
+        ];
         let detail = crate::history::wrap_styled_lines(app.modal.rows.clone(), width);
         let start = app.modal.scroll.min(detail.len().saturating_sub(1));
         if detail.is_empty() {
-            rows.push(Line::from("Loading retained Action files…"));
+            rows.push(Line::from("Loading retained details…"));
         }
         rows.extend(
             detail
                 .into_iter()
                 .skip(start)
-                .take(area.height.saturating_sub(1) as usize),
+                .take(area.height.saturating_sub(2) as usize),
         );
         frame.render_widget(Paragraph::new(rows), area);
         return;
@@ -132,14 +176,19 @@ fn live_region_lines_at(
         ));
     }
     if let Some(notice) = &app.notice {
+        let (prefix, color) = match notice.kind {
+            alan_agent_protocol::UiNoticeKind::Error => ("Error · ", Color::Red),
+            alan_agent_protocol::UiNoticeKind::Warning => ("Warning · ", Color::Yellow),
+            _ => ("· ", Color::DarkGray),
+        };
         lines.push(Line::styled(
-            format!("· {notice}"),
-            Style::default().fg(Color::Yellow),
+            format!("{prefix}{notice}"),
+            Style::default().fg(color),
         ));
     }
     for tool in &app.running_tools {
         lines.push(Line::styled(
-            format!("· tool running: {}", tool.title),
+            format!("{} · running", tool.title),
             Style::default().fg(Color::Cyan),
         ));
     }
@@ -194,6 +243,17 @@ fn live_region_lines_at(
                 let prefix = if idx == state.selected { "▶ " } else { "  " };
                 lines.push(Line::styled(format!("{prefix}{label}"), style));
             }
+        }
+        if app.completion.is_none()
+            && app.project_selection.is_none()
+            && app.pending_yield.is_none()
+            && (!app.projected_actions.is_empty() || !app.plan_owners.is_empty())
+        {
+            // Reuse the stable row below the composer; completion keeps priority.
+            lines.push(Line::styled(
+                "Ctrl+O details (p: plans)",
+                Style::default().fg(Color::DarkGray),
+            ));
         }
         (lines, Some(prompt_start))
     }

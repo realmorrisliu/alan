@@ -15,6 +15,37 @@ fn titles_format_from_args() {
 }
 
 #[test]
+fn completed_action_titles_use_the_result_path_without_reinterpreting_other_tools() {
+    let args = json!({"path":"sample.rs", "old_string":"a + b", "new_string":"a - b",
+        "content":"source", "command":"printf marker"});
+    let result = json!({"path":"/mnt/project-request-2/sample.rs", "success":true});
+    for (name, verb) in [
+        ("read_file", "Read"),
+        ("write_file", "Write"),
+        ("edit_file", "Edit"),
+        ("list_dir", "List"),
+    ] {
+        let mut envelope = json!({});
+        write_action_metadata(&mut envelope, name, &args, &result).unwrap();
+        assert_eq!(
+            envelope["title"],
+            format!("{verb} /mnt/project-request-2/sample.rs")
+        );
+        for result in [json!({}), json!({"path":""}), json!({"path":3})] {
+            let mut envelope = json!({});
+            write_action_metadata(&mut envelope, name, &args, &result).unwrap();
+            assert_eq!(envelope["title"], format!("{verb} sample.rs"));
+        }
+    }
+    let mut envelope = json!({});
+    write_action_metadata(&mut envelope, "bash", &args, &result).unwrap();
+    assert_eq!(envelope["title"], "Bash printf marker");
+    let mut envelope = json!({});
+    write_action_metadata(&mut envelope, "mcp_custom", &args, &result).unwrap();
+    assert!(envelope.get("title").is_none());
+}
+
+#[test]
 fn edit_maps_to_diff() {
     let p = tool_presentation(
         "edit_file",

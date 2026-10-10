@@ -4,7 +4,9 @@ use super::*;
 pub(in crate::file_backed) struct ActionModal {
     pub generation: u64,
     pub active: bool,
-    pub ids: Vec<String>,
+    pub actions: Vec<super::super::action_detail_io::ActionEntry>,
+    pub plan_mode: bool,
+    pub plans: Vec<super::super::plan_detail_io::PlanEntry>,
     pub selected: usize,
     pub scroll: usize,
     pub rows: Vec<Line<'static>>,
@@ -24,7 +26,9 @@ impl FileBackedApp {
             }
             self.modal.active = !self.modal.active;
             self.modal.generation += 1;
-            self.modal.ids.clear();
+            self.modal.actions.clear();
+            self.modal.plan_mode = false;
+            self.modal.plans.clear();
             self.modal.rows.clear();
             self.modal.selected = 0;
             self.modal.scroll = 0;
@@ -43,25 +47,43 @@ impl FileBackedApp {
             self.modal.generation += 1;
             return false;
         }
+        let item_count = if self.modal.plan_mode {
+            self.modal.plans.len()
+        } else {
+            self.modal.actions.len()
+        };
         match key.code {
+            KeyCode::Char('p') if key.modifiers == KeyModifiers::NONE => {
+                self.modal.plan_mode = !self.modal.plan_mode;
+                self.modal.generation += 1;
+                self.modal.selected = 0;
+                self.modal.scroll = 0;
+                self.modal.rows.clear();
+                self.modal.actions.clear();
+                self.modal.plans.clear();
+                self.modal.pending = true;
+            }
             KeyCode::Esc => {
                 self.modal.active = false;
                 self.modal.generation += 1;
             }
-            KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right
-                if !self.modal.ids.is_empty() =>
-            {
+            KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right if item_count > 0 => {
                 let index = if matches!(key.code, KeyCode::Up | KeyCode::Left) {
                     self.modal.selected.saturating_sub(1)
                 } else {
-                    (self.modal.selected + 1).min(self.modal.ids.len() - 1)
+                    (self.modal.selected + 1).min(item_count - 1)
                 };
                 if index != self.modal.selected {
                     self.modal.selected = index;
                     self.modal.generation += 1;
                     self.modal.rows.clear();
                     self.modal.scroll = 0;
-                    self.modal.pending = true;
+                    self.modal.pending = !self.modal.plan_mode;
+                    if self.modal.plan_mode {
+                        self.modal.rows = super::super::plan_detail_io::rows(
+                            &self.modal.plans[self.modal.selected],
+                        );
+                    }
                 }
             }
             KeyCode::Char(' ') if key.modifiers == KeyModifiers::NONE => {

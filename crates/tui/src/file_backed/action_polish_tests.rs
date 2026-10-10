@@ -59,6 +59,7 @@ async fn polish_partial_json_reference_does_not_manufacture_structured_content()
 #[test]
 fn polish_multiline_summary_does_not_join_physical_lines() {
     let cell = HistoryCell::Tool {
+        action: None,
         title: "Read".into(),
         status: ToolStatus::Complete,
         preview: Some("\nfirst line\nsecond unrelated line".into()),

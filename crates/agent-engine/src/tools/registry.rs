@@ -4,7 +4,8 @@ use super::context::{ToolContext, ToolExecutionBinding};
 use anyhow::{Context, Result};
 use jsonschema::{Draft, Validator};
 use serde_json::Value;
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -39,6 +40,11 @@ pub trait Tool: Send + Sync {
 
     /// Whether capability depends on the concrete invocation arguments.
     fn capability_is_argument_dependent(&self) -> bool {
+        false
+    }
+
+    /// Positive native implementation guarantee; package capability claims do not opt in.
+    fn presentation_is_read_only(&self) -> bool {
         false
     }
 
@@ -456,6 +462,7 @@ struct ToolProcessRunnerInner {
     default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
     process_bindings: Mutex<HashMap<u64, ToolExecutionBinding>>,
     process_authorities: Mutex<HashMap<u64, Arc<dyn super::ToolExecutionAuthority>>>,
+    read_only_receipts: Mutex<BTreeMap<u64, (u64, String, String)>>,
 }
 
 /// Kernel-neutral inputs for one Tool executable invocation.
@@ -492,6 +499,7 @@ impl ToolProcessRunner {
                 default_binding: Arc::clone(&registry.default_binding),
                 process_bindings: Mutex::new(HashMap::new()),
                 process_authorities: Mutex::new(HashMap::new()),
+                read_only_receipts: Mutex::new(BTreeMap::new()),
             }),
         }
     }
@@ -557,6 +565,52 @@ impl ToolProcessRunner {
             .expect("process binding mutex poisoned")
             .get(&pid)
             .cloned()
+    }
+
+    pub(crate) fn read_only_presentation_scope(
+        &self,
+        pid: u64,
+        name: &str,
+        arguments: &Value,
+    ) -> Option<String> {
+        let tool = self.inner.tools.get(name)?;
+        if !tool.presentation_is_read_only()
+            || tool.capability(arguments) != alan_agent_protocol::ToolCapability::Read
+        {
+            return None;
+        }
+        self.process_presentation_scope(pid)
+    }
+
+    fn process_presentation_scope(&self, pid: u64) -> Option<String> {
+        let binding = self.process_binding(pid)?;
+        if !binding.has_adapter() {
+            return None;
+        }
+        let authority = self
+            .inner
+            .process_authorities
+            .lock()
+            .ok()?
+            .get(&pid)?
+            .clone();
+        let scope = authority.presentation_scope(pid)?;
+        let cwd = binding.namespace_cwd.to_str()?;
+        if scope.is_empty() || scope.len() > 4096 || cwd.len() > 4096 {
+            return None;
+        }
+        let bytes = serde_json::to_vec(&(cwd, scope)).ok()?;
+        Some(hex::encode(Sha256::digest(bytes)))
+    }
+
+    pub(crate) fn take_read_only_receipt(
+        &self,
+        pid: u64,
+        parent: u64,
+        name: &str,
+    ) -> Option<String> {
+        let (owner, tool, scope) = self.inner.read_only_receipts.lock().ok()?.remove(&pid)?;
+        (owner == parent && tool == name).then_some(scope)
     }
 
     /// Install a late-bound authority resolver for one Agent Process.
@@ -687,6 +741,7 @@ impl ToolProcessRunner {
         } else {
             tool.timeout_secs()
         };
+        let read_only_before = self.read_only_presentation_scope(authority_pid, name, &arguments);
         let execution = tool.execute(arguments, &context);
         let result = if timeout_secs == 0 {
             execution.await
@@ -706,6 +761,20 @@ impl ToolProcessRunner {
         match result {
             Ok(mut output) => {
                 context.project_value(&mut output);
+                if let Some(scope) = read_only_before
+                    && self.process_presentation_scope(authority_pid).as_ref() == Some(&scope)
+                {
+                    let mut receipts = self
+                        .inner
+                        .read_only_receipts
+                        .lock()
+                        .expect("receipt mutex poisoned");
+                    receipts.insert(invocation.pid, (authority_pid, name.into(), scope));
+                    // shortcut: retain 128 late presentation receipts; expand if routine bursts lose grouping.
+                    while receipts.len() > 128 {
+                        receipts.pop_first();
+                    }
+                }
                 process_json_outcome(0, output)
             }
             Err(error) => process_json_outcome(

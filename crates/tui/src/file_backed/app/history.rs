@@ -1,6 +1,48 @@
 use super::*;
 
 impl FileBackedApp {
+    pub(in crate::file_backed) fn upsert_action_cell(
+        &mut self,
+        action_id: String,
+        cell: HistoryCell,
+    ) {
+        if let Some(index) = self.action_cells.get(&action_id).copied()
+            && let Some(existing) = self.transcript.get_mut(index)
+        {
+            if matches!(
+                existing,
+                HistoryCell::Styled(_)
+                    | HistoryCell::Tool {
+                        action: Some(crate::history::ActionHistory {
+                            frozen_rows: Some(_),
+                            read_only: None,
+                            ..
+                        }),
+                        ..
+                    }
+            ) {
+                return;
+            }
+            if !matches!(
+                existing,
+                HistoryCell::Tool {
+                    action: Some(crate::history::ActionHistory {
+                        frozen_rows: Some(_),
+                        ..
+                    }),
+                    ..
+                }
+            ) {
+                *existing = cell;
+                return;
+            }
+        }
+        self.mark_pending_remote_turn_start_if_unbounded();
+        let index = self.transcript.len();
+        self.transcript.push(cell);
+        self.action_cells.insert(action_id, index);
+    }
+
     pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
         for input in self.local_inputs.values_mut() {
             if let Some(index) = &mut input.cell
@@ -20,12 +62,20 @@ impl FileBackedApp {
         opts: RenderOpts,
         lines_to_prune: usize,
     ) -> usize {
+        self.freeze_committing_actions(opts, lines_to_prune);
         let mut remaining = lines_to_prune;
         let mut index = 0;
         while remaining > 0 && index < self.transcript.len() {
             let is_action = self.action_cells.values().any(|i| *i == index)
                 && matches!(self.transcript[index], HistoryCell::Tool { .. });
-            let rows = if is_action {
+            let rows = if let HistoryCell::Tool {
+                action: Some(action),
+                ..
+            } = &self.transcript[index]
+                && let Some(rows) = &action.frozen_rows
+            {
+                HistoryCell::Styled(rows.clone()).render_styled_lines(opts)
+            } else if is_action {
                 crate::history::action_summary(&self.transcript[index], opts.width)
             } else {
                 self.transcript[index].render_styled_lines(opts)
@@ -41,7 +91,13 @@ impl FileBackedApp {
             if cell_lines > remaining || keep_source {
                 let count = remaining.min(cell_lines);
                 if count > 0 {
-                    if is_action {
+                    if let HistoryCell::Tool {
+                        action: Some(action),
+                        ..
+                    } = &mut self.transcript[index]
+                    {
+                        action.frozen_rows = Some(rows.into_iter().skip(count).collect());
+                    } else if is_action {
                         self.transcript[index] =
                             HistoryCell::Styled(rows.into_iter().skip(count).collect());
                     } else if !self.transcript[index].trim_rendered_prefix(opts, count) {
@@ -334,6 +390,7 @@ impl FileBackedApp {
             UiEvent::Activity { snapshot } => self.apply_ui_activity_snapshot(snapshot),
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
+            UiEvent::Notice { .. } if paired_notice => {}
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
             UiEvent::Error { message, .. } => {
                 if expected_error.as_deref() != Some(message.as_str()) {
@@ -353,17 +410,22 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn apply_ui_plan_snapshot(&mut self, snapshot: UiPlanSnapshot) {
         let changed = self.plan != snapshot;
         self.plan = snapshot.clone();
-        if changed && !snapshot.items.is_empty() {
-            self.push_turn_preview_cell(HistoryCell::Plan(
-                snapshot
-                    .items
-                    .into_iter()
-                    .map(|item| crate::history::PlanLine {
-                        status: item.status,
-                        content: item.content,
-                    })
-                    .collect(),
-            ));
+        if changed {
+            let owner = if self.queue.owner.is_empty() {
+                &self.agent_path
+            } else {
+                &self.queue.owner
+            }
+            .clone();
+            if !self.plan_owners.contains(&owner) {
+                self.plan_owners.push(owner.clone());
+            }
+            self.plan_revision += 1;
+            self.push_turn_preview_cell(HistoryCell::Plan {
+                snapshot,
+                owner,
+                revision: self.plan_revision,
+            });
         }
     }
 
@@ -385,10 +447,6 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn apply_ui_notice_snapshot(&mut self, snapshot: UiNoticeSnapshot) {
-        self.notice = match snapshot.kind {
-            UiNoticeKind::None => None,
-            _ if snapshot.message.trim().is_empty() => None,
-            _ => Some(snapshot.message),
-        };
+        self.notice = Notice::runtime(snapshot);
     }
 }

@@ -226,6 +226,27 @@ pub fn create_tool_registry_with_all_tools(host_root: std::path::PathBuf) -> Too
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_known_native_reads_opt_into_group_presentation() {
+        use super::*;
+        let tools: Vec<(Box<dyn Tool>, bool)> = vec![
+            (Box::new(ReadFileTool), true),
+            (Box::new(GrepTool), true),
+            (Box::new(GlobTool), true),
+            (Box::new(ListDirTool), true),
+            (Box::new(WriteFileTool), false),
+            (Box::new(EditFileTool), false),
+            (Box::new(BashTool), false),
+        ];
+        for (tool, eligible) in tools {
+            assert_eq!(
+                tool.presentation_is_read_only(),
+                eligible,
+                "{}",
+                tool.name()
+            );
+        }
+    }
     use super::*;
     use alan_agent_engine::Config;
     use alan_agent_engine::tools::ToolContext;

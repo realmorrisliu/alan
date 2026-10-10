@@ -2,11 +2,16 @@
 use super::*;
 
 pub(in crate::file_backed) enum FileBackedEvent {
+    PlanDetails {
+        path: String,
+        generation: u64,
+        entries: Vec<super::super::plan_detail_io::PlanEntry>,
+    },
     ActionDetails {
         path: String,
         generation: u64,
-        ids: Result<Vec<String>, String>,
-        id: Option<String>,
+        actions: Result<Vec<super::super::action_detail_io::ActionEntry>, String>,
+        selected: Option<super::super::action_detail_io::ActionEntry>,
         rows: Vec<Line<'static>>,
     },
     ModelSelectionWritten {
