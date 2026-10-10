@@ -4,8 +4,9 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including completed macOS F2/F3 below, eleven real-model executions qualify nine
-slots: seven first PASS, two first FAIL and twenty-one NOT_RUN. Tasks 2.1, 2.2
+Including macOS F2/F3 and the failed F4 original attempt below, twelve real-model
+task attempts qualify nine slots: seven first PASS, three first FAIL and twenty
+NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2
 and 2.3 are complete. Linux generation readiness, task 1.4, F4/F5 and final
 candidate applicability remain open.
 
@@ -459,3 +460,96 @@ closing task 2.3 and reaching 6/19 tasks. F4/F5, all Linux generation families,
 final-candidate applicability, review/merge and the absolute namespace Bash
 operand finding remain open. Published F2 evidence head `ebbeaffb` passed all
 sixteen CI checks; this newer evidence commit requires its own CI.
+
+
+## macOS F4 original r1 retained failure — 2026-10-11
+
+Original `macos-f4-r1/a1` uses the frozen repaired CLI `5715ccd9` with actual
+`gpt-6.1-sol/medium`. Initial boot `0a7b67f1-8ff7-4fb7-8080-e2d559657867`,
+native PID 71326, Root 8, rollout `ff33f6fe-3c44-4057-a9be-a009c67ba789`.
+The model invokes `start_work` once: the ledger records one completed effect,
+and an actual delayed writer (PID 72760) is observed live before planned Ctrl+C.
+The writer exits; after its deadline there is no late output and the ledger
+still has one entry. Absolute namespace Bash operands reproduce the separate
+known refusal; the model self-corrects without operator advice.
+
+At the settled pause, `/project revoke` falsely reports no active grant: its
+local picker receipt is absent, but public Host metadata confirms request-1 is
+active at the current Root's selected project. An unplanned, recorded native CLI
+revocation fallback makes that grant inactive. The frozen denied-read follow-up
+returns no content and explicitly refuses revoked cwd authority. Planned queue
+continuation dispatches only that follow-up, not the interrupted task again.
+
+The operator explicitly verifies selection of the original owning rollout, exits
+the first invocation and launches `--resume` in a fresh runtime. Boot
+`5e146bdd-a0a5-4497-8a76-834cb71083e8`, native PID 73195, Root 8, rollout
+`8d0f34ca-c99d-44ba-a9a3-5fbfc41286ec`, retains the original frozen task.
+After explicit regrant and planned model confirmation, EditFile repairs only
+`src/lib.rs`; model Cargo contract passes. Retained resumed Actions never invoke
+`start_work`; the ledger remains one and no late write appears. All observed
+Tools, the child writer and both native invocations exit.
+
+This is FAIL, not a qualified F4 completion: the revoke UI requires unplanned
+fallback and submission through observation/cleanup takes 697.506942 seconds,
+exceeding the frozen 600-second bound. Operator observation is included; this is
+not a model latency measurement. Independent protected verification is NOT_RUN
+and detail/draft/cursor is NOT_CHECKED after qualification failure. There are no
+operator source edits or corrective model advice; planned controls and the
+unplanned revocation fallback remain separately recorded. Cost/usage and exact
+model/Tool/wait partitions are unknown. Receipt SHA-256
+`a7d875eae7d8c7df286182e4d18d9a7ff25292cea52e13df4bcc69baa7f6fc5f`.
+Immutable `first-outcomes-v10.json` SHA-256
+`c86a2e4a93470d9cabd4d4ea7fd41d08dbf11091e76c98d1b6b164d1811da3d0`
+retains thirty slots: seven first PASS, three first FAIL, twenty NOT_RUN; twelve
+real-model task attempts qualify nine slots. Progress stays 6/19; task 2.4 is open.
+Evidence head `5583e2c0` passed all sixteen current-head CI checks before this
+new finding/fix; those checks do not qualify the subsequent production diff.
+
+
+## External project revocation repair and native probe — 2026-10-11
+
+The TUI now issues a bounded asynchronous read of existing Host Mount grant and
+request files when `/project revoke` has no retained local receipt. It matches
+active authority, numeric Root requester and observed cwd by path components,
+chooses the longest unique matching prefix and refuses unavailable, malformed,
+ambiguous or stale context. Existing picker/recovery behavior is preserved. No
+new grant, completion root, controller or inferred cwd access is introduced.
+The existing settled-input predicate is reused at dispatch and reply settlement.
+Actual directory control still checks Root before/after its write; only its
+correlated successful Action arms Host revocation. Lost Host acknowledgments
+retain the existing explicit-retry authority rather than claiming success.
+
+The command regression failed before the fix. Eight new tests (command plus
+seven grant tests) cover actual bounded file reads, longest/ambiguous/component
+matches, inactive/other-Root grants, malformed/oversized/unavailable metadata,
+Root/cwd/admission changes, confirmed leave-before-revoke, lost acknowledgment,
+background correlation, retained draft/quit and lookup timeout. Full TUI passes
+378 unit and 12 integration tests; warnings-denied targeted Clippy passes.
+Full `just quality` including standalone distribution passes; pinned OpenSpec
+1.4.1 strict validation passes all 69 current items. No new dependency/config or
+public ProjectControl variant is needed. Direct review covers private Action/
+Event dispatch, current-Root fencing, public Host schema/visibility, queue
+boundaries, existing pending authority and real cleanup paths.
+
+A separate detached cace913c + exact previous fixes + TUI repair checkout preserves
+earlier native binaries. Fresh CLI SHA-256
+`6e99146065cc0d2e8976ebce19e22055c362e4d624265964db389ff31a4e987e`,
+source diff SHA-256
+`107e10c65b88bc23bfd9591a6f95d166abd33fe596521816d1991b58a094561d`.
+Probe `project-revoke-native-v1` prospectively freezes source/file/CLI/config/
+observer/tool identity and uses ordinary native Alan in the owned 80x24 Herdr
+pane. Boot `62773bf1-2d23-4a5b-9d4c-a2db6fa3097a`, native PID 88671,
+Root 8. SDK grants request-1, ordinary cd selects its namespace cwd without a
+picker receipt, and `/project revoke` produces actual successful cwd Action a1
+(call `78a8f7d5-249d-439a-8794-f607a2c7afe4`) selecting `/` followed by
+public Host `active:false` and truthful UI acknowledgment, without a fallback.
+
+A second SDK grant remains active but unselected at cwd `/`. Repeating the
+command truthfully reports no matching active grant and leaves that grant active,
+proving the UI does not revoke arbitrary visible authority. Planned native CLI
+cleanup then revokes only that probe grant. Both canaries stay unchanged; `/quit`
+ends PID 88671 and foreground returns to the same owned fish PID 72808.
+Receipt SHA-256 `00bf43484a9df328306f47972a23f9cf2d19a399de1bdd6324a75d17f2ae1027`.
+This no-generation repair probe does not fill a matrix slot or replace F4's
+original FAIL. A fresh linked real-model F4 retry and remaining repetitions,
+final-candidate applicability, new-head CI/review and user merge remain required.

@@ -40,6 +40,11 @@ pub(in crate::file_backed) enum FileBackedEvent {
         grant_id: String,
         active: Option<bool>,
     },
+    ProjectGrantLocated {
+        owner: String,
+        cwd: std::path::PathBuf,
+        result: Result<Option<String>, String>,
+    },
     Terminal(TerminalEvent),
     Output(String),
     ResumeWriteCompleted {

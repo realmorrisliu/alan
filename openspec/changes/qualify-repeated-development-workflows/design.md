@@ -147,6 +147,22 @@ The native regression must prove permitted scratch writes and denied source writ
 with source bytes unchanged, including a read-only ancestor of writable scratch.
 This fixes the manifest preflight/temporary-root findings, not the earlier namespace Read operand.
 
+### Explicit project revocation discovers external grants without inventing authority
+
+The original F4 r1 run proves `/project revoke` reports no active grant while an
+SDK-granted current project remains active. Keep retained picker/recovery receipts
+and the existing leave-cwd, correlated Action, then Host revoke sequence. When no
+receipt exists, asynchronously read bounded public Host Mount grant records and
+their corresponding request documents. Match active authority, current Root
+requester identity and the observed namespace cwd by path components; choose the
+longest matching namespace prefix, refusing ambiguous or unavailable evidence.
+Do not infer access, labels or native completion roots from cwd, create grants,
+select another Root's authority or revoke arbitrary grants while cwd is `/`.
+Recheck Root, cwd and the settled input boundary before staging the existing cwd
+control. Lookup is read-only and keeps input/quit responsive; stale responses
+send no mutation. Retain the existing uncertainty/retry behavior until actual
+Host revocation acknowledgment. Host Mount remains the authority owner.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and

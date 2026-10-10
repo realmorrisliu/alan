@@ -69,3 +69,32 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 - **WHEN** the attached Root Agent Process changes
 - **THEN** the previous Root's observed cwd is discarded before rendering the new Root
 - **AND** retained project authority and pending-control fencing continue to use their existing owners
+
+## ADDED Requirements
+
+### Requirement: Explicit project revocation uses authoritative current-Root evidence
+The terminal UI SHALL discover the current Root's active project grant for
+`/project revoke` when no retained project-picker or recovery receipt exists, using bounded public
+Host Mount grant/request files, matching requester identity and observed cwd by
+namespace path components. It SHALL select the longest matching prefix and refuse
+ambiguous, malformed, unavailable or stale evidence. Discovery MUST NOT create
+authority, infer access from cwd, revoke another Root's grants or select arbitrary
+grants at `/`. It SHALL reuse the existing confirmed leave-cwd-before-revoke
+sequence, retain uncertain authority until acknowledgment and never resume work
+implicitly. Read-only discovery SHALL preserve responsive input and exit.
+
+#### Scenario: Externally granted current project is explicitly revoked
+- **WHEN** the current Root has selected an SDK-granted project without a local picker receipt and the user invokes `/project revoke` at a settled boundary
+- **THEN** matching active grant/request evidence identifies that Root's current project
+- **AND** a correlated successful cwd control leaves the project before Host revocation
+- **AND** only actual Host acknowledgment confirms revocation; paused work stays paused
+
+#### Scenario: Discovery cannot establish a unique current project
+- **WHEN** current cwd has no matching active grant, evidence is malformed or unavailable, or two equally specific grants match
+- **THEN** the UI reports no matching authority or an explicit lookup failure without claiming all grants are absent
+- **AND** no cwd control or grant mutation is sent
+
+#### Scenario: Context changes during discovery
+- **WHEN** Root identity, cwd or the settled input boundary changes before discovery completes
+- **THEN** the stale result sends no directory control or revocation
+- **AND** a subsequent explicit command must discover authority in its current context

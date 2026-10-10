@@ -23,7 +23,7 @@ UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
 `cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
-First outcomes are seven PASS, two FAIL and twenty-one NOT_RUN; qualified slots
+First outcomes are seven PASS, three FAIL and twenty NOT_RUN; qualified slots
 are nine out of thirty, including fresh F1/F2 linked retries and all macOS F3. See `native-runs.md`.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout
@@ -97,3 +97,10 @@ unchanged source/assertion/driver bytes and exited Tool/instance. This is a nati
 repair probe, not a model slot; first F2 FAIL remains immutable and its fresh linked
 retry now qualifies after a full independent protected-library/both-binary check. Earlier namespace Read operands remain an
 independent finding. New head review/CI and full matrix remain open.
+
+
+Original macOS F4 r1 fails external-project `/project revoke` discovery and the
+frozen wall bound. Its cancellation/no-late-write and explicit recovery/no-repeat
+evidence are diagnostic, not a qualified slot. The owner-correct TUI repair is
+implemented with a passing fresh native probe; keep the original failure and require a fresh linked native retry. Latest
+aggregate v10 records twelve real-model task attempts and nine qualified slots.

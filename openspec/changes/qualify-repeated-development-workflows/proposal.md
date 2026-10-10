@@ -33,8 +33,9 @@ None.
 
 - `runtime-harness-contract`: repeated real-development qualification through the
   native product entry, honest outcome/intervention metrics and exact effect proof.
-- `rust-inline-tui`: show observed namespace cwd without a local picker receipt
-  and discard old directory context when the Root changes; prompted by native F1 runs.
+- `rust-inline-tui`: show observed namespace cwd without a local picker receipt,
+  discard old directory context when the Root changes, and discover the current
+  Root's externally granted project for explicit revocation; prompted by F1/F4 runs.
 
 ## Impact
 

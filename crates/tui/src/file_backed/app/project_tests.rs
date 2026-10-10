@@ -11,6 +11,25 @@ fn receipt() -> ProjectMountReceipt {
         access: ProjectAccess::ReadOnly,
     }
 }
+
+#[test]
+fn external_project_revoke_requests_authoritative_discovery_without_local_receipt() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
+    app.namespace_cwd = "/mnt/external/src".into();
+    assert!(app.project.is_none());
+    assert!(app.retained_project_grant().is_none());
+    assert!(
+        matches!(
+            app.handle_command("/project revoke"),
+            Some(FileBackedAction::RevokeCurrentProject)
+        ),
+        "missing local receipt must discover Host authority instead of claiming no grant exists"
+    );
+}
 fn action(id: &str, status: &str, exit: i32, cwd: &str) -> ActionSnapshot {
     ActionSnapshot { id: "action".into(), name: "cd".into(), status: status.into(), output: String::new(), result: serde_json::json!({"call_id": id, "title": "Select Process directory", "exit_code": exit, "outcome": {"success": exit == 0, "cwd": cwd}}).to_string() }
 }
