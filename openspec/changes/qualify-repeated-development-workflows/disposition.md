@@ -104,3 +104,13 @@ frozen wall bound. Its cancellation/no-late-write and explicit recovery/no-repea
 evidence are diagnostic, not a qualified slot. The owner-correct TUI repair is
 implemented with a passing fresh native probe; keep the original failure and require a fresh linked native retry. Latest
 aggregate v10 records twelve real-model task attempts and nine qualified slots.
+
+
+Fresh linked F4 r1 a2 also fails: after namespace-absolute Bash inspection refusal,
+the model requests duplicate authority for the already-granted project instead of
+starting the lifecycle test. No duplicate grant is approved, no source/advice is
+supplied, and recorded early cancellation, repaired UI revocation and exit clean
+up the attempt. Immutable aggregate v11 records thirteen real-model task attempts
+with nine qualified slots; original first outcomes remain seven PASS, three FAIL,
+twenty NOT_RUN. The absolute namespace Bash/path guidance boundary is the next
+repair investigation; task 2.4 remains open.

@@ -4,7 +4,7 @@ All three frozen macOS F1 inputs qualify through four normal-CLI real-model
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Including macOS F2/F3 and the failed F4 original attempt below, twelve real-model
+Including macOS F2/F3 and the failed F4 original attempt below, thirteen real-model
 task attempts qualify nine slots: seven first PASS, three first FAIL and twenty
 NOT_RUN. Task attempts are not API-call counts; F4 includes explicit continuation. Tasks 2.1, 2.2
 and 2.3 are complete. Linux generation readiness, task 1.4, F4/F5 and final
@@ -553,3 +553,44 @@ Receipt SHA-256 `00bf43484a9df328306f47972a23f9cf2d19a399de1bdd6324a75d17f2ae102
 This no-generation repair probe does not fill a matrix slot or replace F4's
 original FAIL. A fresh linked real-model F4 retry and remaining repetitions,
 final-candidate applicability, new-head CI/review and user merge remain required.
+
+
+## macOS F4 r1 linked a2 — namespace shell failure retained
+
+Fresh a2 prospectively freezes the repaired CLI `6e991460`, source diff
+`107e10c6`, original prompt/follow-up hashes, identical original fixture bytes,
+selected tools/model/backend and fresh runtime/project/checker paths. Boot
+`72ad2103-b87f-4b85-a49b-ca3ad9b8666d`, PID 95495, Root 8, rollout
+`f0d49628-b70f-45a1-a0c6-3bc2fb098619`; actual gpt-6.1-sol/medium.
+The collector reobserves the same buffered setup rollout before generation and
+corrects its backend enum expectation to the actual `seatbelt`; no model input
+is repeated. Setup Tool versions and enforcing policy audit are frozen before
+submitting the unchanged model task once.
+
+Model Action a2 attempts namespace-absolute `ls`/`sed` inspection and receives
+`Command references path outside host_mount: /mnt/project-request-1`. Unlike
+prior self-correcting runs, the model then calls request_mount for the same
+already-granted namespace. Host metadata shows original request-1 approved and
+active, while new request-2 waits for approval. No duplicate grant is approved;
+no corrective prompt or source edit is provided. The lifecycle test/writer never
+starts, the ledger stays empty and the exact original source inventory is intact.
+
+This attempt is FAIL before F4's required live-writer boundary. Recorded early
+Ctrl+C safely cancels the pending duplicate request; the actual queue settles
+paused with no active/pending work. `/project revoke` now succeeds from the
+settled pause, with successful correlated cwd Action a3 selecting `/`, original
+grant `active:false` and truthful terminal acknowledgment. `/quit` ends PID
+95495 and foreground returns to owned fish PID 72808. No late effect appears.
+Protected verification, explicit recovery and detail/draft/cursor are NOT_RUN or
+NOT_CHECKED; no full lifecycle pass is inferred from cleanup. Submission through
+verified failure cleanup takes 257.709124 seconds. Cost/usage remains unknown.
+
+Receipt SHA-256 `2730d877697be9a081206e2f318624536a29db2fab1bce89fb44cbd60569d4bb`.
+Immutable aggregate `first-outcomes-v11.json`, SHA-256
+`06df3af55f5166c0d25543147026fa2170dd0ab817d3d813e57e45ff64712364`,
+retains seven first PASS, three first FAIL and twenty NOT_RUN; thirteen real-model
+task attempts qualify nine slots. The original a1 remains unchanged. The UI
+revocation fix has positive and negative native proof; the namespace-absolute
+Bash finding now prevents this real model's F4 task instead of being corrected
+by the model. Resolve the path/authority contract before another linked retry;
+do not approve redundant authority or replace the frozen task with an easier one.
