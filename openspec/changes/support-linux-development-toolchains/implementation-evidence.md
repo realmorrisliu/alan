@@ -190,3 +190,63 @@ tasks 2.3/2.4, so this is not complete Linux development qualification.
 
 Final Linux all-target/all-feature engine Clippy with warnings denied also
 passes (`alan-path-entry-final-clippy.log`, 19.69 seconds).
+
+## Private environment and real read-only Rust build slice
+
+Published PATH head `4151f93c` passed all 16 distinct PR checks. This slice
+uses the existing per-command tmpfs and Process lifecycle for private home,
+Cargo/rustup/tmp/XDG cache and read-only build output. It avoids explicitly
+mounted scratch descendants, mode 0700, and keeps writable project output/config
+behavior. New native tests run the same plan twice and assert fresh caches,
+retained delegated contents, private canary absence and unchanged Host fixtures.
+The cancellation regression now writes private Cargo scratch before cancellation
+and asserts that its descendant cannot produce the delayed project effect.
+
+Rustup first failed because `/proc/self/exe` was absent. The runner now mounts
+fresh read-only procfs for its private PID namespace and execs chroot so PID 1
+cannot expose an outside-root setup helper. A private canary is absent through
+`/proc/1/root`, the Host test PID is absent, and proc writes are denied. Native
+`/proc` mount conflicts refuse before effects; virtual Alan Process paths remain
+excluded. Real compilation exposed missing system cc alternatives and GCC
+libexec content; both system directories join the existing read-only substrate.
+
+The opt-in native Rust fixture explicitly supplies task-owned proxy and runtime
+inputs to the existing plan. Rustc/Cargo/rustdoc report 1.97.0, an independently
+read-only mounted local dependency compiles, and both the project unit test and
+an actual doctest pass under `cargo test --offline --locked`. Project Cargo
+configuration is required by a compile-time assertion. All six project/dependency
+files and runtime rustc bytes remain unchanged; no project/dependency target or
+personal Cargo credentials are created. This closes task 2.4, not task 2.3:
+automatic Host adapter selection/projection and complete Linux qualification are
+still open. Portable CI without explicit fixture inputs skips this Rust case
+and must not count that as native qualification.
+
+First failures remain in `alan-private-env-red.log` (HOME absent),
+`alan-private-env-rust-first.log` (proc absent), `alan-private-env-proc-first.log`
+(cc absent), `alan-private-env-engine-final.log` (GCC liblto plugin absent),
+`alan-private-env-runtime-final.log` (rustdoc proxy absent) and
+`alan-private-env-rustdoc-final.log` (fixture omitted Cargo's separate rustdocflags).
+The last correction adds legitimate project rustdoc configuration and retains
+both compile/config assertions rather than suppressing documentation tests.
+Final `alan-private-env-complete-engine.log` passes 1416 tests, zero failures,
+one existing ignored live-provider test, in 22.76 seconds. No relevant native
+case returned early; successful Rust stdout/stderr are retained in that log.
+
+The task-owned proxy originally used a hardlink to personal rustup. Before any
+native use it was replaced by an independent byte-identical copy; the original
+binary bytes/defaults were unchanged, but its link metadata was touched by that
+initial attempt. `rust-proxy-provisioning.json` records this correction. The
+owned provisioning helper now copies instead of linking; no whole Cargo home or
+Rust management directory is projected. Fixture provisioning and explicit lower
+runner execution are not real-model development or automatic runtime support.
+
+Native source/binary/log identity is frozen in `native-private-env-acceptance.json`.
+Mac verification, quality, Clippy and new-head CI are separate gates below.
+
+Linux all-target/all-feature engine Clippy with warnings denied passed in
+19.62 seconds (`alan-private-env-complete-clippy.log`). The byte-identical Rust
+snapshot passes 34 macOS namespace tests and six Sandbox adapter tests, zero
+failures/ignored. Source-size and architecture gates pass. Pinned OpenSpec 1.4.1
+strict validation remains the normative CLI gate, separate from the newer global
+CLI. A normal commit will run full quality and standalone distribution; current
+head CI is required before considering this slice reviewed for delivery.

@@ -183,7 +183,9 @@ fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
         vec![
             "sh".to_string(),
             "-c".to_string(),
-            "test -d /mnt/source && test ! -e /home".to_string(),
+            "test -d /mnt/source && test ! -e /home && test -r /proc/self/status && test -d /proc/1/root && test ! -e \"/proc/1/root$1\" && ! (: >> /proc/self/comm)".to_string(),
+            "alan-runner-smoke".to_string(),
+            host_mount.root.display().to_string(),
         ],
         NetworkPosture::Deny,
     )
@@ -272,70 +274,7 @@ readonly_tree() {
 "#;
 
 #[cfg(target_os = "linux")]
-const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = r#"
-set -u
-PATH='/usr/sbin:/usr/bin:/sbin:/bin'
-export PATH
-fail() {
-  printf '%s %s\n' 'alan reified namespace setup failed:' "$*" >&2
-  exit 125
-}
-
-root="$1"; shift
-setup_marker="$1"; shift
-mount_bin="$1"; shift
-printf_bin="$1"; shift
-chroot_bin="$1"; shift
-namespace_shell="$1"; shift
-namespace_setpriv="$1"; shift
-
-"$mount_bin" --make-rprivate / || fail "make root private"
-"$mount_bin" --bind "$root" "$root" || fail "bind root"
-"$mount_bin" -o remount,bind,ro "$root" || fail "remount root read-only"
-
-scratch_tmp="$1"; shift
-scratch_destination="${root}${scratch_tmp}"
-"$mount_bin" -t tmpfs tmpfs "$scratch_destination" || fail "mount scratch tmp"
-
-mount_count="$1"; shift
-while [ "$mount_count" -gt 0 ]; do
-  namespace_path="$1"; shift
-  host_path="$1"; shift
-  access="$1"; shift
-  destination="${root}${namespace_path}"
-  if [ ! -e "$destination" ]; then
-    if [ -f "$host_path" ]; then
-      mkdir -p "${destination%/*}" && : > "$destination" || fail "prepare file ${namespace_path}"
-    else
-      mkdir -p "$destination" || fail "prepare directory ${namespace_path}"
-    fi
-  fi
-  "$mount_bin" --rbind "$host_path" "$destination" || fail "bind mount ${namespace_path}"
-  if [ "$access" = "read_only" ]; then
-    readonly_tree "$destination" || fail "remount ${namespace_path} recursively read-only"
-  fi
-  mount_count=$((mount_count - 1))
-done
-
-substrate_count="$1"; shift
-while [ "$substrate_count" -gt 0 ]; do
-  namespace_path="$1"; shift
-  host_path="$1"; shift
-  destination="${root}${namespace_path}"
-  "$mount_bin" --rbind "$host_path" "$destination" || fail "bind substrate ${namespace_path}"
-  readonly_tree "$destination" || fail "remount substrate ${namespace_path} recursively read-only"
-  substrate_count=$((substrate_count - 1))
-done
-
-"$mount_bin" --bind /dev/null "${root}/dev/null" || fail "bind /dev/null"
-"$mount_bin" --bind /proc/self/fd/0 "${root}/dev/stdin" || fail "bind /dev/stdin"
-"$mount_bin" --bind /proc/self/fd/1 "${root}/dev/stdout" || fail "bind /dev/stdout"
-"$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
-
-cwd="$1"; shift
-command_path="$1"; shift
-"$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; PATH="$1"; export PATH; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$command_path" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
-"#;
+use runner::{LINUX_REIFIED_COMMAND_SCRIPT, LINUX_REIFIED_NAMESPACE_SCRIPT};
 
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -709,6 +648,20 @@ fn build_linux_reified_namespace_command_with_helpers(
         Some(plan.command_path.clone().into()),
         &plan.execution_substrate,
     )?;
+    if plan
+        .declared_host_mounts
+        .iter()
+        .map(|mount| &mount.namespace_path)
+        .chain(
+            plan.execution_substrate
+                .iter()
+                .map(|mount| &mount.namespace_path),
+        )
+        .chain(std::iter::once(&plan.scratch_tmp.namespace_path))
+        .any(|path| paths_overlap(path, Path::new("/proc")))
+    {
+        return Err("namespace path conflicts with private native proc".to_string());
+    }
     for path in std::iter::once(temp_root.root.as_path())
         .chain(std::iter::once(plan.cwd.as_path()))
         .chain(std::iter::once(plan.scratch_tmp.namespace_path.as_path()))
@@ -764,6 +717,7 @@ fn build_linux_reified_namespace_command_with_helpers(
         helpers.chroot.display().to_string(),
         helpers.namespace_shell.display().to_string(),
         helpers.namespace_setpriv.display().to_string(),
+        LINUX_REIFIED_COMMAND_SCRIPT.to_string(),
         plan.scratch_tmp.namespace_path.display().to_string(),
         plan.declared_host_mounts.len().to_string(),
     ]);
@@ -782,6 +736,12 @@ fn build_linux_reified_namespace_command_with_helpers(
 
     args.push(plan.cwd.display().to_string());
     args.push(plan.command_path.clone());
+    args.push(plan.private_environment_root().display().to_string());
+    let writable_cwd = plan
+        .declared_host_mounts
+        .iter()
+        .any(|mount| mount.access.is_writable() && plan.cwd.starts_with(&mount.namespace_path));
+    args.push(if writable_cwd { "0" } else { "1" }.to_string());
     args.extend(plan.argv.iter().cloned());
 
     Ok(ReifiedNamespaceCommandSpec {
@@ -874,6 +834,8 @@ fn prepare_reified_root(plan: &ReifiedNamespacePlan, root: &Path) -> Result<(), 
 
 #[cfg(target_os = "linux")]
 fn prepare_standard_device_destinations(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join("proc"))
+        .map_err(|err| format!("create private proc mountpoint failed: {err}"))?;
     let dev_dir = root.join("dev");
     std::fs::create_dir_all(&dev_dir)
         .map_err(|err| format!("create /dev mountpoint parent failed: {err}"))?;
@@ -948,3 +910,7 @@ fn namespace_path_under_root(root: &Path, namespace_path: &Path) -> Result<PathB
 #[cfg(test)]
 #[path = "reified_namespace_runner_tests.rs"]
 mod runner_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "reified_namespace/development_tests.rs"]
+mod development_tests;

@@ -45,6 +45,17 @@ Scratch SHALL remain owned while descendants use it and be released afterward.
 - **THEN** compilation and tests can complete without modifying project files
 - **AND** attempted source mutation remains denied
 
+#### Scenario: Delegated files already exist below scratch
+- **WHEN** an explicit Host mount is a descendant of the private scratch mount
+- **THEN** private environment directories avoid that mount and preserve its contents and access
+- **AND** a subsequent command receives fresh home and cache directories
+
+#### Scenario: A supported tool needs native Process discovery
+- **WHEN** the runtime reads `/proc/self/exe` in a confined command
+- **THEN** native procfs describes only the command's private PID namespace and is read-only
+- **AND** no outside-root setup Process remains visible through procfs at user admission
+- **AND** a conflicting native `/proc` projection refuses before user effects
+
 #### Scenario: A cancelled command has descendants
 - **WHEN** a development command is cancelled or times out with active descendants
 - **THEN** existing Process cancellation stops their later effects

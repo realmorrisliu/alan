@@ -125,6 +125,22 @@ pub struct ReifiedNamespacePlan {
 }
 
 impl ReifiedNamespacePlan {
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn private_environment_root(&self) -> PathBuf {
+        (0..=self.declared_host_mounts.len())
+            .map(|index| {
+                self.scratch_tmp
+                    .namespace_path
+                    .join(format!(".alan-env-{index}"))
+            })
+            .find(|candidate| {
+                self.declared_host_mounts
+                    .iter()
+                    .all(|mount| !paths_overlap(candidate, &mount.namespace_path))
+            })
+            .expect("more private environment candidates than declared mounts")
+    }
+
     /// Derive a plan from namespace mount authority and a projected host cwd.
     pub fn derive(input: ReifiedNamespacePlanInput) -> Result<Self, ReifiedNamespacePlanError> {
         let mut declared_host_mounts = Vec::new();
@@ -328,10 +344,12 @@ pub fn default_execution_substrate() -> Vec<ReifiedExecutionSubstrateMount> {
         ("/lib", "/lib"),
         ("/lib64", "/lib64"),
         ("/usr/lib", "/usr/lib"),
+        ("/usr/libexec", "/usr/libexec"),
         ("/usr/lib64", "/usr/lib64"),
         ("/usr/local/lib", "/usr/local/lib"),
         ("/usr/local/lib64", "/usr/local/lib64"),
         ("/etc/ssl", "/etc/ssl"),
+        ("/etc/alternatives", "/etc/alternatives"),
         ("/etc/hosts", "/etc/hosts"),
         ("/etc/resolv.conf", "/etc/resolv.conf"),
     ]

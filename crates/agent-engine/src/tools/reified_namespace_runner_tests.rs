@@ -651,12 +651,17 @@ fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
     assert!(script.contains("\"$chroot_bin\" \"$root\" \"$namespace_shell\""));
     assert!(!script.contains("chroot \"$root\""));
     assert!(!script.contains("exec setpriv --no-new-privs"));
-    assert!(script.contains("exec \"$setpriv_bin\" --no-new-privs"));
-    assert!(script.contains("--bounding-set=-all"));
-    assert!(script.contains("--inh-caps=-all"));
-    assert!(script.contains("--ambient-caps=-all"));
-    assert!(script.contains("printf \"%s\\n\" ok >&3"));
-    assert!(script.contains("exec 3>&-; exec \"$@\""));
+    let command_script = command
+        .args
+        .iter()
+        .find(|arg| arg.contains("export PATH HOME CARGO_HOME"))
+        .unwrap();
+    assert!(command_script.contains("exec \"$setpriv_bin\" --no-new-privs"));
+    assert!(command_script.contains("--bounding-set=-all"));
+    assert!(command_script.contains("--inh-caps=-all"));
+    assert!(command_script.contains("--ambient-caps=-all"));
+    assert!(command_script.contains("printf \"%s\\n\" ok >&3"));
+    assert!(command_script.contains("exec 3>&-; exec \"$@\""));
     assert!(script.contains("3>\"$setup_marker\""));
     assert!(command.args.contains(&"/bin/sh".to_string()));
     assert!(command.args.contains(&"/usr/bin/mount".to_string()));
@@ -775,7 +780,7 @@ async fn linux_runner_cancellation_stops_user_command_after_setup() {
     let plan = ReifiedNamespacePlan::primary_mount(
         mount.path(), mount.path(),
         vec!["/bin/sh".into(), "-c".into(),
-             "printf started > /mnt/source/started; (sleep 1; printf leaked > /mnt/source/leaked) & wait".into()],
+             "printf cache > \"$CARGO_HOME/marker\"; printf started > /mnt/source/started; (sleep 1; printf leaked > \"$CARGO_HOME/later\"; printf leaked > /mnt/source/leaked) & wait".into()],
         NetworkPosture::Deny,
     ).unwrap();
     let execution = tokio::spawn(async move { runner.run_cancellable(&plan, None).await });

@@ -152,3 +152,99 @@ fn capture_pipe(path: &Path) -> std::io::Result<(std::fs::File, std::fs::File)> 
     }
     Ok((writer, reader))
 }
+
+#[cfg(target_os = "linux")]
+pub(super) const LINUX_REIFIED_NAMESPACE_SCRIPT: &str = r#"
+set -u
+PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
+fail() {
+  printf '%s %s\n' 'alan reified namespace setup failed:' "$*" >&2
+  exit 125
+}
+
+root="$1"; shift
+setup_marker="$1"; shift
+mount_bin="$1"; shift
+printf_bin="$1"; shift
+chroot_bin="$1"; shift
+namespace_shell="$1"; shift
+namespace_setpriv="$1"; shift
+command_script="$1"; shift
+
+"$mount_bin" --make-rprivate / || fail "make root private"
+"$mount_bin" --bind "$root" "$root" || fail "bind root"
+"$mount_bin" -o remount,bind,ro "$root" || fail "remount root read-only"
+
+scratch_tmp="$1"; shift
+scratch_destination="${root}${scratch_tmp}"
+"$mount_bin" -t tmpfs tmpfs "$scratch_destination" || fail "mount scratch tmp"
+
+mount_count="$1"; shift
+while [ "$mount_count" -gt 0 ]; do
+  namespace_path="$1"; shift
+  host_path="$1"; shift
+  access="$1"; shift
+  destination="${root}${namespace_path}"
+  if [ ! -e "$destination" ]; then
+    if [ -f "$host_path" ]; then
+      mkdir -p "${destination%/*}" && : > "$destination" || fail "prepare file ${namespace_path}"
+    else
+      mkdir -p "$destination" || fail "prepare directory ${namespace_path}"
+    fi
+  fi
+  "$mount_bin" --rbind "$host_path" "$destination" || fail "bind mount ${namespace_path}"
+  if [ "$access" = "read_only" ]; then
+    readonly_tree "$destination" || fail "remount ${namespace_path} recursively read-only"
+  fi
+  mount_count=$((mount_count - 1))
+done
+
+substrate_count="$1"; shift
+while [ "$substrate_count" -gt 0 ]; do
+  namespace_path="$1"; shift
+  host_path="$1"; shift
+  destination="${root}${namespace_path}"
+  "$mount_bin" --rbind "$host_path" "$destination" || fail "bind substrate ${namespace_path}"
+  readonly_tree "$destination" || fail "remount substrate ${namespace_path} recursively read-only"
+  substrate_count=$((substrate_count - 1))
+done
+
+"$mount_bin" --bind /dev/null "${root}/dev/null" || fail "bind /dev/null"
+"$mount_bin" --bind /proc/self/fd/0 "${root}/dev/stdin" || fail "bind /dev/stdin"
+"$mount_bin" --bind /proc/self/fd/1 "${root}/dev/stdout" || fail "bind /dev/stdout"
+"$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
+"$mount_bin" -t proc -o ro,nosuid,nodev,noexec proc "${root}/proc" || fail "mount private proc"
+
+cwd="$1"; shift
+command_path="$1"; shift
+private_env="$1"; shift
+private_output="$1"; shift
+mkdir -m 700 "${root}${private_env}" || fail "create private environment"
+for name in home cargo rustup tmp cache target; do
+  mkdir -m 700 "${root}${private_env}/${name}" || fail "create private ${name}"
+done
+exec "$chroot_bin" "$root" "$namespace_shell" -c "$command_script" alan-reified-command "$cwd" "$command_path" "$private_env" "$private_output" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
+"#;
+
+#[cfg(target_os = "linux")]
+pub(super) const LINUX_REIFIED_COMMAND_SCRIPT: &str = r#"
+cd "$1" || exit 126; shift
+PATH="$1"; shift
+private_env="$1"; shift
+private_output="$1"; shift
+HOME="${private_env}/home"
+CARGO_HOME="${private_env}/cargo"
+RUSTUP_HOME="${private_env}/rustup"
+TMPDIR="${private_env}/tmp"
+XDG_CACHE_HOME="${private_env}/cache"
+RUSTUP_AUTO_INSTALL=0
+export PATH HOME CARGO_HOME RUSTUP_HOME TMPDIR XDG_CACHE_HOME RUSTUP_AUTO_INSTALL
+if [ "$private_output" = 1 ]; then
+  CARGO_TARGET_DIR="${private_env}/target"
+  export CARGO_TARGET_DIR
+fi
+setpriv_bin="$1"; shift
+shell_bin="$1"; shift
+exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c 'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"' alan-reified-command "$@"
+"#;

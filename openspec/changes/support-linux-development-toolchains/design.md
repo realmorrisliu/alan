@@ -86,6 +86,22 @@ cache reuse is not required for this delivery; if later measured tasks need it,
 use an existing service-owned cache rather than ambient home writes. Network-free
 local dependency qualification comes first; network retrieval keeps current policy.
 
+The private environment is a non-overlapping child of the existing tmpfs scratch,
+mode 0700, with separate home/Cargo/rustup/tmp/XDG cache/build directories. Explicit
+mounts below scratch retain their original contents and access. Read-only cwd
+execution exports private `CARGO_TARGET_DIR`; writable project execution retains
+Cargo's project output/configuration behavior. Auto-install is disabled. Each
+command gets fresh scratch; no private cache is carried to a later command.
+
+Rustup needs `/proc/self/exe`. Mount a fresh read-only procfs for the command's
+private PID namespace, never the Host proc tree. Replace the trusted outer setup
+process with chroot via `exec` before admitting user effects, so procfs has no
+outside-root PID 1 helper. Conflicting native `/proc` projections fail explicitly;
+Alan's virtual Process files are still not native Host mounts. Existing Process
+cancellation owns descendants and tmpfs lifetime. System `cc` requires the
+read-only `/etc/alternatives` links and `/usr/libexec` GCC runtime directory.
+These prerequisites do not complete automatic installed-Rust projection.
+
 ### Use live project mounts for local dependencies
 
 A manifest does not grant access. Keep project and outside local dependency mounts

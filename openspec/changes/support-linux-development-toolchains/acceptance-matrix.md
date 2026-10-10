@@ -21,20 +21,20 @@ native execution is not real-model code-authorship qualification.
 | Readiness | Run actual full namespace/runner/toolchain probes | Required enforcing backend selected; fallback reasons separately retained | Baseline failed library bind; repaired native runner executed; complete toolchain selection remains pending |
 | PATH order | Two supported providers of the same executable | Exact original first provider; trusted helpers unchanged | Passed native fixture: both orders and relative alias; PATH exact; fake setup helpers ignored. See PATH slice evidence |
 | Rust identity | Run selected cargo/rustc through supported installed selection | Exact 1.97 identity and required runtime files; no auto-install or default rewrite | Not run |
-| Local build | Build project with independent explicitly read-only mounted dependency | Successful actual compile; source/dependency unchanged; output authorized/private | Not run |
+| Local build | Build project with independent explicitly read-only mounted dependency | Successful actual compile; source/dependency unchanged; output authorized/private | Passed explicit lower-runner Rust fixture; normal Host adapter entry remains pending |
 | RED/GREEN | Run failing test, make one authorized bounded source fix, rerun test | Failure observed first; exact one-change diff; successful corrected test | Not run |
 | Git diff | Read actual project diff | Exact requested source change; unrelated files absent | Not run |
-| Read-only project | Build/test read-only project with private output | Successful compile/test; all project hashes unchanged | Not run |
+| Read-only project | Build/test read-only project with private output | Successful compile/test; all project hashes unchanged | Passed explicit lower-runner Rust fixture including unit/doctests; automatic Host selection remains pending |
 | PATH rejection | Unset, empty, relative, escaping and unsupported executable entries | Explicit unavailable/refusal before user effect; no substitution | Passed focused pure/native regressions including dangling/chained aliases, NUL/non-UTF-8 and changed backing; broader selected Rust rows remain open |
 | Runtime loss | Remove fixture runtime input or change selection after readiness | Per-command refusal; no stale-startup authority | Not run |
 | Dependency missing | Build without separate dependency authority | No dependency read; explicit failure; cache not accepted as new execution | Not run |
 | Dependency revoked | Revoke prior dependency then request next build | No stale grant, ambient path or retained-output false success | Not run |
 | Dependency escape | Dependency symlink targets an ungranted sibling | Escape denied; no widened common-parent mount | Not run |
-| Read-only writes | Attempt source/dependency/runtime mutation | All denied; original byte inventories unchanged | Not run |
-| Home isolation | Tool attempts fixture home/credential canaries | Undeclared canaries absent; personal directories never mounted or copied | Not run |
-| Private cache | Cargo writes cache/output | Only private or authorized outputs; original toolchain and personal Cargo home unchanged | Not run |
+| Read-only writes | Attempt source/dependency/runtime mutation | All denied; original byte inventories unchanged | Native source/runtime write denial passed; complete dependency and authority matrix pending |
+| Home isolation | Tool attempts fixture home/credential canaries | Undeclared canaries absent; personal directories never mounted or copied | Native private environment/canary tests passed, including private proc root; normal developer entry remains pending |
+| Private cache | Cargo writes cache/output | Only private or authorized outputs; original toolchain and personal Cargo home unchanged | Passed actual lower-runner read-only Cargo build and fresh per-command cache checks; automatic selection pending |
 | Network denial | Attempt isolated network operation | OS confinement blocks; existing network approval unchanged | Not run |
-| Cancellation | Command descendant schedules a delayed marker then cancel/timeout | Wait past delay; marker absent, no surviving writer, truthful cancelled/unknown state | Not run |
+| Cancellation | Command descendant schedules a delayed marker then cancel/timeout | Wait past delay; marker absent, no surviving writer, truthful cancelled/unknown state | Native shell/private-Cargo-scratch cancellation passed; actual development-command cancellation remains pending |
 | Fallback | Required namespace/remount/network capability unavailable | Explicit fallback/approval posture; not counted as enforcing-backend pass | Not run |
 
 Before any native row runs, record fixture/tool provisioning, readiness and exact
