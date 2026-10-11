@@ -88,6 +88,116 @@ fn command_projection_mounts_only_selected_runtimes() {
 }
 
 #[test]
+fn literal_compile_targets_are_checked_before_effects() {
+    let (_fixture, proxies, home, project) = installation();
+    let root = home.join("toolchains/1.97.0-testhost");
+    std::fs::write(
+        root.join("lib/rustlib/multirust-config.toml"),
+        "config_version = \"1\"\n[[components]]\npkg = \"rustc\"\ntarget = \"host-testhost\"\n[[components]]\npkg = \"rust-std\"\ntarget = \"host-testhost\"\n",
+    )
+    .unwrap();
+    let input = input(&project);
+    for words in [
+        vec!["cargo", "+1.97.0", "build", "--target", "missing"],
+        vec!["cargo", "+1.97.0", "check", "--target=missing"],
+        vec!["rustc", "+1.97.0", "--target", "missing", "source.rs"],
+        vec!["rustdoc", "+1.97.0", "--target=missing", "source.rs"],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "test",
+            "--target",
+            "host-testhost",
+            "--target=missing",
+        ],
+        vec!["cargo", "+1.97.0", "rustc", "--", "--target=missing"],
+        vec!["cargo", "+1.97.0", "rustc", "--", "--target=host-tuple"],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "--quiet",
+            "rustc",
+            "--",
+            "--target=missing",
+        ],
+        vec![
+            "rustup",
+            "run",
+            "1.97.0",
+            "cargo",
+            "build",
+            "--target=missing",
+        ],
+        vec!["cargo", "+1.97.0", "build", "--target"],
+        vec!["cargo", "+1.97.0", "build", "--target="],
+        vec!["cargo", "+1.97.0", "build", "--target=custom.json"],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&input, &commands))
+            )
+            .is_err(),
+            "{words:?} must refuse before execution"
+        );
+    }
+    for words in [
+        vec!["cargo", "+1.97.0", "build", "--target", "host-testhost"],
+        vec!["cargo", "+1.97.0", "build", "--target=host-tuple"],
+        vec!["rustc", "+1.97.0", "--target=host-testhost", "source.rs"],
+        vec![
+            "rustdoc",
+            "+1.97.0",
+            "--target",
+            "host-testhost",
+            "source.rs",
+        ],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "test",
+            "--target=host-testhost",
+            "--target",
+            "host-testhost",
+        ],
+        vec!["cargo", "+1.97.0", "rustc", "--", "--target=host-testhost"],
+        vec![
+            "rustup",
+            "run",
+            "1.97.0",
+            "cargo",
+            "build",
+            "--target=host-testhost",
+        ],
+        vec!["cargo", "+1.97.0", "run", "--", "--target=missing"],
+        vec!["cargo", "+1.97.0", "test", "--", "--target=missing"],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "--config",
+            "env.PROBE='clippy'",
+            "test",
+            "--",
+            "--target=missing",
+        ],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        revalidate(&environment).unwrap();
+    }
+}
+
+#[test]
 fn rustup_run_inspects_the_direct_command_and_refuses_selection_mutations() {
     let (_fixture, proxies, home, project) = installation();
     let input = input(&project);
@@ -95,6 +205,8 @@ fn rustup_run_inspects_the_direct_command_and_refuses_selection_mutations() {
         vec!["rustup", "run", "1.97.0", "cargo", "+missing", "test"],
         vec!["rustup", "run", "1.97.0", "cargo", "fmt"],
         vec!["rustup", "run", "1.97.0", "cargo", "clippy"],
+        vec!["cargo", "+1.97.0", "--quiet", "fmt"],
+        vec!["cargo", "+1.97.0", "--color", "never", "clippy"],
         vec!["rustup", "run", "1.97.0", "sh", "-c", "cargo test"],
         vec![
             "rustup", "run", "1.97.0", "rustup", "run", "missing", "cargo",

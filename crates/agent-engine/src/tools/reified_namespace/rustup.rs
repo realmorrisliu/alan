@@ -239,16 +239,11 @@ pub(super) fn discover(
                     let root = runtime_for_selector(&selector, &environment)?
                         .host_path
                         .clone();
+                    validate_cli_targets(&root, name, args)?;
                     if !selected.contains(&root) {
                         selected.push(root.clone());
                     }
-                    let subcommand = args
-                        .get(if args.first().is_some_and(|word| word.starts_with('+')) {
-                            1
-                        } else {
-                            0
-                        })
-                        .map(String::as_str);
+                    let subcommand = cargo_subcommand(args);
                     let required: &[&str] = match (name, subcommand) {
                         ("cargo", Some("fmt")) | ("cargo-fmt", _) => &["cargo-fmt", "rustfmt"],
                         ("cargo", Some("clippy")) | ("cargo-clippy", _) => {
@@ -463,26 +458,7 @@ fn active_selector(
                         .ok_or("invalid Rust component/target list")?;
                     for entry in requested {
                         let name = entry.as_str().ok_or("invalid Rust component/target name")?;
-                        let found = manifest
-                            .get("components")
-                            .and_then(toml::Value::as_array)
-                            .is_some_and(|components| {
-                                components.iter().any(|component| {
-                                    let package =
-                                        component.get("pkg").and_then(toml::Value::as_str);
-                                    if key == "targets" {
-                                        package == Some("rust-std")
-                                            && component.get("target").and_then(toml::Value::as_str)
-                                                == Some(name)
-                                    } else {
-                                        package == Some(name)
-                                            || package == Some(format!("{name}-preview").as_str())
-                                    }
-                                })
-                            });
-                        if !found {
-                            return Err(format!("required Rust component/target absent: {name}"));
-                        }
+                        validate_component(&manifest, key, name)?;
                     }
                 }
             }
@@ -494,6 +470,97 @@ fn active_selector(
         .and_then(toml::Value::as_str)
         .map(String::from)
         .ok_or_else(|| "Rustup has no default toolchain".into())
+}
+
+fn validate_component(manifest: &toml::Value, key: &str, name: &str) -> Result<(), String> {
+    let found = manifest
+        .get("components")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|components| {
+            components.iter().any(|component| {
+                let package = component.get("pkg").and_then(toml::Value::as_str);
+                if key == "targets" {
+                    package == Some("rust-std")
+                        && component.get("target").and_then(toml::Value::as_str) == Some(name)
+                } else {
+                    package == Some(name) || package == Some(format!("{name}-preview").as_str())
+                }
+            })
+        });
+    if found {
+        Ok(())
+    } else {
+        Err(format!("required Rust component/target absent: {name}"))
+    }
+}
+
+fn cargo_subcommand(args: &[String]) -> Option<&str> {
+    let mut words = args.iter();
+    if args.first().is_some_and(|word| word.starts_with('+')) {
+        words.next();
+    }
+    while let Some(word) = words.next() {
+        if word == "--" {
+            return words.next().map(String::as_str);
+        }
+        if matches!(word.as_str(), "--config" | "--color" | "-C" | "-Z") {
+            words.next()?;
+        } else if !word.starts_with('-') {
+            return Some(word);
+        }
+    }
+    None
+}
+
+fn validate_cli_targets(root: &Path, name: &str, args: &[String]) -> Result<(), String> {
+    let cargo = matches!(name, "cargo" | "cargo-clippy");
+    if !cargo && !matches!(name, "rustc" | "rustdoc" | "clippy-driver") {
+        return Ok(());
+    }
+    let subcommand = cargo_subcommand(args);
+    let forwards = name == "cargo-clippy"
+        || (cargo && matches!(subcommand, Some("rustc" | "rustdoc" | "clippy")));
+    let mut words = args.iter();
+    let mut forwarded = false;
+    while let Some(word) = words.next() {
+        if word == "--" {
+            if !forwards || forwarded {
+                break;
+            }
+            forwarded = true;
+            continue;
+        }
+        let target = if word == "--target" {
+            words
+                .next()
+                .map(String::as_str)
+                .ok_or("missing Rust target option value")?
+        } else if let Some(target) = word.strip_prefix("--target=") {
+            target
+        } else {
+            continue;
+        };
+        let manifest: toml::Value = toml::from_str(&read_metadata(
+            &root.join("lib/rustlib/multirust-config.toml"),
+        )?)
+        .map_err(|error| format!("invalid installed Rust component manifest: {error}"))?;
+        let target = if cargo && !forwarded && target == "host-tuple" {
+            manifest
+                .get("components")
+                .and_then(toml::Value::as_array)
+                .and_then(|components| {
+                    components.iter().find(|component| {
+                        component.get("pkg").and_then(toml::Value::as_str) == Some("rustc")
+                    })
+                })
+                .and_then(|component| component.get("target").and_then(toml::Value::as_str))
+                .ok_or("installed Rust host target absent")?
+        } else {
+            target
+        };
+        validate_component(&manifest, "targets", target)?;
+    }
+    Ok(())
 }
 
 fn runtime_for_selector<'a>(

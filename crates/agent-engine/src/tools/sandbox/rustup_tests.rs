@@ -129,6 +129,8 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 | "selected_only"
                 | "rustup_run"
                 | "sequential_cd"
+                | "target_host"
+                | "target_host_tuple"
         );
         let sandbox = Sandbox::from_spec_with_backend(
             SandboxSpec::from_host_mounts(&[
@@ -206,7 +208,29 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 ""
             };
             let command = format!(
-                "{directory}{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked -- -D warnings"
+                "{directory}{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked{target} && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked{target} -- -D warnings",
+                target = if matches!(case.as_str(), "target_host" | "target_host_tuple") {
+                    let runtime = PathBuf::from(
+                        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME").unwrap(),
+                    );
+                    let host = runtime
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .strip_prefix("1.97.0-")
+                        .unwrap();
+                    format!(
+                        " --target={}",
+                        if case == "target_host_tuple" {
+                            "host-tuple"
+                        } else {
+                            host
+                        }
+                    )
+                } else {
+                    String::new()
+                }
             );
             let result = sandbox.exec(&command, &project).await.unwrap();
             assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
@@ -270,6 +294,16 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 "rustup run 1.97.0 cargo +missing test"
             } else if case == "rustup_run_shell" {
                 "rustup run 1.97.0 sh -c 'printf inner > inner-marker'"
+            } else if case == "missing_target" {
+                "cargo +1.97.0 build --target wasm32-unknown-unknown --offline --locked"
+            } else if case == "missing_target_equals" {
+                "cargo +1.97.0 check --target=wasm32-unknown-unknown --offline --locked"
+            } else if case == "missing_target_rustc" {
+                "rustc +1.97.0 --target=wasm32-unknown-unknown src/lib.rs"
+            } else if case == "missing_target_run" {
+                "rustup run 1.97.0 cargo build --target wasm32-unknown-unknown --offline --locked"
+            } else if case == "missing_target_rustdoc" {
+                "rustdoc +1.97.0 --target wasm32-unknown-unknown src/lib.rs"
             } else if case == "rustup_override_unset" {
                 "rustup override unset; cargo test"
             } else {
@@ -306,7 +340,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                     "rejects nested command evaluators"
                 } else if case == "persistent_selector" {
                     "inspected Linux tool environment"
-                } else if case == "missing_component" {
+                } else if case == "missing_component" || case.starts_with("missing_target") {
                     "required Rust component/target absent"
                 } else {
                     "selected Rust runtime absent"
@@ -380,6 +414,13 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         "rustup_run_missing",
         "rustup_run_shell",
         "rustup_override_unset",
+        "missing_target",
+        "missing_target_equals",
+        "missing_target_rustc",
+        "missing_target_run",
+        "missing_target_rustdoc",
+        "target_host",
+        "target_host_tuple",
         "env_unset",
         "env_chdir",
         "shell_wrapper_refused",

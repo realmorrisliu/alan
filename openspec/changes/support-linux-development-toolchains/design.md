@@ -31,6 +31,15 @@ automatic routing or general autonomous code-authorship qualification.
 
 Startup checks validate only the Rustup proxy PATH and grant no installed runtime.
 Non-Rust commands do not depend on unrelated Rustup home/catalog metadata.
+Literal CLI compilation targets use the same installed-component check as project
+toolchain requirements. Inspect spaced/equals target values and every repeated
+Cargo target, including direct Rustup-run and compiler-forwarded arguments. Cargo
+global options must not hide the subcommand or its required fmt/clippy helpers.
+Preserve Cargo's host-tuple alias; after application/test argument delimiters,
+target-like text is ordinary content. Missing target values, unavailable std
+components and unsupported custom target specifications refuse before effects.
+This is literal-option qualification, not a new Cargo configuration resolver,
+custom target/build-std implementation or cross-compilation support claim.
 Per-command inspection enumerates a bounded catalog and strictly validates only
 selected roots, so unrelated linked/custom entries do not disable ordinary
 commands; selecting such unsupported aliases remains an explicit refusal.
@@ -285,6 +294,10 @@ Primary Rust documentation confirms runtime-home and cache semantics:
 [Cargo home](https://doc.rust-lang.org/cargo/guide/cargo-home.html), and
 [Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
 Executable inventory is current fixture evidence, not inferred from these docs.
+Literal target and argument-forwarding semantics follow primary
+[Cargo build options](https://doc.rust-lang.org/cargo/commands/cargo-build.html),
+[rustc target options](https://doc.rust-lang.org/rustc/command-line-arguments.html),
+and [rustdoc target options](https://doc.rust-lang.org/rustdoc/command-line-arguments.html).
 
 Primary mount semantics:
 [Linux mount errors](https://man7.org/linux/man-pages/man2/mount.2.html) and

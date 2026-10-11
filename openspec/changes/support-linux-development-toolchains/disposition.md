@@ -56,6 +56,17 @@ native Engine is 1434/0/1 with 31 actual case labels; final macOS Engine is
 1420/0/1 plus 20 integration tests. These checks add no real-model slots and do
 not reuse the earlier source receipt as final-candidate evidence.
 
+Subsequent literal-target P1 `4240005485` prevents closure despite all sixteen
+checks passing at `a14316c2`. It is reproduced with five native late-marker
+failures. The shared component predicate now checks literal CLI targets,
+including direct Rustup-run and Cargo-forwarded compiler options, while preserving
+host-tuple and application/test argument semantics. Existing helper checks also
+recognize Cargo global options. Final native Engine is 1435/0/1 with 38 actual
+case diagnostics; final macOS Engine is 1421/0/1 plus 20 integration tests.
+The follow-up still requires its own normal commit/current-head CI and review
+reply/resolution. This does not qualify general Cargo configuration, custom
+targets, cross-compilation or any additional real-model slot.
+
 Tasks remain **13/15 complete**: formal review and user merge/canonical closure
 are outstanding. The repaired candidate requires its own native regression,
 normal-commit quality/distribution and completed current-head CI; no earlier

@@ -1079,3 +1079,55 @@ and the explicit pending normal-commit/current-head CI gates. Receipt SHA-256:
 `d4bf2982cc59aee7b76226541109d9ddb51f3daf35d65637d459827eafd657ee`.
 This final evidence paragraph changes documentation only; normal quality and
 published-head CI still need their own receipt.
+
+### Literal compilation-target review — 2026-10-11
+
+Review `4240005485` is valid. The published `a14316c2` head passed all sixteen
+checks, but those checks did not cover literal CLI compilation targets; that
+green state is retained separately with the new unresolved P1 rather than used
+as merge-ready evidence. The new portable test fails on the original inspector.
+Actual native RED controls for Cargo spaced/equals targets, rustc, rustdoc and
+direct Rustup-run all admit a missing wasm standard library and write the prelude
+marker before command failure. Native explicit host and Cargo host-tuple controls
+already succeed, establishing compatibility that the repair must preserve.
+
+The repair shares the existing project component/target predicate with literal
+CLI inspection. Every supplied target must have a rust-std component in the
+selected runtime manifest. Spaced/equals forms, repeated Cargo targets and
+compiler arguments forwarded by Cargo use that same check; bounded Rustup-run
+already supplies the actual inner command. Cargo's host-tuple alias is mapped
+only at Cargo's own option level, not inside forwarded compiler arguments.
+Application/test arguments after their delimiter remain ordinary content.
+Cargo global options no longer hide the subcommand from either target forwarding
+or existing fmt/clippy helper validation. Unit controls cover missing/empty/custom
+values, multiple targets, forwarding, host preservation and helper omissions.
+
+No new resolver, dependency, runtime installation, wider mount or command wrapper
+admission is added. This is literal-option qualification, not general Cargo
+configuration, custom-target/build-std or cross-compilation support. Selected
+manifest hashing/revalidation stays with the existing environment owner.
+
+Latest macOS Engine passes **1421/0/1 + 20 integration tests** and warnings-denied
+all-target/all-feature Clippy. Final actual Linux Engine passes **1435/0/1 in
+135.99 seconds**, with **38 distinct native Rustup case diagnostics**, including
+all five target refusals before either marker and both native host positives.
+The three executable-input source hashes match across Hosts. Native ELF SHA-256:
+`e64e3d08e61f295b9b2f362499ffe4753898bb2ed4ec11a9b365f68fff3f8998`.
+Production source SHA-256:
+`a20099d22382682bd844f35f227b55138eaab3eae6b26ca17b27f72956739ede`.
+The guest retains dev/test debug=0 and incremental=0 with unchanged optimization;
+this is affected-engine native evidence, not default-profile full Linux quality.
+Final Linux Clippy, exact normal commit and new published-head CI remain separate
+gates. Native failures/positives/final logs are retained under
+`/home/morris/.cache/Alan/rustup-followup-20261011/target-*`; the Host sealed receipt
+uses `rust-review-20261011/target-final-v1/`. No model slots are added, credentials
+are not copied, and #1047 must incorporate the final predecessor before its new
+Linux candidate and final source applicability can be accepted.
+
+Both Hosts' final all-target/all-feature Engine Clippy now pass with warnings
+denied; pinned OpenSpec 1.4.1 strict validation is **69/69**. The sealed target
+receipt retains 27 source/native/RED artifacts and explicit pending normal
+commit/current-head CI gates. Receipt SHA-256:
+`b23768f16b79bb676b96ce341121536f66b8aacc26dc8ec61a1084b4bc122d30`.
+This completion paragraph is documentation only; no prior published-head CI is
+substituted for the upcoming target-fix commit.
