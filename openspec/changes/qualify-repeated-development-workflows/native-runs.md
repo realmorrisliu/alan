@@ -24,9 +24,11 @@ Aggregate v47 retains forty-six attempts and four final-source qualified slots.
 Fresh F1 r2/r3 a4 qualify on byte-identical 95d6664c. Aggregate v50 retains
 forty-eight attempts and six final-source qualified slots. Subsequent F2 r1 a5
 and r2/r3 a4 qualify on byte-identical d97d7f70. Aggregate v54 retains fifty-one
-attempts and nine final-source qualified slots. Six macOS F4/F5 refreshes
-and all fifteen Linux
-tasks remain; older results do not qualify this repair. Original
+attempts and nine final-source qualified slots. Three F4 refreshes qualify on
+byte-identical 19665cd9, retaining one collector-ordering FAIL before a fresh
+retry. Aggregate v59 records fifty-five attempts and twelve final-source slots.
+Three macOS F5 refreshes and all fifteen Linux tasks remain; older results do
+not qualify this repair. Original
 eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
 readiness, task 1.4 and cross-platform final delivery remain open. The sections
 below retain the chronological attempts.
@@ -2221,3 +2223,89 @@ original evidence remain intact. Global service scratch and other targets are
 not touched. Supplemental cleanup receipt SHA-256 is
 `737a910ef9b9aaf0f6a6cf85861cdf42c4f774bf7edb329f15fc1b4500fd70c8`.
 Environment setup and cleanup add no model attempts or qualified slots.
+
+## Notice-source lifecycle refresh and collector-ordering failure — 2026-10-11
+
+All three F4 repetitions now qualify on unchanged documentation head 19665cd9,
+with actual chatgpt-main / gpt-6.1-sol / medium, Rust/Cargo 1.93.0, Apple Git 2.54.0,
+80x24 Herdr and the original 600-second bound. CLI SHA-256 remains 950e1ce5;
+437 macOS and 440 Linux compiled inputs match. Prompts/follow-ups, protected
+assertions and allowed effects are unchanged. r1 a5, failed r2 a3 and r3 a3 use
+fresh v1 fixtures; r2 a4 uses equivalent fresh v2 after its failed predecessor.
+Actual Tool audit is Seatbelt, without claiming general macOS Host-read isolation.
+
+| Slot / attempt | Outcome | Independent verification elapsed seconds | Submission through verified cleanup seconds | Receipt SHA-256 |
+| --- | --- | --- | --- | --- |
+| macos-f4-r1 / a5 | PASS | 368.427215 | 401.000461 | `f9fb329aa6b681532b953722e479a527ebe47de56408ce2e06f93e67a8cb1c3e` |
+| macos-f4-r2 / a3 | FAIL | not completed | 423.193024 | `2fcab4ee0a484b86b5b01cc93d790a4e2dd5719a67778c7ebc46e50e4fc5d625` |
+| macos-f4-r2 / a4 | PASS | 361.298667 | 415.959199 | `8a6942771cc97e9c914a0c4708eef508c5a9660580a624dfbf5bd5e32dba9682` |
+| macos-f4-r3 / a3 | PASS | 244.345375 | 254.868359 | `e7f8c766adf068bec8a361469d8ec0b9bacd6333a16f4ff32b3afc2768321d0b` |
+
+Receipts are `dev-boundary-20261011-v1/attempts/<slot>/<attempt>/receipt.json`.
+Each PASS observes a live delayed writer, cancels before the 40-second deadline,
+confirms its native group gone, revokes the grant and retains the subsequent
+actual read denial. Past the deadline, late.txt is absent and the ledger has one
+completed entry. Explicit recovery checks the selected own rollout filename/hash
+before `--resume`; the new boot retains history but no old grants. After explicit
+reapproval and the frozen follow-up, the model changes only src/lib.rs and runs
+only `cargo test --locked --offline --test contract`. Lifecycle file hashes stay
+unchanged; start_work does not replay. New-command/effect analysis excludes copied
+recovery history at the captured pre-regrant rollout row boundary.
+
+r2 a4 and r3 a3 observe the unique Root child Kernel Process running before cancel,
+then exited with exit 130. r1 a5 lacks the individual canceled Tool status and
+retains native writer/group termination plus actual initial-instance exit instead.
+r3 individually observes initial setup Tool 9 and resumed Tools 9/10/11; initial
+completed Tools 10/12 are covered by actual instance exit, without inventing
+individual Kernel-status observations.
+
+Separate native checkers use read-only project/protected grants and fresh writable
+scratch. Their prospectively frozen offline/locked command verifies protected
+behavior and unchanged project/assertion/driver inventories, with zero model
+turns. Each PASS captures actual Action a8 original output, 9/9 detail selection
+and a changed page, then returns to the middle of abcXYZ and inserts δ to obtain
+abcδXYZ. Host scrollback is retained; physical cursor coordinates are not measured.
+All initial/resumed/verifier native PIDs exit after `/quit` and the original fish
+shell returns to foreground. No operator solution/source edit, corrective model
+advice or model-task restart is supplied. Planned grants/setup approval,
+cancel/revoke/continue/recovery and model-requested confirmation remain interventions.
+
+r2 a3 remains FAIL: Herdr delivery is mistaken for native input acknowledgment,
+so `/continue` appends to the retained forced-Agent draft. Clearing its text keeps
+that route, making a subsequent `/discard` literal Agent content too. The planned
+follow-up and two unintended paused inputs are retained and all three discarded;
+the unintended inputs execute no model turn. Cancellation/Kernel exit 130,
+revocation and no late effect pass, but denied-read completion, recovery and
+independent checking remain incomplete. Fresh r2 a4 qualifies without unintended
+input or collector correction. Existing delayed-ack/opposite-route and forced-Agent
+slash regressions both pass; production routing remains unchanged. See
+execution-map.md for corrected sequencing, including actual echo/queue/empty draft
+before following controls and same-submission reobservation instead of resending.
+
+Read-only collector corrections remain explicit: r1 retains its pre-model socket
+path refusal and three observation/schema corrections. r3 retains five corrections
+for revocation wording, compact grant JSON, control members in Action listings,
+empty-inventory markers and retained context count. r3 has three actual admission
+bindings and two available nonduplicated turn contexts, all observed as
+gpt-6.1-sol/medium; no missing context is fabricated. Memory remains enabled and
+system prompts may expose continuity; empty context_items is not absence of memory
+or statistical independence. Usage/cost/time partitions remain unknown; wall times
+include observation/operator waits and are not pure product/model latency.
+
+Immutable aggregate v59 SHA-256
+`33b0d363962cc3193dc59c25364b198bf3f15a916584d10e6c240f7d073c23fd`
+retains 55 attempts, 15 historical slots and 12 applicable final-source slots.
+v56/v57/v58 and original failures remain retained. Rehashing all 55 receipts and
+3727 retained artifacts passes with all thirty original slots unchanged. Three
+macOS F5 refreshes and fifteen Linux model tasks remain; checklist stays 8/19.
+This bounded sample does not establish unattended self-bootstrap.
+
+All sixteen checks pass on 19665cd9 including CodeQL. Immutable gates receipt
+`gates-196-v1/receipt.json` SHA-256 is
+`05a966b914aec35f6526c388a10209f5c5a78b98dce4c853f0ee21de39154212`.
+The preceding source/CLI equality proof is
+`notice-f2-family-source-applicability-v1.json`, SHA-256
+`67775b017e01c28c169ddc8c78908337307de830bf79d12cb4b885b5ae4fc5fe`.
+These new evidence-only edits require their own normal gates/source equality and
+current-head CI. #1045/#1046/#1047 user merge and canonical closure remain open;
+no automatic merge/routing or production Alan self-development occurs.

@@ -1,16 +1,15 @@
 # Native execution and evidence map — 2026-10-10
 
-This records supported operator controls. Current actual task outcomes are in
-`native-runs.md`: eleven first PASS, four first FAIL, fifteen NOT_RUN slots and
-fifteen historically qualified slots through forty development task
-attempts. The latest shared-projector repair changes one of the 437 macOS
-compiled inputs, reopening final-source applicability; all six F1/F2 refreshes
-now pass on integrated source `465e3e47`, with nine macOS refreshes remaining.
-The observed delegated-skill prelaunch publication finding requires a narrow
-repair and affected qualification rather than expanding child authority.
-Linux generation is open. Fixture
-self-checks and provider/backend preflights remain separate from model-authored
-task outcomes.
+This records supported operator controls. Current aggregate v59 retains eleven
+first PASS, four first FAIL and fifteen NOT_RUN through fifty-five development
+attempts. Twelve slots have applicable notice-source evidence: three repetitions
+of each macOS F1/F2/F3/F4 family. Three macOS F5 refreshes and all fifteen Linux
+model tasks remain. The candidate is documentation head 19665cd9 with unchanged
+437 macOS and 440 Linux compiled inputs; all sixteen current-head checks pass.
+Linux's fresh CLI build is not generation or PTY qualification. Earlier source
+and prerequisite receipts below remain historical, not additional completed slots.
+Fixture self-checks and provider/backend preflights remain separate from
+model-authored task outcomes.
 
 ## Candidate and prerequisite evidence
 
@@ -98,6 +97,36 @@ ephemeral/mock boot. Do not enable `--shadow-evaluator` or automatic routing.
 | Explicit durable recovery | Bare `alan --resume` | Current selected rollout belongs to the intended interrupted attempt; recovered segments retain model/effort and grant observations |
 | Queue continuation | `/continue`, `/discard` | Queue control acknowledgement, distinct from a fresh invocation's durable recovery |
 | Retained details | Ctrl+O; `p` toggles Actions/plans; arrows and PgUp/PgDn; Esc returns | Same Action owner/ID, original output/result, stable draft/cursor and scrollback |
+
+## Collector sequencing follows actual native input acknowledgment
+
+Herdr `pane run` acknowledgment proves delivery of bytes, not Alan's native
+input receipt or consumption of the editable draft. F4 r2 a3 sends a planned
+forced-Agent follow-up and `/continue` too quickly: the latter appends to the
+still-retained draft and becomes a second paused Agent input. Clearing text
+preserves its explicit route, so the subsequent `/discard` also becomes literal
+Agent content. These two unintended inputs never reach generation; all three
+paused inputs are explicitly discarded after resetting the empty draft route.
+The original task remains FAIL, followed by a fresh fixture/linked retry.
+
+Before sending a following control, observe the submitted body's native echo,
+the known correlated queue entry and the empty actual draft. Reobserve the same
+submission/boot when acknowledgment is delayed; never resend or restart merely
+because a snapshot lags. Keep explicitly forced-Agent slash text literal and
+preserve edits made before delayed acknowledgment. Existing app/queue ownership
+and focused regressions cover these semantics; this finding changes collector
+ordering, not production routing or the frozen prompts/bounds.
+
+Parse native grant records as JSON rather than formatting-dependent substrings;
+empty CLI inventory has explicit `(none)` markers. Restrict Action directory
+members to actual `aN` records before reading status/result, excluding controls.
+Read actual Request kind/options and available context counts rather than
+predicting schema fields or assuming one retained context per admission. Missing
+individual Process observations remain missing, even when actual instance exit
+provides lifetime evidence. Preserve original failed observations and report
+read-only collector corrections separately from model advice/source edits.
+
+## Instance configuration and recovery selection
 
 `ALAN_CONFIG_PATH` selects a task-only absolute configuration containing
 `connection_profile = "chatgpt-main"` and `model_reasoning_effort = "medium"`.

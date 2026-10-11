@@ -3,7 +3,7 @@
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
-FAIL and fifteen NOT_RUN through fifty-one development attempts. All fifteen
+FAIL and fifteen NOT_RUN through fifty-five development attempts. All fifteen
 macOS slots qualified an earlier frozen candidate; six F1/F2 refreshes passed
 on `465e3e47`. The prelaunch publication repair `bdf14ab0` passes all sixteen
 current-head checks. Its native F3 r1 a3 passes independent behavior but fails
@@ -18,9 +18,12 @@ four final-source slots. Fresh F1 r2/r3 a4 qualify on the byte-identical 95d6664
 documentation head; aggregate v50 records six final-source slots. Both 95d6664c
 and d97d7f70 now pass all sixteen current-head checks. All three F2 refreshes
 qualify on byte-identical d97d7f70; aggregate v54 records nine final-source slots.
-Six macOS F4/F5 refreshes and all fifteen Linux tasks remain;
-historical receipts do not qualify new behavior. This evidence-only follow-up
-needs its own normal gates and CI.
+All three F4 refreshes now qualify on byte-identical 19665cd9, retaining a
+collector-ordering FAIL and its fresh retry. Aggregate v59 records fifty-five
+attempts and twelve final-source slots. Three macOS F5 refreshes and all fifteen
+Linux tasks remain; historical receipts do not qualify new behavior. All sixteen
+checks pass on 19665cd9. This evidence-only follow-up needs its own normal gates
+and CI.
 
 The branch now incorporates predecessor `a6ea2518`, whose sixteen current-head
 checks pass and review threads are resolved. #1046 remains unmerged; formal
@@ -41,7 +44,7 @@ by Tool stdout/stderr/errors. The earlier all-input equality proof is historical
 conservatively rerun all fifteen macOS slots on the final candidate, retaining
 every earlier receipt and original outcome. Native Host/Clippy checks do not
 substitute for model-authored tasks. Final applicability remains open for the
-other twenty-one slots until the required final-source evidence is recorded.
+other eighteen slots until the required final-source evidence is recorded.
 
 Fresh disposable baselines for the same thirty slots are prepared in the owned
 `dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,
@@ -311,3 +314,16 @@ and unrelated/global scratch remain intact. This adds no Linux model task, full
 quality claim or native PTY qualification. Generation is still unconfigured.
 See native-runs.md for exact receipts, identities and limitations. Both 95d6664c
 and d97d7f70 pass all sixteen checks; this new evidence batch needs its own gates.
+
+## Latest lifecycle evidence
+
+All three F4 notice-source repetitions qualify on unchanged 19665cd9 code, with
+one retained collector-ordering FAIL and a fresh linked r2 retry. Aggregate v59
+retains 55 attempts and 12/30 applicable slots; original outcomes stay
+11 PASS / 4 FAIL / 15 NOT_RUN. Kernel running-to-exited cancellation is directly
+observed in r2/r3; r1's missing individual status remains explicit. Independent
+protected checks, no replay/late effect, actual detail/draft/scrollback and native
+exit pass. Five read-only collector corrections in r3 are retained rather than
+claimed as zero intervention. Three macOS F5 and all fifteen Linux tasks remain.
+19665cd9 passes all sixteen checks. This evidence-only publication needs its own
+normal gates/CI and source equality proof; user merge/canonical closure stays open.
