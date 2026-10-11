@@ -18,8 +18,9 @@ byte-identical documentation head ed6a65e6. F1 r2/r3 a4 qualify on the
 byte-identical 95d6664c head. All three F2 refreshes now qualify on byte-identical
 d97d7f70. All three F4 refreshes now qualify on byte-identical 19665cd9,
 retaining one intervening collector-ordering FAIL and its fresh retry. Aggregate
-v59 retains fifty-five attempts and twelve applicable slots. Three macOS F5
-refreshes and all fifteen Linux tasks remain.
+v59 retains fifty-five attempts and twelve applicable slots. All three F5
+refreshes also qualify on byte-identical 81b6f361: aggregate v63 retains
+fifty-eight attempts and all fifteen macOS slots. All fifteen Linux tasks remain.
 Historical checkmarks do not qualify new behavior.
 
 - [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.

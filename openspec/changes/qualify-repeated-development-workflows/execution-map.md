@@ -1,15 +1,15 @@
 # Native execution and evidence map — 2026-10-10
 
-This records supported operator controls. Current aggregate v59 retains eleven
-first PASS, four first FAIL and fifteen NOT_RUN through fifty-five development
-attempts. Twelve slots have applicable notice-source evidence: three repetitions
-of each macOS F1/F2/F3/F4 family. Three macOS F5 refreshes and all fifteen Linux
-model tasks remain. The candidate is documentation head 19665cd9 with unchanged
-437 macOS and 440 Linux compiled inputs; all sixteen current-head checks pass.
-Linux's fresh CLI build is not generation or PTY qualification. Earlier source
-and prerequisite receipts below remain historical, not additional completed slots.
-Fixture self-checks and provider/backend preflights remain separate from
-model-authored task outcomes.
+This records supported operator controls. Current aggregate v63 retains eleven
+first PASS, four first FAIL and fifteen NOT_RUN through fifty-eight development
+attempts. All fifteen macOS slots have applicable notice-source evidence: three
+repetitions of each F1/F2/F3/F4/F5 family. All fifteen Linux model tasks remain.
+The candidate is documentation head 81b6f361 with unchanged 437 macOS and
+440 Linux compiled inputs; all sixteen current-head checks pass. Linux's fresh
+CLI still has no generation profile; build is not generation or PTY qualification.
+Earlier source/prerequisite receipts below remain historical, not additional
+completed slots. Fixture self-checks and provider/backend preflights remain
+separate from model-authored task outcomes.
 
 ## Candidate and prerequisite evidence
 

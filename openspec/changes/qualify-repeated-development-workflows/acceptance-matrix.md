@@ -34,8 +34,10 @@ then qualify on byte-identical d97d7f70; aggregate v54 retains fifty-one attempt
 and nine final-source qualified slots. All three F4 refreshes qualify on
 byte-identical 19665cd9; one intervening collector-ordering FAIL stays retained
 before its fresh retry. Aggregate v59 records fifty-five attempts and twelve
-final-source slots. Three macOS F5 refreshes and all fifteen Linux tasks still
-require applicable final-source acceptance without resetting outcomes.
+final-source slots. All three F5 refreshes qualify on byte-identical 81b6f361;
+aggregate v63 retains fifty-eight attempts and all fifteen macOS slots. All
+fifteen Linux tasks still require applicable final-source acceptance without
+resetting outcomes.
 Original outcomes and all earlier attempts are
 retained, without resetting the denominator; the remaining receipt rows are historical.
 Fresh baselines for the same thirty tasks match the original prompts, source
@@ -101,9 +103,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` FAIL retained; fresh a3 PASS `bd740877`; final-candidate a4 PASS `ec82476c`; notice-source a5 PASS `f9fb329a` |
 | macos-f4-r2 | macos / Herdr | F4 | 2 | PASS | native-runs.md; original a1 `4abcf29e`; final-candidate a2 PASS `28841368`; notice-source a3 FAIL collector ordering `2fcab4ee`; fresh a4 PASS `8a694277` |
 | macos-f4-r3 | macos / Herdr | F4 | 3 | PASS | native-runs.md; original a1 `04dcb923`; final-candidate a2 PASS `104cf401`; notice-source a3 PASS `e7f8c766` |
-| macos-f5-r1 | macos / Herdr | F5 | 1 | FAIL: published retained reference denied; producer rerun | native-runs.md; a1 `c614c228`, a2 `98ad5294` FAIL retained; fresh a3 PASS `ffa05956` |
-| macos-f5-r2 | macos / Herdr | F5 | 2 | PASS | native-runs.md; original a1 receipt `e1514200` |
-| macos-f5-r3 | macos / Herdr | F5 | 3 | PASS | native-runs.md; original a1 receipt `95dbbfd9`; auxiliary lookup and unintended verifier turn disclosed |
+| macos-f5-r1 | macos / Herdr | F5 | 1 | FAIL: published retained reference denied; producer rerun | native-runs.md; a1 `c614c228`, a2 `98ad5294` FAIL retained; fresh a3 PASS `ffa05956`; notice-source a4 PASS `3378b40b` |
+| macos-f5-r2 | macos / Herdr | F5 | 2 | PASS | native-runs.md; original a1 receipt `e1514200`; notice-source a2 PASS `eebdb1d7` |
+| macos-f5-r3 | macos / Herdr | F5 | 3 | PASS | native-runs.md; original a1 receipt `95dbbfd9`; auxiliary lookup and unintended verifier turn disclosed; notice-source a2 PASS `70094038`, zero new verifier generation |
 | linux-f1-r1 | linux / ordinary PTY | F1 | 1 | NOT_RUN | absent |
 | linux-f1-r2 | linux / ordinary PTY | F1 | 2 | NOT_RUN | absent |
 | linux-f1-r3 | linux / ordinary PTY | F1 | 3 | NOT_RUN | absent |

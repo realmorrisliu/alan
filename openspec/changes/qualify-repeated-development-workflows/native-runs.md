@@ -27,8 +27,9 @@ and r2/r3 a4 qualify on byte-identical d97d7f70. Aggregate v54 retains fifty-one
 attempts and nine final-source qualified slots. Three F4 refreshes qualify on
 byte-identical 19665cd9, retaining one collector-ordering FAIL before a fresh
 retry. Aggregate v59 records fifty-five attempts and twelve final-source slots.
-Three macOS F5 refreshes and all fifteen Linux tasks remain; older results do
-not qualify this repair. Original
+All three F5 refreshes qualify on byte-identical 81b6f361; aggregate v63
+retains fifty-eight attempts and all fifteen macOS slots. All fifteen Linux
+tasks remain; older results do not qualify this repair. Original
 eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
 readiness, task 1.4 and cross-platform final delivery remain open. The sections
 below retain the chronological attempts.
@@ -2309,3 +2310,86 @@ The preceding source/CLI equality proof is
 These new evidence-only edits require their own normal gates/source equality and
 current-head CI. #1045/#1046/#1047 user merge and canonical closure remain open;
 no automatic merge/routing or production Alan self-development occurs.
+
+## Final notice-source long stdout/stderr/diff repetitions — 2026-10-11
+
+All three F5 refreshes qualify on byte-identical documentation head 81b6f361,
+using the frozen CLI 950e1ce5, actual chatgpt-main / gpt-6.1-sol / medium,
+Rust/Cargo 1.93.0, Apple Git 2.54.0, Seatbelt, 80x24 Herdr and the original
+600-second bounds. Fresh v1 fixture hashes/prompts/assertions/allowed effects
+match the original matrix. Original failures and the historical separate
+unintended verifier model turn remain retained.
+
+| Slot / attempt | Outcome | Independent behavior verification seconds | Submission through verified cleanup seconds | Receipt SHA-256 |
+| --- | --- | --- | --- | --- |
+| macos-f5-r1 / a4 | PASS | 253.368337 | 299.232744 | `3378b40b735219b32a72004a0e9bdd3f933165a8758a95624cb480e63c4797d8` |
+| macos-f5-r2 / a2 | PASS | 221.939835 | 269.991757 | `eebdb1d78a1c5cd953cfe49bc6b767fb806fb9578b32333131f233c0ee85ccd6` |
+| macos-f5-r3 / a2 | PASS | 201.037226 | 238.028999 | `700940388bfb5151c4b3af96fe5ea409de5c26cd86bfe214c462638ab727fe72` |
+
+Receipts are `dev-boundary-20261011-v1/attempts/<slot>/<attempt>/receipt.json`.
+Each producer executes exactly once in Action a2. The model reads its original
+AgentFS output through bounded ReadFile byte ranges, finds the deep value and
+changes only src/lib.rs. r1 uses a3/a5 reads and finds QVALUE=42137; r2 uses a3
+and finds QVALUE=42274 in stderr; r3 uses a3/a5 and finds +QVALUE=42411 in the
+original diff. Raw Action output, successful reader status/result and actual
+reader content correlate the values, rather than relying on the model's answer.
+The model also inspects fixture/source files, but this does not substitute for
+its positively observed retained-result access. r3's original 138113-byte diff
+has the frozen SHA-256 before generation, as produced by a2 and after checking.
+The pre-existing data/long.txt modification is Host setup, not model authorship.
+
+Actual native details select the original producer: 3/10 in r1 and 3/8 in r2/r3.
+Separate stdout/stderr labels and readable content are captured before paging;
+changed-page and deep-value frames show the exact QVALUE and adjacent rows.
+r3 preserves minus/plus diff markers. Literal server> ready and a > b remain
+content, not generated roles. Closing details restores insertion in abcXYZ;
+adding δ yields abcδXYZ, and Host scrollback remains available. Physical cursor
+coordinates are not measured. Delegated prelaunch rejection is retained once in
+history with no duplicate live Error after the parent completes; this proves
+direct fallback, not successful child delegation or inherited dynamic authority.
+
+The model's ordinary Cargo tests have zero active behavioral assertions; r1/r3
+explicitly report compilation-only checking, and r2 retains its ignored output
+test. r2's non-Git inspection diagnostic is also retained in the successful
+compound command and its final answer. Qualification requires the separate
+protected behavioral check in every case. Native independent checkers use
+read-only project/protected grants and fresh writable scratch, run the original
+prospectively frozen offline/locked command, and execute zero model turns.
+Project, immutable assertions and checker-driver inventories remain unchanged.
+All observed model Tool Processes and checker Tools exit; both native instances
+exit after `/quit` and the original fish shell is foreground.
+
+No operator source edits, corrective model advice, model task restarts or new
+unintended verifier generation occur. Planned project/checker grants, setup
+approval and UI controls stay explicit. r1 retains two read-only collection
+corrections: Action read output/result shape distinction and a syntax typo in its
+diagnostic-record writer, which executed no mutation. r2/r3 have no collector
+correction. Memory remains enabled; empty context_items does not exclude prompt
+continuity or prove statistical independence. Usage/cost/time partitions and
+general macOS Host-read isolation remain unknown or unqualified.
+
+Immutable aggregate v63 SHA-256
+`032d906ba07f9bdf18b79b4a261934fd7ab778f8631fc51977a345367deb537b`
+retains 58 attempts and 15/30 applicable final-source slots, all macOS. Original
+outcomes stay 11 PASS / 4 FAIL / 15 NOT_RUN. All 58 receipts and 4306 retained
+artifact hashes verify with the original thirty slots unchanged. v61/v62 and
+all earlier attempts remain retained. Checklist stays 8/19; full cross-Host
+qualification, merged-main applicability and user delivery remain open.
+
+All sixteen checks pass on 81b6f361, including CodeQL. Gates receipt
+`gates-81b-v1/receipt.json` SHA-256 is
+`1639efda7c56494be69a97c8312121b43e15cda5bac898b0fdd6cf2ec7066f37`.
+The 437 macOS / 440 Linux input and freshly gated Mac CLI equality proof is
+`notice-f4-family-source-applicability-v1.json`, SHA-256
+`1efc1ca9d8ffd9cab8f3ee14632eaa67a645c4120bc6c621365e691a0ff74795`.
+These evidence-only edits need their own normal gates, equality proof and CI.
+
+Fresh Linux CLI reobservation still reports No connection profiles configured
+and effective_profile none; its actual native binary hash remains 4fe74466.
+Receipt `linux-generation-readiness-recheck-v1.json` SHA-256 is
+`7080b32bb647ad5f12c910444f654a98dc24e9de9c02b638ce92e6575677942a`.
+All fifteen Linux slots remain NOT_RUN. No private Store/credential is copied,
+no substitute model is selected, and no preflight or CI test replaces a slot.
+The independent-generation setup question remains pending. #1045/#1046/#1047
+user merge/canonical closure stay open; no automatic routing or unattended
+self-bootstrap claim follows from the fifteen macOS repetitions.
