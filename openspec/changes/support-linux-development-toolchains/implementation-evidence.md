@@ -967,3 +967,35 @@ validation passes **69/69**. Final and failed attempts are retained under
 `rust-review-20261011/final-v1/`. Normal commit quality/distribution and fresh
 current-head CI are required before treating the repair as reviewed delivery.
 No fifteen-slot Linux generation or final main-source qualification is implied.
+
+
+### Coverage admission: bounded Package Store contention — 2026-10-11
+
+The first repair-head CI coverage job `114355535866` (run `38100588737`, head
+`baee72b8`) fails the existing two-client Package catalog test: an installation
+returns `Package Store busy: lock acquisition exceeded 500 ms`. Coverage report
+upload is skipped after that test failure; this is not an upload/network error.
+The store correctly refuses contention at its existing operator bound. The test
+incorrectly requires both concurrent installations to succeed within that bound.
+
+The fixture now accepts only the exact bounded-busy reply, verifies no catalog
+entry or materialized revision for the refused package, and explicitly retries
+after the contenders finish with a fresh request ID. Admission consumes failed
+request IDs too, so reusing the original ID remains an error. Catalog equality and
+both entries remain required. A second case reuses the existing owned lock-holder
+helper: both requests finish busy while the peer still owns the lock, then the
+holder exits normally before either retry. The five-second observation ceiling
+allows thread scheduling; the production acquisition limit stays 500 ms. No
+production Package behavior, CI exclusion, skip or timeout override is introduced.
+The other Package tests have no matching unconditional two-thread success
+assumption; existing explicit lock-budget/short-contention tests remain intact.
+
+Both Hosts' complete Service Manager suite passes **157 unit + 2 integration**
+with zero failures; both all-target/all-feature Clippy checks pass with warnings
+denied. Local actual LLVM coverage instrumentation passes the same concurrency
+test, including the held-peer/busy/no-installation/fresh-request retry branch
+(**0.85 seconds**, observed peer-owned busy completion at **502.95 ms**).
+The original CI failure and local duplicate-ID/command-filter correction logs are
+retained. A fresh normal commit gate and exact-head complete CI still follow.
+The native Rustup production hashes/ELF and its 1431/0/1 receipt remain unchanged;
+this follow-up changes only the Package test and evidence. No model slots are added.
