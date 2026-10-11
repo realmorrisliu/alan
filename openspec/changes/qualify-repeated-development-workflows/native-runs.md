@@ -1592,3 +1592,51 @@ Linux generation, which still has no configured Connection profile. Counts stay
 all original failures, the separate verifier turn and missing usage/cost remain.
 Normal commit quality, strict OpenSpec and this integration's own CI remain gates;
 parent CI does not qualify this child head. Neither PR is merged by this record.
+
+## Updated integrated Linux candidate — 2026-10-11
+
+Integration head `8e9e29f2441a541de253df8b1ae3c70b5964a656` completes its normal
+macOS commit quality/standalone/distribution and pinned strict OpenSpec 70/70.
+Its public source tree `b427ee3a87f073aa365c5ee8701b1bfec8c202eb` is archived
+without Git metadata, credentials or private Stores into a fresh owned Linux
+cache. A native snapshot checkout has exactly that tree, 2307 tracked files,
+and clean source before and after verification. Its build output is registered
+only to that native checkout; no foreign output registry or old frozen source
+is modified. The first quality launch exits before Cargo because the operator
+PATH points to a nonexistent OpenSpec bin directory. Its log remains retained;
+the corrected task-only PATH uses the existing isolated node_modules/.bin.
+No global PATH, package defaults or production lock budget changes.
+
+Complete normal Linux `just quality` passes, including workspace format,
+all-targets/all-features warnings-denied Clippy, private documentation, repository
+Python/fixture checks, host/OpenSpec boundaries, standalone CLI and distribution.
+New debug CLI SHA-256 is
+`b09570dcad1dfb1efc5a43af2195be674cbd99f9f3e6bba9464ded93e45ca693`;
+its actual dependency record includes the repaired Linux Rustup production file.
+The subsequent Engine suite passes 1436 unit and 20 integration tests, retaining
+one existing ignore; Service Manager passes 158 unit and two integration tests.
+Explicit native Rustup proxy/runtime inputs cause all 23 adapter cases to run;
+the selected-only visibility check and direct/nested wrapper refusals actually
+pass. The Package busy/no-effect/new-ID retry check also passes. Tests finish
+normally with no failures, and the CLI remains unchanged.
+
+Updated candidate receipts in the owning cache:
+
+- `linux-review-quality-v1/quality-receipt.json`, SHA-256
+  `3ded8c5cbd0e52b6e8e849cc32328f58692f12c482c3b280dc79801418993c5c`,
+  retains all public source hashes, exact tree/native snapshot/CLI identities,
+  original failed environment log and successful quality/distribution log.
+- `linux-review-native-v1/native-receipt.json`, SHA-256
+  `770be93af6ef2e1673ec355c04656faf4694dd7ce1672571b00a4e6c28460464`,
+  retains the native log, actual Engine ELF digest, test results and explicit
+  runtime/proxy identities. Engine ELF SHA-256 is
+  `f32525364c07fcab476cc709597a9f43a1c8feed8edf5642927465be82eed4ce`.
+
+The actual new CLI's `connection list` still returns no configured profiles.
+No model is substituted and no credentials are imported. These updated build and
+native regression receipts add zero model slots, preserve all 34 task attempts
+and first outcomes, and do not replace the previous ordinary-PTY receipts with
+a claim of a new PTY run. Actual task-cwd tools/profile/medium effort must still
+be frozen before Linux generation. The following evidence-only documentation
+commit keeps production source unchanged but needs its own normal quality,
+strict OpenSpec, current-head CI/review and final user-merged source verification.

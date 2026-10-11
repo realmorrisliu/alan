@@ -59,6 +59,19 @@ task outcomes.
   receipts; neither preflight nor quality closes a real-model slot. Binary
   `6b756582` predates the selected-runtime repair and is not the updated Linux
   candidate for subsequent generation.
+- Updated Linux candidate: exact public tree of integration head `8e9e29f2`,
+  `b427ee3a87f073aa365c5ee8701b1bfec8c202eb`, in its own native Git checkout and
+  registered output. Normal `just quality` and standalone/distribution pass;
+  the actual CLI SHA-256 is
+  `b09570dcad1dfb1efc5a43af2195be674cbd99f9f3e6bba9464ded93e45ca693`.
+  Its production dependency record includes Linux Rustup source. Engine passes
+  1436 unit/20 integration checks, with one existing ignore; Service Manager
+  passes 158 unit/two integration checks. All 23 native Rustup cases execute
+  with explicit inputs, including unselected-runtime invisibility and wrapper
+  refusal. Source remains clean; original first environment failure is retained.
+  The actual new CLI still reports no Connection profiles. This is updated
+  build/regression evidence, not generation readiness, a new PTY receipt or a
+  real-model slot; freeze actual task-cwd selections before any Linux generation.
 
 ## Supported product controls
 

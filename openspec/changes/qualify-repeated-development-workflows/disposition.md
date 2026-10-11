@@ -18,7 +18,9 @@ workflows continue to run; #1046 must merge first. Compared with the frozen nati
 source, four of 827 crate/workspace-manifest files differ: one Linux-only runtime
 source and three test files. All 437 recorded inputs to the frozen macOS CLI
 remain identical and exclude those four files. The SDK observer remains additional.
-Linux needs its own updated candidate build and native checks before generation.
+The updated Linux candidate now passes full quality/distribution and native
+Engine/Service Manager suites; its actual CLI includes the selected-runtime repair.
+Generation remains blocked by the absence of a Linux Connection profile.
 This does not adopt ADR-0058, merge either PR or close final main-source verification.
 Original failures, including F1 r1's incomplete prospective tool identity, remain
 retained alongside their successful fresh retries.

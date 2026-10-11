@@ -17,6 +17,9 @@ frozen-candidate source/binary proof, including the three F4 lifecycle reruns.
 The subsequent Linux review repair changes four source/test files outside the
 actual macOS CLI's 437 unchanged compiled inputs. This preserves macOS source
 applicability, without claiming fresh model runs or an updated Linux binary.
+Separate updated Linux candidate receipts now prove its full quality/distribution
+and native Engine/Service Manager checks. The actual new CLI still has no
+configured Connection profile, so these receipts do not qualify generation.
 All fifteen Linux slots remain unexecuted. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
