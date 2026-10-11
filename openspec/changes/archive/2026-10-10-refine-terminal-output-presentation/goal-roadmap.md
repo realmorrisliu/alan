@@ -1,8 +1,8 @@
 # Development qualification and terminal presentation goal — 2026-10-09
 
 The user authorized implementation of the confirmed terminal design, common
-Linux tooling and repeated real development acceptance. The execution goal is
-active. This roadmap links deliveries; it does not expand the UI change's
+Linux tooling and repeated real development acceptance. This file is the historical roadmap for the UI delivery; Linux tooling and
+repeated-development qualification remain unfinished after its archive. This roadmap links deliveries; it does not expand the UI change's
 normative scope or expand the independently delivered installation/cache change.
 
 ## Ordered deliveries and completion gates
@@ -74,33 +74,25 @@ quality/review/CI and fresh native acceptance remain pending. No delivery is
 complete (0/3). See `implementation-notes.md` for evidence and limitations. The unrelated installation/cache worktree and main's untracked
 proposal are preserved.
 
-## Current checkpoint
+## Closure checkpoint — 2026-10-10
 
-UI tasks are 15/17 checked; completed goal deliveries remain 0/3. The fresh
-canonical-installation candidate has completed all 30 native workflow slots:
-ordinary PTY and Herdr, each at actual 48/80/120 columns. Six independent fixtures
-have exact source/diff/once-only-ledger assertions after the invocations ended.
-Member and historical-plan details, Chinese/emoji draft/caret return, literal
-content, command stdout/stderr, edit diff, authorization controls and native
-scrollback are exercised. The owned Herdr pane was closed, its caller's original
-layout restored and no candidate Alan process remains. See the final matrix in
-`acceptance-matrix.md`; older candidates and harness corrections remain separate.
+UI implementation merged as PR #1044 at `faf747c2`; final PR head `2c30cf38`
+passed all 16 checks and the merge revision passed all 15 main checks. Both
+review threads are resolved. All 17 UI tasks are complete in this post-merge
+canonical-sync/archive closure. The closure branch still needs its own review,
+CI and user merge before these documentation changes become mainline truth.
 
-Reviewed head `3f915876e4dab8b730737685278c584a84207586` has all 16 CI checks
-passing. Its Rust tree is unchanged from the built `f2a9222d` candidate. The
-exact implementation review found no remaining blocker; see `final-review.md`.
-The review/checklist-only head `300ccfa3` subsequently passed all 16 distinct
-checks and PR #1044 left draft. A new review finding exposed duplicate plan
-details at a retained-history display bound; its narrow repair and related
-read-error visibility regression are recorded in `final-review.md`. The next
-review identified an unowned initial submission notice; its repair preserves
-exact submission ownership through queued/paused admission and direct terminal
-receipts without weakening Runtime-warning protection. All 368 library/12
-integration TUI tests pass, but the follow-up requires fresh quality/current-head CI. User
-merge and canonical synchronization remain open. Native
-five-workflow closure does not claim native
-cross-Process replacement, general self-development or Linux qualification;
-real Kernel/AgentFS tests remain the evidence for replacement/attachment fencing.
+The 30/30 native matrix remains scoped to `f2a9222d`. The final submission-notice
+repair adds one fresh 80×22 ordinary PTY queue/cancel/continue run with exact
+once-only effects; it does not replace the full native matrix. All 368 library
+and 12 integration TUI tests pass on the final repair head. See `delivery.md`
+for final-head and merge receipts and canonical preservation checks.
+
+Only the UI implementation is delivered. Linux toolchain support and the five
+real-development families repeated three times on each platform remain open.
+No automatic routing or general autonomous self-development is qualified.
+The earlier waiting-for-UI-merge dependency is resolved. This archived roadmap
+must not be edited as the active follow-up ledger.
 
 ### Earlier checkpoint evidence (historical)
 

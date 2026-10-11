@@ -1,15 +1,14 @@
 # Disposition
 
-2026-10-09: accepted design; implementation and acceptance authorized by the
-user's new goal. The five confirmed decisions in `decision-record.md` remain
-binding. Implementation and native five-workflow acceptance are complete at the
-`f2a9222d` candidate; the review/checklist head `300ccfa3` passed all 16 distinct
-checks and PR #1044 became ready for review. Subsequent plan-detail and initial
-submission-notice review repairs are recorded in `final-review.md` and require
-fresh current-head CI.
-User merge and canonical sync remain open. This disposition
-does not claim merged delivery. See `goal-roadmap.md`
-for the ordered goal and separate follow-up delivery boundaries.
+2026-10-10: implemented in PR #1044, merged by the user as
+`faf747c2f5e8c389992144093250b4d5e538eeb5`. Final implementation head
+`2c30cf38` passed all 16 PR checks; the merge revision passed all 15 main checks.
+Both review threads are resolved. The five confirmed decisions remain binding.
+The three delivered deltas are synchronized into canonical specs in this
+post-merge closure, with existing requirements and scenarios preserved.
+All 17 tasks are complete and the change is ready for archival. This receipt
+belongs to the closure branch until that documentation PR is merged; it does
+not imply that the closure changes are already on main. See `delivery.md`.
 
 This change owns terminal-output presentation only. It modifies the three
 existing capabilities listed in `proposal.md`, follows the immutable archived
