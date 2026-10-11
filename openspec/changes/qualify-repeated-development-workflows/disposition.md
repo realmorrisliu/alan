@@ -1,29 +1,36 @@
-# Disposition — 2026-10-10
+# Disposition — 2026-10-11
 
 The user's existing ordered goal authorizes this independent third delivery.
-Qualification is active: prerequisites/fixtures and all five macOS families are complete (8/19 tasks).
-All fifteen macOS slots have frozen-candidate source/binary evidence. The latest
-Linux review repair preserves their macOS compiled inputs; it is not a new model run.
-Observed production repairs and linked retries are recorded in `native-runs.md`;
-Linux generation, complete cross-Host qualification and delivery remain open.
-The frozen public candidate now passes complete normal Linux quality and a fresh
-explicit-command PTY preflight, including actual read-only write denial and exit.
-Those receipts add no real-model slots. Linux generation remains unconfigured;
-actual task-cwd tool versions, final phase/merged-source checks and the fifteen
-Linux tasks still require their own evidence.
-The qualification branch now incorporates its reviewed Linux predecessor
-`258a956a`; #1047 depends on #1046 rather than relying on a separately composed
-native candidate. The PR retains main as its base so the existing complete CI
-workflows continue to run; #1046 must merge first. Compared with the frozen native
-source, four of 827 crate/workspace-manifest files differ: one Linux-only runtime
-source and three test files. All 437 recorded inputs to the frozen macOS CLI
-remain identical and exclude those four files. The SDK observer remains additional.
-The updated Linux candidate now passes full quality/distribution and native
-Engine/Service Manager suites; its actual CLI includes the selected-runtime repair.
-Generation remains blocked by the absence of a Linux Connection profile.
-This does not adopt ADR-0058, merge either PR or close final main-source verification.
-Original failures, including F1 r1's incomplete prospective tool identity, remain
-retained alongside their successful fresh retries.
+Qualification is active: prerequisites/fixtures and all five historical macOS
+families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
+FAIL and fifteen NOT_RUN through thirty-four development attempts. All fifteen
+macOS slots qualified the earlier frozen candidate; they are not final-source
+qualification for the newly reviewed shared diagnostic projector.
+
+The branch now incorporates predecessor `a6ea2518`, whose sixteen current-head
+checks pass and review threads are resolved. #1046 remains unmerged; formal
+approval, ADR-0058 adoption and user-controlled canonical closure are distinct.
+#1047 retains main as its CI base and must merge after #1046. Its integrated
+candidate still needs its own normal commit/quality/distribution, CI and new
+native source/binary/readiness freeze.
+
+Actual comparison against the frozen macOS CLI's 437 compiled inputs finds one
+changed input: `crates/os-host/src/host_mounts/text_projection.rs`. It is shared
+by Tool stdout/stderr/errors. The earlier all-input equality proof is historical;
+conservatively rerun all fifteen macOS slots on the final candidate, retaining
+every earlier receipt and original outcome. Native Host/Clippy checks do not
+substitute for model-authored tasks. Final applicability remains open for every
+slot until this refresh or independently applicable evidence is recorded.
+
+Fresh disposable baselines for the same thirty slots are prepared in the owned
+`dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,
+protected assertions, allowed changes, bounds and long-diff bytes match the
+original manifest. Only operator checker backing paths and fresh local Git
+setup identity change. This preparation adds no model attempts or qualified slots.
+Linux generation remains unconfigured and all fifteen Linux slots are NOT_RUN;
+no credentials/private stores are copied. Earlier Linux quality, Tool and PTY
+receipts remain historical pending a newly integrated candidate freeze. Final
+main-source verification and user merge/canonical closure remain open.
 Planning artifacts and offline fixture checks do not prove completed real-model
 development tasks or passed native slots. No superseded or archived change is reactivated.
 
@@ -34,7 +41,9 @@ owners. Production fixes require actual findings and the corresponding delta.
 
 Controlled live runs follow native-qualified, reviewed, passing-current-head Linux
 candidate #1046; user merge/canonical closure remain final-delivery gates. Its
-latest 258a956a head passed all 16 checks. Its selected-runtime repair has fresh
+latest `a6ea2518` head passed all 16 checks. Its shared diagnostic change
+requires the independent candidate refresh described above. Its selected-runtime
+repair has fresh
 native engine evidence, and its Package concurrency test correction has passing
 macOS/Linux service suites and an LLVM-instrumented check. Those parent checks do
 not substitute for the integrated qualification candidate. Proposed read-only
@@ -50,8 +59,9 @@ are fifteen out of thirty through thirty-four development task attempts, retaini
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
-Matching final-candidate source/binary evidence covers all fifteen macOS slots,
-including three fresh cancel/revoke/explicit-recovery reruns. F1 r1's a3
+Matching earlier-candidate source/binary evidence covers all fifteen historical
+macOS slots, including three cancel/revoke/explicit-recovery reruns; the latest
+shared-projector source still requires final-candidate model evidence. F1 r1's a3
 collector-identity failure stays retained. All Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout

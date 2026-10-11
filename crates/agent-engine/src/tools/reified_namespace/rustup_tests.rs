@@ -88,6 +88,233 @@ fn command_projection_mounts_only_selected_runtimes() {
 }
 
 #[test]
+fn literal_compile_targets_are_checked_before_effects() {
+    let (_fixture, proxies, home, project) = installation();
+    let root = home.join("toolchains/1.97.0-testhost");
+    std::fs::write(
+        root.join("lib/rustlib/multirust-config.toml"),
+        "config_version = \"1\"\n[[components]]\npkg = \"rustc\"\ntarget = \"host-testhost\"\n[[components]]\npkg = \"rust-std\"\ntarget = \"host-testhost\"\n",
+    )
+    .unwrap();
+    let input = input(&project);
+    for words in [
+        vec!["cargo", "+1.97.0", "build", "--target", "missing"],
+        vec!["cargo", "+1.97.0", "check", "--target=missing"],
+        vec!["rustc", "+1.97.0", "--target", "missing", "source.rs"],
+        vec!["rustdoc", "+1.97.0", "--target=missing", "source.rs"],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "test",
+            "--target",
+            "host-testhost",
+            "--target=missing",
+        ],
+        vec!["cargo", "+1.97.0", "rustc", "--", "--target=missing"],
+        vec!["cargo", "+1.97.0", "rustc", "--", "--target=host-tuple"],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "--quiet",
+            "rustc",
+            "--",
+            "--target=missing",
+        ],
+        vec![
+            "rustup",
+            "run",
+            "1.97.0",
+            "cargo",
+            "build",
+            "--target=missing",
+        ],
+        vec!["cargo", "+1.97.0", "build", "--target"],
+        vec!["cargo", "+1.97.0", "build", "--target="],
+        vec!["cargo", "+1.97.0", "build", "--target=custom.json"],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&input, &commands))
+            )
+            .is_err(),
+            "{words:?} must refuse before execution"
+        );
+    }
+    for words in [
+        vec!["cargo", "+1.97.0", "build", "--target", "host-testhost"],
+        vec!["cargo", "+1.97.0", "build", "--target=host-tuple"],
+        vec!["rustc", "+1.97.0", "--target=host-testhost", "source.rs"],
+        vec![
+            "rustdoc",
+            "+1.97.0",
+            "--target",
+            "host-testhost",
+            "source.rs",
+        ],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "test",
+            "--target=host-testhost",
+            "--target",
+            "host-testhost",
+        ],
+        vec!["cargo", "+1.97.0", "rustc", "--", "--target=host-testhost"],
+        vec![
+            "rustup",
+            "run",
+            "1.97.0",
+            "cargo",
+            "build",
+            "--target=host-testhost",
+        ],
+        vec!["cargo", "+1.97.0", "run", "--", "--target=missing"],
+        vec!["cargo", "+1.97.0", "test", "--", "--target=missing"],
+        vec![
+            "cargo",
+            "+1.97.0",
+            "--config",
+            "env.PROBE='clippy'",
+            "test",
+            "--",
+            "--target=missing",
+        ],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        revalidate(&environment).unwrap();
+    }
+}
+
+#[test]
+fn rustup_run_inspects_the_direct_command_and_refuses_selection_mutations() {
+    let (_fixture, proxies, home, project) = installation();
+    let input = input(&project);
+    for words in [
+        vec!["rustup", "run", "1.97.0", "cargo", "+missing", "test"],
+        vec!["rustup", "run", "1.97.0", "cargo", "fmt"],
+        vec!["rustup", "run", "1.97.0", "cargo", "clippy"],
+        vec!["cargo", "+1.97.0", "--quiet", "fmt"],
+        vec!["cargo", "+1.97.0", "--color", "never", "clippy"],
+        vec!["rustup", "run", "1.97.0", "sh", "-c", "cargo test"],
+        vec![
+            "rustup", "run", "1.97.0", "rustup", "run", "missing", "cargo",
+        ],
+        vec!["rustup", "override", "unset"],
+        vec!["rustup", "default", "1.97.0"],
+        vec!["rustup", "toolchain", "link", "custom", "/tmp/custom"],
+    ] {
+        let commands = vec![words.iter().map(|word| (*word).into()).collect()];
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&input, &commands))
+            )
+            .is_err(),
+            "{words:?} must fail before execution"
+        );
+    }
+    for name in ["cargo-fmt", "rustfmt", "cargo-clippy", "clippy-driver"] {
+        executable(&home.join("toolchains/1.97.0-testhost/bin").join(name));
+    }
+    for subcommand in ["test", "fmt", "clippy"] {
+        let commands = vec![
+            ["rustup", "run", "1.97.0", "cargo", subcommand]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        ];
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(environment.toolchain_mounts.len(), 1);
+        revalidate(&environment).unwrap();
+    }
+}
+
+#[test]
+fn unselected_custom_alias_does_not_block_startup_or_ordinary_commands() {
+    let (_fixture, proxies, home, project) = installation();
+    symlink(&project, home.join("toolchains/custom-linked")).unwrap();
+    let commands = vec![vec!["git".into(), "status".into()]];
+    for inspection in [None, Some((&input(&project), commands.as_slice()))] {
+        let environment = discover(proxies.to_str().unwrap(), &home, None, inspection)
+            .unwrap()
+            .unwrap();
+        assert!(environment.toolchain_mounts.is_empty());
+        revalidate(&environment).unwrap();
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home.join("absent"),
+            None,
+            inspection,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(environment.metadata_hashes.is_empty());
+        assert!(environment.toolchain_mounts.is_empty());
+        revalidate(&environment).unwrap();
+    }
+    let commands = vec![vec!["cargo".into(), "+custom-linked".into(), "test".into()]];
+    assert!(
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input(&project), &commands))
+        )
+        .unwrap_err()
+        .contains("unsafe alias")
+    );
+}
+
+#[test]
+fn sequential_cd_preserves_missing_target_failure_branches() {
+    let (_fixture, proxies, home, project) = installation();
+    std::fs::create_dir_all(project.join("a/b")).unwrap();
+    std::fs::write(project.join("a/b/rust-toolchain"), "1.97.0\n").unwrap();
+    let commands = vec![
+        vec!["cd".into(), "a".into()],
+        vec!["cd".into(), "b".into()],
+        vec!["cargo".into(), "test".into()],
+    ];
+    let environment = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input(&project), &commands)),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(environment.toolchain_mounts.len(), 2);
+    assert!(
+        environment
+            .metadata_hashes
+            .iter()
+            .any(|(path, _)| path == &project.join("a/b/rust-toolchain"))
+    );
+    assert!(!project.join("b").exists());
+}
+
+#[test]
 fn command_prefixes_preserve_rustup_selection_and_validate_before_effects() {
     let (_fixture, proxies, home, project) = installation();
     let input = input(&project);
@@ -427,9 +654,15 @@ fn directory_override_proximity_and_legacy_file_match_rustup() {
 #[test]
 fn rejects_runtime_loss_proxy_escape_and_unknown_wrapper() {
     let (_fixture, proxies, home, project) = installation();
-    let environment = discover(proxies.to_str().unwrap(), &home, None, None)
-        .unwrap()
-        .unwrap();
+    let commands = vec![vec!["cargo".into(), "+1.97.0".into(), "test".into()]];
+    let environment = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input(&project), &commands)),
+    )
+    .unwrap()
+    .unwrap();
     let rustdoc = home.join("toolchains/1.97.0-testhost/bin/rustdoc");
     std::fs::remove_file(&rustdoc).unwrap();
     assert!(revalidate(&environment).is_err());
@@ -484,9 +717,14 @@ fn refuses_undelegated_toolchain_file_and_metadata_aliases() {
     std::fs::rename(home.join("settings.toml"), home.join("original-settings")).unwrap();
     symlink("original-settings", home.join("settings.toml")).unwrap();
     assert!(
-        discover(proxies.to_str().unwrap(), &home, None, None)
-            .unwrap_err()
-            .contains("unsafe or oversized")
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input(&project), &commands))
+        )
+        .unwrap_err()
+        .contains("unsafe or oversized")
     );
 }
 
@@ -569,9 +807,15 @@ fn component_metadata_parent_alias_cannot_escape_runtime() {
     std::fs::rename(&library, root.join("lib/original-rustlib")).unwrap();
     std::fs::write(project.join("multirust-config.toml"), "private canary").unwrap();
     symlink(&project, &library).unwrap();
+    let commands = vec![vec!["cargo".into(), "+1.97.0".into(), "test".into()]];
     assert!(
-        discover(proxies.to_str().unwrap(), &home, None, None)
-            .unwrap_err()
-            .contains("component metadata escapes")
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input(&project), &commands))
+        )
+        .unwrap_err()
+        .contains("component metadata escapes")
     );
 }

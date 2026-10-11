@@ -2,7 +2,7 @@
 
 This is delivery 3 of the user's ordered goal, after terminal presentation and
 Linux toolchain/authority qualification. UI implementation is merged in PR #1044;
-canonical closure is prepared in #1045. Linux toolchain #1046 is still draft and
+canonical closure is prepared in #1045. Linux toolchain #1046 is ready for review and
 its ADR-0058 disjoint read-only dependency adoption remains outstanding. Controlled
 candidate qualification is authorized by the goal: the live matrix starts after
 the predecessor candidate's native qualification, code review and current-head CI

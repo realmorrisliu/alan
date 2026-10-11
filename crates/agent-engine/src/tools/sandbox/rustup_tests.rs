@@ -45,7 +45,15 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             &toolchain,
             if matches!(
                 case.as_str(),
-                "env" | "cli" | "inline" | "inline_cli" | "cwd_cli" | "cwd_env" | "cwd_inline"
+                "env"
+                    | "cli"
+                    | "inline"
+                    | "inline_cli"
+                    | "cwd_cli"
+                    | "cwd_env"
+                    | "cwd_inline"
+                    | "rustup_run"
+                    | "env_unset"
             ) {
                 "[toolchain]\nchannel = \"missing\"\n"
             } else {
@@ -63,10 +71,20 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         let mut extra_files = Vec::new();
         let changes_cwd = matches!(
             case.as_str(),
-            "changed_cwd" | "cwd_cli" | "cwd_env" | "cwd_inline" | "cwd_project"
+            "changed_cwd"
+                | "cwd_cli"
+                | "cwd_env"
+                | "cwd_inline"
+                | "cwd_project"
+                | "sequential_cd"
+                | "env_chdir"
         );
         if changes_cwd {
-            let child = project.join("child");
+            let child = project.join(if case == "sequential_cd" {
+                "a/b"
+            } else {
+                "child"
+            });
             std::fs::create_dir_all(child.join("src")).unwrap();
             for (path, bytes) in &files {
                 if matches!(
@@ -75,14 +93,21 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 ) && path.starts_with(&project)
                 {
                     let target = child.join(path.strip_prefix(&project).unwrap());
-                    let content = bytes.replace("../dependency", "../../dependency");
+                    let content = bytes.replace(
+                        "../dependency",
+                        if case == "sequential_cd" {
+                            "../../../dependency"
+                        } else {
+                            "../../dependency"
+                        },
+                    );
                     std::fs::write(&target, &content).unwrap();
                     extra_files.push((target, content));
                 }
             }
             std::fs::write(
                 child.join("rust-toolchain"),
-                if case == "cwd_project" {
+                if matches!(case.as_str(), "cwd_project" | "sequential_cd") {
                     "1.97.0\n"
                 } else {
                     "missing\n"
@@ -102,6 +127,10 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 | "cwd_inline"
                 | "cwd_project"
                 | "selected_only"
+                | "rustup_run"
+                | "sequential_cd"
+                | "target_host"
+                | "target_host_tuple"
         );
         let sandbox = Sandbox::from_spec_with_backend(
             SandboxSpec::from_host_mounts(&[
@@ -144,7 +173,15 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             std::fs::write(&path, &content).unwrap();
             extra_files.push((path, content));
         }
-        if positive {
+        if case == "unselected_alias" {
+            let result = sandbox.exec("git --version", &project).await.unwrap();
+            assert_eq!(result.exit_code, 0, "{}", result.stderr);
+            assert!(result.stdout.contains("git version"));
+            eprintln!(
+                "native automatic Rustup {case}:\n{}{}",
+                result.stdout, result.stderr
+            );
+        } else if positive {
             let readiness =
                 crate::tools::sandbox_backend::linux_reified_namespace_backend_readiness();
             assert_eq!(
@@ -160,11 +197,40 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             let prefix = match case.as_str() {
                 "inline" | "cwd_inline" => "RUSTUP_TOOLCHAIN=1.97.0 ",
                 "inline_cli" => "RUSTUP_TOOLCHAIN=missing ",
+                "rustup_run" => "rustup run 1.97.0 ",
                 _ => "",
             };
-            let directory = if changes_cwd { "cd child && " } else { "" };
+            let directory = if case == "sequential_cd" {
+                "cd a; cd b; "
+            } else if changes_cwd {
+                "cd child && "
+            } else {
+                ""
+            };
             let command = format!(
-                "{directory}{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked -- -D warnings"
+                "{directory}{prefix}rustc{selector} --version && {prefix}cargo{selector} --version && {prefix}rustdoc{selector} --version && {prefix}cargo{selector} test --offline --locked{target} && {prefix}cargo{selector} fmt -- --check && {prefix}cargo{selector} clippy --offline --locked{target} -- -D warnings",
+                target = if matches!(case.as_str(), "target_host" | "target_host_tuple") {
+                    let runtime = PathBuf::from(
+                        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME").unwrap(),
+                    );
+                    let host = runtime
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .strip_prefix("1.97.0-")
+                        .unwrap();
+                    format!(
+                        " --target={}",
+                        if case == "target_host_tuple" {
+                            "host-tuple"
+                        } else {
+                            host
+                        }
+                    )
+                } else {
+                    String::new()
+                }
             );
             let result = sandbox.exec(&command, &project).await.unwrap();
             assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
@@ -220,19 +286,53 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 "export RUSTUP_TOOLCHAIN=missing; cargo test"
             } else if case == "environment_reset" {
                 "env -i cargo test"
+            } else if case == "env_unset" {
+                "env -u RUSTUP_TOOLCHAIN cargo test"
+            } else if case == "env_chdir" {
+                "env -C child cargo test"
+            } else if case == "rustup_run_missing" {
+                "rustup run 1.97.0 cargo +missing test"
+            } else if case == "rustup_run_shell" {
+                "rustup run 1.97.0 sh -c 'printf inner > inner-marker'"
+            } else if case == "missing_target" {
+                "cargo +1.97.0 build --target wasm32-unknown-unknown --offline --locked"
+            } else if case == "missing_target_equals" {
+                "cargo +1.97.0 check --target=wasm32-unknown-unknown --offline --locked"
+            } else if case == "missing_target_rustc" {
+                "rustc +1.97.0 --target=wasm32-unknown-unknown src/lib.rs"
+            } else if case == "missing_target_run" {
+                "rustup run 1.97.0 cargo build --target wasm32-unknown-unknown --offline --locked"
+            } else if case == "missing_target_rustdoc" {
+                "rustdoc +1.97.0 --target wasm32-unknown-unknown src/lib.rs"
+            } else if case == "rustup_override_unset" {
+                "rustup override unset; cargo test"
             } else {
                 "cargo test"
             };
-            let error = sandbox
+            let outcome = sandbox
                 .exec(&format!("printf effect > marker; {cargo}"), &project)
-                .await
-                .unwrap_err();
+                .await;
+            assert!(
+                outcome.is_err(),
+                "{case}: admitted with marker={}, inner-marker={}, {outcome:?}",
+                project.join("marker").exists(),
+                project.join("inner-marker").exists()
+            );
+            let error = outcome.unwrap_err();
             let reason = format!("{error:#}");
             assert!(
                 reason.contains(if case == "alias" {
                     "unsafe alias"
-                } else if case == "environment_reset" || case == "missing_wrapped" {
+                } else if matches!(
+                    case.as_str(),
+                    "environment_reset" | "missing_wrapped" | "env_unset" | "env_chdir"
+                ) {
                     "rejects shell wrappers like env"
+                } else if matches!(
+                    case.as_str(),
+                    "rustup_run_missing" | "rustup_run_shell" | "rustup_override_unset"
+                ) {
+                    "unsupported inspected Rustup"
                 } else if matches!(
                     case.as_str(),
                     "shell_wrapper_refused" | "shell_inline_refused" | "nested_wrapper_refused"
@@ -240,7 +340,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                     "rejects nested command evaluators"
                 } else if case == "persistent_selector" {
                     "inspected Linux tool environment"
-                } else if case == "missing_component" {
+                } else if case == "missing_component" || case.starts_with("missing_target") {
                     "required Rust component/target absent"
                 } else {
                     "selected Rust runtime absent"
@@ -259,8 +359,13 @@ async fn native_rustup_selection_through_sandbox_adapter() {
         }
         if changes_cwd {
             assert_eq!(
-                std::fs::read_to_string(project.join("child/rust-toolchain")).unwrap(),
-                if case == "cwd_project" {
+                std::fs::read_to_string(project.join(if case == "sequential_cd" {
+                    "a/b/rust-toolchain"
+                } else {
+                    "child/rust-toolchain"
+                }))
+                .unwrap(),
+                if matches!(case.as_str(), "cwd_project" | "sequential_cd") {
                     "1.97.0\n"
                 } else {
                     "missing\n"
@@ -303,6 +408,21 @@ async fn native_rustup_selection_through_sandbox_adapter() {
     for case in [
         "project",
         "selected_only",
+        "rustup_run",
+        "sequential_cd",
+        "unselected_alias",
+        "rustup_run_missing",
+        "rustup_run_shell",
+        "rustup_override_unset",
+        "missing_target",
+        "missing_target_equals",
+        "missing_target_rustc",
+        "missing_target_run",
+        "missing_target_rustdoc",
+        "target_host",
+        "target_host_tuple",
+        "env_unset",
+        "env_chdir",
         "shell_wrapper_refused",
         "shell_inline_refused",
         "nested_wrapper_refused",
@@ -335,14 +455,14 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             )
             .env(
                 "RUSTUP_HOME",
-                if case == "alias" {
+                if matches!(case, "alias" | "unselected_alias") {
                     fake_home.as_path()
                 } else {
                     home
                 },
             )
             .env_remove("RUSTUP_TOOLCHAIN");
-        if matches!(case, "env" | "cwd_env") {
+        if matches!(case, "env" | "cwd_env" | "env_unset") {
             child.env("RUSTUP_TOOLCHAIN", "1.97.0");
         }
         if matches!(

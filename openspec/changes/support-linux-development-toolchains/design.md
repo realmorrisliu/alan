@@ -27,6 +27,30 @@ automatic routing or general autonomous code-authorship qualification.
 
 ## Decisions
 
+### Inspect actual selected Rust commands without extending wrapper execution
+
+Startup checks validate only the Rustup proxy PATH and grant no installed runtime.
+Non-Rust commands do not depend on unrelated Rustup home/catalog metadata.
+Literal CLI compilation targets use the same installed-component check as project
+toolchain requirements. Inspect spaced/equals target values and every repeated
+Cargo target, including direct Rustup-run and compiler-forwarded arguments. Cargo
+global options must not hide the subcommand or its required fmt/clippy helpers.
+Preserve Cargo's host-tuple alias; after application/test argument delimiters,
+target-like text is ordinary content. Missing target values, unavailable std
+components and unsupported custom target specifications refuse before effects.
+This is literal-option qualification, not a new Cargo configuration resolver,
+custom target/build-std implementation or cross-compilation support claim.
+Per-command inspection enumerates a bounded catalog and strictly validates only
+selected roots, so unrelated linked/custom entries do not disable ordinary
+commands; selecting such unsupported aliases remains an explicit refusal.
+Literal `rustup run` supports direct known Rust proxies with its fixed outer
+selector and existing required-helper checks. Nested selectors, arbitrary child
+dispatch and other Rustup management commands refuse before effects; this slice
+does not implement general recursive program evaluation. Version/help queries
+remain available. Existing Full shape validation still refuses `env` wrappers
+before inspection on Linux. Missing/non-directory `cd` targets preserve their
+failure cwd; valid granted targets continue through the existing bounded state.
+
 ### Extend the existing plan and native Host adapter
 
 Native selection and projection remain Host-private inputs behind the current
@@ -174,6 +198,13 @@ ancestors with the existing explicit `<unmapped-host-path>` marker and retain th
 relative diagnostic suffix. This never infers a grant or invents a usable namespace
 for an unavailable dependency. Top-level OS paths remain ordinary text; literal
 role lookalikes, comparisons and Markdown quotes retain their content.
+Root, non-root and ancestor matches all require the existing leading token
+boundary as well as their trailing component check. Network URLs and token
+suffixes containing a backing spelling remain literal content. Trailing SGR
+color controls do not change the preceding visible character: strip only their
+suffix for boundary inspection, retaining the original bytes in output. This
+preserves colored absolute paths and file URIs without accepting colored suffixes
+embedded in ordinary text or adding a URI/terminal parser dependency.
 
 ### Use live project mounts for local dependencies
 
@@ -270,6 +301,10 @@ Primary Rust documentation confirms runtime-home and cache semantics:
 [Cargo home](https://doc.rust-lang.org/cargo/guide/cargo-home.html), and
 [Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
 Executable inventory is current fixture evidence, not inferred from these docs.
+Literal target and argument-forwarding semantics follow primary
+[Cargo build options](https://doc.rust-lang.org/cargo/commands/cargo-build.html),
+[rustc target options](https://doc.rust-lang.org/rustc/command-line-arguments.html),
+and [rustdoc target options](https://doc.rust-lang.org/rustdoc/command-line-arguments.html).
 
 Primary mount semantics:
 [Linux mount errors](https://man7.org/linux/man-pages/man2/mount.2.html) and

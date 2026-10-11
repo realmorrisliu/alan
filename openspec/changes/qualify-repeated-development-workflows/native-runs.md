@@ -4,13 +4,15 @@ The original three frozen macOS F1 inputs qualify through four normal-CLI real-m
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-The latest immutable aggregate v29 retains thirty-one development task attempts
-and fifteen historically qualified slots: eleven first PASS, four first FAIL and
-fifteen NOT_RUN. Twelve slots match the final candidate: all macOS F1, F2, F3 and F5
-repetitions. One unintended verifier generation stays separate. Task attempts are
-not API-call counts; F4 includes explicit continuation. Tasks 2.1 through 2.5 have
-historical macOS evidence, while three older F4 slots need final-candidate reruns.
-Linux generation readiness, task 1.4 and cross-platform delivery remain open.
+Latest historical aggregate v32 retains thirty-four development task attempts
+and fifteen qualified macOS slots: eleven first PASS, four first FAIL and fifteen
+Linux NOT_RUN. All fifteen matched the earlier frozen candidate, including the
+three later F4 lifecycle reruns. One unintended verifier generation stays
+separate. Task attempts are not API-call counts; F4 includes explicit continuation.
+The latest parent `a6ea2518` changes the shared diagnostic projector, reopening
+final-source applicability for all fifteen macOS slots. No old receipt is deleted
+or relabeled as a new run. Linux generation readiness, task 1.4 and cross-platform
+final delivery remain open. The sections below retain the chronological attempts.
 
 ## Candidate and receipts
 
@@ -1640,3 +1642,37 @@ a claim of a new PTY run. Actual task-cwd tools/profile/medium effort must still
 be frozen before Linux generation. The following evidence-only documentation
 commit keeps production source unchanged but needs its own normal quality,
 strict OpenSpec, current-head CI/review and final user-merged source verification.
+
+
+## Shared-projector final-source refresh — 2026-10-11
+
+The normal ancestry-preserving integration incorporates #1046 `a6ea2518`, whose
+sixteen checks pass. Its leading-boundary repair is reproduced and fixed in the
+shared Host projector; native Host/Clippy and normal commit gates pass on both
+applicable scopes. The punctuation suggestion is evaluated rather than widening
+path recognition to legal unknown sibling names. Parent CI/review receipt SHA-256
+is `267b3cfb4b095296ad92b5529ea31006dbc97ab3503fea2d7a6906820da12d65`.
+This does not grant formal approval, merge a PR or adopt the proposed grant policy.
+
+Actual frozen-CLI input audit compares all 437 inputs and finds exactly one
+change, `crates/os-host/src/host_mounts/text_projection.rs`, from
+`7386df2971a2698262c81a5e4689d8fd1e5cbee6d904dc5db83e3f5b7bc9de05` to
+`df211150cdfbe614259152223abc7475ed8a101e69f3eadcf14353b949a7ec36`.
+Because Tool stdout/stderr/error projection is shared, conservatively refresh all
+fifteen macOS rows. Earlier 437-input equality and prospective `499b352c` Linux
+build remain historical. Source-applicability receipt SHA-256 is
+`f582c6344da458c9090954e67b20f95ff3ded535b222ca5ca9f592ae6a4adbc4`.
+The owning cache is `dev-boundary-20261011-v1`; new candidate binary/readiness,
+normal integration quality/CI and all real-model reruns remain pending.
+
+Fresh materialization of the same thirty original slots has manifest SHA-256
+`4894a588888396e6f88ae8aefc21adf10f4f0cef62519eabcb23b2a002b46e7e`.
+Every prompt/follow-up, project baseline inventory, protected assertion inventory,
+allowed-change list, 80x24 geometry bound, 600-second limit and initial long-diff
+hash matches the original `b64ad012` manifest. Operator checker backing paths and
+local setup Git commit identities are fresh; no model prompt gains backing paths,
+no protected assertion changes and no corrected solution enters a new project.
+This adds zero model attempts; original thirty slots, thirty-four attempts and
+first outcomes remain retained. Linux generation remains unconfigured; no private
+Store or credential copy, model substitution, automatic routing or production
+Alan self-development is authorized by this qualification.

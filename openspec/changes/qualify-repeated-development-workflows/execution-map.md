@@ -2,30 +2,32 @@
 
 This records supported operator controls. Current actual task outcomes are in
 `native-runs.md`: eleven first PASS, four first FAIL, fifteen NOT_RUN slots and
-fifteen qualified slots through thirty-four development task attempts. All
-fifteen macOS slots match the frozen candidate, with unchanged compiled-input
-applicability after the Linux review repair; Linux generation is open. Fixture
+fifteen historically qualified slots through thirty-four development task
+attempts. The latest shared-projector repair changes one of the 437 macOS
+compiled inputs, reopening final-source applicability; all fifteen macOS slots
+will be refreshed conservatively. Linux generation is open. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
 
 ## Candidate and prerequisite evidence
 
 - UI implementation: main `faf747c2`, merged #1044; closure #1045 remains open.
-- Toolchain candidate: #1046 `258a956ae72449145485c1bc82ed1f34f57edfe0`.
-  Its current-head sixteen CI checks pass. Direct caller/boundary review and
-  native positive/negative toolchain evidence precede these disposable tests.
-  The proposed ADR-0058 grant extension, formal review, user merge and canonical
-  synchronization remain final-delivery gates.
+- Toolchain candidate: #1046 `a6ea2518ccb214471edb87198bce174eb34993fc`.
+  All sixteen current-head checks pass and review threads are resolved. The valid
+  leading-boundary repair has native Host/Clippy evidence on both Hosts. The later
+  sentence-punctuation suggestion is not adopted because those characters can be
+  legal sibling names; actual shared-projector controls and a resolved rationale
+  preserve complete-component semantics. Formal approval, ADR-0058 adoption,
+  user merge and canonical synchronization remain final-delivery gates.
 - Qualification #1047 incorporates that exact parent and requires #1046 to merge
-  first. Its PR base remains main because the complete CI workflows filter
-  pull_request bases to main/master. Comparison covers 827 frozen native files;
-  four differ after this review repair (one Linux-only runtime and three tests).
-  The actual frozen macOS CLI dependency record contains 437 unchanged inputs,
-  excluding all four differences. Its source applicability receipt is in
-  `native-runs.md`; no fresh binary/model run is claimed. The qualification SDK
-  example remains additional. An updated Linux build/native check, new-head
-  quality/CI and final user-merged main verification remain distinct gates.
-- macOS native CLI: cace913c plus the exact production repairs and 35-file
+  first. Its PR base remains main so complete CI workflows run. Compared with
+  the earlier frozen CLI's actual 437 compiled inputs, one shared production file
+  now differs: `host_mounts/text_projection.rs`. Earlier all-input equality is
+  historical. Freeze a new candidate and refresh all fifteen macOS rows before
+  final qualification; original attempts/first outcomes are retained. The SDK
+  observer is qualification-only. Integrated quality/CI, Linux native readiness
+  and final user-merged main verification remain separate gates.
+- Earlier frozen macOS native CLI: cace913c plus the exact production repairs and 35-file
   inventory recorded in `native-runs.md`, built in the owned
   `responses-native-verify-20261011` worktree at
   `target/quality-gate/aarch64-apple-darwin/debug/alan`; SHA-256

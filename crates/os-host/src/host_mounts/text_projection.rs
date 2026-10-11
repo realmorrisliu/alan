@@ -40,18 +40,9 @@ pub(super) fn project_text(text: &str, mounts: &[NativeToolMount]) -> String {
         let suffix = &text[offset..];
         if let Some((source, target)) = mounted.iter().find(|(source, _)| {
             suffix.starts_with(source)
+                && has_leading_path_boundary(&text[..offset])
                 && if source.ends_with(std::path::MAIN_SEPARATOR) {
                     !suffix.starts_with("//")
-                        && (offset == 0
-                            || text[..offset].ends_with("file://")
-                            || text[..offset].chars().next_back().is_some_and(|previous| {
-                                previous.is_whitespace()
-                                    || previous.is_control()
-                                    || matches!(
-                                        previous,
-                                        '\'' | '"' | '`' | '(' | '[' | '{' | '=' | ':'
-                                    )
-                            }))
                 } else {
                     suffix[source.len()..].chars().next().is_none_or(|next| {
                         next == std::path::MAIN_SEPARATOR
@@ -76,6 +67,25 @@ pub(super) fn project_text(text: &str, mounts: &[NativeToolMount]) -> String {
         }
     }
     projected
+}
+
+fn has_leading_path_boundary(mut prefix: &str) -> bool {
+    // SGR color controls do not change the preceding visible character.
+    while let Some(before_m) = prefix.strip_suffix('m') {
+        let before_params =
+            before_m.trim_end_matches(|ch: char| ch.is_ascii_digit() || matches!(ch, ';' | ':'));
+        let Some(before_code) = before_params.strip_suffix("\x1b[") else {
+            break;
+        };
+        prefix = before_code;
+    }
+    prefix.is_empty()
+        || prefix.ends_with("file://")
+        || prefix.chars().next_back().is_some_and(|previous| {
+            previous.is_whitespace()
+                || previous.is_control()
+                || matches!(previous, '\'' | '"' | '`' | '(' | '[' | '{' | '=' | ':')
+        })
 }
 
 #[cfg(test)]
@@ -146,6 +156,34 @@ mod tests {
         assert_eq!(
             project_text("/etc/x a/b https://example/x file:///etc/x", &mounts),
             "/mnt/system/etc/x a/b https://example/x file:///mnt/system/etc/x"
+        );
+    }
+
+    #[test]
+    fn literal_prefixes_and_network_urls_are_not_host_paths() {
+        for mounts in [
+            vec![mount("/native/user/project", "/mnt/project")],
+            vec![mount("/", "/mnt/system")],
+        ] {
+            for text in [
+                "https://example/native/user/project/file",
+                "prefix/native/user/project/file",
+                "https://example/native/user/outside/file",
+                "prefix/native/user/outside/file",
+                "中/native/user/project/file",
+                "prefix\x1b[32m/native/user/project/file\x1b[0m",
+            ] {
+                assert_eq!(project_text(text, &mounts), text);
+            }
+        }
+    }
+
+    #[test]
+    fn colored_root_paths_keep_boundary_and_uri_semantics() {
+        let mounts = [mount("/", "/mnt/system")];
+        assert_eq!(
+            project_text("\x1b[1m\x1b[32m/etc/x\x1b[0m file:///etc/y", &mounts),
+            "\x1b[1m\x1b[32m/mnt/system/etc/x\x1b[0m file:///mnt/system/etc/y"
         );
     }
 

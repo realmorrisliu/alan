@@ -13,15 +13,17 @@ attempts before its successful fresh retry. Fifteen slots qualify through thirty
 real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
 One unintended verifier model turn is recorded separately; the long-diff run is
 not zero-unplanned-intervention. All fifteen macOS slots have matching
-frozen-candidate source/binary proof, including the three F4 lifecycle reruns.
-The subsequent Linux review repair changes four source/test files outside the
-actual macOS CLI's 437 unchanged compiled inputs. This preserves macOS source
-applicability, without claiming fresh model runs or an updated Linux binary.
-Separate updated Linux candidate receipts now prove its full quality/distribution
-and native Engine/Service Manager checks. The actual new CLI still has no
-configured Connection profile, so these receipts do not qualify generation.
-All fifteen Linux slots remain unexecuted. See `native-runs.md`
-for retained receipts.
+historical frozen-candidate proof, including the three F4 lifecycle reruns.
+The latest reviewed parent `a6ea2518` changes the shared diagnostic projector,
+one of that CLI's 437 compiled inputs, reopening final-source applicability.
+All fifteen macOS slots will be rerun conservatively; the following receipt
+column is historical until linked final-candidate evidence is added. Original
+outcomes and thirty-four attempts are retained, without resetting the denominator.
+Fresh baselines for the same thirty tasks match the original prompts, source
+bytes, assertions, bounds and long-diff bytes. Preparation/native checks add no
+model attempts. All fifteen Linux slots remain unexecuted for missing generation
+configuration; earlier Linux quality/Tool/PTY receipts do not qualify the newly
+integrated source. See `native-runs.md` for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.
 
 ## Entry, identity and bounds
@@ -66,7 +68,7 @@ content; generated role-prefix regression checks follow ADR-0059.
 
 ## Thirty initial slots
 
-| Slot | Platform / Host | Family | Repetition | First outcome | Final qualified evidence |
+| Slot | Platform / Host | Family | Repetition | First outcome | Historical qualified evidence; final refresh pending |
 | --- | --- | --- | --- | --- | --- |
 | macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; final-candidate a3 FAIL `7f7ddbdb` retained, fresh a4 PASS `7b2e4c0c`; a1 retained |
 | macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; final-candidate a2 PASS `1e499e15` |
