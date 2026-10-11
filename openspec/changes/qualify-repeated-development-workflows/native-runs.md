@@ -18,7 +18,10 @@ footer. The narrow TUI repair `573cd12e` passes normal gates and all sixteen CI
 checks. Aggregate v45 retains forty-five attempts, fifteen historical qualified
 slots and three qualified F3 slots on this source. A detail-capture audit withholds
 one earlier claimed PASS without changing its immutable receipt; a fresh retry
-provides actual modal/page evidence. Twelve macOS refreshes and all fifteen Linux
+provides actual modal/page evidence. Byte-identical documentation head ed6a65e6
+passes all sixteen checks, and F1 r1 a6 adds applicable small-repair evidence.
+Aggregate v47 retains forty-six attempts and four final-source qualified slots.
+Eleven macOS refreshes and all fifteen Linux
 tasks remain; older results do not qualify this repair. Original
 eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
 readiness, task 1.4 and cross-platform final delivery remain open. The sections
@@ -2027,3 +2030,48 @@ and all original receipts remain linked. Twelve macOS refreshes and fifteen Linu
 real-model tasks remain; checklist stays 8/19. This documentation-only follow-up
 needs its own normal commit gates and current-head CI, with 437-input applicability
 rechecked rather than rerunning native tasks merely for documentation changes.
+
+## Notice-source F1 r1 fresh small repair — 2026-10-11
+
+Head `ed6a65e6fd8f21cd88daf8815b80b15e619199b1` passes all sixteen checks;
+its 437 compiled inputs and freshly gated CLI remain byte-identical to 573cd12e.
+Retained CI receipt SHA-256 is
+`4cfeda42d2615630ac2d509aaac39dd7776e1e8177dbfec598c96923d4821d33`.
+F1 r1 a6 uses the original addition fault/prompt in a fresh disposable baseline.
+Actual gpt-6.1-sol medium generation first records assertion RED (5 versus 9),
+changes only src/lib.rs from subtraction to addition and passes the original
+contract. A separate native verifier, with project/assertions read-only and
+fresh writable scratch, passes four protected addition cases. All project,
+protected assertion and driver inventories remain unchanged by verification.
+
+Model boot `95971c9b-5868-4ae8-a819-820adfeaebc9`, native PID 74543, Root 8,
+submission `723dbf9d-6cbc-421d-9330-4e49f5e6efb9` and all actual Tool result
+Processes are correlated. A6's retained original stdout/stderr detail is observed
+before paging, then a changed page is captured before closing. The draft returns
+to its middle insertion position (abcXYZ to abcδXYZ), and host scrollback remains
+available. Virtual delegation is refused without child authority; its Error
+appears once in history without a duplicate live footer. Direct parent fallback
+actually completes. The non-Git command failure remains retained. Both native
+owners and all discovered Tools exit; the pane returns to its original fish.
+There is no corrective model advice, operator solution edit, restart or verifier
+generation. Prospective config/tool/definition/memory metadata is captured, with
+zero context items and no personal memory-body collection or clearing.
+
+Collector corrections remain explicit: Process status has a trailing newline;
+Tool result/Process is top-level in the rollout; the content Action title scrolls
+while the modal header remains fixed. One early missing Action read is retained.
+The actual saved frames and lifecycle files prove completion; no controls or task
+are replayed because an assertion or observation failed. Behavior verification
+takes 151.39 seconds and submission through verified cleanup 165.53 seconds,
+including operator observation within the unchanged 600-second bound. Usage/cost,
+model/Tool/wait partitions, exact cursor coordinates, general macOS read isolation
+and statistical independence are not claimed.
+
+Immutable receipt SHA-256 is
+`b1cf57f6b1dc189b5682876d1eeb2295dd5e6550aa09efb3c3405d10bc5da3bf`.
+Aggregate first-outcomes-v47.json SHA-256 is
+`9e68d65479b5d69a0dea1666f86053b71db7ca0391a6710d94aaea643cbac40c`:
+46 model attempts, 15 historical and four final-source qualified slots;
+11 first PASS/4 FAIL/15 NOT_RUN remain unchanged. Eleven macOS refreshes and
+fifteen Linux tasks remain. This evidence-only follow-up requires its own normal
+gates, CI and committed-input applicability proof; checklist remains 8/19.

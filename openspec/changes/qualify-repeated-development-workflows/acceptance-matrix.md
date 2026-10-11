@@ -25,7 +25,10 @@ retained error repeats as a live footer after parent completion. The TUI repair
 forty-five attempts and three qualified F3 slots on this source. A detail-capture
 audit withholds an earlier claimed PASS while keeping its immutable receipt;
 the fresh retry captures the actual modal and changed page. Fifteen earlier
-qualified slots remain historical. Twelve macOS refreshes and all fifteen Linux
+qualified slots remain historical. The byte-identical ed6a65e6 documentation head
+passes all sixteen checks. F1 r1 a6 adds applicable small-repair evidence;
+aggregate v47 retains forty-six attempts and four final-source qualified slots.
+Eleven macOS refreshes and all fifteen Linux
 tasks still require applicable final-source acceptance without resetting outcomes.
 Original outcomes and all earlier attempts are
 retained, without resetting the denominator; the remaining receipt rows are historical.
@@ -80,7 +83,7 @@ content; generated role-prefix regression checks follow ADR-0059.
 
 | Slot | Platform / Host | Family | Repetition | First outcome | Historical evidence and linked final refresh |
 | --- | --- | --- | --- | --- | --- |
-| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; earlier-candidate a3 FAIL `7f7ddbdb`, a4 PASS `7b2e4c0c`; integrated-source a5 PASS `13432009`; a1 retained |
+| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; earlier-candidate a3 FAIL `7f7ddbdb`, a4 PASS `7b2e4c0c`; integrated-source a5 PASS `13432009`; notice-source a6 PASS `b1cf57f6`; a1 retained |
 | macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; earlier-candidate a2 PASS `1e499e15`; integrated-source a3 PASS `4144cce1` |
 | macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; original a1 `9c9a1a6f`; earlier-candidate a2 PASS `997fd0dd`; integrated-source a3 PASS `d41c3bdb` |
 | macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained; integrated-source a4 PASS `e4b12f0b` |
