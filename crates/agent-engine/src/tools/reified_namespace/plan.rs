@@ -15,6 +15,9 @@ pub const DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH: &str = "/mnt/source";
 /// Default namespace path for the private scratch/tmp mount.
 pub const DEFAULT_SCRATCH_TMP_NAMESPACE_PATH: &str = "/tmp";
 
+pub(super) const LINUX_REIFIED_COMMAND_PATH: &str =
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
 /// Access mode for a declared host-backed mount in the reified namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReifiedMountAccess {
@@ -109,6 +112,23 @@ pub struct ReifiedScratchTmpMount {
     pub namespace_path: PathBuf,
 }
 
+/// Host-inspected Rustup metadata for an isolated native execution environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReifiedRustupEnvironment {
+    /// Selected non-secret settings copied into private Rustup scratch.
+    pub settings: String,
+    /// Original explicit Rustup selector, if present.
+    pub toolchain_override: Option<String>,
+    /// Validated proxy-only directories, preserving PATH spelling.
+    pub proxy_mounts: Vec<ReifiedExecutionSubstrateMount>,
+    /// Installed runtime roots projected independently of management state.
+    pub toolchain_mounts: Vec<ReifiedExecutionSubstrateMount>,
+    /// Frozen selection file identities, rechecked before command effects.
+    pub metadata_hashes: Vec<(PathBuf, String)>,
+    /// Frozen executable contents, rechecked before command effects.
+    pub executable_hashes: Vec<(PathBuf, String)>,
+}
+
 /// Pure plan consumed by the future Linux namespace runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReifiedNamespacePlan {
@@ -116,11 +136,30 @@ pub struct ReifiedNamespacePlan {
     pub execution_substrate: Vec<ReifiedExecutionSubstrateMount>,
     pub cwd: PathBuf,
     pub argv: Vec<String>,
+    pub command_path: String,
+    /// Host-inspected Rust inputs; neither agent state nor mount authority.
+    pub rustup: Option<ReifiedRustupEnvironment>,
     pub scratch_tmp: ReifiedScratchTmpMount,
     pub network: NetworkPosture,
 }
 
 impl ReifiedNamespacePlan {
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn private_environment_root(&self) -> PathBuf {
+        (0..=self.declared_host_mounts.len())
+            .map(|index| {
+                self.scratch_tmp
+                    .namespace_path
+                    .join(format!(".alan-env-{index}"))
+            })
+            .find(|candidate| {
+                self.declared_host_mounts
+                    .iter()
+                    .all(|mount| !paths_overlap(candidate, &mount.namespace_path))
+            })
+            .expect("more private environment candidates than declared mounts")
+    }
+
     /// Derive a plan from namespace mount authority and a projected host cwd.
     pub fn derive(input: ReifiedNamespacePlanInput) -> Result<Self, ReifiedNamespacePlanError> {
         let mut declared_host_mounts = Vec::new();
@@ -196,6 +235,8 @@ impl ReifiedNamespacePlan {
             execution_substrate,
             cwd,
             argv: input.argv,
+            command_path: input.command_path,
+            rustup: input.rustup,
             scratch_tmp: ReifiedScratchTmpMount {
                 namespace_path: input.scratch_tmp_namespace_path,
             },
@@ -241,6 +282,9 @@ pub struct ReifiedNamespacePlanInput {
     pub declarations: Vec<ReifiedMountDeclaration>,
     pub cwd: PathBuf,
     pub argv: Vec<String>,
+    pub command_path: String,
+    /// Optional Host inspection passed to the native runner without Host IO in plan derivation.
+    pub rustup: Option<ReifiedRustupEnvironment>,
     pub network: NetworkPosture,
     pub execution_substrate: Vec<ReifiedExecutionSubstrateMount>,
     pub scratch_tmp_namespace_path: PathBuf,
@@ -281,10 +325,18 @@ impl ReifiedNamespacePlanInput {
             declarations,
             cwd: cwd.into(),
             argv,
+            command_path: LINUX_REIFIED_COMMAND_PATH.to_string(),
+            rustup: None,
             network,
             execution_substrate,
             scratch_tmp_namespace_path: scratch,
         }
+    }
+
+    /// Preserve the explicitly selected command PATH; the native adapter validates visibility.
+    pub fn with_command_path(mut self, path: impl Into<String>) -> Self {
+        self.command_path = path.into();
+        self
     }
 
     /// Override the read-only execution substrate list.
@@ -315,10 +367,12 @@ pub fn default_execution_substrate() -> Vec<ReifiedExecutionSubstrateMount> {
         ("/lib", "/lib"),
         ("/lib64", "/lib64"),
         ("/usr/lib", "/usr/lib"),
+        ("/usr/libexec", "/usr/libexec"),
         ("/usr/lib64", "/usr/lib64"),
         ("/usr/local/lib", "/usr/local/lib"),
         ("/usr/local/lib64", "/usr/local/lib64"),
         ("/etc/ssl", "/etc/ssl"),
+        ("/etc/alternatives", "/etc/alternatives"),
         ("/etc/hosts", "/etc/hosts"),
         ("/etc/resolv.conf", "/etc/resolv.conf"),
     ]

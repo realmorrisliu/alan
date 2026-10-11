@@ -1,5 +1,42 @@
 use super::*;
 
+#[test]
+fn private_environment_avoids_delegated_roots_and_descendants() {
+    let plan = ReifiedNamespacePlan::derive(ReifiedNamespacePlanInput::new(
+        vec![
+            ReifiedMountDeclaration::host(
+                "/mnt/project",
+                "/host/project",
+                ReifiedMountAccess::ReadOnly,
+            ),
+            ReifiedMountDeclaration::host(
+                "/tmp/.alan-env-0",
+                "/host/docs",
+                ReifiedMountAccess::ReadOnly,
+            ),
+            ReifiedMountDeclaration::host(
+                "/tmp/.alan-env-1/cargo",
+                "/host/cache",
+                ReifiedMountAccess::ReadWrite,
+            ),
+        ],
+        "/host/project",
+        vec!["sh".into()],
+        NetworkPosture::Deny,
+    ))
+    .unwrap();
+    assert_eq!(
+        plan.private_environment_root(),
+        PathBuf::from("/tmp/.alan-env-2")
+    );
+    for mount in &plan.declared_host_mounts {
+        assert!(!paths_overlap(
+            &plan.private_environment_root(),
+            &mount.namespace_path
+        ));
+    }
+}
+
 fn shell_argv() -> Vec<String> {
     vec!["sh".to_string(), "-c".to_string(), "pwd".to_string()]
 }

@@ -7,6 +7,14 @@ mod native_shell_tests;
 #[path = "sandbox/reified_tests.rs"]
 mod reified_tests;
 
+#[cfg(target_os = "linux")]
+#[path = "sandbox/rustup_tests.rs"]
+mod rustup_tests;
+
+#[cfg(target_os = "linux")]
+#[path = "sandbox/development_tests.rs"]
+mod development_tests;
+
 #[path = "sandbox/spec_tests.rs"]
 mod spec_tests;
 
