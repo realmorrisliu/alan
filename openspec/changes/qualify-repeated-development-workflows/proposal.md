@@ -51,6 +51,8 @@ None.
   Root's externally granted project for explicit revocation; prompted by F1/F4 runs.
   F1/F2 refreshes also require truthful file-backed publication of delegated-skill
   prelaunch rejection, preserving the existing child namespace and parent fallback.
+  Native F3 additionally requires retiring only the matching runtime-owned live
+  Error notice after its error is retained, preserving local/unrelated notices.
 
 ## Impact
 

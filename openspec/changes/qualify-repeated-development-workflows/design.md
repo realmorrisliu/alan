@@ -254,6 +254,16 @@ existing correlated InputCompleted receipt remains the truth for parent success,
 so a recovered invocation must not turn a successfully completed parent task into
 a failed task. Retain all six previous outcomes and audit affected source scope.
 
+Native F3 r1 on `bdf14ab0` proves original compiler correction and independent
+protected behavior, but retains a duplicate failure in history and the live footer
+after successful parent completion. Keep that UI-failed attempt. Record runtime
+versus local ownership in the existing private Notice value and retire only a
+matching runtime-owned Error notice when the actual error reaches history.
+Local identical text, different runtime errors and warnings remain. This is
+presentation retirement, not AgentFS notice deletion or input/Process settlement.
+The same event application covers hydration; no new event identity or controller
+is introduced. Require a fresh native unchanged-task retry after repair.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and

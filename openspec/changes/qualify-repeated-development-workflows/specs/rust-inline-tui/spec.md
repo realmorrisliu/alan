@@ -72,6 +72,24 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 
 ## ADDED Requirements
 
+### Requirement: A retained runtime error does not repeat as a live notice
+The terminal SHALL retire a matching runtime-owned Error notice when the same
+runtime error is retained in transcript history. It MUST preserve unrelated
+runtime notices and local notices, including identical local text. Notice
+retirement MUST NOT change input completion, Process lifecycle, original error
+evidence or the draft/cursor. Hydrating the existing notice/error event pair SHALL
+apply the same rule without deleting history or replaying work.
+
+#### Scenario: Delegation fails but the parent completes its direct fallback
+- **WHEN** the runtime publishes a matching Error notice and retained error, then completes the parent's task
+- **THEN** the error appears once in history without remaining as a duplicate live footer
+- **AND** the parent's actual Completed receipt and unchanged draft remain authoritative
+
+#### Scenario: Local or unrelated notices must survive
+- **WHEN** a retained runtime error has the same text as a local notice or a different text/severity from a runtime notice
+- **THEN** that notice remains visible with its original ownership and severity
+- **AND** text similarity alone does not authorize retirement
+
 ### Requirement: Delegated skill prelaunch rejection remains visible without changing authority
 The runtime SHALL publish delegated-skill prelaunch rejection through existing
 AgentFS notice and retained terminal-error surfaces when the invocation is invalid,

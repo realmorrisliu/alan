@@ -3,11 +3,14 @@
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
-FAIL and fifteen NOT_RUN through forty development attempts. All fifteen
-macOS slots qualified the earlier frozen candidate. All six F1/F2 refreshes pass
-on integrated source `465e3e47`; nine macOS refreshes remain. A newly observed
-delegated-skill prelaunch failure-publication gap requires a narrow repair and
-applicability audit; six source-applicable receipts are not proof for that repair.
+FAIL and fifteen NOT_RUN through forty-one development attempts. All fifteen
+macOS slots qualified an earlier frozen candidate; six F1/F2 refreshes passed
+on `465e3e47`. The prelaunch publication repair `bdf14ab0` passes all sixteen
+current-head checks. Its native F3 r1 a3 passes independent behavior but fails
+UI qualification because the retained failure repeats in the live footer.
+Aggregate v40 therefore records zero qualified slots on this new source. A
+narrow TUI ownership/notice retirement repair and final-source native acceptance
+remain required; no historical receipt qualifies that repair.
 
 The branch now incorporates predecessor `a6ea2518`, whose sixteen current-head
 checks pass and review threads are resolved. #1046 remains unmerged; formal
@@ -16,9 +19,10 @@ approval, ADR-0058 adoption and user-controlled canonical closure are distinct.
 candidate `465e3e47` passes normal commit quality/distribution and all sixteen CI
 checks. Its new macOS CLI/source/readiness identities are frozen. Linux's new
 CLI builds from the same public source, but has no generation profile and still
-needs actual generation/PTY readiness. The subsequent prelaunch UI repair needs
-its own normal commit, source/binary freeze, affected native acceptance and
-current-head CI; neither PR is merged by these records.
+needs actual generation/PTY readiness. The prelaunch UI repair has its own normal
+commit and source/binary freeze, with current-head CI passing. Its failed native
+UI acceptance is retained; the additional TUI repair requires normal gates, a new
+freeze and affected native acceptance. Neither PR is merged by these records.
 
 Actual comparison against the frozen macOS CLI's 437 compiled inputs finds one
 changed input: `crates/os-host/src/host_mounts/text_projection.rs`. It is shared
@@ -26,7 +30,7 @@ by Tool stdout/stderr/errors. The earlier all-input equality proof is historical
 conservatively rerun all fifteen macOS slots on the final candidate, retaining
 every earlier receipt and original outcome. Native Host/Clippy checks do not
 substitute for model-authored tasks. Final applicability remains open for the
-other twenty-four slots until the required final-source evidence is recorded.
+all thirty slots until the required final-source evidence is recorded.
 
 Fresh disposable baselines for the same thirty slots are prepared in the owned
 `dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,

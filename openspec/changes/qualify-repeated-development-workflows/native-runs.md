@@ -9,13 +9,17 @@ and fifteen qualified macOS slots: eleven first PASS, four first FAIL and fiftee
 Linux NOT_RUN. All fifteen matched the earlier frozen candidate, including the
 three later F4 lifecycle reruns. One unintended verifier generation stays
 separate. Task attempts are not API-call counts; F4 includes explicit continuation.
-The latest parent `a6ea2518` changes the shared diagnostic projector, reopening
-final-source applicability for all fifteen macOS slots. Aggregate v38 adds six
-fresh F1/F2 PASS runs on integrated source `465e3e47`: forty attempts,
-fifteen historical qualified slots and six source-applicable slots. Nine
-macOS refreshes remain before the newly observed prelaunch UI repair. No old receipt is deleted
-or relabeled as a new run. Linux generation readiness, task 1.4 and cross-platform
-final delivery remain open. The sections below retain the chronological attempts.
+Parent `a6ea2518` changed the shared diagnostic projector, reopening final-source
+applicability. Aggregate v38 retained six F1/F2 PASS refreshes on `465e3e47`.
+The subsequent prelaunch publication repair `bdf14ab0` passes all sixteen CI
+checks, but its native F3 r1 a3 fails UI qualification: the model's correction
+and protected behavior pass, while the same retained error repeats in the live
+footer. Aggregate v40 retains forty-one attempts, fifteen historical qualified
+slots and zero qualified slots on the new source. A narrow TUI repair and fresh
+acceptance remain required; older results do not qualify that repair. Original
+eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
+readiness, task 1.4 and cross-platform final delivery remain open. The sections
+below retain the chronological attempts.
 
 ## Candidate and receipts
 
@@ -1896,3 +1900,52 @@ delegation error versus correlated parent completion. Normal commit quality/
 distribution, new-head CI and fresh native repair acceptance are recorded
 separately when terminal, never inferred from these passing regression gates. Initial environment failures remain in
 `target/delegated-prelaunch-engine-tests.log` and the retained qualification notes.
+
+
+## Native F3 prelaunch publication and duplicate footer finding — 2026-10-11
+
+Normal commit quality/distribution and all sixteen checks pass on `bdf14ab0`.
+Its frozen native CLI is `8307682a`, with 437 compiled inputs matching committed
+source; only the two delegated-skill runtime inputs differ from `465e3e47`.
+The original F3 r1 task runs through the native Herdr pane with gpt-6.1-sol medium,
+actual compiler RED, model-authored correction only in src/lib.rs and Cargo GREEN.
+A rejected delegated cwd now independently publishes the actual reason through
+AgentFS notice and one retained Error event. The parent completes its direct
+fallback; rejection remains authority refusal, not successful child support.
+
+Separate native verification passes the original protected_behavior assertions.
+Original tests/config/project boundaries and protected assertion/driver inventories
+remain unchanged. Both model and verifier Tool Processes and native owners exit;
+behavior verification takes 279.89 s and submission through verified cleanup
+363.69 s, within the original 600-second bound. Detail paging, scrollback and
+logical draft/cursor restoration remain observed. However, a settled parent
+Completed still shows the same error twice: retained history and persistent live
+footer. Required UI qualification fails, so this attempt is retained as FAIL and
+adds no qualified slot. Model boot is `008795bd-7ca4-4dac-94d7-2413460197f6`,
+native PID 50772, Root 8, submission `350b0092-b52e-4474-b997-0e2d3e0edf8e`.
+Receipt attempts/macos-f3-r1/a3/receipt.json SHA-256 is
+`497573d4f1f7cf33d3d7080691ecc1c4e6bf4224c49f7f381a428687728303e9`.
+Aggregate first-outcomes-v40.json SHA-256 is
+`8dce2d6de301f928fc034c0c932771b3e5529dff5580b3ed7d1432f9d4bda999`:
+41 model attempts, original 11 first PASS/4 FAIL/15 NOT_RUN, 15 historical qualified
+slots, zero qualified slots on bdf14ab0. No old outcome or denominator changes.
+
+Collector limits remain explicit: raw UI JSONL was saved before the single-JSON
+decoder rejected multiple events; the observer/model was not restarted, and
+line-by-line inspection confirms the real event pair and Completed receipt.
+Current definition/memory metadata was collected after submission, although
+prospective config/compiler identities were frozen. No memory bodies were read or
+cleared, and no statistical independence or complete prospective metadata proof
+is inferred. There was no model advice or operator source edit.
+
+The shared TUI Notice value now distinguishes runtime-owned from local notices.
+A matching runtime Error notice retires only when its retained Error is handled;
+identical local text, runtime Warning and unrelated runtime Error survive. Error
+history, parent completion, draft/cursor and underlying AgentFS evidence remain
+unchanged. The focused regression first reproduces the duplicate on old code;
+its initial test-import compile error is retained separately, not called RED
+behavior evidence. The corrected regression fails its retirement assertion before
+the production repair. Full TUI tests after the repair pass 384 unit and 12
+integration tests, including actual file-backed hydration of Notice/Error/Completed.
+This is regression evidence; fresh native acceptance, normal gates and current-head
+CI for the additional TUI repair remain separate delivery requirements.
