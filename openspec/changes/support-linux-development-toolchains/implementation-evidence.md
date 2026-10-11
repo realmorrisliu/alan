@@ -888,3 +888,28 @@ boolean backing-root check; AP, Kernel and Agent Process types remain unchanged.
 No registry, configuration or dependency is added. This repairs observed path/
 identity divergence before native Tool projection, while concurrent post-check
 Host mutation remains outside the claimed guarantee.
+
+### Publication and final boundary review refresh — 2026-10-11
+
+Published source head cace913c passes all sixteen completed checks, including
+quality, both platform test/release jobs, harnesses and CodeQL. Current inline
+review comments are empty. The final review follows the Host Mount Service's
+active same-PID projection filter through per-launch reconciliation, the common
+native adapter's selected-first/read-only-only shell projection and the existing
+HostDirFs directory-handle identity check. Invalid non-root cwd, revoked sticky
+cwd grants, mixed-access overlap, retargeted/replaced roots and authority
+amplification remain refusals; the retained compiled-reader and cached-revocation
+receipts cover those boundaries. No additional production repair is found.
+
+#1047 now incorporates cace913c and its observed production repairs. Its published
+f84c21d4 source matches the frozen native candidate's 827 crate/workspace files,
+with only the separately qualified observer added, and passes all sixteen checks.
+That change records fifteen final-candidate macOS slots through thirty-four
+development attempts; fifteen Linux slots remain NOT_RUN. Neither its real-model
+receipts nor its later operator tooling setup replaces this change's frozen
+installation/package/native authority receipts.
+
+This documentation refresh prepares #1046 for formal review and requires its own
+normal quality/distribution and current-head CI. It changes no source or authority,
+adopts no ADR-0058 extension and merges/deploys nothing. Checklist remains 13/15
+until formal review and user-controlled canonical delivery close their gates.

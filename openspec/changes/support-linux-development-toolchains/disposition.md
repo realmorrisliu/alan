@@ -33,20 +33,23 @@ unchanged 379-node Rust and 217-entry Git inventories, and limitations are in
 implementation-evidence.md. macOS arbitrary-reader OS confinement is not inferred.
 Original private-root Git PATH and native wrappers remain explicit refusals.
 
-Draft PR #1046 remains unmerged. Its previously published ce7aa5dd head passed all
-16 distinct checks; they do not qualify this new candidate. Publication requires
-normal-commit full quality and standalone distribution, followed by its own
-current-head CI. Full quality and standalone distribution passed at the first
-root-checked normal commit e757df2e; the Linux-only absolute-manifest fixture
-extension and retained-directory identity repair have their own fresh native
-Host/HostFs/Clippy and macOS Host/HostFs evidence; publication runs the normal hook
-gates again. Tasks
-are **13/15 complete**; review/current-head CI and user merge/canonical closure
-remain open.
+PR #1046 remains unmerged and is prepared for formal review. Source candidate
+cace913c passed all sixteen current-head checks, full quality and standalone
+distribution. Its absolute-manifest and retained-directory identity evidence
+remains scoped to the exact frozen source/binaries. The final boundary review
+rechecks active same-PID grants, selected-only writable authority, invalid cwd,
+retained-directory identity and per-launch reconciliation; no new finding or code
+change is introduced by this status refresh. The new documentation head requires
+its own normal-commit quality and current-head CI before promotion from draft.
+Tasks remain **13/15 complete**: formal review and user merge/canonical closure
+are outstanding; earlier-head checks are never substituted for new-head checks.
 
 The ADR-0058 dependency extension is a reviewable draft candidate pending user
 adoption/merge; the delivered main single-grant baseline is unchanged. Wider
-qualification is independently planned in draft PR #1047: thirty real-model
-slots remain NOT_RUN. Keep fallback/approval, network and automatic-routing
+qualification is independently tracked in draft PR #1047: all fifteen macOS
+slots qualify on the final candidate through thirty-four development attempts;
+all fifteen Linux slots remain NOT_RUN for missing generation readiness. These
+are that change's receipts, not this delivery's native Tool tests. Keep
+fallback/approval, network and automatic-routing
 posture unchanged; do not start Alan self-development instances in place of
 Codex-authored implementation.
