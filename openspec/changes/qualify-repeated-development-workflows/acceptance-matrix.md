@@ -20,10 +20,13 @@ All fifteen macOS slots require conservative reruns. Six F1/F2 refreshes passed
 on `465e3e47`. All six retain a delegated-skill launch rejection followed by
 direct model fallback. The publication repair `bdf14ab0` passes CI, but native
 F3 r1 a3 fails required UI checks despite independently correct code: the same
-retained error repeats as a live footer after parent completion. Aggregate v40
-retains forty-one attempts and zero qualified slots on the new source. Fifteen
-earlier qualified slots remain historical. The additional narrow TUI repair
-requires a new freeze and affected native acceptance without resetting outcomes.
+retained error repeats as a live footer after parent completion. The TUI repair
+`573cd12e` passes normal gates and all sixteen CI checks. Aggregate v45 retains
+forty-five attempts and three qualified F3 slots on this source. A detail-capture
+audit withholds an earlier claimed PASS while keeping its immutable receipt;
+the fresh retry captures the actual modal and changed page. Fifteen earlier
+qualified slots remain historical. Twelve macOS refreshes and all fifteen Linux
+tasks still require applicable final-source acceptance without resetting outcomes.
 Original outcomes and all earlier attempts are
 retained, without resetting the denominator; the remaining receipt rows are historical.
 Fresh baselines for the same thirty tasks match the original prompts, source
@@ -83,9 +86,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained; integrated-source a4 PASS `e4b12f0b` |
 | macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; original a1 `e3313a3a`; final-candidate a2 PASS `330cd58d`; integrated-source a3 PASS `6485ba9e` |
 | macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; original a1 `42c7ae59`; final-candidate a2 PASS `a8f7da36`; integrated-source a3 PASS `06a9b4c8` |
-| macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; original a1 `41bc46fa`; earlier-candidate a2 PASS `8386abe9`; prelaunch-source a3 FAIL UI `497573d4` |
-| macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; original a1 `a6e6c051`; final-candidate a2 PASS `c1eaa463` |
-| macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; original a1 `0ef06fc9`; final-candidate a2 PASS `58da21c8` |
+| macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; original a1 `41bc46fa`; earlier-candidate a2 PASS `8386abe9`; prelaunch-source a3 FAIL UI `497573d4`; notice-source a4 claim withheld by detail audit `ad41407a`; fresh a5 PASS `9113f519` |
+| macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; original a1 `a6e6c051`; earlier-candidate a2 PASS `c1eaa463`; notice-source a3 PASS `d29cf3a0` |
+| macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; original a1 `0ef06fc9`; earlier-candidate a2 PASS `58da21c8`; notice-source a3 PASS `b2ef5a92` |
 | macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` FAIL retained; fresh a3 PASS `bd740877`; final-candidate a4 PASS `ec82476c` |
 | macos-f4-r2 | macos / Herdr | F4 | 2 | PASS | native-runs.md; original a1 `4abcf29e`; final-candidate a2 PASS `28841368` |
 | macos-f4-r3 | macos / Herdr | F4 | 3 | PASS | native-runs.md; original a1 `04dcb923`; final-candidate a2 PASS `104cf401` |

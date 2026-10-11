@@ -11,8 +11,10 @@ The checks below retain completed historical repetitions. The shared-projector
 review repair reopens final-source applicability for all fifteen macOS rows.
 Six linked F1/F2 refreshes passed on `465e3e47`. The subsequent prelaunch-source
 F3 r1 a3 fails UI qualification despite independently correct code. Task 4.2
-requires the matching runtime notice repair and applicable final-candidate native
-evidence for all fifteen rows; historical checkmarks do not qualify new behavior.
+requires applicable final-candidate native evidence for all fifteen rows. The
+notice repair now has three qualified F3 repetitions, including a fresh retry
+after an insufficient-detail capture audit; twelve macOS refreshes remain.
+Historical checkmarks do not qualify new behavior.
 
 - [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.
 - [x] 2.2 Run cross-file changes three times with all required callers updated and no unrelated edits.

@@ -14,9 +14,12 @@ applicability. Aggregate v38 retained six F1/F2 PASS refreshes on `465e3e47`.
 The subsequent prelaunch publication repair `bdf14ab0` passes all sixteen CI
 checks, but its native F3 r1 a3 fails UI qualification: the model's correction
 and protected behavior pass, while the same retained error repeats in the live
-footer. Aggregate v40 retains forty-one attempts, fifteen historical qualified
-slots and zero qualified slots on the new source. A narrow TUI repair and fresh
-acceptance remain required; older results do not qualify that repair. Original
+footer. The narrow TUI repair `573cd12e` passes normal gates and all sixteen CI
+checks. Aggregate v45 retains forty-five attempts, fifteen historical qualified
+slots and three qualified F3 slots on this source. A detail-capture audit withholds
+one earlier claimed PASS without changing its immutable receipt; a fresh retry
+provides actual modal/page evidence. Twelve macOS refreshes and all fifteen Linux
+tasks remain; older results do not qualify this repair. Original
 eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
 readiness, task 1.4 and cross-platform final delivery remain open. The sections
 below retain the chronological attempts.
@@ -1949,3 +1952,78 @@ the production repair. Full TUI tests after the repair pass 384 unit and 12
 integration tests, including actual file-backed hydration of Notice/Error/Completed.
 This is regression evidence; fresh native acceptance, normal gates and current-head
 CI for the additional TUI repair remain separate delivery requirements.
+
+
+## Runtime notice retirement and audited F3 refresh — 2026-10-11
+
+Production repair `573cd12eb0ddec1e1b19d2fbfb492fe8c3d729e1` passes normal commit
+quality/standalone distribution, full TUI 384 unit plus 12 integration tests,
+strict OpenSpec 70/70 and all sixteen current-head checks. Frozen CLI SHA-256 is
+`950e1ce5338b60f73e07131bd233c9193da0aa01221acf05f8902138e92b1497`.
+All 437 compiled inputs match the clean committed source; only app/history.rs
+and app/notice.rs differ from bdf14ab0. The existing private Notice records
+runtime ownership; a matching runtime Error retires when its Error is retained.
+Local identical text, runtime Warning and unrelated runtime Error remain. There
+is no protocol/config/dependency change or lifecycle/authority mutation.
+Freeze receipt SHA-256 is
+`8cf1873907184399e959955ff7071777fe80888c36020aa2e1a661f531b776eb`;
+retained gates/CI receipt is
+`283d952e4394b54b55461e722a62e5fd571a5bc951155c479325293619326191`.
+
+An initial F3 r1 a4 receipt claimed PASS after correct model source, independent
+protected behavior, one retained Error/no duplicate live footer and draft/caret
+checks. Later artifact audit finds its detail-open/page frames captured before
+the terminal redraw; delivering controls is insufficient evidence of retained
+details. Keep the immutable primary receipt ad41407a and append the qualification
+audit rather than rewriting it. Aggregate v42 withholds its qualification and
+requires a fresh unchanged-task retry. Audit SHA-256 is
+`bd2b0f66022e21a076f6ef9e711e3a66302bac1d512ce062c98b6880c39cccef`.
+The earlier read-only missing-path observations, rejected mount access spelling
+before Host mutation and draft observation lag remain disclosed. These are
+collector/procedure limitations, not an erased model outcome or invented UI pass.
+
+All three F3 tasks now qualify on the same frozen repair. r1 uses a fresh v2
+fixture with the original missing BTreeSet import; r2 retains the missing module
+file/compiler diagnosis and corrects only lib's module declaration/reference;
+r3 fixes the actual Result-versus-i32 error with unwrap_or(0). Model edits only
+src/lib.rs, preserving original tests, operations.rs where present, Cargo files
+and fixture data. Independent fresh native verifiers pass the original protected
+assertions from read-only project/assertion grants and private writable checker
+scratch. Source/assertion/driver inventories remain unchanged by verification.
+
+| Slot / attempt | Behavior verification | Submission through verified cleanup | Receipt SHA-256 |
+| --- | --- | --- | --- |
+| macos-f3-r1 / a5 | 187.59 s | 229.57 s | `9113f5199e59eb9146b0d5d1834f1278028e44ac9fdeb51b8061ca2627ffdd2b` |
+| macos-f3-r2 / a3 | 217.81 s | 259.02 s | `d29cf3a0a2316e63d11436a7ebe4715b1574b7e3a2b0efcd6b172f83a3763447` |
+| macos-f3-r3 / a3 | 273.97 s | 333.27 s | `b2ef5a920cc81c6a01e91497aa4bcecd404285eb40205b546fd54fac94d30466` |
+
+Each attempt has actual gpt-6.1-sol medium admission/generation, a prospective
+selected-tool/config/definition/memory exposure record, actual 80x24 PTY/Host,
+real RED and model-authored GREEN. Every rejected virtual delegated launch now
+has one retained UI Error and no duplicate live Error after its parent's correlated
+Completed. None is successful child qualification. All discovered Tool Processes
+and both native owners exit within the unchanged 600-second bound. Actual retained
+Action detail frames are captured; r1/r3 additionally observe the modal before
+Space and capture a changed page before Esc. Returning to the middle of abcXYZ
+and inserting delta produces abcδXYZ. Host scrollback remains captured. No
+corrective model advice, operator solution edit, task restart or unintended
+verifier generation occurs; one model grant, one version-check setup approval and
+three verifier grants are planned per run. r2's prelaunch fixture parent-directory
+preparation failure is retained separately, without adding a model attempt.
+
+Fresh v1/v2 fixture inputs preserve all thirty original prompts/follow-ups,
+baseline source bytes, protected assertions, allowed effects, 80x24 geometry,
+600-second bounds and long-diff bytes; only operator backing paths/Git setup
+identity differ. Memory bodies are not collected or cleared, and statistical
+independence, exact cursor coordinates, general macOS read isolation, provider
+usage/cost and model/Tool/wait time partitions are not claimed. Recorded total
+wall time includes operator observation and verification, not only product latency.
+
+Aggregate first-outcomes-v45.json SHA-256 is
+`d4fd2c7c5b04da26e059a7f47f3cc635f490e30298b5df91b22b67f5b979750c`:
+45 model attempts, 15 historical qualified slots, three applicable F3 slots on
+573cd12e, original 11 first PASS/4 FAIL/15 NOT_RUN unchanged. The superseding audit
+and all original receipts remain linked. Twelve macOS refreshes and fifteen Linux
+real-model tasks remain; checklist stays 8/19. This documentation-only follow-up
+needs its own normal commit gates and current-head CI, with 437-input applicability
+rechecked rather than rerunning native tasks merely for documentation changes.
