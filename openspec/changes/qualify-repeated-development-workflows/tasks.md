@@ -8,8 +8,9 @@
 ## 2. macOS real-model tasks in Herdr
 
 The checks below retain completed historical repetitions. The shared-projector
-review repair reopens final-source applicability for all fifteen macOS rows;
-task 4.2 requires the linked fresh-candidate reruns before final qualification.
+review repair reopens final-source applicability for all fifteen macOS rows.
+All three linked F1 refreshes now pass on integrated source `465e3e47`; task 4.2
+requires the remaining twelve fresh-candidate reruns before final qualification.
 
 - [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.
 - [x] 2.2 Run cross-file changes three times with all required callers updated and no unrelated edits.

@@ -3,24 +3,28 @@
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
-FAIL and fifteen NOT_RUN through thirty-four development attempts. All fifteen
-macOS slots qualified the earlier frozen candidate; they are not final-source
-qualification for the newly reviewed shared diagnostic projector.
+FAIL and fifteen NOT_RUN through thirty-seven development attempts. All fifteen
+macOS slots qualified the earlier frozen candidate. All three F1 refreshes pass
+on integrated source `465e3e47`, giving three final-source-qualified slots;
+the remaining twelve macOS slots still require refresh.
 
 The branch now incorporates predecessor `a6ea2518`, whose sixteen current-head
 checks pass and review threads are resolved. #1046 remains unmerged; formal
 approval, ADR-0058 adoption and user-controlled canonical closure are distinct.
 #1047 retains main as its CI base and must merge after #1046. Its integrated
-candidate still needs its own normal commit/quality/distribution, CI and new
-native source/binary/readiness freeze.
+candidate `465e3e47` passes normal commit quality/distribution and all sixteen CI
+checks. Its new macOS CLI/source/readiness identities are frozen. Linux's new
+CLI builds from the same public source, but has no generation profile and still
+needs actual generation/PTY readiness. This evidence-only follow-up needs its
+own normal commit and current-head CI; neither PR is merged by these records.
 
 Actual comparison against the frozen macOS CLI's 437 compiled inputs finds one
 changed input: `crates/os-host/src/host_mounts/text_projection.rs`. It is shared
 by Tool stdout/stderr/errors. The earlier all-input equality proof is historical;
 conservatively rerun all fifteen macOS slots on the final candidate, retaining
 every earlier receipt and original outcome. Native Host/Clippy checks do not
-substitute for model-authored tasks. Final applicability remains open for every
-slot until this refresh or independently applicable evidence is recorded.
+substitute for model-authored tasks. Final applicability remains open for the
+other twenty-seven slots until the required final-source evidence is recorded.
 
 Fresh disposable baselines for the same thirty slots are prepared in the owned
 `dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,
@@ -29,7 +33,7 @@ original manifest. Only operator checker backing paths and fresh local Git
 setup identity change. This preparation adds no model attempts or qualified slots.
 Linux generation remains unconfigured and all fifteen Linux slots are NOT_RUN;
 no credentials/private stores are copied. Earlier Linux quality, Tool and PTY
-receipts remain historical pending a newly integrated candidate freeze. Final
+receipts remain historical; the new Linux build-only freeze adds no model task. Final
 main-source verification and user merge/canonical closure remain open.
 Planning artifacts and offline fixture checks do not prove completed real-model
 development tasks or passed native slots. No superseded or archived change is reactivated.
@@ -51,17 +55,17 @@ disjoint-grant adoption remains outstanding;
 these tests do not adopt ADR-0058 or deploy a candidate to an installed runtime.
 UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
-the frozen `cace913c` plus recorded repairs; the branch now includes the subsequent
-Linux review delta. r2 freezes macOS readiness; Linux generation and complete cross-Host
+the newly frozen integrated source `465e3e47`. Earlier `cace913c` plus recorded
+repairs remains historical. Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
-are fifteen out of thirty through thirty-four development task attempts, retaining
+are fifteen historical slots out of thirty through thirty-seven development attempts, retaining
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
 Matching earlier-candidate source/binary evidence covers all fifteen historical
 macOS slots, including three cancel/revoke/explicit-recovery reruns; the latest
-shared-projector source still requires final-candidate model evidence. F1 r1's a3
+shared-projector source has three qualified refreshes and requires twelve more. F1 r1's a3
 collector-identity failure stays retained. All Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout

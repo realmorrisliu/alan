@@ -16,9 +16,12 @@ not zero-unplanned-intervention. All fifteen macOS slots have matching
 historical frozen-candidate proof, including the three F4 lifecycle reruns.
 The latest reviewed parent `a6ea2518` changes the shared diagnostic projector,
 one of that CLI's 437 compiled inputs, reopening final-source applicability.
-All fifteen macOS slots will be rerun conservatively; the following receipt
-column is historical until linked final-candidate evidence is added. Original
-outcomes and thirty-four attempts are retained, without resetting the denominator.
+All fifteen macOS slots require conservative reruns. Fresh `macos-f1-r1/a5`,
+`macos-f1-r2/a3` and `macos-f1-r3/a3` pass on integrated source `465e3e47`;
+twelve macOS refreshes remain. There are now thirty-seven development attempts,
+fifteen historical qualified slots and three final-source-qualified slots.
+Original outcomes and all earlier attempts are
+retained, without resetting the denominator; the remaining receipt rows are historical.
 Fresh baselines for the same thirty tasks match the original prompts, source
 bytes, assertions, bounds and long-diff bytes. Preparation/native checks add no
 model attempts. All fifteen Linux slots remain unexecuted for missing generation
@@ -68,11 +71,11 @@ content; generated role-prefix regression checks follow ADR-0059.
 
 ## Thirty initial slots
 
-| Slot | Platform / Host | Family | Repetition | First outcome | Historical qualified evidence; final refresh pending |
+| Slot | Platform / Host | Family | Repetition | First outcome | Historical evidence and linked final refresh |
 | --- | --- | --- | --- | --- | --- |
-| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; final-candidate a3 FAIL `7f7ddbdb` retained, fresh a4 PASS `7b2e4c0c`; a1 retained |
-| macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; final-candidate a2 PASS `1e499e15` |
-| macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; original a1 `9c9a1a6f`; final-candidate a2 PASS `997fd0dd` |
+| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; earlier-candidate a3 FAIL `7f7ddbdb`, a4 PASS `7b2e4c0c`; integrated-source a5 PASS `13432009`; a1 retained |
+| macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; earlier-candidate a2 PASS `1e499e15`; integrated-source a3 PASS `4144cce1` |
+| macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; original a1 `9c9a1a6f`; earlier-candidate a2 PASS `997fd0dd`; integrated-source a3 PASS `d41c3bdb` |
 | macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained |
 | macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; original a1 `e3313a3a`; final-candidate a2 PASS `330cd58d` |
 | macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; original a1 `42c7ae59`; final-candidate a2 PASS `a8f7da36` |

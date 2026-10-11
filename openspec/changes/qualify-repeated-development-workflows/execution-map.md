@@ -2,10 +2,11 @@
 
 This records supported operator controls. Current actual task outcomes are in
 `native-runs.md`: eleven first PASS, four first FAIL, fifteen NOT_RUN slots and
-fifteen historically qualified slots through thirty-four development task
+fifteen historically qualified slots through thirty-seven development task
 attempts. The latest shared-projector repair changes one of the 437 macOS
-compiled inputs, reopening final-source applicability; all fifteen macOS slots
-will be refreshed conservatively. Linux generation is open. Fixture
+compiled inputs, reopening final-source applicability; all three F1 refreshes
+now pass on integrated source `465e3e47`, with twelve macOS refreshes remaining.
+Linux generation is open. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
 
@@ -23,10 +24,12 @@ task outcomes.
   first. Its PR base remains main so complete CI workflows run. Compared with
   the earlier frozen CLI's actual 437 compiled inputs, one shared production file
   now differs: `host_mounts/text_projection.rs`. Earlier all-input equality is
-  historical. Freeze a new candidate and refresh all fifteen macOS rows before
-  final qualification; original attempts/first outcomes are retained. The SDK
-  observer is qualification-only. Integrated quality/CI, Linux native readiness
-  and final user-merged main verification remain separate gates.
+  historical. The new candidate is frozen and all three F1 refreshes pass;
+  refresh the remaining twelve rows before final qualification. Original
+  attempts/first outcomes are retained. The SDK
+  observer is qualification-only. Integrated `465e3e47` quality/distribution and
+  all sixteen CI checks pass. New Linux CLI build/source identity is recorded,
+  but generation/PTY readiness and final user-merged main verification remain gates.
 - Earlier frozen macOS native CLI: cace913c plus the exact production repairs and 35-file
   inventory recorded in `native-runs.md`, built in the owned
   `responses-native-verify-20261011` worktree at

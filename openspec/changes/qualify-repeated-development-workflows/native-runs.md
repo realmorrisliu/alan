@@ -4,13 +4,16 @@ The original three frozen macOS F1 inputs qualify through four normal-CLI real-m
 executions in Herdr, without corrective model advice or operator source edits.
 The original r1 attempt omitted prospective exact PATH/executable identity and
 remains FAIL; its fresh linked retry passes without replacing that first outcome.
-Latest historical aggregate v32 retains thirty-four development task attempts
+Historical aggregate v32 retains thirty-four development task attempts
 and fifteen qualified macOS slots: eleven first PASS, four first FAIL and fifteen
 Linux NOT_RUN. All fifteen matched the earlier frozen candidate, including the
 three later F4 lifecycle reruns. One unintended verifier generation stays
 separate. Task attempts are not API-call counts; F4 includes explicit continuation.
 The latest parent `a6ea2518` changes the shared diagnostic projector, reopening
-final-source applicability for all fifteen macOS slots. No old receipt is deleted
+final-source applicability for all fifteen macOS slots. Aggregate v35 adds three
+fresh F1 PASS runs on integrated source `465e3e47`: thirty-seven attempts,
+fifteen historical qualified slots and three final-source-qualified slots. Twelve
+macOS refreshes remain. No old receipt is deleted
 or relabeled as a new run. Linux generation readiness, task 1.4 and cross-platform
 final delivery remain open. The sections below retain the chronological attempts.
 
@@ -1676,3 +1679,124 @@ This adds zero model attempts; original thirty slots, thirty-four attempts and
 first outcomes remain retained. Linux generation remains unconfigured; no private
 Store or credential copy, model substitution, automatic routing or production
 Alan self-development is authorized by this qualification.
+
+## Integrated candidate freeze and first refreshed task — 2026-10-11
+
+Integrated head `465e3e474ee8af98a7647b5eee06e748b9fd9aa6` has public tree
+`2fac9b16c2ba4a00edd1ed1ad643475ff7a22d6d`. Its normal commit hook passes
+quality/standalone/distribution; pinned strict OpenSpec is 70/70 and fixture
+self-checks are 6/6. All sixteen checks pass at this exact head. The immutable
+`current-head-ci-v1/receipt.json` SHA-256 is
+`909dba16bd039d61d666b0ae49e13762677c9bebb10645276467d9ba9979ca84`.
+Formal review, user merge and canonical closure remain distinct gates.
+
+The separately frozen macOS CLI SHA-256 is
+`81cff69cc17c47ac66c3fdb2fe369f6515f63a273a35d7b490da1a862073b1a6`;
+all 437 recorded compiler inputs match committed blobs. Candidate receipt
+`macos-candidate-v1/receipt.json` SHA-256 is
+`1c8c17f80085644e25b977eb8d4e508d234e79dd23f44b5873eddb893fb56577`.
+The native Linux public checkout is clean with the exact same tree. Its frozen
+CLI SHA-256 is `c59e8b0bee3785a5908da0857e4e386f834cc894cadfad313d4ef8bac59b2d22`.
+Actual native CLI build passes using the registered task-owned debug-info-disabled
+output; this is not a claim of complete default-profile Linux quality or fresh
+PTY qualification. `linux-candidate-v1/receipt.json` SHA-256 is
+`4d78190351e58b8dfcdea7a4334bfd41de341d1aebc48a0ed21965a47048457d`.
+The actual frozen CLI still reports no configured Connection profiles. Public
+source is copied without credentials, private Stores or original Git metadata;
+the Linux build adds zero model slots.
+
+Fresh `macos-f1-r1/a5` uses the unchanged original addition prompt, project
+baseline, protected assertions and 600-second limit. Actual stdin PTY and Host
+layout are both 80x24. Before generation, public numeric-Process observation
+confirms `chatgpt-main`, `gpt-6.1-sol`, medium effort and a settled queue. The
+planned version command selects Rust/Cargo 1.93.0 and Apple Git 2.54.0, matching
+the prospective executable/runtime hashes from the actual project cwd; its
+approval record confirms Seatbelt. Definition/config and default Memory exposure
+are recorded without clearing memory or claiming independent statistical samples.
+The separately frozen observer retains source `8346bb55` and binary `6ff28b7f`;
+it attaches through the existing SDK rather than booting or generating work.
+
+The real model retains contract RED in a2 (exit 101, observed 5 versus expected 9),
+recovers without advice from a3's non-Git diagnostic, changes only `src/lib.rs`
+in a5, and passes the unchanged original contract in a6. Model boot
+`de657a34-3de5-407a-8426-b1b87df08719` owns Root `/proc/8`, submission
+`182bb272-2be1-49bb-9858-f7ad952bf26c` and rollout
+`dc570914-da3e-44f0-874b-286948cacde4`; its actual generation metadata confirms
+the model and effort. All six Tool Processes are observed exited before `/quit`,
+and the native invocation PID is gone before the separate verifier starts.
+
+The verifier receives only project/protected assertions read-only and checker
+scratch read-write. Ordinary explicit Cargo compiles the real model-authored
+source with the original protected assertions and passes `protected_behavior`.
+Source/tests/config/protected assertions/driver hashes remain unchanged through
+checking, and both verifier Tool and native invocation exit. Behavior verification
+takes 170.14 seconds; submission through verified cleanup takes 212.50 seconds,
+within the predeclared bound. Time partitions, provider usage and cost remain unknown.
+
+Raw text/ANSI captures retain both original failed/successful Action details,
+Space paging, Chinese/emoji draft preservation after Esc, and Host scrollback.
+Exact cursor coordinates are not measured by this refreshed task. One planned
+`home` detail-navigation key is rejected by Herdr before delivery; its error and
+supported-arrow continuation are retained, not hidden as a flawless UI operation.
+One immediate verifier readiness read precedes publication and is reobserved on
+the same launch without restarting. There are zero operator source edits,
+corrective model messages, task restarts or unintended verifier model turns.
+One planned model-project grant, one setup approval and three checker grants are
+recorded; no approval-free autonomy or general macOS Host read isolation is claimed.
+
+Receipt `attempts/macos-f1-r1/a5/receipt.json` SHA-256 is
+`134320095f628e6547edea982282b1214adae806ed45dafc3e7b833e50330046`;
+separate `cleanup-timing-v1.json` retains the verified-exit timing.
+Aggregate `first-outcomes-v33.json` SHA-256 is
+`97988ec9bce2aa187c2ebff25b81d3f9b7db68d545a693046cbfe716ed24e466`.
+It retains all thirty slots and eleven first PASS/four first FAIL/fifteen NOT_RUN,
+adds development attempt 35, and distinguishes fifteen historical qualified slots
+from one final-source-qualified slot. Fourteen macOS refreshes and all fifteen
+Linux real-model tasks remain open. No old outcome or receipt is overwritten.
+
+## Remaining F1 refreshes on the same integrated source — 2026-10-11
+
+Fresh `macos-f1-r2/a3` and `macos-f1-r3/a3` repeat the original absolute-difference
+and inclusive-clamp tasks on new baselines and separate native invocations.
+Before each generation, all 437 compiled input hashes and the frozen CLI digest
+still match; original prompt/project/protected-checker bytes and allowed changes
+are unchanged. Actual 80x24 geometry, effective `chatgpt-main`/`gpt-6.1-sol`/medium,
+project-cwd selected executable/runtime hashes and Seatbelt are recorded. These
+do not reuse already-corrected projects or replace either first PASS outcome.
+
+Each real model records a2 contract RED, recovers from its own non-Git diagnostic,
+edits only `src/lib.rs` in a5 and passes the unchanged Cargo contract in a6.
+The r2 RED observes 6 instead of 5; r3 observes -5 instead of 5. The separate
+native verifiers receive only read-only project/protected assertions and writable
+checker scratch. Fresh compilation and original `protected_behavior` pass;
+source/tests/config/assertions/driver hashes stay unchanged through checking.
+All observed model/verifier Tool Processes exit, both owning native invocations
+actually exit, and the owned pane returns to its shell. No production edits,
+corrective model advice, generation restart or unintended verifier turn occurs.
+Planned grants/approval/detail/lifecycle actions remain counted. Immediate
+readiness observations precede publication once for r2 and twice for r3; the same
+live launches are reobserved, never replaced to manufacture readiness.
+
+Raw detail/scrollback captures preserve the failed and successful Action streams
+and Space paging. r2's draft middle survives details: inserting delta after Esc
+produces `abcδXYZ`, proving the logical insertion point. r3 retains its Chinese/
+emoji draft after returning. Exact terminal cursor coordinates, general macOS
+Host read isolation, provider usage/cost and model/Tool/wait partitions remain
+unmeasured; the sample does not establish general self-bootstrap eligibility.
+
+| Slot / attempt | Behavior verification | Submission through verified cleanup | Receipt SHA-256 |
+| --- | --- | --- | --- |
+| macos-f1-r2 / a3 | 152.10 s | 186.92 s | `4144cce18aa6cf6d0bbcd2af4cf3d6361721cc2640558070e304de2c9c5b90bd` |
+| macos-f1-r3 / a3 | 180.61 s | 212.19 s | `d41c3bdb1deff8910b67e88908fb673b0400c25d32416b01aa55611e8dace7d1` |
+
+Both finish within the original 600-second bounds. Numeric Process, fresh boot,
+submission UUID and owned rollout identities are in the receipts; exact admitted
+submission UUIDs are checked against each retained owned rollout, avoiding another
+invocation's global selection. Receipt artifacts and every earlier linked receipt
+are checked against their hashes. Aggregate `first-outcomes-v35.json` SHA-256 is
+`dfaeaf9ba0958a55a6ad3262607752dd785ef30b9fa7d57345cfcb758ceb6b6a`.
+It retains thirty slots and original eleven PASS/four FAIL/fifteen NOT_RUN,
+with thirty-seven development attempts, fifteen historical qualified slots and
+three final-source-qualified slots. Twelve macOS refreshes and fifteen Linux
+tasks remain open; the checklist stays 8/19. This evidence-only follow-up changes
+no compiled production input and needs its own normal commit quality and CI.
