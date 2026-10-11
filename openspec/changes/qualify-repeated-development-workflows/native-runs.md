@@ -10,10 +10,10 @@ Linux NOT_RUN. All fifteen matched the earlier frozen candidate, including the
 three later F4 lifecycle reruns. One unintended verifier generation stays
 separate. Task attempts are not API-call counts; F4 includes explicit continuation.
 The latest parent `a6ea2518` changes the shared diagnostic projector, reopening
-final-source applicability for all fifteen macOS slots. Aggregate v35 adds three
-fresh F1 PASS runs on integrated source `465e3e47`: thirty-seven attempts,
-fifteen historical qualified slots and three final-source-qualified slots. Twelve
-macOS refreshes remain. No old receipt is deleted
+final-source applicability for all fifteen macOS slots. Aggregate v38 adds six
+fresh F1/F2 PASS runs on integrated source `465e3e47`: forty attempts,
+fifteen historical qualified slots and six source-applicable slots. Nine
+macOS refreshes remain before the newly observed prelaunch UI repair. No old receipt is deleted
 or relabeled as a new run. Linux generation readiness, task 1.4 and cross-platform
 final delivery remain open. The sections below retain the chronological attempts.
 
@@ -1800,3 +1800,99 @@ with thirty-seven development attempts, fifteen historical qualified slots and
 three final-source-qualified slots. Twelve macOS refreshes and fifteen Linux
 tasks remain open; the checklist stays 8/19. This evidence-only follow-up changes
 no compiled production input and needs its own normal commit quality and CI.
+
+
+## Integrated-source F2 refresh and prelaunch UI finding — 2026-10-11
+
+All three unchanged cross-file tasks pass on frozen integrated source `465e3e47`,
+CLI `81cff69c`, with all 437 compiled inputs matching committed head `34fd4910`.
+Each real `gpt-6.1-sol` medium invocation updates the function and both callers,
+modifying only `src/lib.rs`, `src/main.rs` and `src/bin/report.rs`. The original
+non-Git command failure remains; r1 also retains its absent-tests-directory
+failure. Cargo's zero-test result is recorded honestly rather than qualifying
+behavior by exit zero. Separate normal native verifier invocations receive
+project/protected assertions read-only and fresh checker scratch read-write.
+Original `protected_behavior` passes, and actual independently run binaries
+produce respectively `20`/`-1`, `51`/`-20` and `3`/`-5` as complete stdout lines.
+Source/tests/config/assertion/driver inventories remain unchanged by verification.
+
+| Slot / attempt | Behavior verification | Submission through verified cleanup | Receipt SHA-256 |
+| --- | --- | --- | --- |
+| macos-f2-r1 / a4 | 275.29 s | 335.91 s | `e4b12f0bbb537eab066e00de6b0250528440c395d8a04c1863f5a397ec5fbbaf` |
+| macos-f2-r2 / a3 | 195.30 s | 247.71 s | `6485ba9ee89a1507c67c19d2e1768b779f1b04ad22390a9da56eb2eaa6b89fcf` |
+| macos-f2-r3 / a3 | 505.86 s | 516.03 s | `06a9b4c8ef2408d289427e2c869a0f2aab24a49b600067114400f30aad4a9d6a` |
+
+All observed model and verifier Tool Processes exit, both owning native PIDs
+actually exit, and the pane returns to its original shell within each unchanged
+600-second bound. Actual 80x24 PTY/Host captures retain successful Action details,
+Space paging, scrollback and logical draft/cursor restoration (`abcXYZ` -> details
+-> Esc -> insert delta -> `abcδXYZ`). Failed ordinary diagnostics remain in Action
+files; these F2 runs do not claim that a failed Action detail was opened. No
+operator source edits, corrective model advice, task restart or unintended
+verifier generation occurs. One model-project grant, one setup approval and three
+checker grants are planned per run. Exact cursor coordinates, provider usage/cost,
+time partitions and general macOS Host read isolation remain unmeasured.
+
+Each of these F2 runs also attempts `invoke_delegated_skill`; launch rejects cwd
+`/mnt/project-request-1` as outside the child's explicit delegated namespace. The
+model falls back directly without operator steering. This failure is a virtual
+Tool result, not any ordinary aN Action or successful child Process. A supplemental
+raw-rollout audit confirms the same rejection in all three F1 refreshes, preserving
+their immutable receipts. Its missing file-backed failure publication is now a
+reproduced UI finding: legacy Tool events and the model's explanation alone do
+not provide the terminal's independent notice/history. Preserve the authority
+refusal; the owning rust-inline-tui delta covers the narrow prelaunch publication
+repair, original Tool result and parent continuation. New production source
+requires affected qualification; these six receipts do not qualify that repair.
+
+Supplemental `delegation-history-audit-v1.json` SHA-256 is
+`a44ba8d1048423ebb8de522d1e72ecd6ba26551200640293f44ee469e1219094`.
+Aggregate `first-outcomes-v38.json` SHA-256 is
+`567a43455d4b859ee25f95bddad4469fd565b83fc9a695e6f1255978a96a3ef9`:
+forty development attempts, fifteen historical qualified slots and six applicable
+slots on `465e3e47`, with original eleven first PASS/four FAIL/fifteen NOT_RUN
+unchanged. Nine macOS refreshes and all fifteen Linux tasks remain; task 4.2 also
+requires qualification of the prelaunch UI repair. Checklist remains 8/19.
+The preceding documentation-only head `34fd4910` passes its normal quality and
+all sixteen current-head checks; no compiled input changes in that commit.
+Its commit and CI receipts are respectively
+`c51aa64fc1bfc5e66cdcc3ac8655666aecbf622fb891afd4ce1d81a0df040a43` and
+`442897f18725811dd427db733d56f22d9f17be1e004e67e0e70040431398087e`.
+That CI does not qualify the later prelaunch repair or close Linux readiness.
+
+
+## Delegated-skill prelaunch publication repair — 2026-10-11
+
+The file-backed regression first fails on the old implementation: an invalid
+invocation produces its original Tool result and recoverable legacy Error, but
+AgentFS notice remains None. The revised five-case regression covers actual
+launch refusal text, invalid input, unavailable delegation, target mismatch and
+unwritable presentation files. Existing AgentFS notice/error publication is
+reused after the original result is recorded. A best-effort publication failure
+is diagnosed without replacing that result, changing continuation or retrying
+child launch. The successful-launch regression keeps an empty notice. A terminal
+regression checks that a retained delegated-operation error does not override the
+parent's correlated Completed receipt or its independently verified answer.
+No child namespace, grant, Tool policy, parent generation, Action or Process
+identity is added or changed by this repair. Launched-child wait/cancel/exit paths
+remain unchanged. All six previously refreshed real tasks attempted rejected
+launches, so their receipt scope is historical for this new UI behavior and each
+requires affected fresh acceptance after the new candidate is frozen.
+
+Initial full engine/fixture checks fail for native disk exhaustion (LLVM IO failure
+and linker errno28); they are environment failures, not passing checks. The
+existing managed quality output belongs to this exact worktree and quality
+purpose. With its exclusive output lock held and no live build, only its two
+reconstructible incremental subdirectories are removed. Frozen CLI/observer,
+receipts, original failed checks and all source/Git state remain. Source porcelain
+is unchanged across that cleanup; subsequent checks must run normally.
+
+
+After exact cache cleanup, full all-feature engine tests pass 1428 unit tests and
+20 integration tests, with one existing ignored live-provider test. The fixture
+self-check retry passes all six; strict change validation passes. The complete
+terminal suite passes 382 unit and 12 integration tests, including recovered
+delegation error versus correlated parent completion. Normal commit quality/
+distribution, new-head CI and fresh native repair acceptance are recorded
+separately when terminal, never inferred from these passing regression gates. Initial environment failures remain in
+`target/delegated-prelaunch-engine-tests.log` and the retained qualification notes.

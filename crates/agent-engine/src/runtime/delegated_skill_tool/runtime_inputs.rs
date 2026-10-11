@@ -61,6 +61,14 @@ impl<'a> DelegatedSkillRuntime<'a> {
         }
     }
 
+    pub(super) async fn publish_prelaunch_rejection(&self, message: &str) {
+        if let Err(error) =
+            crate::runtime::ui_surfaces::error_notice(&self.agent_files, message).await
+        {
+            tracing::warn!(%error, "Delegated skill rejection publication failed");
+        }
+    }
+
     pub(super) fn child_namespace_cwd(&self) -> &std::path::Path {
         self.child_runtime_inputs.child_launch.namespace_cwd()
     }

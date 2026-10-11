@@ -49,6 +49,8 @@ None.
 - `rust-inline-tui`: show observed namespace cwd without a local picker receipt,
   discard old directory context when the Root changes, and discover the current
   Root's externally granted project for explicit revocation; prompted by F1/F4 runs.
+  F1/F2 refreshes also require truthful file-backed publication of delegated-skill
+  prelaunch rejection, preserving the existing child namespace and parent fallback.
 
 ## Impact
 

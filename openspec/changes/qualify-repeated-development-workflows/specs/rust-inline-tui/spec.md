@@ -72,6 +72,27 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 
 ## ADDED Requirements
 
+### Requirement: Delegated skill prelaunch rejection remains visible without changing authority
+The runtime SHALL publish delegated-skill prelaunch rejection through existing
+AgentFS notice and retained terminal-error surfaces when the invocation is invalid,
+unavailable, cannot resolve its target or fails before child launch. Publication
+MUST NOT invent an Action or child Process, broaden the child namespace, retry
+effects or replace the original Tool result and parent continuation. A failed
+presentation write SHALL preserve the recorded rejection and report the
+publication failure through existing diagnostics. Successful launches and child
+wait/cancel/exit states SHALL retain their existing lifecycle semantics.
+
+#### Scenario: A child cwd is outside its explicit delegated namespace
+- **WHEN** child launch rejects the delegated cwd before creating a child Process
+- **THEN** the file-backed terminal receives the actual launch rejection independently of the model's commentary
+- **AND** the parent retains the failed Tool result and may choose its existing direct Tool path without gaining authority
+- **AND** turn settlement and a subsequent input do not erase the retained rejection or imply that delegation succeeded
+
+#### Scenario: Presentation cannot be published
+- **WHEN** the prelaunch rejection is recorded but its UI publication fails
+- **THEN** parent advancement and the original failed Tool result remain unchanged
+- **AND** diagnostics identify the unavailable presentation without creating an Action or retrying child launch
+
 ### Requirement: Tool loop guard stops remain visible in file-backed history
 The runtime SHALL publish the actual stop reason through the existing AgentFS
 notice and terminal-error event surfaces when repeated identical Tool calls or

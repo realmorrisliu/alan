@@ -238,6 +238,22 @@ add a synthetic model answer or another history owner. Stop copy must describe
 the reason and supported next-input action without obsolete environment advice.
 Regressions exercise both guard branches through real AgentFS-backed orchestration.
 
+### Observed delegated-skill prelaunch rejection uses existing UI owners
+
+All six integrated-source F1/F2 refreshes record `child_launch_failed`: the child
+cwd is outside its explicitly delegated namespace. Preserve that safety refusal;
+do not infer child authority from the parent's dynamically granted project. The
+virtual Tool records the failure for the model but emits only legacy Tool events,
+so the file-backed terminal lacks an independently published launch failure.
+Reuse existing AgentFS notice and retained error-event publication for invalid,
+unavailable, unresolved and rejected prelaunch invocations. Publish after recording
+the original Tool result, and log publication failure without changing continuation.
+No synthetic Action/child Process, automatic retry or new history owner is needed.
+Launched-child completion, pause and cancellation are outside this repair. The
+existing correlated InputCompleted receipt remains the truth for parent success,
+so a recovered invocation must not turn a successfully completed parent task into
+a failed task. Retain all six previous outcomes and audit affected source scope.
+
 ## Risks / Trade-offs
 
 - Provider or tool environment unavailable → retain the blocked first slot and

@@ -2,10 +2,12 @@
 
 This records supported operator controls. Current actual task outcomes are in
 `native-runs.md`: eleven first PASS, four first FAIL, fifteen NOT_RUN slots and
-fifteen historically qualified slots through thirty-seven development task
+fifteen historically qualified slots through forty development task
 attempts. The latest shared-projector repair changes one of the 437 macOS
-compiled inputs, reopening final-source applicability; all three F1 refreshes
-now pass on integrated source `465e3e47`, with twelve macOS refreshes remaining.
+compiled inputs, reopening final-source applicability; all six F1/F2 refreshes
+now pass on integrated source `465e3e47`, with nine macOS refreshes remaining.
+The observed delegated-skill prelaunch publication finding requires a narrow
+repair and affected qualification rather than expanding child authority.
 Linux generation is open. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
@@ -24,8 +26,8 @@ task outcomes.
   first. Its PR base remains main so complete CI workflows run. Compared with
   the earlier frozen CLI's actual 437 compiled inputs, one shared production file
   now differs: `host_mounts/text_projection.rs`. Earlier all-input equality is
-  historical. The new candidate is frozen and all three F1 refreshes pass;
-  refresh the remaining twelve rows before final qualification. Original
+  historical. The new candidate is frozen and all six F1/F2 refreshes pass;
+  refresh the remaining nine rows and audit the prelaunch UI repair before final qualification. Original
   attempts/first outcomes are retained. The SDK
   observer is qualification-only. Integrated `465e3e47` quality/distribution and
   all sixteen CI checks pass. New Linux CLI build/source identity is recorded,

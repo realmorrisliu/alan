@@ -3,10 +3,11 @@
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
-FAIL and fifteen NOT_RUN through thirty-seven development attempts. All fifteen
-macOS slots qualified the earlier frozen candidate. All three F1 refreshes pass
-on integrated source `465e3e47`, giving three final-source-qualified slots;
-the remaining twelve macOS slots still require refresh.
+FAIL and fifteen NOT_RUN through forty development attempts. All fifteen
+macOS slots qualified the earlier frozen candidate. All six F1/F2 refreshes pass
+on integrated source `465e3e47`; nine macOS refreshes remain. A newly observed
+delegated-skill prelaunch failure-publication gap requires a narrow repair and
+applicability audit; six source-applicable receipts are not proof for that repair.
 
 The branch now incorporates predecessor `a6ea2518`, whose sixteen current-head
 checks pass and review threads are resolved. #1046 remains unmerged; formal
@@ -15,8 +16,9 @@ approval, ADR-0058 adoption and user-controlled canonical closure are distinct.
 candidate `465e3e47` passes normal commit quality/distribution and all sixteen CI
 checks. Its new macOS CLI/source/readiness identities are frozen. Linux's new
 CLI builds from the same public source, but has no generation profile and still
-needs actual generation/PTY readiness. This evidence-only follow-up needs its
-own normal commit and current-head CI; neither PR is merged by these records.
+needs actual generation/PTY readiness. The subsequent prelaunch UI repair needs
+its own normal commit, source/binary freeze, affected native acceptance and
+current-head CI; neither PR is merged by these records.
 
 Actual comparison against the frozen macOS CLI's 437 compiled inputs finds one
 changed input: `crates/os-host/src/host_mounts/text_projection.rs`. It is shared
@@ -24,7 +26,7 @@ by Tool stdout/stderr/errors. The earlier all-input equality proof is historical
 conservatively rerun all fifteen macOS slots on the final candidate, retaining
 every earlier receipt and original outcome. Native Host/Clippy checks do not
 substitute for model-authored tasks. Final applicability remains open for the
-other twenty-seven slots until the required final-source evidence is recorded.
+other twenty-four slots until the required final-source evidence is recorded.
 
 Fresh disposable baselines for the same thirty slots are prepared in the owned
 `dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,
@@ -59,13 +61,14 @@ the newly frozen integrated source `465e3e47`. Earlier `cace913c` plus recorded
 repairs remains historical. Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
-are fifteen historical slots out of thirty through thirty-seven development attempts, retaining
+are fifteen historical slots out of thirty through forty development attempts, retaining
 linked retries and all original failures. One unintended verifier model turn is
 separate from development attempts and prevents a zero-unplanned-intervention claim
 for long diff. See `native-runs.md`.
 Matching earlier-candidate source/binary evidence covers all fifteen historical
 macOS slots, including three cancel/revoke/explicit-recovery reruns; the latest
-shared-projector source has three qualified refreshes and requires twelve more. F1 r1's a3
+shared-projector source has six qualified refreshes and requires nine more before
+the prelaunch UI repair, which affects all six observed delegated rejections. F1 r1's a3
 collector-identity failure stays retained. All Linux slots remain open.
 macOS public Connection metadata confirms default chatgpt-main and selected
 gpt-6.1-sol. A separate actual generation preflight succeeded; its owned rollout

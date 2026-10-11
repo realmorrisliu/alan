@@ -9,8 +9,9 @@
 
 The checks below retain completed historical repetitions. The shared-projector
 review repair reopens final-source applicability for all fifteen macOS rows.
-All three linked F1 refreshes now pass on integrated source `465e3e47`; task 4.2
-requires the remaining twelve fresh-candidate reruns before final qualification.
+All six linked F1/F2 refreshes now pass on integrated source `465e3e47`; task 4.2
+requires the remaining nine fresh-candidate reruns and affected prelaunch UI
+repair reruns before final qualification.
 
 - [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.
 - [x] 2.2 Run cross-file changes three times with all required callers updated and no unrelated edits.
