@@ -3,7 +3,7 @@
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
-FAIL and fifteen NOT_RUN through forty-eight development attempts. All fifteen
+FAIL and fifteen NOT_RUN through fifty-one development attempts. All fifteen
 macOS slots qualified an earlier frozen candidate; six F1/F2 refreshes passed
 on `465e3e47`. The prelaunch publication repair `bdf14ab0` passes all sixteen
 current-head checks. Its native F3 r1 a3 passes independent behavior but fails
@@ -15,9 +15,10 @@ PASS while preserving the immutable receipt and fresh linked retry. Documentatio
 head ed6a65e6 passes all sixteen checks with all 437 compiled inputs and the CLI
 byte-identical to 573cd12e. F1 r1 a6 qualifies on that head; aggregate v47 records
 four final-source slots. Fresh F1 r2/r3 a4 qualify on the byte-identical 95d6664c
-documentation head; aggregate v50 records six final-source slots. Its CI has
-fourteen SUCCESS and Rust CodeQL still running at this observation, with no
-failed checks. Nine macOS refreshes and all fifteen Linux tasks remain;
+documentation head; aggregate v50 records six final-source slots. Both 95d6664c
+and d97d7f70 now pass all sixteen current-head checks. All three F2 refreshes
+qualify on byte-identical d97d7f70; aggregate v54 records nine final-source slots.
+Six macOS F4/F5 refreshes and all fifteen Linux tasks remain;
 historical receipts do not qualify new behavior. This evidence-only follow-up
 needs its own normal gates and CI.
 
@@ -40,7 +41,7 @@ by Tool stdout/stderr/errors. The earlier all-input equality proof is historical
 conservatively rerun all fifteen macOS slots on the final candidate, retaining
 every earlier receipt and original outcome. Native Host/Clippy checks do not
 substitute for model-authored tasks. Final applicability remains open for the
-other twenty-four slots until the required final-source evidence is recorded.
+other twenty-one slots until the required final-source evidence is recorded.
 
 Fresh disposable baselines for the same thirty slots are prepared in the owned
 `dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,
@@ -293,3 +294,20 @@ Linux tasks remain open; checklist stays 8/19. Prior head c5f9b924 passes all
 sixteen current-head CI checks, including CodeQL; these evidence-only updates
 require their own publication/checks. No final cross-Host delivery or unattended
 self-bootstrap claim is made. Native identities and receipts are in native-runs.md.
+
+## Latest F2 and Linux environment evidence
+
+All three notice-source F2 repetitions qualify with exact three-file edits,
+protected library assertions, both binary results, actual detail paging/draft
+return and exited Tool/native Processes. Aggregate v54 retains 51 attempts and
+9/30 applicable final-source slots without changing first outcomes. Six macOS
+F4/F5 refreshes and all fifteen Linux model tasks remain open; tasks stay 8/19.
+
+The fresh public-source Linux CLI builds from d97d7f70 with all 440 native inputs
+matched, retaining its initial offline dependency failure and locked retry.
+Only missing lsof/liblsof0 are installed after exact package-diff checks, then
+only the owned registered Cargo target is cleaned. Source, frozen CLI, evidence
+and unrelated/global scratch remain intact. This adds no Linux model task, full
+quality claim or native PTY qualification. Generation is still unconfigured.
+See native-runs.md for exact receipts, identities and limitations. Both 95d6664c
+and d97d7f70 pass all sixteen checks; this new evidence batch needs its own gates.

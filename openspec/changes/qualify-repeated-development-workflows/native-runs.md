@@ -22,7 +22,9 @@ provides actual modal/page evidence. Byte-identical documentation head ed6a65e6
 passes all sixteen checks, and F1 r1 a6 adds applicable small-repair evidence.
 Aggregate v47 retains forty-six attempts and four final-source qualified slots.
 Fresh F1 r2/r3 a4 qualify on byte-identical 95d6664c. Aggregate v50 retains
-forty-eight attempts and six final-source qualified slots. Nine macOS refreshes
+forty-eight attempts and six final-source qualified slots. Subsequent F2 r1 a5
+and r2/r3 a4 qualify on byte-identical d97d7f70. Aggregate v54 retains fifty-one
+attempts and nine final-source qualified slots. Six macOS F4/F5 refreshes
 and all fifteen Linux
 tasks remain; older results do not qualify this repair. Original
 eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
@@ -2116,3 +2118,106 @@ hash audit. Aggregate first-outcomes-v50.json SHA-256 is
 Linux tasks remain. At this observation 95d6664c has fourteen successful checks
 and Rust CodeQL running, with no failed check. This evidence-only follow-up needs
 normal commit gates, CI and committed-input applicability proof; checklist is 8/19.
+
+## Notice-source F2 refresh and current-head gates — 2026-10-11
+
+All three frozen cross-file tasks now qualify on documentation head `d97d7f70`
+with the unchanged `573cd12e` production inputs and frozen native CLI
+`950e1ce5338b60f73e07131bd233c9193da0aa01221acf05f8902138e92b1497`.
+The actual admitted binding and generation context confirm `chatgpt-main`,
+`gpt-6.1-sol`, medium effort and an empty context-item list. Exact native PATH,
+selected Rust/Cargo 1.93.0 and Git 2.54.0 identities were frozen before generation
+and checked through the actual Tool entry. Memory remains enabled; empty context
+items do not prove statistical independence.
+
+| Slot / attempt | Model boot | Independent binary stdout | Submission through behavior check | Submission through verified cleanup | Receipt SHA-256 |
+| --- | --- | --- | --- | --- | --- |
+| macos-f2-r1 / a5 | bb1e74b8-21ab-4104-82da-87b77f00ed50 | 20, -1 | 172.636043 s | 213.396169 s | `9855d329e65af8c2541695c84f73f7e8bedf35192676b97e221cdf03aa52b417` |
+| macos-f2-r2 / a4 | 044376ae-5a65-463f-9b05-78a19d6f5a3b | 51, -20 | 251.453896 s | 308.698140 s | `b143cd83d2dfb17fbf3d25040d108977bb38fec2898bb83ae0c90e6964c1fe50` |
+| macos-f2-r3 / a4 | 4aeff782-c75b-4235-8589-08c664cdd2ff | 3, -5 | 423.277697 s | 440.607847 s | `8974f584184f7105059f334a3c8735e86916bed5ab7ffd38c649225665065867` |
+
+Receipts are `dev-boundary-20261011-v1/attempts/<slot>/<attempt>/receipt.json`.
+Each real model changes exactly `src/lib.rs`, `src/main.rs` and
+`src/bin/report.rs`, implementing addition, multiplication or minimum respectively.
+Model library tests truthfully report zero tests; qualification instead requires
+separate protected library assertions and execution of both actual binaries.
+The original full independent command retains offline/locked flags and both
+read-only manifest executions from fresh writable checker scratch. Project,
+protected assertion and driver inventories remain unchanged by checking.
+
+Actual original Action details and a changed page are captured before close:
+r1/r3 a7 at 8/8; r2 a6 at 7/7. Returning to the middle of `abcXYZ` and inserting
+`δ` yields `abcδXYZ`; readable stdout/stderr and Host scrollback remain available.
+The delegated prelaunch rejection is retained once in history before any new
+input, with no duplicate live Error and actual parent Completed/idle evidence.
+This proves direct parent fallback, not successful delegated execution. r3's
+failed non-Git inspection is retained; r2 has no failed ordinary Action and its
+receipt explicitly avoids inventing one for the virtual rejection. Actual Tool
+Processes exit before model exit, and each model and independent-verifier native
+PID is gone with the original fish shell foreground after `/quit`. Verifiers
+have zero model turns. No source edits, corrective model advice or model-task
+restart were supplied by the operator. Planned setup approval, explicit grants
+and UI/lifecycle controls remain interventions rather than approval-free autonomy.
+Read-only collector reference/filename errors in r1/r3 are retained and corrected
+without repeating the model task or changing its source.
+
+These wall times include observation, UI/lifecycle checks and operator waits;
+r2 also includes independent Linux environment work. They are not pure model or
+product latency. Usage, cost, time partitions, physical cursor coordinates and
+general macOS Host-read isolation remain unqualified or unknown.
+Immutable aggregate v54 SHA-256
+`fd3fffc5ca9a946b0ae09eb171c317a4fcc71a7d8e7cc864ab425ab3fbf12c21`
+retains fifty-one development attempts, fifteen historically qualified slots and
+nine final-source slots, preserving eleven first PASS, four first FAIL and fifteen
+NOT_RUN. Its preceding v53 and every earlier receipt remain retained. Six macOS
+F4/F5 refreshes and all fifteen Linux tasks remain; checklist stays 8/19.
+
+All sixteen checks pass on both `95d6664c` and `d97d7f70`, including Rust CodeQL.
+The latter immutable gates receipt is `gates-d97-v1/receipt.json`, SHA-256
+`a291c88021c570d343141fe58b071d3d9818ff5e009a674ff5ca4af0f0f1c74c`.
+The 437-input/CLI equality proof is
+`notice-f1-family-source-applicability-v1.json`, SHA-256
+`52910a4e73afb2b717fafd79cfb1ef35ce524c8054c1b57ba151ae7612e8f197`.
+Transient GitHub reads were reobserved at the same head/job rather than restarting
+checks. New evidence-only commits require their own normal gates and CI.
+
+## Fresh Linux candidate, missing dependency and exact cleanup — 2026-10-11
+
+The task-owned Ubuntu guest receives only the public Git archive of `d97d7f70`,
+public tree `bde81b765b8a94bf0ce703e84c55b96155456770`, under
+`/home/morris/.cache/Alan/qdev-notice-candidate-20261011-v1`. Original Git metadata,
+credentials, private Stores and tracked `.env`/`.env.local` are not transferred.
+A fresh snapshot Git identity verifies that same tree and clean source state;
+it is not the repository's original commit identity.
+
+The first locked offline build fails because cached `anstream v1.0.0` is absent;
+its original exit/log record stays retained. A locked retry permits registry
+downloads on the unchanged source and lockfile. Native build succeeds in
+54.119429 seconds with dev debug information disabled and incremental compilation
+disabled. The frozen Linux CLI SHA-256 is
+`4fe74466033731061a798a16bfadba72d61ce014fbe40d8aef637f1e36255fdb`.
+All 440 actual native workspace inputs match committed public source; this Linux
+input map is distinct from the 437-input macOS map. Build-only receipt
+`linux-candidate-notice-v1/receipt.json` SHA-256 is
+`b75c37bbbefe3deca387a2eef0339edf6ea6b6995ba97c79a20b220ac711307e`.
+It claims neither full default-profile quality nor native PTY/model qualification.
+Actual CLI connection inventory says `No connection profiles configured.`
+All fifteen Linux slots remain NOT_RUN and task 1.4 remains open.
+
+Initial exact build-output cleanup conservatively refuses because `lsof` is
+missing. Its original sealed receipt is not rewritten. After a simulated package
+transaction, install only `lsof` and `liblsof0`, both `4.99.4+dfsg-2build2`, with
+no recommended packages. Before/after package inventories prove exactly those
+two additions, zero changed existing packages and zero removals; `lsof -v` passes.
+Setup receipt `linux-candidate-notice-v1/lsof-setup/receipt.json` SHA-256 is
+`f10a2bdca840da172efb2af868a5e94882025bcec3267879245ebb24489aeb0f`.
+No Node/Python installation or user toolchain-default change is implied.
+
+Reusing the existing build-artifact helper, inspect registrations, completed
+build lease, Cargo-only ownership, locks and live handles, then clean only
+`source/target/notice-cli`. Its preview is would-clean, actual state cleaned and
+that exact target is absent. The frozen CLI hash, clean source, build log and
+original evidence remain intact. Global service scratch and other targets are
+not touched. Supplemental cleanup receipt SHA-256 is
+`737a910ef9b9aaf0f6a6cf85861cdf42c4f774bf7edb329f15fc1b4500fd70c8`.
+Environment setup and cleanup add no model attempts or qualified slots.

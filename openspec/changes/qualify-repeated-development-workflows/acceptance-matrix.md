@@ -29,7 +29,9 @@ qualified slots remain historical. The byte-identical ed6a65e6 documentation hea
 passes all sixteen checks. F1 r1 a6 adds applicable small-repair evidence;
 aggregate v47 retains forty-six attempts and four final-source qualified slots.
 Fresh F1 r2/r3 a4 also qualify on byte-identical 95d6664c. Aggregate v50 retains
-forty-eight attempts and six final-source qualified slots. Nine macOS refreshes
+forty-eight attempts and six final-source qualified slots. F2 r1 a5 and r2/r3 a4
+then qualify on byte-identical d97d7f70; aggregate v54 retains fifty-one attempts
+and nine final-source qualified slots. Six macOS F4/F5 refreshes
 and all fifteen Linux
 tasks still require applicable final-source acceptance without resetting outcomes.
 Original outcomes and all earlier attempts are
@@ -88,9 +90,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; earlier-candidate a3 FAIL `7f7ddbdb`, a4 PASS `7b2e4c0c`; integrated-source a5 PASS `13432009`; notice-source a6 PASS `b1cf57f6`; a1 retained |
 | macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; earlier-candidate a2 PASS `1e499e15`; integrated-source a3 PASS `4144cce1`; notice-source a4 PASS `babcb125` |
 | macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; original a1 `9c9a1a6f`; earlier-candidate a2 PASS `997fd0dd`; integrated-source a3 PASS `d41c3bdb`; notice-source a4 PASS `c1df2cea` |
-| macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained; integrated-source a4 PASS `e4b12f0b` |
-| macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; original a1 `e3313a3a`; final-candidate a2 PASS `330cd58d`; integrated-source a3 PASS `6485ba9e` |
-| macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; original a1 `42c7ae59`; final-candidate a2 PASS `a8f7da36`; integrated-source a3 PASS `06a9b4c8` |
+| macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained; integrated-source a4 PASS `e4b12f0b`; notice-source a5 PASS `9855d329` |
+| macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; original a1 `e3313a3a`; final-candidate a2 PASS `330cd58d`; integrated-source a3 PASS `6485ba9e`; notice-source a4 PASS `b143cd83` |
+| macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; original a1 `42c7ae59`; final-candidate a2 PASS `a8f7da36`; integrated-source a3 PASS `06a9b4c8`; notice-source a4 PASS `8974f584` |
 | macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; original a1 `41bc46fa`; earlier-candidate a2 PASS `8386abe9`; prelaunch-source a3 FAIL UI `497573d4`; notice-source a4 claim withheld by detail audit `ad41407a`; fresh a5 PASS `9113f519` |
 | macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; original a1 `a6e6c051`; earlier-candidate a2 PASS `c1eaa463`; notice-source a3 PASS `d29cf3a0` |
 | macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; original a1 `0ef06fc9`; earlier-candidate a2 PASS `58da21c8`; notice-source a3 PASS `b2ef5a92` |
