@@ -14,7 +14,9 @@ F3 r1 a3 fails UI qualification despite independently correct code. Task 4.2
 requires applicable final-candidate native evidence for all fifteen rows. The
 notice repair now has three qualified F3 repetitions, including a fresh retry
 after an insufficient-detail capture audit. F1 r1 a6 also qualifies on the
-byte-identical documentation head ed6a65e6; eleven macOS refreshes remain.
+byte-identical documentation head ed6a65e6. F1 r2/r3 a4 qualify on the
+byte-identical 95d6664c head, bringing applicable coverage to six slots;
+nine macOS refreshes remain.
 Historical checkmarks do not qualify new behavior.
 
 - [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.

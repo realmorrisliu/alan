@@ -3,7 +3,7 @@
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
-FAIL and fifteen NOT_RUN through forty-six development attempts. All fifteen
+FAIL and fifteen NOT_RUN through forty-eight development attempts. All fifteen
 macOS slots qualified an earlier frozen candidate; six F1/F2 refreshes passed
 on `465e3e47`. The prelaunch publication repair `bdf14ab0` passes all sixteen
 current-head checks. Its native F3 r1 a3 passes independent behavior but fails
@@ -14,7 +14,10 @@ slots on this source. A native detail-capture audit withholds one earlier claime
 PASS while preserving the immutable receipt and fresh linked retry. Documentation
 head ed6a65e6 passes all sixteen checks with all 437 compiled inputs and the CLI
 byte-identical to 573cd12e. F1 r1 a6 qualifies on that head; aggregate v47 records
-four final-source slots. Eleven macOS refreshes and all fifteen Linux tasks remain;
+four final-source slots. Fresh F1 r2/r3 a4 qualify on the byte-identical 95d6664c
+documentation head; aggregate v50 records six final-source slots. Its CI has
+fourteen SUCCESS and Rust CodeQL still running at this observation, with no
+failed checks. Nine macOS refreshes and all fifteen Linux tasks remain;
 historical receipts do not qualify new behavior. This evidence-only follow-up
 needs its own normal gates and CI.
 
@@ -37,7 +40,7 @@ by Tool stdout/stderr/errors. The earlier all-input equality proof is historical
 conservatively rerun all fifteen macOS slots on the final candidate, retaining
 every earlier receipt and original outcome. Native Host/Clippy checks do not
 substitute for model-authored tasks. Final applicability remains open for the
-other twenty-six slots until the required final-source evidence is recorded.
+other twenty-four slots until the required final-source evidence is recorded.
 
 Fresh disposable baselines for the same thirty slots are prepared in the owned
 `dev-boundary-20261011-v1` cache. All prompts/follow-ups, project baseline bytes,

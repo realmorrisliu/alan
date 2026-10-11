@@ -21,7 +21,9 @@ one earlier claimed PASS without changing its immutable receipt; a fresh retry
 provides actual modal/page evidence. Byte-identical documentation head ed6a65e6
 passes all sixteen checks, and F1 r1 a6 adds applicable small-repair evidence.
 Aggregate v47 retains forty-six attempts and four final-source qualified slots.
-Eleven macOS refreshes and all fifteen Linux
+Fresh F1 r2/r3 a4 qualify on byte-identical 95d6664c. Aggregate v50 retains
+forty-eight attempts and six final-source qualified slots. Nine macOS refreshes
+and all fifteen Linux
 tasks remain; older results do not qualify this repair. Original
 eleven first PASS/four FAIL/fifteen NOT_RUN remain unchanged. Linux generation
 readiness, task 1.4 and cross-platform final delivery remain open. The sections
@@ -2075,3 +2077,42 @@ Aggregate first-outcomes-v47.json SHA-256 is
 11 first PASS/4 FAIL/15 NOT_RUN remain unchanged. Eleven macOS refreshes and
 fifteen Linux tasks remain. This evidence-only follow-up requires its own normal
 gates, CI and committed-input applicability proof; checklist remains 8/19.
+
+## Notice-source F1 r2/r3 family refresh — 2026-10-11
+
+Both fresh tasks use documentation head 95d6664c, the same frozen CLI and all
+437 unchanged compilation inputs. Actual gpt-6.1-sol medium admission/generation
+is correlated to each original prompt. r2 retains assertion RED (6 versus 5),
+removes the extra increment from absolute difference, then passes the original
+contract. r3 retains assertion RED (-5 versus 5), repairs the inclusive clamp,
+then passes the original contract. Each model changes only src/lib.rs. Separate
+native verifiers pass the original protected behavior from read-only project and
+assertion grants, compiling into previously absent writable checker targets.
+Source/assertion/driver inventories remain unchanged by verification.
+
+| Slot / attempt | Model submission | Behavior verification | Through verified cleanup | Receipt SHA-256 |
+| --- | --- | --- | --- | --- |
+| macos-f1-r2 / a4 | bc9e15e5-571d-4ac2-ac1b-bdb5366c4390 | 116.07 s | 144.88 s | `babcb125f6638091160f570be9ac5e13f28327c707ffa70416cde1df0c0df349` |
+| macos-f1-r3 / a4 | bb148480-2ea0-4a51-90e8-bd2eeec29d5f | 111.06 s | 135.04 s | `c1df2cea20215bef49c4e2d0e7248defc0f23c731d01b32f08e9fb8f3fb07ab2` |
+
+Both runs capture actual original Action a5 details before paging and a changed
+stdout/stderr page before closing. Returning to the middle of abcXYZ and inserting
+delta produces abcδXYZ; host scrollback is retained. Delegation refusal is one
+retained Error with no duplicate live footer, followed by actual Completed parent
+fallback. Neither is successful child qualification. Non-Git failures remain
+retained. Every discovered Tool Process and both native owners exit; the pane
+returns to original fish. Planned grants/setup approval are recorded. There is
+no operator solution edit, corrective model advice, restart or verifier generation.
+Prospective tool/config/definition/memory metadata is captured; context items
+are empty and no personal memory bodies are collected or cleared. Existing limits
+on usage/cost, time partitions, exact cursor coordinates, general macOS read
+isolation and statistical independence remain. Wall times include observation.
+
+All forty-eight linked receipt identities and both new artifact inventories pass
+hash audit. Aggregate first-outcomes-v50.json SHA-256 is
+`79c15a42768306a62c47fe61a23f5bb3ccf857294c7fe1ee07a09d043aaa6ea1`:
+48 attempts, 15 historical and six final-source qualified slots (all macOS F1/F3);
+11 first PASS/4 FAIL/15 NOT_RUN remain unchanged. Nine macOS refreshes and fifteen
+Linux tasks remain. At this observation 95d6664c has fourteen successful checks
+and Rust CodeQL running, with no failed check. This evidence-only follow-up needs
+normal commit gates, CI and committed-input applicability proof; checklist is 8/19.
