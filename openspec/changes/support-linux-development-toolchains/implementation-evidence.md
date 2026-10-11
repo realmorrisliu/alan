@@ -888,3 +888,114 @@ boolean backing-root check; AP, Kernel and Agent Process types remain unchanged.
 No registry, configuration or dependency is added. This repairs observed path/
 identity divergence before native Tool projection, while concurrent post-check
 Host mutation remains outside the claimed guarantee.
+
+### Publication and final boundary review refresh — 2026-10-11
+
+Published source head cace913c passed all sixteen completed checks, including
+quality, both platform test/release jobs, harnesses and CodeQL. Its inline review
+inventory was empty at that publication check. The final review follows the Host Mount Service's
+active same-PID projection filter through per-launch reconciliation, the common
+native adapter's selected-first/read-only-only shell projection and the existing
+HostDirFs directory-handle identity check. Invalid non-root cwd, revoked sticky
+cwd grants, mixed-access overlap, retargeted/replaced roots and authority
+amplification remain refusals; the retained compiled-reader and cached-revocation
+receipts cover those boundaries. No additional production repair is found.
+
+#1047 now incorporates cace913c and its observed production repairs. Its published
+f84c21d4 source matches the frozen native candidate's 827 crate/workspace files,
+with only the separately qualified observer added, and passes all sixteen checks.
+That change records fifteen final-candidate macOS slots through thirty-four
+development attempts; fifteen Linux slots remain NOT_RUN. Neither its real-model
+receipts nor its later operator tooling setup replaces this change's frozen
+installation/package/native authority receipts.
+
+This documentation refresh prepares #1046 for formal review and requires its own
+normal quality/distribution and current-head CI. It changes no source or authority,
+adopts no ADR-0058 extension and merges/deploys nothing. Checklist remains 13/15
+until formal review and user-controlled canonical delivery close their gates.
+
+
+### Current-head review: selected Rust runtimes — 2026-10-11
+
+Review 4239725745 is valid. Per-command discovery previously retained every
+installed standard runtime in the execution substrate and private Rustup links.
+A protected test compiled and executed through the actual native Sandbox adapter
+selected Rust 1.97.0, but could still observe the unrelated installed stable runtime;
+`red-a2-selected_only.log` retains the original assertion failure. Discovery now
+collects the existing bounded command/directory selections before reducing the
+runtime list and recording its manifest/executable hashes. Multiple possible
+selections remain present; a non-Rust command adds no installed runtime. Startup
+catalog validation is inspection, not a Process execution grant. No PATH/default,
+Host grant policy, native wrapper admission or dependencies change.
+
+Review 4239725742's direct `sh -c` example is not admitted by this Linux path.
+`Sandbox::exec_with_timeout_and_capability` checks the command shape before
+`exec_reified_namespace`; `permits_autonomous_bash` is true only for Seatbelt,
+so Linux uses Full mode regardless of capability or enforcing-backend availability.
+Full mode rejects nested shell evaluators before an outer marker can execute.
+The native baseline returns that guard error, not a post-effect missing-runtime
+error. New native direct/nested/inline-selector refusal controls assert both outer
+and inner markers are absent. The unused experimental recursive-discovery code
+was removed; no new inline shell support is introduced by this review follow-up.
+
+Portable regression covers zero, one and multiple selected runtime mounts,
+explicit `rustup run`, omission of unselected runtime validation evidence and
+unchanged selection precedence. The native visibility probe positively reads
+selected Cargo, cannot observe the unrelated stable runtime, must actually run
+its test, and retains exact protected source contents. Raw collector mistakes
+(zero tests from an incorrect exact name), the initial native P1 expectation
+mismatch, and generated fixture fmt/test-count failures remain retained; none is
+a real-model task or a passed native suite. Corrected final execution and artifact
+identities are recorded below after verification.
+
+The owned review cache is
+`~/Library/Caches/Alan/qualification/rust-review-20261011/`; the Linux public-only
+source/receipts are `/home/morris/.cache/Alan/rust-review-20261011/`. No Connection
+credentials, Host private stores or frozen repeated-task receipts were copied or
+changed. All fifteen Linux model slots remain NOT_RUN. Prior macOS candidate
+receipts stay bound to their original source/binary; final source applicability
+and user-controlled canonical delivery remain separate gates.
+
+Final native Linux engine passes **1431/0/1 in 150.35 seconds**, including all
+23 automatic-Rustup cases. The actual visibility integration assertion and three
+shell refusal/absent-marker controls pass. Native engine ELF SHA-256:
+`0cd3a573c305e719ba42b0b1c2c218fbea202e62888103cbf38e98443258dbb0`.
+The three changed Rust file hashes match the exact native input. macOS engine
+passes **1417/0/1** plus **20 integration tests**. Both Hosts' engine all-target/
+all-feature Clippy pass with warnings denied; pinned OpenSpec 1.4.1 strict
+validation passes **69/69**. Final and failed attempts are retained under
+`rust-review-20261011/final-v1/`. Normal commit quality/distribution and fresh
+current-head CI are required before treating the repair as reviewed delivery.
+No fifteen-slot Linux generation or final main-source qualification is implied.
+
+
+### Coverage admission: bounded Package Store contention — 2026-10-11
+
+The first repair-head CI coverage job `114355535866` (run `38100588737`, head
+`baee72b8`) fails the existing two-client Package catalog test: an installation
+returns `Package Store busy: lock acquisition exceeded 500 ms`. Coverage report
+upload is skipped after that test failure; this is not an upload/network error.
+The store correctly refuses contention at its existing operator bound. The test
+incorrectly requires both concurrent installations to succeed within that bound.
+
+The fixture now accepts only the exact bounded-busy reply, verifies no catalog
+entry or materialized revision for the refused package, and explicitly retries
+after the contenders finish with a fresh request ID. Admission consumes failed
+request IDs too, so reusing the original ID remains an error. Catalog equality and
+both entries remain required. A second case reuses the existing owned lock-holder
+helper: both requests finish busy while the peer still owns the lock, then the
+holder exits normally before either retry. The five-second observation ceiling
+allows thread scheduling; the production acquisition limit stays 500 ms. No
+production Package behavior, CI exclusion, skip or timeout override is introduced.
+The other Package tests have no matching unconditional two-thread success
+assumption; existing explicit lock-budget/short-contention tests remain intact.
+
+Both Hosts' complete Service Manager suite passes **157 unit + 2 integration**
+with zero failures; both all-target/all-feature Clippy checks pass with warnings
+denied. Local actual LLVM coverage instrumentation passes the same concurrency
+test, including the held-peer/busy/no-installation/fresh-request retry branch
+(**0.85 seconds**, observed peer-owned busy completion at **502.95 ms**).
+The original CI failure and local duplicate-ID/command-filter correction logs are
+retained. A fresh normal commit gate and exact-head complete CI still follow.
+The native Rustup production hashes/ELF and its 1431/0/1 receipt remain unchanged;
+this follow-up changes only the Package test and evidence. No model slots are added.

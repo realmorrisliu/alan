@@ -2,7 +2,8 @@
 
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five macOS families are complete (8/19 tasks).
-All fifteen macOS slots now have matching final-candidate source/binary evidence.
+All fifteen macOS slots have frozen-candidate source/binary evidence. The latest
+Linux review repair preserves their macOS compiled inputs; it is not a new model run.
 Observed production repairs and linked retries are recorded in `native-runs.md`;
 Linux generation, complete cross-Host qualification and delivery remain open.
 The frozen public candidate now passes complete normal Linux quality and a fresh
@@ -11,12 +12,14 @@ Those receipts add no real-model slots. Linux generation remains unconfigured;
 actual task-cwd tool versions, final phase/merged-source checks and the fifteen
 Linux tasks still require their own evidence.
 The qualification branch now incorporates its reviewed Linux predecessor
-`cace913c`; #1047 depends on #1046 rather than relying on a separately composed
+`258a956a`; #1047 depends on #1046 rather than relying on a separately composed
 native candidate. The PR retains main as its base so the existing complete CI
-workflows continue to run; #1046 must merge first. All 827 crate/workspace-manifest
-files match the frozen native source, with only the separately qualified SDK
-observer added. This does not adopt ADR-0058, merge either PR or close final
-main-source verification.
+workflows continue to run; #1046 must merge first. Compared with the frozen native
+source, four of 827 crate/workspace-manifest files differ: one Linux-only runtime
+source and three test files. All 437 recorded inputs to the frozen macOS CLI
+remain identical and exclude those four files. The SDK observer remains additional.
+Linux needs its own updated candidate build and native checks before generation.
+This does not adopt ADR-0058, merge either PR or close final main-source verification.
 Original failures, including F1 r1's incomplete prospective tool identity, remain
 retained alongside their successful fresh retries.
 Planning artifacts and offline fixture checks do not prove completed real-model
@@ -29,12 +32,16 @@ owners. Production fixes require actual findings and the corresponding delta.
 
 Controlled live runs follow native-qualified, reviewed, passing-current-head Linux
 candidate #1046; user merge/canonical closure remain final-delivery gates. Its
-cace913c candidate passed all 16 checks and actual native toolchain/authority
-qualification. Proposed read-only disjoint-grant adoption remains outstanding;
+latest 258a956a head passed all 16 checks. Its selected-runtime repair has fresh
+native engine evidence, and its Package concurrency test correction has passing
+macOS/Linux service suites and an LLVM-instrumented check. Those parent checks do
+not substitute for the integrated qualification candidate. Proposed read-only
+disjoint-grant adoption remains outstanding;
 these tests do not adopt ADR-0058 or deploy a candidate to an installed runtime.
 UI implementation #1044 is merged, with canonical/archive closure separate in
 #1045. Fixture preparation is based on main `faf747c2`; the native runtime candidate is
-`cace913c`. r2 freezes macOS readiness; Linux generation and complete cross-Host
+the frozen `cace913c` plus recorded repairs; the branch now includes the subsequent
+Linux review delta. r2 freezes macOS readiness; Linux generation and complete cross-Host
 qualification remain open.
 First outcomes are eleven PASS, four FAIL and fifteen NOT_RUN; qualified slots
 are fifteen out of thirty through thirty-four development task attempts, retaining

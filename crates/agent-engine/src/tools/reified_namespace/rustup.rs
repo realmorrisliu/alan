@@ -153,25 +153,8 @@ pub(super) fn discover(
         metadata_hashes: vec![(source, digest(&bytes))],
         executable_hashes: Vec::new(),
     };
-    for mount in &environment.toolchain_mounts {
-        let manifest = mount.host_path.join("lib/rustlib/multirust-config.toml");
-        environment
-            .metadata_hashes
-            .push((manifest.clone(), digest(&read_metadata(&manifest)?)));
-    }
-    for path in environment
-        .proxy_mounts
-        .iter()
-        .map(|mount| mount.host_path.join("rustup"))
-        .chain(environment.toolchain_mounts.iter().flat_map(|mount| {
-            ["cargo", "rustc", "rustdoc"].map(|name| mount.host_path.join("bin").join(name))
-        }))
-    {
-        environment
-            .executable_hashes
-            .push((path.clone(), executable_digest(&path)?));
-    }
     if let Some((input, commands)) = input {
+        let mut selected = Vec::new();
         let mut directories = Some(vec![input.cwd.clone()]);
         for words in commands {
             let Some((name, args)) = super::super::sandbox::command_and_args(words) else {
@@ -215,6 +198,9 @@ pub(super) fn discover(
                     let root = runtime_for_selector(&selector, &environment)?
                         .host_path
                         .clone();
+                    if !selected.contains(&root) {
+                        selected.push(root.clone());
+                    }
                     let subcommand = args
                         .get(if args.first().is_some_and(|word| word.starts_with('+')) {
                             1
@@ -244,12 +230,36 @@ pub(super) fn discover(
                     }
                 }
             } else if name == "rustup" && args.first().is_some_and(|word| word == "run") {
-                validate_selector(
-                    args.get(1).ok_or("missing Rustup run selector")?,
-                    &environment,
-                )?;
+                let selector = args.get(1).ok_or("missing Rustup run selector")?;
+                let root = runtime_for_selector(selector, &environment)?
+                    .host_path
+                    .clone();
+                if !selected.contains(&root) {
+                    selected.push(root);
+                }
             }
         }
+        environment
+            .toolchain_mounts
+            .retain(|mount| selected.contains(&mount.host_path));
+    }
+    for mount in &environment.toolchain_mounts {
+        let manifest = mount.host_path.join("lib/rustlib/multirust-config.toml");
+        environment
+            .metadata_hashes
+            .push((manifest.clone(), digest(&read_metadata(&manifest)?)));
+    }
+    for path in environment
+        .proxy_mounts
+        .iter()
+        .map(|mount| mount.host_path.join("rustup"))
+        .chain(environment.toolchain_mounts.iter().flat_map(|mount| {
+            ["cargo", "rustc", "rustdoc"].map(|name| mount.host_path.join("bin").join(name))
+        }))
+    {
+        environment
+            .executable_hashes
+            .push((path.clone(), executable_digest(&path)?));
     }
     Ok(Some(environment))
 }
@@ -429,10 +439,6 @@ fn active_selector(
         .and_then(toml::Value::as_str)
         .map(String::from)
         .ok_or_else(|| "Rustup has no default toolchain".into())
-}
-
-fn validate_selector(selector: &str, environment: &ReifiedRustupEnvironment) -> Result<(), String> {
-    runtime_for_selector(selector, environment).map(|_| ())
 }
 
 fn runtime_for_selector<'a>(

@@ -34,6 +34,12 @@ safe-degradation rules, never silent replacement or wider ambient access.
 - **AND** a command selector takes precedence over the last command-local override, which takes precedence over the inherited override and project selection
 - **AND** environment-clearing wrappers or command-local PATH/Rustup-home and persistent selection changes that cannot preserve the inspected view refuse explicitly before effects
 
+#### Scenario: Other Rust runtimes are installed
+- **WHEN** a command selects one or more supported Rust runtimes from the installed catalog
+- **THEN** only those selected runtimes enter the read-only execution substrate and retained runtime validation evidence
+- **AND** unrelated installed runtime roots remain unavailable to child code
+- **AND** a command without any Rust runtime selection projects no installed Rust runtime
+
 #### Scenario: A native script changes directory before a Rust invocation
 - **WHEN** a compound native script uses literal directory changes before invoking a standard Rustup proxy
 - **THEN** admission checks every bounded possible directory selection inside delegated project authority, retaining both success and failure paths rather than reusing only the initial cwd

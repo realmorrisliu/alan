@@ -12,8 +12,11 @@ also qualify. All three macOS F4 slots now qualify, retaining both failed r1
 attempts before its successful fresh retry. Fifteen slots qualify through thirty-four
 real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
 One unintended verifier model turn is recorded separately; the long-diff run is
-not zero-unplanned-intervention. All fifteen macOS slots now have matching
-final-candidate source/binary proof, including the three F4 lifecycle reruns.
+not zero-unplanned-intervention. All fifteen macOS slots have matching
+frozen-candidate source/binary proof, including the three F4 lifecycle reruns.
+The subsequent Linux review repair changes four source/test files outside the
+actual macOS CLI's 437 unchanged compiled inputs. This preserves macOS source
+applicability, without claiming fresh model runs or an updated Linux binary.
 All fifteen Linux slots remain unexecuted. See `native-runs.md`
 for retained receipts.
 No earlier UI, Sandbox, Tool or CI receipt fills a slot.

@@ -3,24 +3,28 @@
 This records supported operator controls. Current actual task outcomes are in
 `native-runs.md`: eleven first PASS, four first FAIL, fifteen NOT_RUN slots and
 fifteen qualified slots through thirty-four development task attempts. All
-fifteen macOS slots now match the final candidate; Linux generation is open. Fixture
+fifteen macOS slots match the frozen candidate, with unchanged compiled-input
+applicability after the Linux review repair; Linux generation is open. Fixture
 self-checks and provider/backend preflights remain separate from model-authored
 task outcomes.
 
 ## Candidate and prerequisite evidence
 
 - UI implementation: main `faf747c2`, merged #1044; closure #1045 remains open.
-- Toolchain candidate: #1046 `cace913c3cbe76a63fc3f7b6dfb9bcb5468891b8`.
+- Toolchain candidate: #1046 `258a956ae72449145485c1bc82ed1f34f57edfe0`.
   Its current-head sixteen CI checks pass. Direct caller/boundary review and
   native positive/negative toolchain evidence precede these disposable tests.
   The proposed ADR-0058 grant extension, formal review, user merge and canonical
   synchronization remain final-delivery gates.
 - Qualification #1047 incorporates that exact parent and requires #1046 to merge
   first. Its PR base remains main because the complete CI workflows filter
-  pull_request bases to main/master. Crate/workspace-manifest comparison covers
-  all 827 native candidate files, with no missing or differing files; only the
-  qualification SDK example is additional. New-head quality/CI and final
-  user-merged main verification remain distinct gates.
+  pull_request bases to main/master. Comparison covers 827 frozen native files;
+  four differ after this review repair (one Linux-only runtime and three tests).
+  The actual frozen macOS CLI dependency record contains 437 unchanged inputs,
+  excluding all four differences. Its source applicability receipt is in
+  `native-runs.md`; no fresh binary/model run is claimed. The qualification SDK
+  example remains additional. An updated Linux build/native check, new-head
+  quality/CI and final user-merged main verification remain distinct gates.
 - macOS native CLI: cace913c plus the exact production repairs and 35-file
   inventory recorded in `native-runs.md`, built in the owned
   `responses-native-verify-20261011` worktree at
@@ -33,7 +37,7 @@ task outcomes.
   `32a46d54-3cc1-412c-b43c-b6d9d27f2876` records model `gpt-6.1-sol`, reasoning
   effort `medium`, and Process path `/proc/8`. This is not a matrix slot and has
   no retained live boot-status receipt. An earlier setup failure remains retained.
-- The same public candidate passes the complete normal Linux `just quality` in
+- The previous frozen public candidate passes the complete normal Linux `just quality` in
   its own real Git checkout, including standalone/distribution checks. The gate
   uses the cace913c candidate's quality script; phase-specific fixture checks and
   final merged-source applicability remain separate requirements. The unchanged
@@ -52,7 +56,9 @@ task outcomes.
   versions. Its latest native `connection current` reports `effective_profile
   none`; Linux generation readiness and all fifteen slots remain open. No macOS
   credential or private store has been copied. See the latest `native-runs.md`
-  receipts; neither preflight nor quality closes a real-model slot.
+  receipts; neither preflight nor quality closes a real-model slot. Binary
+  `6b756582` predates the selected-runtime repair and is not the updated Linux
+  candidate for subsequent generation.
 
 ## Supported product controls
 

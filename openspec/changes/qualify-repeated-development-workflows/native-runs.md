@@ -1550,3 +1550,45 @@ first, user merge and final main-source validation remain gates.
 The new integration head requires full quality, strict OpenSpec and its own CI.
 All fifteen Linux real-model slots, cross-Host audit, usage/cost and final delivery
 remain open; checklist and matrix counts are unchanged.
+
+## Linux review repair integration and macOS applicability — 2026-10-11
+
+Parent #1046 head `258a956ae72449145485c1bc82ed1f34f57edfe0` completes all
+sixteen current-head CI checks, including coverage. It fixes overbroad Rustup
+runtime projection by retaining only command-selected runtimes, without admitting
+shell evaluators that the existing Linux entry already refuses. Its subsequent
+Package concurrency change is test-only: busy has no installation effects, and
+retry uses a new request ID after the peer releases the lock. The production
+500 ms lock budget is unchanged. Parent native engine evidence is 1431/0/1;
+both Hosts' Service Manager suites pass 157 unit and two integration tests, and
+the affected LLVM-instrumented concurrency case passes. These are regression
+checks, not model development slots.
+
+The qualification branch incorporates that parent through a conflict-free merge,
+preserving published history and main as the PR base. A complete comparison
+against the frozen macOS source finds exactly four differences among 827 files:
+`tools/reified_namespace/rustup.rs`, its adjacent tests, Sandbox Rustup tests,
+and Package concurrency tests. The first is Linux-only in a production build;
+the other three are tests. The actual frozen CLI's `alan.d` lists 437 workspace
+source/resource inputs. Every input exists and matches the integrated source,
+and none is one of those four files. The actual CLI still hashes to
+`1b609034eea7c8c2a7f7f5a1725d14fb6ed5165ec4776a196bd7237162a2495e`.
+This establishes unchanged macOS compiled-input applicability for the fifteen
+retained qualified slots, not a new binary build or fresh model execution.
+
+Immutable applicability receipt `linux-review-alignment-v2/receipt.json` has
+SHA-256 `4cda62271f0c938c98380babdb7a3d3757b5af97f62cad3101baf8939c51daee`.
+It retains the dependency record, all input hashes and four old/new source hashes.
+The first collector incorrectly required more than 500 inputs although the actual
+record has 437; `linux-review-alignment-v1/collector-error.json` retains that
+collector failure. The corrected check requires concrete CLI/engine/service
+inputs and exact equality, rather than an invented count threshold.
+
+The older Linux binary `6b756582` contains the pre-review runtime implementation.
+Its quality, PTY and observer receipts remain historical and cannot qualify the
+updated Linux candidate. A new integrated build/native check is required before
+Linux generation, which still has no configured Connection profile. Counts stay
+34 development attempts, 15 qualified macOS slots and 15 Linux NOT_RUN slots;
+all original failures, the separate verifier turn and missing usage/cost remain.
+Normal commit quality, strict OpenSpec and this integration's own CI remain gates;
+parent CI does not qualify this child head. Neither PR is merged by this record.

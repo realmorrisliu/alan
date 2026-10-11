@@ -33,20 +33,28 @@ unchanged 379-node Rust and 217-entry Git inventories, and limitations are in
 implementation-evidence.md. macOS arbitrary-reader OS confinement is not inferred.
 Original private-root Git PATH and native wrappers remain explicit refusals.
 
-Draft PR #1046 remains unmerged. Its previously published ce7aa5dd head passed all
-16 distinct checks; they do not qualify this new candidate. Publication requires
-normal-commit full quality and standalone distribution, followed by its own
-current-head CI. Full quality and standalone distribution passed at the first
-root-checked normal commit e757df2e; the Linux-only absolute-manifest fixture
-extension and retained-directory identity repair have their own fresh native
-Host/HostFs/Clippy and macOS Host/HostFs evidence; publication runs the normal hook
-gates again. Tasks
-are **13/15 complete**; review/current-head CI and user merge/canonical closure
-remain open.
+PR #1046 remains unmerged and prepared for formal review. Its previous
+source candidate cace913c and documentation head 7702ce55 passed all sixteen
+distinct checks; those checks do not qualify the subsequent production repair.
+Current-head review found overbroad installed-Rust runtime projection. The repair
+retains only runtimes selected by the actual command's bounded inspection and
+hashes only their runtime manifests/executables. The reported direct `sh -c`
+before-effects gap is not reachable in the shipped Linux entry: its full shape
+guard rejects direct/nested shell evaluators before environment construction.
+Actual native negative controls retain that refusal without admitting new wrapper
+execution. Review follow-up and retained failures are in implementation-evidence.md.
+
+Tasks remain **13/15 complete**: formal review and user merge/canonical closure
+are outstanding. The repaired candidate requires its own native regression,
+normal-commit quality/distribution and completed current-head CI; no earlier
+checks or real-model slots are substituted.
 
 The ADR-0058 dependency extension is a reviewable draft candidate pending user
 adoption/merge; the delivered main single-grant baseline is unchanged. Wider
-qualification is independently planned in draft PR #1047: thirty real-model
-slots remain NOT_RUN. Keep fallback/approval, network and automatic-routing
+qualification is independently tracked in draft PR #1047: all fifteen macOS
+slots qualify on the final candidate through thirty-four development attempts;
+all fifteen Linux slots remain NOT_RUN for missing generation readiness. These
+are that change's receipts, not this delivery's native Tool tests. Keep
+fallback/approval, network and automatic-routing
 posture unchanged; do not start Alan self-development instances in place of
 Codex-authored implementation.
