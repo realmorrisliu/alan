@@ -39,10 +39,18 @@ safe-degradation rules, never silent replacement or wider ambient access.
 - **THEN** only those selected runtimes enter the read-only execution substrate and retained runtime validation evidence
 - **AND** unrelated installed runtime roots remain unavailable to child code
 - **AND** a command without any Rust runtime selection projects no installed Rust runtime
+- **AND** startup PATH checks and commands without a runtime selection do not validate or project unrelated custom runtime entries
+- **AND** selecting an unsupported runtime alias still refuses before effects
+
+#### Scenario: Rustup dispatches a direct installed proxy command
+- **WHEN** a literal `rustup run` selects an installed standard runtime and a direct supported Rust proxy command
+- **THEN** inspection validates that runtime and the actual command's required executables and helpers before effects
+- **AND** nested selectors, arbitrary child dispatch and unmodeled Rustup management commands refuse before effects rather than changing the inspected selection
 
 #### Scenario: A native script changes directory before a Rust invocation
 - **WHEN** a compound native script uses literal directory changes before invoking a standard Rustup proxy
 - **THEN** admission checks every bounded possible directory selection inside delegated project authority, retaining both success and failure paths rather than reusing only the initial cwd
+- **AND** a missing or non-directory target retains the failed branch's cwd while existing delegated targets remain inspectable for subsequent changes
 - **AND** all potentially selected runtimes, components, helpers and project selection metadata are validated and rechecked before user effects
 - **AND** an uninspectable, escaping or excessive directory state requires explicit command, command-local or inherited Rust selection, or refuses before effects without inferring another grant
 

@@ -27,6 +27,21 @@ automatic routing or general autonomous code-authorship qualification.
 
 ## Decisions
 
+### Inspect actual selected Rust commands without extending wrapper execution
+
+Startup checks validate only the Rustup proxy PATH and grant no installed runtime.
+Non-Rust commands do not depend on unrelated Rustup home/catalog metadata.
+Per-command inspection enumerates a bounded catalog and strictly validates only
+selected roots, so unrelated linked/custom entries do not disable ordinary
+commands; selecting such unsupported aliases remains an explicit refusal.
+Literal `rustup run` supports direct known Rust proxies with its fixed outer
+selector and existing required-helper checks. Nested selectors, arbitrary child
+dispatch and other Rustup management commands refuse before effects; this slice
+does not implement general recursive program evaluation. Version/help queries
+remain available. Existing Full shape validation still refuses `env` wrappers
+before inspection on Linux. Missing/non-directory `cd` targets preserve their
+failure cwd; valid granted targets continue through the existing bounded state.
+
 ### Extend the existing plan and native Host adapter
 
 Native selection and projection remain Host-private inputs behind the current

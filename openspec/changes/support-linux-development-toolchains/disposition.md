@@ -44,6 +44,18 @@ guard rejects direct/nested shell evaluators before environment construction.
 Actual native negative controls retain that refusal without admitting new wrapper
 execution. Review follow-up and retained failures are in implementation-evidence.md.
 
+The published `258a956a` head passed all sixteen checks, but five subsequent
+inline comments require their own follow-up. Four valid gaps are repaired in
+the existing Rustup inspector: bounded direct run dispatch/helper checks,
+before-effects management refusal, no unrelated home/catalog inspection for
+startup/non-Rust commands, and failed-cd branch retention. The env-options claim
+is already prevented by the existing Linux Full guard; actual baseline and final
+negative controls verify that boundary. Latest portable/native proof, original
+failures and precise limits are recorded in implementation-evidence.md. Final
+native Engine is 1434/0/1 with 31 actual case labels; final macOS Engine is
+1420/0/1 plus 20 integration tests. These checks add no real-model slots and do
+not reuse the earlier source receipt as final-candidate evidence.
+
 Tasks remain **13/15 complete**: formal review and user merge/canonical closure
 are outstanding. The repaired candidate requires its own native regression,
 normal-commit quality/distribution and completed current-head CI; no earlier

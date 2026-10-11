@@ -65,6 +65,31 @@ pub(super) fn discover(
     if proxies.is_empty() {
         return Ok(None);
     }
+    let selects_runtime = input.is_some_and(|(_, commands)| {
+        commands.iter().any(|words| {
+            super::super::sandbox::command_and_args(words).is_some_and(|(name, args)| {
+                PROXIES.contains(&name)
+                    && (name != "rustup" || args.first().is_some_and(|arg| arg == "run"))
+            })
+        })
+    });
+    if !selects_runtime {
+        let executable_hashes = proxies
+            .iter()
+            .map(|mount| {
+                let path = mount.host_path.join("rustup");
+                executable_digest(&path).map(|digest| (path, digest))
+            })
+            .collect::<Result<_, _>>()?;
+        return Ok(Some(ReifiedRustupEnvironment {
+            settings: "version = \"12\"\n".into(),
+            toolchain_override,
+            proxy_mounts: proxies,
+            toolchain_mounts: Vec::new(),
+            metadata_hashes: Vec::new(),
+            executable_hashes,
+        }));
+    }
     if !home.is_absolute() || contains_parent_component(home) || home == Path::new("/") {
         return Err("unsafe Rustup home metadata path".into());
     }
@@ -141,7 +166,6 @@ pub(super) fn discover(
             return Err("Rustup runtime catalog exceeds inspection bound".into());
         }
         let root = entry.map_err(|error| error.to_string())?.path();
-        validate_runtime(&root)?;
         toolchains.push(ReifiedExecutionSubstrateMount::new(&root, &root));
     }
     toolchains.sort_by(|left, right| left.host_path.cmp(&right.host_path));
@@ -157,18 +181,35 @@ pub(super) fn discover(
         let mut selected = Vec::new();
         let mut directories = Some(vec![input.cwd.clone()]);
         for words in commands {
-            let Some((name, args)) = super::super::sandbox::command_and_args(words) else {
+            let Some((mut name, mut args)) = super::super::sandbox::command_and_args(words) else {
                 continue;
             };
             let prefix = &words[..words.len() - args.len() - 1];
+            let run_selector = if name == "rustup" && args.first().is_some_and(|arg| arg == "run") {
+                let selector = args.get(1).ok_or("missing Rustup run selector")?;
+                let command = args.get(2).ok_or("missing Rustup run command")?;
+                let inner_args = &args[3..];
+                if command == "rustup"
+                    || !PROXIES.contains(&command.as_str())
+                    || inner_args.first().is_some_and(|arg| arg.starts_with('+'))
+                {
+                    return Err(
+                        "unsupported inspected Rustup run command or nested selector".into(),
+                    );
+                }
+                name = command;
+                args = inner_args;
+                Some(selector.as_str())
+            } else {
+                None
+            };
             if name == "cd" {
                 directories =
                     directories.and_then(|directories| cd_directories(input, &directories, args));
             }
             if PROXIES.contains(&name) && name != "rustup" {
-                let explicit_selector = args
-                    .first()
-                    .and_then(|word| word.strip_prefix('+'))
+                let explicit_selector = run_selector
+                    .or_else(|| args.first().and_then(|word| word.strip_prefix('+')))
                     .or_else(|| {
                         prefix
                             .iter()
@@ -229,14 +270,6 @@ pub(super) fn discover(
                         }
                     }
                 }
-            } else if name == "rustup" && args.first().is_some_and(|word| word == "run") {
-                let selector = args.get(1).ok_or("missing Rustup run selector")?;
-                let root = runtime_for_selector(selector, &environment)?
-                    .host_path
-                    .clone();
-                if !selected.contains(&root) {
-                    selected.push(root);
-                }
             }
         }
         environment
@@ -276,15 +309,28 @@ fn cd_directories(
     // Keep both outcomes: a shell cd may fail or be conditional.
     let mut possible = directories.to_vec();
     for directory in directories {
-        let target = std::fs::canonicalize(directory.join(path)).ok()?;
+        let target = match std::fs::canonicalize(directory.join(path)) {
+            Ok(target) => target,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => return None,
+        };
         if !input.declarations.iter().any(|mount| match &mount.source {
             ReifiedMountSource::Host(root) => {
                 target.starts_with(canonicalize_existing_host_path(root))
             }
             ReifiedMountSource::Virtual => false,
-        }) || !target.is_dir()
-        {
+        }) {
             return None;
+        }
+        if !target.is_dir() {
+            continue;
         }
         if !possible.contains(&target) {
             possible.push(target);
@@ -298,6 +344,15 @@ fn cd_directories(
 
 fn validate_command_environment(words: &[String]) -> Result<(), String> {
     let view = super::super::sandbox::command_and_args(words);
+    if view.is_some_and(|(name, args)| {
+        name == "rustup"
+            && !matches!(
+                args.first().map(String::as_str),
+                Some("run" | "--version" | "--help" | "-V" | "-h")
+            )
+    }) {
+        return Err("unsupported inspected Rustup management command".into());
+    }
     let prefix = view.map_or(words, |(_, args)| &words[..words.len() - args.len() - 1]);
     let state_change = view.is_none()
         || view.is_some_and(|(name, _)| {
@@ -476,7 +531,10 @@ fn runtime_for_selector<'a>(
             name == Some(selector) || name == Some(format!("{selector}-{host}").as_str())
         })
     };
-    found.ok_or_else(|| format!("selected Rust runtime absent or unsupported: {selector}"))
+    let runtime =
+        found.ok_or_else(|| format!("selected Rust runtime absent or unsupported: {selector}"))?;
+    validate_runtime(&runtime.host_path)?;
+    Ok(runtime)
 }
 
 pub(super) fn revalidate(environment: &ReifiedRustupEnvironment) -> Result<(), String> {

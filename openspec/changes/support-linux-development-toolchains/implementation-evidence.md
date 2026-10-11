@@ -999,3 +999,83 @@ The original CI failure and local duplicate-ID/command-filter correction logs ar
 retained. A fresh normal commit gate and exact-head complete CI still follow.
 The native Rustup production hashes/ELF and its 1431/0/1 receipt remain unchanged;
 this follow-up changes only the Package test and evidence. No model slots are added.
+
+### Follow-up review: dispatch, management and inspection scope — 2026-10-11
+
+Five further inline comments were evaluated against the shipped Sandbox entry.
+Four identify actual gaps; the `env` claim is already prevented by the existing
+Linux Full command-shape guard. Production changes remain in `rustup.rs`, with
+adjacent portable and actual native tests. No dependency, global PATH/default,
+grant expansion, recursive shell admission or automatic routing is introduced.
+
+- `4239812320`: bounded `rustup run` now validates its direct supported Rust proxy
+  and reuses existing helper/component checks. Arbitrary children, nested Rustup
+  and inner selectors refuse before effects. The old native nested-Cargo control
+  writes the outer marker before Cargo reports `no such command: +missing`;
+  this installed Rustup dispatches direct Cargo, not a selector-honoring proxy.
+  A related `rustup run 1.97.0 sh -c ...` control actually executes and writes both
+  markers. Both now refuse before either marker; direct installed rustc/rustdoc,
+  Cargo test/fmt/clippy still run successfully.
+- `4239812324`: neither `env -u RUSTUP_TOOLCHAIN cargo test` nor `env -C child
+  cargo test` reaches Linux environment construction. Both native controls
+  already refuse with no outer/inner marker on the original binary. The existing
+  Full shape guard stays authoritative; no unused context-changing env parser is
+  added. Portable discovery tests do not claim these wrappers are admitted.
+- `4239863229`: unmodeled Rustup management commands now refuse unconditionally
+  before metadata inspection or execution. Portable controls cover override
+  unset, default and toolchain link. Old native `override unset; cargo test`
+  admits the management command and writes the prelude marker; the repaired
+  control refuses before the marker. That fixture has no existing override, so
+  it proves admission, not the report's exact two-runtime override switch.
+- `4239863233`: startup and commands without a runtime selection inspect only
+  proxy PATH/executable identity; they read no Rustup home/catalog metadata and
+  project no runtime. Selecting Rust enumerates the bounded catalog and strictly
+  validates only selected roots. Portable controls include an absent home and
+  unrelated linked runtime; native Git with an unselected alias now succeeds.
+  Selecting that alias still refuses, and unrelated runtime visibility stays
+  denied. Selected metadata and executable revalidation remain in force.
+- `4239863236`: missing/non-directory `cd` targets retain the failed branch's
+  cwd, while existing delegated directories add bounded successful states.
+  Other I/O errors, escaped or excessive states remain conservative. The old
+  portable/native `cd a; cd b` control fails inspection when only `a/b` exists;
+  the repaired native path actually builds/tests/formats/lints its project and
+  separate read-only dependency. No new grant is inferred.
+
+The original portable regression has **12 PASS / 3 FAIL**. Native RED results
+retain late markers for run/management and the sequential-cd/unselected-alias
+refusals; the two already-safe env controls remain distinct. Initial portable
+test-intent corrections, the first collector's missing unselected-alias log
+label, and a qualification-only Git author-identity failure are retained as
+verification/operator errors, not erased or counted as model tasks.
+
+Latest production source SHA-256 is
+`1ed4b9db9fbc6befb0b42aee73d936247ef7520e20edd7bebd20b7cfffe65339`.
+Final native engine passes **1434/0/1 in 122.37 seconds**, with **31 distinct
+actual Rustup case diagnostics** and no automatic-Rustup early-return skip.
+Native ELF SHA-256:
+`f3a40768131598bfe7b233e7228c497050e0853b85d2cd0fa547ea57b6026544`.
+All three source/test hashes match the macOS inputs. The native build uses
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`
+because of bounded guest disk capacity; optimization is unchanged. This is
+affected-engine native proof, not a default-profile full Linux quality receipt.
+macOS Engine passes **1420/0/1 + 20 integration tests** and warnings-denied
+all-target/all-feature Clippy. Final Linux Clippy, strict OpenSpec, normal commit
+quality/distribution and fresh published-head CI follow as separate gates.
+
+Raw guest evidence is retained under
+`/home/morris/.cache/Alan/rustup-followup-20261011/`; the sealed Host receipt is
+under `~/Library/Caches/Alan/qualification/rust-review-20261011/followup-final-v1/`.
+Prior native/source receipts remain historical; they do not qualify this final
+repair. Original parent build registrations, credentials and frozen model-task
+receipts are unchanged. All fifteen Linux model slots remain NOT_RUN; updating
+the dependent candidate, its source applicability and final main-source closure
+remain independent requirements after this repair's checks.
+
+Final affected-engine all-target/all-feature Clippy now passes with warnings
+denied on both Hosts; pinned OpenSpec 1.4.1 strict validation passes **69/69**.
+The immutable source/native follow-up receipt retains 39 raw artifacts, the
+seven-file patch at collection time, all three final executable-input hashes,
+and the explicit pending normal-commit/current-head CI gates. Receipt SHA-256:
+`d4bf2982cc59aee7b76226541109d9ddb51f3daf35d65637d459827eafd657ee`.
+This final evidence paragraph changes documentation only; normal quality and
+published-head CI still need their own receipt.
