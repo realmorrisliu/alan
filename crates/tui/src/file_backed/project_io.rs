@@ -1,6 +1,173 @@
 //! Host operations run off the input loop. Only correlated replies settle authority.
 use super::*;
 
+#[cfg(test)]
+#[path = "project_grant_tests.rs"]
+mod grant_tests;
+
+pub(super) fn start_discovery(
+    app: &mut FileBackedApp,
+    shell: &alan_shell::Shell,
+    owner: String,
+    jobs: &mut tokio::task::JoinSet<()>,
+    tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
+) {
+    if app.project_host_pending {
+        return;
+    }
+    app.project_host_pending = true;
+    app.notice =
+        Some("looking up current project authority; /help or /quit remain available".into());
+    let cwd = app.namespace_cwd.clone();
+    let shell = shell.clone();
+    let tx = tx.clone();
+    jobs.spawn(async move {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            discover_grant(&shell, &owner, &cwd),
+        )
+        .await
+        .unwrap_or_else(|_| Err("Host authority lookup timed out".into()));
+        let _ = tx
+            .send(FileBackedEvent::ProjectGrantLocated { owner, cwd, result })
+            .await;
+    });
+}
+
+pub(super) fn finish_discovery(
+    app: &mut FileBackedApp,
+    owner: String,
+    current_owner: Option<String>,
+    cwd: std::path::PathBuf,
+    blocked: bool,
+    result: Result<Option<String>, String>,
+) -> Option<(String, String, String)> {
+    app.project_host_pending = false;
+    if current_owner.as_deref() != Some(&owner)
+        || app.namespace_cwd != cwd
+        || !app.project_boundary_available(blocked)
+        || app.retained_project_grant().is_some()
+    {
+        app.push_error("project context changed during lookup; no revocation sent".into());
+        return None;
+    }
+    match result {
+        Ok(Some(grant_id)) => {
+            let (id, command) = project_dispatch::project_selector("/");
+            app.stage_project_control(owner.clone(), id.clone(), None, Some(grant_id));
+            Some((owner, id, command))
+        }
+        Ok(None) => {
+            app.notice = Some("no active project grant matches current directory".into());
+            None
+        }
+        Err(error) => {
+            app.push_error(format!(
+                "project authority lookup failed; no revocation sent: {error}"
+            ));
+            None
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct GrantRecord {
+    id: String,
+    namespace_path: String,
+    active: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct RequestRecord {
+    id: String,
+    namespace_path: String,
+    requesting_pid: u64,
+}
+
+async fn record<T: serde::de::DeserializeOwned>(
+    shell: &alan_shell::Shell,
+    path: &str,
+) -> Result<T, String> {
+    let text = action_detail_io::reference::document_with_budget(shell, path, 4096).await?;
+    serde_json::from_str(&text).map_err(|_| format!("invalid Host record at {path}"))
+}
+
+async fn discover_grant(
+    shell: &alan_shell::Shell,
+    owner: &str,
+    cwd: &std::path::Path,
+) -> Result<Option<String>, String> {
+    let pid = owner
+        .strip_prefix("/agent/")
+        .and_then(|p| p.parse::<u64>().ok())
+        .filter(|p| *p != 0)
+        .ok_or("Root identity unavailable")?;
+    if !cwd.is_absolute()
+        || cwd
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("invalid observed cwd".into());
+    }
+    if !cwd.starts_with("/mnt") {
+        return Ok(None);
+    }
+    let ids = shell
+        .ls_bounded("/mnt/host-mount/grants", 1024, 65536)
+        .await
+        .map_err(|e| format!("Host grants unavailable: {e:?}"))?;
+    let mut selected: Option<(String, usize)> = None;
+    let mut ambiguous = false;
+    for id in ids {
+        if id.is_empty() || id.contains('/') || matches!(id.as_str(), "." | "..") {
+            return Err("invalid Host grant ID".into());
+        }
+        let grant: GrantRecord =
+            record(shell, &format!("/mnt/host-mount/grants/{id}/record")).await?;
+        if grant.id != id {
+            return Err("Host grant identity mismatch".into());
+        }
+        if !grant.active {
+            continue;
+        }
+        let path = std::path::Path::new(&grant.namespace_path);
+        if !path.starts_with("/mnt")
+            || path == std::path::Path::new("/mnt")
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err("invalid Host grant namespace path".into());
+        }
+        if !cwd.starts_with(path) {
+            continue;
+        }
+        let request: RequestRecord =
+            record(shell, &format!("/mnt/host-mount/requests/{id}/request")).await?;
+        if request.id != id || request.namespace_path != grant.namespace_path {
+            return Err("Host grant/request identity mismatch".into());
+        }
+        if request.requesting_pid != pid {
+            continue;
+        }
+        let depth = path.components().count();
+        match &selected {
+            Some((other, n)) if *n == depth && other != &id => {
+                ambiguous = true;
+            }
+            Some((_, n)) if *n >= depth => {}
+            _ => {
+                selected = Some((id, depth));
+                ambiguous = false;
+            }
+        }
+    }
+    if ambiguous {
+        return Err("ambiguous current project authority".into());
+    }
+    Ok(selected.map(|(id, _)| id))
+}
+
 pub(super) fn start(
     app: &mut FileBackedApp,
     handler: &ProjectControlHandler,

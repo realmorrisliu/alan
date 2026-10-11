@@ -19,6 +19,25 @@ pub(super) fn structured_text(text: &str) -> Vec<Line<'static>> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
         return Vec::new();
     };
+    if let (Some(stdout), Some(stderr), Some(exit_code)) = (
+        value["stdout"].as_str(),
+        value["stderr"].as_str(),
+        value["exit_code"]
+            .as_i64()
+            .and_then(|code| i32::try_from(code).ok()),
+    ) {
+        let mut rows = Vec::new();
+        for (label, stream) in [("stdout", stdout), ("stderr", stderr)] {
+            rows.push(Line::from(label));
+            rows.extend(
+                stream
+                    .lines()
+                    .map(|line| Line::from(crate::history::clean_text(line))),
+            );
+        }
+        rows.push(Line::from(format!("exit {exit_code}")));
+        return rows;
+    }
     let (
         Some("text"),
         Some(path),

@@ -23,7 +23,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file's contents. For images, returns metadata."
+        "Read a file's contents. For images, returns metadata. Host files use line offset/limit. Follow a retained result reference at your concrete /agent/<pid>/actions/<id>/output using byte_offset/byte_limit, without another Host grant or rerunning the producer. Evidence returns at most 4096 original bytes with total_bytes and next_byte_offset for subsequent ranges."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -45,12 +45,49 @@ impl Tool for ReadFileTool {
                     "description": "Maximum number of lines to read",
                     "minimum": 1,
                     "maximum": 1000
+                },
+                "byte_offset": {
+                    "type": "integer",
+                    "description": "Zero-indexed original byte offset for your own retained Action output only; use next_byte_offset to continue. Do not combine with line offset/limit.",
+                    "minimum": 0
+                },
+                "byte_limit": {
+                    "type": "integer",
+                    "description": "Maximum original bytes for retained Action output only (default 4096). Do not combine with line offset/limit.",
+                    "minimum": 1,
+                    "maximum": ToolContext::MAX_EVIDENCE_READ_BYTES
                 }
             }
         })
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
+        let requested = args["path"].as_str().unwrap_or("");
+        let byte_offset = args["byte_offset"].as_u64().unwrap_or(0);
+        let byte_limit = args["byte_limit"]
+            .as_u64()
+            .unwrap_or(ToolContext::MAX_EVIDENCE_READ_BYTES);
+        if let Some(read) = ctx.read_namespace_evidence(requested, byte_offset, byte_limit) {
+            if args.get("offset").is_some()
+                || args.get("limit").is_some()
+                || args.get("byte_offset").is_some_and(|v| !v.is_u64())
+                || args.get("byte_limit").is_some_and(|v| !v.is_u64())
+            {
+                return Box::pin(async {
+                    Err(anyhow!(
+                        "Retained evidence requires valid byte ranges, not line offset/limit"
+                    ))
+                });
+            }
+            return read;
+        }
+        if args.get("byte_offset").is_some() || args.get("byte_limit").is_some() {
+            return Box::pin(async {
+                Err(anyhow!(
+                    "Byte ranges are supported only for retained Action output"
+                ))
+            });
+        }
         let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
@@ -272,3 +309,7 @@ pub(super) fn detect_mime(path: &Path) -> &'static str {
 #[cfg(test)]
 #[path = "file_tools_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "namespace_read_tests.rs"]
+mod namespace_read_tests;

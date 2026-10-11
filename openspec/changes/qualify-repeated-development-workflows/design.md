@@ -1,0 +1,271 @@
+## Context
+
+This is delivery 3 of the user's ordered goal, after terminal presentation and
+Linux toolchain/authority qualification. UI implementation is merged in PR #1044;
+canonical closure is prepared in #1045. Linux toolchain #1046 is still draft and
+its ADR-0058 disjoint read-only dependency adoption remains outstanding. Controlled
+candidate qualification is authorized by the goal: the live matrix starts after
+the predecessor candidate's native qualification, code review and current-head CI
+pass, with source/binary/authority scope frozen. User merge and canonical closure
+remain required final-delivery gates rather than prerequisites for disposable
+candidate tests. Testing does not adopt the proposed grant policy. If review
+changes its production behavior, rerun affected rows on the final candidate.
+
+Existing `scripts/harness/run_repo_worker_suite.sh` collects executable scenario
+results but primarily runs scripted/CI commands. Its exit-zero score cannot prove
+real-model authorship. Reuse its receipt conventions and existing CLI/Process,
+AgentFS, rollout and Host Mount boundaries; keep the thirty native runs distinct
+from CI scenarios and earlier UI/native Tool receipts.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Complete five task families at least three times each on macOS/Herdr and
+  Linux/ordinary PTY, recording first outcomes, intervention, time and effects.
+- Exercise real generation, retained diagnostics, model-selected Tools and source
+  changes through a fresh Alan invocation with explicit disposable project grants.
+- Fix shared UI/reliability causes exposed by these tasks and verify corrected
+  retries without replacing original records.
+
+**Non-Goals:**
+- Enable automatic routing or change grant, policy, provider or recovery semantics.
+- Delegate production implementation to Alan, install unused Node/Python tooling,
+  construct a terminal host or claim general autonomous self-development.
+
+## Decisions
+
+### Freeze a complete matrix before launching generation
+
+`acceptance-matrix.md` owns the thirty slots, family inputs/checks and measurement
+fields. Each repetition uses a fresh disposable fixture and source/effect baseline.
+Initial task variants and prompts are hashed before their first run; expected
+answers and verifier state remain outside the granted project. Preserve model
+`gpt-6.1-sol` with medium effort when the actual supported Connection profile can
+supply it; any unavailable profile/model is an environment-blocked slot, never an
+unannounced substitute. Record effective model/effort for every resumed segment.
+
+Freeze the complete thirty-slot inputs, bounds and measurement fields first, then
+gate live generation separately on each Host's actual model/backend readiness.
+An unavailable Linux Connection does not prevent a ready macOS Host from running
+its fifteen slots. Keep unavailable prerequisites explicit and task 1.4 open until
+both Hosts are ready; do not replace Linux slots, reduce the denominator or infer
+their completion from macOS results. Final qualification still requires three
+proven completions of every family on each Host. This staging changes no success
+criterion and avoids making external login a prerequisite for unrelated evidence.
+
+Fresh invocations are separate Process/boot identities, not proof of statistically
+independent model samples. Record exposed Memory Store/definition/config identity;
+do not clear personal memory to manufacture independence. A recovery-family run
+contains explicitly selected durable continuation and records both old and fresh
+execution identities. Do not resume unrelated runs or auto-recover product-wide.
+
+Alternative: reusing successful native Tool/UI receipts would avoid new execution,
+but leaves the model/plan/edit/verify chain untested and cannot satisfy this goal.
+
+### Keep Alan as the product under test
+
+macOS uses Herdr-hosted ordinary Alan terminal operation; Linux uses an ordinary
+PTY. Freeze 80x24 initially; actual narrow/resize defects receive targeted 48-column
+reruns. Additional cross-host smoke and UI reruns do not replace any of the thirty
+slots. Keep draft/cursor/detail/scrollback observations with raw terminal captures
+and Process/AgentFS evidence. Native Host probes must establish the enforcing
+backend independently of portable test counts.
+
+Provision projects/expected test failures as Host fixture setup. Submit the task
+through Alan Shell to its Root Agent Process and let the real model choose
+permitted Tools and author requested production changes. Host scripts verify
+results independently afterward; they do not write the solution. Any operator
+source edit, advice or tool substitution is recorded as an intervention and does
+not qualify model-only coding success. Codex implements actual product repairs.
+
+### Minimal receipt collection, separate from runtime ownership
+
+Reuse harness JSON/JSONL conventions, native terminal captures and existing
+read-only inspection paths. Add only collection/assertion code required by the
+matrix, with a small malformed/missing/duplicate-record self-check if new parsing
+logic is needed. Do not build another runtime controller or repair the generic
+CI runner merely to make its scripted pass count look like native qualification.
+
+Per run, correlate prompt/submission, request/action IDs, Root Process/boot,
+rollout/checkpoint references, tool results, terminal observation and verified
+source/artifact/effect changes. Product runtime evidence stays in its owning
+System Store; qualification receipts/captures use a unique task-owned Host cache,
+with no credential bodies or copied personal stores. Repository fixtures and
+operator guidance are executable evidence, not an alternative planning surface.
+
+### Outcomes and intervention remain separate dimensions
+
+A task passes only when its predeclared behavioral/effect checks and required
+terminal/lifecycle assertions pass. A model's final answer, command exit zero,
+screenshot or fixture setup success alone is insufficient. Planned grant approval,
+cancel/revoke/recovery steps are counted separately from unplanned steering,
+operator code edits, environment repair and corrective reruns.
+
+Report first-attempt pass/failed/environment-blocked/unsupported/not-run totals
+out of thirty, with per-platform/family counts. Report assisted completion and
+zero-unplanned-intervention completion separately. Corrections add linked attempts
+rather than overwriting the original slot. Wall time runs from submission through
+verified completion, with model/tool/wait portions when evidence allows. Provider
+usage/cost remains unknown when unavailable; never fabricate token totals or
+pricing. The five-family sample supports only those measured boundaries.
+
+### Repair observed defects in their durable owners
+
+Capture the smallest reproduction before changing production code. Add the owning
+OpenSpec delta when needed: terminal presentation/detail retention belongs to
+existing TUI/Tool result owners; Process/AgentFS and Host adapters keep lifecycle
+and native authority. Fix a shared cause once, run affected tests and native reruns,
+and freeze a new source/binary identity. Every final qualification slot must have
+applicable final-candidate evidence; retain earlier-source attempts as historical
+results and rerun affected rows. No speculative rewrite follows from this plan.
+
+### Observed directory context uses existing Action evidence
+
+Native F1 r3 and r1 retry show `no project` after public Host authorization and a
+successful ordinary `cd`: the TUI tracks the correct namespace cwd but its header
+requires a local picker receipt. Reuse that observed cwd as the fallback location
+when it differs from `/`; keep the existing default at `/` and picker labels/access
+when a receipt exists. Do not infer authority or Native Host paths from cwd. Clear
+the previous observed cwd at Root replacement while retaining grant/control fencing.
+Existing narrow-line priorities and the editable draft remain unchanged.
+
+### Observed Cargo manifest input reuses finite operand roles
+
+The first F2 independent compound check is classified Write and rejects an explicit
+read-only project manifest before execution, although the same grant can be read
+by the protected library checker. Extend the existing token path-role parser only
+for Cargo build/check/test/run `--manifest-path` inputs before `--`; use readable
+authority for that operand in both direct-path and absolute-literal checks when
+an OS enforcing backend is active. Keep command policy, writable cwd, output and
+redirection checks, read-deny/protected/symlink validation, Host grant projection
+and parser-only degradation unchanged. Unknown Cargo commands and program arguments
+receive no exception. Do not rewrite command text or add a native authority root.
+A native spoofed-Cargo regression additionally exposed Seatbelt shared-temp write
+allowances overriding read-only roots. Add explicit native read-only write denies
+from the same SandboxSpec, preserving existing writable descendant exceptions.
+The native regression must prove permitted scratch writes and denied source writes
+with source bytes unchanged, including a read-only ancestor of writable scratch.
+This fixes the manifest preflight/temporary-root findings, not the earlier namespace Read operand.
+
+### Explicit project revocation discovers external grants without inventing authority
+
+The original F4 r1 run proves `/project revoke` reports no active grant while an
+SDK-granted current project remains active. Keep retained picker/recovery receipts
+and the existing leave-cwd, correlated Action, then Host revoke sequence. When no
+receipt exists, asynchronously read bounded public Host Mount grant records and
+their corresponding request documents. Match active authority, current Root
+requester identity and the observed namespace cwd by path components; choose the
+longest matching namespace prefix, refusing ambiguous or unavailable evidence.
+Do not infer access, labels or native completion roots from cwd, create grants,
+select another Root's authority or revoke arbitrary grants while cwd is `/`.
+Recheck Root, cwd and the settled input boundary before staging the existing cwd
+control. Lookup is read-only and keeps input/quit responsive; stale responses
+send no mutation. Retain the existing uncertainty/retry behavior until actual
+Host revocation acknowledgment. Host Mount remains the authority owner.
+
+### Clarify the existing native shell path contract before new qualification
+
+F4 r1 a2 reproduces a namespace-absolute Bash refusal and an unnecessary duplicate
+mount request for already active authority. Bash passes command text unchanged to
+native execution, while file Tools and selected cwd use the existing Host adapter
+resolver. Its model-visible description currently fails to explain this difference.
+State the supported cwd-relative shell operand path and use of file Tools for
+absolute Alan namespace paths in the existing Bash definition/schema. A namespace
+shell refusal alone must not imply that another project grant is needed. This
+guidance introduces no path rewrite, broad authority, new parser or runtime option.
+It does not implement general namespace-absolute native shell operands. Retain
+that limitation explicitly and rerun the unchanged real-model task on a fresh
+candidate to measure whether model use of the supported boundary actually works.
+
+### Repair real retained-output access and readability in existing owners
+
+Native F5 r1 proves the full original Action output survives, while the model's
+published namespace-reference read incorrectly falls through the Host-only file
+adapter. Ordinary Tool Process execution must read its owning Agent's emitted
+Action output through bounded read-only namespace descriptors, independently of
+native Host backing. Scope the actual receiving Process/namespace, reject other
+Agent owners and traversal/control paths, preserve expiry/redaction and bounded
+range semantics, and never authorize writes or broaden project/native grants.
+Long JSON output needs usable bounded range access within the prompt-facing
+budget; another oversized projection or producer rerun is not successful reading.
+Reuse existing namespace/evidence IO and Tool execution rather than an artifact
+registry or globally addressed controller. The existing ReadFile Tool receives
+the actual invocation namespace from the Service Manager, scoped to the real
+parent Process rather than a Tool argument. Only concrete own-Agent Action output
+paths use this read-only route; Host paths keep their existing adapter and
+line-range behavior. Evidence uses byte_offset and byte_limit with a 4096-byte
+bound, reports total_bytes and next_byte_offset, and preserves UTF-8 boundaries
+so repeated ranges return original text without another oversized Tape projection.
+The bound leaves room for worst-case JSON escaping. Missing/expired records,
+cross-owner/control/traversal attempts and absent descriptors fail truthfully
+without Host fallback. Native qualification and final-candidate task retries
+remain open.
+
+The same run shows retained Command JSON displayed as escaped raw bytes after
+its bounded structured preview. Extend the existing pure acquired-content
+presentation to recognize the generic stdout/stderr/exit result shape and show
+full acquired streams with separate labels, preserving raw bytes below them.
+Keep bounds, reference resolution, redaction/expiry and malformed fallback intact;
+interpret no Tool arguments or tool identity. A failing actual Action-detail
+regression precedes the repair, with native acceptance on a fresh candidate.
+
+### Preserve declared Tool schema optionality at the Responses boundary
+
+The first native reader candidate fails the unchanged F5 retry: four ReadFile
+calls combine line and byte ranges, despite the model-visible guidance and an
+error requiring distinct modes. The shared Responses wire Tool definition emits
+no strict field. OpenAI's function-calling contract states that omission permits
+provider normalization into strict schemas, making all fields required. This is
+a plausible shared cause of the observed forced-looking arguments, not a proven
+server trace. Preserve the supplied Tool schema and its optional fields by
+explicitly selecting non-strict function arguments in the existing Responses
+wire adapter. Both official and managed Responses use this mapper; retain engine
+schema validation before Tool execution, typed-evaluation/output contracts,
+provider auth/profile/model/effort and all Process/grant/range boundaries. Do not
+silently ignore mixed ranges or remove the failed retry. Require serialized-wire
+regressions and a fresh unchanged-task native retry to qualify the finding.
+
+Reference: [OpenAI function-calling strict-mode contract](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
+
+### Retain loop-guard stop reasons through existing file-backed error surfaces
+
+The same failed F5 retry also reveals a loop-guard visibility gap: both guard
+branches emit legacy Error/TextDelta events without publishing an AgentFS UI
+error. Reuse the existing error_notice helper, whose notice and Error event
+already feed file-backed live state and retained transcript history. Preserve
+existing guard thresholds, Process/Action effects and turn settlement; do not
+add a synthetic model answer or another history owner. Stop copy must describe
+the reason and supported next-input action without obsolete environment advice.
+Regressions exercise both guard branches through real AgentFS-backed orchestration.
+
+## Risks / Trade-offs
+
+- Provider or tool environment unavailable → retain the blocked first slot and
+  inspect actual readiness; no mocked output, weaker-backend or model substitution.
+- Operator intervention hides failure → log each intervention before it changes
+  the run and distinguish planned lifecycle actions from corrective help.
+- Reused cache or durable work yields a false pass → fresh fixture baseline,
+  selected recovery only, exact expected effects and independent retained checks.
+- Failed task leaves a live writer → track actual owned processes, cancel/exit
+  through product controls, wait beyond its scheduled effect and verify cleanup.
+- Thirty runs give limited reliability coverage → report the measured task/model/
+  platform scope and failure counts; do not extrapolate an autonomy guarantee.
+
+## Migration Plan
+
+No product-state migration is needed. First qualify the Linux predecessor
+candidate, freeze candidate/provider/fixture identities and readiness, then run
+the matrix serially in disposable projects. Preserve outstanding user adoption,
+merge and canonical closure explicitly until final delivery.
+Review repairs and rerun affected rows, publish evidence with current-head CI and
+let the user merge. After merge, sync the harness delta to canonical specs and
+archive only after verified delivery. Remove only exact owned stopped fixtures;
+retain unsuccessful attempts and evidence until their disposition is reviewed.
+
+## Open Questions
+
+- The predecessor's explicit disjoint read-only shell grant adoption remains a
+  user review/merge decision. Controlled candidate tests state that proposed
+  boundary and do not decide adoption or deploy it to an installed runtime.
+- Provider access and exact supported model/effort on each Host need live inventory
+  before freezing tasks; current macOS profile history is not Linux credential proof.

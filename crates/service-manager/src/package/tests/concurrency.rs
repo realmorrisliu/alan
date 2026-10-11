@@ -156,29 +156,75 @@ fn independent_services_observe_mutations_and_retain_live_revisions() {
 
 #[test]
 fn concurrent_services_do_not_overwrite_each_others_catalog_entries() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("packages");
-    let first = PackageService::open(root.clone()).unwrap();
-    let second = PackageService::open(root).unwrap();
-    let barrier = std::sync::Barrier::new(2);
-    std::thread::scope(|scope| {
-        for (service, id) in [(&first, "first"), (&second, "second")] {
-            let barrier = &barrier;
-            scope.spawn(move || {
-                barrier.wait();
-                let result = service
-                    .execute(PackageCommand::Install {
-                        request_id: id.into(),
-                        package_id: id.into(),
-                        snapshot: native_snapshot(id, id),
+    for force_busy in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("packages");
+        let first = PackageService::open(root.clone()).unwrap();
+        let second = PackageService::open(root.clone()).unwrap();
+        let install = |service: &PackageService, id: &str, request_id: &str| {
+            service
+                .execute(PackageCommand::Install {
+                    request_id: request_id.into(),
+                    package_id: id.into(),
+                    snapshot: native_snapshot(id, id),
+                })
+                .unwrap()
+        };
+        let operation = move || {
+            let barrier = std::sync::Barrier::new(2);
+            let replies = std::thread::scope(|scope| {
+                let handles: Vec<_> = [(&first, "first"), (&second, "second")]
+                    .into_iter()
+                    .map(|(service, id)| {
+                        let barrier = &barrier;
+                        scope.spawn(move || {
+                            barrier.wait();
+                            install(service, id, id)
+                        })
                     })
-                    .unwrap();
-                assert!(result.success, "Package Install reply: {result:?}");
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect::<Vec<_>>()
             });
+            (first, second, replies)
+        };
+        let (first, second, replies) = if force_busy {
+            let (bounded, value, _, owned) =
+                lock_contention::contend(&root, std::time::Duration::from_secs(5), operation);
+            assert!(
+                bounded && owned,
+                "both callers must finish while peer owns the lock"
+            );
+            value
+        } else {
+            operation()
+        };
+        if force_busy {
+            assert!(replies.iter().all(|reply| !reply.success));
+            assert!(first.catalog().unwrap().packages.is_empty());
+        } else {
+            assert!(replies.iter().any(|reply| reply.success));
         }
-    });
-    assert_eq!(first.catalog().unwrap(), second.catalog().unwrap());
-    assert_eq!(first.catalog().unwrap().packages.len(), 2);
+        for ((service, id), reply) in [(&first, "first"), (&second, "second")]
+            .into_iter()
+            .zip(replies)
+        {
+            if !reply.success {
+                // The operator's bounded busy result is valid under slow/instrumented IO.
+                assert_eq!(
+                    reply.message,
+                    "Package Store busy: lock acquisition exceeded 500 ms"
+                );
+                assert!(!service.catalog().unwrap().packages.contains_key(id));
+                assert!(!root.join("revisions").join(id).exists());
+                assert!(install(service, id, &format!("{id}-retry")).success);
+            }
+        }
+        assert_eq!(first.catalog().unwrap(), second.catalog().unwrap());
+        assert_eq!(first.catalog().unwrap().packages.len(), 2);
+    }
 }
 
 #[test]

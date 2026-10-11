@@ -9,6 +9,8 @@ use serde_json::json;
 use serde_json::{Map, Value};
 
 pub(crate) const MAX_INLINE_EVIDENCE_BYTES: usize = 30_000;
+// JSON escaping can expand each source byte sixfold; leave room for the result envelope.
+pub(crate) const MAX_EVIDENCE_READ_BYTES: u64 = 4096;
 const MAX_EVIDENCE_PREVIEW_BYTES: usize = 8_000;
 const MAX_EVIDENCE_METADATA_VALUE_BYTES: usize = 512;
 pub(crate) const RETENTION_EXPIRED_RECORD_TYPE: &str = "evidence_retention_expired";

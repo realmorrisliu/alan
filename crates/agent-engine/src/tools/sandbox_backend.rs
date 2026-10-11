@@ -27,7 +27,9 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 pub use seatbelt::seatbelt_profile;
-pub(crate) use seatbelt::{read_denylist_excluding_writable_roots, seatbelt_host_mount_exclusions};
+pub(crate) use seatbelt::{
+    read_denylist_excluding_writable_roots, seatbelt_host_mount_exclusions, seatbelt_read_only,
+};
 
 /// Available sandbox enforcement backends, in order of strength.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +456,23 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
 const TRUSTED_LINUX_PROBE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[cfg(target_os = "linux")]
+const LINUX_RECURSIVE_READ_ONLY_PROBE: &str = r#"
+set -eu
+mount_bin="$ALAN_PROBE_MOUNT_BIN"
+printf_bin="$ALAN_PROBE_PRINTF_BIN"
+"$ALAN_PROBE_MOUNT_BIN" --make-rprivate /
+mkdir "$1/nested"
+"$ALAN_PROBE_MOUNT_BIN" -t tmpfs tmpfs "$1/nested"
+printf nested > "$1/nested/probe-file"
+"$ALAN_PROBE_MOUNT_BIN" --rbind "$1" "$2"
+readonly_tree "$2"
+test "$(cat "$2/probe-file")" = probe
+test "$(cat "$2/nested/probe-file")" = nested
+if "$ALAN_PROBE_SHELL_BIN" -c 'printf x > "$1/probe-file"' sh "$2" 2>/dev/null; then exit 1; fi
+if "$ALAN_PROBE_SHELL_BIN" -c 'printf x > "$1/nested/probe-file"' sh "$2" 2>/dev/null; then exit 1; fi
+"#;
+
+#[cfg(target_os = "linux")]
 fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let linux_host = LinuxReificationCapability::available();
     let user_namespace = run_linux_probe_command(
@@ -498,10 +517,10 @@ fn probe_linux_reification_for_host() -> LinuxReificationCapabilityReport {
     let read_only_remount = if mount_namespace.is_available() {
         run_mount_probe(
             "read-only remount",
-            "\"$ALAN_PROBE_MOUNT_BIN\" --make-rprivate / && \
-             \"$ALAN_PROBE_MOUNT_BIN\" --bind \"$1\" \"$2\" && \
-             \"$ALAN_PROBE_MOUNT_BIN\" -o remount,bind,ro \"$2\" && \
-             if \"$ALAN_PROBE_SHELL_BIN\" -c 'printf x > \"$1/probe-file\"' sh \"$2\" 2>/dev/null; then exit 1; fi",
+            &format!(
+                "{}\n{LINUX_RECURSIVE_READ_ONLY_PROBE}",
+                super::reified_namespace::LINUX_READ_ONLY_MOUNT_TREE
+            ),
         )
     } else {
         LinuxReificationCapability::unavailable("requires available mount namespace")
@@ -584,10 +603,12 @@ fn linux_unshare_shell_command(
     let unshare = resolve_trusted_linux_helper("unshare", &["/usr/bin/unshare", "/bin/unshare"])?;
     let shell = resolve_trusted_linux_helper("sh", &["/bin/sh", "/usr/bin/sh"])?;
     let mount = resolve_trusted_linux_helper("mount", &["/usr/bin/mount", "/bin/mount"])?;
+    let printf = resolve_trusted_linux_helper("printf", &["/usr/bin/printf", "/bin/printf"])?;
     let mut command = std::process::Command::new(unshare);
     command
         .env("PATH", TRUSTED_LINUX_PROBE_PATH)
         .env("ALAN_PROBE_MOUNT_BIN", mount)
+        .env("ALAN_PROBE_PRINTF_BIN", printf)
         .env("ALAN_PROBE_SHELL_BIN", &shell)
         .args(["--user", "--map-root-user", "--mount"])
         .arg(shell)

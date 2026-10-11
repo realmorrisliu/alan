@@ -20,6 +20,8 @@ mod path_safety;
 mod sandbox_spec;
 mod shell_syntax;
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) use command_wrappers::command_and_args;
 pub(crate) use path_safety::protected_path_component;
 pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 
@@ -169,7 +171,7 @@ impl Sandbox {
     /// Return a stable routing reason when a bash command targets local paths
     /// outside the current host_mount.
     pub fn bash_path_guard_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
-        if !self.is_writable(cwd) {
+        if !self.command_cwd_is_authorized(cwd, None) {
             return Some(format!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
@@ -183,6 +185,21 @@ impl Sandbox {
                 let reason = err.to_string();
                 is_path_guard_reason(&reason).then_some(reason)
             }
+        }
+    }
+
+    fn command_cwd_is_authorized(
+        &self,
+        cwd: &Path,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> bool {
+        if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read))
+            || self.active_backend()
+                == super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
+        {
+            self.is_readable(cwd)
+        } else {
+            self.is_writable(cwd)
         }
     }
 
@@ -319,14 +336,7 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
-        let read_only_command =
-            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
-        let cwd_is_authorized = if read_only_command {
-            self.is_readable(cwd)
-        } else {
-            self.is_writable(cwd)
-        };
-        if !cwd_is_authorized {
+        if !self.command_cwd_is_authorized(cwd, capability) {
             return Err(anyhow!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
@@ -421,6 +431,7 @@ impl Sandbox {
                     &self.spec.read_denylist,
                     allow_network,
                 );
+                profile.push_str(&super::sandbox_backend::seatbelt_read_only(&self.spec));
                 profile.push_str(&super::sandbox_backend::seatbelt_host_mount_exclusions(
                     &self.excluded_host_roots,
                     &self.spec.readable_roots,
@@ -477,7 +488,16 @@ impl Sandbox {
         timeout: Option<Duration>,
         allow_network: bool,
     ) -> Result<ExecResult> {
-        let plan = self.reified_namespace_plan_for_command(cmd, cwd, allow_network)?;
+        let input = self.reified_namespace_input_for_command(cmd, cwd, allow_network);
+        #[cfg(target_os = "linux")]
+        let input = super::reified_namespace::configure_linux_command_environment(
+            input,
+            shell_commands(cmd)?,
+        )
+        .await
+        .map_err(|reason| anyhow!("linux command environment unavailable: {reason}"))?;
+        let plan = super::reified_namespace::ReifiedNamespacePlan::derive(input)
+            .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
         let runner = super::reified_namespace::LinuxReifiedNamespaceRunner::with_fallback_backend(
             super::sandbox_backend::detect_projection_backend(),
         );
@@ -487,12 +507,12 @@ impl Sandbox {
             .map_err(anyhow::Error::from)
     }
 
-    fn reified_namespace_plan_for_command(
+    fn reified_namespace_input_for_command(
         &self,
         cmd: &str,
         cwd: &Path,
         allow_network: bool,
-    ) -> Result<super::reified_namespace::ReifiedNamespacePlan> {
+    ) -> super::reified_namespace::ReifiedNamespacePlanInput {
         let cwd = if cwd.is_absolute() {
             cwd.to_path_buf()
         } else {
@@ -503,22 +523,18 @@ impl Sandbox {
         } else {
             NetworkPosture::Deny
         };
-        let plan = super::reified_namespace::ReifiedNamespacePlan::derive(
-            super::reified_namespace::ReifiedNamespacePlanInput::new(
-                self.reified_mount_declarations(),
-                cwd,
-                vec![
-                    "/bin/sh".to_string(),
-                    "-p".to_string(),
-                    "-f".to_string(),
-                    "-c".to_string(),
-                    cmd.to_string(),
-                ],
-                network,
-            ),
+        super::reified_namespace::ReifiedNamespacePlanInput::new(
+            self.reified_mount_declarations(),
+            cwd,
+            vec![
+                "/bin/sh".to_string(),
+                "-p".to_string(),
+                "-f".to_string(),
+                "-c".to_string(),
+                cmd.to_string(),
+            ],
+            network,
         )
-        .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
-        Ok(plan)
     }
 
     fn reified_mount_declarations(&self) -> Vec<super::reified_namespace::ReifiedMountDeclaration> {
@@ -635,9 +651,10 @@ impl Sandbox {
                 continue;
             }
 
-            if role != TokenPathRole::Check {
+            if !matches!(role, TokenPathRole::Check | TokenPathRole::Read) {
                 continue;
             }
+            let capability = role.capability(capability, self.active_backend().is_os_enforced());
             for candidate in path_like_subtokens(token) {
                 self.validate_command_path_candidate(candidate, cwd, capability)?;
             }
@@ -881,6 +898,7 @@ impl Sandbox {
             if role == TokenPathRole::Data {
                 continue;
             }
+            let capability = role.capability(capability, self.active_backend().is_os_enforced());
             let path_literals = if let TokenPathRole::ExecutableData(offset) = role {
                 let Some(getline_paths) =
                     command_interpreters::awk_getline_file_paths(&token.decoded[offset..])

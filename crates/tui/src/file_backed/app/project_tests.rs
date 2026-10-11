@@ -11,6 +11,25 @@ fn receipt() -> ProjectMountReceipt {
         access: ProjectAccess::ReadOnly,
     }
 }
+
+#[test]
+fn external_project_revoke_requests_authoritative_discovery_without_local_receipt() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot::default()),
+    );
+    app.namespace_cwd = "/mnt/external/src".into();
+    assert!(app.project.is_none());
+    assert!(app.retained_project_grant().is_none());
+    assert!(
+        matches!(
+            app.handle_command("/project revoke"),
+            Some(FileBackedAction::RevokeCurrentProject)
+        ),
+        "missing local receipt must discover Host authority instead of claiming no grant exists"
+    );
+}
 fn action(id: &str, status: &str, exit: i32, cwd: &str) -> ActionSnapshot {
     ActionSnapshot { id: "action".into(), name: "cd".into(), status: status.into(), output: String::new(), result: serde_json::json!({"call_id": id, "title": "Select Process directory", "exit_code": exit, "outcome": {"success": exit == 0, "cwd": cwd}}).to_string() }
 }
@@ -206,4 +225,59 @@ fn candidate_cleanup_retains_failed_authority_and_requires_explicit_retry() {
         assert!(app.project_cleanup.is_none());
         assert!(app.project_boundary_available(false));
     }
+}
+
+#[test]
+fn ordinary_cd_context_uses_observed_namespace_cwd_without_a_picker_receipt() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    assert!(app.context_line(120).to_string().contains("no project"));
+    let mut snapshot = ActionSnapshot {
+        id: "external-project-cd".into(),
+        name: "cd".into(),
+        status: "running".into(),
+        output: String::new(),
+        result: serde_json::json!({"outcome": {"cwd": "/mnt/project-request-1/src"}}).to_string(),
+    };
+    for status in ["running", "failed", "rejected"] {
+        snapshot.status = status.into();
+        app.observe_action_cwd(&snapshot);
+        assert!(app.context_line(120).to_string().contains("no project"));
+    }
+    snapshot.status = "completed".into();
+    app.observe_action_cwd(&snapshot);
+    let context = app.context_line(120).to_string();
+    assert!(context.contains("/mnt/project-request-1/src"), "{context}");
+    assert!(!context.contains("no project") && !context.contains("read-only"));
+    assert!(
+        app.project.is_none(),
+        "cwd does not create a project receipt"
+    );
+    for width in [32, 40, 48, 80] {
+        let line = app.context_line(width);
+        let text = line.to_string();
+        assert!(line.width() <= width, "{width}: {text}");
+        assert!(
+            text.contains("gpt-6.1-sol") && text.contains("ready"),
+            "{text}"
+        );
+    }
+    snapshot.result = serde_json::json!({"outcome": {"cwd": "/"}}).to_string();
+    app.observe_action_cwd(&snapshot);
+    assert!(app.context_line(120).to_string().contains("no project"));
+}
+
+#[test]
+fn root_change_discards_previous_ordinary_cd_context() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.observe_action_cwd(&ActionSnapshot {
+        id: "old-cd".into(),
+        name: "cd".into(),
+        status: "completed".into(),
+        output: String::new(),
+        result: serde_json::json!({"outcome": {"cwd": "/mnt/old"}}).to_string(),
+    });
+    app.reset_for_root_process_change();
+    assert_eq!(app.namespace_cwd, std::path::PathBuf::from("/"));
+    assert!(app.context_line(120).to_string().contains("no project"));
 }

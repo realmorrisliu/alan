@@ -1,170 +1,238 @@
 //! User toolchain visibility checks for Linux reified namespace selection.
 
-#[cfg(any(target_os = "linux", all(test, unix)))]
-use std::os::unix::fs::PermissionsExt;
-#[cfg(any(target_os = "linux", all(test, unix)))]
-use std::path::{Path, PathBuf};
-
 #[cfg(target_os = "linux")]
 use super::super::sandbox_backend::LinuxReificationCapability;
+#[cfg(test)]
 use super::LINUX_REIFIED_COMMAND_PATH;
 #[cfg(any(target_os = "linux", all(test, unix)))]
-use super::plan::canonicalize_existing_host_path;
-#[cfg(test)]
-use super::plan::default_execution_substrate;
+use super::plan::{canonicalize_existing_host_path, contains_parent_component};
+#[cfg(any(target_os = "linux", all(test, unix)))]
+use super::{ReifiedExecutionSubstrateMount, default_execution_substrate};
 
-/// Smoke-check that selecting reified mode will not hide user PATH toolchains.
+/// Resolve the current supported command PATH without changing its order or spelling.
+#[cfg(target_os = "linux")]
+pub(crate) fn current_linux_command_path() -> Result<String, String> {
+    let (path, substrate, _) = current_environment(None)?;
+    validate_linux_command_path(Some(path.into()), &substrate)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) async fn configure_linux_command_environment(
+    input: super::ReifiedNamespacePlanInput,
+    commands: Vec<Vec<String>>,
+) -> Result<super::ReifiedNamespacePlanInput, String> {
+    tokio::task::spawn_blocking(move || configure_input(input, &commands))
+        .await
+        .map_err(|error| format!("Linux tool environment inspection failed: {error}"))?
+}
+
+#[cfg(target_os = "linux")]
+fn configure_input(
+    mut input: super::ReifiedNamespacePlanInput,
+    commands: &[Vec<String>],
+) -> Result<super::ReifiedNamespacePlanInput, String> {
+    let (path, substrate, rustup) = current_environment(Some((&input, commands)))?;
+    input = input
+        .with_execution_substrate(substrate)
+        .with_command_path(path);
+    if rustup.is_some()
+        && input.execution_substrate.iter().any(|mount| {
+            super::plan::paths_overlap(&input.scratch_tmp_namespace_path, &mount.namespace_path)
+        })
+    {
+        input.scratch_tmp_namespace_path = (0..=input.declarations.len()
+            + input.execution_substrate.len())
+            .map(|index| std::path::PathBuf::from(format!("/.alan-tmp-{index}")))
+            .find(|candidate| {
+                input
+                    .declarations
+                    .iter()
+                    .map(|mount| &mount.namespace_path)
+                    .chain(
+                        input
+                            .execution_substrate
+                            .iter()
+                            .map(|mount| &mount.namespace_path),
+                    )
+                    .filter(|path| path.as_path() != std::path::Path::new("/"))
+                    .all(|path| !super::plan::paths_overlap(path, candidate))
+            })
+            .expect("more scratch candidates than reserved mount roots");
+    }
+    input.rustup = rustup;
+    Ok(input)
+}
+
+#[cfg(target_os = "linux")]
+fn current_environment(
+    input: Option<(&super::ReifiedNamespacePlanInput, &[Vec<String>])>,
+) -> Result<
+    (
+        String,
+        Vec<ReifiedExecutionSubstrateMount>,
+        Option<super::ReifiedRustupEnvironment>,
+    ),
+    String,
+> {
+    let path = std::env::var("PATH").map_err(|_| "current PATH is unset or not UTF-8")?;
+    if path.contains('\0') {
+        return Err("current PATH contains NUL".into());
+    }
+    let home = std::env::var_os("RUSTUP_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".rustup")))
+        .unwrap_or_default();
+    let selector = std::env::var_os("RUSTUP_TOOLCHAIN")
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "Rustup override is not UTF-8")
+        })
+        .transpose()?;
+    let rustup = super::rustup::discover(&path, &home, selector, input)?;
+    let mut substrate = default_execution_substrate();
+    if let Some(environment) = &rustup {
+        substrate.extend(
+            environment
+                .proxy_mounts
+                .iter()
+                .chain(&environment.toolchain_mounts)
+                .cloned(),
+        );
+    }
+    let path = validate_linux_command_path(Some(path.into()), &substrate)?;
+    Ok((path, substrate, rustup))
+}
+
+/// Startup selection and per-command construction share the same validation.
 #[cfg(target_os = "linux")]
 pub(crate) fn smoke_linux_reified_namespace_user_path() -> LinuxReificationCapability {
-    match reified_namespace_user_path_unavailable_reason(std::env::var_os("PATH")) {
-        Some(reason) => LinuxReificationCapability::unavailable(reason),
-        None => LinuxReificationCapability::available(),
+    match current_linux_command_path() {
+        Ok(_) => LinuxReificationCapability::available(),
+        Err(reason) => LinuxReificationCapability::unavailable(reason),
     }
 }
 
-#[cfg(target_os = "linux")]
-fn reified_namespace_user_path_unavailable_reason(
-    path: Option<std::ffi::OsString>,
-) -> Option<String> {
-    let visible_roots = reified_command_path_roots();
-    reified_namespace_user_path_unavailable_reason_with_roots(
-        path,
-        &visible_roots,
-        std::ffi::OsString::from(LINUX_REIFIED_COMMAND_PATH),
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn reified_command_path_roots() -> Vec<PathBuf> {
-    std::env::split_paths(LINUX_REIFIED_COMMAND_PATH)
-        .map(|path| canonicalize_existing_host_path(&path))
-        .collect()
-}
-
 #[cfg(any(target_os = "linux", all(test, unix)))]
-fn reified_namespace_user_path_unavailable_reason_with_roots(
+pub(super) fn validate_linux_command_path(
     path: Option<std::ffi::OsString>,
-    visible_roots: &[PathBuf],
-    reified_command_path: std::ffi::OsString,
-) -> Option<String> {
-    let Some(path) = path else {
-        return Some(
-            "current PATH is unset; preserve actual PATH/order before selecting \
-             linux_reified_namespace"
-                .to_string(),
-        );
-    };
-    let visible_roots = visible_roots
-        .iter()
-        .map(|root| canonicalize_existing_host_path(root))
-        .collect::<Vec<_>>();
-    let mut unsupported = Vec::new();
-    let mut current_executable_entries = Vec::new();
-
+    substrate: &[ReifiedExecutionSubstrateMount],
+) -> Result<String, String> {
+    let path = path.ok_or_else(|| "current PATH is unset".to_string())?;
+    let path = path
+        .into_string()
+        .map_err(|_| "current PATH is not UTF-8".to_string())?;
+    if path.contains('\0') {
+        return Err("current PATH contains NUL".to_string());
+    }
     for entry in std::env::split_paths(&path) {
         if entry.as_os_str().is_empty() {
-            return Some(
-                "current PATH contains an empty component for current-directory lookup; preserve \
-                 actual PATH/order before selecting linux_reified_namespace"
-                    .to_string(),
+            return Err(
+                "current PATH contains an empty component for current-directory lookup".to_string(),
             );
         }
-        if !entry.is_absolute() {
-            unsupported.push(format!("relative PATH entry {}", entry.display()));
-            continue;
+        if !entry.is_absolute() || contains_parent_component(&entry) {
+            return Err(format!("unsafe PATH entry {}", entry.display()));
         }
-
-        let entry = canonicalize_existing_host_path(&entry);
-        if !path_directory_has_executables(&entry) {
-            continue;
-        }
-        if visible_roots
+        let Some(mount) = substrate
             .iter()
-            .any(|root| entry == *root || entry.starts_with(root))
-        {
-            push_unique_path(&mut current_executable_entries, entry);
-            continue;
+            .find(|mount| entry.starts_with(&mount.namespace_path))
+        else {
+            return Err(format!(
+                "PATH entry outside the reified execution substrate: {}",
+                entry.display()
+            ));
+        };
+        let root = canonicalize_existing_host_path(&mount.host_path);
+        let relative = entry
+            .strip_prefix(&mount.namespace_path)
+            .expect("matched namespace prefix");
+        let candidate = root.join(relative);
+        validate_directory_aliases(&candidate, &root, &mount.namespace_path)?;
+        let source = canonicalize_existing_host_path(&candidate);
+        if !source.starts_with(&root) {
+            return Err(format!(
+                "PATH entry escapes execution substrate: {}",
+                entry.display()
+            ));
         }
-
-        unsupported.push(entry.display().to_string());
-        if unsupported.len() >= 3 {
-            break;
+        match std::fs::metadata(&source) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if candidate
+                    .ancestors()
+                    .take_while(|path| path.starts_with(&root))
+                    .any(|path| {
+                        std::fs::symlink_metadata(path)
+                            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    })
+                {
+                    return Err(format!(
+                        "PATH entry contains an unresolved alias: {}",
+                        entry.display()
+                    ));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "PATH entry is not an accessible directory: {}",
+                    entry.display()
+                ));
+            }
         }
     }
-
-    if !unsupported.is_empty() {
-        return Some(format!(
-            "current PATH has executable entries outside the reified execution substrate: {}; \
-             preserve user PATH/toolchain mounts before selecting linux_reified_namespace",
-            unsupported.join(", ")
-        ));
-    }
-
-    let reified_executable_entries = executable_path_entries(&reified_command_path);
-    if current_executable_entries != reified_executable_entries {
-        return Some(format!(
-            "current PATH executable entry order differs from the reified command PATH: \
-             current=[{}], reified=[{}]; preserve actual PATH/order before selecting \
-             linux_reified_namespace",
-            format_path_entries(&current_executable_entries),
-            format_path_entries(&reified_executable_entries)
-        ));
-    }
-
-    None
+    Ok(path)
 }
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
-fn path_directory_has_executables(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_dir() {
-        return false;
-    }
-
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return true;
-    };
-    entries.filter_map(Result::ok).any(|entry| {
-        std::fs::metadata(entry.path())
-            .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    })
-}
-
-#[cfg(any(target_os = "linux", all(test, unix)))]
-fn executable_path_entries(path: &std::ffi::OsString) -> Vec<PathBuf> {
-    let mut entries = Vec::new();
-    for entry in std::env::split_paths(path) {
-        if entry.as_os_str().is_empty() || !entry.is_absolute() {
-            continue;
+fn validate_directory_aliases(
+    candidate: &std::path::Path,
+    root: &std::path::Path,
+    namespace_root: &std::path::Path,
+) -> Result<(), String> {
+    let mut path = candidate.components().collect::<std::path::PathBuf>();
+    for _ in 0..40 {
+        let alias = path
+            .ancestors()
+            .take_while(|ancestor| *ancestor != root && ancestor.starts_with(root))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .find_map(|ancestor| {
+                std::fs::read_link(ancestor)
+                    .ok()
+                    .map(|target| (ancestor, target))
+            });
+        let Some((alias, target)) = alias else {
+            return Ok(());
+        };
+        // Absolute aliases may resolve differently after the Host root is remapped.
+        if target.is_absolute() && (root != namespace_root || !target.starts_with(root)) {
+            return Err(format!(
+                "absolute PATH alias in remapped substrate: {}",
+                alias.display()
+            ));
         }
-        let entry = canonicalize_existing_host_path(&entry);
-        if path_directory_has_executables(&entry) {
-            push_unique_path(&mut entries, entry);
+        if contains_parent_component(&target) {
+            return Err(format!("unsafe PATH alias: {}", alias.display()));
         }
+        let target = if target.is_absolute() {
+            target
+        } else {
+            alias
+                .parent()
+                .expect("alias below substrate root")
+                .join(target)
+        };
+        path = target
+            .join(path.strip_prefix(alias).expect("alias ancestor"))
+            .components()
+            .collect();
     }
-    entries
-}
-
-#[cfg(any(target_os = "linux", all(test, unix)))]
-fn push_unique_path(entries: &mut Vec<PathBuf>, entry: PathBuf) {
-    if !entries.contains(&entry) {
-        entries.push(entry);
-    }
-}
-
-#[cfg(any(target_os = "linux", all(test, unix)))]
-fn format_path_entries(entries: &[PathBuf]) -> String {
-    if entries.is_empty() {
-        return "<none>".to_string();
-    }
-    entries
-        .iter()
-        .map(|entry| entry.display().to_string())
-        .collect::<Vec<_>>()
-        .join(":")
+    Err(format!(
+        "PATH alias resolution limit exceeded: {}",
+        candidate.display()
+    ))
 }
 
 #[cfg(test)]

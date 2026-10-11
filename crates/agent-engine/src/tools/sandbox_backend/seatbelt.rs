@@ -1,6 +1,33 @@
 //! macOS Seatbelt profile generation and path projection rules.
 
+use crate::tools::SandboxSpec;
 use std::path::{Component, Path, PathBuf};
+
+/// Explicit read-only roots override shared temporary-directory write allowances.
+pub(crate) fn seatbelt_read_only(spec: &SandboxSpec) -> String {
+    spec.readable_roots
+        .iter()
+        .filter(|root| !spec.writable_roots.contains(root))
+        .map(|root| {
+            let exceptions = spec
+                .writable_roots
+                .iter()
+                .filter(|writable| writable.starts_with(root))
+                .map(|writable| {
+                    format!(
+                        "(require-not (subpath {}))",
+                        sbpl_quote(&canonical_string(writable))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "(deny file-write* (require-all (subpath {}) {exceptions}))\n",
+                sbpl_quote(&canonical_string(root))
+            )
+        })
+        .collect()
+}
 
 /// Generate a macOS Seatbelt (SBPL) profile that confines filesystem writes to
 /// writable roots (plus the temp dir) and denies outbound network.

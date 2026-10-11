@@ -7,6 +7,7 @@ pub(crate) mod accepted_submission;
 pub(crate) mod directory_control;
 mod explicit_command;
 mod namespace_environment;
+pub(crate) use namespace_environment::read_action_evidence;
 pub(crate) mod owner_work;
 mod turn_execution;
 use turn_execution::finalize_replayed_tool_end_turn_best_effort;
@@ -493,6 +494,7 @@ where
     let tool_arguments = tool_call.arguments.clone();
 
     if let Some(msg) = loop_guard.before_tool_call(&tool_call.name, &tool_arguments) {
+        super::ui_surfaces::error_notice(&state.agent_files(), &msg).await?;
         emit(Event::Error {
             message: msg.clone(),
             recoverable: true,
@@ -662,6 +664,7 @@ where
     }
 
     if let Some(msg) = loop_guard.after_tool_batch() {
+        super::ui_surfaces::error_notice(&state.agent_files(), &msg).await?;
         emit(Event::Error {
             message: msg.clone(),
             recoverable: true,
