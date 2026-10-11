@@ -891,9 +891,9 @@ Host mutation remains outside the claimed guarantee.
 
 ### Publication and final boundary review refresh — 2026-10-11
 
-Published source head cace913c passes all sixteen completed checks, including
-quality, both platform test/release jobs, harnesses and CodeQL. Current inline
-review comments are empty. The final review follows the Host Mount Service's
+Published source head cace913c passed all sixteen completed checks, including
+quality, both platform test/release jobs, harnesses and CodeQL. Its inline review
+inventory was empty at that publication check. The final review follows the Host Mount Service's
 active same-PID projection filter through per-launch reconciliation, the common
 native adapter's selected-first/read-only-only shell projection and the existing
 HostDirFs directory-handle identity check. Invalid non-root cwd, revoked sticky
@@ -913,3 +913,57 @@ This documentation refresh prepares #1046 for formal review and requires its own
 normal quality/distribution and current-head CI. It changes no source or authority,
 adopts no ADR-0058 extension and merges/deploys nothing. Checklist remains 13/15
 until formal review and user-controlled canonical delivery close their gates.
+
+
+### Current-head review: selected Rust runtimes — 2026-10-11
+
+Review 4239725745 is valid. Per-command discovery previously retained every
+installed standard runtime in the execution substrate and private Rustup links.
+A protected test compiled and executed through the actual native Sandbox adapter
+selected Rust 1.97.0, but could still observe the unrelated installed stable runtime;
+`red-a2-selected_only.log` retains the original assertion failure. Discovery now
+collects the existing bounded command/directory selections before reducing the
+runtime list and recording its manifest/executable hashes. Multiple possible
+selections remain present; a non-Rust command adds no installed runtime. Startup
+catalog validation is inspection, not a Process execution grant. No PATH/default,
+Host grant policy, native wrapper admission or dependencies change.
+
+Review 4239725742's direct `sh -c` example is not admitted by this Linux path.
+`Sandbox::exec_with_timeout_and_capability` checks the command shape before
+`exec_reified_namespace`; `permits_autonomous_bash` is true only for Seatbelt,
+so Linux uses Full mode regardless of capability or enforcing-backend availability.
+Full mode rejects nested shell evaluators before an outer marker can execute.
+The native baseline returns that guard error, not a post-effect missing-runtime
+error. New native direct/nested/inline-selector refusal controls assert both outer
+and inner markers are absent. The unused experimental recursive-discovery code
+was removed; no new inline shell support is introduced by this review follow-up.
+
+Portable regression covers zero, one and multiple selected runtime mounts,
+explicit `rustup run`, omission of unselected runtime validation evidence and
+unchanged selection precedence. The native visibility probe positively reads
+selected Cargo, cannot observe the unrelated stable runtime, must actually run
+its test, and retains exact protected source contents. Raw collector mistakes
+(zero tests from an incorrect exact name), the initial native P1 expectation
+mismatch, and generated fixture fmt/test-count failures remain retained; none is
+a real-model task or a passed native suite. Corrected final execution and artifact
+identities are recorded below after verification.
+
+The owned review cache is
+`~/Library/Caches/Alan/qualification/rust-review-20261011/`; the Linux public-only
+source/receipts are `/home/morris/.cache/Alan/rust-review-20261011/`. No Connection
+credentials, Host private stores or frozen repeated-task receipts were copied or
+changed. All fifteen Linux model slots remain NOT_RUN. Prior macOS candidate
+receipts stay bound to their original source/binary; final source applicability
+and user-controlled canonical delivery remain separate gates.
+
+Final native Linux engine passes **1431/0/1 in 150.35 seconds**, including all
+23 automatic-Rustup cases. The actual visibility integration assertion and three
+shell refusal/absent-marker controls pass. Native engine ELF SHA-256:
+`0cd3a573c305e719ba42b0b1c2c218fbea202e62888103cbf38e98443258dbb0`.
+The three changed Rust file hashes match the exact native input. macOS engine
+passes **1417/0/1** plus **20 integration tests**. Both Hosts' engine all-target/
+all-feature Clippy pass with warnings denied; pinned OpenSpec 1.4.1 strict
+validation passes **69/69**. Final and failed attempts are retained under
+`rust-review-20261011/final-v1/`. Normal commit quality/distribution and fresh
+current-head CI are required before treating the repair as reviewed delivery.
+No fifteen-slot Linux generation or final main-source qualification is implied.

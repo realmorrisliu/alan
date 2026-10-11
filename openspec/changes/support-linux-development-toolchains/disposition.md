@@ -33,16 +33,21 @@ unchanged 379-node Rust and 217-entry Git inventories, and limitations are in
 implementation-evidence.md. macOS arbitrary-reader OS confinement is not inferred.
 Original private-root Git PATH and native wrappers remain explicit refusals.
 
-PR #1046 remains unmerged and is prepared for formal review. Source candidate
-cace913c passed all sixteen current-head checks, full quality and standalone
-distribution. Its absolute-manifest and retained-directory identity evidence
-remains scoped to the exact frozen source/binaries. The final boundary review
-rechecks active same-PID grants, selected-only writable authority, invalid cwd,
-retained-directory identity and per-launch reconciliation; no new finding or code
-change is introduced by this status refresh. The new documentation head requires
-its own normal-commit quality and current-head CI before promotion from draft.
+PR #1046 remains unmerged and prepared for formal review. Its previous
+source candidate cace913c and documentation head 7702ce55 passed all sixteen
+distinct checks; those checks do not qualify the subsequent production repair.
+Current-head review found overbroad installed-Rust runtime projection. The repair
+retains only runtimes selected by the actual command's bounded inspection and
+hashes only their runtime manifests/executables. The reported direct `sh -c`
+before-effects gap is not reachable in the shipped Linux entry: its full shape
+guard rejects direct/nested shell evaluators before environment construction.
+Actual native negative controls retain that refusal without admitting new wrapper
+execution. Review follow-up and retained failures are in implementation-evidence.md.
+
 Tasks remain **13/15 complete**: formal review and user merge/canonical closure
-are outstanding; earlier-head checks are never substituted for new-head checks.
+are outstanding. The repaired candidate requires its own native regression,
+normal-commit quality/distribution and completed current-head CI; no earlier
+checks or real-model slots are substituted.
 
 The ADR-0058 dependency extension is a reviewable draft candidate pending user
 adoption/merge; the delivered main single-grant baseline is unchanged. Wider

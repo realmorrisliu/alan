@@ -38,6 +38,56 @@ fn executable(path: &Path) {
 }
 
 #[test]
+fn command_projection_mounts_only_selected_runtimes() {
+    let (_fixture, proxies, home, project) = installation();
+    let input = input(&project);
+    for (commands, expected) in [
+        (vec![vec!["printf", "hello"]], vec![]),
+        (
+            vec![vec!["cargo", "+1.97.0", "test"]],
+            vec!["1.97.0-testhost"],
+        ),
+        (
+            vec![vec!["rustup", "run", "1.97.0", "cargo", "test"]],
+            vec!["1.97.0-testhost"],
+        ),
+        (
+            vec![vec!["cargo", "test"], vec!["rustc", "+1.97.0", "--version"]],
+            vec!["1.97.0-testhost", "stable-testhost"],
+        ),
+    ] {
+        let commands: Vec<Vec<String>> = commands
+            .into_iter()
+            .map(|words| words.into_iter().map(String::from).collect())
+            .collect();
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        let names: Vec<_> = environment
+            .toolchain_mounts
+            .iter()
+            .map(|mount| mount.host_path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(names, expected);
+        for (path, _) in environment
+            .metadata_hashes
+            .iter()
+            .chain(&environment.executable_hashes)
+        {
+            if let Ok(relative) = path.strip_prefix(home.join("toolchains")) {
+                assert!(expected.iter().any(|name| relative.starts_with(name)));
+            }
+        }
+        revalidate(&environment).unwrap();
+    }
+}
+
+#[test]
 fn command_prefixes_preserve_rustup_selection_and_validate_before_effects() {
     let (_fixture, proxies, home, project) = installation();
     let input = input(&project);
@@ -270,8 +320,8 @@ fn preserves_selector_precedence_and_private_metadata() {
     .unwrap();
     assert!(!environment.settings.contains("do not project"));
     assert_eq!(environment.proxy_mounts.len(), 1);
-    assert_eq!(environment.toolchain_mounts.len(), 2);
-    assert_eq!(environment.metadata_hashes.len(), 4);
+    assert_eq!(environment.toolchain_mounts.len(), 1);
+    assert_eq!(environment.metadata_hashes.len(), 3);
     revalidate(&environment).unwrap();
     std::fs::write(
         project.join("rust-toolchain.toml"),

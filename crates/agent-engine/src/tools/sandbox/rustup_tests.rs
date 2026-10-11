@@ -60,7 +60,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             )
             .unwrap();
         }
-        let mut child_files = Vec::new();
+        let mut extra_files = Vec::new();
         let changes_cwd = matches!(
             case.as_str(),
             "changed_cwd" | "cwd_cli" | "cwd_env" | "cwd_inline" | "cwd_project"
@@ -77,7 +77,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                     let target = child.join(path.strip_prefix(&project).unwrap());
                     let content = bytes.replace("../dependency", "../../dependency");
                     std::fs::write(&target, &content).unwrap();
-                    child_files.push((target, content));
+                    extra_files.push((target, content));
                 }
             }
             std::fs::write(
@@ -101,6 +101,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 | "cwd_env"
                 | "cwd_inline"
                 | "cwd_project"
+                | "selected_only"
         );
         let sandbox = Sandbox::from_spec_with_backend(
             SandboxSpec::from_host_mounts(&[
@@ -121,6 +122,28 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             ]),
             crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
         );
+        if case == "selected_only" {
+            let selected =
+                PathBuf::from(std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME").unwrap());
+            let triple = selected
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .strip_prefix("1.97.0-")
+                .unwrap();
+            let other = selected.parent().unwrap().join(format!("stable-{triple}"));
+            assert!(other.is_dir() && other != selected);
+            let path = project.join("tests/runtime_visibility.rs");
+            let content = format!(
+                "#[test]\nfn selected_runtime_only() {{\n    let selected = {:?};\n    let other = {:?};\n    assert!(std::path::Path::new(selected).join(\"bin/cargo\").is_file());\n    assert!(!std::path::Path::new(other).exists());\n}}\n",
+                selected.to_str().unwrap(),
+                other.to_str().unwrap()
+            );
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &content).unwrap();
+            extra_files.push((path, content));
+        }
         if positive {
             let readiness =
                 crate::tools::sandbox_backend::linux_reified_namespace_backend_readiness();
@@ -145,6 +168,13 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             );
             let result = sandbox.exec(&command, &project).await.unwrap();
             assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
+            if case == "selected_only" {
+                assert!(
+                    result.stdout.contains("test selected_runtime_only ... ok"),
+                    "visibility assertion did not run: {}",
+                    result.stdout
+                );
+            }
             for name in ["rustc", "cargo", "rustdoc"] {
                 assert!(
                     result.stdout.contains(&format!("{name} 1.97.0")),
@@ -154,7 +184,7 @@ async fn native_rustup_selection_through_sandbox_adapter() {
             }
             assert_eq!(
                 result.stdout.matches("1 passed").count(),
-                2,
+                if case == "selected_only" { 3 } else { 2 },
                 "{}",
                 result.stdout
             );
@@ -176,6 +206,12 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 "cd child; cargo test"
             } else if case == "missing_cli" {
                 "cargo +missing test"
+            } else if case == "shell_wrapper_refused" {
+                "sh -c 'printf inner > inner-marker; cargo +missing test'"
+            } else if case == "shell_inline_refused" {
+                "RUSTUP_TOOLCHAIN=missing sh -c 'cargo test'"
+            } else if case == "nested_wrapper_refused" {
+                "sh -c \"bash -c 'cargo +missing test'\""
             } else if case == "missing_inline" {
                 "RUSTUP_TOOLCHAIN=missing cargo test"
             } else if case == "missing_wrapped" {
@@ -197,6 +233,11 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                     "unsafe alias"
                 } else if case == "environment_reset" || case == "missing_wrapped" {
                     "rejects shell wrappers like env"
+                } else if matches!(
+                    case.as_str(),
+                    "shell_wrapper_refused" | "shell_inline_refused" | "nested_wrapper_refused"
+                ) {
+                    "rejects nested command evaluators"
                 } else if case == "persistent_selector" {
                     "inspected Linux tool environment"
                 } else if case == "missing_component" {
@@ -207,12 +248,13 @@ async fn native_rustup_selection_through_sandbox_adapter() {
                 "{reason}"
             );
             assert!(!project.join("marker").exists());
+            assert!(!project.join("inner-marker").exists());
             eprintln!("native automatic Rustup {case}: {reason}");
         }
         for (path, bytes) in &files {
             assert_eq!(std::fs::read_to_string(path).unwrap(), *bytes);
         }
-        for (path, bytes) in &child_files {
+        for (path, bytes) in &extra_files {
             assert_eq!(std::fs::read_to_string(path).unwrap(), *bytes);
         }
         if changes_cwd {
@@ -260,6 +302,10 @@ async fn native_rustup_selection_through_sandbox_adapter() {
     let (_, name) = name.split_once("::").unwrap();
     for case in [
         "project",
+        "selected_only",
+        "shell_wrapper_refused",
+        "shell_inline_refused",
+        "nested_wrapper_refused",
         "env",
         "cli",
         "inline",

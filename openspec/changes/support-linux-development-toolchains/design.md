@@ -106,8 +106,10 @@ These prerequisites do not complete automatic installed-Rust projection.
 
 The Host adapter recognizes standard ELF Rustup proxy directories in the original
 PATH. It preserves their namespace spelling/order, validates the bounded known
-proxy names and their shared executable identity, and adds each installed standard
-runtime root independently to the read-only substrate. The catalog is bounded to
+proxy names and their shared executable identity. Per-command inspection adds only
+the standard runtime roots actually selected by its bounded possible invocations
+to the read-only substrate; commands without a Rust runtime selection mount none.
+Startup catalog inspection does not grant every installed runtime to execution. The catalog is bounded to
 64 roots; metadata reads are bounded to 64 KiB and each executable digest to
 256 MiB. Unsupported extra proxy entries, wrappers, linked/custom runtime roots
 and escaping aliases remain explicitly unavailable. No complete Cargo home or
