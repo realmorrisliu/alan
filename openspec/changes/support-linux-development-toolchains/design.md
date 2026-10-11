@@ -198,6 +198,13 @@ ancestors with the existing explicit `<unmapped-host-path>` marker and retain th
 relative diagnostic suffix. This never infers a grant or invents a usable namespace
 for an unavailable dependency. Top-level OS paths remain ordinary text; literal
 role lookalikes, comparisons and Markdown quotes retain their content.
+Root, non-root and ancestor matches all require the existing leading token
+boundary as well as their trailing component check. Network URLs and token
+suffixes containing a backing spelling remain literal content. Trailing SGR
+color controls do not change the preceding visible character: strip only their
+suffix for boundary inspection, retaining the original bytes in output. This
+preserves colored absolute paths and file URIs without accepting colored suffixes
+embedded in ordinary text or adding a URI/terminal parser dependency.
 
 ### Use live project mounts for local dependencies
 

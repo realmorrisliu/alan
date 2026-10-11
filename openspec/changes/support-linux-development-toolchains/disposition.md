@@ -24,10 +24,12 @@ validation is a reconciliation-time check, not an atomic concurrent Host-mutatio
 or descriptor-bound native execution guarantee. Native diagnostic projection continues to conceal
 private backing ancestors without inventing authority.
 
-Final retained-root candidate has verified engine 1430/0/1 evidence reused from
-unchanged sources/binary, fresh Linux Host 58/0/2 and HostFs 23/0/0 plus warnings-
-denied Clippy. macOS Host is 57/0/2 and HostFs 23/0/0 portable shared-adapter
-coverage. Native absolute-manifest builds use fresh output and actually compile.
+The latest retained-root candidate has source-matching Engine evidence of
+1435/0/1 on Linux and 1421/0/1 plus 20 integration tests on macOS. The subsequent
+diagnostic-boundary repair has fresh Linux Host 60/0/2 and macOS Host 59/0/2,
+plus 16 integration tests on each Host and warnings-denied all-target/all-feature
+Host Clippy. HostFs 23/0/0 evidence remains from unchanged sources. Native
+absolute-manifest builds use fresh output and actually compile.
 Pinned strict OpenSpec is 69/69. Exact source/binary/log hashes, retained failures,
 unchanged 379-node Rust and 217-entry Git inventories, and limitations are in
 implementation-evidence.md. macOS arbitrary-reader OS confinement is not inferred.
@@ -63,9 +65,22 @@ including direct Rustup-run and Cargo-forwarded compiler options, while preservi
 host-tuple and application/test argument semantics. Existing helper checks also
 recognize Cargo global options. Final native Engine is 1435/0/1 with 38 actual
 case diagnostics; final macOS Engine is 1421/0/1 plus 20 integration tests.
-The follow-up still requires its own normal commit/current-head CI and review
-reply/resolution. This does not qualify general Cargo configuration, custom
-targets, cross-compilation or any additional real-model slot.
+That follow-up was committed as `499b352c`, passed all sixteen checks and its
+review thread was resolved. This does not qualify general Cargo configuration,
+custom targets, cross-compilation or any additional real-model slot.
+
+New P2 `4240044058` at that head is valid: non-root and ancestor projection can
+rewrite a mounted spelling inside a network URL or ordinary token. The shared
+projection now checks the existing leading boundary for every root, retaining
+trailing component checks. Trailing SGR controls are inspected without altering
+output bytes, preserving colored absolute/file-URI paths and literal colored
+token suffixes. Portable RED controls reproduce both the literal-text corruption
+and the previous colored-root omission. Final Host suites and Clippy pass on
+both Hosts. The first Linux attempt's outside-substrate Git prefix refusal is
+retained; the second uses the already-qualified standard prefix without widening
+authority or changing packages. This repair still needs its own normal commit,
+published-head CI and review reply/resolution; the green `499b352c` checks do not
+cover it.
 
 Tasks remain **13/15 complete**: formal review and user merge/canonical closure
 are outstanding. The repaired candidate requires its own native regression,
@@ -75,9 +90,12 @@ checks or real-model slots are substituted.
 The ADR-0058 dependency extension is a reviewable draft candidate pending user
 adoption/merge; the delivered main single-grant baseline is unchanged. Wider
 qualification is independently tracked in draft PR #1047: all fifteen macOS
-slots qualify on the final candidate through thirty-four development attempts;
-all fifteen Linux slots remain NOT_RUN for missing generation readiness. These
-are that change's receipts, not this delivery's native Tool tests. Keep
+slots have historical qualification through thirty-four development attempts;
+all fifteen Linux slots remain NOT_RUN for missing generation readiness. The
+diagnostic-boundary source participates in macOS compilation, reopening final
+candidate applicability and affected model reruns; the earlier 437-input equality
+does not qualify this changed source. These are that change's receipts, not this
+delivery's native Tool tests. Keep
 fallback/approval, network and automatic-routing
 posture unchanged; do not start Alan self-development instances in place of
 Codex-authored implementation.

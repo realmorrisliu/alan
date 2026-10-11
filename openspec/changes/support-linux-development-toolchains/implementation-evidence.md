@@ -1131,3 +1131,62 @@ commit/current-head CI gates. Receipt SHA-256:
 `b23768f16b79bb676b96ce341121536f66b8aacc26dc8ec61a1084b4bc122d30`.
 This completion paragraph is documentation only; no prior published-head CI is
 substituted for the upcoming target-fix commit.
+
+### Diagnostic leading-boundary review — 2026-10-11
+
+Literal-target repair `499b352c94bf625fc8800894e73a15a3c6e00668` subsequently
+passed all sixteen published-head checks; reply `4240038068` resolved its P1
+thread. New P2 `4240044058` is valid and keeps delivery open: non-root mounts and
+unmapped ancestor fallback checked only their trailing boundary, corrupting
+network URLs and token suffixes containing a backing spelling. All callers use
+the existing `NativeHostMountExportAdapter::project_text`: Bash stdout/stderr,
+Tool error strings and recursively projected JSON string values. No mount,
+grant, execution authority or interface changes are needed.
+
+Two new portable controls produce **5 PASS / 2 FAIL** before the production
+repair: the literal URL is rewritten, and a colored filesystem-root path is not
+projected. The minimal shared repair applies the existing leading boundary to
+root, non-root and ancestor matches. Only trailing numeric SGR controls are
+removed from boundary inspection, preserving the original bytes and visible
+preceding character. Existing trailing component checks, longest known-mount
+selection, one-pass projection, private-ancestor fallback and file-URI behavior
+remain. Tests cover network URLs, ordinary and Unicode token prefixes, colored
+token suffixes, stacked colors, root/non-root mounts and unmapped ancestors. No
+URI/terminal parser dependency or general content sanitizer is introduced.
+
+Final macOS Host is **59/0/2 + 16 integration tests**; actual Linux Host is
+**60/0/2 + 16 integration tests**, with the required Rust/Git native fixture
+environment supplied. A separate live mixed-work integration test remains
+ignored on each Host; no live model instance is implied. Both Hosts pass
+all-target/all-feature Host Clippy with warnings denied. Cross-Host projection
+source SHA-256 is
+`df211150cdfbe614259152223abc7475ed8a101e69f3eadcf14353b949a7ec36`.
+Linux retains explicitly recorded dev/test debug=0 and incremental=0 with
+unchanged optimization; this is affected native evidence, not default-profile
+full Linux quality or a real-model slot.
+
+Native Linux a1 retains its genuine readiness refusal: the operator selected the
+old Git fixture outside the fixed substrate. No product-policy change was made.
+Native a2 reuses the already-qualified Git 2.53 standard prefix under
+`/usr/local/lib/alan-qualification/`; its executable digest and original fixture
+receipt remain unchanged. Actual Bash positives and expected RED failures cover
+dependency compilation, Git diff, read-only writes, source aliases, private
+environment, network denial and dependency revocation. The whole outer suite
+passes, without treating an expected inner compiler failure as a failed suite or
+a capability skip as executed acceptance.
+
+The immutable receipt is `rust-review-20261011/path-boundary-final-v1/`, including
+raw portable RED, macOS/native Linux logs, the first Git-prefix refusal, selected
+Git identity, Linux test binary hash and source patch. Normal commit quality,
+new published-head CI and review reply/resolution remain separate pending gates.
+Receipt SHA-256:
+`c69c61f07a8ede67c658e943bced5368cd8721cb70e175eef3a87c93dfdaf512`.
+
+This source is one of the frozen macOS CLI's 437 compiled inputs. Therefore
+#1047's earlier equality proof and prospective Linux `499b352c` snapshot remain
+historical receipts: they do not qualify this boundary repair. The dependent
+change must incorporate the final reviewed predecessor, audit final-source
+applicability and rerun affected real-model rows. Its original thirty slots,
+thirty-four attempts and failures remain unchanged; no native Tool check adds a
+model slot. Linux generation readiness, user merge and canonical closure remain
+open.

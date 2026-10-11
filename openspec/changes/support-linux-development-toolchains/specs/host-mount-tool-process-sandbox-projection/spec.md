@@ -28,6 +28,12 @@ namespace for an unavailable resource, or alter native execution authority.
 - **WHEN** captured text contains ordinary role lookalikes, comparisons, Markdown quotes, Unicode, color sequences or file URI paths
 - **THEN** ordinary literal text retains its content and known native diagnostic paths use the same namespace mapping
 
+#### Scenario: A mounted spelling appears inside ordinary text or a URL
+- **WHEN** a mounted root or its ancestor appears inside a network URL or a token with no leading path boundary
+- **THEN** projection preserves that literal text rather than inventing a namespace path or unmapped marker
+- **AND** root, non-root and ancestor projection share the same leading boundary while retaining existing trailing component checks
+- **AND** trailing SGR color controls preserve the preceding visible boundary, so colored absolute paths and file URI paths still project while colored token suffixes remain unchanged
+
 
 ### Requirement: Native shell reads explicitly delegated read-only dependencies
 For supported enforcing native execution, the Host adapter SHALL retain the cwd
