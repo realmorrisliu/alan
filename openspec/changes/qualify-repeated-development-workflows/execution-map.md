@@ -1,8 +1,10 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v68 retains 61 attempts and 18/30 applicable slots:
-all macOS slots and Linux F1 r1/r2/r3. First outcomes are 14 PASS / 4 FAIL /
-12 NOT_RUN. Both 2277b693 and f497fbe7 pass all sixteen current-head checks.
+Latest 2026-10-12 aggregate v71 retains 63 attempts and 19/30 applicable slots:
+all macOS slots, Linux F1 r1/r2/r3 and Linux F2 r1. First outcomes are
+14 PASS / 5 FAIL / 11 NOT_RUN. The first F2 r1 operator checker-path failure
+remains retained before its fresh retry. 2277b693, f497fbe7 and be25825a each
+pass all sixteen checks on their own pinned heads.
 Linux task readiness is frozen on byte-identical 2277b693, which passes all
 sixteen checks: known actual ChatGPT catalog/medium selection, task-cwd Git 2.53
 and Rust/Cargo 1.96, linux_reified_namespace and the original task inputs.
@@ -13,7 +15,7 @@ This records supported operator controls. Current aggregate v63 retains eleven
 first PASS, four first FAIL and fifteen NOT_RUN through fifty-eight development
 attempts. All fifteen macOS slots have applicable notice-source evidence: three
 repetitions of each F1/F2/F3/F4/F5 family. All fifteen Linux model tasks remain.
-The candidate is documentation head 81b6f361 with unchanged 437 macOS and
+The candidate is documentation head be25825a with unchanged 437 macOS and
 440 Linux compiled inputs; all sixteen current-head checks pass. Linux's fresh
 CLI's earlier readiness snapshot had no generation profile. The 2026-10-12
 user-authorized managed-auth reuse now passes actual Linux generation with
@@ -253,6 +255,12 @@ not implicit replacements inside arbitrary file contents. Freeze the exact drive
 its acknowledged grants and backend before execution; never inject private backing
 paths into model prompts or grant manifests to the model. Do not alter assertions,
 copy dependency contents or broaden grants to make a run pass.
+For independent F2 binary checks, use the explicitly granted native project
+manifest in the operator-owned command, with output in writable checker scratch.
+Bash does not translate `/mnt/<grant>` paths inside command text; using such an
+absolute manifest caused Linux F2 r1/a1 to fail before execution. Preserve that
+failed attempt and freeze the corrected checker command before a fresh model
+retry. Model prompts remain unchanged and contain no private backing paths.
 
 A macOS native preflight exercised this driver arrangement with separate live
 read-only project/checker grants and writable scratch, actual fresh compilation

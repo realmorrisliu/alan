@@ -2580,3 +2580,69 @@ remain explicit; statistical independence, usage/cost and time partitions are
 not qualified. The other twelve Linux tasks, new evidence-head gates/CI, final
 review, user merge and canonical synchronization remain open. Earlier attempts
 and aggregates are immutable and no original failure is reset.
+
+## First Linux cross-file qualification and retained checker failure — 2026-10-12
+
+Evidence head be25825a passes all sixteen distinct current-head checks. Its
+immutable gate receipt SHA-256 is
+`66a585b05da0b4699361eab43319a3e93e40883ee03a258f35df8dda99854e70`.
+This follow-up changes no production source. Both attempts use the same frozen
+Linux CLI, 80x24 native PTY, qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium,
+selected Git 2.53 and Rust/Cargo 1.96, and linux_reified_namespace. Each has one
+original force_agent admission, one matching model turn context and one planned
+setup approval. No operator source edits during execution or corrective model
+advice occurs. Before the retry, only the previously sealed disposable fixture's
+allowed source changes are reset to the exact original baseline; its build cache
+is removed. This is fresh-attempt preparation, not model authorship.
+
+Original a1 correctly changes only src/lib.rs, src/main.rs and src/bin/report.rs,
+and the model's library test and both binaries pass with outputs 20 and -1.
+Its independently frozen compound checker wrongly uses
+/mnt/project-request-1/Cargo.toml as a command-text manifest operand. Native
+preflight rejects that untranslatable namespace path before checking protected
+behavior. The attempt stays FAIL; no separate weaker check replaces it.
+Inspection of the existing Bash schema and native checker arrangement confirms
+this is an operator command error: shell text is not namespace-translated and
+both Hosts' independent drivers already use explicitly granted native backing.
+No production parser or authority change is warranted. The setup queue-shape,
+Tool-process selection and builtin cd-output collector corrections stay recorded.
+
+Fresh a2 preserves the original prompt, project/checker baseline, protected
+assertions, 600-second bound and grant access. Its corrected operator command is
+frozen before the model runs, replacing only the manifest operand with the
+explicitly granted native backing path. Private backing paths are never injected
+into the model prompt. The model updates all three sources, runs library/binary/
+doc-test targets, reports the fixture contains zero tests, and obtains 20 / -1.
+The optional non-Git inspection and delegated prelaunch rejection are retained
+before direct parent fallback; no child execution is claimed.
+
+After model exit, the separate native checker receives project and protected
+assertions read-only and checker scratch read-write. The unchanged original
+protected API assertions pass, and both binaries independently compile and return
+20 / -1 from writable scratch. Source/driver/assertion hashes are unchanged by
+verification. The verifier has zero Agent inputs and model turn contexts. The
+actual Tool/native Processes exit; no later source effect is observed. Native
+detail opens the final result, pages after a separate Space event, and returns
+with Unicode draft insertion abcδQXYZ. A read-only collector correction replaces
+an invented detail-heading expectation with the actual Action / Original output
+heading. Physical cursor coordinates and a Host scrollback gesture remain
+unmeasured; full native transcript streams are retained.
+
+| Attempt | Model PID / boot | Checker PID / boot | Independent verification | Receipt SHA-256 / files |
+| --- | --- | --- | --- | --- |
+| a1 | 481834 / f129a982-e6dc-474d-89b4-ede41eb0c07a | 492625 / e70ec4dc-8ccd-46aa-aa0c-91c3a0d2d1e2 | FAIL / 290.439277 seconds | `58598a50b12f692371a2cc0969dfc8f1210d17580b64f80e59d169fcf36f7ab5` / 110 |
+| a2 | 496628 / b4ef4395-9977-4cd1-9668-b66147a3ddab | 509285 / e731cab2-a406-4e99-8b5a-0781ee358b5f | PASS / 185.747696 seconds | `9005e73b9d4e81f999ba8ee53de38f70ff3e1eb4930e4ab3a7c0acb5804d352a` / 101 |
+
+Both model/checker native exits are within the original 600-second bound, with
+second-resolution script completion timestamps retained. Later receipt sealing
+is separate. Aggregate v70 SHA-256
+`c4747089a98ce1baaa7a5515f973bdbf823ceb6aed435949778a46b48de0ed93`
+retains the first FAIL; v71 SHA-256
+`98ba793942c99331f93e92174b7b663a7e2ec2efaba69d19c6eaaaf11dc5dcd0`
+adds its linked PASS. The earlier aggregate's stale final-candidate count/head
+metadata is corrected from actual applicable slot flags, with no receipt or first
+outcome rewritten. Latest totals are 63 development attempts, 19/30 applicable
+slots and first outcomes 14 PASS / 5 FAIL / 11 NOT_RUN. Checklist stays 10/19;
+Linux F2 r2/r3, F3/F4/F5, final audit, fresh publication gates/CI and user merge/
+canonical closure remain open. Shared auth, enabled memory, historical verifier
+intervention and unknown usage/cost/time partitions remain explicit.

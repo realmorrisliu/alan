@@ -43,6 +43,11 @@ Historical checkmarks do not qualify new behavior.
 - [ ] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
 - [ ] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
 
+Linux F2 r1 qualifies on unchanged be25825a after retaining the original checker
+path failure and running a fresh linked original-task retry. Protected library
+behavior, both binary results, exact three-file effects, native detail/draft and
+exits pass. F2 r2/r3 remain; task 3.2 is still open and checklist stays 10/19.
+
 ## 4. Findings, final candidate and delivery
 
 - [ ] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
