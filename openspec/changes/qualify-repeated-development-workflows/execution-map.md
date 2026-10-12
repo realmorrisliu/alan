@@ -447,3 +447,14 @@ Unprojectable/conflicting pins refuse. The later augmented plan still validates
 runtime substrate and scratch relocation. Identity declarations keep the original
 inspection/settings path. Selection pins describe prelaunch inspection and do not
 establish support for rewriting selection files inside the same compound command.
+
+### Exact alias override retention
+
+Canonicalize inspection cwd and Host roots before filtering Host override keys;
+retain the keys themselves and the original unnormalized plan inputs for boundary
+validation. Initial implicit directory tracking uses canonical cwd consistently,
+including identity mounts reached by aliases. This supersedes the prior assertion
+that the raw identity inspection path is unchanged: for the selected historical
+canonical roots/cwds normalization is an identity operation. Bind each Linux
+initial/resumed/verifier phase's cwd Action to its original canonical/backing-root
+grant evidence; public namespace labels alone do not establish native paths.

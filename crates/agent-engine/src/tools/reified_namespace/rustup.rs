@@ -125,19 +125,22 @@ pub(super) fn discover(
         && let Some(values) = value.get("overrides")
     {
         let values = values.as_table().ok_or("invalid Rustup overrides")?;
+        let cwd = canonicalize_existing_host_path(&input.0.cwd);
+        let roots = input
+            .0
+            .declarations
+            .iter()
+            .filter_map(|mount| match &mount.source {
+                ReifiedMountSource::Host(root) => Some(canonicalize_existing_host_path(root)),
+                ReifiedMountSource::Virtual => None,
+            })
+            .collect::<Vec<_>>();
         for (path, selector) in values {
             let path = Path::new(path);
-            if input.0.cwd.starts_with(path)
-                || input
-                    .0
-                    .declarations
+            if cwd.starts_with(path)
+                || roots
                     .iter()
-                    .any(|mount| match &mount.source {
-                        ReifiedMountSource::Host(root) => {
-                            root.starts_with(path) || path.starts_with(root)
-                        }
-                        ReifiedMountSource::Virtual => false,
-                    })
+                    .any(|root| root.starts_with(path) || path.starts_with(root))
             {
                 if !path.is_absolute() || contains_parent_component(path) {
                     return Err("unsafe Rustup directory override".into());
@@ -187,7 +190,7 @@ pub(super) fn discover(
             ReifiedMountSource::Virtual => false,
         });
         let mut directory_selections = std::collections::BTreeMap::new();
-        let mut directories = Some(vec![input.cwd.clone()]);
+        let mut directories = Some(vec![canonicalize_existing_host_path(&input.cwd)]);
         for words in commands {
             let Some((mut name, mut args)) = super::super::sandbox::command_and_args(words) else {
                 continue;
@@ -235,11 +238,7 @@ pub(super) fn discover(
                     let mut inspection = input.clone();
                     let mut selectors = Vec::new();
                     for directory in directories {
-                        inspection.cwd = if remapped {
-                            canonicalize_existing_host_path(directory)
-                        } else {
-                            directory.clone()
-                        };
+                        inspection.cwd = directory.clone();
                         let selector = active_selector(&inspection, &mut environment)?;
                         if remapped
                             && let Some(previous) = directory_selections

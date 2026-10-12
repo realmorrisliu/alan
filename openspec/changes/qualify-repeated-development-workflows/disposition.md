@@ -1,3 +1,18 @@
+## Latest exact-alias review repair — 2026-10-12
+
+Completed review of 10a475d1 found P1 #4246987405: raw cwd/Host-root comparisons
+could discard an override keyed to an alias's exact canonical target before
+selection was canonicalized. The direct repair snapshots canonical inspection
+cwd/roots before override filtering, preserves original inputs for plan validation,
+and starts implicit directory inspection from canonical cwd. Override keys and
+selection priority are unchanged. Task 4.4 remains open and checklist is 17/19.
+Seventeen portable regressions pass, including remapped and identity alias-only
+cases without a masking canonical child mount. Actual 10a native RED and four-case
+GREEN are retained; twelve old-10a/new complete environment comparisons pass for
+already-canonical inputs. Original matrix applicability is semantic equality of
+its already-canonical cwd/backing roots, not an unchanged raw identity code branch.
+Current committed-head gates and completed automated re-review remain required.
+
 ## Latest post-repair automated review — 2026-10-12
 
 The Cargo manifest P2 was fixed in d719f3b6 and resolved; that head passed all

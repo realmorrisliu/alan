@@ -672,8 +672,13 @@ fn remapped_directories_preserve_inspected_rustup_selection() {
     }
     let alias = project.parent().unwrap().join("project-alias");
     symlink(&project, &alias).unwrap();
+    input.declarations.truncate(1);
     input.cwd = alias.clone();
     input.declarations[0].source = super::super::ReifiedMountSource::Host(alias);
+    std::fs::write(home.join("settings.toml"), format!(
+        "version = \"12\"\ndefault_toolchain = \"missing\"\ndefault_host_triple = \"testhost\"\n[overrides]\n{} = \"1.97.0\"\n",
+        toml::Value::String(project.to_str().unwrap().into())
+    )).unwrap();
     let environment = discover(
         proxies.to_str().unwrap(),
         &home,
@@ -715,6 +720,21 @@ fn remapped_directories_preserve_inspected_rustup_selection() {
         let settings: toml::Value = toml::from_str(&environment.settings).unwrap();
         assert!(settings["overrides"].as_table().unwrap().is_empty());
     }
+    input.declarations[0].namespace_path = project.clone();
+    let environment = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(environment.toolchain_mounts.len(), 2);
+    let settings: toml::Value = toml::from_str(&environment.settings).unwrap();
+    assert_eq!(
+        settings["overrides"][project.to_str().unwrap()].as_str(),
+        Some("1.97.0")
+    );
 }
 
 #[test]

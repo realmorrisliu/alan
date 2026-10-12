@@ -49,3 +49,8 @@ descendant roots SHALL retain only their existing writable authority.
 - **AND** each inspected directory's effective selection is pinned at all validated equivalent namespace projections, including fixed shell cd outcomes
 - **AND** explicit selectors retain priority, only selected runtimes are mounted, and unprojectable/conflicting selections refuse before effects
 - **AND** Host configuration, delegated rights and selection metadata revalidation remain unchanged; pins do not qualify rewriting selection metadata within the same compound command.
+
+#### Scenario: An alias-only project retains its canonical Rustup override
+- **WHEN** the inspected cwd and sole Host mount source are aliases while Rustup settings key the override to the exact canonical target
+- **THEN** canonical inspection cwd/Host roots retain that override before selection, with no extra canonical child mount needed
+- **AND** remapped and identity execution agree with Host selection while original plan inputs still undergo path/authority validation.

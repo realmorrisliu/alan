@@ -37,10 +37,13 @@ fn native_remapped_rustup_overrides_match_host_selection() {
     let lock = "version = 4\n[[package]]\nname = \"alan_remap_fixture\"\nversion = \"0.1.0\"\n";
     std::fs::write(project.join("Cargo.lock"), lock).unwrap();
     let runtime_bytes = std::fs::read(runtime.join("bin/rustc")).unwrap();
-    for (override_path, selector, file_selector) in [
-        (&project, "1.97.0", Some("missing")),
-        (&root, "1.97.0", None),
-        (&root, "missing", Some("1.97.0")),
+    let alias = root.join("project-alias");
+    std::os::unix::fs::symlink(&project, &alias).unwrap();
+    for (override_path, selector, file_selector, task_root) in [
+        (&project, "1.97.0", Some("missing"), &project),
+        (&root, "1.97.0", None, &project),
+        (&root, "missing", Some("1.97.0"), &project),
+        (&project, "1.97.0", Some("missing"), &alias),
     ] {
         let settings = format!(
             "version = \"12\"\ndefault_toolchain = \"missing\"\n[overrides]\n{} = {selector:?}\n",
@@ -55,7 +58,7 @@ fn native_remapped_rustup_overrides_match_host_selection() {
         }
         let host = Command::new(proxy.join("rustc"))
             .arg("--version")
-            .current_dir(&project)
+            .current_dir(task_root)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("RUSTUP_HOME", &home)
@@ -68,8 +71,8 @@ fn native_remapped_rustup_overrides_match_host_selection() {
             String::from_utf8_lossy(&host.stderr)
         );
         let mut input = ReifiedNamespacePlanInput::new(
-            vec![ReifiedMountDeclaration::host("/mnt/project", &project, ReifiedMountAccess::ReadOnly)],
-            &project,
+            vec![ReifiedMountDeclaration::host("/mnt/project", task_root, ReifiedMountAccess::ReadOnly)],
+            task_root,
             vec!["/bin/sh".into(), "-c".into(),
                 "set -eu; rustc --version; cargo test --offline --locked; test -d \"$CARGO_TARGET_DIR/debug/deps\"; if (: >> src/lib.rs); then exit 43; fi".into()],
             NetworkPosture::Deny,

@@ -3177,3 +3177,28 @@ three final remap builds pass. All 33 Linux phase references remain linked
 to their original selected receipts and unchanged identity authority call chain.
 The previous P2 corpus audit remains applicable; original evidence is not renamed
 as new execution. Current-head CI/review remain pending until after commit.
+
+### Exact canonical-target override follow-up — 2026-10-12
+
+Completed 10a475d1 review found valid P1 #4246987405. The earlier alias case had
+an ancestor override and an additional canonical child mount; neither exercised
+the sole alias backing's exact target key. New portable RED removes that masking
+mount and fails with the incorrectly selected missing runtime. Native RED aliases
+both discovery cwd and Host source and reproduces the same rejection after the
+three existing cases pass. Initial probes that aliased only Host version lookup,
+or retained the canonical child mount, passed and are retained as insufficient
+controls; they are not labelled bug reproductions.
+
+Seventeen corrected portable cases pass, including identity alias selection.
+Native GREEN has four actual Host-matched Cargo compilations, retaining original
+precedence cases plus exact canonical-target/alias-only cwd+mount. Source, locks,
+private settings, installed rustc and personal settings remain unchanged. A fresh
+cache-only compiled comparison directly compares exact 10a production code with
+the repair in twelve complete already-canonical environments containing parent
+and child overrides; settings/runtime/metadata/executable values are equal.
+Canonical inspection snapshots do not replace original plan inputs, so path and
+authority validation is not erased. Original 85 attempts/30 selected receipts are
+unchanged; Linux phase applicability uses explicit canonical cwd/grant/backing
+bindings, not an absence-of-overrides assumption. Prior raw-branch-equality wording
+belongs to the earlier P1 observation and is superseded for this repair. New frozen
+CLI/source ledger, normal gates and committed-head CI/review remain pending.
