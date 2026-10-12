@@ -33,6 +33,10 @@ fn compiler_overrides_and_configuration_store_changes_refuse() {
         vec!["env", "-0uRUSTDOC", "cargo", "test"],
         vec!["env", "-u", "CARGO_HOME", "cargo", "test"],
         vec!["cargo", "-C", "child", "test"],
+        vec!["cargo", "-vCchild", "test"],
+        vec!["cargo", "-VCchild", "custom"],
+        vec!["cargo", "test", "-vCchild"],
+        vec!["rustup", "run", "1.97.0", "cargo", "-vCchild", "test"],
         vec![
             "cargo",
             "--config",
@@ -653,13 +657,29 @@ fn global_queries_bind_only_cargo_without_ignoring_selected_aliases() {
         "-vh",
         "-Vv",
         "-hV",
+        "-hZunstable-options",
+        "-VZunstable-options",
+        "-vVZunstable-options",
+        "-hX",
+        "-hCmissing",
+        "-VhZunstable-options",
     ] {
         for command in [
             "fmt", "clippy", "custom", "test", "help", "b", "c", "d", "t", "r", "rm",
         ] {
             let words = vec!["cargo".into(), flag.into(), command.into()];
             if matches!(command, "b" | "c" | "d" | "t" | "r" | "rm")
-                && !matches!(flag, "--help" | "-h" | "-vh" | "-hV")
+                && !matches!(
+                    flag,
+                    "--help"
+                        | "-h"
+                        | "-vh"
+                        | "-hV"
+                        | "-hZunstable-options"
+                        | "-hX"
+                        | "-hCmissing"
+                        | "-VhZunstable-options"
+                )
             {
                 assert!(
                     discover(&path, &home, None, Some((&input(&project), &[words])))
@@ -676,7 +696,17 @@ fn global_queries_bind_only_cargo_without_ignoring_selected_aliases() {
             assert_eq!(environment.command_providers[0].executable, "cargo");
             revalidate(&environment).unwrap();
             if !matches!(command, "test" | "help") {
-                let pure_help = matches!(flag, "--help" | "-h" | "-vh" | "-hV");
+                let pure_help = matches!(
+                    flag,
+                    "--help"
+                        | "-h"
+                        | "-vh"
+                        | "-hV"
+                        | "-hZunstable-options"
+                        | "-hX"
+                        | "-hCmissing"
+                        | "-VhZunstable-options"
+                );
                 assert_eq!(environment.cargo_config_files.is_empty(), pure_help);
                 let config = project.join(".cargo");
                 std::fs::create_dir_all(&config).unwrap();
@@ -749,6 +779,12 @@ fn proxy_global_queries_need_only_cargo_without_frontend_components() {
         "-vh",
         "-Vv",
         "-hV",
+        "-hZunstable-options",
+        "-VZunstable-options",
+        "-vVZunstable-options",
+        "-hX",
+        "-hCmissing",
+        "-VhZunstable-options",
     ] {
         for command in ["fmt", "clippy", "custom"] {
             let words = vec![

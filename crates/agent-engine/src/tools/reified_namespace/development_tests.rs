@@ -204,19 +204,31 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
     for name in ["cargo-fmt", "cargo-clippy"] {
         std::fs::remove_file(system.join("bin").join(name)).unwrap();
     }
-    let commands: Vec<Vec<String>> = ["--help", "-h", "--version", "-V", "--list"]
-        .iter()
-        .flat_map(|flag| {
-            ["fmt", "clippy", "custom"].map(|name| {
-                vec![
-                    "cargo".into(),
-                    (*flag).into(),
-                    name.into(),
-                    "--target=absent".into(),
-                ]
-            })
+    let commands: Vec<Vec<String>> = [
+        "--help",
+        "-h",
+        "--version",
+        "-V",
+        "--list",
+        "-hZunstable-options",
+        "-VZunstable-options",
+        "-vVZunstable-options",
+        "-hX",
+        "-hCmissing",
+        "-VhZunstable-options",
+    ]
+    .iter()
+    .flat_map(|flag| {
+        ["fmt", "clippy", "custom"].map(|name| {
+            vec![
+                "cargo".into(),
+                (*flag).into(),
+                name.into(),
+                "--target=absent".into(),
+            ]
         })
-        .collect();
+    })
+    .collect();
     let script = format!(
         "set -eu; {}",
         commands
@@ -258,7 +270,8 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
         queries.stdout, queries.stderr
     );
     eprintln!(
-        "fifteen confined global queries pass with ordinary frontends/compilers removed and only Cargo bound"
+        "{} confined global queries pass with ordinary frontends/compilers removed and only Cargo bound",
+        commands.len()
     );
     eprintln!(
         "system Cargo metadata --no-deps/locate-project/new/init pass with only a later proxy rustc and no projected Rustup runtime"

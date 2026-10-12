@@ -1,3 +1,43 @@
+## Cargo mixed short-option arity — 2026-10-13
+
+Completed 8b56c4b1 Codex review added valid P2 #4250308685. Genuine Cargo1.97
+returns root help/version for -hZunstable-options and -VZunstable-options before
+fmt. The shared scanner recognizes flags up to h (immediate help) or Z/C
+(consuming the remainder/next word). Values such as -ZhV/-ChV are not queries;
+unknown flags before h retain errors. Ordinary and Rustup selection share the
+same helper. Directory inspection reuses it across visible arguments, retaining
+post-subcommand mixed-C refusal and excluding consumed values and -- payload.
+This is bounded admission, not a complete independent implementation of Clap.
+
+The owned-runtime child canary records80 cases:34 exit0 and46 genuine error
+controls, all retained. Valid unaliased mixed hZ/VZ/vVZ root queries have no
+children; every genuine root-help case succeeds with no children. Two cases
+launch a child: fmt -vCmissing --help invokes cargo-fmt and errors; with a
+configured fmt alias it invokes cargo-canary and succeeds. Neither is root help,
+and existing frontend/configuration checks remain. Stable Cargo rejects actual
+C/Z use in many controls; those errors do not qualify unstable directory changes.
+Previous version/list alias dispatch evidence and default-short-alias refusal
+remain linked through the 8b source-applicability ledger.
+
+Current40 portable Rustup checks and two inline parser checks pass. Replacing
+the two production files with exact old8b sources makes both global-query
+regressions fail on unused frontends; the overlays are restored. Fully synced
+native namespace checks pass96/96; the genuine ordinary-runtime fixture executes
+33 root queries with --target=absent after removing ordinary frontends and
+compilers, binding only Cargo. All450 historical scripts/310 Cargo argument sets
+retain old8b effective-subcommand index/query outputs. An initial historical
+probe used a wrong corpus path and failed compilation; it is retained separately
+from the corrected parity run, and no audit overlays ship.
+
+Evidence: rustup-mixed-short-query-review-v1 under the existing qualification
+cache. Original30 selected slots/85 development attempts, 21PASS/9FAIL first
+outcomes, assisted completions and unknown cost/physical-terminal limits remain
+unchanged. No new model development task, credential transfer or toolchain
+installation occurred. Mac shared-parser applicability is semantic, not raw
+source/binary identity; final actual-input freezes bind the new production head.
+Task4.4 remains open until fresh exact-head CI/completed review; task4.5 still
+requires user merge and canonical adoption.
+
 ## Cargo root query dispatch boundaries — 2026-10-13
 
 Completed c9bfe9a3 review found P2 #4249812214 after all16 checks passed.

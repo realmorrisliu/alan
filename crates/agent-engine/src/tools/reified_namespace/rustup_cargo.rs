@@ -338,11 +338,7 @@ pub(super) fn inspect(
         {
             continue;
         }
-        if args
-            .iter()
-            .take_while(|arg| arg.as_str() != "--")
-            .any(|arg| arg == "-C" || arg.starts_with("-C"))
-        {
+        if crate::tools::sandbox::command_options::cargo_changes_directory(args) {
             return Err("Cargo -C changes the inspected compiler/configuration cwd".into());
         }
         for directory in directories

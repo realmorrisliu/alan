@@ -115,3 +115,9 @@ descendant roots SHALL retain only their existing writable authority.
 - **THEN** only actual Cargo/runtime selection is bound, without unused frontend or target requirements
 - **AND** root help returns before alias expansion while named/frontend help keeps its checks
 - **AND** version/list selected aliases are inspected and unsafe default-alias combinations refuse before effects
+
+#### Scenario: Mixed Cargo short options preserve arity and directory inspection
+- **WHEN** Cargo short options combine a root query with a value-taking option
+- **THEN** only actual h/V flags are queries; Z/C consume attached or separate values, and real h retains its immediate-help precedence
+- **AND** directory-changing C in visible prefix or subcommand arguments retains inspection refusal, while consumed values and -- payload do not create flags
+- **AND** selected aliases and frontend arguments retain their existing checks

@@ -1,3 +1,18 @@
+## Latest mixed Cargo short-option repair — 2026-10-13
+
+Completed review of 8b56c4b1 added P2 #4250308685: valid root queries in mixed
+short-option clusters still required unused frontends. The shared scanner now
+recognizes h/V before Z/C consume attached or separate values; a real h exits
+before later flags. The same scanner preserves directory-change refusal before
+and after the subcommand, without treating option values or -- payload as flags.
+Forty Rustup checks, two local parser checks and 96 native checks pass, including
+33 confined root queries with ordinary frontends/compilers removed. Eighty real
+Cargo1.97 probes retain34 exit0/46 genuine error controls; aliases and forwarded
+frontend flags remain separately inspected. Original30 slots/85 attempts and
+limits stay unchanged. Task4.4 remains open17/19 for new committed-head CI and
+completed review; user merge/canonical closure remains separate. Earlier entries
+below are historical evidence, not current merge readiness.
+
 ## Latest Cargo root query dispatch repair — 2026-10-13
 
 All sixteen checks passed on c9bfe9a3, but its completed review found valid
