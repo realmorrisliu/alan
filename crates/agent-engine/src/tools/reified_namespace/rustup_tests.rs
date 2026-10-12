@@ -954,3 +954,6 @@ fn component_metadata_parent_alias_cannot_escape_runtime() {
         .contains("component metadata escapes")
     );
 }
+
+#[path = "rustup_provider_tests.rs"]
+mod provider;

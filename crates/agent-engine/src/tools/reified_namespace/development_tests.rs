@@ -1,6 +1,102 @@
 use super::*;
 
 #[test]
+fn native_system_rust_provider_precedes_later_rustup_proxies() {
+    let (Some(proxy), Some(runtime)) = (
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME"),
+    ) else {
+        eprintln!("skipping native system Rust provider: explicit owned runtime inputs absent");
+        return;
+    };
+    assert!(probe_linux_reification().is_selectable());
+    let fixture = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(fixture.path()).unwrap();
+    let system = root.join("system-runtime");
+    let project = root.join("project");
+    let home = root.join("rustup-without-settings");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    let proxy = PathBuf::from(proxy);
+    // Genuine runtime executables act as an ordinary installation in this owned fixture.
+    assert!(
+        Command::new("/bin/cp")
+            .args(["-a", "--reflink=auto"])
+            .arg(runtime)
+            .arg(&system)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let manifest = "[package]\nname = \"alan_system_provider_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n";
+    let source = "#[test] fn actual_compiler() { assert_eq!(2 + 2, 4); }\n";
+    let lock =
+        "version = 4\n[[package]]\nname = \"alan_system_provider_fixture\"\nversion = \"0.1.0\"\n";
+    std::fs::write(project.join("Cargo.toml"), manifest).unwrap();
+    std::fs::write(project.join("src/lib.rs"), source).unwrap();
+    std::fs::write(project.join("Cargo.lock"), lock).unwrap();
+    let path = format!("{}/bin:{}:/usr/bin:/bin", system.display(), proxy.display());
+    let commands = vec![
+        vec!["rustc".into(), "--version".into()],
+        vec![
+            "cargo".into(),
+            "test".into(),
+            "--offline".into(),
+            "--locked".into(),
+        ],
+    ];
+    let mut input = ReifiedNamespacePlanInput::new(
+        vec![ReifiedMountDeclaration::host(&project, &project, ReifiedMountAccess::ReadOnly)],
+        &project,
+        vec!["/bin/sh".into(), "-c".into(),
+            "set -eu; rustc --version; cargo test --offline --locked; test -d \"$CARGO_TARGET_DIR/debug/deps\"; if (: >> src/lib.rs); then exit 43; fi".into()],
+        NetworkPosture::Deny,
+    );
+    let environment = rustup::discover(&path, &home, None, Some((&input, &commands)))
+        .unwrap()
+        .unwrap();
+    assert!(environment.toolchain_mounts.is_empty());
+    assert!(environment.metadata_hashes.is_empty());
+    let mut substrate = default_execution_substrate();
+    substrate.push(ReifiedExecutionSubstrateMount::new(&system, &system));
+    substrate.extend(environment.proxy_mounts.iter().cloned());
+    input = input
+        .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
+        .with_execution_substrate(substrate)
+        .with_command_path(path);
+    input.rustup = Some(environment);
+    let plan = ReifiedNamespacePlan::derive(input).unwrap();
+    let result = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+        .run(&plan)
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
+    assert!(result.stdout.contains("1 passed"));
+    assert_eq!(
+        std::fs::read_to_string(project.join("Cargo.toml")).unwrap(),
+        manifest
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join("Cargo.lock")).unwrap(),
+        lock
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join("src/lib.rs")).unwrap(),
+        source
+    );
+    assert!(!project.join("target").exists());
+    assert!(!home.join("settings.toml").exists());
+    std::fs::remove_file(system.join("bin/rustc")).unwrap();
+    let error = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+        .run(&plan)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("provider changed"), "{error}");
+    eprintln!(
+        "system-first genuine Cargo/Rustc compile passed; Rustup metadata/runtime count 0; source/lock unchanged"
+    );
+}
+
+#[test]
 fn native_remapped_rustup_overrides_match_host_selection() {
     let (Some(proxy), Some(runtime)) = (
         std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),

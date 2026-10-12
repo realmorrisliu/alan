@@ -317,6 +317,75 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     }
 }
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn command_preserves_execution_context(words: &[String]) -> bool {
+    let Some(mut index) = next_command_offset(words) else {
+        return true;
+    };
+    loop {
+        let command = command_basename(&words[index]);
+        let args = &words[index + 1..];
+        let next = if command == "env" {
+            env_command_offset(args)
+        } else {
+            transparent_wrapper_offset(command, args)
+        };
+        let Some(next) = next else { return true };
+        let flags = &args[..next];
+        if command == "env" && !env_preserves_execution_context(flags) {
+            return false;
+        }
+        if matches!(command, "command" | "exec")
+            && flags.iter().any(|arg| {
+                arg.strip_prefix('-')
+                    .filter(|flag| !flag.starts_with('-'))
+                    .is_some_and(|flag| flag.contains(if command == "command" { 'p' } else { 'c' }))
+            })
+        {
+            return false;
+        }
+        index += 1 + next;
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn env_preserves_execution_context(flags: &[String]) -> bool {
+    let protected = |name: &str| matches!(name, "PATH" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN");
+    for (index, flag) in flags.iter().enumerate() {
+        if flag == "--" {
+            break;
+        }
+        if matches!(flag.as_str(), "--ignore-environment" | "--chdir")
+            || flag.starts_with("--chdir=")
+        {
+            return false;
+        }
+        if flag.strip_prefix("--unset=").is_some_and(protected)
+            || flag == "--unset" && flags.get(index + 1).is_some_and(|name| protected(name))
+        {
+            return false;
+        }
+        if let Some(short) = flag.strip_prefix('-').filter(|flag| !flag.starts_with('-')) {
+            for (offset, ch) in short.char_indices() {
+                if matches!(ch, 'i' | 'C') {
+                    return false;
+                }
+                if ch == 'u' {
+                    let name = &short[offset + 1..];
+                    if protected(name)
+                        || name.is_empty()
+                            && flags.get(index + 1).is_some_and(|name| protected(name))
+                    {
+                        return false;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    true
+}
+
 pub(in crate::tools) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {
     let view = nested_evaluator_view(words)?;
     Some((view.command, view.args))

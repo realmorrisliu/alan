@@ -14,7 +14,7 @@
 mod command_interpreters;
 pub(in crate::tools) mod command_options;
 pub(in crate::tools) mod command_process;
-mod command_wrappers;
+pub(in crate::tools) mod command_wrappers;
 mod path_literals;
 mod path_safety;
 mod sandbox_spec;

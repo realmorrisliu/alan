@@ -127,6 +127,19 @@ pub struct ReifiedRustupEnvironment {
     pub metadata_hashes: Vec<(PathBuf, String)>,
     /// Frozen executable contents, rechecked before command effects.
     pub executable_hashes: Vec<(PathBuf, String)>,
+    /// Frozen command lookup and provider classification, rechecked before effects.
+    pub command_providers: Vec<ReifiedRustCommandProvider>,
+}
+
+/// Host-inspected command lookup; this record conveys no mount authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReifiedRustCommandProvider {
+    /// Original executable spelling, including an explicit absolute path.
+    pub executable: String,
+    /// Original ordered PATH used for inspection.
+    pub path: String,
+    /// Canonical provider, contents, and validated Rustup proxy classification.
+    pub resolved: Option<(PathBuf, String, bool)>,
 }
 
 /// Pure plan consumed by the future Linux namespace runner.

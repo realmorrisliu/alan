@@ -640,3 +640,15 @@ async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper_with_argv0_option() {
             .contains("rejects shell wrappers like exec")
     );
 }
+
+#[test]
+fn legacy_env_reset_is_rejected_before_rust_tool_effects() {
+    let commands = shell_commands("env - cargo test").unwrap();
+    let error = validate_nested_command_evaluators(&commands, "test")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("env") && error.contains("unsupported options"),
+        "{error}"
+    );
+}

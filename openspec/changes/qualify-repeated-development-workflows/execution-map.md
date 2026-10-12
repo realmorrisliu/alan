@@ -1,5 +1,11 @@
 # Native execution and evidence map — 2026-10-10
 
+Latest provider repair responds to completed 06f15be3 review P1 #4247205400.
+Existing selected tasks retain their historical results; final-head applicability
+uses bound launcher/provider inputs, product parser audit and targeted native
+controls. Current-head CI/completed review and user merge remain open; the entries
+below preserve earlier evidence. See native-runs.md latest provider follow-up.
+
 Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
 applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
 (70% first-pass qualification). All 21 failed attempt records remain retained;

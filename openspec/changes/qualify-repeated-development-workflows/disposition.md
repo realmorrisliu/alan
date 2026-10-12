@@ -1,3 +1,15 @@
+## Latest effective-provider review repair — 2026-10-12
+
+Completed review of 06f15be3 found valid P1 #4247205400: a later Rustup proxy
+must not determine inspection for an earlier ordinary PATH executable. The direct
+repair selects the first regular X_OK provider (or explicit absolute executable),
+freezes its path/content/proxy classification, and rechecks before effects.
+System Cargo's default PATH compiler decision is frozen too. Unproved alias
+chains and context-changing wrappers refuse conservatively. No mount authority
+or unrelated runtime is added. Earlier delivery entries below are historical;
+current-head CI and completed automated review remain open under task 4.4 (17/19).
+See [the latest native evidence](native-runs.md#effective-path-provider-follow-up--2026-10-12).
+
 ## Latest exact-alias review repair — 2026-10-12
 
 Completed review of 10a475d1 found P1 #4246987405: raw cwd/Host-root comparisons

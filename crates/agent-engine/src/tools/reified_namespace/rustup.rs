@@ -1,6 +1,8 @@
 //! Bounded Host inspection of standard Rustup proxy/runtime installations.
 use super::super::sandbox::command_options::cargo_subcommand;
-use super::plan::{canonicalize_existing_host_path, contains_parent_component};
+use super::plan::{
+    ReifiedRustCommandProvider, canonicalize_existing_host_path, contains_parent_component,
+};
 use super::{
     ReifiedExecutionSubstrateMount, ReifiedMountSource, ReifiedNamespacePlanInput,
     ReifiedRustupEnvironment,
@@ -9,6 +11,9 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+
+#[path = "rustup_provider.rs"]
+mod provider;
 
 // shortcut: standard Rustup ELF layouts only; extend for a recorded linked/custom runtime task.
 const PROXIES: &[&str] = &[
@@ -66,14 +71,47 @@ pub(super) fn discover(
     if proxies.is_empty() {
         return Ok(None);
     }
-    let selects_runtime = input.is_some_and(|(_, commands)| {
-        commands.iter().any(|words| {
-            super::super::sandbox::command_and_args(words).is_some_and(|(name, args)| {
-                PROXIES.contains(&name)
-                    && (name != "rustup" || args.first().is_some_and(|arg| arg == "run"))
-            })
-        })
-    });
+    let mut command_providers = Vec::new();
+    let mut selects_runtime = false;
+    if let Some((_, commands)) = input {
+        for words in commands {
+            let Some((name, args)) = super::super::sandbox::command_and_args(words) else {
+                continue;
+            };
+            if !PROXIES.contains(&name) {
+                continue;
+            }
+            let executable = &words[words.len() - args.len() - 1];
+            let binding = provider::snapshot(executable, path, &proxies)?;
+            let uses_proxy = binding.as_ref().is_some_and(|(_, _, proxy)| *proxy);
+            if !uses_proxy && name == "cargo" && cargo_subcommand(args).is_some() {
+                let compiler = provider::snapshot("rustc", path, &proxies)?;
+                if compiler.as_ref().is_some_and(|(_, _, proxy)| *proxy) {
+                    return Err(
+                        "mixed system Cargo and Rustup compiler selection is unsupported".into(),
+                    );
+                }
+                let entry = ReifiedRustCommandProvider {
+                    executable: "rustc".into(),
+                    path: path.into(),
+                    resolved: compiler,
+                };
+                if !command_providers.contains(&entry) {
+                    command_providers.push(entry);
+                }
+            }
+            selects_runtime |=
+                uses_proxy && (name != "rustup" || args.first().is_some_and(|arg| arg == "run"));
+            let entry = ReifiedRustCommandProvider {
+                executable: executable.clone(),
+                path: path.into(),
+                resolved: binding,
+            };
+            if !command_providers.contains(&entry) {
+                command_providers.push(entry);
+            }
+        }
+    }
     if !selects_runtime {
         let executable_hashes = proxies
             .iter()
@@ -89,6 +127,7 @@ pub(super) fn discover(
             toolchain_mounts: Vec::new(),
             metadata_hashes: Vec::new(),
             executable_hashes,
+            command_providers,
         }));
     }
     if !home.is_absolute() || contains_parent_component(home) || home == Path::new("/") {
@@ -180,6 +219,7 @@ pub(super) fn discover(
         toolchain_mounts: toolchains,
         metadata_hashes: vec![(source, digest(&bytes))],
         executable_hashes: Vec::new(),
+        command_providers,
     };
     if let Some((input, commands)) = input {
         let mut selected = Vec::new();
@@ -195,6 +235,13 @@ pub(super) fn discover(
             let Some((mut name, mut args)) = super::super::sandbox::command_and_args(words) else {
                 continue;
             };
+            if PROXIES.contains(&name) {
+                let executable = &words[words.len() - args.len() - 1];
+                let resolved = provider::resolve(executable, path, &environment.proxy_mounts)?;
+                if !provider::is_proxy(resolved.as_deref(), &environment.proxy_mounts)? {
+                    continue;
+                }
+            }
             let prefix = &words[..words.len() - args.len() - 1];
             let run_selector = if name == "rustup" && args.first().is_some_and(|arg| arg == "run") {
                 let selector = args.get(1).ok_or("missing Rustup run selector")?;
@@ -386,6 +433,13 @@ fn cd_directories(
 
 fn validate_command_environment(words: &[String]) -> Result<(), String> {
     let view = super::super::sandbox::command_and_args(words);
+    if view.is_some_and(|(name, _)| PROXIES.contains(&name))
+        && !super::super::sandbox::command_wrappers::command_preserves_execution_context(words)
+    {
+        return Err(
+            "Rust invocation wrapper changes the inspected PATH, environment or cwd".into(),
+        );
+    }
     if view.is_some_and(|(name, args)| {
         name == "rustup"
             && !matches!(
@@ -634,6 +688,16 @@ fn runtime_for_selector<'a>(
 }
 
 pub(super) fn revalidate(environment: &ReifiedRustupEnvironment) -> Result<(), String> {
+    for binding in &environment.command_providers {
+        if provider::snapshot(
+            &binding.executable,
+            &binding.path,
+            &environment.proxy_mounts,
+        )? != binding.resolved
+        {
+            return Err("Rust command provider changed before execution".into());
+        }
+    }
     for mount in &environment.proxy_mounts {
         validate_proxies(&mount.host_path)?;
     }

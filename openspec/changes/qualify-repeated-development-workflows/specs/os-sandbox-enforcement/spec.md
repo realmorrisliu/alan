@@ -54,3 +54,19 @@ descendant roots SHALL retain only their existing writable authority.
 - **WHEN** the inspected cwd and sole Host mount source are aliases while Rustup settings key the override to the exact canonical target
 - **THEN** canonical inspection cwd/Host roots retain that override before selection, with no extra canonical child mount needed
 - **AND** remapped and identity execution agree with Host selection while original plan inputs still undergo path/authority validation.
+
+
+#### Scenario: Earlier ordinary executable precedes a Rustup proxy
+- **WHEN** an ordinary executable is the first regular executable allowed by current PATH lookup, or the command names its absolute path
+- **THEN** a later proxy does not cause unrelated Rustup metadata inspection or runtime projection
+- **AND** the original PATH and actual provider spelling remain unchanged; discovery grants no extra mount authority
+
+#### Scenario: Inspected provider changes before launch
+- **WHEN** executable availability, contents, canonical provider or validated proxy classification changes after inspection
+- **THEN** revalidation refuses before command effects instead of falling through to another provider
+- **AND** an inspected ordinary Cargo subcommand's default PATH rustc lookup is also revalidated
+
+#### Scenario: Provider lookup context cannot be preserved
+- **WHEN** a Rust command uses an unproved executable alias, relative executable path, or wrapper changing the inspected lookup environment or cwd
+- **THEN** the unsupported invocation refuses before effects
+- **AND** the default-lookup mixed compiler guard does not imply qualification of Cargo compiler configuration or RUSTC/wrapper overrides

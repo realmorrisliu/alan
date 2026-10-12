@@ -185,7 +185,7 @@ pub(super) fn validate_linux_command_path(
 }
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
-fn validate_directory_aliases(
+pub(super) fn validate_directory_aliases(
     candidate: &std::path::Path,
     root: &std::path::Path,
     namespace_root: &std::path::Path,

@@ -3202,3 +3202,64 @@ unchanged; Linux phase applicability uses explicit canonical cwd/grant/backing
 bindings, not an absence-of-overrides assumption. Prior raw-branch-equality wording
 belongs to the earlier P1 observation and is superseded for this repair. New frozen
 CLI/source ledger, normal gates and committed-head CI/review remain pending.
+
+
+## Effective PATH provider follow-up — 2026-10-12
+
+Completed 06f15be3 Codex review found valid P1 #4247205400 after all sixteen
+checks passed. A Rustup proxy anywhere in PATH is not proof the named command
+will reach it. Discovery now resolves the first regular X_OK executable in order,
+or the exact absolute spelling. It inspects Rustup metadata/runtime only for a
+validated proxy provider and retains the original PATH. Provider path/content and
+proxy classification are frozen and rechecked before launch; System Cargo's
+implicit default PATH rustc decision receives its own frozen binding.
+
+The existing bounded alias validator checks full executable paths. Cross-root
+aliases and unproved directory projections are conservatively unsupported.
+Command -p, exec -c, env clear/protected-unset/chdir wrappers refuse before effects;
+ordinary transparent prefixes and harmless unsets remain supported. GNU legacy
+`env -` is already rejected by existing opaque-wrapper admission; an adjacent
+regression binds that behavior without another parser special case. The mixed
+compiler guard rejects ordinary Cargo subcommands with a default PATH Rustup
+rustc; it does not qualify command-local RUSTC/wrapper variables or Cargo compiler
+configuration overrides, nor promise complete system-package/compiler support.
+
+Twenty-four portable Rustup regressions pass, including PATH order, non-X_OK and
+non-file leading candidates, hard-linked proxies, explicit system/proxy paths,
+ordinary outer rustup, aliases, content/classification changes and disappearing
+implicit compilers. A genuine installed runtime copied into an owned fixture acts
+as an ordinary system installation ahead of validated proxies. Old 06 code with
+only an empty-new-field compatibility initializer fails by reading absent Rustup
+settings; new code completes a real offline locked compile against read-only
+sources with private outputs, zero projected Rustup runtimes/selection metadata,
+and unchanged source/lock. Removing the inspected compiler then causes native
+prelaunch provider-change refusal before a second command launch. No host package installation/default/auth mutation is
+performed. Native namespace boundary suite: 77 PASS, including four real remap
+compiles, mount/write/network isolation and cancellation.
+
+New cache evidence root: `dev-boundary-20261011-v1/rustup-provider-review-v1`.
+Historical phase provider bindings SHA-256
+`2ff2b9edcb6ad940acb2b44b2d5ceb8309082df49c9e6e611186b400e5b57756`
+recomputes 99 original launcher/preparation/version artifacts and 33 receipt
+references across 33 phases/15 selected Linux slots; it links prior canonical
+bindings and complete original rollout corpus. Current realpath/X_OK/inode/hash
+observations are separate corroboration, never historical permission snapshots.
+The compiled product parser audit SHA-256
+`89c04f6961da5fdd1526ec5669bac20902890effccbd43e8d7e0216b2c9d736e`
+checks all 241 structured Linux Bash occurrences: 215 bare Rust command occurrences
+(Cargo 156/Rustc 59), no explicit Rust paths/wrappers/local environment overrides.
+Twelve old-06/current comparisons preserve every original environment field,
+including real override precedence, with the required empty-provider compatibility
+shim; added proxy bindings are independently asserted, not claimed equal to an
+old absent field. Cache-only comparison overlays are restored before commit.
+
+These input bindings, original-field equality and native controls support the
+same 30 selected slots/85 development attempts with zero new development-model
+tasks. Original 21 PASS/9 FAIL first outcomes, 3 assisted Linux F4 completions,
+collector corrections, unknown cost/independence, physical Linux caret/scroll
+measurement gap and laborious long paging remain unchanged. Retained operational
+failures include the initial owner-less build refusal, malformed compatibility
+initializer compilation failure and wrong legacy-env error-string assertion;
+none is a completed development task. Fresh compiled-input freezes and final
+current-head CI/completed review remain delivery gates, task 4.4 open at 17/19.
+User merge/canonical closure remains task 4.5; earlier readiness was premature.
