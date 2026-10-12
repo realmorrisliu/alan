@@ -73,8 +73,8 @@ fails on verifier approval timeout; linux-f2-r1/opaque-writer-a5 fails because t
 ACK for process completion; neither becomes PASS. The corrected collector requires
 actual exit_code (with a separate builtin cd case), checked by four assert cases.
 All failed receipts and rollout/artifact evidence are retained. linux-f2-r1/opaque-writer-a1
-binary transport corruption, opaque-writer-a2 missing runtime parent and
-opaque-writer-a4 stale owned checker build output are prelaunch failures with no model input; their raw NOT_RUN/FAIL labels
+binary transport corruption, linux-f2-r1/opaque-writer-a2 missing runtime parent and
+linux-f2-r1/opaque-writer-a4 stale owned checker build output are prelaunch failures with no model input; their raw NOT_RUN/FAIL labels
 remain and are excluded from development counts. Binary transport was corrected
 by guest-local copy, not a change to production code.
 
