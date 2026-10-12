@@ -3069,3 +3069,65 @@ conclusions, timestamps and direct run URLs. Normal commit quality/distribution,
 strict OpenSpec 70/70 and both final review axes pass. Task 4.4 closes at 18/19;
 this documentation-only recording must pass its own CI. User merge and canonical
 closure remain task 4.5, with no autonomous merge or routing enablement.
+
+## Cargo selector/global-option P2 after ready-triggered review — 2026-10-12
+
+Codex review of e8f4f076 finishes after the readiness report and adds
+`discussion_r4246031780`. The finding is valid. Portable RED fails the read-only
+manifest on cargo +1.97.0 build; actual Linux RED rejects the same manifest before
+compiler effects. The shared cargo_subcommand function moves unchanged from the
+Rustup inspector to internal command-options and is reused by path_literals.
+Selectors and separated/inline global values now reach the real subcommand;
+original policy, rights, output/redirection and -- boundaries remain unchanged.
+
+Five manifest tests and two Rustup prefix tests pass. The existing macOS native
+Seatbelt program exercises six prefix/parent combinations: source reads and
+scratch writes succeed, writes to the explicit read-only source fail. A fresh
+owned Linux build passes the full native development fixture in 109.90 seconds,
+including three actual +selector/global-prefix compilations from a read-only
+manifest, four pre-effect negative controls (read-only output, ungranted manifest,
+forwarded operands, unknown subcommand), source/runtime/home/network/cache guards
+and descendant lifecycle. These are adapter/native checks, not new model slots.
+
+The newly built normal CLI also admits +1.97.0 --color never test against the
+read-only original project manifest while cwd/target remain in writable scratch.
+It compiles actual fresh artifacts, exits0 and records no model turn. Its exact
+normal scoped approval and all 27 receipt/artifact files are verified. Receipt
+SHA-256 is `7ef0a890200fd6c90e63ed66527272d5de376eb2ac36dfc5d1d86e8c51b2f777`.
+Physical Host cursor geometry remains unmeasured.
+
+Fresh Mac/Linux CLI SHA-256 are respectively
+`e02537a889ba998f653438e2f39eaf635371139ce37e2e823a275bbfa84e1121` and
+`cad2b7e6f30f04ac9a60fbfccf8d752e840a147d3ef165e140d3eea0afbecf5d`.
+Their 437/440 actual compiled-input hashes match this repaired source. Original
+binary hashes do not stand in for these new binaries.
+
+The applicability ledger verifies 66 selected initial/resumed/verifier rollout
+references for all thirty slots, covering 193 completed Bash records and a
+superset of 450 structured arguments (duplicates, proposed/cancelled requests
+included). Source hashes/captured prefixes and exact admission/Action UUIDs are
+checked before extraction. A compiled old/new comparison using existing tokenizer
+and wrapper inspection verifies 3,415 token roles, zero differences/refusals and
+zero nested wrapper scripts in this corpus. Rustup parser and surrounding
+selection code are unchanged after removing its move/import. Policy/rights and
+other runtime owners are unchanged. This no-impact proof plus targeted new-form
+native checks supports inherited applicability of the same thirty slots without
+rewriting a receipt or adding a model task. The 85 attempts, first21PASS/9FAIL and
+three assisted Linux lifecycle completions retain their original meaning.
+
+source-applicability-ledger.json SHA-256 is
+`acc0d1b32c00cedbf052962cc4fc4a34e230236d1f948ccde39ead6f4c9dba8a`.
+The complete request corpus SHA-256 is
+`9dd406b8f8eba0f1a2ecfef79f8d3ee22e937a1c381e728c5420fff6dc0bd52a`.
+It contains only extracted Tool arguments/provenance, no memory or provider bodies.
+
+Retained operational attempts are not promoted to PASS: shared Cargo target
+reuse returned the old binary; the owned output helper refused an archive without
+Git metadata; the first CLI launch lacked a runtime parent; another requested
+literal 1.96.0 that was not installed and was refused before effects. The fresh
+owned build and installed 1.97.0 CLI retry supply actual acceptance. Those
+preflights have zero model generation and do not alter development attempt counts.
+Normal repaired-source quality/distribution pass. Strict OpenSpec, final commit
+CI, thread reply/resolution and completed current-head automated review remain
+separate closing gates. Task 4.4 reopens; task 4.5 still requires user merge and
+canonical synchronization. No automatic merge or autonomous self-bootstrap claim.

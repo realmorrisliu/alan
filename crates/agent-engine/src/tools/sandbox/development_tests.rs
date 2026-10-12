@@ -342,6 +342,99 @@ mod tests {{
         protected.stdout, protected.stderr
     );
     record("read-only-build", &protected);
+    let scratch = fixture.path().join("manifest-output");
+    std::fs::create_dir(&scratch).unwrap();
+    let manifest_sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec::from_host_mounts(&[
+            SandboxHostMount {
+                namespace_path: project.clone(),
+                host_path: project.clone(),
+                access: ReifiedMountAccess::ReadOnly,
+            },
+            SandboxHostMount {
+                namespace_path: dependency.clone(),
+                host_path: dependency.clone(),
+                access: ReifiedMountAccess::ReadOnly,
+            },
+            SandboxHostMount {
+                namespace_path: scratch.clone(),
+                host_path: scratch.clone(),
+                access: ReifiedMountAccess::ReadWrite,
+            },
+        ]),
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+    );
+    for (index, prefix) in [
+        "cargo +1.97.0",
+        "cargo --color never",
+        "cargo +1.97.0 --color never",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let result = manifest_sandbox.exec_with_timeout_and_capability(
+            &format!("{prefix} test --offline --locked --manifest-path '{}' --target-dir target/{index}", project.join("Cargo.toml").display()),
+            &scratch,
+            Some(Duration::from_secs(30)),
+            Some(alan_agent_protocol::ToolCapability::Write),
+        ).await.unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "{prefix}: {} {}",
+            result.stdout, result.stderr
+        );
+        assert!(result.stdout.contains("2 passed; 0 failed; 1 ignored"));
+        assert!(scratch.join(format!("target/{index}/debug/deps")).is_dir());
+        assert_eq!(
+            std::fs::read_to_string(project.join("src/lib.rs")).unwrap(),
+            corrected
+        );
+        record(&format!("read-only-manifest-prefix-{index}"), &result);
+    }
+    for (label, command) in [
+        (
+            "read-only-output",
+            format!(
+                "cargo +1.97.0 --color never test --manifest-path '{}' --target-dir '{}/forbidden-target'",
+                project.join("Cargo.toml").display(),
+                project.display()
+            ),
+        ),
+        (
+            "ungranted-manifest",
+            format!(
+                "cargo +1.97.0 --color never test --manifest-path '{}' --target-dir target/denied",
+                credential.display()
+            ),
+        ),
+        (
+            "forwarded-manifest",
+            format!(
+                "cargo +1.97.0 --color never run -- --manifest-path '{}'",
+                project.join("Cargo.toml").display()
+            ),
+        ),
+        (
+            "unknown-subcommand",
+            format!(
+                "cargo +1.97.0 --color never custom --manifest-path '{}'",
+                project.join("Cargo.toml").display()
+            ),
+        ),
+    ] {
+        let denied = manifest_sandbox
+            .exec_with_timeout_and_capability(
+                &command,
+                &scratch,
+                Some(Duration::from_secs(10)),
+                Some(alan_agent_protocol::ToolCapability::Write),
+            )
+            .await;
+        assert!(denied.is_err(), "{label}: {denied:?}");
+        eprintln!("native development {label}: refused before effects");
+    }
+    assert!(!project.join("forbidden-target").exists());
+    assert!(!scratch.join("target/denied").exists());
     let denied = read_only
         .exec("printf unauthorized >> src/lib.rs", &project)
         .await;

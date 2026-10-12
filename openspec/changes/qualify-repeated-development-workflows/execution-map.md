@@ -406,3 +406,30 @@ No production visibility is widened. Exact production-body comparisons plus
 all other frozen compiled inputs verify runtime applicability; the two changed
 raw source hashes are explicitly test-layout changes. Focused six Tool/two
 Process tests and normal quality/distribution checks exercise the new placement.
+
+## Cargo prefix review repair and applicability — 2026-10-12
+
+The manifest operand role and bounded Rustup inspection share cargo_subcommand
+from the existing internal command-options module. Read-only treatment still
+requires OS enforcement, supported build/check/test/run, an explicit manifest
+option before -- and current readable authority. Output/redirection/unknown
+operands, policy/rights and command bytes retain their original owners/behavior.
+
+The applicability audit uses complete selected rollout command arguments, not
+clipped result previews or successful calls alone. Captured full/prefix hashes
+are verified; three missing index entries are recovered through exact native
+admission UUID/correlated Action UUID within narrow recorded-time candidates.
+All typed Bash requests are compared, including cancelled/failed requests and
+duplicates. The existing shell tokenizer/wrapper inspector and old/new operand
+classifier are compiled together in a cache-only white-box audit. Actual original
+slot inputs have no role differences; new argument forms have separate native
+positive/negative proof. No original Model task or receipt is substituted.
+
+Imported public source uses a unique owned Cargo output, with fresh per-platform
+compiled-input maps and binary hashes. The initial shared-target stale artifact,
+archive-without-Git ownership refusal, missing runtime-parent launch and
+uninstalled literal 1.96.0 request are retained as operator preflight failures.
+They add no developer Model attempts. Actual CLI acceptance uses installed
+1.97.0, read-only project and writable scratch and verifies native exit/no model
+turns. Do not treat a ready-triggered review as complete before its current-head
+result, inline threads and summary/reactions are rechecked.

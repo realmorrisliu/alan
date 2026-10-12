@@ -12,7 +12,7 @@
 //! recipes, or utility-specific script/DSL modes such as `sed -f`.
 
 mod command_interpreters;
-mod command_options;
+pub(in crate::tools) mod command_options;
 pub(in crate::tools) mod command_process;
 mod command_wrappers;
 mod path_literals;

@@ -66,7 +66,7 @@ zero-model collector preflights remain retained. Task 3.4 closes; checklist is
 - [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
 - [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
 - [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
-- [x] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
+- [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
 
 ## Final native and evidence audit — 2026-10-12
@@ -98,3 +98,30 @@ axes are resolved and normal quality/distribution plus strict OpenSpec 70/70
 pass. Task 4.4 closes; checklist is 18/19. This documentation-only recording
 still needs its own CI; no user merge or canonical adoption is claimed. Task 4.5
 remains open for user merges of #1045/#1046/#1047 and subsequent canonical closure.
+
+## Post-ready automated review follow-up — 2026-10-12
+
+Marking #1047 ready triggered Codex review. Its subsequent P2
+`discussion_r4246031780` is valid: Cargo selectors/global options hide the
+subcommand from the manifest read-role check. The previous gate closure covers
+its historical head, not completion of that later review. Task 4.4 reopens;
+checklist is 17/19 until the repaired head's CI and completed automated re-review.
+
+The existing Cargo parser is shared with Rustup inspection without changing its
+body or surrounding selection code. Five manifest tests, two Rustup prefix tests,
+six actual macOS Seatbelt prefix read/write boundaries and a fresh Linux native
+fixture pass. Linux verifies three real prefix builds against read-only sources
+and four negative pre-effect refusals, plus existing isolation/lifecycle guards.
+A newly built standalone CLI also compiles a read-only manifest from writable
+scratch with +1.97.0/--color, normal scoped approval, no model input and native exit0.
+
+All 66 selected initial/resumed/verifier rollout references are validated. A
+cache-only compiled comparison inspects 450 structured Bash argument occurrences
+(including 193 completed records, duplicates and cancelled/proposed requests):
+3,415 token roles agree with the original candidate, with no nested wrapper
+scripts or parser refusals in this corpus. The unchanged Rustup parser/selection,
+unchanged policy/rights owners, fresh 437/440-input binary freezes and targeted
+native controls support inheritance of the same thirty slots. No original
+receipt, first outcome or elapsed time is rewritten; no new model slot is added.
+The independent applicability ledger and retained operational failures are in
+native-runs.md. User merge/canonical closure remains task 4.5.

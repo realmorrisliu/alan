@@ -1,4 +1,5 @@
 //! Bounded Host inspection of standard Rustup proxy/runtime installations.
+use super::super::sandbox::command_options::cargo_subcommand;
 use super::plan::{canonicalize_existing_host_path, contains_parent_component};
 use super::{
     ReifiedExecutionSubstrateMount, ReifiedMountSource, ReifiedNamespacePlanInput,
@@ -492,24 +493,6 @@ fn validate_component(manifest: &toml::Value, key: &str, name: &str) -> Result<(
     } else {
         Err(format!("required Rust component/target absent: {name}"))
     }
-}
-
-fn cargo_subcommand(args: &[String]) -> Option<&str> {
-    let mut words = args.iter();
-    if args.first().is_some_and(|word| word.starts_with('+')) {
-        words.next();
-    }
-    while let Some(word) = words.next() {
-        if word == "--" {
-            return words.next().map(String::as_str);
-        }
-        if matches!(word.as_str(), "--config" | "--color" | "-C" | "-Z") {
-            words.next()?;
-        } else if !word.starts_with('-') {
-            return Some(word);
-        }
-    }
-    None
 }
 
 fn validate_cli_targets(root: &Path, name: &str, args: &[String]) -> Result<(), String> {

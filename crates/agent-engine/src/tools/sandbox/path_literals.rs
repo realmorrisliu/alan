@@ -50,7 +50,7 @@ pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRol
     // extend operand roles when another real supported command needs them.
     if command_name == "cargo"
         && matches!(
-            args.first().map(String::as_str),
+            super::command_options::cargo_subcommand(args),
             Some("build" | "check" | "test" | "run")
         )
         && !args.iter().any(|word| word == "--")

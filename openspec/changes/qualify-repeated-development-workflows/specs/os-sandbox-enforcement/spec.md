@@ -17,6 +17,12 @@ descendant roots SHALL retain only their existing writable authority.
 - **THEN** preflight permits the manifest read in separated or inline option form
 - **AND** compound commands keep the same per-operand boundary and original command text
 
+#### Scenario: Cargo selectors and global options precede the subcommand
+- **WHEN** a supported Cargo invocation selects an installed toolchain or places global options before build/check/test/run
+- **THEN** manifest operand classification and Rustup inspection use the same effective-subcommand parser
+- **AND** global option values are consumed as values rather than mistaken for subcommands
+- **AND** original command text, policy classification, output checks and the argument terminator remain unchanged
+
 #### Scenario: Outputs and unrelated arguments retain writable checks
 - **WHEN** a command targets a read-only path for output, redirection, another command or arguments after Cargo's terminator
 - **THEN** the manifest input role does not authorize those writes or operands

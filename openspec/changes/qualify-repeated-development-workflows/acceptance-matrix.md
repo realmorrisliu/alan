@@ -1,5 +1,13 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
+Post-ready review reports valid Cargo prefix P2 `discussion_r4246031780`.
+The repaired candidate has fresh native boundary evidence and a complete
+selected-command no-impact audit; current-head CI and completed automated
+re-review are still required. The same thirty historical slots are inherited by
+the reviewed applicability ledger, with no original outcome or model count reset.
+See the latest section of native-runs.md; earlier all-input-equality statements
+remain limited to their recorded candidates.
+
 Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
 applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
 (70% first-pass qualification). All 21 failed attempt records remain retained;
@@ -11,9 +19,9 @@ intervention because read-only collector corrections remain enumerated.
 All selected completions have model-authored allowed source edits, protected
 behavior, terminal evidence and actual native exits within the original bound.
 No operator authors the selected solutions. Final audit verifies 85 receipt
-hashes and 4,694 selected artifact hashes. Final source applicability covers the
-frozen runtime and the reviewed test-only relocation; it does not claim all raw
-compiled-input hashes remain equal after that relocation. Current-head CI and
+hashes and 4,694 selected artifact hashes. That recorded source applicability covers its frozen runtime and test-only
+relocation; the later Cargo parser repair has its own semantic applicability
+ledger and fresh binary/source freezes. Raw old-input equality is not claimed. Current-head CI and
 user merge/canonical closure remain separate gates.
 The retained candidate history below does not reset original outcomes.
 

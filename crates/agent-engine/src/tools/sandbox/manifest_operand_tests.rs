@@ -35,23 +35,33 @@ fn enforced_cargo_manifest_operand_reads_explicit_read_only_grant() {
         let (root, sandbox) = fixture(backend);
         let manifest = root.path().join("dependency/Cargo.toml");
         for mode in [PathCheckMode::Full, PathCheckMode::ProtectedOnly] {
-            for command in ["build", "check", "test", "run"] {
-                for operand in [
-                    format!("--manifest-path '{}'", manifest.display()),
-                    format!("--manifest-path='{}'", manifest.display()),
-                    "--manifest-path ../dependency/Cargo.toml".into(),
-                ] {
-                    let script = format!(
-                        "cargo test --target-dir target && cargo {command} {operand} --target-dir target/project"
-                    );
-                    sandbox
-                        .validate_command_paths(
-                            &script,
-                            &root.path().join("scratch"),
-                            mode,
-                            Some(ToolCapability::Write),
-                        )
-                        .unwrap_or_else(|error| panic!("{backend:?}: {script}: {error}"));
+            for prefix in [
+                "cargo",
+                "cargo +1.97.0",
+                "cargo --color never",
+                "cargo +1.97.0 --color=never --locked --offline",
+                "cargo --config 'env.PROBE=\"test\"'",
+                "cargo -v -Z unstable-options",
+                "cargo -C scratch",
+            ] {
+                for command in ["build", "check", "test", "run"] {
+                    for operand in [
+                        format!("--manifest-path '{}'", manifest.display()),
+                        format!("--manifest-path='{}'", manifest.display()),
+                        "--manifest-path ../dependency/Cargo.toml".into(),
+                    ] {
+                        let script = format!(
+                            "cargo test --target-dir target && {prefix} {command} {operand} --target-dir target/project"
+                        );
+                        sandbox
+                            .validate_command_paths(
+                                &script,
+                                &root.path().join("scratch"),
+                                mode,
+                                Some(ToolCapability::Write),
+                            )
+                            .unwrap_or_else(|error| panic!("{backend:?}: {script}: {error}"));
+                    }
                 }
             }
         }
@@ -86,6 +96,27 @@ fn manifest_read_role_does_not_authorize_writes_or_other_operands() {
         format!("cargo run -- --manifest-path '{}'", manifest.display()),
         format!("cargo fix --manifest-path '{}'", manifest.display()),
         format!("cargo custom --manifest-path '{}'", manifest.display()),
+        format!(
+            "cargo +1.97.0 --color never custom --manifest-path '{}'",
+            manifest.display()
+        ),
+        format!(
+            "cargo --color test custom --manifest-path '{}'",
+            manifest.display()
+        ),
+        format!(
+            "cargo --config test custom --manifest-path '{}'",
+            manifest.display()
+        ),
+        format!(
+            "cargo +1.97.0 run -- --manifest-path '{}'",
+            manifest.display()
+        ),
+        format!(
+            "cargo +1.97.0 --color never run --manifest-path '{}' --target-dir '{}/target'",
+            manifest.display(),
+            manifest.parent().unwrap().display()
+        ),
         format!("other --manifest-path '{}'", manifest.display()),
     ] {
         for mode in [PathCheckMode::Full, PathCheckMode::ProtectedOnly] {
@@ -197,22 +228,24 @@ async fn cargo_named_program_cannot_turn_manifest_input_into_native_write_author
                 .readable_roots
                 .push(dunce::canonicalize(root.path()).unwrap());
         }
-        let result = sandbox
-            .exec_with_timeout_and_capability(
-                &format!(
-                    "'{}' run --manifest-path '{}'",
-                    executable.display(),
-                    manifest.display()
-                ),
-                &root.path().join("scratch"),
-                Some(std::time::Duration::from_secs(10)),
-                Some(ToolCapability::Write),
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "fixture");
-        assert_ne!(result.exit_code, 0);
-        assert_eq!(std::fs::read(&manifest).unwrap(), b"fixture");
-        assert_eq!(std::fs::read(&output).unwrap(), b"permitted");
+        for prefix in ["", "+1.97.0", "+1.97.0 --color never"] {
+            let result = sandbox
+                .exec_with_timeout_and_capability(
+                    &format!(
+                        "'{}' {prefix} run --manifest-path '{}'",
+                        executable.display(),
+                        manifest.display()
+                    ),
+                    &root.path().join("scratch"),
+                    Some(std::time::Duration::from_secs(10)),
+                    Some(ToolCapability::Write),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.stdout, "fixture");
+            assert_ne!(result.exit_code, 0);
+            assert_eq!(std::fs::read(&manifest).unwrap(), b"fixture");
+            assert_eq!(std::fs::read(&output).unwrap(), b"permitted");
+        }
     }
 }

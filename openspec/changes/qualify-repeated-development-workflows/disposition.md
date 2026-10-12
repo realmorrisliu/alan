@@ -1,6 +1,19 @@
 # Disposition — 2026-10-11
 
-## Latest qualification update — 2026-10-12
+## Latest automated-review follow-up — 2026-10-12
+
+Codex review triggered by ready status subsequently reports valid P2
+`discussion_r4246031780`. The prior statement that only user merge remained is
+withdrawn; task 4.4 reopens at 17/19 for current-head CI and completed re-review.
+The narrow repair shares the existing Cargo subcommand parser between manifest
+preflight and Rustup inspection. New native/portable boundary checks and the
+complete selected-command no-impact audit pass; original thirty qualified slots
+and all eighty-five attempts remain unchanged. Fresh source/binary freezes replace
+the earlier all-input-equality claim. See native-runs.md for the applicability
+ledger. This uncommitted repair is not a completed automated review or passed
+new-head CI, and it does not authorize merge or routing activation.
+
+## Retained pre-automated-review qualification update — 2026-10-12
 
 Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
 applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
