@@ -2646,3 +2646,55 @@ slots and first outcomes 14 PASS / 5 FAIL / 11 NOT_RUN. Checklist stays 10/19;
 Linux F2 r2/r3, F3/F4/F5, final audit, fresh publication gates/CI and user merge/
 canonical closure remain open. Shared auth, enabled memory, historical verifier
 intervention and unknown usage/cost/time partitions remain explicit.
+
+## Complete Linux cross-file family — 2026-10-12
+
+Evidence head 94e8940f passes all sixteen distinct current-head checks; gate
+receipt SHA-256 is
+`6b848a8c0e4ccdb709cf890d889e3631c9115ad07997de624a6a5d1f5a606e04`.
+Its five changed documents leave all 437 macOS/440 Linux compiled inputs
+unchanged from the proven be25825a parent. Both subsequent Linux F2 repetitions
+freeze and execute that same proven native candidate; no production repair,
+provider substitution or authority expansion is introduced.
+
+r2/r3 each start from exact original project, prompt, protected assertions and
+checker-driver bytes, with no previous model build output. Known actual catalog,
+gpt-6.1-sol/medium binding, selected Git 2.53/Rust-Cargo 1.96 and acknowledged
+RW project grant are frozen before the one original force_agent input. Each
+model updates only src/lib.rs, src/main.rs and src/bin/report.rs, adds adjustment
+to calculate_2/calculate_3 and updates both binary callers. Multiplication gives
+51 / -20; minimum gives 3 / -5. All library/binary commands actually exit zero.
+The delegated prelaunch rejection remains before direct parent fallback in both;
+r3 also retains optional Git's non-repository failure. Neither is hidden or
+represented as successful child execution. Each has one planned setup approval
+and no model-selected Tool approval, operator source edits, corrective advice,
+extra Agent inputs or read-only collector corrections during its execution.
+
+After each model exits, a fresh normal CLI checker grants original project and
+protected assertions read-only, with only dedicated scratch writable. Its
+prospectively frozen compound command uses the explicitly granted native project
+manifest; the original protected API assertions pass and both binaries compile
+and produce their expected results. Source/driver/assertion inventories remain
+unchanged by checking. Both checker rollouts admit commands only and have zero
+model contexts. Observed invocation Tools and native model/checker instances
+exit; handles are removed. Each actual final Action detail opens, pages after a
+separate Space event and restores Unicode draft insertion abcδQXYZ. Full native
+transcript streams are retained; physical Host scrollback gesture and cursor
+coordinates remain unmeasured.
+
+| Slot / attempt | Model PID / boot | Checker PID / boot | Independent verification | Receipt SHA-256 / files |
+| --- | --- | --- | --- | --- |
+| linux-f2-r2 / a1 | 515637 / a5f45847-6cf6-402e-b533-6fb85c7ac789 | 526242 / c9c85eee-9feb-49b1-a1e4-8e48e96301b0 | PASS / 192.507015 seconds | `3c89ebcd4ecf1c545c2e4b742bb3843676523fdac68e1597e0fe7014ebd34106` / 91 |
+| linux-f2-r3 / a1 | 532580 / 481900fb-9611-4f19-ab1a-02c55ae04d39 | 545239 / 32e00095-2f8f-4ba5-912c-1dcf3f9dedf3 | PASS / 192.429444 seconds | `b60eb51a103974c9bbb0d1a0a7d010e22337a9b3cc7ceedf7dcce48e8070b99f` / 100 |
+
+All native exits are within the original 600-second bound, using retained
+second-resolution script timestamps rather than later audit/sealing time.
+All 402 receipt/artifact files across the complete F2 family verify.
+Aggregate v74 SHA-256 is
+`56de122788bf8cee399952515c550282f35ec8144d226500ab13b1161bbde5f2`.
+It retains 65 development attempts and 21/30 applicable slots, with first outcomes
+16 PASS / 5 FAIL / 9 NOT_RUN. Task 3.2 closes and checklist is 11/19. Linux
+F3/F4/F5, complete metrics/finding audit, fresh publication gates/CI, user merge
+and canonical closure remain open. Shared auth and enabled memory do not prove
+independence; usage/cost and time partitions remain unknown. Historical failures,
+retries and the earlier separate unintended verifier turn remain immutable.

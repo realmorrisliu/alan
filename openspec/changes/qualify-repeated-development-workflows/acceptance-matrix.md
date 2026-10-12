@@ -1,11 +1,11 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
-Latest 2026-10-12 aggregate v71 records 63 development attempts and 19/30
-applicable slots: all fifteen macOS slots, all three Linux small repairs and
-Linux F2 r1. First outcomes are 14 PASS / 5 FAIL / 11 NOT_RUN. The original Linux
+Latest 2026-10-12 aggregate v74 records 65 development attempts and 21/30
+applicable slots: all fifteen macOS slots and all Linux F1/F2 repetitions.
+First outcomes are 16 PASS / 5 FAIL / 9 NOT_RUN. The original Linux
 F2 r1 checker-path failure remains FAIL; its fresh linked retry qualifies the slot.
-Linux readiness generation
-and user-authorized shared-auth preparation remain separate from task attempts.
+Linux readiness generation and user-authorized shared-auth preparation remain
+separate from task attempts.
 The retained earlier candidate history below does not reset these outcomes.
 
 The layout, thirty fixture inputs/prompts, bounds and measurement fields are
@@ -121,8 +121,8 @@ content; generated role-prefix regression checks follow ADR-0059.
 | linux-f1-r2 | linux / ordinary PTY | F1 | 2 | PASS | native-runs.md; original a1 PASS `d8387d60` on byte-identical f497fbe7; protected checking, actual detail page and exits retained |
 | linux-f1-r3 | linux / ordinary PTY | F1 | 3 | PASS | native-runs.md; original a1 PASS `725de813` on byte-identical f497fbe7; protected checking, actual detail page, exits and ANSI-header collector correction retained |
 | linux-f2-r1 | linux / ordinary PTY | F2 | 1 | FAIL: operator checker used untranslatable namespace manifest path | native-runs.md; original a1 FAIL `58598a50` retained; fresh a2 PASS `9005e73b` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
-| linux-f2-r2 | linux / ordinary PTY | F2 | 2 | NOT_RUN | absent |
-| linux-f2-r3 | linux / ordinary PTY | F2 | 3 | NOT_RUN | absent |
+| linux-f2-r2 | linux / ordinary PTY | F2 | 2 | PASS | native-runs.md; original a1 PASS `3c89ebcd` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
+| linux-f2-r3 | linux / ordinary PTY | F2 | 3 | PASS | native-runs.md; original a1 PASS `b60eb51a` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
 | linux-f3-r1 | linux / ordinary PTY | F3 | 1 | NOT_RUN | absent |
 | linux-f3-r2 | linux / ordinary PTY | F3 | 2 | NOT_RUN | absent |
 | linux-f3-r3 | linux / ordinary PTY | F3 | 3 | NOT_RUN | absent |

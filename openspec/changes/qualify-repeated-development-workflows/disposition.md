@@ -14,15 +14,17 @@ repair subsequently qualifies with independent protected behavior, exact source
 effects, terminal evidence and native exits within the original bound. The other
 two Linux F1 repetitions also qualify. Linux F2 r1 additionally qualifies after
 a retained operator checker-path failure and a fresh original-task retry.
-Aggregate v71 retains 63 attempts and 19/30 applicable slots, with first outcomes
-14 PASS / 5 FAIL / 11 NOT_RUN. F2 r2/r3 and the other three Linux families remain
-open; the same protected assertions and authority boundaries are preserved.
+F2 r2/r3 also qualify with original protected library assertions and both
+binary results, exact three-file edits, native detail/draft and exits. Aggregate
+v74 retains 65 attempts and 21/30 applicable slots, with first outcomes
+16 PASS / 5 FAIL / 9 NOT_RUN. Linux F3/F4/F5 remain open; the same protected
+assertions and authority boundaries are preserved.
 Earlier unavailable-profile/no-copy observations below remain historical.
-092e3278, readiness head 2277b693 and evidence heads f497fbe7 / be25825a each
-pass all sixteen checks. The native task-cwd/catalog/source freeze closes task
-1.4, and all three
-Linux small repairs close task 3.1; checklist is 10/19. This additional task
-evidence needs its own normal gates and CI. User review/merge, full cross-Host qualification and canonical closure remain open.
+092e3278, readiness head 2277b693 and evidence heads f497fbe7 / be25825a /
+94e8940f each pass all sixteen checks. Readiness closes task 1.4, complete Linux
+F1 closes 3.1 and complete Linux F2 closes 3.2; checklist is 11/19. This
+evidence-only follow-up needs its own normal gates and CI. User review/merge,
+full cross-Host qualification and canonical closure remain open.
 
 ## Retained earlier disposition
 

@@ -1,25 +1,20 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v71 retains 63 attempts and 19/30 applicable slots:
-all macOS slots, Linux F1 r1/r2/r3 and Linux F2 r1. First outcomes are
-14 PASS / 5 FAIL / 11 NOT_RUN. The first F2 r1 operator checker-path failure
-remains retained before its fresh retry. 2277b693, f497fbe7 and be25825a each
-pass all sixteen checks on their own pinned heads.
-Linux task readiness is frozen on byte-identical 2277b693, which passes all
-sixteen checks: known actual ChatGPT catalog/medium selection, task-cwd Git 2.53
-and Rust/Cargo 1.96, linux_reified_namespace and the original task inputs.
-The remaining twelve Linux tasks and final delivery remain open. Earlier
-observations below are historical, including unavailable profiles and login.
+Latest 2026-10-12 aggregate v74 retains 65 attempts and 21/30 applicable slots:
+all macOS slots and Linux F1/F2 r1/r2/r3. First outcomes are 16 PASS / 5 FAIL /
+9 NOT_RUN. The first Linux F2 r1 operator checker-path failure remains retained
+before its fresh retry. Evidence heads 2277b693, f497fbe7, be25825a and 94e8940f
+each pass all sixteen checks on their own pinned heads. This additional
+evidence-only follow-up still requires its own gates and CI.
 
-This records supported operator controls. Current aggregate v63 retains eleven
-first PASS, four first FAIL and fifteen NOT_RUN through fifty-eight development
-attempts. All fifteen macOS slots have applicable notice-source evidence: three
-repetitions of each F1/F2/F3/F4/F5 family. All fifteen Linux model tasks remain.
-The candidate is documentation head be25825a with unchanged 437 macOS and
-440 Linux compiled inputs; all sixteen current-head checks pass. Linux's fresh
-CLI's earlier readiness snapshot had no generation profile. The 2026-10-12
-user-authorized managed-auth reuse now passes actual Linux generation with
+Linux task readiness is frozen on byte-identical 2277b693: known actual ChatGPT
+catalog/medium selection, task-cwd Git 2.53 and Rust/Cargo 1.96,
+linux_reified_namespace and the original task inputs. The candidate documentation
+head is 94e8940f with unchanged 437 macOS and 440 Linux compiled inputs. The
+2026-10-12 user-authorized managed-auth reuse passes actual Linux generation on
 qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; see native-runs.md.
+Linux F3/F4/F5 and final delivery remain open. Earlier observations below are
+historical, including unavailable profiles and device login.
 An actual 80x24 final-source explicit-command PTY probe also passes protected
 compilation and write denial. Neither readiness probe fills a development slot.
 Earlier source/prerequisite receipts below remain historical, not additional

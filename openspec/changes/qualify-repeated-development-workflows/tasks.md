@@ -38,15 +38,16 @@ Historical checkmarks do not qualify new behavior.
 ## 3. Linux real-model tasks in ordinary PTY
 
 - [x] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
-- [ ] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
+- [x] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
 - [ ] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
 - [ ] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
 - [ ] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
 
-Linux F2 r1 qualifies on unchanged be25825a after retaining the original checker
-path failure and running a fresh linked original-task retry. Protected library
-behavior, both binary results, exact three-file effects, native detail/draft and
-exits pass. F2 r2/r3 remain; task 3.2 is still open and checklist stays 10/19.
+All three Linux F2 repetitions qualify on unchanged be25825a. The original r1
+checker-path failure and fresh retry remain retained; r2/r3 pass their original
+first attempts. Protected library behavior, both binary results, exact three-file
+effects, native detail/draft and exits pass. Task 3.2 closes; checklist is 11/19.
+The original thirty-slot matrix still has nine Linux F3/F4/F5 tasks open.
 
 ## 4. Findings, final candidate and delivery
 
