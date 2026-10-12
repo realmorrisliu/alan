@@ -1,3 +1,17 @@
+## Latest Cargo root query dispatch repair — 2026-10-13
+
+All sixteen checks passed on c9bfe9a3, but its completed review found valid
+P2 #4249812214: root queries before a trailing frontend require unused children.
+The direct repair uses one shared option parser on ordinary and Rustup Cargo;
+root help precedes alias expansion, while version/list still inspect selected
+aliases and refuse default-short-alias combinations that can dispatch. Named or
+frontend help retains its own checks. Real208 child probes retain200 exit0 and
+8 genuine default-alias failures, alongside40 portable/96 native checks and
+450 original scripts/310 Cargo argument parity. Original30 slots/85 attempts,
+first outcomes and all limits remain unchanged. Task4.4 stays open17/19 for the
+new committed-head CI/completed review; user merge remains separate. Entries
+below record historical delivery states, not current merge readiness.
+
 ## Latest Cargo frontend query repair — 2026-10-12
 
 All sixteen checks passed on de04ab8d, but its completed review found valid

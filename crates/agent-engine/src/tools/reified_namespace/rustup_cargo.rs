@@ -6,6 +6,9 @@ pub(super) use crate::tools::sandbox::command_wrappers::rust_compiler_override a
 
 pub(super) fn uses_compiler(args: &[String]) -> bool {
     use crate::tools::sandbox::command_options::{cargo_global_query, cargo_subcommand_index};
+    if cargo_global_query(args) {
+        return false;
+    }
     let Some(index) = cargo_subcommand_index(args) else {
         return false;
     };
@@ -22,9 +25,6 @@ pub(super) fn uses_compiler(args: &[String]) -> bool {
             .is_some_and(|target| !matches!(target, "fmt" | "clippy"));
     }
     let builtin = is_builtin(command);
-    if builtin && cargo_global_query(args) {
-        return false;
-    }
     let mut visible = args[index + 1..]
         .iter()
         .take_while(|arg| arg.as_str() != "--");
@@ -96,6 +96,9 @@ fn is_builtin(command: &str) -> bool {
 
 // shortcut: fresh private Cargo home is empty; freeze its bin before supporting in-request helper edits.
 pub(super) fn implicit_tools(args: &[String]) -> Vec<String> {
+    if crate::tools::sandbox::command_options::cargo_global_query(args) {
+        return Vec::new();
+    }
     let Some(command) = cargo_subcommand(args) else {
         return Vec::new();
     };
@@ -312,7 +315,27 @@ pub(super) fn inspect(
             }
             _ => continue,
         };
-        if !uses_compiler(args) && implicit_tools(args).is_empty() {
+        if crate::tools::sandbox::command_options::cargo_global_help(args) {
+            continue;
+        }
+        // shortcut: default aliases can discard query flags; use canonical commands until qualified.
+        if crate::tools::sandbox::command_options::cargo_global_query(args)
+            && !crate::tools::sandbox::command_options::cargo_global_help(args)
+            && matches!(
+                cargo_subcommand(args),
+                Some("b" | "c" | "d" | "t" | "r" | "rm")
+            )
+        {
+            return Err(
+                "global Cargo version/list may execute default aliases; use a canonical subcommand"
+                    .into(),
+            );
+        }
+        // Global version/list flags can be discarded during configured alias expansion.
+        if !uses_compiler(args)
+            && implicit_tools(args).is_empty()
+            && cargo_subcommand(args).is_none_or(is_builtin)
+        {
             continue;
         }
         if args

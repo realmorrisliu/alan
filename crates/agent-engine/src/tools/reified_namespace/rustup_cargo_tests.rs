@@ -377,7 +377,6 @@ fn configurable_alias_queries_do_not_skip_compiler_admission() {
         vec!["cargo", "b", "--help"],
         vec!["cargo", "--version", "custom"],
         vec!["cargo", "--list", "custom"],
-        vec!["cargo", "--help", "custom"],
         vec!["cargo", "help", "custom"],
         vec!["cargo", "help", "--color", "never", "custom"],
         vec!["cargo", "help", "--config", "env.PROBE='safe'", "custom"],
@@ -631,6 +630,159 @@ fn system_cargo_helpers_follow_path_order_and_revalidate() {
                 .command_providers
                 .iter()
                 .any(|p| p.executable == "rustdoc")
+        );
+    }
+}
+
+#[test]
+fn global_queries_bind_only_cargo_without_ignoring_selected_aliases() {
+    let (_fixture, proxies, home, project) = installation();
+    let system = project.parent().unwrap().join("system");
+    std::fs::create_dir(&system).unwrap();
+    executable(&system.join("cargo"));
+    for name in ["cargo-fmt", "rustfmt", "cargo-clippy", "clippy-driver"] {
+        symlink("rustup", proxies.join(name)).unwrap();
+    }
+    let path = format!("{}:{}", system.display(), proxies.display());
+    for flag in [
+        "--help",
+        "-h",
+        "--version",
+        "-V",
+        "--list",
+        "-vh",
+        "-Vv",
+        "-hV",
+    ] {
+        for command in [
+            "fmt", "clippy", "custom", "test", "help", "b", "c", "d", "t", "r", "rm",
+        ] {
+            let words = vec!["cargo".into(), flag.into(), command.into()];
+            if matches!(command, "b" | "c" | "d" | "t" | "r" | "rm")
+                && !matches!(flag, "--help" | "-h" | "-vh" | "-hV")
+            {
+                assert!(
+                    discover(&path, &home, None, Some((&input(&project), &[words])))
+                        .unwrap_err()
+                        .contains("default aliases")
+                );
+                continue;
+            }
+            let environment = discover(&path, &home, None, Some((&input(&project), &[words])))
+                .unwrap()
+                .unwrap();
+            assert!(environment.toolchain_mounts.is_empty());
+            assert_eq!(environment.command_providers.len(), 1);
+            assert_eq!(environment.command_providers[0].executable, "cargo");
+            revalidate(&environment).unwrap();
+            if !matches!(command, "test" | "help") {
+                let pure_help = matches!(flag, "--help" | "-h" | "-vh" | "-hV");
+                assert_eq!(environment.cargo_config_files.is_empty(), pure_help);
+                let config = project.join(".cargo");
+                std::fs::create_dir_all(&config).unwrap();
+                std::fs::write(
+                    config.join("config.toml"),
+                    format!("[alias]\n{command}='other'\n"),
+                )
+                .unwrap();
+                assert_eq!(revalidate(&environment).is_ok(), pure_help);
+                let words = vec!["cargo".into(), flag.into(), command.into()];
+                assert_eq!(
+                    discover(&path, &home, None, Some((&input(&project), &[words]))).is_ok(),
+                    pure_help
+                );
+                std::fs::remove_file(config.join("config.toml")).unwrap();
+                let words = vec![
+                    "cargo".into(),
+                    "--config".into(),
+                    format!("alias.{command}='other'"),
+                    flag.into(),
+                    command.into(),
+                ];
+                assert_eq!(
+                    discover(&path, &home, None, Some((&input(&project), &[words]))).is_ok(),
+                    pure_help
+                );
+            }
+        }
+    }
+    for args in [
+        vec!["--color", "--help", "fmt"],
+        vec!["--", "--help", "fmt"],
+        vec!["fmt", "--", "--help"],
+    ] {
+        let mut words = vec!["cargo".into()];
+        words.extend(args.iter().map(|s| String::from(*s)));
+        assert!(discover(&path, &home, None, Some((&input(&project), &[words]))).is_err());
+    }
+    std::fs::write(
+        project.join(".cargo/config.toml"),
+        "[alias]\ncustom='test'\nb='test'\nfmt='test'\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["--version", "--help", "custom"],
+        vec!["--help", "--version", "b"],
+        vec!["--list", "--help", "fmt"],
+        vec!["-Vh", "custom"],
+    ] {
+        let mut words = vec!["cargo".into()];
+        words.extend(args.into_iter().map(String::from));
+        let environment = discover(&path, &home, None, Some((&input(&project), &[words])))
+            .unwrap()
+            .unwrap();
+        assert_eq!(environment.command_providers.len(), 1);
+        assert!(environment.cargo_config_files.is_empty());
+        revalidate(&environment).unwrap();
+    }
+}
+
+#[test]
+fn proxy_global_queries_need_only_cargo_without_frontend_components() {
+    let (_fixture, proxies, home, project) = installation();
+    for flag in [
+        "--help",
+        "-h",
+        "--version",
+        "-V",
+        "--list",
+        "-vh",
+        "-Vv",
+        "-hV",
+    ] {
+        for command in ["fmt", "clippy", "custom"] {
+            let words = vec![
+                "cargo".into(),
+                flag.into(),
+                command.into(),
+                "--target=absent".into(),
+            ];
+            let environment = discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&input(&project), &[words])),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(environment.toolchain_mounts.len(), 1);
+            assert!(!environment.executable_hashes.iter().any(|(p, _)| matches!(
+                p.file_name().and_then(|n| n.to_str()),
+                Some("cargo-fmt" | "rustfmt" | "cargo-clippy" | "clippy-driver")
+            )));
+            revalidate(&environment).unwrap();
+        }
+    }
+    for command in ["fmt", "clippy"] {
+        let words = vec!["cargo".into(), command.into()];
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&input(&project), &[words]))
+            )
+            .is_err()
         );
     }
 }

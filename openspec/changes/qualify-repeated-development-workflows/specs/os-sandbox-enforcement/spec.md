@@ -109,3 +109,9 @@ descendant roots SHALL retain only their existing writable authority.
 - **THEN** only the proven compiler-free frontend must be bound and revalidated
 - **AND** selected configuration aliases and compiler overrides remain inspected
 - **AND** custom commands, fmt version and forwarded payload retain conservative child requirements
+
+#### Scenario: Root Cargo queries retain dispatch-aware boundaries
+- **WHEN** Cargo handles a global query before a trailing command
+- **THEN** only actual Cargo/runtime selection is bound, without unused frontend or target requirements
+- **AND** root help returns before alias expansion while named/frontend help keeps its checks
+- **AND** version/list selected aliases are inspected and unsafe default-alias combinations refuse before effects

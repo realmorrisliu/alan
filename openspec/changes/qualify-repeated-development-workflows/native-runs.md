@@ -1,3 +1,49 @@
+## Cargo root query dispatch boundaries — 2026-10-13
+
+Completed c9bfe9a3 review found P2 #4249812214 after all16 checks passed.
+Ordinary Cargo root --help/-h/version/-V/list before fmt/clippy/custom now binds
+only Cargo. Rustup Cargo retains its selected Cargo/runtime/selector integrity
+but does not require unexecuted frontend components or validate ignored targets.
+The existing option parser carries an explicit immediate-help bit, consumes
+option values and stops at the subcommand/-- boundary; supported v/q/h/V short
+clusters and mixed help/version/list priority use the same parser.
+
+Root cargo --help fmt exits before alias expansion, including configured aliases.
+Cargo fmt --help and cargo help fmt execute the frontend and retain its binding
+and configuration checks. Root version/list can lose their flags during alias
+expansion: nonbuiltin targets still inspect/freeze selected configuration;
+configured aliases refuse. Default b/c/d/t/r/rm version/list combinations refuse
+explicitly before effects, recommending canonical commands. Root help on these
+aliases succeeds. This is a bounded refusal, not new general alias expansion.
+
+208 actual owned-runtime child canaries produce200 exit0 and8 retained default
+alias failures (4exit101/4exit1). They comprise130 primary query cases and78
+ordinary default-alias controls. All144 cases containing root help succeed with
+no child;19 cases actually spawn children, including12 configured-alias cases
+and default build/doc/test controls. The first shell-alias syntax probe produced
+9 failed alias-dispatch attempts; its records remain a harness error, superseded
+by simple-alias proofs, never claimed as successful effects. Earlier canary
+versions, failed parser include placement, moved-path compile error and stale
+Linux test copy failures are retained separately; none changes model outcomes.
+
+40 portable and96 fully synchronized native namespace checks pass, zero ignored.
+The real ordinary-Cargo fixture runs15 root queries with --target=absent after
+ordinary frontends/compilers are removed; only Cargo is bound. Old-c9 portable
+ordinary/proxy controls reproduce false helper/target rejection; a fresh old-c9
+native control and final committed builds/gates have separate recorded evidence.
+
+A compiled comparison covers all450 original scripts and310 Cargo argument sets:
+old-c9 effective-subcommand index/global-query outputs match. It does not claim
+unchanged parser bytes or equality for newly supported clusters. The original
+Linux156 Cargo calls are48 exact ['cargo','--version'],82test/24run/2check;
+new query suffixes/default aliases/targets are absent from the original matrix.
+MacOS shared parser inputs require fresh source/binary binding; Linux also changes
+query admission/component checks. The original30 slots/85 attempts, first21PASS/
+9FAIL, three assisted LinuxF4 results and all cost/UI/independence limits inherit
+through prior ledgers. No new development model task is added. Cache proof is in
+rustup-global-query-review-v1; current-head CI/completed review and user merge
+remain separate, with no merge readiness claim while those gates are pending.
+
 ## Compiler-free Cargo frontend queries — 2026-10-12
 
 Completed de04ab8d automated review found P2 #4249496754 after all sixteen CI

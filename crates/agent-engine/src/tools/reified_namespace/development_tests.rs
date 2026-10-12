@@ -193,7 +193,7 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
     input = input
         .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
         .with_execution_substrate(substrate)
-        .with_command_path(path);
+        .with_command_path(&path);
     input.rustup = Some(environment);
     let free_plan = ReifiedNamespacePlan::derive(input).unwrap();
     let free = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
@@ -201,6 +201,65 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
         .unwrap();
     assert_eq!(free.exit_code, 0, "{} {}", free.stdout, free.stderr);
     assert!(free.stdout.contains("alan_system_provider_fixture"));
+    for name in ["cargo-fmt", "cargo-clippy"] {
+        std::fs::remove_file(system.join("bin").join(name)).unwrap();
+    }
+    let commands: Vec<Vec<String>> = ["--help", "-h", "--version", "-V", "--list"]
+        .iter()
+        .flat_map(|flag| {
+            ["fmt", "clippy", "custom"].map(|name| {
+                vec![
+                    "cargo".into(),
+                    (*flag).into(),
+                    name.into(),
+                    "--target=absent".into(),
+                ]
+            })
+        })
+        .collect();
+    let script = format!(
+        "set -eu; {}",
+        commands
+            .iter()
+            .map(|words| words.join(" "))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+    let mut input = ReifiedNamespacePlanInput::new(
+        vec![ReifiedMountDeclaration::host(
+            &project,
+            &project,
+            ReifiedMountAccess::ReadOnly,
+        )],
+        &project,
+        vec!["/bin/sh".into(), "-c".into(), script],
+        NetworkPosture::Deny,
+    );
+    let environment = rustup::discover(&path, &home, None, Some((&input, &commands)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(environment.command_providers.len(), 1);
+    assert!(environment.toolchain_mounts.is_empty());
+    let mut substrate = default_execution_substrate();
+    substrate.push(ReifiedExecutionSubstrateMount::new(&system, &system));
+    substrate.extend(environment.proxy_mounts.iter().cloned());
+    input = input
+        .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
+        .with_execution_substrate(substrate)
+        .with_command_path(path);
+    input.rustup = Some(environment);
+    let query_plan = ReifiedNamespacePlan::derive(input).unwrap();
+    let queries = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+        .run(&query_plan)
+        .unwrap();
+    assert_eq!(
+        queries.exit_code, 0,
+        "{} {}",
+        queries.stdout, queries.stderr
+    );
+    eprintln!(
+        "fifteen confined global queries pass with ordinary frontends/compilers removed and only Cargo bound"
+    );
     eprintln!(
         "system Cargo metadata --no-deps/locate-project/new/init pass with only a later proxy rustc and no projected Rustup runtime"
     );

@@ -321,6 +321,11 @@ pub(super) fn discover(
                     }
                     let subcommand = cargo_subcommand(args);
                     let required: &[&str] = match (name, subcommand) {
+                        ("cargo", _)
+                            if super::super::sandbox::command_options::cargo_global_query(args) =>
+                        {
+                            &["cargo"]
+                        }
                         ("cargo", Some("fmt")) | ("cargo-fmt", _) => &["cargo-fmt", "rustfmt"],
                         ("cargo", Some("clippy")) | ("cargo-clippy", _) => {
                             &["cargo-clippy", "clippy-driver"]
@@ -651,6 +656,9 @@ fn validate_component(manifest: &toml::Value, key: &str, name: &str) -> Result<(
 }
 
 fn validate_cli_targets(root: &Path, name: &str, args: &[String]) -> Result<(), String> {
+    if name == "cargo" && super::super::sandbox::command_options::cargo_global_query(args) {
+        return Ok(());
+    }
     let cargo = matches!(name, "cargo" | "cargo-clippy");
     if !cargo && !matches!(name, "rustc" | "rustdoc" | "clippy-driver") {
         return Ok(());

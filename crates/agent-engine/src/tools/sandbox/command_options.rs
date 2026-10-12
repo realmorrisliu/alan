@@ -27,28 +27,42 @@ pub(in crate::tools) fn cargo_global_query(args: &[String]) -> bool {
     cargo_command_options(args).1
 }
 
-fn cargo_command_options(args: &[String]) -> (Option<usize>, bool) {
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn cargo_global_help(args: &[String]) -> bool {
+    cargo_command_options(args).2
+}
+
+fn cargo_command_options(args: &[String]) -> (Option<usize>, bool, bool) {
     let mut words = args.iter().enumerate();
     if args.first().is_some_and(|word| word.starts_with('+')) {
         words.next();
     }
     let mut query = false;
+    let mut help = false;
     while let Some((index, word)) = words.next() {
+        let short = word.strip_prefix('-').filter(|flags| {
+            flags
+                .chars()
+                .all(|flag| matches!(flag, 'v' | 'q' | 'h' | 'V'))
+        });
         if word == "--" {
-            return (words.next().map(|(index, _)| index), query);
+            return (words.next().map(|(index, _)| index), query, help);
         }
         if matches!(word.as_str(), "--config" | "--color" | "-C" | "-Z") {
             if words.next().is_none() {
-                return (None, query);
+                return (None, query, help);
             }
         } else if !word.starts_with('-') {
-            return (Some(index), query);
+            return (Some(index), query, help);
         } else if matches!(
             word.as_str(),
             "--help" | "-h" | "--version" | "-V" | "--list"
-        ) {
+        ) || short.is_some_and(|flags| flags.contains('h') || flags.contains('V'))
+        {
             query = true;
+            help |= matches!(word.as_str(), "--help" | "-h")
+                || short.is_some_and(|flags| flags.contains('h'));
         }
     }
-    (None, query)
+    (None, query, help)
 }
