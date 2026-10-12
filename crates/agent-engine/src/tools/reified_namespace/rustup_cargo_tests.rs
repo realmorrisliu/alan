@@ -249,6 +249,7 @@ fn ordinary_cargo_checks_compilers_only_for_compiler_using_commands() {
         vec!["--list"],
         vec!["test", "--help"],
         vec!["metadata", "--no-deps"],
+        vec!["help", "test"],
     ] {
         let mut words = vec!["cargo".into()];
         words.extend(args.iter().map(|s| String::from(*s)));
@@ -474,4 +475,197 @@ fn namespace_parent_traversal_cannot_choose_an_uninspected_sibling() {
             "{target}"
         );
     }
+}
+
+#[test]
+fn shell_lookup_definitions_and_new_directory_selection_refuse() {
+    let (_fixture, proxies, home, project) = installation();
+    for script in [
+        "cargo() { true; }; cargo test",
+        "sh -c 'cargo() { true; }; cargo test'",
+        "sh -c 'cargo test'",
+        "cargo () (true); cargo test",
+        "function cargo { true; }; cargo test",
+        "function cargo() { true; }; cargo test",
+        "cd() { true; }; cargo test",
+        "car\\\ngo() { true; }; cargo test",
+        "alias cargo=true\ncargo test",
+        "alias cd=true\ncd child\ncargo test",
+        "hash -p /bin/true cargo; cargo test",
+        "mkdir -p child/.cargo; echo override > child/.cargo/config.toml; cd child; cargo test",
+    ] {
+        let mut inspection = input(&project);
+        inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
+        let commands = crate::tools::sandbox::shell_commands(script).unwrap();
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&inspection, &commands))
+            )
+            .is_err(),
+            "{script}"
+        );
+    }
+    for script in [
+        "printf 'cargo() { true; }'; cargo test",
+        "# cargo() { true; }\ncargo test",
+        "printf 'fn main() {}'; cargo test",
+        "cat <<'TEXT'\ncargo() { true; }\nTEXT\ncargo test",
+        "cat <<'TEXT'\nalias cargo=true\nTEXT\ncargo test",
+        "cat <<'TEXT'\nsh -c 'printf literal'\nTEXT\ncargo test",
+    ] {
+        let mut inspection = input(&project);
+        inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
+        // Here-document text is not an execution request.
+        let commands = vec![vec!["cargo".into(), "test".into()]];
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&inspection, &commands)),
+        )
+        .unwrap();
+    }
+    for script in [
+        "helper() { true; }; helper",
+        "alias helper=true\nhelper",
+        "alias cargo=true",
+    ] {
+        let mut inspection = input(&project);
+        inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
+        let commands = crate::tools::sandbox::shell_commands(script).unwrap();
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&inspection, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(environment.toolchain_mounts.is_empty(), "{script}");
+    }
+}
+
+#[test]
+fn system_cargo_helpers_follow_path_order_and_revalidate() {
+    let (_fixture, proxies, home, project) = installation();
+    let system = project.parent().unwrap().join("system");
+    std::fs::create_dir(&system).unwrap();
+    executable(&system.join("cargo"));
+    executable(&system.join("rustc"));
+    for name in ["cargo-fmt", "rustfmt", "cargo-clippy", "clippy-driver"] {
+        symlink("rustup", proxies.join(name)).unwrap();
+    }
+    let path = format!("{}:{}", system.display(), proxies.display());
+    for args in [
+        vec!["doc"],
+        vec!["rustdoc"],
+        vec!["d"],
+        vec!["test"],
+        vec!["fmt"],
+        vec!["clippy"],
+        vec!["help", "fmt"],
+    ] {
+        let mut words = vec!["cargo".into()];
+        words.extend(args.iter().map(|s| String::from(*s)));
+        assert!(
+            discover(&path, &home, None, Some((&input(&project), &[words])))
+                .unwrap_err()
+                .contains("mixed system Cargo"),
+            "{args:?}"
+        );
+    }
+    for name in [
+        "rustdoc",
+        "cargo-fmt",
+        "rustfmt",
+        "cargo-clippy",
+        "clippy-driver",
+        "cargo-custom",
+    ] {
+        executable(&system.join(name));
+    }
+    for args in [
+        vec!["doc"],
+        vec!["test"],
+        vec!["fmt"],
+        vec!["clippy"],
+        vec!["help", "custom"],
+    ] {
+        let mut words = vec!["cargo".into()];
+        words.extend(args.iter().map(|s| String::from(*s)));
+        let environment = discover(&path, &home, None, Some((&input(&project), &[words])))
+            .unwrap()
+            .unwrap();
+        assert!(environment.toolchain_mounts.is_empty());
+        revalidate(&environment).unwrap();
+        let helper = environment
+            .command_providers
+            .iter()
+            .find(|p| !matches!(p.executable.as_str(), "cargo" | "rustc"))
+            .unwrap();
+        let file = system.join(&helper.executable);
+        let original = std::fs::read(&file).unwrap();
+        std::fs::write(&file, "replaced executable").unwrap();
+        assert!(revalidate(&environment).is_err());
+        std::fs::write(&file, &original).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        assert!(revalidate(&environment).is_err());
+        std::fs::write(&file, &original).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    for args in [
+        vec!["test", "--lib"],
+        vec!["test", "--no-run"],
+        vec!["metadata", "--no-deps"],
+    ] {
+        let mut words = vec!["cargo".into()];
+        words.extend(args.iter().map(|s| String::from(*s)));
+        let environment = discover(&path, &home, None, Some((&input(&project), &[words])))
+            .unwrap()
+            .unwrap();
+        assert!(
+            !environment
+                .command_providers
+                .iter()
+                .any(|p| p.executable == "rustdoc")
+        );
+    }
+}
+
+#[test]
+fn executable_heredoc_lookup_changes_refuse_but_quoted_examples_remain_literal() {
+    let (_fixture, proxies, home, project) = installation();
+    for script in [
+        "cat <<EOF\n'$(cargo() { true; }; cargo test)'\nEOF\ncargo test",
+        "cat <<EOF\n$(cargo() { true; }; cargo test)\nEOF",
+        "cat <<EOF\n'$(RUSTC=other-rustc cargo test)'\nEOF",
+    ] {
+        let mut inspection = input(&project);
+        inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
+        let commands = crate::tools::sandbox::shell_commands(script).unwrap();
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&inspection, &commands))
+            )
+            .is_err(),
+            "{script}"
+        );
+    }
+    let script = "cat <<'EOF'\n'$(cargo() { true; }; cargo test)'\nEOF\ncargo test";
+    let mut inspection = input(&project);
+    inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
+    let commands = vec![vec!["cargo".into(), "test".into()]];
+    discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&inspection, &commands)),
+    )
+    .unwrap();
 }

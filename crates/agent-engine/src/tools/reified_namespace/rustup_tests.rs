@@ -287,7 +287,7 @@ fn unselected_custom_alias_does_not_block_startup_or_ordinary_commands() {
 }
 
 #[test]
-fn sequential_cd_preserves_missing_target_failure_branches() {
+fn sequential_cd_requires_every_possible_target_to_exist() {
     let (_fixture, proxies, home, project) = installation();
     std::fs::create_dir_all(project.join("a/b")).unwrap();
     std::fs::write(project.join("a/b/rust-toolchain"), "1.97.0\n").unwrap();
@@ -296,6 +296,16 @@ fn sequential_cd_preserves_missing_target_failure_branches() {
         vec!["cd".into(), "b".into()],
         vec!["cargo".into(), "test".into()],
     ];
+    assert!(
+        discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input(&project), &commands))
+        )
+        .is_err()
+    );
+    std::fs::create_dir(project.join("b")).unwrap();
     let environment = discover(
         proxies.to_str().unwrap(),
         &home,
@@ -304,14 +314,12 @@ fn sequential_cd_preserves_missing_target_failure_branches() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(environment.toolchain_mounts.len(), 2);
     assert!(
         environment
             .metadata_hashes
             .iter()
             .any(|(path, _)| path == &project.join("a/b/rust-toolchain"))
     );
-    assert!(!project.join("b").exists());
 }
 
 #[test]

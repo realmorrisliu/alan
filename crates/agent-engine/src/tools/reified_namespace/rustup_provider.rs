@@ -105,3 +105,46 @@ pub(super) fn snapshot(
         })
         .transpose()
 }
+
+pub(super) fn validate_shell_lookup(
+    input: &ReifiedNamespacePlanInput,
+    commands: &[Vec<String>],
+) -> Result<(), String> {
+    use crate::tools::sandbox::command_and_args;
+    use crate::tools::sandbox::command_wrappers::{
+        inspect_shell_lookup, shell_wrapper_inline_script,
+    };
+    let rust =
+        |words: &[String]| command_and_args(words).is_some_and(|(name, _)| PROXIES.contains(&name));
+    let changes_lookup = |words: &[String]| {
+        command_and_args(words)
+            .is_some_and(|(name, _)| matches!(name, "alias" | "unalias" | "hash"))
+    };
+    let mut rust_request = false;
+    let mut changed = false;
+    let mut scripts = shell_wrapper_inline_script(&input.argv)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .collect::<Vec<_>>();
+    if scripts.is_empty() {
+        rust_request = commands.iter().any(|words| rust(words));
+        changed = commands.iter().any(|words| changes_lookup(words));
+    }
+    let mut index = 0;
+    while index < scripts.len() {
+        let (modifies, actual) =
+            inspect_shell_lookup(&scripts[index]).map_err(|e| e.to_string())?;
+        changed |= modifies;
+        for words in actual {
+            rust_request |= rust(&words);
+            if let Some(inner) = shell_wrapper_inline_script(&words).map_err(|e| e.to_string())? {
+                scripts.push(inner);
+            }
+        }
+        index += 1;
+    }
+    if rust_request && (changed || scripts.len() > 1) {
+        return Err("shell syntax/function/alias/hash changes and nested shells cannot preserve inspected Rust lookup".into());
+    }
+    Ok(())
+}

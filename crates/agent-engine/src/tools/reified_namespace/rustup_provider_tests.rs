@@ -226,7 +226,7 @@ fn system_cargo_freezes_its_implicit_compiler_lookup() {
     let (_fixture, proxies, home, project) = installation();
     let system = project.parent().unwrap().join("system");
     std::fs::create_dir(&system).unwrap();
-    for name in ["cargo", "rustc"] {
+    for name in ["cargo", "rustc", "rustdoc"] {
         executable(&system.join(name));
     }
     let path = format!("{}:{}", system.display(), proxies.display());

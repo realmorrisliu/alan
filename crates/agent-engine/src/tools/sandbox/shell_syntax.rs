@@ -552,7 +552,7 @@ fn push_shell_word_token(
     });
 }
 
-pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
+pub(in crate::tools) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
     let mut commands = Vec::new();
     let mut current_command = Vec::new();
     let mut current_word = String::new();

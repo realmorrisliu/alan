@@ -1,3 +1,65 @@
+## Shell lookup, cwd and auxiliary frontend follow-up — 2026-10-12
+
+The completed b0034bd9 re-review has three additional findings even though all
+sixteen CI checks pass. #4248653241 is reproduced by actual native function and
+alias shadowing: both commands exit 0 and create the owned marker without Cargo
+execution. #4248653247 is reproduced by mkdir/config-write/cd: native execution
+creates the marker and reaches the configured alternative compiler, then exits
+101. #4248653257 is reproduced with genuine ordinary Cargo/rustc and a missing
+ordinary rustdoc: cargo doc reaches the later proxy and fails because no runtime
+is selected. Initial fixture mount-overlap failures are retained separately;
+the corrected scratch namespace reproduces actual Cargo failure. These are
+boundary controls, not added development model tasks.
+
+The direct repair uses the existing tree-sitter Bash dependency, rejects functions
+and alias/hash lookup changes only for Rust requests, and conservatively refuses
+nested Rust shells whose lookup context is not inspected. Missing or non-directory
+cd targets become uncertain rather than assuming a failed-only branch; configuration
+editing/new-directory selection and execution are separate requests. Ordinary
+Cargo snapshots/revalidates rustdoc for doc/rustdoc/default test doctests, fmt and
+Clippy frontends/drivers, and custom Cargo helpers. Proven no-doctest target flags
+and compiler-free builtin help retain their narrower helper needs. Later proxy
+helpers refuse without mounting unrelated runtimes. Helper lookup assumes the
+existing fresh private CARGO_HOME/bin is initially empty; opaque or same-request
+helper creation/replacement is unqualified, rather than claimed as immutable.
+
+Thirty-seven portable provider/configuration regressions pass, including function
+syntax variants, aliases across newlines, quoted source/comments/literal heredocs, executable substitutions, missing
+cd, default-test rustdoc, attached target flags, helper PATH order and replacement/
+loss. Old-b003/new complete environment comparisons pass twelve cases, including
+configuration and provider bindings, with no compatibility field clearing. All
+450 retained original shell scripts pass the actual production AST guard; the
+initial corpus-selection/count error (193 instead of all 450 occurrences) is
+retained separately and corrected. The compiler-query/configuration canaries and
+all earlier failures remain preserved. The final full Linux namespace suite passes 93 cases, including the public
+Sandbox hidden-expansion controls; a separate rerun under the original qualified
+PATH also passes. Actual compiled-input freezes and
+completed committed-head gates still require their own evidence.
+
+Exact public Sandbox API controls also expose the unquoted-heredoc expansion
+boundary: with the old whole-body skip, both a hidden function and a hidden
+compiler assignment create the owned marker and return exit 0; the second retains
+its swallowed actual Cargo failure in stderr. Initial managed-test PATH refusals
+are retained as harness failures, not counted as successful boundary rejection;
+the corrected original qualification PATH proves actual execution. The repaired
+AST checks real command/process substitutions, including their actual command
+nodes. Quoted EOF remains literal; ordinary heredoc text is not misread as a
+nested shell. The private plain Bash control is not substituted for this API proof.
+
+New `rustup-launch-context-review-v1/historical-launch-context-bindings-v1.json`
+binds 450 structured scripts/66 references, 81 historical root cd occurrences
+(45 Linux) and all 33 Linux rollout/grant/boot/receipt phases with successful
+original cd results. There are no actual shell functions; eleven rough text
+matches are quoted Rust source. There are no dynamically created cd targets,
+auxiliary Cargo commands or lookup-changing aliases/hash operations in this
+qualified matrix. Historical Cargo commands remain version/test/run/check;
+proxy-first historical providers bypass only the new ordinary-Cargo helper branch.
+This is historical input/semantic applicability, not present-directory existence
+or an unchanged raw provider branch. The original 30 slots, 85 attempts, 21 PASS /
+9 FAIL first outcomes, three assisted Linux F4 results, missing cost/usage and UI
+limitations remain unchanged. Task 4.4 remains open; user merge/canonical closure
+is separate. Earlier records below remain historical.
+
 ## Compiler configuration and query follow-up — 2026-10-12
 
 The 8c769439 review findings #4247811233/P1 and #4247811240/P2 are addressed

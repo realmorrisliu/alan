@@ -37,7 +37,7 @@ use path_literals::{
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
-    ShellToken, normalize_shell_line_continuations, shell_commands, shell_tokens_with_spans,
+    ShellToken, normalize_shell_line_continuations, shell_tokens_with_spans,
     validate_shell_features,
 };
 
@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use shell_syntax::parse_standalone_cd;
+pub(in crate::tools) use shell_syntax::shell_commands;
 
 const SANDBOX_BACKEND_PATH_GUARD: &str = "host_mount_path_guard";
 

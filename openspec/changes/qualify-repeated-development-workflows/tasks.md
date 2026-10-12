@@ -1,3 +1,19 @@
+## Latest shell lookup, cwd and Cargo helper repair — 2026-10-12
+
+All sixteen checks passed on b0034bd9, but its completed automated review found
+three additional valid findings: #4248653241/function shadowing,
+#4248653247/newly created cd targets and #4248653257/auxiliary Cargo frontends.
+Merge readiness remains withdrawn and task 4.4 remains open (17/19). The direct
+repair uses the existing Bash syntax parser to reject actual functions in Rust
+requests while preserving quoted Rust source/comments/heredocs, rejects alias/hash
+lookup changes and unqualified nested Rust shells, and treats missing cd targets
+as uncertain. Ordinary Cargo freezes command-specific PATH helpers, including
+rustdoc for documentation/default doctests and fmt/clippy/custom frontends.
+Fresh private Cargo home is initially empty; in-request helper mutation remains
+unqualified. No extra runtime or authority is granted. Original 30 slots/85
+attempts and all first outcomes remain unchanged. Native and source applicability
+are recorded in native-runs.md; committed-head CI/re-review and user merge remain.
+
 ## Latest compiler configuration and query repair — 2026-10-12
 
 Completed review of 8c769439 reported P1 #4247811233 (compiler overrides) and

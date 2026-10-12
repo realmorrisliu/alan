@@ -20,9 +20,46 @@ pub(super) fn uses_compiler(args: &[String]) -> bool {
         // Cargo dispatches named help targets through aliases or external commands.
         return help_target(&args[index + 1..]).is_some();
     }
-    let builtin = matches!(
+    let builtin = is_builtin(command);
+    if builtin && cargo_global_query(args) {
+        return false;
+    }
+    let mut visible = args[index + 1..]
+        .iter()
+        .take_while(|arg| arg.as_str() != "--");
+    while let Some(arg) = visible.next() {
+        if matches!(
+            arg.as_str(),
+            "--config"
+                | "--color"
+                | "-Z"
+                | "-C"
+                | "--manifest-path"
+                | "--format-version"
+                | "--filter-platform"
+                | "--features"
+                | "-F"
+        ) {
+            visible.next();
+        } else if builtin && matches!(arg.as_str(), "--help" | "-h")
+            || command == "metadata" && arg == "--no-deps"
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_builtin(command: &str) -> bool {
+    matches!(
         command,
-        "build"
+        "locate-project"
+            | "new"
+            | "init"
+            | "help"
+            | "version"
+            | "read-manifest"
+            | "build"
             | "check"
             | "test"
             | "run"
@@ -51,34 +88,65 @@ pub(super) fn uses_compiler(args: &[String]) -> bool {
             | "vendor"
             | "fix"
             | "report"
-    );
-    if builtin && cargo_global_query(args) {
-        return false;
+    )
+}
+
+// shortcut: fresh private Cargo home is empty; freeze its bin before supporting in-request helper edits.
+pub(super) fn implicit_tools(args: &[String]) -> Vec<String> {
+    if !uses_compiler(args) {
+        return Vec::new();
     }
-    let mut visible = args[index + 1..]
-        .iter()
-        .take_while(|arg| arg.as_str() != "--");
-    while let Some(arg) = visible.next() {
-        if matches!(
-            arg.as_str(),
-            "--config"
-                | "--color"
-                | "-Z"
-                | "-C"
-                | "--manifest-path"
-                | "--format-version"
-                | "--filter-platform"
-                | "--features"
-                | "-F"
-        ) {
-            visible.next();
-        } else if builtin && matches!(arg.as_str(), "--help" | "-h")
-            || command == "metadata" && arg == "--no-deps"
-        {
-            return false;
+    let Some(command) = cargo_subcommand(args) else {
+        return Vec::new();
+    };
+    let command = if command == "help" {
+        let index = crate::tools::sandbox::command_options::cargo_subcommand_index(args).unwrap();
+        let target = help_target(&args[index + 1..]).unwrap_or(command);
+        if is_builtin(target) {
+            return Vec::new();
         }
+        target
+    } else {
+        command
+    };
+    match command {
+        "doc" | "d" | "rustdoc" => vec!["rustc".into(), "rustdoc".into()],
+        "test" | "t"
+            if !args
+                .iter()
+                .take_while(|arg| arg.as_str() != "--")
+                .any(|arg| {
+                    matches!(
+                        arg.as_str(),
+                        "--lib"
+                            | "--bins"
+                            | "--bin"
+                            | "--tests"
+                            | "--test"
+                            | "--benches"
+                            | "--bench"
+                            | "--examples"
+                            | "--example"
+                            | "--all-targets"
+                            | "--no-run"
+                    ) || ["--bin=", "--test=", "--bench=", "--example="]
+                        .iter()
+                        .any(|prefix| arg.starts_with(prefix))
+                }) =>
+        {
+            vec!["rustc".into(), "rustdoc".into()]
+        }
+        "fmt" => vec!["cargo-fmt".into(), "rustfmt".into()],
+        "clippy" => vec![
+            "cargo-clippy".into(),
+            "clippy-driver".into(),
+            "rustc".into(),
+        ],
+        name if is_builtin(name) || matches!(name, "b" | "c" | "t" | "r" | "rm") => {
+            vec!["rustc".into()]
+        }
+        name => vec![format!("cargo-{name}"), "rustc".into()],
     }
-    true
 }
 
 fn help_target(args: &[String]) -> Option<&str> {

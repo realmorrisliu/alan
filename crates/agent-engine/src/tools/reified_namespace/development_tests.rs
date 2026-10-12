@@ -85,6 +85,60 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
     );
     assert!(!project.join("target").exists());
     assert!(!home.join("settings.toml").exists());
+    let rustdoc = system.join("bin/rustdoc");
+    let rustdoc_bytes = std::fs::read(&rustdoc).unwrap();
+    let rustdoc_permissions = std::fs::metadata(&rustdoc).unwrap().permissions();
+    std::fs::remove_file(&rustdoc).unwrap();
+    for command in ["doc", "test"] {
+        let mut inspection = ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(
+                &project,
+                &project,
+                ReifiedMountAccess::ReadOnly,
+            )],
+            &project,
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                format!("cargo {command} --offline --locked"),
+            ],
+            NetworkPosture::Deny,
+        );
+        let commands = vec![vec![
+            "cargo".into(),
+            command.into(),
+            "--offline".into(),
+            "--locked".into(),
+        ]];
+        let path = format!("{}/bin:{}:/usr/bin:/bin", system.display(), proxy.display());
+        let environment = rustup::discover(&path, &home, None, Some((&inspection, &commands)));
+        if let Ok(Some(environment)) = environment {
+            let mut substrate = default_execution_substrate();
+            substrate.push(ReifiedExecutionSubstrateMount::new(&system, &system));
+            substrate.extend(environment.proxy_mounts.iter().cloned());
+            inspection = inspection
+                .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
+                .with_execution_substrate(substrate)
+                .with_command_path(path);
+            inspection.rustup = Some(environment);
+            let bad_plan = ReifiedNamespacePlan::derive(inspection).unwrap();
+            let result =
+                LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                    .run(&bad_plan)
+                    .unwrap();
+            panic!(
+                "missing ordinary rustdoc reached cargo {command}: exit {}, stderr {}",
+                result.exit_code, result.stderr
+            );
+        }
+        assert!(environment.unwrap_err().contains("mixed system Cargo"));
+    }
+    assert!(rustup::revalidate(plan.rustup.as_ref().unwrap()).is_err());
+    std::fs::write(&rustdoc, rustdoc_bytes).unwrap();
+    std::fs::set_permissions(&rustdoc, rustdoc_permissions).unwrap();
+    eprintln!(
+        "ordinary Cargo doc/test refuse later proxy rustdoc; selected helper loss refuses before execution"
+    );
     std::fs::remove_file(system.join("bin/rustc")).unwrap();
     let error = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
         .run(&plan)
@@ -669,4 +723,146 @@ fn native_proc_conflicts_refuse_before_user_effects() {
         assert!(error.reason.contains("conflicts with private native proc"));
         assert!(!project.path().join("marker").exists());
     }
+}
+
+#[test]
+fn native_rust_shell_lookup_and_new_cwd_refuse_before_effects() {
+    let (Some(proxy), Some(runtime)) = (
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME"),
+    ) else {
+        eprintln!("skipping native lookup: explicit owned runtime inputs absent");
+        return;
+    };
+    assert!(probe_linux_reification().is_selectable());
+    let proxy = PathBuf::from(proxy);
+    let runtime = PathBuf::from(runtime);
+    let home = runtime.parent().unwrap().parent().unwrap();
+    let mut unsupported = Vec::new();
+    for (case, script) in [
+        (
+            "function",
+            "printf effect > marker; cargo() { true; }; cargo test --offline",
+        ),
+        (
+            "alias",
+            "printf effect > marker; alias cargo=true\ncargo test --offline",
+        ),
+        (
+            "new cwd",
+            "printf effect > marker; mkdir -p child/.cargo; printf '[build]\\nrustc=\"/usr/bin/true\"\\n' > child/.cargo/config.toml; cd child; cargo test --offline",
+        ),
+    ] {
+        let fixture = tempfile::tempdir().unwrap();
+        let project = std::fs::canonicalize(fixture.path()).unwrap();
+        std::fs::create_dir(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname='alan_lookup_fixture'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .unwrap();
+        std::fs::write(project.join("src/lib.rs"), "pub fn answer() -> u32 {4}\n").unwrap();
+        let mut input = ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(
+                &project,
+                &project,
+                ReifiedMountAccess::ReadWrite,
+            )],
+            &project,
+            vec!["/bin/sh".into(), "-c".into(), script.into()],
+            NetworkPosture::Deny,
+        );
+        let commands = crate::tools::sandbox::shell_commands(script).unwrap();
+        let environment = rustup::discover(
+            proxy.to_str().unwrap(),
+            home,
+            Some(runtime.file_name().unwrap().to_str().unwrap().into()),
+            Some((&input, &commands)),
+        );
+        if let Ok(Some(environment)) = environment {
+            let mut substrate = default_execution_substrate();
+            substrate.extend(
+                environment
+                    .proxy_mounts
+                    .iter()
+                    .chain(&environment.toolchain_mounts)
+                    .cloned(),
+            );
+            input = input
+                .with_execution_substrate(substrate)
+                .with_command_path(format!("{}:/usr/bin:/bin", proxy.display()));
+            input.rustup = Some(environment);
+            let plan = ReifiedNamespacePlan::derive(input).unwrap();
+            let result =
+                LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                    .run(&plan)
+                    .unwrap();
+            eprintln!(
+                "unsupported {case} executed: exit {}, marker {}, stdout {}, stderr {}",
+                result.exit_code,
+                project.join("marker").exists(),
+                result.stdout,
+                result.stderr
+            );
+            unsupported.push(case);
+        } else {
+            assert!(!project.join("marker").exists(), "{case}");
+            eprintln!("native {case} refused before marker/user effects");
+        }
+    }
+    assert!(
+        unsupported.is_empty(),
+        "unsupported native lookup contexts admitted: {unsupported:?}"
+    );
+}
+
+#[tokio::test]
+async fn native_public_sandbox_rejects_executable_heredoc_lookup_changes() {
+    if !probe_linux_reification().is_selectable() {
+        eprintln!("skipping executable heredoc: native namespace unavailable");
+        return;
+    }
+    let mut admitted = Vec::new();
+    for script in [
+        "cat <<EOF\n'$(cargo() { printf effect > marker; }; cargo test)'\nEOF",
+        "cat <<EOF\n'$(printf effect > marker; RUSTC=other-rustc cargo test)'\nEOF",
+    ] {
+        let fixture = tempfile::tempdir().unwrap();
+        let project = std::fs::canonicalize(fixture.path()).unwrap();
+        let sandbox = crate::tools::Sandbox::with_backend(
+            project.clone(),
+            SandboxBackendKind::LinuxReifiedNamespace,
+        );
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                script,
+                &project,
+                Some(std::time::Duration::from_secs(30)),
+                Some(alan_agent_protocol::ToolCapability::Write),
+            )
+            .await;
+        match result {
+            Ok(result) => {
+                eprintln!(
+                    "public Sandbox admitted executable heredoc: exit {}, marker {}, stdout {}, stderr {}",
+                    result.exit_code,
+                    project.join("marker").exists(),
+                    result.stdout,
+                    result.stderr
+                );
+                admitted.push(script);
+            }
+            Err(error) => {
+                assert!(error.to_string().contains("inspected Rust"), "{error}");
+                assert!(!project.join("marker").exists());
+                eprintln!(
+                    "public Sandbox refuses executable heredoc Rust lookup before marker effects"
+                );
+            }
+        }
+    }
+    assert!(
+        admitted.is_empty(),
+        "executable heredoc reached public Sandbox effects: {admitted:?}"
+    );
 }

@@ -41,7 +41,8 @@ pub(super) fn discover(
     toolchain_override: Option<String>,
     input: Option<(&ReifiedNamespacePlanInput, &[Vec<String>])>,
 ) -> Result<Option<ReifiedRustupEnvironment>, String> {
-    if let Some((_, commands)) = input {
+    if let Some((input, commands)) = input {
+        provider::validate_shell_lookup(input, commands)?;
         for words in commands {
             validate_command_environment(words)?;
         }
@@ -90,20 +91,22 @@ pub(super) fn discover(
             let executable = &words[words.len() - args.len() - 1];
             let binding = provider::snapshot(executable, path, &proxies)?;
             let uses_proxy = binding.as_ref().is_some_and(|(_, _, proxy)| *proxy);
-            if !uses_proxy && name == "cargo" && cargo::uses_compiler(args) {
-                let compiler = provider::snapshot("rustc", path, &proxies)?;
-                if compiler.as_ref().is_some_and(|(_, _, proxy)| *proxy) {
-                    return Err(
-                        "mixed system Cargo and Rustup compiler selection is unsupported".into(),
-                    );
-                }
-                let entry = ReifiedRustCommandProvider {
-                    executable: "rustc".into(),
-                    path: path.into(),
-                    resolved: compiler,
-                };
-                if !command_providers.contains(&entry) {
-                    command_providers.push(entry);
+            if !uses_proxy && name == "cargo" {
+                for executable in cargo::implicit_tools(args) {
+                    let resolved = provider::snapshot(&executable, path, &proxies)?;
+                    if resolved.as_ref().is_some_and(|(_, _, proxy)| *proxy) {
+                        return Err(format!(
+                            "mixed system Cargo and Rustup compiler/frontend {executable} selection is unsupported"
+                        ));
+                    }
+                    let entry = ReifiedRustCommandProvider {
+                        executable,
+                        path: path.into(),
+                        resolved,
+                    };
+                    if !command_providers.contains(&entry) {
+                        command_providers.push(entry);
+                    }
                 }
             }
             selects_runtime |=
@@ -436,7 +439,7 @@ fn cd_directories(
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) =>
             {
-                continue;
+                return None;
             }
             Err(_) => return None,
         };

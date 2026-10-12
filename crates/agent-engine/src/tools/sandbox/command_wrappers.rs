@@ -876,3 +876,32 @@ fn is_exec_wrapper_flag(arg: &str) -> bool {
 fn has_inline_exec_argv0(arg: &str) -> bool {
     arg.starts_with("-a") && arg.len() > 2
 }
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn inspect_shell_lookup(command: &str) -> Result<(bool, Vec<Vec<String>>)> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
+    let normalized = super::normalize_shell_line_continuations(command);
+    let tree = parser
+        .parse(&normalized, None)
+        .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
+    let mut changed = tree.root_node().has_error();
+    let mut commands = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        changed |= matches!(
+            node.kind(),
+            "function_definition" | "command_substitution" | "process_substitution"
+        );
+        if node.kind() == "command" {
+            let actual = super::shell_commands(&normalized[node.byte_range()])?;
+            changed |= actual.iter().any(|words| {
+                command_and_args(words)
+                    .is_some_and(|(name, _)| matches!(name, "alias" | "unalias" | "hash"))
+            });
+            commands.extend(actual);
+        }
+        pending.extend(node.named_children(&mut node.walk()));
+    }
+    Ok((changed, commands))
+}

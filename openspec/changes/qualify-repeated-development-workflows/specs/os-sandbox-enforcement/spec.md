@@ -87,3 +87,19 @@ descendant roots SHALL retain only their existing writable authority.
 - **WHEN** the same shell request contains a literal configuration redirection, file write or ancestor replacement followed by compiler-using Cargo
 - **THEN** the bounded preflight rejects it before effects and requires separate configuration-edit and execution requests
 - **AND** quoted output remains ordinary content; opaque program-internal mutation is not qualified by this bounded check.
+
+
+#### Scenario: Shell lookup no longer resolves the inspected executable
+- **WHEN** a Linux Rust request defines a shell function, changes aliases/hash lookup or hides Rust execution in an unqualified nested shell
+- **THEN** inspection rejects it before effects rather than recording a PATH provider that the shell does not execute
+- **AND** quoted source, comments and literal here-document contents containing function-like text remain ordinary content; actual command/process substitutions are an unsupported execution context, including expansions in unquoted here-documents.
+
+#### Scenario: A compound command can create a later working directory
+- **WHEN** an inspected Linux cd target is absent or not a directory before execution
+- **THEN** subsequent cwd-dependent Cargo inspection treats it as uncertain and refuses before effects
+- **AND** earlier mkdir or configuration writes cannot make an uninspected Cargo cwd appear during the same request.
+
+#### Scenario: Ordinary Cargo launches auxiliary frontends
+- **WHEN** an ordinary Cargo invocation in the Linux namespace can launch documentation, default doctest, formatter, Clippy or a custom Cargo frontend
+- **THEN** supported command-specific PATH helper decisions are frozen and revalidated, and a later unqualified proxy refuses without projecting an unrelated runtime
+- **AND** helper replacement/loss refuses before launch, compiler-free queries keep their narrower requirements, and the fresh private Cargo home is not a qualification of in-request helper mutations.
