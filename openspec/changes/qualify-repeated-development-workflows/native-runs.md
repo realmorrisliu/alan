@@ -1,3 +1,41 @@
+## Compiler-free Cargo frontend queries — 2026-10-12
+
+Completed de04ab8d automated review found P2 #4249496754 after all sixteen CI
+checks passed. The old module falsely rejects cargo fmt --help when only a
+later Rustup proxy provides rustfmt. Both a portable old-module regression and
+an actual Linux native ordinary-Cargo fixture reproduce that refusal.
+
+The shared classifier now narrows known fmt/Clippy help (-h/--help and Cargo
+named help) to cargo-fmt/cargo-clippy respectively. Proven Clippy --version/-V
+also needs only cargo-clippy. Frontend path/content bindings and prelaunch
+revalidation remain required. Configuration inspection stays independent of
+compiler dependencies: project and inline selected aliases, compiler overrides
+and option operands are still checked. Fmt --version actually invokes rustfmt;
+forwarded -- payload and custom external commands retain conservative inspection.
+
+Eleven genuine Cargo/frontend probes use an owned copied runtime with child
+canaries in its sibling executable directory. All exit0; six help queries and
+two Clippy versions have no driver/compiler children, while fmt version and its
+forwarded help invoke rustfmt. The first PATH-only probe missed sibling children
+and failed its expected-version assertion; its original records are retained as
+a harness error, never substituted for the corrected native child proof.
+
+Thirty-eight portable and 94 full native namespace checks pass (zero ignored).
+The confined ordinary-Cargo fixture successfully executes eight frontend queries
+with ordinary rustc/rustfmt/clippy-driver removed and only later unconfigured
+proxies available. It still freezes inspected config absence. The initial native
+extension retained an obsolete config-empty assertion and failed before command
+execution; the corrected assertion requires absence snapshots, not skipped config.
+Both failures remain separate from the original development attempts.
+
+Evidence lives in rustup-frontend-help-review-v1. The original artifact-bound
+launch corpus contains version/test/run/check Cargo requests, no fmt/Clippy queries;
+shared lookup/provider/AST sources remain byte-identical to de04ab8d. Historical
+30 slots/85 attempts, 21 PASS/9 FAIL first outcomes, three assisted Linux F4 results
+and all limits inherit through the previous launch-context ledger, not new model
+attempts or current filesystem assumptions. Committed source/binary freezes,
+current-head CI/completed re-review and user merge remain independent gates.
+
 ## Shell lookup, cwd and auxiliary frontend follow-up — 2026-10-12
 
 The completed b0034bd9 re-review has three additional findings even though all

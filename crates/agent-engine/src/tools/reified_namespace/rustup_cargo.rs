@@ -18,7 +18,8 @@ pub(super) fn uses_compiler(args: &[String]) -> bool {
     }
     if command == "help" {
         // Cargo dispatches named help targets through aliases or external commands.
-        return help_target(&args[index + 1..]).is_some();
+        return help_target(&args[index + 1..])
+            .is_some_and(|target| !matches!(target, "fmt" | "clippy"));
     }
     let builtin = is_builtin(command);
     if builtin && cargo_global_query(args) {
@@ -41,7 +42,9 @@ pub(super) fn uses_compiler(args: &[String]) -> bool {
                 | "-F"
         ) {
             visible.next();
-        } else if builtin && matches!(arg.as_str(), "--help" | "-h")
+        } else if (builtin || matches!(command, "fmt" | "clippy"))
+            && matches!(arg.as_str(), "--help" | "-h")
+            || command == "clippy" && matches!(arg.as_str(), "--version" | "-V")
             || command == "metadata" && arg == "--no-deps"
         {
             return false;
@@ -93,9 +96,6 @@ fn is_builtin(command: &str) -> bool {
 
 // shortcut: fresh private Cargo home is empty; freeze its bin before supporting in-request helper edits.
 pub(super) fn implicit_tools(args: &[String]) -> Vec<String> {
-    if !uses_compiler(args) {
-        return Vec::new();
-    }
     let Some(command) = cargo_subcommand(args) else {
         return Vec::new();
     };
@@ -109,6 +109,13 @@ pub(super) fn implicit_tools(args: &[String]) -> Vec<String> {
     } else {
         command
     };
+    if !uses_compiler(args) {
+        return if matches!(command, "fmt" | "clippy") {
+            vec![format!("cargo-{command}")]
+        } else {
+            Vec::new()
+        };
+    }
     match command {
         "doc" | "d" | "rustdoc" => vec!["rustc".into(), "rustdoc".into()],
         "test" | "t"
@@ -305,7 +312,7 @@ pub(super) fn inspect(
             }
             _ => continue,
         };
-        if !uses_compiler(args) {
+        if !uses_compiler(args) && implicit_tools(args).is_empty() {
             continue;
         }
         if args

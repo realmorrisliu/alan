@@ -150,20 +150,37 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
         vec!["cargo".into(), "locate-project".into()],
         vec!["cargo".into(), "new".into()],
         vec!["cargo".into(), "init".into()],
+        vec!["cargo".into(), "fmt".into(), "--help".into()],
+        vec!["cargo".into(), "fmt".into(), "-h".into()],
+        vec!["cargo".into(), "help".into(), "fmt".into()],
+        vec!["cargo".into(), "clippy".into(), "--help".into()],
+        vec!["cargo".into(), "clippy".into(), "-h".into()],
+        vec!["cargo".into(), "help".into(), "clippy".into()],
+        vec!["cargo".into(), "clippy".into(), "--version".into()],
+        vec!["cargo".into(), "clippy".into(), "-V".into()],
     ];
+    for name in ["rustfmt", "clippy-driver"] {
+        std::fs::remove_file(system.join("bin").join(name)).unwrap();
+    }
     let path = format!("{}/bin:{}:/usr/bin:/bin", system.display(), proxy.display());
     let mut input = ReifiedNamespacePlanInput::new(
         vec![ReifiedMountDeclaration::host(&project, &project, ReifiedMountAccess::ReadOnly)],
         &project,
         vec!["/bin/sh".into(), "-c".into(),
-            "set -eu; cargo metadata --no-deps --format-version 1; cargo locate-project; cargo new --vcs none \"$TMPDIR/new-provider-project\"; cargo init --vcs none \"$TMPDIR/init-provider-project\"".into()],
+            "set -eu; cargo metadata --no-deps --format-version 1; cargo locate-project; cargo new --vcs none \"$TMPDIR/new-provider-project\"; cargo init --vcs none \"$TMPDIR/init-provider-project\"; cargo fmt --help; cargo fmt -h; cargo help fmt; cargo clippy --help; cargo clippy -h; cargo help clippy; cargo clippy --version; cargo clippy -V".into()],
         NetworkPosture::Deny,
     );
     let environment = rustup::discover(&path, &home, None, Some((&input, &commands)))
         .unwrap()
         .unwrap();
     assert!(environment.toolchain_mounts.is_empty());
-    assert!(environment.cargo_config_files.is_empty());
+    assert!(!environment.cargo_config_files.is_empty());
+    assert!(
+        environment
+            .cargo_config_files
+            .iter()
+            .all(|file| file.digest.is_none())
+    );
     assert!(
         !environment
             .command_providers
@@ -186,6 +203,9 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
     assert!(free.stdout.contains("alan_system_provider_fixture"));
     eprintln!(
         "system Cargo metadata --no-deps/locate-project/new/init pass with only a later proxy rustc and no projected Rustup runtime"
+    );
+    eprintln!(
+        "eight ordinary fmt/Clippy help/version queries pass with later proxy compilers/drivers and inspected config absence"
     );
     eprintln!(
         "system-first genuine Cargo/Rustc compile passed; Rustup metadata/runtime count 0; source/lock unchanged"

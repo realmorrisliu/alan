@@ -1,3 +1,17 @@
+## Latest Cargo frontend query repair — 2026-10-12
+
+All sixteen checks passed on de04ab8d, but its completed review found valid
+P2 #4249496754: ordinary cargo fmt --help unnecessarily required later-proxy
+rustfmt. Known fmt/Clippy help and proven Clippy version queries now bind only
+their actual frontend, while still inspecting configuration and selected aliases.
+Fmt version/forwarded payload and custom commands retain conservative dependencies.
+Eleven real owned-runtime child probes, 38 portable checks and 94 native namespace
+checks pass, including eight actual confined queries without ordinary compilers.
+Old portable/native false-refusal controls and harness failures are retained.
+Original 30 slots/85 attempts and limits stay unchanged. Task 4.4 remains open
+(17/19) for the new committed-head CI/completed review; user merge is separate.
+Earlier delivery entries below are historical, superseded by this current status.
+
 ## Latest shell lookup, cwd and Cargo helper repair — 2026-10-12
 
 All sixteen checks passed on b0034bd9, but its completed automated review found

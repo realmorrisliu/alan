@@ -636,6 +636,111 @@ fn system_cargo_helpers_follow_path_order_and_revalidate() {
 }
 
 #[test]
+fn auxiliary_help_preserves_frontends_without_requiring_compilers() {
+    let (_fixture, proxies, home, project) = installation();
+    let system = project.parent().unwrap().join("system");
+    std::fs::create_dir(&system).unwrap();
+    for name in ["cargo", "cargo-fmt", "cargo-clippy"] {
+        executable(&system.join(name));
+    }
+    for name in ["cargo-fmt", "rustfmt", "cargo-clippy", "clippy-driver"] {
+        symlink("rustup", proxies.join(name)).unwrap();
+    }
+    let path = format!("{}:{}", system.display(), proxies.display());
+    for frontend in ["fmt", "clippy"] {
+        for args in [
+            vec![frontend, "--help"],
+            vec![frontend, "-h"],
+            vec!["help", frontend],
+        ] {
+            let mut words = vec!["cargo".into()];
+            words.extend(args.iter().map(|s| String::from(*s)));
+            let environment = discover(&path, &home, None, Some((&input(&project), &[words])))
+                .unwrap()
+                .unwrap();
+            assert!(!super::super::cargo::uses_compiler(
+                &args.iter().map(|s| String::from(*s)).collect::<Vec<_>>()
+            ));
+            assert!(environment.toolchain_mounts.is_empty());
+            assert_eq!(
+                environment
+                    .command_providers
+                    .iter()
+                    .map(|p| p.executable.as_str())
+                    .collect::<Vec<_>>(),
+                vec![format!("cargo-{frontend}"), "cargo".into()]
+            );
+            revalidate(&environment).unwrap();
+            let helper = system.join(format!("cargo-{frontend}"));
+            let original = std::fs::read(&helper).unwrap();
+            std::fs::write(&helper, "replaced helper").unwrap();
+            assert!(revalidate(&environment).is_err());
+            std::fs::write(&helper, original).unwrap();
+            let config = project.join(".cargo");
+            std::fs::create_dir_all(&config).unwrap();
+            std::fs::write(
+                config.join("config.toml"),
+                format!("[alias]\n{frontend}='custom'\n"),
+            )
+            .unwrap();
+            let mut selected = vec!["cargo".into()];
+            selected.extend(args.iter().map(|s| String::from(*s)));
+            assert!(discover(&path, &home, None, Some((&input(&project), &[selected]))).is_err());
+            std::fs::remove_file(config.join("config.toml")).unwrap();
+            std::fs::write(config.join("config.toml"), "[build]\nrustc='other'\n").unwrap();
+            let mut selected = vec!["cargo".into()];
+            selected.extend(args.iter().map(|s| String::from(*s)));
+            assert!(discover(&path, &home, None, Some((&input(&project), &[selected]))).is_err());
+            std::fs::remove_file(config.join("config.toml")).unwrap();
+            let inline = vec![
+                "cargo".into(),
+                "--config".into(),
+                format!("alias.{frontend}='custom'"),
+                frontend.into(),
+                "--help".into(),
+            ];
+            assert!(discover(&path, &home, None, Some((&input(&project), &[inline]))).is_err());
+        }
+        for args in [
+            vec![frontend],
+            vec![frontend, "--", "--help"],
+            vec![frontend, "--manifest-path", "--help"],
+        ] {
+            let mut words = vec!["cargo".into()];
+            words.extend(args.iter().map(|s| String::from(*s)));
+            assert!(discover(&path, &home, None, Some((&input(&project), &[words]))).is_err());
+        }
+    }
+    for args in [vec!["clippy", "--version"], vec!["clippy", "-V"]] {
+        let mut words = vec!["cargo".into()];
+        words.extend(args.into_iter().map(String::from));
+        let environment = discover(&path, &home, None, Some((&input(&project), &[words])))
+            .unwrap()
+            .unwrap();
+        assert_eq!(environment.command_providers.len(), 2);
+        assert!(
+            environment
+                .command_providers
+                .iter()
+                .any(|p| p.executable == "cargo-clippy")
+        );
+        revalidate(&environment).unwrap();
+    }
+    assert!(
+        discover(
+            &path,
+            &home,
+            None,
+            Some((
+                &input(&project),
+                &[vec!["cargo".into(), "fmt".into(), "--version".into()]]
+            ))
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn executable_heredoc_lookup_changes_refuse_but_quoted_examples_remain_literal() {
     let (_fixture, proxies, home, project) = installation();
     for script in [

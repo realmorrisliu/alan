@@ -103,3 +103,9 @@ descendant roots SHALL retain only their existing writable authority.
 - **WHEN** an ordinary Cargo invocation in the Linux namespace can launch documentation, default doctest, formatter, Clippy or a custom Cargo frontend
 - **THEN** supported command-specific PATH helper decisions are frozen and revalidated, and a later unqualified proxy refuses without projecting an unrelated runtime
 - **AND** helper replacement/loss refuses before launch, compiler-free queries keep their narrower requirements, and the fresh private Cargo home is not a qualification of in-request helper mutations.
+
+#### Scenario: Known frontend queries preserve frontend and configuration binding
+- **WHEN** Linux ordinary Cargo dispatches fmt or Clippy help, or Clippy version
+- **THEN** only the proven compiler-free frontend must be bound and revalidated
+- **AND** selected configuration aliases and compiler overrides remain inspected
+- **AND** custom commands, fmt version and forwarded payload retain conservative child requirements
