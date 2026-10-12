@@ -52,6 +52,10 @@ actual E0425/E0583/E0308 diagnostics before model-only lib repairs, original
 protected behavior, failed-Action details, Unicode draft return and native exits.
 Task 3.3 closes; checklist is 12/19. r1 retains its incremental-heading collector
 correction; r2/r3 have none. The matrix still has six Linux F4/F5 tasks open.
+Linux F4 r1 has two retained FAIL attempts. The first misses cancellation due to
+a collector PID-domain assumption; the second proves the lifecycle path but
+exceeds 600 seconds after a launcher correction and operator delay. Task 3.4
+remains open; a fresh original-task retry with the corrected collector is needed.
 
 ## 4. Findings, final candidate and delivery
 

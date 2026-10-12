@@ -1,16 +1,17 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v78 retains 68 attempts and 24/30 applicable slots:
-all macOS slots and Linux F1/F2/F3 r1/r2/r3. First outcomes are 19 PASS / 5 FAIL /
-6 NOT_RUN. The first Linux F2 r1 operator checker-path failure remains retained
-before its fresh retry. Evidence heads 2277b693, f497fbe7, be25825a, 94e8940f
-and 23e169e6 each pass all sixteen checks on their own pinned heads. This
+Latest 2026-10-12 aggregate v81 retains 70 attempts and 24/30 applicable slots:
+all macOS slots and Linux F1/F2/F3 r1/r2/r3. First outcomes are 19 PASS / 6 FAIL /
+5 NOT_RUN. Both Linux F4 r1 failures remain unqualified. The first Linux F2 r1
+operator checker-path failure remains retained before its fresh retry. Evidence
+heads 2277b693, f497fbe7, be25825a, 94e8940f, 23e169e6 and 3b4adf5d each pass
+all sixteen checks on their own pinned heads. This
 evidence-only follow-up still requires its own gates and CI.
 
 Linux task readiness is frozen on byte-identical 2277b693: known actual ChatGPT
 catalog/medium selection, task-cwd Git 2.53 and Rust/Cargo 1.96,
 linux_reified_namespace and the original task inputs. The candidate documentation
-head is 23e169e6 with unchanged 437 macOS and 440 Linux compiled inputs. The
+head is 3b4adf5d with unchanged 437 macOS and 440 Linux compiled inputs. The
 2026-10-12 user-authorized managed-auth reuse passes actual Linux generation on
 qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; see native-runs.md.
 Linux F4/F5 and final delivery remain open. Earlier observations below are
@@ -133,7 +134,25 @@ members to actual `aN` records before reading status/result, excluding controls.
 Read actual Request kind/options and available context counts rather than
 predicting schema fields or assuming one retained context per admission. Missing
 individual Process observations remain missing, even when actual instance exit
-provides lifetime evidence. Preserve original failed observations and report
+provides lifetime evidence.
+
+Linux reification uses a separate PID namespace. The fixture's writer.pid is an
+inner PID: it is not a guest-visible PID, and an argv path is not a stable native
+ownership discriminator. Map the inner PID through the last NSpid field only
+among descendants of the pinned live native invocation, then correlate the
+actual running Kernel child before Ctrl+C. Retain the actual writer/parent/group
+termination and deadline/effect observations. The collector's ancestry guard has
+cycle/unrelated/root-self rejection assertions. Never cancel an unrelated native
+process based on an inner PID or similarly named executable.
+
+Initial, resumed and verifier launchers use distinct exclusive calibration and
+terminal filenames. A pre-boot calibration collision is a retained launcher
+failure, not an Alan recovery failure. Check terminal failure and missing native
+handle plus unchanged selected rollout before retrying a corrected launcher.
+Actual turn contexts need not equal admitted inputs: cancelled work and a queued
+follow-up can share one context. Record actual counts and callable/effort binding,
+not an assumed one-context-per-input relationship. Keep the original 600-second
+bound across all lifecycle stages; post-bound correctness never qualifies a slot. Preserve original failed observations and report
 read-only collector corrections separately from model advice/source edits.
 
 ## Instance configuration and recovery selection

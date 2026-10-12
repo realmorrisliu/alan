@@ -1,8 +1,9 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
-Latest 2026-10-12 aggregate v78 records 68 development attempts and 24/30
+Latest 2026-10-12 aggregate v81 records 70 development attempts and 24/30
 applicable slots: all fifteen macOS slots and all Linux F1/F2/F3 repetitions.
-First outcomes are 19 PASS / 5 FAIL / 6 NOT_RUN. The original Linux
+First outcomes are 19 PASS / 6 FAIL / 5 NOT_RUN. Linux F4 r1 retains its first
+collector PID-domain failure and a second bound failure; neither qualifies. The original Linux
 F2 r1 checker-path failure remains FAIL; its fresh linked retry qualifies the slot.
 Linux readiness generation and user-authorized shared-auth preparation remain
 separate from task attempts.
@@ -126,7 +127,7 @@ content; generated role-prefix regression checks follow ADR-0059.
 | linux-f3-r1 | linux / ordinary PTY | F3 | 1 | PASS | native-runs.md; original a1 PASS `4f914795` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
 | linux-f3-r2 | linux / ordinary PTY | F3 | 2 | PASS | native-runs.md; original a1 PASS `6f1a6c22` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
 | linux-f3-r3 | linux / ordinary PTY | F3 | 3 | PASS | native-runs.md; original a1 PASS `13c3a0ae` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
-| linux-f4-r1 | linux / ordinary PTY | F4 | 1 | NOT_RUN | absent |
+| linux-f4-r1 | linux / ordinary PTY | F4 | 1 | FAIL: collector PID-domain assumption missed cancellation deadline | native-runs.md; original a1 FAIL `056a2301` retained; linked a2 FAIL `deb72654` retains successful cancel/revoke/denial/recovery/no-repeat evidence but exceeds 600 seconds; fresh retry remains required |
 | linux-f4-r2 | linux / ordinary PTY | F4 | 2 | NOT_RUN | absent |
 | linux-f4-r3 | linux / ordinary PTY | F4 | 3 | NOT_RUN | absent |
 | linux-f5-r1 | linux / ordinary PTY | F5 | 1 | NOT_RUN | absent |

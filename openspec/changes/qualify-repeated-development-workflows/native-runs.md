@@ -2762,3 +2762,79 @@ Linux F4/F5, complete metrics/finding audit, fresh publication gates/CI and
 user-controlled review/merge/canonical closure remain open. Enabled memory,
 shared auth, unknown usage/cost/time partitions and the historical separate
 unintended verifier turn remain explicit; no original outcome is reset.
+
+## First Linux lifecycle attempts remain FAIL — 2026-10-12
+
+Current evidence head 3b4adf5d passes all sixteen distinct checks; gate receipt
+SHA-256 is
+`637a60222fc3dafa1e619108683f8223a4f2964b3cc4f13a2ebb0bb55fb1c9a5`.
+The same frozen CLI, 440 Linux inputs, qualification-gpt61 / ChatGPT /
+gpt-6.1-sol / medium, selected Git 2.53/Rust-Cargo 1.96 and original F4 r1 prompt,
+follow-ups, assertions, allowed effects and 600-second bound remain in use.
+No production repair, model substitution or wider grant is introduced.
+
+Original a1 runs start_work and records one completed ledger entry. The collector
+mistakes inner writer.pid 2037 for a guest PID; its ps lookup fails. A subsequent
+argv-path/NSpid filter also finds no match. Operator cancellation is late: the
+forty-second child writes FORBIDDEN_LATE_EFFECT before Ctrl+C. Kernel Tool 10
+already exited normally with code zero; no successful live cancellation is
+claimed. The source remains defective and revoke/denied-read/recovery/protected
+verification are not completed. This is an operator collector failure and stays
+first FAIL. The initial native invocation exits normally. Its late-file bytes,
+ledger, timestamps and errors are sealed before fresh-attempt preparation.
+
+Fresh a2 restores exact original disposable fixture bytes and clears only the
+previous attempt's effect/build data after retaining its receipt and final-effect
+inventory. Before generation, the collector changes only native observation:
+match final NSpid within the current native invocation's process ancestry,
+without assuming a visible argv path. Cycle/unrelated/root-self assertions guard
+that mapping. Inner PID 2037 resolves to guest PID 630679, parent 630677, group
+628642, all under native Alan PID 620581. Kernel Tool 11 is actually running
+before Ctrl+C, then exited with code 130. The actual writer, parent and complete
+group disappear. Past the original forty-second deadline, late.txt remains
+absent and the ledger has one entry.
+
+At the settled paused boundary, /project revoke acknowledges inactive request-1
+and resets cwd. The unchanged denied-read follow-up is admitted alone, with empty
+native draft before /continue. Actual ReadFile Action a4 returns no authorized
+Host adapter, with no ledger content, new grant request or extra work. Both
+original Agent inputs retain gpt-6.1-sol/medium binding but share one actual turn
+context; a read-only collector correction retains its failed two-context
+assumption. Individual Kernel and native termination evidence stay recorded.
+
+Explicit recovery compares the exact owned rollout before initial exit and
+before --resume, without modifying the shared selector. The first resume launcher
+exits one before Alan exec because it tries to exclusively recreate the initial
+pty-calibration.json. Its failed transcript/script and absent Host handle remain
+retained. The corrected launcher uses distinct resumed calibration/transcript
+names and the unchanged selector. A fresh native boot retains the original task
+and denied follow-up with known empty queue. Same-project RW reapproval and a
+settled cwd Action precede the unchanged continuation. The model requests its
+planned structured project confirmation; after approval it edits only src/lib.rs
+and runs only cargo test --locked --offline --test contract, successfully.
+Copied recovery rows are excluded from new-command analysis. The ledger stays
+one entry, writer.pid/writer.started hashes remain unchanged and late.txt is
+absent; start_work never replays.
+
+That continuation and cleanup occur after the original 600-second bound because
+of operator observation/launcher delays. a2 therefore remains FAIL, despite its
+retained correct lifecycle/repair evidence. Required protected verification and
+full UI acceptance are not completed within the bound. No bound/start time is
+relaxed, and no post-bound result is substituted for qualification. All initial
+and resumed native invocations exit; no owned native instance remains.
+
+| Attempt | Outcome | Receipt SHA-256 | Verified receipt/artifact files |
+| --- | --- | --- | --- |
+| linux-f4-r1 / a1 | FAIL: missed cancellation deadline | `056a23011e40ddaea36a858fe2e4ec23bf9f74965af25edde323482c5f1d720f` | 36 |
+| linux-f4-r1 / a2 | FAIL: original overall bound exceeded | `deb72654c49622364f5a4b380108559a1c509ab91bd5737095ace95a38a07ec4` | 143 |
+
+Aggregate v81 SHA-256 is
+`71ba3bd35cf3ff25c05296097d861a234672b8be73371e3186cfa284ed803345`.
+It retains 70 development attempts, 24/30 applicable slots and original first
+outcomes 19 PASS / 6 FAIL / 5 NOT_RUN. Task 3.4 remains open and checklist is
+12/19. A fresh original-task retry must use the corrected PID mapping, distinct
+launcher filenames, actual context counts and prompt/queue control sequencing,
+while preserving the complete original lifecycle and verification scope within
+600 seconds. Other Linux F4/F5 repetitions, full metrics/audit and user-controlled
+review/merge/canonical closure stay open. Shared auth, enabled memory and unknown
+usage/cost/time partitions remain explicit.
