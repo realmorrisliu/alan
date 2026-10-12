@@ -433,3 +433,17 @@ They add no developer Model attempts. Actual CLI acceptance uses installed
 1.97.0, read-only project and writable scratch and verifies native exit/no model
 turns. Do not treat a ready-triggered review as complete before its current-head
 result, inline threads and summary/reactions are rechecked.
+
+### Rustup remap review repair
+
+Discovery retains Host-key settings through all original selection checks. For
+nonidentity declarations only, it records canonical implicit selection directories
+and then uses the existing validated plan/projection helper to pin the effective
+selector at every matching Host projection. All explicit selector branches, exact
+selected runtime union and metadata/executable revalidation remain. Equivalent
+Host projections include both an outer mount's relative child and a separate child
+mount; a single longest-prefix projection is insufficient for fixed shell cd.
+Unprojectable/conflicting pins refuse. The later augmented plan still validates
+runtime substrate and scratch relocation. Identity declarations keep the original
+inspection/settings path. Selection pins describe prelaunch inspection and do not
+establish support for rewriting selection files inside the same compound command.

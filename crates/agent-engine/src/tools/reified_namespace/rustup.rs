@@ -180,6 +180,13 @@ pub(super) fn discover(
     };
     if let Some((input, commands)) = input {
         let mut selected = Vec::new();
+        let remapped = input.declarations.iter().any(|mount| match &mount.source {
+            ReifiedMountSource::Host(root) => {
+                mount.namespace_path != canonicalize_existing_host_path(root)
+            }
+            ReifiedMountSource::Virtual => false,
+        });
+        let mut directory_selections = std::collections::BTreeMap::new();
         let mut directories = Some(vec![input.cwd.clone()]);
         for words in commands {
             let Some((mut name, mut args)) = super::super::sandbox::command_and_args(words) else {
@@ -228,8 +235,19 @@ pub(super) fn discover(
                     let mut inspection = input.clone();
                     let mut selectors = Vec::new();
                     for directory in directories {
-                        inspection.cwd = directory.clone();
+                        inspection.cwd = if remapped {
+                            canonicalize_existing_host_path(directory)
+                        } else {
+                            directory.clone()
+                        };
                         let selector = active_selector(&inspection, &mut environment)?;
+                        if remapped
+                            && let Some(previous) = directory_selections
+                                .insert(inspection.cwd.clone(), selector.clone())
+                            && previous != selector
+                        {
+                            return Err("Rust directory selection changed during inspection".into());
+                        }
                         if !selectors.contains(&selector) {
                             selectors.push(selector);
                         }
@@ -271,6 +289,35 @@ pub(super) fn discover(
         environment
             .toolchain_mounts
             .retain(|mount| selected.contains(&mount.host_path));
+        if remapped {
+            let plan = super::ReifiedNamespacePlan::derive(input.clone())
+                .map_err(|error| error.to_string())?;
+            let mut overrides = toml::Table::new();
+            // Pin effective selections only after all Host precedence checks have completed.
+            for (directory, selector) in directory_selections {
+                let mut projected = false;
+                for mount in &plan.declared_host_mounts {
+                    if let Some(path) = super::plan::translate_host_path_with_mounts(
+                        std::slice::from_ref(mount),
+                        &directory,
+                    ) {
+                        let key = path.to_str().ok_or("non-UTF-8 Rust directory projection")?;
+                        if let Some(previous) =
+                            overrides.insert(key.into(), selector.clone().into())
+                            && previous.as_str() != Some(&selector)
+                        {
+                            return Err("conflicting Rust directory projections".into());
+                        }
+                        projected = true;
+                    }
+                }
+                if !projected {
+                    return Err("Rust directory selection is outside delegated authority".into());
+                }
+            }
+            settings.insert("overrides".into(), overrides.into());
+            environment.settings = toml::to_string(&settings).map_err(|error| error.to_string())?;
+        }
     }
     for mount in &environment.toolchain_mounts {
         let manifest = mount.host_path.join("lib/rustlib/multirust-config.toml");

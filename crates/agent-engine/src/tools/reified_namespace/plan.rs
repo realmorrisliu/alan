@@ -414,7 +414,7 @@ pub enum ReifiedNamespacePlanError {
     CwdOutsideView { cwd: PathBuf },
 }
 
-fn translate_host_path_with_mounts(
+pub(super) fn translate_host_path_with_mounts(
     mounts: &[ReifiedHostMount],
     host_path: &Path,
 ) -> Option<PathBuf> {

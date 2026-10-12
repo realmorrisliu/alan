@@ -3131,3 +3131,49 @@ Normal repaired-source quality/distribution pass. Strict OpenSpec, final commit
 CI, thread reply/resolution and completed current-head automated review remain
 separate closing gates. Task 4.4 reopens; task 4.5 still requires user merge and
 canonical synchronization. No automatic merge or autonomous self-bootstrap claim.
+
+### Post-P2 Rustup namespace-override repair — 2026-10-12
+
+Automated review of d719f3b6 completed with P1 #4246709180 after all sixteen CI
+checks passed. A real remapped project selected the correct Host override runtime,
+but unchanged Host override keys in private settings allowed confined Rustup to
+choose an incompatible toolchain file/default. Merge readiness remains withdrawn.
+
+Portable RED is retained. Seventeen Rustup regressions pass after repairing the
+existing discovery owner, covering project/ancestor overrides, closer files,
+canonical aliases, all equivalent projections, fixed cd success/failure paths,
+explicit +/environment/run priority and changed metadata refusal. A cache-only
+compiled old/new comparison has twelve complete ReifiedRustupEnvironment equality
+checks with actual parent/child override entries: settings, runtime roots and
+metadata/executable hashes all match for identity declarations.
+
+Native RED reproduces the Host/confined selection mismatch. The native GREEN
+fixture passes three real Rust/Cargo compilations on a read-only /mnt/project:
+same-directory override beats its toolchain file; ancestor override selects the
+runtime when no closer file exists; closer file beats an ancestor override. Each
+confined rustc version equals the actual Host-selected version. Only one selected
+runtime is retained; source, Cargo.lock and fixture-private settings are unchanged,
+output stays private, and source writes fail. Personal Host settings and installed
+rustc remain unchanged. Runtime content is copied into disposable fixture metadata;
+no personal override or default is written. Preflight cache-purpose and cross-device
+hard-link failures, and the subsequent unlocked-Cargo lock-write refusal, remain
+retained separately and add no model development attempts.
+
+Original 85 development attempts and 30 selected receipts remain untouched.
+macOS does not execute Linux Rustup discovery. Every Linux initial/resumed/verifier
+native Bash uses SandboxSpec's canonical Host roots and the unchanged
+reified_mount_declarations mapping namespace_path = host_path. Thus the unchanged
+identity branch applies regardless of historical override-map contents. Public
+/mnt/project-request-N grant names do not imply native remapping. A final frozen
+source/CLI ledger and committed-head CI plus completed automated re-review are
+still required. Costs, assistance, independence and navigation limits remain.
+
+Frozen P1 applicability ledger: `93a60ad822b23c4d280a2a69dae449a41d54d381b0f88b5d954ed069cc5e1903`. New macOS CLI
+`165ad2fb6dbbe6ce41e75b5fb2fc990aa860beef6f76d9870f775c168f3aa2d9` has 437 frozen inputs; Linux CLI
+`98e6a552fc51c314e08e254d807b079f2aad1ce9f12c71b79d8024285463f80a` has 440. Only the plan helper's
+internal visibility and Linux Rustup discovery differ from the reviewed P2
+compiled inputs. Complete native identity boundary/lifecycle regression passes;
+three final remap builds pass. All 33 Linux phase references remain linked
+to their original selected receipts and unchanged identity authority call chain.
+The previous P2 corpus audit remains applicable; original evidence is not renamed
+as new execution. Current-head CI/review remain pending until after commit.

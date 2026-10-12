@@ -1,3 +1,16 @@
+## Latest post-repair automated review — 2026-10-12
+
+The Cargo manifest P2 was fixed in d719f3b6 and resolved; that head passed all
+sixteen checks. Its completed automated re-review found a valid Rustup remap P1
+(#4246709180). Merge readiness remains withdrawn and task 4.4 remains open.
+The direct repair preserves Host precedence checks and projects inspected effective
+selectors at all validated equivalent namespace directories after inspection.
+Identity mounts retain their original settings/selection branch; this does not
+assume historical user override maps were absent. Portable and native regression,
+new source applicability, independent review and committed current-head CI/review
+must close before readiness is restored. Checklist remains 17/19; user merge and
+canonical closure remain separate. No automatic merge is authorized.
+
 # Repeated real-development acceptance matrix — 2026-10-10
 
 Post-ready review reports valid Cargo prefix P2 `discussion_r4246031780`.

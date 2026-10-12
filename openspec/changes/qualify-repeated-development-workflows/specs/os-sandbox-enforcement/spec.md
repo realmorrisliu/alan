@@ -42,3 +42,10 @@ descendant roots SHALL retain only their existing writable authority.
 - **WHEN** an OS-confined program receives a read-only source below a generally writable temporary directory
 - **THEN** it can read the source but native program-internal writes to that root are denied
 - **AND** explicitly writable scratch remains writable, including a writable child of a read-only ancestor
+
+#### Scenario: Rustup directory selection survives project namespace remapping
+- **WHEN** an inspected Cargo/Rust command uses a granted project whose Host path differs from its native namespace path
+- **THEN** Host directory-override and toolchain-file proximity determine the effective selector before projection
+- **AND** each inspected directory's effective selection is pinned at all validated equivalent namespace projections, including fixed shell cd outcomes
+- **AND** explicit selectors retain priority, only selected runtimes are mounted, and unprojectable/conflicting selections refuse before effects
+- **AND** Host configuration, delegated rights and selection metadata revalidation remain unchanged; pins do not qualify rewriting selection metadata within the same compound command.

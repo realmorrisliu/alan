@@ -1,6 +1,152 @@
 use super::*;
 
 #[test]
+fn native_remapped_rustup_overrides_match_host_selection() {
+    let (Some(proxy), Some(runtime)) = (
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME"),
+    ) else {
+        eprintln!("skipping native Rustup remap: explicit owned runtime inputs absent");
+        return;
+    };
+    assert!(probe_linux_reification().is_selectable());
+    let proxy = PathBuf::from(proxy);
+    let runtime = PathBuf::from(runtime);
+    let fixture = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(fixture.path()).unwrap();
+    let project = root.join("project");
+    let home = root.join("rustup");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::create_dir_all(home.join("toolchains")).unwrap();
+    // Copy into fixture-owned metadata; never mutate the installed Host tree.
+    assert!(
+        Command::new("/bin/cp")
+            .arg("-a")
+            .arg("--reflink=auto")
+            .arg(&runtime)
+            .arg(home.join("toolchains").join(runtime.file_name().unwrap()))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let manifest =
+        "[package]\nname = \"alan_remap_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n";
+    let source = "#[test] fn expected_answer() { assert_eq!(2 + 2, 4); }\n";
+    std::fs::write(project.join("Cargo.toml"), manifest).unwrap();
+    std::fs::write(project.join("src/lib.rs"), source).unwrap();
+    let lock = "version = 4\n[[package]]\nname = \"alan_remap_fixture\"\nversion = \"0.1.0\"\n";
+    std::fs::write(project.join("Cargo.lock"), lock).unwrap();
+    let runtime_bytes = std::fs::read(runtime.join("bin/rustc")).unwrap();
+    for (override_path, selector, file_selector) in [
+        (&project, "1.97.0", Some("missing")),
+        (&root, "1.97.0", None),
+        (&root, "missing", Some("1.97.0")),
+    ] {
+        let settings = format!(
+            "version = \"12\"\ndefault_toolchain = \"missing\"\n[overrides]\n{} = {selector:?}\n",
+            toml::Value::String(override_path.to_str().unwrap().into())
+        );
+        std::fs::write(home.join("settings.toml"), &settings).unwrap();
+        let file = project.join("rust-toolchain");
+        if let Some(selector) = file_selector {
+            std::fs::write(&file, format!("{selector}\n")).unwrap();
+        } else {
+            std::fs::remove_file(&file).unwrap();
+        }
+        let host = Command::new(proxy.join("rustc"))
+            .arg("--version")
+            .current_dir(&project)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("RUSTUP_HOME", &home)
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .output()
+            .unwrap();
+        assert!(
+            host.status.success(),
+            "{}",
+            String::from_utf8_lossy(&host.stderr)
+        );
+        let mut input = ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host("/mnt/project", &project, ReifiedMountAccess::ReadOnly)],
+            &project,
+            vec!["/bin/sh".into(), "-c".into(),
+                "set -eu; rustc --version; cargo test --offline --locked; test -d \"$CARGO_TARGET_DIR/debug/deps\"; if (: >> src/lib.rs); then exit 43; fi".into()],
+            NetworkPosture::Deny,
+        );
+        let commands = vec![
+            vec!["rustc".into(), "--version".into()],
+            vec![
+                "cargo".into(),
+                "test".into(),
+                "--offline".into(),
+                "--locked".into(),
+            ],
+        ];
+        let environment = rustup::discover(
+            proxy.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(environment.toolchain_mounts.len(), 1);
+        let mut substrate = default_execution_substrate();
+        substrate.extend(
+            environment
+                .proxy_mounts
+                .iter()
+                .chain(&environment.toolchain_mounts)
+                .cloned(),
+        );
+        input = input
+            .with_scratch_tmp_namespace_path("/.alan-rustup-test-tmp")
+            .with_execution_substrate(substrate)
+            .with_command_path(format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", proxy.display()));
+        input.rustup = Some(environment);
+        let plan = ReifiedNamespacePlan::derive(input).unwrap();
+        let result =
+            LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                .run(&plan)
+                .unwrap();
+        assert_eq!(result.exit_code, 0, "{} {}", result.stdout, result.stderr);
+        assert!(
+            result
+                .stdout
+                .starts_with(std::str::from_utf8(&host.stdout).unwrap())
+        );
+        assert!(result.stdout.contains("1 passed"));
+        eprintln!(
+            "remapped override {} -> {selector}; Host and confined {}compile passed; selected runtime count 1",
+            override_path.display(),
+            std::str::from_utf8(&host.stdout).unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("settings.toml")).unwrap(),
+            settings
+        );
+        assert_eq!(
+            std::fs::read_to_string(project.join("Cargo.toml")).unwrap(),
+            manifest
+        );
+        assert_eq!(
+            std::fs::read_to_string(project.join("src/lib.rs")).unwrap(),
+            source
+        );
+        assert!(!project.join("target").exists());
+        assert_eq!(
+            std::fs::read_to_string(project.join("Cargo.lock")).unwrap(),
+            lock
+        );
+    }
+    assert_eq!(
+        std::fs::read(runtime.join("bin/rustc")).unwrap(),
+        runtime_bytes
+    );
+}
+
+#[test]
 fn native_readonly_rust_build_uses_private_output_and_project_config() {
     let (Some(proxy), Some(runtime)) = (
         std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),

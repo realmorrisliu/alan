@@ -603,6 +603,121 @@ fn preserves_selector_precedence_and_private_metadata() {
 }
 
 #[test]
+fn remapped_directories_preserve_inspected_rustup_selection() {
+    let (_fixture, proxies, home, project) = installation();
+    let child = project.join("child");
+    std::fs::create_dir(&child).unwrap();
+    let commands = vec![
+        vec!["rustc".into(), "--version".into()],
+        vec!["cd".into(), "child".into()],
+        vec!["cargo".into(), "--version".into()],
+    ];
+    let mut input = input(&project);
+    input.declarations[0].namespace_path = "/mnt/project".into();
+    input
+        .declarations
+        .push(super::super::ReifiedMountDeclaration::host(
+            "/mnt/child",
+            &child,
+            super::super::ReifiedMountAccess::ReadOnly,
+        ));
+    for override_path in [&project, project.parent().unwrap()] {
+        let original = format!(
+            "version = \"12\"\ndefault_toolchain = \"missing\"\ndefault_host_triple = \"testhost\"\n[overrides]\n{} = \"1.97.0\"\n",
+            toml::Value::String(override_path.to_str().unwrap().into())
+        );
+        std::fs::write(home.join("settings.toml"), &original).unwrap();
+        if override_path == project {
+            std::fs::write(project.join("rust-toolchain"), "missing\n").unwrap();
+        } else {
+            std::fs::remove_file(project.join("rust-toolchain")).unwrap();
+        }
+        std::fs::write(child.join("rust-toolchain"), "stable-testhost\n").unwrap();
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        let settings: toml::Value = toml::from_str(&environment.settings).unwrap();
+        assert_eq!(
+            settings["overrides"]["/mnt/project"].as_str(),
+            Some("1.97.0")
+        );
+        for path in ["/mnt/project/child", "/mnt/child"] {
+            assert_eq!(
+                settings["overrides"][path].as_str(),
+                Some("stable-testhost")
+            );
+        }
+        assert!(
+            settings["overrides"]
+                .get(override_path.to_str().unwrap())
+                .is_none()
+        );
+        assert_eq!(environment.toolchain_mounts.len(), 2);
+        revalidate(&environment).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(home.join("settings.toml")).unwrap(),
+            original
+        );
+        std::fs::write(home.join("settings.toml"), format!("{original}# changed\n")).unwrap();
+        assert!(
+            revalidate(&environment)
+                .unwrap_err()
+                .contains("metadata changed")
+        );
+    }
+    let alias = project.parent().unwrap().join("project-alias");
+    symlink(&project, &alias).unwrap();
+    input.cwd = alias.clone();
+    input.declarations[0].source = super::super::ReifiedMountSource::Host(alias);
+    let environment = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap()
+    .unwrap();
+    let settings: toml::Value = toml::from_str(&environment.settings).unwrap();
+    assert_eq!(
+        settings["overrides"]["/mnt/project"].as_str(),
+        Some("1.97.0")
+    );
+    std::fs::write(project.join("rust-toolchain"), "missing\n").unwrap();
+    for commands in [
+        vec![vec!["cargo".into(), "+1.97.0".into(), "test".into()]],
+        vec![vec![
+            "RUSTUP_TOOLCHAIN=1.97.0".into(),
+            "cargo".into(),
+            "test".into(),
+        ]],
+        vec![vec![
+            "rustup".into(),
+            "run".into(),
+            "1.97.0".into(),
+            "cargo".into(),
+            "test".into(),
+        ]],
+    ] {
+        let environment = discover(
+            proxies.to_str().unwrap(),
+            &home,
+            None,
+            Some((&input, &commands)),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(environment.toolchain_mounts.len(), 1);
+        let settings: toml::Value = toml::from_str(&environment.settings).unwrap();
+        assert!(settings["overrides"].as_table().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn directory_override_proximity_and_legacy_file_match_rustup() {
     let (_fixture, proxies, home, project) = installation();
     let settings = format!(
