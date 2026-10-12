@@ -3060,3 +3060,12 @@ and two Process focused tests pass; normal quality/distribution pass. A future
 production change requires fresh applicability assessment rather than reuse of
 this proof. Current committed-head CI and user-controlled canonical closure are
 still required.
+
+### Current-source gate closure
+
+Head ceb71ee6b492faac0143329bf45a35b602860bf2 passes all sixteen completed
+current-head checks. The sealed gates-ceb71-v1 receipt records check names,
+conclusions, timestamps and direct run URLs. Normal commit quality/distribution,
+strict OpenSpec 70/70 and both final review axes pass. Task 4.4 closes at 18/19;
+this documentation-only recording must pass its own CI. User merge and canonical
+closure remain task 4.5, with no autonomous merge or routing enablement.

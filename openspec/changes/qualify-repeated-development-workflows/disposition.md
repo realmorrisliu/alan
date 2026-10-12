@@ -26,8 +26,8 @@ by transfer; shared auth is not independent-credential acceptance.
 Pinned a9d88a6a passed all sixteen checks. Two-axis final review finds no spec
 violation and two documented test-placement violations; the narrow relocation
 repairs both and preserves production behavior/visibility. Eight focused tests
-and normal quality/distribution pass locally. This new committed head still
-needs its own CI. Tasks 1–3 and 4.1–4.3 close (17/19); current-head delivery and
+and normal quality/distribution pass locally. Head ceb71ee6 now passes all sixteen current-head checks. Tasks 1–3 and
+4.1–4.4 close (18/19); this documentation recording needs its own CI, and
 user merge/canonical adoption remain open. #1046 must precede #1047; no PR is
 automatically merged, and routing remains unchanged.
 

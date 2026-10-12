@@ -66,7 +66,7 @@ zero-model collector preflights remain retained. Task 3.4 closes; checklist is
 - [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
 - [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
 - [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
-- [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
+- [x] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
 
 ## Final native and evidence audit — 2026-10-12
@@ -89,3 +89,12 @@ reported usability limit, not a missing proof or a newly implemented feature.
 Task 4.4 still requires the committed head's review and full CI. Task 4.5 waits
 for user merges and canonical closure. This matrix does not qualify general
 unassisted self-bootstrap, automatic routing or statistical independence.
+
+## Current-source delivery gates — 2026-10-12
+
+Committed head ceb71ee6 passes all sixteen current-head checks, including both
+platform suites, quality, coverage, release builds and CodeQL. Both final review
+axes are resolved and normal quality/distribution plus strict OpenSpec 70/70
+pass. Task 4.4 closes; checklist is 18/19. This documentation-only recording
+still needs its own CI; no user merge or canonical adoption is claimed. Task 4.5
+remains open for user merges of #1045/#1046/#1047 and subsequent canonical closure.
