@@ -1,24 +1,37 @@
-## Current opaque-writer repair and qualification withdrawal — 2026-10-13
+## Current opaque-writer qualification and delivery gates — 2026-10-13
 
-Completed review of `7538396e` found valid P1 #4250587942: an opaque
-program can replace configuration between preflight and later Cargo execution.
-Merge readiness is withdrawn. The Linux adapter now requires a separate request
-after opaque programs or Rust work that can execute project code. Literal cwd
-selection, bounded read-only producers, genuine system queries and verified
-standard wrappers retain their narrow support; dynamic shell control and loader
-changes refuse before effects. This includes initially private Cargo/Rustup homes.
+P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work
+require a separate request before inspected Rust execution, including initially
+private Cargo/Rustup homes. Bounded read-only producers, genuine system queries
+and verified standard wrappers retain narrow support; dynamic/asynchronous shell
+control and loader overrides refuse before effects. The thread is replied to and
+resolved. `51d1ed4c` also updates quinn-proto to 0.11.18 for five newly disclosed
+advisories; both default CLI feature graphs and binaries are unchanged.
 
-The original thirty selected slots and eighty-five attempts remain immutable
-history. The new admission rule changes seven Linux phase commands in four slots:
-F2 r1/r2/r3 (model and verifier), and F5 r2 (initial model). Their fourteen
-structured occurrences include request/result duplicates, not fourteen executions.
-Four fresh native model qualifications are required; none is claimed yet.
-The twelve analogous macOS records do not execute this Linux-only production
-rule. F5 r3 retains the existing bounded read-only producer/Rustc pipeline.
+Four fresh Linux model qualifications pass on `51d1ed4c`: F2 r1/r2/r3 and F5 r2.
+The other twenty-six slots inherit the linked semantic applicability audits and
+actual committed build-input freezes. The original thirty slots/eighty-five
+attempts remain immutable; six new model-started attempts add four PASS and two
+collector FAIL, for ninety-one total (68 PASS/23 FAIL). Three new prelaunch
+failures remain separate. Original first outcomes stay 21 PASS/9 FAIL (70%).
+The admission audit's fourteen Linux records represent seven phase commands in
+four slots; twelve macOS test-only refusals do not execute in production.
 
-Tasks 3.2, 3.5 and 4.3 reopen; the current checklist is 14/19. Current-head
-quality/CI/completed review and user merge/canonical closure also remain open.
-Earlier entries below record historical evidence, not current readiness.
+Tasks 3.2, 3.5 and 4.3 close again. Task 4.4 closes on the source head's normal
+quality/distribution checks, strict OpenSpec, independent reviews, all sixteen
+passing CI checks and completed same-head Codex no-major-findings review
+(#6130992270). Checklist is 18/19. This documentation recording still requires
+its own current-head CI/completed review before reporting merge readiness.
+Task 4.5 remains open for user merge and canonical adoption; no merge is authorized.
+Earlier entries below record historical evidence, not current delivery status.
+
+The four renewals use gpt-6.1-sol/medium and normal scoped approvals. Delegation
+fails at the child namespace cwd boundary; the root Agent completes each task,
+so delegation is not qualified. Existing assisted Linux F4 results stay assisted.
+Shared auth is authorized, not credential independence. Provider usage/cost and
+physical Herdr geometry/cursor/scroll gestures remain unmeasured; automatic
+routing stays off. These fixture results do not establish general unassisted
+self-bootstrap. Final receipts, accounting and hashes are below in native-runs.md.
 
 ## Latest mixed Cargo short-option repair — 2026-10-13
 
@@ -177,10 +190,10 @@ Historical checkmarks do not qualify new behavior.
 ## 3. Linux real-model tasks in ordinary PTY
 
 - [x] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
-- [ ] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
+- [x] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
 - [x] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
 - [x] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
-- [ ] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
+- [x] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
 
 All three Linux F2 repetitions qualify on unchanged be25825a. The original r1
 checker-path failure and fresh retry remain retained; r2/r3 pass their original
@@ -204,8 +217,8 @@ zero-model collector preflights remain retained. Task 3.4 closes; checklist is
 
 - [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
 - [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
-- [ ] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
-- [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
+- [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
+- [x] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
 
 ## Final native and evidence audit — 2026-10-12

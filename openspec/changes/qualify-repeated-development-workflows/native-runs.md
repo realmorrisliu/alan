@@ -1,24 +1,119 @@
-## Current opaque-writer repair and qualification withdrawal — 2026-10-13
+## Current opaque-writer qualification and delivery gates — 2026-10-13
 
-Completed review of `7538396e` found valid P1 #4250587942: an opaque
-program can replace configuration between preflight and later Cargo execution.
-Merge readiness is withdrawn. The Linux adapter now requires a separate request
-after opaque programs or Rust work that can execute project code. Literal cwd
-selection, bounded read-only producers, genuine system queries and verified
-standard wrappers retain their narrow support; dynamic shell control and loader
-changes refuse before effects. This includes initially private Cargo/Rustup homes.
+P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work
+require a separate request before inspected Rust execution, including initially
+private Cargo/Rustup homes. Bounded read-only producers, genuine system queries
+and verified standard wrappers retain narrow support; dynamic/asynchronous shell
+control and loader overrides refuse before effects. The thread is replied to and
+resolved. `51d1ed4c` also updates quinn-proto to 0.11.18 for five newly disclosed
+advisories; both default CLI feature graphs and binaries are unchanged.
 
-The original thirty selected slots and eighty-five attempts remain immutable
-history. The new admission rule changes seven Linux phase commands in four slots:
-F2 r1/r2/r3 (model and verifier), and F5 r2 (initial model). Their fourteen
-structured occurrences include request/result duplicates, not fourteen executions.
-Four fresh native model qualifications are required; none is claimed yet.
-The twelve analogous macOS records do not execute this Linux-only production
-rule. F5 r3 retains the existing bounded read-only producer/Rustc pipeline.
+Four fresh Linux model qualifications pass on `51d1ed4c`: F2 r1/r2/r3 and F5 r2.
+The other twenty-six slots inherit the linked semantic applicability audits and
+actual committed build-input freezes. The original thirty slots/eighty-five
+attempts remain immutable; six new model-started attempts add four PASS and two
+collector FAIL, for ninety-one total (68 PASS/23 FAIL). Three new prelaunch
+failures remain separate. Original first outcomes stay 21 PASS/9 FAIL (70%).
+The admission audit's fourteen Linux records represent seven phase commands in
+four slots; twelve macOS test-only refusals do not execute in production.
 
-Tasks 3.2, 3.5 and 4.3 reopen; the current checklist is 14/19. Current-head
-quality/CI/completed review and user merge/canonical closure also remain open.
-Earlier entries below record historical evidence, not current readiness.
+Tasks 3.2, 3.5 and 4.3 close again. Task 4.4 closes on the source head's normal
+quality/distribution checks, strict OpenSpec, independent reviews, all sixteen
+passing CI checks and completed same-head Codex no-major-findings review
+(#6130992270). Checklist is 18/19. This documentation recording still requires
+its own current-head CI/completed review before reporting merge readiness.
+Task 4.5 remains open for user merge and canonical adoption; no merge is authorized.
+Earlier entries below record historical evidence, not current delivery status.
+
+The four renewals use gpt-6.1-sol/medium and normal scoped approvals. Delegation
+fails at the child namespace cwd boundary; the root Agent completes each task,
+so delegation is not qualified. Existing assisted Linux F4 results stay assisted.
+Shared auth is authorized, not credential independence. Provider usage/cost and
+physical Herdr geometry/cursor/scroll gestures remain unmeasured; automatic
+routing stays off. These fixture results do not establish general unassisted
+self-bootstrap. Final receipts, accounting and hashes are below in native-runs.md.
+
+## Opaque-writer fresh model renewals — 2026-10-13
+
+Candidate source `51d1ed4ce9d77a2dbc5e5375ba6aef6079c4ada9` is frozen by the
+actual Cargo dependency files: 437 macOS and 443 Linux public project inputs,
+all matching committed blobs. Cargo.lock SHA256 is
+`a0acca9fa0e3d5c6d266b0393078af24cf7ef9192516f0c15910494b8ac54f36`.
+The Linux CLI used for all new model tasks is
+`2e4abbcd1d03239d5e33fc43ef0656968dfd097ce2746670d85bc7216c60ed59`.
+The compatible quinn-proto 0.11.18 lockfile repair passes Cargo Audit; default
+CLI feature trees and binaries on both Hosts are unchanged from e4c3cfc6.
+This is not an all-features runtime qualification claim.
+
+| Native selected renewal | Outcome | Receipt elapsed wall time | Receipt SHA256 |
+| --- | --- | --- | --- |
+| linux-f2-r1/a6 | PASS | 82.409507 s | `47823a4fcbc24063324b79b803b18ff63c3490c13618835c6d4e7044a0d1537d` |
+| linux-f2-r2/a1 | PASS | 83.026150 s | `c13ba9d5b2f7e36df9c66764bcfc6ea9fcd5e59a3b02d90e75e17679f2f2702f` |
+| linux-f2-r3/a1 | PASS | 80.843049 s | `56c24fcadc18e86435a5b26ecb02b6769cd0a8c5f904a2ea03d023b8d751ff0e` |
+| linux-f5-r2/a1 | PASS | 409.659057 s | `09dadd57acf11f5ee3af372613e6f4994f4c723de33cdd6b08418fd69fe45135` |
+
+Each renewed slot uses the original frozen prompt, project baseline, protected
+expected results and 600-second bound, gpt-6.1-sol with medium effort, native
+Linux enforcement and ordinary scoped approvals. F2 library tests and the two
+binary runs are separate requests; the independent protected checker makes no
+model calls. F5 runs its long-output producer once, retains 165163 stderr bytes,
+reads QVALUE 42274 from the complete Reader Action, edits only src/lib.rs and
+passes the protected native verifier. Native logical detail paging reaches the
+retained marker (280 additional page steps after the initial page), the Unicode input draft remains intact, and all
+owned instances/Tool Processes exit. Physical Host geometry/caret/scroll gestures
+are not measured by this 80×24 native PTY evidence.
+
+Four renewals need six actual model-started attempts: F2 r1/a3 fails on verifier
+approval timeout, r1/a5 fails because the collector mistook an accepted escalation
+ACK for process completion; neither becomes PASS. The corrected collector requires
+actual exit_code (with a separate builtin cd case), checked by four assert cases.
+All failed receipts and rollout/artifact evidence are retained. F2 r1/a1 binary
+transport corruption, a2 missing runtime parent and a4 stale owned checker build
+output are prelaunch failures with no model input; their raw NOT_RUN/FAIL labels
+remain and are excluded from development counts. Binary transport was corrected
+by guest-local copy, not a change to production code.
+
+The original aggregate v104 has 85 model attempts (64 PASS/21 FAIL). Append-only
+v106 has 91 (68 PASS/23 FAIL), plus three new prelaunch records separately; all
+original attempt entries and 21 PASS/9 FAIL first outcomes (70%) are unchanged.
+Twenty-six selected slots inherit the linked original source-applicability chain;
+the four changed Linux slots use these new receipts. This restores the thirty
+qualified fixture slots without claiming thirty new runs or independent samples.
+
+All four tasks first try delegation and receive child_launch_failed because
+/mnt/project-request-1 is outside the delegated namespace. The root Agent then
+completes each task. No child model starts; delegation remains unqualified. F5
+also retains its own compound-command refusal and include! path failure before
+recovering with separate requests and a trusted cat/printf-to-Rustc pipeline.
+No operator source edit or corrective implementation advice occurs during these
+model tasks; normal approvals still count as human participation. Original three
+assisted Linux F4 completions, shared authorized auth, unknown provider usage/cost,
+unmeasured physical terminal behavior and disabled automatic routing stay explicit.
+
+Independent Spec and Standards requalification audits check actual model tape,
+source edits, original authority, protected effects, lifecycle, retained terminal
+evidence and all twelve copied rollouts. Checker manifests differ only by owned
+root relocation; Cargo.lock differs by whitespace with identical TOML semantics,
+so checker byte identity is not claimed. The public evidence archive SHA256 is
+`1ddc77848658bb04816bef32b3ad6148f9289b5c1dffc79c44faf6b24eda08fc`.
+Fresh checker/protected copies have separate copy bindings outside that archive.
+Evidence remains under rustup-opaque-writer-review-v1; the ledger links the
+previous 7538396e ledger and aggregate v104 without rewriting either.
+
+Frozen renewal records (SHA256):
+
+- `source-applicability-ledger-v2.json`: `43ed8f89230bc635520614393d41fd7cf7892c92e65f2aefaec949655d3bae91` (advisory-ID correction; original ledger preserved).
+- `first-outcomes-v106.json`: `2fa9193455ceda23631b8fbfa12b731003fb89b5abd321331c41f1e1c09dc554` (reference correction; v105 preserved).
+- `independent-spec-requalification-audit-v2.json`: `304689e1e0a1f8ad67b9b95f5eaaa2e96fb2afab90c8e4a031d4d0237ecf9579`.
+- `independent-standards-requalification-audit-v1.json`: `c65035349f933af095dd608437ff8833a18d0b1c46a913edd0d5ae7a6912067d`.
+
+The source head passes normal quality/distribution checks, pinned OpenSpec 1.4.1
+strict validation, sixteen CI checks, two independent source/dependency reviews
+and completed exact-head Codex review
+[#6130992270](https://github.com/realmorrisliu/alan/pull/1047#issuecomment-6130992270).
+The valid P1 has been fixed, replied to and resolved. This final documentation
+recording requires its own exact-head CI/completed review; user merge/canonical
+closure is still separate and no automatic merge is authorized.
 
 ## Opaque-writer native controls — 2026-10-13
 
@@ -43,8 +138,8 @@ Later review also rejects asynchronous `setsid` wrappers rather than treating
 forking as sequential execution. Final focused checks bind this last source;
 source manifests and committed build/CI review remain required before readiness.
 All intermediate compilation, fixture, scope and compatibility failures remain
-in cache logs. The four renewed real model tasks are still pending; original
-first outcomes are unchanged, and no new model completion is claimed here.
+in cache logs. This controls-only record predates the four successful model renewals above;
+original first outcomes remain unchanged.
 
 
 ## Cargo mixed short-option arity — 2026-10-13
