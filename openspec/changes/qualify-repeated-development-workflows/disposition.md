@@ -9,12 +9,16 @@ is collected in evidence or copied into a project. Shared auth is not independen
 credential acceptance. The previous device login is stopped before transfer.
 Actual Linux generation now succeeds on qualification-gpt61 / gpt-6.1-sol /
 medium; its admitted callable and turn context match. This resolves the earlier
-login prerequisite without completing a development slot. All fifteen Linux
-tasks remain NOT_RUN; aggregate v64 stays 58 attempts and 15/30 applicable slots.
+login prerequisite without completing a development slot. Linux's first small
+repair subsequently qualifies with independent protected behavior, exact source
+effects, terminal evidence and native exits within the original bound. Aggregate
+v65 retains 59 attempts and 16/30 applicable slots, with first outcomes
+12 PASS / 4 FAIL / 14 NOT_RUN; the other fourteen Linux tasks remain.
 Earlier unavailable-profile/no-copy observations below remain historical.
-Current evidence head 092e3278 passes all sixteen checks; these new planning and
-readiness records need their own normal gates and CI. Task 1.4 still requires
-the selected native task-cwd readiness freeze before matrix generation.
+Both 092e3278 and readiness head 2277b693 pass all sixteen checks. The first
+Linux task's native task-cwd/catalog/source freeze closes task 1.4; checklist is
+9/19. This additional task evidence needs its own normal gates and CI. User
+review/merge, full cross-Host qualification and canonical closure remain open.
 
 ## Retained earlier disposition
 

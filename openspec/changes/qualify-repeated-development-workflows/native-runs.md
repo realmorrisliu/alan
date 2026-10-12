@@ -2453,3 +2453,69 @@ Counts remain 58 development attempts and 15/30 applicable slots, with original
 11 PASS / 4 FAIL / 15 NOT_RUN. Usage/cost and statistical independence remain
 unqualified. These document edits need their own normal gates and current-head
 CI; user review/merge and canonical synchronization remain open.
+
+## First Linux real-model repair — 2026-10-12
+
+Readiness/documentation head 2277b693 passes normal repository quality and
+standalone/distribution checks, pinned strict OpenSpec 70/70 and all sixteen
+current-head checks. Gates receipt SHA-256 is
+`2920fd7af25f583de3198f28b11e9f268736ec8c48998afeb4269d8bd66a6fcf`.
+All 437 macOS and 440 Linux committed/working compiled inputs match the frozen
+production candidate. The new first-task freeze has SHA-256
+`86ddc5a6a8f7a56b7244175f6c95d534075903f82ed31643393f330032c4fc64`.
+The actual native catalog includes gpt-6.1-sol with medium support. The selected
+task cwd executes Git 2.53.0 and Rust/Cargo 1.96.0 under linux_reified_namespace;
+the setup Tool exits before the original Agent input. This closes readiness
+task 1.4, not a model-development slot, and moves checklist to 9/19.
+
+Linux F1 r1 a1 then submits the unchanged original prompt in an actual 80x24
+ordinary PTY. Its sole force_agent admission preserves the original body and
+binds qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; its single retained
+turn context matches. Source and protected checks start from the original
+fixture bytes. a2 actually compiles and runs the seeded contract, failing with
+exit 101 and left 5/right 9. a3's optional Git status fails because this frozen
+fixture is not a Git repository; the failure stays retained. Model inspection
+and hashing follow, with one normal r1 hash-command approval. Delegated repo-coding
+launch fails before creating a child because the cwd is outside the explicit
+child namespace; that refusal stays visible and does not confer parent grants.
+The parent directly edits only src/lib.rs from subtraction to addition through
+EditFile, then a7 runs the same offline/locked test successfully. No operator
+writes a solution, supplies corrective advice or restarts the model task.
+
+Actual detail selects 8/8, Action a7 under /agent/8, displaying readable original
+test output. Closing detail restores the Unicode draft; insertion yields
+abcδQXYZ. The complete native transcript stream retains earlier failure/history
+bytes. Physical cursor coordinates and a physical Host scrollback gesture are
+not measured. No successful child delegation or general terminal-host support
+is inferred. The seven observed Tool Processes 9 through 15 all exit, including
+the real failing commands, before the model invocation ends.
+
+A separate fresh ordinary-PTY invocation grants the model-authored project and
+original protected assertions read-only, with only checker scratch writable.
+The original checker driver and assertions are unchanged. Its explicit offline/
+locked Cargo command actually compiles the dependency and protected library;
+the protected behavioral test covers all four original cases and passes.
+The checker admits no Agent input and has zero turn contexts/model turns.
+Source inventory uses the existing fixture helper's top-level build exclusion,
+preserving exact allowed effects rather than hiding nested source paths.
+
+Independent verification completes 530.917682 seconds after submission. Retained
+native script completion records exit zero for model/checker at 409.971706 /
+530.971706 seconds (second-resolution timestamps); their final log mtimes are
+410.917748 / 531.146728 seconds. Both native PIDs and handles are gone. These
+actual completion records are within the original 600-second bound; later
+read-only audit/sealing time is not substituted for execution completion time.
+The collector initially expects intent agent instead of the actual force_agent
+and aborts its final audit; the failed assumption and its correction are retained.
+No task, assertion, bound, model input or source effect changes to make it pass.
+Shared auth and enabled Memory Store remain explicit; empty context_items does
+not prove statistical independence. Usage/cost and time partitions remain unknown.
+
+Immutable attempt receipt SHA-256 is
+`c4636708bb41e9f6595143fd63fa6c13c57c5ec1ee00e77ee1a491d7a32c951f`;
+all 122 retained receipt/artifact files verify. Aggregate v65 SHA-256 is
+`26c2b155a93b2df91fbab52eb3ccb9d96afce87553c4d4dbe708569faea7d4c0`.
+It retains 59 development attempts and 16/30 applicable slots, with first
+outcomes 12 PASS / 4 FAIL / 14 NOT_RUN. Prior aggregates/attempts stay immutable.
+The remaining fourteen Linux tasks, new evidence-head gates/CI, formal review,
+user merge and canonical synchronization remain open.
