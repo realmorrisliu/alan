@@ -1,37 +1,35 @@
 # Disposition — 2026-10-11
 
-## Latest readiness update — 2026-10-12
+## Latest qualification update — 2026-10-12
 
-The user explicitly authorizes reusing the existing macOS Alan ChatGPT managed
-auth on Ubuntu. Only its selected Host Store auth file is transferred, with
-0600 destination permissions and unchanged macOS source; no credential payload
-is collected in evidence or copied into a project. Shared auth is not independent
-credential acceptance. The previous device login is stopped before transfer.
-Actual Linux generation now succeeds on qualification-gpt61 / gpt-6.1-sol /
-medium; its admitted callable and turn context match. This resolves the earlier
-login prerequisite without completing a development slot. Linux's first small
-repair subsequently qualifies with independent protected behavior, exact source
-effects, terminal evidence and native exits within the original bound. The other
-two Linux F1 repetitions also qualify. Linux F2 r1 additionally qualifies after
-a retained operator checker-path failure and a fresh original-task retry.
-F2 r2/r3 also qualify with original protected library assertions and both
-binary results, exact three-file edits, native detail/draft and exits. Aggregate
-v85 now includes three assisted Linux lifecycle completions: 78 development
-attempts and 27/30 applicable slots, with first outcomes 21 PASS / 6 FAIL /
-3 NOT_RUN. All seven failed Linux F4 development attempts and two separate
-zero-model native preflights remain retained. Successful r1/r2/r3 retain real
-cancel/130 exits, blocked delayed effects, revoke/denied read, exact owned durable
-recovery, once-only ledger, model-only source repair, protected behavior, native
-detail/draft and exits within 600 seconds. Each also requires one corrective
-directory selection and one factual model acknowledgement after duplicate
-same-path Host reapproval; no unassisted self-bootstrap claim follows.
-Linux F5 remains open with its original inputs, authority and assertions.
-Earlier unavailable-profile/no-copy observations below remain historical.
-092e3278, readiness head 2277b693 and evidence heads f497fbe7 / be25825a /
-94e8940f, 23e169e6, 3b4adf5d and 0f2958d9 each pass all sixteen checks. Readiness closes
-task 1.4, and complete Linux F1/F2/F3/F4 close 3.1/3.2/3.3/3.4; checklist is 13/19. This
-evidence-only follow-up needs its own normal gates and CI. User review/merge,
-full cross-Host qualification and canonical closure remain open.
+Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
+applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
+(70% first-pass qualification). All 21 failed attempt records remain retained;
+two zero-model collector preflights and one historical unintended verifier model
+turn are separate. The three Linux F4 completions require corrective directory
+selection and a factual model acknowledgement. The other 27 selected completions
+have no corrective model advice; this does not establish zero unplanned
+intervention because read-only collector corrections remain enumerated.
+All selected completions have model-authored allowed source edits, protected
+behavior, terminal evidence and actual native exits within the original bound.
+No operator authors the selected solutions. Final audit verifies 85 receipt
+hashes and 4,694 selected artifact hashes. Final source applicability covers the
+frozen runtime and the reviewed test-only relocation; it does not claim all raw
+compiled-input hashes remain equal after that relocation. Current-head CI and
+user merge/canonical closure remain separate gates.
+
+Managed macOS ChatGPT auth reuse is explicitly user-authorized and actual Linux
+generation succeeds on qualification-gpt61 / gpt-6.1-sol / medium. No secret
+payload is evidence or repository content. Source credentials are not changed
+by transfer; shared auth is not independent-credential acceptance.
+
+Pinned a9d88a6a passed all sixteen checks. Two-axis final review finds no spec
+violation and two documented test-placement violations; the narrow relocation
+repairs both and preserves production behavior/visibility. Eight focused tests
+and normal quality/distribution pass locally. This new committed head still
+needs its own CI. Tasks 1–3 and 4.1–4.3 close (17/19); current-head delivery and
+user merge/canonical adoption remain open. #1046 must precede #1047; no PR is
+automatically merged, and routing remains unchanged.
 
 ## Retained earlier disposition
 

@@ -1,16 +1,21 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
-Latest 2026-10-12 aggregate v85 records 78 development attempts and 27/30
-applicable slots: all fifteen macOS slots and all Linux F1/F2/F3/F4 repetitions.
-First outcomes are 21 PASS / 6 FAIL / 3 NOT_RUN. Linux F4 has three independently
-verified assisted completions; each needs one corrective directory selection and
-one factual authorization acknowledgement. They are not zero-unplanned-intervention
-completions. Its seven failed development attempts and two separate zero-model
-collector preflights remain retained. Linux F5 is still unexecuted.
-The original Linux F2 r1 checker-path failure remains FAIL; its fresh retry
-qualifies the slot. Readiness generation, shared-auth preparation and native
-collector preflights remain separate from development attempts.
-The retained earlier candidate history below does not reset these outcomes.
+Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
+applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
+(70% first-pass qualification). All 21 failed attempt records remain retained;
+two zero-model collector preflights and one historical unintended verifier model
+turn are separate. The three Linux F4 completions require corrective directory
+selection and a factual model acknowledgement. The other 27 selected completions
+have no corrective model advice; this does not establish zero unplanned
+intervention because read-only collector corrections remain enumerated.
+All selected completions have model-authored allowed source edits, protected
+behavior, terminal evidence and actual native exits within the original bound.
+No operator authors the selected solutions. Final audit verifies 85 receipt
+hashes and 4,694 selected artifact hashes. Final source applicability covers the
+frozen runtime and the reviewed test-only relocation; it does not claim all raw
+compiled-input hashes remain equal after that relocation. Current-head CI and
+user merge/canonical closure remain separate gates.
+The retained candidate history below does not reset original outcomes.
 
 The layout, thirty fixture inputs/prompts, bounds and measurement fields are
 frozen at five families x two platforms x three repetitions. Runtime readiness
@@ -133,9 +138,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | linux-f4-r1 | linux / ordinary PTY | F4 | 1 | FAIL: collector PID-domain assumption missed cancellation deadline | native-runs.md; original a1 FAIL `056a2301` retained; linked a2 FAIL `deb72654` retains lifecycle evidence beyond the bound; a5/a6/a7/a8/a9 failures and zero-model a3/a4 preflights retained; a10 assisted PASS `7883c9af` on 0f2958d9 completes the original task within 600 seconds |
 | linux-f4-r2 | linux / ordinary PTY | F4 | 2 | PASS | first actual model attempt a2 assisted PASS `e9c899f3` on 0f2958d9; prepared a1 never launched; original behavior/effects, native UI and exits independently verified |
 | linux-f4-r3 | linux / ordinary PTY | F4 | 3 | PASS | first actual model attempt a2 assisted PASS `60ced0f1` on 0f2958d9; prepared a1 never launched; original behavior/effects, native UI and exits independently verified |
-| linux-f5-r1 | linux / ordinary PTY | F5 | 1 | NOT_RUN | absent |
-| linux-f5-r2 | linux / ordinary PTY | F5 | 2 | NOT_RUN | absent |
-| linux-f5-r3 | linux / ordinary PTY | F5 | 3 | NOT_RUN | absent |
+| linux-f5-r1 | linux / ordinary PTY | F5 | 1 | FAIL: incomplete collector qualification | native-runs.md; original failures retained; fresh a2 PASS `ed0a2fbf` |
+| linux-f5-r2 | linux / ordinary PTY | F5 | 2 | FAIL: incomplete collector qualification | native-runs.md; original failures retained; fresh a2 PASS `de882567` |
+| linux-f5-r3 | linux / ordinary PTY | F5 | 3 | FAIL: incomplete collector qualification | native-runs.md; original failures retained; fresh a3 PASS `4e4c5793` |
 
 ## Per-attempt receipt and independent assertions
 

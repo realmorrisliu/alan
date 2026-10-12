@@ -2964,3 +2964,99 @@ separate. Task 3.4 closes and checklist is 13/19. Three Linux F5 tasks, complete
 metrics/review/final audit, current-head gates and user merge/canonical closure
 remain open. These controlled assisted completions do not qualify general
 unassisted self-bootstrap or automatic routing.
+
+## Linux F5 completes the original long-result family — 2026-10-12
+
+All tasks use the unchanged a9d88a6a runtime, qualification-gpt61,
+gpt-6.1-sol/medium, original fixtures/prompt hashes, exact allowed lib.rs effects,
+original 600-second limit and enforcing Linux backend. stdout, stderr and the
+initial diff producers each run once. The model reads the original Action through
+successful retained reader Actions and authors the dependent constant. Native
+original details, changed page, deep marker and Unicode draft return are captured;
+full ANSI uses no alternate screen. Separate fresh read-only source/protected
+checks pass with unchanged guards/driver and zero verifier model calls. All
+owned native invocations quit zero and their handles/PIDs are gone.
+
+The original failed qualifications remain FAIL:
+
+| Attempt | Retained failure | Receipt SHA-256 |
+| --- | --- | --- |
+| stdout r1 a1 | Full reader Action was correct, but collector checked the clipped rollout summary; remaining UI/protected scope incomplete | `078f8d3ac3e36d46499cf7aa0f988758885cd98811bec9d32bab58e31dc68c00` |
+| stderr r2 a1 | Normal model verification authorization was incorrectly treated as collector failure; remaining scope incomplete | `678747f7307f0e9f24e4fddfa18d4023bc5988b932ad227893608ee11bb5a813` |
+| diff r3 a1 | Collector required server literal in first deleted-line viewport, rather than the actual diff header | `e430450a82133e3f7a2d028c224c83788c40b7548465a275f6443980f27442cb` |
+| diff r3 a2 | Delayed scoped approvals and 531 individual page controls exhausted the original 600 seconds before complete marker/protected scope | `9a406eda9e7c8fe6eb4fb8b5d97d262da2116e93312e63074ecc8134dd943e86` |
+
+Fresh retries retain prior inventory/lib bytes before resetting only allowed
+lib.rs to the original fixture. Unknown authorization waits for a review tied to
+the exact current boot and request fingerprint. Model-authored compiler mistakes
+and subsequent model corrections remain visible; the operator does not supply
+source solutions or corrective advice. Long diff retry batches ordinary native
+Space controls and still requires an actual reconstructed screen at the marker;
+it does not infer visibility from content offsets or relax the bound.
+
+| Slot / attempt | Original bytes / marker | Original Action | Wall seconds | Receipt SHA-256 |
+| --- | --- | --- | --- | --- |
+| linux-f5-r1 / a2 | 165094 / 42137 | a2 | 175.243795 | `ed0a2fbf6ca8c17e9b97b1fc3368171b57d27dbb1e3e199d3c61abf33f826a5a` |
+| linux-f5-r2 / a2 | 165163 / 42274 | a2 | 354.337853 | `de882567833a11f455712fb33691ed201b0d135d2d2be15e1f0d59e6aaaaf2c8` |
+| linux-f5-r3 / a3 | 138113 / 42411 | a2 | 196.018466 | `4e4c5793123b19cbe4b4213d65f193e34b67b58f8e5c532a4870af8d0d263a60` |
+
+Normal setup approval is recorded in each run; stderr has one additional scoped
+compiler approval, diff has two. Every successful F5 run has zero operator source
+edits, corrective model advice and verifier generation. Physical Linux cursor
+coordinates and Host scroll gestures remain unmeasured. Available Home/10-line
+Space detail navigation has no End and remains laborious for long diffs.
+
+## Complete matrix audit and measured limits — 2026-10-12
+
+Aggregate v93 SHA-256 is
+`f3b3370b27985e8ea8c0747a435f601033a1855f6ef0bb6e2c9113591edc9092`.
+It retains 85 development attempts, 64 PASS / 21 FAIL attempt records, and
+30 applicable slots. Original first qualification is 21 PASS / 9 FAIL / 0 NOT_RUN
+(70%); retries do not replace first failures. PASS attempt records include earlier
+candidates and are not equivalent to current-source slots. Two zero-model
+collector preflights and one historical unintended verifier generation remain
+separate; neither is erased by later passes.
+
+Independent audit all-thirty-slot-independent-audit-v1.json SHA-256 is
+`682b83b23922eb3055cf147af0fd8e323645df4a8a9c3ca22393a5918b137a66`.
+It verifies all 85 retained attempt receipt hashes and 4,694 selected artifact
+hashes, actual model/effort, protected behavior, permitted source ownership,
+recorded lifecycle and original wall limits for all thirty selected completions.
+All selected solutions have zero operator source edits. Three Linux F4 selected
+completions require corrective model advice and authority reselection; 27 do not
+require corrective advice. Zero unplanned intervention is not inferred from that
+27: collector corrections remain enumerated per selected receipt, and a strict
+cohort count is not established. Enabled memory/shared auth prevent a statistical
+independence claim. Provider usage, cost and model/Tool/wait time partitions remain
+unknown. This is bounded supervised development evidence, not general autonomous
+self-bootstrap qualification.
+
+| Platform / family | Minimum / median / maximum wall seconds (three selected completions) |
+| --- | --- |
+| macos / F1 | 135.043 / 144.883 / 165.530 |
+| macos / F2 | 213.396 / 308.698 / 440.608 |
+| macos / F3 | 229.572 / 259.021 / 333.269 |
+| macos / F4 | 254.868 / 401.000 / 415.959 |
+| macos / F5 | 238.029 / 269.992 / 299.233 |
+| linux / F1 | 293.597 / 345.897 / 530.972 |
+| linux / F2 | 191.856 / 192.129 / 218.600 |
+| linux / F3 | 287.906 / 355.693 / 437.440 |
+| linux / F4 | 131.873 / 149.811 / 153.697 |
+| linux / F5 | 175.244 / 196.018 / 354.338 |
+
+macOS and modern Linux collectors measure submission through verified native
+cleanup. Older Linux F1–F3 use the latest captured actual native exit, whose
+terminal timestamp has one-second precision; later audit time is not runtime.
+Values include planned controls and operator waits and are not pure model speed
+or directly comparable benchmark estimates.
+
+Final review repairs two test-layout violations: public namespace read contracts
+move to crates/tools/tests/namespace_read.rs; private SystemProcessRunner scenarios
+move to adjacent process_runner_tests.rs. Exact production bodies are unchanged,
+435/437 macOS and 438/440 Linux frozen inputs match byte-for-byte, and the two
+remaining input changes are cfg(test) declarations/test extraction only. No
+production visibility/API, dependency or runtime configuration changes. Six Tool
+and two Process focused tests pass; normal quality/distribution pass. A future
+production change requires fresh applicability assessment rather than reuse of
+this proof. Current committed-head CI and user-controlled canonical closure are
+still required.

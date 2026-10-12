@@ -41,7 +41,7 @@ Historical checkmarks do not qualify new behavior.
 - [x] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
 - [x] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
 - [x] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
-- [ ] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
+- [x] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
 
 All three Linux F2 repetitions qualify on unchanged be25825a. The original r1
 checker-path failure and fresh retry remain retained; r2/r3 pass their original
@@ -59,12 +59,33 @@ behavior, native detail/draft and exits within 600 seconds. One corrective nativ
 directory selection and one factual model acknowledgement are recorded per run;
 none is zero-unplanned-intervention. Seven failed development attempts and two
 zero-model collector preflights remain retained. Task 3.4 closes; checklist is
-13/19. Only the three Linux F5 repetitions remain unexecuted.
+13/19. The three Linux F5 repetitions remained open at that historical point.
 
 ## 4. Findings, final candidate and delivery
 
-- [ ] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
-- [ ] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
-- [ ] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
+- [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
+- [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
+- [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
 - [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
+
+## Final native and evidence audit — 2026-10-12
+
+All three Linux F5 repetitions now qualify, retaining their original collector
+failures and the additional 600-second diff timeout. No original bound, prompt,
+authority, producer-once requirement or protected assertion changes. Checklist
+is 17/19 after tasks 3.5 and 4.1–4.3 close. Aggregate v93 retains 85 development
+attempts, first outcomes 21 PASS / 9 FAIL / 0 NOT_RUN, and 30 applicable slots.
+The independent audit verifies all attempt receipt hashes and 4,694 artifacts
+for the selected completions. Per-family wall times, assisted outcomes, collector
+interventions and missing provider cost/usage are published in native-runs.md.
+
+The two final review findings concern test placement; both are repaired without
+production changes or widened visibility, and eight focused tests pass.
+Unchanged production bodies and the other frozen inputs preserve existing native
+runtime applicability; raw all-input equality is no longer claimed. Long detail
+navigation remains laborious (Home and 10-line Space pages, no End); this is a
+reported usability limit, not a missing proof or a newly implemented feature.
+Task 4.4 still requires the committed head's review and full CI. Task 4.5 waits
+for user merges and canonical closure. This matrix does not qualify general
+unassisted self-bootstrap, automatic routing or statistical independence.

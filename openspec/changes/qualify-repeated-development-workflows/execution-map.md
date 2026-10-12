@@ -1,11 +1,20 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v85 retains 78 attempts and 27/30 applicable slots:
-all macOS slots and Linux F1/F2/F3/F4 r1/r2/r3. First outcomes are 21 PASS / 6 FAIL /
-3 NOT_RUN. Linux F4 qualifies three assisted completions after retaining all seven
-failed development attempts and two separate zero-model native preflights. Each
-completion records one corrective directory selection and one factual authority
-acknowledgement; it is not zero-unplanned-intervention. Linux F5 remains open.
+Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
+applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
+(70% first-pass qualification). All 21 failed attempt records remain retained;
+two zero-model collector preflights and one historical unintended verifier model
+turn are separate. The three Linux F4 completions require corrective directory
+selection and a factual model acknowledgement. The other 27 selected completions
+have no corrective model advice; this does not establish zero unplanned
+intervention because read-only collector corrections remain enumerated.
+All selected completions have model-authored allowed source edits, protected
+behavior, terminal evidence and actual native exits within the original bound.
+No operator authors the selected solutions. Final audit verifies 85 receipt
+hashes and 4,694 selected artifact hashes. Final source applicability covers the
+frozen runtime and the reviewed test-only relocation; it does not claim all raw
+compiled-input hashes remain equal after that relocation. Current-head CI and
+user merge/canonical closure remain separate gates.
 
 Linux task readiness is frozen on byte-identical 2277b693: known actual ChatGPT
 catalog/medium selection, task-cwd Git 2.53 and Rust/Cargo 1.96,
@@ -13,7 +22,7 @@ linux_reified_namespace and the original task inputs. Native lifecycle runs free
 head 0f2958d9 with unchanged 437 macOS and 440 Linux compiled inputs. The
 2026-10-12 user-authorized managed-auth reuse passes actual Linux generation on
 qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; see native-runs.md.
-Linux F5 and final delivery remain open. Earlier observations below are
+All Linux F5 repetitions now qualify; final delivery remains open. Earlier observations below are
 historical, including unavailable profiles and device login.
 An actual 80x24 final-source explicit-command PTY probe also passes protected
 compilation and write denial. Neither readiness probe fills a development slot.
@@ -373,3 +382,27 @@ authority scope, assertions and bound remain unchanged; the acknowledgement and
 all additional approvals/controls are retained separately. No operator writes a
 solution, no new completed start_work is permitted, and no automatic cwd adoption
 is added. A second additional mount request exceeds this variant and fails it.
+
+## Final long-output collection and review boundary — 2026-10-12
+
+Read the original producer and successful reader Actions independently of clipped
+rollout summaries. Diff details initially show deleted lines, so the first
+viewport is checked for its real diff header, not a literal found only in added
+lines. The original output determines the paging bound. For the final diff retry,
+565 ordinary native Space keys approach the useful line; individual following
+pages must actually render QVALUE=42411 before close/draft/protected verification.
+No goto control, rewritten output or extended wall limit is introduced. All key
+intent, boot identity and full ANSI records precede/retain the actual controls.
+
+Unknown model verification requests wait for scoped operator review. Review must
+match the current boot and the complete kind/options/prompt fingerprint before
+native approve. Only the exact compiler/assertion command in existing fixture
+scope is approved; source edits and model advice remain zero. Wrong boot and
+wrong fingerprint are rejected by a cache-only assert-based self-check.
+
+Final review relocates public retained-evidence contracts to crates/tools/tests/
+and private Process dispatch scenarios to adjacent process_runner_tests.rs.
+No production visibility is widened. Exact production-body comparisons plus
+all other frozen compiled inputs verify runtime applicability; the two changed
+raw source hashes are explicitly test-layout changes. Focused six Tool/two
+Process tests and normal quality/distribution checks exercise the new placement.

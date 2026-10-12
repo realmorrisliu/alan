@@ -309,7 +309,3 @@ pub(super) fn detect_mime(path: &Path) -> &'static str {
 #[cfg(test)]
 #[path = "file_tools_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "namespace_read_tests.rs"]
-mod namespace_read_tests;
