@@ -127,7 +127,7 @@ pub(super) fn validate_direct_command_shapes(
 /// Extract the inline script of a shell wrapper command (`sh -c <script>`,
 /// `bash -c <script>`, …) so it can be recursively inspected. Returns `None`
 /// for non-wrapper commands or wrappers without an inline script argument.
-pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
+pub(in crate::tools) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
     let view = nested_evaluator_view(words);
     if let Some(view) = &view {
         let options = view
@@ -350,7 +350,12 @@ pub(in crate::tools) fn command_preserves_execution_context(words: &[String]) ->
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
 fn env_preserves_execution_context(flags: &[String]) -> bool {
-    let protected = |name: &str| matches!(name, "PATH" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN");
+    let protected = |name: &str| {
+        matches!(
+            name,
+            "PATH" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN" | "CARGO_HOME"
+        ) || rust_compiler_override(name)
+    };
     for (index, flag) in flags.iter().enumerate() {
         if flag == "--" {
             break;
@@ -384,6 +389,61 @@ fn env_preserves_execution_context(flags: &[String]) -> bool {
         }
     }
     true
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn rust_compiler_override(name: &str) -> bool {
+    matches!(
+        name,
+        "RUSTC"
+            | "RUSTC_WRAPPER"
+            | "RUSTC_WORKSPACE_WRAPPER"
+            | "RUSTDOC"
+            | "RUSTFMT"
+            | "CARGO_BUILD_RUSTC"
+            | "CARGO_BUILD_RUSTC_WRAPPER"
+            | "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"
+            | "CARGO_BUILD_RUSTDOC"
+    ) || name.starts_with("CARGO_ALIAS_")
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn writes_cargo_configuration(
+    script: &str,
+    files: &[std::path::PathBuf],
+    directories: &[std::path::PathBuf],
+) -> Result<bool> {
+    let configured = |word: &str| {
+        super::path_like_subtokens(word).iter().any(|word| {
+            directories.iter().any(|cwd| {
+                let candidate = super::lexically_normalize_path(&cwd.join(word));
+                files
+                    .iter()
+                    .any(|file| file == &candidate || file.starts_with(&candidate))
+            })
+        })
+    };
+    for pair in super::shell_tokens_with_spans(script)?.windows(2) {
+        let operator = &pair[0];
+        if matches!(operator.decoded.as_str(), ">" | ">>" | ">|" | "<>")
+            && script[operator.raw_start..operator.raw_end] == operator.decoded
+            && configured(&pair[1].decoded)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(super::shell_commands(script)?.iter().any(|words| {
+        command_and_args(words).is_some_and(|(name, args)| {
+            let mutation = matches!(
+                name,
+                "cp" | "mv" | "rm" | "touch" | "tee" | "install" | "ln" | "dd" | "truncate"
+            ) || name == "sed"
+                && args
+                    .iter()
+                    .any(|arg| arg.starts_with("-i") || arg.starts_with("--in-place"));
+            mutation && args.iter().any(|arg| configured(arg))
+        })
+    }))
 }
 
 pub(in crate::tools) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {

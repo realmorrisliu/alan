@@ -1,3 +1,53 @@
+## Compiler configuration and query follow-up — 2026-10-12
+
+The 8c769439 review findings #4247811233/P1 and #4247811240/P2 are addressed
+by bounded compiler admission, not by claiming support for alternate compilers.
+Shared wrapper/environment checks reject RUSTC, wrapper/rustdoc/Rustfmt overrides,
+Cargo compiler/alias variables and CARGO_HOME changes. Compiler-using Cargo and
+direct Clippy/Fmt frontends inspect inline/extra-file/visible ancestor configuration,
+including every matching projection and fixed cd outcome. Unsupported compiler,
+wrapper, include and selected-alias configuration refuses before effects.
+Validated bytes and the digest come from one read; prelaunch revalidation also
+checks absent files becoming present, legacy precedence and backing aliases.
+Parent traversal and uncertain cwd selection refuse conservatively. Original
+shell tokens distinguish actual literal writes/redirections from quoted content;
+configuration editing and execution are separate requests. This bounded check
+explicitly does not qualify opaque program-internal configuration mutation.
+
+Real Cargo 1.97 canaries retain 68 probes (60 successful commands, 8 failures),
+including the initial bad direct-Clippy probe and corrected wrapper probes.
+Three earlier harness expectation errors are retained, not hidden or counted as
+model development failures. Plain metadata/clean/fetch/tree can invoke rustc;
+metadata --no-deps, locate-project/new/init and bare help/version queries do not.
+Custom command help can execute tools. Two actual named-help probes confirm
+external dispatch and a simple alias; an earlier shell-alias-help probe fails and
+is retained. Direct Clippy also invokes configured wrappers in successful checks.
+These probes do not alter the 85 development attempts or qualify additional slots.
+
+Old 8c native controls reproduce both findings: RUSTC override reaches actual
+execution and creates the owned marker; compiler-free metadata is falsely refused.
+Fresh Linux native boundaries pass 88 tests with actual confinement, including
+six override/config rewrite refusals before any marker, and system-first genuine
+Cargo compiling plus metadata --no-deps/locate-project/new/init after ordinary
+rustc disappears. The latter installation is a copied genuine runtime fixture,
+not a newly installed distro package. The help delimiter refinement has a fresh
+focused native rerun. Portable Rustup/config tests pass 34 cases; raw-shell writer
+and five manifest regressions pass. The original 450 Bash requests/3,415 operand
+roles match the old candidate, with no nested-wrapper/refusal difference. Twelve
+old-8c/new environment comparisons preserve every old field, including provider
+bindings, while independently asserting newly added absent-config snapshots.
+
+New evidence lives in `rustup-compiler-review-v1/`; historical configuration,
+file mutation and final-library audits live in `compiler-provider-review-v1/`
+under the original Host qualification cache. They bind 97 historical artifacts,
+15 project/checker inventories, 33 cwd phases, 241 parser coordinates and all 42
+file Tool argument occurrences. No original compiler configuration, override environment,
+extra config operand or transient config edit occurs in the selected tasks.
+Current filesystem absence is not substituted for historical proof. All original
+receipts/failures and the 30 slots remain intact; source applicability still needs
+actual compiled-input freezes after the production commit, current-head full CI
+and completed automated review. Earlier evidence below remains historical.
+
 # Initial native development runs — 2026-10-10
 
 The original three frozen macOS F1 inputs qualify through four normal-CLI real-model

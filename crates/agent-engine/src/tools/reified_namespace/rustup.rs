@@ -12,6 +12,8 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+#[path = "rustup_cargo.rs"]
+mod cargo;
 #[path = "rustup_provider.rs"]
 mod provider;
 
@@ -44,6 +46,10 @@ pub(super) fn discover(
             validate_command_environment(words)?;
         }
     }
+    let cargo_config_files = input
+        .map(|(input, commands)| cargo::inspect(input, commands))
+        .transpose()?
+        .unwrap_or_default();
     let mut proxies = Vec::new();
     let system = super::default_execution_substrate();
     for entry in std::env::split_paths(path) {
@@ -68,7 +74,7 @@ pub(super) fn discover(
             proxies.push(ReifiedExecutionSubstrateMount::new(entry, source));
         }
     }
-    if proxies.is_empty() {
+    if proxies.is_empty() && cargo_config_files.is_empty() {
         return Ok(None);
     }
     let mut command_providers = Vec::new();
@@ -84,7 +90,7 @@ pub(super) fn discover(
             let executable = &words[words.len() - args.len() - 1];
             let binding = provider::snapshot(executable, path, &proxies)?;
             let uses_proxy = binding.as_ref().is_some_and(|(_, _, proxy)| *proxy);
-            if !uses_proxy && name == "cargo" && cargo_subcommand(args).is_some() {
+            if !uses_proxy && name == "cargo" && cargo::uses_compiler(args) {
                 let compiler = provider::snapshot("rustc", path, &proxies)?;
                 if compiler.as_ref().is_some_and(|(_, _, proxy)| *proxy) {
                     return Err(
@@ -128,6 +134,7 @@ pub(super) fn discover(
             metadata_hashes: Vec::new(),
             executable_hashes,
             command_providers,
+            cargo_config_files,
         }));
     }
     if !home.is_absolute() || contains_parent_component(home) || home == Path::new("/") {
@@ -220,6 +227,7 @@ pub(super) fn discover(
         metadata_hashes: vec![(source, digest(&bytes))],
         executable_hashes: Vec::new(),
         command_providers,
+        cargo_config_files,
     };
     if let Some((input, commands)) = input {
         let mut selected = Vec::new();
@@ -392,9 +400,31 @@ fn cd_directories(
     args: &[String],
 ) -> Option<Vec<PathBuf>> {
     let [path] = args else { return None };
-    if path.is_empty() || path.starts_with(['-', '~']) {
+    // Parent traversal can cross remapped sibling mounts; refuse uncertain cwd selection.
+    if path.is_empty()
+        || path.starts_with(['-', '~'])
+        || Path::new(path)
+            .components()
+            .any(|part| part == std::path::Component::ParentDir)
+    {
         return None;
     }
+    // Absolute native paths must resolve through their existing delegated projection.
+    let projected = input
+        .declarations
+        .iter()
+        .filter_map(|mount| {
+            let ReifiedMountSource::Host(root) = &mount.source else {
+                return None;
+            };
+            Path::new(path)
+                .strip_prefix(&mount.namespace_path)
+                .ok()
+                .map(|suffix| (mount.namespace_path.components().count(), root.join(suffix)))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, path)| path);
+    let path = projected.as_deref().unwrap_or_else(|| Path::new(path));
     // Keep both outcomes: a shell cd may fail or be conditional.
     let mut possible = directories.to_vec();
     for directory in directories {
@@ -449,6 +479,25 @@ fn validate_command_environment(words: &[String]) -> Result<(), String> {
     }) {
         return Err("unsupported inspected Rustup management command".into());
     }
+    if let Some(("printf", args)) = view {
+        let mut options = args.iter().take_while(|word| word.as_str() != "--");
+        while let Some(option) = options.next() {
+            let variable = if option == "-v" {
+                options.next().map(String::as_str)
+            } else {
+                option.strip_prefix("-v").filter(|value| !value.is_empty())
+            };
+            if variable.is_some_and(|name| {
+                cargo::compiler_override(name)
+                    || matches!(
+                        name,
+                        "PATH" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN" | "CARGO_HOME"
+                    )
+            }) {
+                return Err("printf cannot change the inspected Rust tool environment".into());
+            }
+        }
+    }
     let prefix = view.map_or(words, |(_, args)| &words[..words.len() - args.len() - 1]);
     let state_change = view.is_none()
         || view.is_some_and(|(name, _)| {
@@ -467,7 +516,10 @@ fn validate_command_environment(words: &[String]) -> Result<(), String> {
     let operands = if state_change { words } else { prefix };
     for word in operands {
         let name = word.split_once('=').map_or(word.as_str(), |(name, _)| name);
-        if matches!(name.trim_end_matches('+'), "PATH" | "RUSTUP_HOME")
+        if matches!(
+            name.trim_end_matches('+'),
+            "PATH" | "RUSTUP_HOME" | "CARGO_HOME"
+        ) || cargo::compiler_override(name.trim_end_matches('+'))
             || (state_change && name.trim_end_matches('+') == "RUSTUP_TOOLCHAIN")
         {
             return Err(format!(
@@ -697,6 +749,9 @@ pub(super) fn revalidate(environment: &ReifiedRustupEnvironment) -> Result<(), S
         {
             return Err("Rust command provider changed before execution".into());
         }
+    }
+    for input in &environment.cargo_config_files {
+        cargo::revalidate(input)?;
     }
     for mount in &environment.proxy_mounts {
         validate_proxies(&mount.host_path)?;

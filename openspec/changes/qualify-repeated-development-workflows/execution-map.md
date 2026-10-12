@@ -1,3 +1,21 @@
+## Latest compiler configuration and query repair — 2026-10-12
+
+Completed review of 8c769439 reported P1 #4247811233 (compiler overrides) and
+P2 #4247811240 (compiler-free Cargo commands). Both require repair before merge.
+Compiler-using invocations now inspect inline, extra-file and visible ancestor
+Cargo configuration, reject unsupported compiler/wrapper/context overrides and
+selected aliases, and freeze validated bytes or absence for prelaunch revalidation.
+Only proven compiler-free commands skip the implicit PATH rustc check. Real Cargo
+1.97 probes show plain metadata/clean can invoke rustc; metadata --no-deps does not.
+Custom help, aliases, directory remapping and bounded literal configuration writes
+receive the same checks. Parent-traversing cd refuses uncertain native selection.
+No extra authority or compiler installation is added. Opaque program-internal
+configuration mutation within one shell request remains unqualified; separate
+configuration editing from execution. The original 30 slots/85 attempts and their
+first outcomes remain immutable. Task 4.4 stays open (17/19) until committed-head
+CI and completed automated re-review; user merge remains separate under 4.5.
+See [compiler/configuration evidence](native-runs.md#compiler-configuration-and-query-follow-up--2026-10-12).
+
 # Native execution and evidence map — 2026-10-10
 
 Latest provider repair responds to completed 06f15be3 review P1 #4247205400.

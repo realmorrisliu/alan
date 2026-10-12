@@ -64,9 +64,26 @@ descendant roots SHALL retain only their existing writable authority.
 #### Scenario: Inspected provider changes before launch
 - **WHEN** executable availability, contents, canonical provider or validated proxy classification changes after inspection
 - **THEN** revalidation refuses before command effects instead of falling through to another provider
-- **AND** an inspected ordinary Cargo subcommand's default PATH rustc lookup is also revalidated
+- **AND** a compiler-using ordinary Cargo subcommand's default PATH rustc lookup is also revalidated
 
 #### Scenario: Provider lookup context cannot be preserved
 - **WHEN** a Rust command uses an unproved executable alias, relative executable path, or wrapper changing the inspected lookup environment or cwd
 - **THEN** the unsupported invocation refuses before effects
 - **AND** the default-lookup mixed compiler guard does not imply qualification of Cargo compiler configuration or RUSTC/wrapper overrides
+
+
+#### Scenario: Cargo selects a compiler through configuration
+- **WHEN** a compiler-using Cargo or direct Cargo frontend invocation supplies environment, inline, extra-file or visible ancestor compiler/wrapper overrides or a selected alias
+- **THEN** unsupported compiler/context selections refuse before effects rather than snapshotting an unrelated PATH rustc
+- **AND** configuration inspection uses only existing native projections, checks every fixed cwd outcome and rejects uncertain or parent-traversing directory selection
+- **AND** validated configuration bytes and their digest come from the same read; present and absent inputs are rechecked before launch.
+
+#### Scenario: A proven compiler-free Cargo command has no ordinary rustc
+- **WHEN** ordinary Cargo runs a proven compiler-free builtin or metadata --no-deps while only a later Rustup proxy rustc exists
+- **THEN** absence of an ordinary compiler does not reject the command or project an unrelated Rustup runtime
+- **AND** plain metadata/clean and custom help/aliases retain conservative compiler/configuration inspection, including help targets after the argument delimiter.
+
+#### Scenario: A compound command visibly rewrites selected Cargo configuration
+- **WHEN** the same shell request contains a literal configuration redirection, file write or ancestor replacement followed by compiler-using Cargo
+- **THEN** the bounded preflight rejects it before effects and requires separate configuration-edit and execution requests
+- **AND** quoted output remains ordinary content; opaque program-internal mutation is not qualified by this bounded check.

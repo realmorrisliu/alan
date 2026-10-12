@@ -12,19 +12,43 @@ pub(super) fn has_attached_option_value(arg: &str) -> bool {
 }
 
 pub(in crate::tools) fn cargo_subcommand(args: &[String]) -> Option<&str> {
-    let mut words = args.iter();
+    cargo_command_options(args)
+        .0
+        .map(|index| args[index].as_str())
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn cargo_subcommand_index(args: &[String]) -> Option<usize> {
+    cargo_command_options(args).0
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn cargo_global_query(args: &[String]) -> bool {
+    cargo_command_options(args).1
+}
+
+fn cargo_command_options(args: &[String]) -> (Option<usize>, bool) {
+    let mut words = args.iter().enumerate();
     if args.first().is_some_and(|word| word.starts_with('+')) {
         words.next();
     }
-    while let Some(word) = words.next() {
+    let mut query = false;
+    while let Some((index, word)) = words.next() {
         if word == "--" {
-            return words.next().map(String::as_str);
+            return (words.next().map(|(index, _)| index), query);
         }
         if matches!(word.as_str(), "--config" | "--color" | "-C" | "-Z") {
-            words.next()?;
+            if words.next().is_none() {
+                return (None, query);
+            }
         } else if !word.starts_with('-') {
-            return Some(word);
+            return (Some(index), query);
+        } else if matches!(
+            word.as_str(),
+            "--help" | "-h" | "--version" | "-V" | "--list"
+        ) {
+            query = true;
         }
     }
-    None
+    (None, query)
 }

@@ -462,29 +462,40 @@ fn shell_directory_changes_inspect_possible_project_selections() {
             Some((&input, &commands))
         )
         .unwrap_err()
-        .contains("Rust selection after shell cd")
+        .contains("Cargo compiler inspection needs a fixed delegated cwd")
     );
-    discover(
-        proxies.to_str().unwrap(),
-        &home,
-        Some("1.97.0".into()),
-        Some((&input, &commands)),
-    )
-    .unwrap();
-    for words in [
-        vec!["cargo", "+1.97.0", "test"],
-        vec!["RUSTUP_TOOLCHAIN=1.97.0", "cargo", "test"],
-        vec!["printf", "cargo"],
-    ] {
-        commands[1] = words.iter().map(|word| (*word).into()).collect();
+    assert!(
         discover(
             proxies.to_str().unwrap(),
             &home,
-            None,
-            Some((&input, &commands)),
+            Some("1.97.0".into()),
+            Some((&input, &commands))
         )
-        .unwrap();
+        .is_err()
+    );
+    for words in [
+        vec!["cargo", "+1.97.0", "test"],
+        vec!["RUSTUP_TOOLCHAIN=1.97.0", "cargo", "test"],
+    ] {
+        commands[1] = words.iter().map(|word| (*word).into()).collect();
+        assert!(
+            discover(
+                proxies.to_str().unwrap(),
+                &home,
+                None,
+                Some((&input, &commands))
+            )
+            .is_err()
+        );
     }
+    commands[1] = vec!["printf".into(), "cargo".into()];
+    discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap();
     commands.swap(0, 1);
     commands[0] = vec!["cargo".into(), "test".into()];
     discover(
@@ -957,3 +968,6 @@ fn component_metadata_parent_alias_cannot_escape_runtime() {
 
 #[path = "rustup_provider_tests.rs"]
 mod provider;
+
+#[path = "rustup_cargo_tests.rs"]
+mod cargo;

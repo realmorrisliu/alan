@@ -129,6 +129,8 @@ pub struct ReifiedRustupEnvironment {
     pub executable_hashes: Vec<(PathBuf, String)>,
     /// Frozen command lookup and provider classification, rechecked before effects.
     pub command_providers: Vec<ReifiedRustCommandProvider>,
+    /// Present and absent visible Cargo configuration inputs, rechecked before effects.
+    pub cargo_config_files: Vec<ReifiedCargoConfigInput>,
 }
 
 /// Host-inspected command lookup; this record conveys no mount authority.
@@ -140,6 +142,19 @@ pub struct ReifiedRustCommandProvider {
     pub path: String,
     /// Canonical provider, contents, and validated Rustup proxy classification.
     pub resolved: Option<(PathBuf, String, bool)>,
+}
+
+/// Visible Cargo configuration input; this snapshot conveys no mount authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReifiedCargoConfigInput {
+    /// Host path behind the configuration candidate.
+    pub path: PathBuf,
+    /// Validated backing root for bounded alias revalidation.
+    pub root: PathBuf,
+    /// Original native projection, retained for absolute-alias checks.
+    pub namespace_root: PathBuf,
+    /// Contents digest, or absence when the candidate did not exist.
+    pub digest: Option<String>,
 }
 
 /// Pure plan consumed by the future Linux namespace runner.

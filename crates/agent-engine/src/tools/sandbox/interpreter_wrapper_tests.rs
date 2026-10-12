@@ -652,3 +652,53 @@ fn legacy_env_reset_is_rejected_before_rust_tool_effects() {
         "{error}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn cargo_configuration_write_detection_uses_original_shell_tokens() {
+    let files = [
+        std::path::PathBuf::from("/project/.cargo/config.toml"),
+        std::path::PathBuf::from("/project/extra.toml"),
+        std::path::PathBuf::from("/project/cfg/extra.toml"),
+        std::path::PathBuf::from("/.cargo/config.toml"),
+    ];
+    for script in [
+        "echo>.cargo/config.toml; cargo test",
+        "echo>extra.toml; cargo --config extra.toml test",
+        "printf '%s' override > extra.toml; cargo --config extra.toml test",
+        "cp other .cargo/config.toml; cargo test",
+        "sed -i 's/a/b/' extra.toml; cargo test",
+        "dd if=unsafe.toml of=extra.toml; cargo --config extra.toml test",
+        "truncate -s 0 extra.toml; cargo --config extra.toml test",
+        "rm -rf .cargo; mv staged .cargo; cargo test",
+        "rm -rf cfg; mv staged cfg; cargo --config cfg/extra.toml test",
+        "echo>/.cargo/config.toml; cargo test",
+    ] {
+        assert!(
+            super::super::command_wrappers::writes_cargo_configuration(
+                script,
+                &files,
+                &[std::path::PathBuf::from("/project")]
+            )
+            .unwrap(),
+            "{script}"
+        );
+    }
+    for script in [
+        "echo '> .cargo/config.toml'; cargo test",
+        "echo '>' .cargo/config.toml; cargo test",
+        "cat .cargo/config.toml; cargo test",
+        "sed -n '1,20p' extra.toml; cargo test",
+        "echo config > src/lib.rs; cargo test",
+    ] {
+        assert!(
+            !super::super::command_wrappers::writes_cargo_configuration(
+                script,
+                &files,
+                &[std::path::PathBuf::from("/project")]
+            )
+            .unwrap(),
+            "{script}"
+        );
+    }
+}

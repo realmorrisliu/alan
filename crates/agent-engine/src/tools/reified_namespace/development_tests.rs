@@ -91,9 +91,179 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("provider changed"), "{error}");
+    let commands = vec![
+        vec!["cargo".into(), "metadata".into(), "--no-deps".into()],
+        vec!["cargo".into(), "locate-project".into()],
+        vec!["cargo".into(), "new".into()],
+        vec!["cargo".into(), "init".into()],
+    ];
+    let path = format!("{}/bin:{}:/usr/bin:/bin", system.display(), proxy.display());
+    let mut input = ReifiedNamespacePlanInput::new(
+        vec![ReifiedMountDeclaration::host(&project, &project, ReifiedMountAccess::ReadOnly)],
+        &project,
+        vec!["/bin/sh".into(), "-c".into(),
+            "set -eu; cargo metadata --no-deps --format-version 1; cargo locate-project; cargo new --vcs none \"$TMPDIR/new-provider-project\"; cargo init --vcs none \"$TMPDIR/init-provider-project\"".into()],
+        NetworkPosture::Deny,
+    );
+    let environment = rustup::discover(&path, &home, None, Some((&input, &commands)))
+        .unwrap()
+        .unwrap();
+    assert!(environment.toolchain_mounts.is_empty());
+    assert!(environment.cargo_config_files.is_empty());
+    assert!(
+        !environment
+            .command_providers
+            .iter()
+            .any(|binding| binding.executable == "rustc")
+    );
+    let mut substrate = default_execution_substrate();
+    substrate.push(ReifiedExecutionSubstrateMount::new(&system, &system));
+    substrate.extend(environment.proxy_mounts.iter().cloned());
+    input = input
+        .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
+        .with_execution_substrate(substrate)
+        .with_command_path(path);
+    input.rustup = Some(environment);
+    let free_plan = ReifiedNamespacePlan::derive(input).unwrap();
+    let free = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+        .run(&free_plan)
+        .unwrap();
+    assert_eq!(free.exit_code, 0, "{} {}", free.stdout, free.stderr);
+    assert!(free.stdout.contains("alan_system_provider_fixture"));
+    eprintln!(
+        "system Cargo metadata --no-deps/locate-project/new/init pass with only a later proxy rustc and no projected Rustup runtime"
+    );
     eprintln!(
         "system-first genuine Cargo/Rustc compile passed; Rustup metadata/runtime count 0; source/lock unchanged"
     );
+}
+
+#[test]
+fn native_cargo_compiler_overrides_refuse_before_any_command_effects() {
+    let (Some(proxy), Some(runtime)) = (
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_PROXY_DIR"),
+        std::env::var_os("ALAN_LINUX_QUALIFICATION_RUST_RUNTIME"),
+    ) else {
+        eprintln!("skipping native Cargo override refusal: explicit owned runtime inputs absent");
+        return;
+    };
+    assert!(probe_linux_reification().is_selectable());
+    let proxy = PathBuf::from(proxy);
+    let runtime = PathBuf::from(runtime);
+    let home = runtime.parent().unwrap().parent().unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let project = std::fs::canonicalize(fixture.path()).unwrap();
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::create_dir(project.join(".cargo")).unwrap();
+    std::fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname='alan_override_fixture'\nversion='0.1.0'\nedition='2024'\n",
+    )
+    .unwrap();
+    std::fs::write(project.join("src/lib.rs"), "pub fn answer() -> u32 { 4 }\n").unwrap();
+    let config = project.join(".cargo/config.toml");
+    let extra = project.join("extra.toml");
+    for (case, script, words, contents, extra_contents) in [
+        (
+            "compiler env",
+            "printf effect > marker; RUSTC=/usr/bin/true cargo test --offline",
+            vec!["RUSTC=/usr/bin/true", "cargo", "test", "--offline"],
+            None,
+            None,
+        ),
+        (
+            "inline config",
+            "printf effect > marker; cargo --config 'build.rustc=\"/usr/bin/true\"' test --offline",
+            vec!["cargo", "--config", "build.rustc=\"/usr/bin/true\"", "test"],
+            None,
+            None,
+        ),
+        (
+            "project config",
+            "printf effect > marker; cargo test --offline",
+            vec!["cargo", "test"],
+            Some("[build]\nrustc='/usr/bin/true'\n"),
+            None,
+        ),
+        (
+            "direct Clippy",
+            "printf effect > marker; cargo-clippy clippy --offline",
+            vec!["cargo-clippy", "clippy", "--offline"],
+            Some("[build]\nrustc-wrapper='/usr/bin/true'\n"),
+            None,
+        ),
+        (
+            "explicit config",
+            "printf effect > marker; cargo --config extra.toml test --offline",
+            vec!["cargo", "--config", "extra.toml", "test"],
+            None,
+            Some("[build]\nrustc='/usr/bin/true'\n"),
+        ),
+        (
+            "literal config rewrite",
+            "printf effect > marker; printf '[build]\\nrustc=\"/usr/bin/true\"\\n' >.cargo/config.toml; cargo test --offline",
+            vec!["cargo", "test"],
+            None,
+            None,
+        ),
+    ] {
+        for path in [&config, &extra] {
+            if path.exists() {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        if let Some(contents) = contents {
+            std::fs::write(&config, contents).unwrap();
+        }
+        if let Some(contents) = extra_contents {
+            std::fs::write(&extra, contents).unwrap();
+        }
+        let mut input = ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(
+                &project,
+                &project,
+                ReifiedMountAccess::ReadWrite,
+            )],
+            &project,
+            vec!["/bin/sh".into(), "-c".into(), script.into()],
+            NetworkPosture::Deny,
+        );
+        let commands = vec![words.into_iter().map(String::from).collect()];
+        let environment = rustup::discover(
+            proxy.to_str().unwrap(),
+            home,
+            Some(runtime.file_name().unwrap().to_str().unwrap().into()),
+            Some((&input, &commands)),
+        );
+        if let Ok(Some(environment)) = environment {
+            let mut substrate = default_execution_substrate();
+            substrate.extend(
+                environment
+                    .proxy_mounts
+                    .iter()
+                    .chain(&environment.toolchain_mounts)
+                    .cloned(),
+            );
+            input = input
+                .with_execution_substrate(substrate)
+                .with_command_path(format!("{}:/usr/bin:/bin", proxy.display()));
+            input.rustup = Some(environment);
+            let plan = ReifiedNamespacePlan::derive(input).unwrap();
+            let result =
+                LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                    .run(&plan)
+                    .unwrap();
+            panic!(
+                "unsupported {case} entered native execution: exit {}, marker {}, stderr {}",
+                result.exit_code,
+                project.join("marker").exists(),
+                result.stderr
+            );
+        }
+        assert!(environment.is_err(), "{case}");
+        assert!(!project.join("marker").exists(), "{case}");
+        eprintln!("native {case} refused before marker/user effects");
+    }
 }
 
 #[test]
