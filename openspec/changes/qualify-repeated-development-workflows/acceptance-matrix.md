@@ -1,8 +1,8 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
-Latest 2026-10-12 aggregate v65 records 59 development attempts and 16/30
-applicable slots: all fifteen macOS slots and the first Linux small repair.
-First outcomes are 12 PASS / 4 FAIL / 14 NOT_RUN. Linux readiness generation
+Latest 2026-10-12 aggregate v68 records 61 development attempts and 18/30
+applicable slots: all fifteen macOS slots and all three Linux small repairs.
+First outcomes are 14 PASS / 4 FAIL / 12 NOT_RUN. Linux readiness generation
 and user-authorized shared-auth preparation remain separate from task attempts.
 The retained earlier candidate history below does not reset these outcomes.
 
@@ -116,8 +116,8 @@ content; generated role-prefix regression checks follow ADR-0059.
 | macos-f5-r2 | macos / Herdr | F5 | 2 | PASS | native-runs.md; original a1 receipt `e1514200`; notice-source a2 PASS `eebdb1d7` |
 | macos-f5-r3 | macos / Herdr | F5 | 3 | PASS | native-runs.md; original a1 receipt `95dbbfd9`; auxiliary lookup and unintended verifier turn disclosed; notice-source a2 PASS `70094038`, zero new verifier generation |
 | linux-f1-r1 | linux / ordinary PTY | F1 | 1 | PASS | native-runs.md; original a1 PASS `c4636708` on byte-identical 2277b693; protected checking, native exit and collector correction retained |
-| linux-f1-r2 | linux / ordinary PTY | F1 | 2 | NOT_RUN | absent |
-| linux-f1-r3 | linux / ordinary PTY | F1 | 3 | NOT_RUN | absent |
+| linux-f1-r2 | linux / ordinary PTY | F1 | 2 | PASS | native-runs.md; original a1 PASS `d8387d60` on byte-identical f497fbe7; protected checking, actual detail page and exits retained |
+| linux-f1-r3 | linux / ordinary PTY | F1 | 3 | PASS | native-runs.md; original a1 PASS `725de813` on byte-identical f497fbe7; protected checking, actual detail page, exits and ANSI-header collector correction retained |
 | linux-f2-r1 | linux / ordinary PTY | F2 | 1 | NOT_RUN | absent |
 | linux-f2-r2 | linux / ordinary PTY | F2 | 2 | NOT_RUN | absent |
 | linux-f2-r3 | linux / ordinary PTY | F2 | 3 | NOT_RUN | absent |

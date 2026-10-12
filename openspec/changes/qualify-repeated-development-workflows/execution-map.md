@@ -1,11 +1,12 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v65 retains 59 attempts and 16/30 applicable slots:
-all macOS slots and Linux F1 r1. First outcomes are 12 PASS / 4 FAIL / 14 NOT_RUN.
+Latest 2026-10-12 aggregate v68 retains 61 attempts and 18/30 applicable slots:
+all macOS slots and Linux F1 r1/r2/r3. First outcomes are 14 PASS / 4 FAIL /
+12 NOT_RUN. Both 2277b693 and f497fbe7 pass all sixteen current-head checks.
 Linux task readiness is frozen on byte-identical 2277b693, which passes all
 sixteen checks: known actual ChatGPT catalog/medium selection, task-cwd Git 2.53
 and Rust/Cargo 1.96, linux_reified_namespace and the original task inputs.
-The remaining fourteen Linux tasks and final delivery remain open. Earlier
+The remaining twelve Linux tasks and final delivery remain open. Earlier
 observations below are historical, including unavailable profiles and login.
 
 This records supported operator controls. Current aggregate v63 retains eleven

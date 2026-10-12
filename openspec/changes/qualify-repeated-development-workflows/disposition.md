@@ -11,13 +11,15 @@ Actual Linux generation now succeeds on qualification-gpt61 / gpt-6.1-sol /
 medium; its admitted callable and turn context match. This resolves the earlier
 login prerequisite without completing a development slot. Linux's first small
 repair subsequently qualifies with independent protected behavior, exact source
-effects, terminal evidence and native exits within the original bound. Aggregate
-v65 retains 59 attempts and 16/30 applicable slots, with first outcomes
-12 PASS / 4 FAIL / 14 NOT_RUN; the other fourteen Linux tasks remain.
+effects, terminal evidence and native exits within the original bound. The other
+two Linux F1 repetitions also qualify. Aggregate v68 retains 61 attempts and
+18/30 applicable slots, with first outcomes 14 PASS / 4 FAIL / 12 NOT_RUN; the
+remaining four Linux families stay open.
 Earlier unavailable-profile/no-copy observations below remain historical.
-Both 092e3278 and readiness head 2277b693 pass all sixteen checks. The first
-Linux task's native task-cwd/catalog/source freeze closes task 1.4; checklist is
-9/19. This additional task evidence needs its own normal gates and CI. User
+092e3278, readiness head 2277b693 and evidence head f497fbe7 pass all sixteen
+checks. The native task-cwd/catalog/source freeze closes task 1.4, and all three
+Linux small repairs close task 3.1; checklist is 10/19. This additional task
+evidence needs its own normal gates and CI. User
 review/merge, full cross-Host qualification and canonical closure remain open.
 
 ## Retained earlier disposition

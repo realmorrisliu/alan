@@ -2519,3 +2519,64 @@ It retains 59 development attempts and 16/30 applicable slots, with first
 outcomes 12 PASS / 4 FAIL / 14 NOT_RUN. Prior aggregates/attempts stay immutable.
 The remaining fourteen Linux tasks, new evidence-head gates/CI, formal review,
 user merge and canonical synchronization remain open.
+
+## Remaining Linux small-repair repetitions — 2026-10-12
+
+Evidence head f497fbe7 passes all sixteen distinct checks, including CodeQL.
+Immutable gates receipt SHA-256 is
+`75c494c300925861fbdde88ad8cfff05e6d980e5b84e23df98f6653899a08827`.
+The 437 macOS/440 Linux compiled inputs remain unchanged; no production repair
+or model substitution is introduced. Linux F1 r2/r3 both use fresh original
+fixtures, normal CLI invocations in actual 80x24 PTYs, qualification-gpt61 /
+ChatGPT / gpt-6.1-sol / medium and the same selected Git 2.53/Rust-Cargo 1.96.
+Each actual task-cwd version command completes before the original Agent input,
+with one planned setup approval. Each model rollout contains exactly one original
+force_agent admission and one matching turn context.
+
+r2's first Cargo test fails with exit 101 because absolute difference adds one;
+the model changes only src/lib.rs to `(x - y).abs()` and the original test passes.
+r3's first Cargo test fails with exit 101 because min(-5) does not clamp; the
+model changes only src/lib.rs to x.clamp(-5, 5), names the unused argument _y,
+and the original test passes. Both retain the optional non-Git inspection failure
+and rejected delegated prelaunch before direct parent fallback. Neither failure
+is hidden or represented as successful child execution. r2 has one normal model
+hash-command approval; r3 needs no model-selected Tool approval. No operator
+source edit, corrective advice, task restart or extra Agent input occurs.
+
+Each actual detail modal acquires the final successful test result (a7 in r2,
+a6 in r3); a separate Space event and captured changed page precede closure.
+Closing restores Unicode draft insertion, producing abcδQXYZ. Complete native
+transcript streams retain earlier history. r2's seven observed model Tool
+Processes and r3's six all exit. Physical cursor coordinates and a physical
+Host scrollback gesture remain unmeasured, rather than inferred from byte-stream
+captures. r3's collector initially expects contiguous raw 7/7 text: the native
+loading header actually updates through separate cursor-addressed digit patches.
+The failed substring assumption and read-only correction are retained; actual
+Action/result identity, original output and changed-page evidence are unchanged.
+No renderer or task is altered to satisfy the collector.
+
+Fresh independent checker invocations grant the actual project and original
+protected assertions read-only with only scratch writable. Each runs the original
+unchanged protected library assertions through a fresh offline/locked Cargo build
+and passes all four behavioral cases. Driver/assertion hashes and exact allowed
+source effects remain unchanged; both checkers have zero Agent admissions and
+zero model turn contexts. Both checker Tools and native instances exit normally.
+Independent verification completes at 345.676205 seconds for r2 and 294.056641
+for r3. Retained native script timestamps put model/checker exits at approximately
+227/346 and 164/294 seconds respectively, within the original 600-second bound.
+Timestamp precision is one second; later receipt-sealing time is separate.
+
+| Slot / attempt | Receipt SHA-256 | Verified receipt/artifact files |
+| --- | --- | --- |
+| linux-f1-r2 / a1 | `d8387d601beedab6275d882b7291db852d5b98dcb3a67413a98a4ab6d1440f4a` | 101 |
+| linux-f1-r3 / a1 | `725de8137cf1e54b522b99f40afefe6cc044c8ee58bd071b18243815693d9322` | 92 |
+
+Aggregate v68 SHA-256 is
+`30a67386bcfd9a223f51ada1c1dcae997f892789f6d2f918f245a8492c6998cf`.
+It retains 61 development attempts and 18/30 applicable slots, with original
+first outcomes 14 PASS / 4 FAIL / 12 NOT_RUN. All three Linux F1 repetitions now
+close task 3.1; checklist is 10/19. Shared authentication and enabled memory
+remain explicit; statistical independence, usage/cost and time partitions are
+not qualified. The other twelve Linux tasks, new evidence-head gates/CI, final
+review, user merge and canonical synchronization remain open. Earlier attempts
+and aggregates are immutable and no original failure is reset.

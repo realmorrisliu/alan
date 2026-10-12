@@ -37,7 +37,7 @@ Historical checkmarks do not qualify new behavior.
 
 ## 3. Linux real-model tasks in ordinary PTY
 
-- [ ] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
+- [x] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
 - [ ] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
 - [ ] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
 - [ ] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
