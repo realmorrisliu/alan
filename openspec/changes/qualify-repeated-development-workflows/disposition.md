@@ -16,16 +16,20 @@ two Linux F1 repetitions also qualify. Linux F2 r1 additionally qualifies after
 a retained operator checker-path failure and a fresh original-task retry.
 F2 r2/r3 also qualify with original protected library assertions and both
 binary results, exact three-file edits, native detail/draft and exits. Aggregate
-v81 includes all three Linux compiler-correction repetitions and two failed
-Linux F4 r1 attempts: 70 attempts and 24/30 applicable slots, with first outcomes
-19 PASS / 6 FAIL / 5 NOT_RUN. The first lifecycle collector misreads namespace
-PID as guest PID and misses the deadline; its retry proves cancellation/revoke/
-denial/recovery/no-repeat but exceeds the original bound. Linux F4/F5 remain
-open; the same protected assertions and authority boundaries are preserved.
+v85 now includes three assisted Linux lifecycle completions: 78 development
+attempts and 27/30 applicable slots, with first outcomes 21 PASS / 6 FAIL /
+3 NOT_RUN. All seven failed Linux F4 development attempts and two separate
+zero-model native preflights remain retained. Successful r1/r2/r3 retain real
+cancel/130 exits, blocked delayed effects, revoke/denied read, exact owned durable
+recovery, once-only ledger, model-only source repair, protected behavior, native
+detail/draft and exits within 600 seconds. Each also requires one corrective
+directory selection and one factual model acknowledgement after duplicate
+same-path Host reapproval; no unassisted self-bootstrap claim follows.
+Linux F5 remains open with its original inputs, authority and assertions.
 Earlier unavailable-profile/no-copy observations below remain historical.
 092e3278, readiness head 2277b693 and evidence heads f497fbe7 / be25825a /
-94e8940f, 23e169e6 and 3b4adf5d each pass all sixteen checks. Readiness closes
-task 1.4, and complete Linux F1/F2/F3 close 3.1/3.2/3.3; checklist is 12/19. This
+94e8940f, 23e169e6, 3b4adf5d and 0f2958d9 each pass all sixteen checks. Readiness closes
+task 1.4, and complete Linux F1/F2/F3/F4 close 3.1/3.2/3.3/3.4; checklist is 13/19. This
 evidence-only follow-up needs its own normal gates and CI. User review/merge,
 full cross-Host qualification and canonical closure remain open.
 

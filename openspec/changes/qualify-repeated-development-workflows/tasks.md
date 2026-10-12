@@ -40,7 +40,7 @@ Historical checkmarks do not qualify new behavior.
 - [x] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
 - [x] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
 - [x] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
-- [ ] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
+- [x] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
 - [ ] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
 
 All three Linux F2 repetitions qualify on unchanged be25825a. The original r1
@@ -50,12 +50,16 @@ effects, native detail/draft and exits pass. Task 3.2 closes.
 All three Linux F3 repetitions also qualify on unchanged 23e169e6, retaining
 actual E0425/E0583/E0308 diagnostics before model-only lib repairs, original
 protected behavior, failed-Action details, Unicode draft return and native exits.
-Task 3.3 closes; checklist is 12/19. r1 retains its incremental-heading collector
-correction; r2/r3 have none. The matrix still has six Linux F4/F5 tasks open.
-Linux F4 r1 has two retained FAIL attempts. The first misses cancellation due to
-a collector PID-domain assumption; the second proves the lifecycle path but
-exceeds 600 seconds after a launcher correction and operator delay. Task 3.4
-remains open; a fresh original-task retry with the corrected collector is needed.
+Task 3.3 closed at checklist 12/19. r1 retains its incremental-heading collector
+correction; r2/r3 have none. Six Linux F4/F5 tasks were still open at that point.
+Linux F4 now qualifies three assisted repetitions on unchanged 0f2958d9. Each
+retains cancel/130 and native group exit, blocked late effects, revoke/actual denied
+read, exact owned recovery, once-only ledger, model-authored lib repair, protected
+behavior, native detail/draft and exits within 600 seconds. One corrective native
+directory selection and one factual model acknowledgement are recorded per run;
+none is zero-unplanned-intervention. Seven failed development attempts and two
+zero-model collector preflights remain retained. Task 3.4 closes; checklist is
+13/19. Only the three Linux F5 repetitions remain unexecuted.
 
 ## 4. Findings, final candidate and delivery
 

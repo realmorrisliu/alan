@@ -2838,3 +2838,129 @@ while preserving the complete original lifecycle and verification scope within
 600 seconds. Other Linux F4/F5 repetitions, full metrics/audit and user-controlled
 review/merge/canonical closure stay open. Shared auth, enabled memory and unknown
 usage/cost/time partitions remain explicit.
+
+
+## Linux lifecycle collection failures and assisted complete family — 2026-10-12
+
+The original thirty slots, model, fixture bytes, allowed changes, assertions,
+40-second delayed effect and 600-second execution bound remain unchanged.
+Ordinary 80x24 PTYs use the frozen native CLI, gpt-6.1-sol / medium and the
+linux_reified_namespace backend on byte-identical source 0f2958d9. Its sixteen
+current-head checks now pass, sealed in gates-0f295-v1/receipt.json SHA-256
+`894c363e524343a955e36fc653183a31c750483882d3c06d18b526f10b781079`.
+The later documentation update needs its own normal gates and current-head CI.
+
+The controller only sends recorded native controls/explicit grants and reads
+bounded numeric-owner SDK evidence. It never writes a solution. Two native
+preflight failures have zero model input and remain separate from development
+attempts: a3 lacks a fresh-PTY cursor-query answer and exits one; a4 misreads the
+SDK listing as records rather than names and quits zero. Both actual native PIDs
+and handles are gone. Their receipts remain immutable, including a3's misleading
+field that conflated a successful zero exit with absence of a live process.
+
+The a5 model attempt proves timely cancellation and revocation, but waits for
+revocation's cwd result in the wrong owner. The actual successful result is an
+AgentFS Action, not a rollout Tool call; the collector timeout remains FAIL.
+The a6 attempt proves cancel/revoke/denial/recovery/no-repeat and contract success,
+but its raw ANSI heading assertion fails. The retained screen does contain
+Original output and the actual contract result. It lacks the remaining draft and
+protected-verifier proof, so it stays FAIL. Its first cleanup writes /quit into
+an open modal; a pinned selected-instance Host stop ends only that owned Root.
+The full after-cleanup terminal is retained separately. Its original 17,142-byte
+prefix is recovered by the receipt's exact SHA-256 and every sealed artifact hash
+is verified; neither receipt nor failure classification is rewritten.
+
+The existing repository dependency vt100 0.16.2 reconstructs incremental output,
+with a cache-only Rust reader and assert checks for split headings and Unicode
+insertion. No production dependency or terminal rendering code changes.
+terminal-frame-v1/receipt.json SHA-256 is
+`0e35a94bcff5d1b452291ee8673dbfde82582ec303054211fdea1269a24a21c6`.
+Parser binary SHA-256 is
+`2649a9b40a23eee67063fde7cd7ccbd53dee4b3298660bb9aee956a553cd227c`.
+
+The a7/a8/a9 failures reveal an actual assisted-workflow boundary. A recovered
+model may ask to reapprove an already-authorized namespace path. Explicitly
+approving that same Host directory replaces its binding; the old cwd authority
+then correctly denies read/command execution until explicit directory selection.
+This is the accepted stale-cwd rule, not permission to adopt a new grant silently.
+a7 cannot complete the requested contract work after that denial. a8 records the
+same pending request and an intentional owned-instance stop before adopting a
+new assisted protocol. a9 explicitly reselects the directory after settled
+failure but repeats the original recovery directive; the model asks for another
+approval and exceeds the predeclared one-extra-request variant. None qualifies.
+The original two failures also remain recorded.
+
+| r1 record | Classification | Receipt SHA-256 |
+| --- | --- | --- |
+| a3 | zero-model collector preflight FAIL | `dcb61da341c270c9fb2a50b06ef2429c14634eb4f0c83e240122f39141a86ae1` |
+| a4 | zero-model collector preflight FAIL | `6aa844e464af3bbb9095f289987fcd766303035f78dfd01e2827e2d415481903` |
+| a5 | development FAIL: wrong cwd-evidence owner | `d0e5705f26cb89f18a9fc21dc73f27bec49fa31438909327d58b2b05fb6c734f` |
+| a6 | development FAIL: incremental-label collection and incomplete proof | `31e8ca1633dbba42f529d4d26a9919f189af230820bdc2064077d8195a110c9e` |
+| a7 | development FAIL: same-path replacement leaves stale cwd | `da54f161096ef1257cb55c6e7c33f3eaa1fa8958a699e7b4453f93671e13e7a8` |
+| a8 | development FAIL: duplicate reapproval beyond fixed controls | `7ed6adff231b3f6ed74e32e4a01c0cd73dcceeb586076f1b30e17365f981a750` |
+| a9 | development FAIL: repeated original directive requests approval again | `a995cb30181416e2518759b41dd5fdbbcbf1217d4b2b0597f32fbb379ca19bf7` |
+
+Before new model input, controller v8 freezes an assisted variant. After a single
+same-scope Host reapproval and actual stale-cwd denial, it waits for settled input,
+explicitly selects the same directory with native !cd and sends one factual
+acknowledgement that approval and directory selection are complete. The original
+recovery directive remains in the Tape unchanged; the acknowledgement is
+additional corrective model advice, not an original input or an autonomy pass.
+There is no solution, code edit or additional authority in this acknowledgement.
+Its controller SHA-256 is
+`cb8bf18838957b4ae1dd85c58133449736b61b39da5d6146f61e06062a624c73`.
+
+All three fresh runs complete the full original behavior within 600 seconds:
+
+- Live writer resolution uses exact owned-native ancestry plus last NSpid. The
+  running Kernel Tool exits 130; native writer, parent and group are gone.
+- Past the original writer deadline there is no late.txt and exactly one ledger
+  entry. Revocation's correlated Action resets cwd to /; the existing grant is
+  inactive and an actual read returns the authority error with no ledger data.
+- Initial exit precedes explicit --resume. The exact owned selector, copied
+  original/denied admission text and known empty queue are checked before regrant.
+  Every initial, resumed and verifier boot has distinct identity.
+- The recovered model alone edits lib.rs to x + y. Denied read/Bash attempts from
+  stale authority stay retained. Only the requested contract command executes
+  successfully; start_work is not repeated and lifecycle hashes remain unchanged.
+- A separate fresh verifier has read-only project/assertions and read-write
+  checker scratch. Original protected behavior passes, guards/driver/source and
+  lifecycle effects stay unchanged, all referenced Tools exit and there are zero
+  verifier model calls.
+- vt100-reconstructed native frames show actual original contract details,
+  separate page movement, close/return and abcδQXYZ insertion into the preserved
+  draft. Full ANSI is retained. Physical Host cursor geometry and scroll gestures
+  remain unmeasured; the parser is logical PTY evidence.
+- Every native invocation quits zero within the original bound. All owned native
+  handles are absent after the family. Enabled memory, shared authorized auth and
+  unknown usage/cost/time partitions remain explicit.
+
+Each successful run has one setup Tool approval, one additional same-scope Host
+approval, one corrective directory selection and one corrective model
+acknowledgement. Original setup/regrant/checker mount controls also remain
+recorded. Each has zero operator source edits and zero unintended model inputs,
+but is not zero-unplanned-intervention. r2/r3 prepared a1 never launched; a2 is
+therefore their first actual model attempt, classified PASS with assistance.
+
+| Slot / attempt | Initial PID / boot | Resumed PID / boot | Verifier PID / boot | Complete execution | Receipt SHA-256 / files |
+| --- | --- | --- | --- | --- | --- |
+| F4 r1 / a10 | 774279 / f1ee60e5-d849-4903-9943-016ab21dedbe | 789845 / 5ea8917c-3090-40bc-85a5-bddabd642d2e | 804434 / 7bacaa28-c763-4856-9183-ad5c06dc2e9d | 149.810737 seconds | `7883c9aff68d70548f42d34d95bd0cc5a766875058c9f0fa555ef943db0747d6` / 106 |
+| F4 r2 / a2 | 810768 / cad23a55-1e0b-453a-88f5-fd930032f8ad | 823750 / 9fe348a9-1bfd-4713-9060-63237dd88d40 | 837248 / 772b932d-5b62-4343-b85b-7ae50f10e19d | 131.872968 seconds | `e9c899f38a1743a5de4079424e443164861af53a983b43ff7a12619c72ab129d` / 105 |
+| F4 r3 / a2 | 843582 / 9b7b275c-6915-4c64-8ee8-856bdc52ee23 | 854347 / c1ff058b-145d-4da9-81b5-5fe92377cfc4 | 872154 / 7401d419-dbcc-4936-8800-a6c209fce0cf | 153.697165 seconds | `60ced0f1651428c3d324c7e9de3bfb89d56b99cfc6f40ef5102a4e515ce1031d` / 105 |
+
+Independent re-reading verifies all 316 successful receipt/artifact files and the
+behavior/lifecycle/detail/draft assertions. All 437 macOS and 440 Linux compiled
+inputs still match 0f2958d9. Audit linux-f4-family-independent-audit-v1.json SHA-256
+is `b218bb5d7ea4670da01c1f5d044906f3f05ffc256ba3023d375a649cbee40b01`.
+The local r2 copy's missing-parent collector error is retained separately; the
+same immutable receipt is subsequently verified/copied with no model rerun.
+
+Aggregate v85 SHA-256 is
+`4d10723274b72978527ccb90a823f95883b388248d5dc71a4d5aa069c275512a`.
+It retains 78 development attempts and 27/30 applicable slots, with first outcomes
+21 PASS / 6 FAIL / 3 NOT_RUN. F4 contributes ten development attempts, three
+assisted completions and seven failures; its two zero-model preflights are
+separate. Task 3.4 closes and checklist is 13/19. Three Linux F5 tasks, complete
+metrics/review/final audit, current-head gates and user merge/canonical closure
+remain open. These controlled assisted completions do not qualify general
+unassisted self-bootstrap or automatic routing.

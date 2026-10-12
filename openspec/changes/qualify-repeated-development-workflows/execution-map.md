@@ -1,20 +1,19 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v81 retains 70 attempts and 24/30 applicable slots:
-all macOS slots and Linux F1/F2/F3 r1/r2/r3. First outcomes are 19 PASS / 6 FAIL /
-5 NOT_RUN. Both Linux F4 r1 failures remain unqualified. The first Linux F2 r1
-operator checker-path failure remains retained before its fresh retry. Evidence
-heads 2277b693, f497fbe7, be25825a, 94e8940f, 23e169e6 and 3b4adf5d each pass
-all sixteen checks on their own pinned heads. This
-evidence-only follow-up still requires its own gates and CI.
+Latest 2026-10-12 aggregate v85 retains 78 attempts and 27/30 applicable slots:
+all macOS slots and Linux F1/F2/F3/F4 r1/r2/r3. First outcomes are 21 PASS / 6 FAIL /
+3 NOT_RUN. Linux F4 qualifies three assisted completions after retaining all seven
+failed development attempts and two separate zero-model native preflights. Each
+completion records one corrective directory selection and one factual authority
+acknowledgement; it is not zero-unplanned-intervention. Linux F5 remains open.
 
 Linux task readiness is frozen on byte-identical 2277b693: known actual ChatGPT
 catalog/medium selection, task-cwd Git 2.53 and Rust/Cargo 1.96,
-linux_reified_namespace and the original task inputs. The candidate documentation
-head is 3b4adf5d with unchanged 437 macOS and 440 Linux compiled inputs. The
+linux_reified_namespace and the original task inputs. Native lifecycle runs freeze documentation
+head 0f2958d9 with unchanged 437 macOS and 440 Linux compiled inputs. The
 2026-10-12 user-authorized managed-auth reuse passes actual Linux generation on
 qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; see native-runs.md.
-Linux F4/F5 and final delivery remain open. Earlier observations below are
+Linux F5 and final delivery remain open. Earlier observations below are
 historical, including unavailable profiles and device login.
 An actual 80x24 final-source explicit-command PTY probe also passes protected
 compilation and write denial. Neither readiness probe fills a development slot.
@@ -341,3 +340,36 @@ Escape separately from Unicode to avoid terminal Alt-key ambiguity, and move to
 the end before Ctrl-U when clearing the complete draft. These collection controls
 are not model advice or substitute Tool execution. Remaining frozen tasks and
 final-candidate/delivery gates are unchanged.
+
+
+## Linux lifecycle collection and assisted authority completion — 2026-10-12
+
+The cache-owned controller records controls before native effects, answers only
+fresh-PTY initialization cursor queries, waits for actual TUI rendering, and
+uses bounded numeric-owner SDK observations. Namespace listings are names.
+Revocation's cwd result belongs to a correlated AgentFS Action, not a rollout
+Tool record. A live writer is resolved by last NSpid only within the exact native
+Root's ancestry; its Kernel status/130 exit and native group death are both required.
+The original 40-second delayed effect and 600-second task bound are unchanged.
+
+Use the repository's existing vt100 0.16.2 parser to reconstruct incremental
+80x24 output before checking retained detail, separate paging and Unicode draft
+return. Raw ANSI substring absence is not a missing rendered heading. This is
+logical PTY evidence; physical Host coordinates/scroll gestures stay unmeasured.
+
+A model may request reapproval of the already-mounted namespace path. Approval
+replaces its grant binding; the accepted stale-cwd rule correctly denies later
+Tools until explicit directory selection. The qualified assisted variant retains
+that failed read/command, waits for settled input, selects the same authorized
+directory through native `!cd`, and sends one factual corrective acknowledgement:
+
+> Operator reapproval and explicit directory selection are now complete for
+> /mnt/project-request-1. Continue the previously requested recovery task using
+> the existing grant.
+
+This is corrective model advice, not an original frozen follow-up or a
+zero-intervention completion. Original prompts/follow-ups, fixture bytes, model,
+authority scope, assertions and bound remain unchanged; the acknowledgement and
+all additional approvals/controls are retained separately. No operator writes a
+solution, no new completed start_work is permitted, and no automatic cwd adoption
+is added. A second additional mount request exceeds this variant and fails it.
