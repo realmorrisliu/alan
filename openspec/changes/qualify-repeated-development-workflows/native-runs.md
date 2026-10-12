@@ -2698,3 +2698,67 @@ F3/F4/F5, complete metrics/finding audit, fresh publication gates/CI, user merge
 and canonical closure remain open. Shared auth and enabled memory do not prove
 independence; usage/cost and time partitions remain unknown. Historical failures,
 retries and the earlier separate unintended verifier turn remain immutable.
+
+## Complete Linux compiler-correction family — 2026-10-12
+
+All three original Linux F3 attempts qualify on unchanged 23e169e6 compiled
+production inputs and the same frozen native CLI. All sixteen current-head
+checks pass; immutable gate receipt SHA-256 is
+`863f030b99fd00d3ee986ee676c5e875acd93bf556217cb9fedc9d20c2837fc9`.
+r1 starts while only doc-head CI remains pending, with compiled production
+identity unchanged from passing 94e8940f; the last checks complete during its
+run. r2/r3 freeze that source's passing sixteen-check receipt before generation.
+This follow-up adds evidence only and requires its own normal gates/CI.
+
+Each actual 80x24 ordinary PTY freezes the original prompt/project/checker bytes,
+known ChatGPT catalog and gpt-6.1-sol/medium binding, selected Git 2.53/Rust-Cargo
+1.96, linux_reified_namespace and the acknowledged RW project grant before its
+one force_agent input. Each has one matching model context and one planned
+setup approval, with no model-selected Tool approval, operator source edits,
+corrective advice or extra Agent input.
+
+The first Cargo test actually fails with exit 101 and E0425, E0583 or E0308.
+r1 adds the missing BTreeSet import; r2 changes the module declaration/reference
+to the existing operations module; r3 unwraps parse failure to zero. Models change
+only src/lib.rs and rerun actual original tests successfully. Original test,
+Cargo, fixture and r2's operations.rs bytes remain unchanged. Optional non-Git
+inspection failures in r1/r3 stay retained. r1/r2 also retain delegated prelaunch
+rejection before direct parent fallback; r3 has no such failed delegation. No
+successful child execution is inferred from direct fallback.
+
+The detail test selects the actual original failed Action a2 after parent
+completion, rather than the latest successful test. Post-open native segments
+contain the original compiler diagnostic; a separate Space event and changed
+page precede closing and Unicode draft insertion abcδQXYZ. r3 additionally seals
+the diagnostic patch produced after selecting the failed Action. r1's collector
+initially expects contiguous Action a2 header text, whereas native incremental
+rendering changes only the numeric cell. Its read-only correction is retained;
+the original Action/diagnostic, selected navigation, UI and task remain unchanged.
+r2/r3 avoid that assumption and have no collector correction during execution.
+Full native transcript streams remain retained. Physical cursor coordinates and
+a physical Host scrollback gesture remain unmeasured.
+
+After each model exits, a separate normal CLI checker receives original project
+and protected assertions read-only, with only dedicated scratch writable. Its
+frozen explicit offline/locked Cargo command freshly compiles model-authored
+code and unchanged protected assertions, and protected behavior passes. Source,
+assertion and driver inventories stay unchanged by checking. All checker inputs
+are commands; there are no Agent admissions or model contexts. Observed Tool
+Processes and all native model/checker instances exit with removed handles.
+
+| Slot / attempt | Diagnostic | Model PID / boot | Checker PID / boot | Independent verification | Receipt SHA-256 / files |
+| --- | --- | --- | --- | --- | --- |
+| linux-f3-r1 / a1 | E0425 | 551609 / 65615a7b-cb7a-4fd3-bea5-8946ef4ad804 | 564233 / 68519802-a673-49a2-907e-ab3241fcdcec | PASS / 354.797932 seconds | `4f9147952dea81f44d65d9fdf13612a3ac0cc5fb5ff5759ac322a86e6e526784` / 86 |
+| linux-f3-r2 / a1 | E0583 | 570551 / 6ac69b56-f302-48fc-8d04-a36e616c0f39 | 585141 / aeed2b4b-292c-4c8b-b1c2-9eeb0199c035 | PASS / 287.839797 seconds | `6f1a6c22c46a2004465b86876424fbc5dfcbda2fa93e0893c33dd90af03a4d80` / 91 |
+| linux-f3-r3 / a1 | E0308 | 591417 / 1d50faee-a94a-4faf-99ab-867d342b00d5 | 604012 / c18fecc4-2e23-4309-b2e8-ffd2382514c8 | PASS / 438.205438 seconds | `13c3a0aee9a67430c9ac83013b8169bc8ce1af3992fbb21b2a3cb578985750ea` / 87 |
+
+All native exits remain within the original 600-second bounds, with script
+completion timestamps at one-second precision. Later audits/receipt sealing are
+separate. All 264 family receipt/artifact files verify. Aggregate v78 SHA-256 is
+`c4b3f6b6607f386882ec0d296a98c911128235893c1771210e35f0282ef3a199`.
+It retains 68 development attempts and 24/30 applicable slots, with original
+first outcomes 19 PASS / 5 FAIL / 6 NOT_RUN. Task 3.3 closes; checklist is 12/19.
+Linux F4/F5, complete metrics/finding audit, fresh publication gates/CI and
+user-controlled review/merge/canonical closure remain open. Enabled memory,
+shared auth, unknown usage/cost/time partitions and the historical separate
+unintended verifier turn remain explicit; no original outcome is reset.

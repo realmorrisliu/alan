@@ -1,8 +1,8 @@
 # Repeated real-development acceptance matrix — 2026-10-10
 
-Latest 2026-10-12 aggregate v74 records 65 development attempts and 21/30
-applicable slots: all fifteen macOS slots and all Linux F1/F2 repetitions.
-First outcomes are 16 PASS / 5 FAIL / 9 NOT_RUN. The original Linux
+Latest 2026-10-12 aggregate v78 records 68 development attempts and 24/30
+applicable slots: all fifteen macOS slots and all Linux F1/F2/F3 repetitions.
+First outcomes are 19 PASS / 5 FAIL / 6 NOT_RUN. The original Linux
 F2 r1 checker-path failure remains FAIL; its fresh linked retry qualifies the slot.
 Linux readiness generation and user-authorized shared-auth preparation remain
 separate from task attempts.
@@ -123,9 +123,9 @@ content; generated role-prefix regression checks follow ADR-0059.
 | linux-f2-r1 | linux / ordinary PTY | F2 | 1 | FAIL: operator checker used untranslatable namespace manifest path | native-runs.md; original a1 FAIL `58598a50` retained; fresh a2 PASS `9005e73b` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
 | linux-f2-r2 | linux / ordinary PTY | F2 | 2 | PASS | native-runs.md; original a1 PASS `3c89ebcd` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
 | linux-f2-r3 | linux / ordinary PTY | F2 | 3 | PASS | native-runs.md; original a1 PASS `b60eb51a` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
-| linux-f3-r1 | linux / ordinary PTY | F3 | 1 | NOT_RUN | absent |
-| linux-f3-r2 | linux / ordinary PTY | F3 | 2 | NOT_RUN | absent |
-| linux-f3-r3 | linux / ordinary PTY | F3 | 3 | NOT_RUN | absent |
+| linux-f3-r1 | linux / ordinary PTY | F3 | 1 | PASS | native-runs.md; original a1 PASS `4f914795` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
+| linux-f3-r2 | linux / ordinary PTY | F3 | 2 | PASS | native-runs.md; original a1 PASS `6f1a6c22` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
+| linux-f3-r3 | linux / ordinary PTY | F3 | 3 | PASS | native-runs.md; original a1 PASS `13c3a0ae` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
 | linux-f4-r1 | linux / ordinary PTY | F4 | 1 | NOT_RUN | absent |
 | linux-f4-r2 | linux / ordinary PTY | F4 | 2 | NOT_RUN | absent |
 | linux-f4-r3 | linux / ordinary PTY | F4 | 3 | NOT_RUN | absent |

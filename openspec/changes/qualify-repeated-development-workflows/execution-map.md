@@ -1,19 +1,19 @@
 # Native execution and evidence map — 2026-10-10
 
-Latest 2026-10-12 aggregate v74 retains 65 attempts and 21/30 applicable slots:
-all macOS slots and Linux F1/F2 r1/r2/r3. First outcomes are 16 PASS / 5 FAIL /
-9 NOT_RUN. The first Linux F2 r1 operator checker-path failure remains retained
-before its fresh retry. Evidence heads 2277b693, f497fbe7, be25825a and 94e8940f
-each pass all sixteen checks on their own pinned heads. This additional
+Latest 2026-10-12 aggregate v78 retains 68 attempts and 24/30 applicable slots:
+all macOS slots and Linux F1/F2/F3 r1/r2/r3. First outcomes are 19 PASS / 5 FAIL /
+6 NOT_RUN. The first Linux F2 r1 operator checker-path failure remains retained
+before its fresh retry. Evidence heads 2277b693, f497fbe7, be25825a, 94e8940f
+and 23e169e6 each pass all sixteen checks on their own pinned heads. This
 evidence-only follow-up still requires its own gates and CI.
 
 Linux task readiness is frozen on byte-identical 2277b693: known actual ChatGPT
 catalog/medium selection, task-cwd Git 2.53 and Rust/Cargo 1.96,
 linux_reified_namespace and the original task inputs. The candidate documentation
-head is 94e8940f with unchanged 437 macOS and 440 Linux compiled inputs. The
+head is 23e169e6 with unchanged 437 macOS and 440 Linux compiled inputs. The
 2026-10-12 user-authorized managed-auth reuse passes actual Linux generation on
 qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; see native-runs.md.
-Linux F3/F4/F5 and final delivery remain open. Earlier observations below are
+Linux F4/F5 and final delivery remain open. Earlier observations below are
 historical, including unavailable profiles and device login.
 An actual 80x24 final-source explicit-command PTY probe also passes protected
 compilation and write denial. Neither readiness probe fills a development slot.

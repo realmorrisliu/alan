@@ -16,13 +16,14 @@ two Linux F1 repetitions also qualify. Linux F2 r1 additionally qualifies after
 a retained operator checker-path failure and a fresh original-task retry.
 F2 r2/r3 also qualify with original protected library assertions and both
 binary results, exact three-file edits, native detail/draft and exits. Aggregate
-v74 retains 65 attempts and 21/30 applicable slots, with first outcomes
-16 PASS / 5 FAIL / 9 NOT_RUN. Linux F3/F4/F5 remain open; the same protected
+v78 additionally includes all three Linux compiler-correction repetitions:
+68 attempts and 24/30 applicable slots, with first outcomes
+19 PASS / 5 FAIL / 6 NOT_RUN. Linux F4/F5 remain open; the same protected
 assertions and authority boundaries are preserved.
 Earlier unavailable-profile/no-copy observations below remain historical.
 092e3278, readiness head 2277b693 and evidence heads f497fbe7 / be25825a /
-94e8940f each pass all sixteen checks. Readiness closes task 1.4, complete Linux
-F1 closes 3.1 and complete Linux F2 closes 3.2; checklist is 11/19. This
+94e8940f and 23e169e6 each pass all sixteen checks. Readiness closes task 1.4,
+and complete Linux F1/F2/F3 close 3.1/3.2/3.3; checklist is 12/19. This
 evidence-only follow-up needs its own normal gates and CI. User review/merge,
 full cross-Host qualification and canonical closure remain open.
 
