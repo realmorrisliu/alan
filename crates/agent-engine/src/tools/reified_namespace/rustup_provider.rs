@@ -7,6 +7,23 @@ pub(super) fn resolve(
     path: &str,
     proxies: &[ReifiedExecutionSubstrateMount],
 ) -> Result<Option<PathBuf>, String> {
+    resolve_lookup(executable, path, proxies, false)
+}
+
+pub(super) fn resolve_projected(
+    executable: &str,
+    path: &str,
+    mounts: &[ReifiedExecutionSubstrateMount],
+) -> Result<Option<PathBuf>, String> {
+    resolve_lookup(executable, path, mounts, true)
+}
+
+fn resolve_lookup(
+    executable: &str,
+    path: &str,
+    projections: &[ReifiedExecutionSubstrateMount],
+    authoritative: bool,
+) -> Result<Option<PathBuf>, String> {
     let candidates = if executable.contains('/') {
         if !Path::new(executable).is_absolute() || contains_parent_component(Path::new(executable))
         {
@@ -22,11 +39,18 @@ pub(super) fn resolve(
             .collect()
     };
     for candidate in candidates {
-        let substrate = super::super::default_execution_substrate();
-        let mount = proxies
+        let substrate = if authoritative {
+            Vec::new()
+        } else {
+            super::super::default_execution_substrate()
+        };
+        let mount = projections
             .iter()
             .chain(&substrate)
             .find(|mount| candidate.starts_with(&mount.namespace_path));
+        if authoritative && mount.is_none() {
+            continue;
+        }
         let namespace_root = mount.map_or(candidate.parent().unwrap(), |m| &m.namespace_path);
         let root = canonicalize_existing_host_path(mount.map_or(namespace_root, |m| &m.host_path));
         if mount.is_none() && root != namespace_root {
@@ -66,7 +90,40 @@ pub(super) fn resolve(
             return Err(format!("Rust executable access unavailable: {error}"));
         }
         // shortcut: cross-root executable aliases need an explicit supported projection.
-        super::super::toolchain::validate_directory_aliases(&source, &root, namespace_root)?;
+        if let Err(error) =
+            super::super::toolchain::validate_directory_aliases(&source, &root, namespace_root)
+        {
+            let canonical = std::fs::canonicalize(&source).map_err(|_| error.clone())?;
+            let system_roots = [
+                Path::new("/usr"),
+                Path::new("/bin"),
+                Path::new("/lib"),
+                Path::new("/etc"),
+            ];
+            let native_system_alias = [Path::new("/usr/bin"), Path::new("/bin")]
+                .contains(&candidate.parent().unwrap())
+                && canonical.starts_with("/usr")
+                && projections
+                    .iter()
+                    .any(|mount| canonical.starts_with(&mount.namespace_path))
+                && std::fs::canonicalize(namespace_root).is_ok_and(|native| native == root)
+                && projections
+                    .iter()
+                    .filter(|mount| {
+                        system_roots
+                            .iter()
+                            .any(|system| mount.namespace_path.starts_with(system))
+                    })
+                    .all(|mount| {
+                        mount.namespace_path == mount.host_path
+                            || std::fs::canonicalize(&mount.namespace_path)
+                                .is_ok_and(|native| native == mount.host_path)
+                    });
+            // System cross-root aliases require unchanged system projections along their route.
+            if !authoritative || !native_system_alias {
+                return Err(error);
+            }
+        }
         return std::fs::canonicalize(&source)
             .map(Some)
             .map_err(|error| format!("Rust provider canonicalization failed: {error}"));

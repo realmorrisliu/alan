@@ -145,62 +145,70 @@ fn native_system_rust_provider_precedes_later_rustup_proxies() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("provider changed"), "{error}");
-    let commands = vec![
-        vec!["cargo".into(), "metadata".into(), "--no-deps".into()],
-        vec!["cargo".into(), "locate-project".into()],
-        vec!["cargo".into(), "new".into()],
-        vec!["cargo".into(), "init".into()],
-        vec!["cargo".into(), "fmt".into(), "--help".into()],
-        vec!["cargo".into(), "fmt".into(), "-h".into()],
-        vec!["cargo".into(), "help".into(), "fmt".into()],
-        vec!["cargo".into(), "clippy".into(), "--help".into()],
-        vec!["cargo".into(), "clippy".into(), "-h".into()],
-        vec!["cargo".into(), "help".into(), "clippy".into()],
-        vec!["cargo".into(), "clippy".into(), "--version".into()],
-        vec!["cargo".into(), "clippy".into(), "-V".into()],
-    ];
     for name in ["rustfmt", "clippy-driver"] {
         std::fs::remove_file(system.join("bin").join(name)).unwrap();
     }
     let path = format!("{}/bin:{}:/usr/bin:/bin", system.display(), proxy.display());
-    let mut input = ReifiedNamespacePlanInput::new(
-        vec![ReifiedMountDeclaration::host(&project, &project, ReifiedMountAccess::ReadOnly)],
-        &project,
-        vec!["/bin/sh".into(), "-c".into(),
-            "set -eu; cargo metadata --no-deps --format-version 1; cargo locate-project; cargo new --vcs none \"$TMPDIR/new-provider-project\"; cargo init --vcs none \"$TMPDIR/init-provider-project\"; cargo fmt --help; cargo fmt -h; cargo help fmt; cargo clippy --help; cargo clippy -h; cargo help clippy; cargo clippy --version; cargo clippy -V".into()],
-        NetworkPosture::Deny,
-    );
-    let environment = rustup::discover(&path, &home, None, Some((&input, &commands)))
-        .unwrap()
-        .unwrap();
-    assert!(environment.toolchain_mounts.is_empty());
-    assert!(!environment.cargo_config_files.is_empty());
-    assert!(
-        environment
-            .cargo_config_files
-            .iter()
-            .all(|file| file.digest.is_none())
-    );
-    assert!(
-        !environment
-            .command_providers
-            .iter()
-            .any(|binding| binding.executable == "rustc")
-    );
-    let mut substrate = default_execution_substrate();
-    substrate.push(ReifiedExecutionSubstrateMount::new(&system, &system));
-    substrate.extend(environment.proxy_mounts.iter().cloned());
-    input = input
-        .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
-        .with_execution_substrate(substrate)
-        .with_command_path(&path);
-    input.rustup = Some(environment);
-    let free_plan = ReifiedNamespacePlan::derive(input).unwrap();
-    let free = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
-        .run(&free_plan)
-        .unwrap();
-    assert_eq!(free.exit_code, 0, "{} {}", free.stdout, free.stderr);
-    assert!(free.stdout.contains("alan_system_provider_fixture"));
+    for command in [
+        "cargo metadata --no-deps --format-version 1",
+        "cargo locate-project",
+        "cargo new --vcs none /.alan-system-provider-tmp/new-provider-project",
+        "cargo init --vcs none /.alan-system-provider-tmp/init-provider-project",
+        "cargo fmt --help",
+        "cargo fmt -h",
+        "cargo help fmt",
+        "cargo clippy --help",
+        "cargo clippy -h",
+        "cargo help clippy",
+        "cargo clippy --version",
+        "cargo clippy -V",
+    ] {
+        let commands = crate::tools::sandbox::shell_commands(command).unwrap();
+        let mut input = ReifiedNamespacePlanInput::new(
+            vec![ReifiedMountDeclaration::host(
+                &project,
+                &project,
+                ReifiedMountAccess::ReadOnly,
+            )],
+            &project,
+            vec!["/bin/sh".into(), "-c".into(), command.into()],
+            NetworkPosture::Deny,
+        );
+        let environment = rustup::discover(&path, &home, None, Some((&input, &commands)))
+            .unwrap()
+            .unwrap();
+        assert!(environment.toolchain_mounts.is_empty());
+        assert!(
+            environment
+                .cargo_config_files
+                .iter()
+                .all(|file| file.digest.is_none())
+        );
+        assert!(
+            !environment
+                .command_providers
+                .iter()
+                .any(|binding| binding.executable == "rustc")
+        );
+        let mut substrate = default_execution_substrate();
+        substrate.push(ReifiedExecutionSubstrateMount::new(&system, &system));
+        substrate.extend(environment.proxy_mounts.iter().cloned());
+        input = input
+            .with_scratch_tmp_namespace_path("/.alan-system-provider-tmp")
+            .with_execution_substrate(substrate)
+            .with_command_path(&path);
+        input.rustup = Some(environment);
+        let plan = ReifiedNamespacePlan::derive(input).unwrap();
+        let result =
+            LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock)
+                .run(&plan)
+                .unwrap();
+        assert_eq!(
+            result.exit_code, 0,
+            "{command}: {} {}",
+            result.stdout, result.stderr
+        );
+    }
     for name in ["cargo-fmt", "cargo-clippy"] {
         std::fs::remove_file(system.join("bin").join(name)).unwrap();
     }

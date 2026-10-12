@@ -136,9 +136,9 @@ pub struct ReifiedRustupEnvironment {
 /// Host-inspected command lookup; this record conveys no mount authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReifiedRustCommandProvider {
-    /// Original executable spelling, including an explicit absolute path.
+    /// Lookup spelling, or a verified standard provider canonical identity.
     pub executable: String,
-    /// Original ordered PATH used for inspection.
+    /// Ordered lookup PATH; empty for a fixed standard provider identity.
     pub path: String,
     /// Canonical provider, contents, and validated Rustup proxy classification.
     pub resolved: Option<(PathBuf, String, bool)>,

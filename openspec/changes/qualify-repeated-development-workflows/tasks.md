@@ -1,3 +1,25 @@
+## Current opaque-writer repair and qualification withdrawal — 2026-10-13
+
+Completed review of `7538396e` found valid P1 #4250587942: an opaque
+program can replace configuration between preflight and later Cargo execution.
+Merge readiness is withdrawn. The Linux adapter now requires a separate request
+after opaque programs or Rust work that can execute project code. Literal cwd
+selection, bounded read-only producers, genuine system queries and verified
+standard wrappers retain their narrow support; dynamic shell control and loader
+changes refuse before effects. This includes initially private Cargo/Rustup homes.
+
+The original thirty selected slots and eighty-five attempts remain immutable
+history. The new admission rule changes seven Linux phase commands in four slots:
+F2 r1/r2/r3 (model and verifier), and F5 r2 (initial model). Their fourteen
+structured occurrences include request/result duplicates, not fourteen executions.
+Four fresh native model qualifications are required; none is claimed yet.
+The twelve analogous macOS records do not execute this Linux-only production
+rule. F5 r3 retains the existing bounded read-only producer/Rustc pipeline.
+
+Tasks 3.2, 3.5 and 4.3 reopen; the current checklist is 14/19. Current-head
+quality/CI/completed review and user merge/canonical closure also remain open.
+Earlier entries below record historical evidence, not current readiness.
+
 ## Latest mixed Cargo short-option repair — 2026-10-13
 
 Completed review of 8b56c4b1 added P2 #4250308685: valid root queries in mixed
@@ -155,10 +177,10 @@ Historical checkmarks do not qualify new behavior.
 ## 3. Linux real-model tasks in ordinary PTY
 
 - [x] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
-- [x] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
+- [ ] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
 - [x] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
 - [x] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
-- [x] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
+- [ ] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
 
 All three Linux F2 repetitions qualify on unchanged be25825a. The original r1
 checker-path failure and fresh retry remain retained; r2/r3 pass their original
@@ -182,7 +204,7 @@ zero-model collector preflights remain retained. Task 3.4 closes; checklist is
 
 - [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
 - [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
-- [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
+- [ ] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
 - [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
 

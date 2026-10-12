@@ -17,6 +17,9 @@ fn compiler_overrides_and_configuration_store_changes_refuse() {
     };
     for words in [
         vec!["RUSTC=/usr/bin/other-rustc", "cargo", "test"],
+        vec!["LD_PRELOAD=/project/plugin.so", "cargo", "--version"],
+        vec!["env", "LD_LIBRARY_PATH=/project", "cargo", "--version"],
+        vec!["RUSTUP_FORCE_ARG0=rustup", "cargo", "--version"],
         vec!["env", "RUSTC_WRAPPER=/usr/bin/wrapper", "cargo", "test"],
         vec![
             "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=/usr/bin/wrapper",
@@ -511,6 +514,7 @@ fn shell_lookup_definitions_and_new_directory_selection_refuse() {
             "{script}"
         );
     }
+    let literal_path = format!("{}:/usr/bin:/bin", proxies.display());
     for script in [
         "printf 'cargo() { true; }'; cargo test",
         "# cargo() { true; }\ncargo test",
@@ -523,13 +527,7 @@ fn shell_lookup_definitions_and_new_directory_selection_refuse() {
         inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
         // Here-document text is not an execution request.
         let commands = vec![vec!["cargo".into(), "test".into()]];
-        discover(
-            proxies.to_str().unwrap(),
-            &home,
-            None,
-            Some((&inspection, &commands)),
-        )
-        .unwrap();
+        discover(&literal_path, &home, None, Some((&inspection, &commands))).unwrap();
     }
     for script in [
         "helper() { true; }; helper",
@@ -955,7 +953,7 @@ fn executable_heredoc_lookup_changes_refuse_but_quoted_examples_remain_literal()
     inspection.argv = vec!["/bin/sh".into(), "-c".into(), script.into()];
     let commands = vec![vec!["cargo".into(), "test".into()]];
     discover(
-        proxies.to_str().unwrap(),
+        &format!("{}:/usr/bin:/bin", proxies.display()),
         &home,
         None,
         Some((&inspection, &commands)),

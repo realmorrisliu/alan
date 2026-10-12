@@ -86,7 +86,7 @@ descendant roots SHALL retain only their existing writable authority.
 #### Scenario: A compound command visibly rewrites selected Cargo configuration
 - **WHEN** the same shell request contains a literal configuration redirection, file write or ancestor replacement followed by compiler-using Cargo
 - **THEN** the bounded preflight rejects it before effects and requires separate configuration-edit and execution requests
-- **AND** quoted output remains ordinary content; opaque program-internal mutation is not qualified by this bounded check.
+- **AND** quoted output remains ordinary content; an opaque preceding program or earlier Rust work requires a separate execution request even when no literal writer is visible.
 
 
 #### Scenario: Shell lookup no longer resolves the inspected executable
@@ -121,3 +121,18 @@ descendant roots SHALL retain only their existing writable authority.
 - **THEN** only actual h/V flags are queries; Z/C consume attached or separate values, and real h retains its immediate-help precedence
 - **AND** directory-changing C in visible prefix or subcommand arguments retains inspection refusal, while consumed values and -- payload do not create flags
 - **AND** selected aliases and frontend arguments retain their existing checks
+
+#### Scenario: Opaque programs precede an inspected Rust invocation
+- **WHEN** a Linux request runs an unmodeled program or Rust work that can execute project code before another inspected Rust invocation
+- **THEN** admission refuses the request before effects, including possible changes in private Cargo/Rustup homes, and requires separate requests
+- **AND** literal cwd selection, command-local selection, bounded read-only text producers and genuine system queries retain their supported subset; dynamic control flow, asynchronous execution and loader overrides refuse
+
+#### Scenario: A transparent wrapper is not the actual standard provider
+- **WHEN** a request names a transparent wrapper or a supported system query whose actual namespace provider is unverified, missing or replaced
+- **THEN** admission or prelaunch revalidation refuses before effects using the actual projected identity, without supplementing unmounted paths from the Host
+- **AND** native system cross-root aliases require unchanged system projections and an actually projected target; Host-only alias equality does not qualify a remapped native route
+
+#### Scenario: A bounded read-only pipeline supplies a Rustc invocation
+- **WHEN** a literal supported read-only producer supplies the last Rustc command in a pipeline, without earlier opaque or project-code execution
+- **THEN** inspection preserves the existing invocation and verified provider bindings
+- **AND** a concurrent writer after Rustc, dynamic producers or nested cwd/environment controls refuse before effects

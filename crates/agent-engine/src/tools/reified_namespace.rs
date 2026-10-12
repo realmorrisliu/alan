@@ -958,3 +958,7 @@ mod runner_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "reified_namespace/development_tests.rs"]
 mod development_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "reified_namespace/rust_sequence_native_tests.rs"]
+mod rust_sequence_native_tests;

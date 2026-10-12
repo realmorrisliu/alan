@@ -1,3 +1,25 @@
+## Current opaque-writer repair and qualification withdrawal — 2026-10-13
+
+Completed review of `7538396e` found valid P1 #4250587942: an opaque
+program can replace configuration between preflight and later Cargo execution.
+Merge readiness is withdrawn. The Linux adapter now requires a separate request
+after opaque programs or Rust work that can execute project code. Literal cwd
+selection, bounded read-only producers, genuine system queries and verified
+standard wrappers retain their narrow support; dynamic shell control and loader
+changes refuse before effects. This includes initially private Cargo/Rustup homes.
+
+The original thirty selected slots and eighty-five attempts remain immutable
+history. The new admission rule changes seven Linux phase commands in four slots:
+F2 r1/r2/r3 (model and verifier), and F5 r2 (initial model). Their fourteen
+structured occurrences include request/result duplicates, not fourteen executions.
+Four fresh native model qualifications are required; none is claimed yet.
+The twelve analogous macOS records do not execute this Linux-only production
+rule. F5 r3 retains the existing bounded read-only producer/Rustc pipeline.
+
+Tasks 3.2, 3.5 and 4.3 reopen; the current checklist is 14/19. Current-head
+quality/CI/completed review and user merge/canonical closure also remain open.
+Earlier entries below record historical evidence, not current readiness.
+
 ## Latest mixed Cargo short-option repair — 2026-10-13
 
 Completed review of 8b56c4b1 added P2 #4250308685: valid root queries in mixed

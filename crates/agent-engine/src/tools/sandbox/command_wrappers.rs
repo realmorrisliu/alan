@@ -694,7 +694,7 @@ fn setsid_wrapper_offset(args: &[String]) -> Option<usize> {
     Some(index)
 }
 
-pub(super) fn is_env_assignment(word: &str) -> bool {
+pub(in crate::tools) fn is_env_assignment(word: &str) -> bool {
     let Some((name, _)) = word.split_once('=') else {
         return false;
     };
@@ -702,6 +702,27 @@ pub(super) fn is_env_assignment(word: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn command_wrapper_executables(words: &[String]) -> Vec<&str> {
+    let mut wrappers = Vec::new();
+    let Some(mut index) = next_command_offset(words) else {
+        return wrappers;
+    };
+    loop {
+        let name = command_basename(&words[index]);
+        let args = &words[index + 1..];
+        let next = if name == "env" {
+            env_command_offset(args)
+        } else {
+            transparent_wrapper_offset(name, args)
+        };
+        let Some(next) = next else { break };
+        wrappers.push(words[index].as_str());
+        index += next + 1;
+    }
+    wrappers
 }
 
 fn is_shell_eval_builtin(command: &str) -> bool {

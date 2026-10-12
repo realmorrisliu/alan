@@ -1,3 +1,52 @@
+## Current opaque-writer repair and qualification withdrawal — 2026-10-13
+
+Completed review of `7538396e` found valid P1 #4250587942: an opaque
+program can replace configuration between preflight and later Cargo execution.
+Merge readiness is withdrawn. The Linux adapter now requires a separate request
+after opaque programs or Rust work that can execute project code. Literal cwd
+selection, bounded read-only producers, genuine system queries and verified
+standard wrappers retain their narrow support; dynamic shell control and loader
+changes refuse before effects. This includes initially private Cargo/Rustup homes.
+
+The original thirty selected slots and eighty-five attempts remain immutable
+history. The new admission rule changes seven Linux phase commands in four slots:
+F2 r1/r2/r3 (model and verifier), and F5 r2 (initial model). Their fourteen
+structured occurrences include request/result duplicates, not fourteen executions.
+Four fresh native model qualifications are required; none is claimed yet.
+The twelve analogous macOS records do not execute this Linux-only production
+rule. F5 r3 retains the existing bounded read-only producer/Rustc pipeline.
+
+Tasks 3.2, 3.5 and 4.3 reopen; the current checklist is 14/19. Current-head
+quality/CI/completed review and user merge/canonical closure also remain open.
+Earlier entries below record historical evidence, not current readiness.
+
+## Opaque-writer native controls — 2026-10-13
+
+Evidence is retained under the owned cache `dev-boundary-20261011-v1/rustup-opaque-writer-review-v1/`.
+The exact `7538396e` Rustup/provider/wrapper sources admit all four isolated
+Git checkout, tar extraction, private-Cargo-home Python writer and project
+wrapper controls. Each returns exit 0 with both writer and compiler markers.
+The genuine ordinary Rust 1.97 runtime and all effects stay inside owned fixtures.
+The new admission rule rejects each before writer/configuration/compiler effects.
+No marker-producing redirection is prepended to mask the opaque-writer cause.
+
+The full native pass includes 103 production checks and one temporary historical
+auditor (104 total). The auditor runs the actual new sequence parser over all
+450 immutable structured records. Linux has fourteen refusals across seven phase
+commands/four slots; request and result records are counted separately. macOS test
+compilation produces matching parser decisions, but its production build excludes
+this Linux adapter. The historical configurations and thirty-three actual Linux
+phase grant/cwd bindings remain linked to the launch-context ledger; this audit
+does not replace them with assumptions about today's filesystem.
+
+Later review also rejects asynchronous `setsid` wrappers rather than treating
+forking as sequential execution. Final focused checks bind this last source;
+source manifests and committed build/CI review remain required before readiness.
+All intermediate compilation, fixture, scope and compatibility failures remain
+in cache logs. The four renewed real model tasks are still pending; original
+first outcomes are unchanged, and no new model completion is claimed here.
+
+
 ## Cargo mixed short-option arity — 2026-10-13
 
 Completed 8b56c4b1 Codex review added valid P2 #4250308685. Genuine Cargo1.97

@@ -47,6 +47,10 @@ pub(super) fn discover(
             validate_command_environment(words)?;
         }
     }
+    let mut command_providers = input
+        .map(|(input, _)| sequence::inspect(input, path))
+        .transpose()?
+        .unwrap_or_default();
     let cargo_config_files = input
         .map(|(input, commands)| cargo::inspect(input, commands))
         .transpose()?
@@ -75,10 +79,9 @@ pub(super) fn discover(
             proxies.push(ReifiedExecutionSubstrateMount::new(entry, source));
         }
     }
-    if proxies.is_empty() && cargo_config_files.is_empty() {
+    if proxies.is_empty() && cargo_config_files.is_empty() && command_providers.is_empty() {
         return Ok(None);
     }
-    let mut command_providers = Vec::new();
     let mut selects_runtime = false;
     if let Some((_, commands)) = input {
         for words in commands {
@@ -528,6 +531,9 @@ fn validate_command_environment(words: &[String]) -> Result<(), String> {
             name.trim_end_matches('+'),
             "PATH" | "RUSTUP_HOME" | "CARGO_HOME"
         ) || cargo::compiler_override(name.trim_end_matches('+'))
+            || name.starts_with("LD_")
+            || name.starts_with("DYLD_")
+            || matches!(name, "GCONV_PATH" | "RUSTUP_FORCE_ARG0")
             || (state_change && name.trim_end_matches('+') == "RUSTUP_TOOLCHAIN")
         {
             return Err(format!(
@@ -945,3 +951,6 @@ fn digest(bytes: &str) -> String {
 #[cfg(test)]
 #[path = "rustup_tests.rs"]
 mod tests;
+
+#[path = "rustup_sequence.rs"]
+mod sequence;

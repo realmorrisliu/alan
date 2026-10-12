@@ -405,7 +405,6 @@ pub(super) fn inspect(
             }
         }
     }
-    // shortcut: opaque program-internal config mutation within one shell request is unqualified.
     if !snapshots.is_empty() {
         use crate::tools::sandbox::command_wrappers::{
             shell_wrapper_inline_script, writes_cargo_configuration,
