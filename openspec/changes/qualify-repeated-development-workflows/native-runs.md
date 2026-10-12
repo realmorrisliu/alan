@@ -47,10 +47,15 @@ This is not an all-features runtime qualification claim.
 
 | Native selected renewal | Outcome | Receipt elapsed wall time | Receipt SHA256 |
 | --- | --- | --- | --- |
-| linux-f2-r1/a6 | PASS | 82.409507 s | `47823a4fcbc24063324b79b803b18ff63c3490c13618835c6d4e7044a0d1537d` |
-| linux-f2-r2/a1 | PASS | 83.026150 s | `c13ba9d5b2f7e36df9c66764bcfc6ea9fcd5e59a3b02d90e75e17679f2f2702f` |
-| linux-f2-r3/a1 | PASS | 80.843049 s | `56c24fcadc18e86435a5b26ecb02b6769cd0a8c5f904a2ea03d023b8d751ff0e` |
-| linux-f5-r2/a1 | PASS | 409.659057 s | `09dadd57acf11f5ee3af372613e6f4994f4c723de33cdd6b08418fd69fe45135` |
+| linux-f2-r1/opaque-writer-a6 | PASS | 82.409507 s | `47823a4fcbc24063324b79b803b18ff63c3490c13618835c6d4e7044a0d1537d` |
+| linux-f2-r2/opaque-writer-a1 | PASS | 83.026150 s | `c13ba9d5b2f7e36df9c66764bcfc6ea9fcd5e59a3b02d90e75e17679f2f2702f` |
+| linux-f2-r3/opaque-writer-a1 | PASS | 80.843049 s | `56c24fcadc18e86435a5b26ecb02b6769cd0a8c5f904a2ea03d023b8d751ff0e` |
+| linux-f5-r2/opaque-writer-a1 | PASS | 409.659057 s | `09dadd57acf11f5ee3af372613e6f4994f4c723de33cdd6b08418fd69fe45135` |
+
+Every new receipt uses the globally unique slot/`opaque-writer-aN` ID already
+recorded in aggregate v106, including failed and prelaunch records. Original raw
+receipts retain their local `aN` capture label and SHA256; that label is not the
+global attempt ID. The renewal namespace distinguishes these from older receipts.
 
 Each renewed slot uses the original frozen prompt, project baseline, protected
 expected results and 600-second bound, gpt-6.1-sol with medium effort, native
@@ -59,17 +64,17 @@ binary runs are separate requests; the independent protected checker makes no
 model calls. F5 runs its long-output producer once, retains 165163 stderr bytes,
 reads QVALUE 42274 from the complete Reader Action, edits only src/lib.rs and
 passes the protected native verifier. Native logical detail paging reaches the
-retained marker (280 additional page steps after the initial page), the Unicode input draft remains intact, and all
-owned instances/Tool Processes exit. Physical Host geometry/caret/scroll gestures
+retained marker (280 additional page steps after the initial page), the Unicode
+input draft remains intact, and all owned instances/Tool Processes exit. Physical Host geometry/caret/scroll gestures
 are not measured by this 80×24 native PTY evidence.
 
-Four renewals need six actual model-started attempts: F2 r1/a3 fails on verifier
-approval timeout, r1/a5 fails because the collector mistook an accepted escalation
+Four renewals need six actual model-started attempts: linux-f2-r1/opaque-writer-a3
+fails on verifier approval timeout; linux-f2-r1/opaque-writer-a5 fails because the collector mistook an accepted escalation
 ACK for process completion; neither becomes PASS. The corrected collector requires
 actual exit_code (with a separate builtin cd case), checked by four assert cases.
-All failed receipts and rollout/artifact evidence are retained. F2 r1/a1 binary
-transport corruption, a2 missing runtime parent and a4 stale owned checker build
-output are prelaunch failures with no model input; their raw NOT_RUN/FAIL labels
+All failed receipts and rollout/artifact evidence are retained. linux-f2-r1/opaque-writer-a1
+binary transport corruption, opaque-writer-a2 missing runtime parent and
+opaque-writer-a4 stale owned checker build output are prelaunch failures with no model input; their raw NOT_RUN/FAIL labels
 remain and are excluded from development counts. Binary transport was corrected
 by guest-local copy, not a change to production code.
 
