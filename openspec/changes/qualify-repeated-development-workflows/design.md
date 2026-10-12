@@ -93,6 +93,20 @@ System Store; qualification receipts/captures use a unique task-owned Host cache
 with no credential bodies or copied personal stores. Repository fixtures and
 operator guidance are executable evidence, not an alternative planning surface.
 
+### User-authorized managed-auth reuse on Linux
+
+On 2026-10-12 the user authorizes reusing the existing macOS Alan ChatGPT login
+on Ubuntu. This supersedes the earlier no-cross-Host-credential-copy operator
+constraint only for that selected managed `auth.json` file. Transfer it directly
+to the Ubuntu Host Store with owner-only permissions, leaving the macOS source
+unchanged and collecting no credential payload in receipts, logs or repository
+files. Do not clone private Store trees or give project Tools access to auth.
+Record this as environment preparation and shared authentication, not independent
+credentials, a development completion or approval-free autonomy. Actual Linux
+generation must verify the selected profile/model/effort after transfer; metadata
+and credential-reference presence alone do not establish readiness. The original
+thirty tasks, protected assertions, effect bounds and failure history stay fixed.
+
 ### Outcomes and intervention remain separate dimensions
 
 A task passes only when its predeclared behavioral/effect checks and required

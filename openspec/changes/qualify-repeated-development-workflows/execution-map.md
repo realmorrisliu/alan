@@ -6,7 +6,11 @@ attempts. All fifteen macOS slots have applicable notice-source evidence: three
 repetitions of each F1/F2/F3/F4/F5 family. All fifteen Linux model tasks remain.
 The candidate is documentation head 81b6f361 with unchanged 437 macOS and
 440 Linux compiled inputs; all sixteen current-head checks pass. Linux's fresh
-CLI still has no generation profile; build is not generation or PTY qualification.
+CLI's earlier readiness snapshot had no generation profile. The 2026-10-12
+user-authorized managed-auth reuse now passes actual Linux generation with
+qualification-gpt61 / ChatGPT / gpt-6.1-sol / medium; see native-runs.md.
+An actual 80x24 final-source explicit-command PTY probe also passes protected
+compilation and write denial. Neither readiness probe fills a development slot.
 Earlier source/prerequisite receipts below remain historical, not additional
 completed slots. Fixture self-checks and provider/backend preflights remain
 separate from model-authored task outcomes.
@@ -159,7 +163,7 @@ the actual XDG data root, ordinarily `~/.local/share/Alan`.
 | Memory exposure | System Store `services/memory/stores/default` | Record exposure/config identity without clearing personal memory or claiming independent samples |
 | Composer history | System Store `services/shell-ui/composer-history` | Existing service-owned state, not qualification output |
 | Connection metadata | System Store `services/connections/connections.toml` | Collect profile/provider/model metadata, not private settings bodies |
-| Credentials/auth | Host Store `credentials/` and `auth.json` | Never collect bodies or copy them between Hosts |
+| Credentials/auth | Host Store `credentials/` and `auth.json` | Never collect bodies in evidence or project grants; only the user's 2026-10-12 selected managed-auth transfer is authorized, with shared-auth exposure recorded |
 | Qualification captures/receipts | Unique owned Host cache | Retain failures, exact sources/effects, interventions and references; never overwrite `latest` |
 
 There is no generic `alan host fs cat` command. Use supported TUI details and

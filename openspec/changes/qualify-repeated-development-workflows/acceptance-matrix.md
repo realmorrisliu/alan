@@ -56,8 +56,11 @@ No earlier UI, Sandbox, Tool or CI receipt fills a slot.
   digest, definition/config identity, Connection profile/provider/model/effort,
   platform/kernel, selected git/Rust/PATH and grant IDs/access are required.
 - Target selection is gpt-6.1-sol medium, subject to real supported profile
-  inventory on both Hosts. Absence remains blocked; no substitute model or copied
-  credentials. No automatic routing; use explicit supported input semantics.
+  inventory on both Hosts. Absence remains blocked; no substitute model. The
+  user's 2026-10-12 authorization permits only the selected managed ChatGPT auth
+  file to move between owning Host Stores; record shared auth and verify real
+  generation. No credential payload belongs in evidence or project grants.
+  No automatic routing; use explicit supported input semantics.
 - A repetition has a fresh fixture/Process identity. Recovery records every
   continuation Process/boot identity and explicit selected rollout/checkpoint.
   Record memory exposure without clearing user stores or claiming independent

@@ -2393,3 +2393,63 @@ no substitute model is selected, and no preflight or CI test replaces a slot.
 The independent-generation setup question remains pending. #1045/#1046/#1047
 user merge/canonical closure stay open; no automatic routing or unattended
 self-bootstrap claim follows from the fifteen macOS repetitions.
+
+## Linux readiness and user-authorized auth reuse — 2026-10-12
+
+Current head 092e3278 passes all sixteen distinct checks. Immutable final gates
+receipt `gates-092-v1/receipt.json` has SHA-256
+`b28280f410ac9ee9d0e13274308890f5b7881bdfe5416551edf0c3d6182b7486`.
+The production source and frozen CLI remain unchanged. Actual Linux explicit
+commands run through the fresh normal CLI in an ordinary 80x24 PTY, selecting
+Git 2.53.0 and Rust/Cargo 1.96.0 under linux_reified_namespace. One planned Bash
+approval precedes the compound version/Git command. Cargo actually compiles the
+read-only dependency and protected checker in writable scratch; the protected
+behavioral test passes and source/checker writes are denied. All fixture hashes
+remain unchanged. Action details show readable original output; returning from
+details preserves abcδXYZ and insertion produces abcδQXYZ. Both observed Tool
+Processes and the native instance exit. Two read-only collector corrections
+(Host readiness field and Action owner path) remain retained. This probe does not
+measure physical cursor coordinates or qualify Host scrollback. Receipt SHA-256
+is `755349a7806693df2d038a7043f8104b6b471542b02fed8147bfe19fa0fff6c4`;
+all 51 retained evidence files verify. It adds zero model tasks or slots.
+
+The dedicated qualification-gpt61 profile selects gpt-6.1-sol with medium in its
+explicit config. The first-profile automatic default is cleared, restoring the
+original unset default. Credential-reference metadata alone is not a login.
+Setup receipt SHA-256 is
+`bbc94803c212f3354a0bd1d4daf7c8ea34aca75b7573f1db0eba26adb577a3c6`.
+The first device-login process times out; a user-requested retry is later stopped
+before the user-authorized migration. Neither failure is reclassified as success.
+
+The user then explicitly authorizes copying the existing macOS Alan ChatGPT
+managed-auth file to the Ubuntu Host Store. The selected regular auth file uses
+the same portable schema on both Hosts; direct process-stdin transfer creates a
+new 0600 destination without overwriting existing auth and leaves the macOS
+source unchanged. Credential payloads are absent from logs, repository files
+and qualification receipts. Private Store trees are not cloned. This is shared
+authentication and environment setup, not independent credential acceptance.
+The narrow authorization supersedes the earlier no-copy operator constraint;
+all project grants, model selection and task success requirements stay fixed.
+
+CLI connection validation passes, followed by one actual redirected-input
+generation readiness probe with no project grants or Tool calls. The response
+is exactly ALAN_LINUX_AUTH_OK and the instance exits after 13.282594 seconds.
+Its sole admitted callable is ChatGPT / qualification-gpt61 / gpt-6.1-sol with
+medium request controls; the actual turn context also records gpt-6.1-sol/medium.
+The owned rollout remains in the System Store and only its reference/hash are
+collected. Readiness receipt SHA-256 is
+`5c4f0f98c3bb2f9ee9c25f84eb507a4f9709ee482a7590b96729adf57f779e09`.
+This adds one readiness generation turn and zero development tasks or slots.
+
+The unchanged fixture module also prepares native Linux inputs. All fifteen
+Linux prompts/follow-ups, project baseline bytes, protected assertions, allowed
+changes, original long-diff bytes, 80x24 geometry and 600-second bounds match
+the original frozen matrix. Only checker backing paths and local Git setup
+identity differ. Input-equality receipt SHA-256 is
+`fcd0b5fd8275b3faf76c8b3458b1fdbdc317f42e25920fde24eb9ca768f775bd`.
+Preparation writes no solution and launches no Agent. All fifteen Linux slots
+remain NOT_RUN; the next task needs its native task-cwd/source/model freeze.
+Counts remain 58 development attempts and 15/30 applicable slots, with original
+11 PASS / 4 FAIL / 15 NOT_RUN. Usage/cost and statistical independence remain
+unqualified. These document edits need their own normal gates and current-head
+CI; user review/merge and canonical synchronization remain open.

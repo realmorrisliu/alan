@@ -1,5 +1,23 @@
 # Disposition — 2026-10-11
 
+## Latest readiness update — 2026-10-12
+
+The user explicitly authorizes reusing the existing macOS Alan ChatGPT managed
+auth on Ubuntu. Only its selected Host Store auth file is transferred, with
+0600 destination permissions and unchanged macOS source; no credential payload
+is collected in evidence or copied into a project. Shared auth is not independent
+credential acceptance. The previous device login is stopped before transfer.
+Actual Linux generation now succeeds on qualification-gpt61 / gpt-6.1-sol /
+medium; its admitted callable and turn context match. This resolves the earlier
+login prerequisite without completing a development slot. All fifteen Linux
+tasks remain NOT_RUN; aggregate v64 stays 58 attempts and 15/30 applicable slots.
+Earlier unavailable-profile/no-copy observations below remain historical.
+Current evidence head 092e3278 passes all sixteen checks; these new planning and
+readiness records need their own normal gates and CI. Task 1.4 still requires
+the selected native task-cwd readiness freeze before matrix generation.
+
+## Retained earlier disposition
+
 The user's existing ordered goal authorizes this independent third delivery.
 Qualification is active: prerequisites/fixtures and all five historical macOS
 families have evidence (8/19 tasks). Original outcomes remain eleven PASS, four
