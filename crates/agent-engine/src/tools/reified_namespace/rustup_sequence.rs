@@ -55,6 +55,7 @@ fn projected_provider(
         ),
         path: String::new(),
         resolved,
+        requires_private_proxy_links: false,
     })
 }
 
@@ -85,7 +86,7 @@ fn standard_provider(
     Ok(binding)
 }
 
-fn proxy_links_stay_in_directory(source: &Path) -> bool {
+pub(super) fn proxy_links_stay_in_directory(source: &Path) -> bool {
     let Ok(identity) = std::fs::metadata(source) else {
         return false;
     };
@@ -117,7 +118,7 @@ fn query_provider(
     input: &ReifiedNamespacePlanInput,
     proxies: &[ReifiedExecutionSubstrateMount],
 ) -> Result<Option<ReifiedRustCommandProvider>, String> {
-    let binding = projected_provider(executable, path, input, proxies)?;
+    let mut binding = projected_provider(executable, path, input, proxies)?;
     // A frozen file identity does not prove that a project program implements a read-only query.
     let trusted = binding.resolved.as_ref().is_some_and(|(source, _, proxy)| {
         standard_source(executable, source)
@@ -128,6 +129,11 @@ fn query_provider(
                         if super::super::plan::paths_overlap(&canonicalize_existing_host_path(root), source.parent().unwrap()))
                 })
     });
+    binding.requires_private_proxy_links = trusted
+        && binding
+            .resolved
+            .as_ref()
+            .is_some_and(|(source, _, proxy)| *proxy && !standard_source(executable, source));
     Ok(trusted.then_some(binding))
 }
 

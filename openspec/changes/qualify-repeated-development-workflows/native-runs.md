@@ -1,3 +1,26 @@
+## Query proxy prelaunch revalidation follow-up — 2026-10-13
+
+Completed review of `a2ba0bfa` found P1 #4254072238: creating an external hard
+link after discovery did not invalidate the earlier query exemption. Query
+provider bindings now retain this admission requirement and recheck the shared
+physical-link condition before launch, alongside existing provider/configuration
+checks. Ordinary and standalone bindings do not acquire this requirement.
+
+The new discovery-to-revalidation test fails on the preceding source and passes
+with the repair: adding a link refuses, removing it restores validity, and a
+standalone query retains authority. Focused tests pass 50/50; full locked Engine
+suites pass 1466 on macOS and 1486 on Linux (one ignored each). All five existing
+real Linux public-Sandbox controls pass against rebuilt default CLI dependencies.
+These controls test native behavior; the late-link mutation window is covered
+by the direct discover/revalidate regression, not an injected native race.
+Both independent review axes report no findings in this narrow patch.
+
+Evidence: `rustup-query-provider-review-v1/prelaunch-link-review-v1/verification-ledger-v1.json`
+SHA-256 `a050c56ca892d98d5386d70dbd093d2aa409e50b0900b5cbaa1715457e1a155d`.
+The historical provider remains unchanged with one physical link; the thirty
+slots and ninety-one attempts remain historical, with no new model run or binary
+equality claim. Current-head CI/completed review and user merge remain pending.
+
 ## Rustup hard-link review follow-up — 2026-10-13
 
 PR #1056 review comment #4253959287 identified a valid gap: canonical path

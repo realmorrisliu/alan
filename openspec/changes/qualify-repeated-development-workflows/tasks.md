@@ -1,3 +1,11 @@
+## Current prelaunch link revalidation repair — 2026-10-13
+
+P1 #4254072238 is repaired by retaining the query-specific topology requirement
+and rechecking it before execution. RED-to-GREEN, focused 50/50, full macOS 1466
+and Linux 1486 (one ignored each), and five rebuilt native controls pass; both
+independent reviews report no findings. See native-runs.md. Checklist remains
+17/19 until current-head CI/completed review and user merge/canonical closure.
+
 ## Current hard-link review follow-up — 2026-10-13
 
 PR #1056 P1 #4253959287 is repaired locally with inode/link-count validation for

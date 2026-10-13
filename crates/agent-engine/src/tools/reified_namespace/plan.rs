@@ -142,6 +142,8 @@ pub struct ReifiedRustCommandProvider {
     pub path: String,
     /// Canonical provider, contents, and validated Rustup proxy classification.
     pub resolved: Option<(PathBuf, String, bool)>,
+    /// Query admission relied on this proxy having no external physical links.
+    pub requires_private_proxy_links: bool,
 }
 
 /// Visible Cargo configuration input; this snapshot conveys no mount authority.
