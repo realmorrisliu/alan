@@ -105,6 +105,16 @@ its user-facing summary.
 - **THEN** the UI labels the missing portion or unavailable detail truthfully
 - **AND** expanding does not fabricate content or re-execute the Tool
 
+#### Scenario: Acquired retained Command exceeds its preview
+- **WHEN** original retained Command JSON has acquired stdout, stderr and an exit code beyond the bounded presentation preview
+- **THEN** details show the acquired streams as readable text with separate stdout/stderr labels and exit status
+- **AND** raw bytes remain separately available; literal role-like content and comparisons are preserved
+
+#### Scenario: Acquired output is not a complete Command shape
+- **WHEN** retained JSON lacks the generic Command fields or contains incompatible field types
+- **THEN** the renderer preserves its existing fallback and truthful bound/loss notices
+- **AND** it does not infer a Command from a Tool name or arguments
+
 ### Requirement: Tool failures explain an available next action
 Tool failure summaries SHALL identify the failed operation, an understandable
 cause and an available next action when known. Internal diagnostics SHALL remain

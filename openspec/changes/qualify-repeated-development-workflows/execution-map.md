@@ -1,3 +1,25 @@
+## Current delivery status — 2026-10-13
+
+Implementation and follow-up are merged: #1047 at `8802b541`, #1056 at
+`34396740`; predecessor #1046 at `465e3e47` and UI/directory closure #1045 at
+`d2d044b5` are also merged. Local main was fast-forwarded to `d2d044b5`.
+The final repair head `d42b0c58` passed all sixteen checks and completed Codex
+review without major issues; both P1 threads are resolved. Local focused 50/50,
+macOS 1466/Linux 1486 Engine tests (one ignored each), five native Linux controls,
+quality/distribution and strict OpenSpec passed as recorded in native-runs.md.
+
+This documentation delivery synchronizes thirteen requirement blocks across seven
+canonical owners. Checklist is 18/19; task 4.5 remains open for final adoption. Its own
+review/CI and user merge remain required before canonical adoption on main and
+archive-readiness are final. The change remains active until that delivery lands;
+no historical archive is modified. See [delivery.md](delivery.md).
+
+Thirty selected slots and ninety-one model attempts remain immutable history;
+first outcomes remain 21 PASS/9 FAIL (70%). Linux F4 remains assisted, delegation
+is not qualified, usage/cost and physical terminal gestures remain unmeasured,
+and automatic routing/general unassisted self-bootstrap are not qualified.
+Earlier status entries below describe their historical revisions.
+
 ## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
 
 Direct follow-up review reproduced an additional execution-order gap on published
