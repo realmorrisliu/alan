@@ -7,7 +7,7 @@
 
 ## 2. Acceptance and delivery
 - [x] 2.1 Build and run isolated Herdr acceptance with actual output, completion and project/model context; record observations and limits in delivery.md.
-- [ ] 2.2 Pass quality and strict change validation, review the final diff and publish a reviewable PR with current-head CI status.
+- [x] 2.2 Pass quality and strict change validation, review the final diff and publish a reviewable PR with current-head CI status.
 
 ## Workflow follow-up
 - User merges after required CI/review; then synchronize canonical spec and archive through the normal workflow.
