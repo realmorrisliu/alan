@@ -1,3 +1,49 @@
+## Current prelaunch link revalidation repair — 2026-10-13
+
+P1 #4254072238 is repaired by retaining the query-specific topology requirement
+and rechecking it before execution. RED-to-GREEN, focused 50/50, full macOS 1466
+and Linux 1486 (one ignored each), and five rebuilt native controls pass; both
+independent reviews report no findings. See native-runs.md. Checklist remains
+17/19 until current-head CI/completed review and user merge/canonical closure.
+
+## Current hard-link review follow-up — 2026-10-13
+
+PR #1056 P1 #4253959287 is repaired locally with inode/link-count validation for
+Rustup query preludes. Focused 49/49, full macOS 1465 and Linux 1485 tests and
+five real Linux controls pass. Historical thirty-slot applicability is retained;
+no model attempt is added. See native-runs.md for evidence and limitations.
+Checklist remains 17/19: current-head CI/completed review and user merge remain
+open. Earlier entries describe their historical heads, not current readiness.
+
+## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
+
+Direct follow-up review reproduced an additional execution-order gap on published
+head `bbe9573f`: a project-owned executable named rustc can implement --version
+by changing Cargo configuration before a later genuine Cargo call. Public Sandbox
+API native controls complete with exit 0 and writer/config/compiler effects.
+Executable identity/digest snapshots alone do not prove read-only query semantics.
+PR #1047 was subsequently merged as `8802b541` on 2026-10-13; this
+additional fix is a separate follow-up based on main `7b0cbcf0`. The merged
+head does not contain the fix, and follow-up readiness remains withdrawn.
+
+The shared adapter now admits query preludes only from actual native standard
+providers or validated Rustup proxies outside explicitly granted Host trees.
+Namespace projection and provider identity are checked and frozen; a project
+program, an ordinary custom runtime or forwarded rustup run consumes the one work
+slot and requires a separate request before later inspected Rust execution.
+Standalone requests retain their existing authority and execution behavior.
+No mount authority, automatic routing or model-development instance is added.
+
+The original thirty selected qualifications, ninety-one model attempts and their
+raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
+No new model qualification is claimed for this repair. Native controls and
+full Engine regressions pass on the latest-main dependencies; see native-runs.md.
+Independent original-provider applicability and committed build-input binding
+are complete for source `74b9e5ad`: all thirty historical slots remain applicable,
+with no new model attempts. Task 4.3 closes; checklist is 17/19. Task 4.4 still
+requires current-head CI/completed review; task 4.5 requires follow-up user merge
+and canonical adoption. Earlier entries below are historical records.
+
 ## Current opaque-writer qualification and delivery gates — 2026-10-13
 
 P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work
@@ -218,7 +264,7 @@ zero-model collector preflights remain retained. Task 3.4 closes; checklist is
 - [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
 - [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
 - [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
-- [x] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
+- [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
 
 ## Final native and evidence audit — 2026-10-12

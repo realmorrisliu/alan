@@ -247,3 +247,47 @@ fn system_cargo_freezes_its_implicit_compiler_lookup() {
             .contains("provider changed")
     );
 }
+
+#[test]
+fn query_proxy_external_links_are_rechecked_before_execution() {
+    let (_fixture, proxies, home, project) = installation();
+    let mut input = input(&project);
+    input.argv = vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "rustc --version; cargo test".into(),
+    ];
+    let commands = vec![
+        vec!["rustc".into(), "--version".into()],
+        vec!["cargo".into(), "test".into()],
+    ];
+    let environment = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands)),
+    )
+    .unwrap()
+    .unwrap();
+    revalidate(&environment).unwrap();
+    let link = project.join("late-link");
+    std::fs::hard_link(proxies.join("rustup"), &link).unwrap();
+    assert!(
+        revalidate(&environment)
+            .unwrap_err()
+            .contains("query proxy")
+    );
+    std::fs::remove_file(&link).unwrap();
+    revalidate(&environment).unwrap();
+    input.argv = vec!["rustc".into(), "--version".into()];
+    let standalone = discover(
+        proxies.to_str().unwrap(),
+        &home,
+        None,
+        Some((&input, &commands[..1])),
+    )
+    .unwrap()
+    .unwrap();
+    std::fs::hard_link(proxies.join("rustup"), &link).unwrap();
+    revalidate(&standalone).unwrap();
+}

@@ -1,3 +1,150 @@
+## Query proxy prelaunch revalidation follow-up — 2026-10-13
+
+Completed review of `a2ba0bfa` found P1 #4254072238: creating an external hard
+link after discovery did not invalidate the earlier query exemption. Query
+provider bindings now retain this admission requirement and recheck the shared
+physical-link condition before launch, alongside existing provider/configuration
+checks. Ordinary and standalone bindings do not acquire this requirement.
+
+The new discovery-to-revalidation test fails on the preceding source and passes
+with the repair: adding a link refuses, removing it restores validity, and a
+standalone query retains authority. Focused tests pass 50/50; full locked Engine
+suites pass 1466 on macOS and 1486 on Linux (one ignored each). All five existing
+real Linux public-Sandbox controls pass against rebuilt default CLI dependencies.
+These controls test native behavior; the late-link mutation window is covered
+by the direct discover/revalidate regression, not an injected native race.
+Both independent review axes report no findings in this narrow patch.
+
+Evidence: `rustup-query-provider-review-v1/prelaunch-link-review-v1/verification-ledger-v1.json`
+SHA-256 `a050c56ca892d98d5386d70dbd093d2aa409e50b0900b5cbaa1715457e1a155d`.
+The historical provider remains unchanged with one physical link; the thirty
+slots and ninety-one attempts remain historical, with no new model run or binary
+equality claim. Current-head CI/completed review and user merge remain pending.
+
+## Rustup hard-link review follow-up — 2026-10-13
+
+PR #1056 review comment #4253959287 identified a valid gap: canonical path
+separation does not establish separation from writable external hard links.
+The query prelude exemption now requires every physical link to the validated
+proxy inode to remain inside its bounded proxy directory. Symbolic aliases do
+not count as physical links. Existing proxy validation already rejects unknown
+entries and bounds the entire directory; standalone requests retain authority.
+
+Focused regressions pass 49/49, including external project and individual-file
+grants, normal internal hard links, symbolic aliases and standalone execution.
+Full locked Engine suites pass 1465 tests on macOS and 1485 on Linux, each with
+one ignored test. A real public Sandbox API old-source control admits the query
+chain with an external link; this proves admission, not malicious mutation.
+All five repaired native controls pass: external-link refusal, normal query
+success, project-query refusal before effects, genuine query/build success and
+standalone project execution. Two earlier harness failures remain retained.
+
+Evidence lives under `rustup-query-provider-review-v1/hardlink-review-v1` in the
+existing qualification cache. `verification-ledger-v1.json` SHA-256 is
+`c6e991602d802d7faefdc1cef5a5da4b5289edbcf9f5eb60b77e05c1e0877d3c`.
+The actual historical Rustup provider still has one physical link and SHA-256
+`9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792`,
+matching the retained provider audit. Thirty historical slots and ninety-one
+model attempts are unchanged; these are native adapter regressions, not new
+model development runs. Current-head CI/completed review and user merge remain
+open under tasks 4.4 and 4.5; earlier source/binary freezes describe their own
+historical commits and do not claim binary equality for this patch.
+
+## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
+
+Direct follow-up review reproduced an additional execution-order gap on published
+head `bbe9573f`: a project-owned executable named rustc can implement --version
+by changing Cargo configuration before a later genuine Cargo call. Public Sandbox
+API native controls complete with exit 0 and writer/config/compiler effects.
+Executable identity/digest snapshots alone do not prove read-only query semantics.
+PR #1047 was subsequently merged as `8802b541` on 2026-10-13; this
+additional fix is a separate follow-up based on main `7b0cbcf0`. The merged
+head does not contain the fix, and follow-up readiness remains withdrawn.
+
+The shared adapter now admits query preludes only from actual native standard
+providers or validated Rustup proxies outside explicitly granted Host trees.
+Namespace projection and provider identity are checked and frozen; a project
+program, an ordinary custom runtime or forwarded rustup run consumes the one work
+slot and requires a separate request before later inspected Rust execution.
+Standalone requests retain their existing authority and execution behavior.
+No mount authority, automatic routing or model-development instance is added.
+
+The original thirty selected qualifications, ninety-one model attempts and their
+raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
+No new model qualification is claimed for this repair. Native controls and
+full Engine regressions pass on the latest-main dependencies; see native-runs.md.
+Independent original-provider applicability and committed build-input binding
+are complete for source `74b9e5ad`: all thirty historical slots remain applicable,
+with no new model attempts. Task 4.3 closes; checklist is 17/19. Task 4.4 still
+requires current-head CI/completed review; task 4.5 requires follow-up user merge
+and canonical adoption. Earlier entries below are historical records.
+
+## Rust query provider follow-up verification — 2026-10-13
+
+Source `74b9e5ad` binds all 880 actual project build-input instances across both
+Hosts to committed blobs. `source-applicability-ledger-v1.json` has SHA-256
+`fe6469e101e18de83c095df661bc86f2b8ba5c7c8c09dcefa781e7128144525c`.
+Aggregate `first-outcomes-v110.json` has SHA-256
+`718cd8079d759cc1be3f19ad4897f2000a428a156d4a9feef81054c6208661a3`;
+all thirty slot objects and their ninety-one attempt records are unchanged.
+The independent expanded historical audit has SHA-256
+`196222a161b74d3d173572a08b10562476946ec2b16a326527ae834f06c58b9b`.
+It binds all twelve renewal provider/grant contexts and checks every actual
+short/help/query spelling, rather than filtering only version-looking strings.
+Task 4.3 is closed; current-head CI/review and user merge remain distinct gates.
+
+The repair is based on merged main `7b0cbcf0`, retaining its Cargo.lock updates.
+The earlier public Sandbox API reproduction on `bbe9573f` remains a failure:
+project `rustc --version` writes Cargo configuration before genuine Cargo executes.
+This is adapter acceptance evidence, not a new model-authored development task.
+
+The repaired public API controls use fresh owned Linux projects and actual
+namespace/network confinement. Assertions establish:
+
+- The compound project query is refused before writer, configuration or compiler effects.
+- Genuine `git --version && rustc --version && cargo --version` followed by
+  `cargo test --offline --locked` succeeds, including its real library test.
+- A standalone project query still executes with its existing project authority;
+  its declared writer/configuration effects occur without a compiler invocation.
+
+Portable Rustup tests pass 48/48 on macOS. The Linux namespace suite passes
+106/106 with an explicitly provided owned Rust runtime, including real refusal
+controls for Git, archive extraction, Python, a substituted wrapper and the
+Rust-named project query. These suite runs precede the latest-main lockfile
+rebuild; the public API controls use the subsequent rebuilt CLI dependencies.
+Final current-source quality, compiled-input applicability and CI remain separate.
+
+Latest-main locked Engine regression subsequently passes 1464 tests on macOS and
+1484 on Linux, with one existing ignored test on each Host. Linux uses the explicit
+native runtime and two test threads. The first fully parallel Linux run retained
+1483 passes and one failure: an unchanged native capture command hit its 5-second
+timeout before the cancellation stage. That test passes in isolation and in the
+complete two-thread rerun; the timeout and both reruns remain recorded, rather
+than erasing the original failure or increasing its timeout.
+
+Actual Cargo dependency files bind 437 macOS and 443 Linux project input files.
+Relative to the prior qualified source, macOS production project inputs are
+unchanged; Linux changes only rustup.rs and rustup_sequence.rs. Main's already
+merged Cargo.lock updates are retained, so binary identity is not claimed unchanged.
+The full Engine regressions and public API controls use those updated dependencies.
+Committed project-input binding is complete as recorded above; CI remains outstanding.
+
+Evidence is retained under the task-owned Host cache
+`rustup-query-provider-review-v1/`:
+
+- `test-results-v2.json`: SHA-256 `0eb3e7513e8948bcac228b166f8dd2bfde96d8ea230291f185df8cd02f933d21`.
+- `public-api-canary.rs`: SHA-256 `eeff5d9bdbcc713b4affc84625cc7d314d3dc8ab90ca5e562967c88df3d8810a`.
+- `public-api-canary-results.json`: SHA-256 `fe14f2646f7c3b7e5c58b9a3103377a8d828682956f81008450d807c4a8cd752`.
+- `historical-query-provider-audit-v1.json`: SHA-256 `fd72f97771d9e474f85bc005dfb88730a5404f295249145a0efd857206f3dd35`.
+
+The historical query audit binds all 450 original structured Bash records,
+33 Linux launch phases and 12 renewal rollout copies. The 48 original Linux
+query records use the frozen external `.cargo/bin` providers; recorded project
+grants do not overlap that provider directory. The only original version-query
+sequence is the genuine three-tool query above. This is a query-provider audit,
+not a replacement for the thirty task receipts or complete final-source adoption.
+All original outcomes, assisted status, failed retries and unknown costs remain.
+
 ## Current opaque-writer qualification and delivery gates — 2026-10-13
 
 P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work

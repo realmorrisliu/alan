@@ -47,10 +47,6 @@ pub(super) fn discover(
             validate_command_environment(words)?;
         }
     }
-    let mut command_providers = input
-        .map(|(input, _)| sequence::inspect(input, path))
-        .transpose()?
-        .unwrap_or_default();
     let cargo_config_files = input
         .map(|(input, commands)| cargo::inspect(input, commands))
         .transpose()?
@@ -79,6 +75,10 @@ pub(super) fn discover(
             proxies.push(ReifiedExecutionSubstrateMount::new(entry, source));
         }
     }
+    let mut command_providers = input
+        .map(|(input, _)| sequence::inspect(input, path, &proxies))
+        .transpose()?
+        .unwrap_or_default();
     if proxies.is_empty() && cargo_config_files.is_empty() && command_providers.is_empty() {
         return Ok(None);
     }
@@ -106,6 +106,7 @@ pub(super) fn discover(
                         executable,
                         path: path.into(),
                         resolved,
+                        requires_private_proxy_links: false,
                     };
                     if !command_providers.contains(&entry) {
                         command_providers.push(entry);
@@ -118,6 +119,7 @@ pub(super) fn discover(
                 executable: executable.clone(),
                 path: path.into(),
                 resolved: binding,
+                requires_private_proxy_links: false,
             };
             if !command_providers.contains(&entry) {
                 command_providers.push(entry);
@@ -758,6 +760,13 @@ fn runtime_for_selector<'a>(
 
 pub(super) fn revalidate(environment: &ReifiedRustupEnvironment) -> Result<(), String> {
     for binding in &environment.command_providers {
+        if binding.requires_private_proxy_links
+            && !binding.resolved.as_ref().is_some_and(|(source, _, proxy)| {
+                *proxy && sequence::proxy_links_stay_in_directory(source)
+            })
+        {
+            return Err("Rust query proxy acquired external links before execution".into());
+        }
         if provider::snapshot(
             &binding.executable,
             &binding.path,

@@ -21,7 +21,7 @@ fn native_opaque_writers_refuse_before_configuration_or_compiler_effects() {
     );
     let path = format!("{}/bin:/usr/bin:/bin", system.display());
     let mut admitted = Vec::new();
-    for writer in ["git", "tar", "python", "wrapper"] {
+    for writer in ["git", "tar", "python", "wrapper", "rust_query"] {
         let project = root.join(writer);
         std::fs::create_dir_all(project.join("src")).unwrap();
         std::fs::write(
@@ -101,6 +101,12 @@ fn native_opaque_writers_refuse_before_configuration_or_compiler_effects() {
             "python" => {
                 std::fs::write(project.join("writer.py"), format!("import os,pathlib\npathlib.Path(os.environ['CARGO_HOME'],'config.toml').write_text({config:?})\npathlib.Path('writer-marker').write_text('effect')\n")).unwrap();
                 "python3 writer.py; cargo test --offline --locked".into()
+            }
+            "rust_query" => {
+                let fake = project.join("rustc");
+                std::fs::write(&fake, format!("#!/bin/sh\nmkdir -p .cargo\nprintf '%s' \"{config}\" > .cargo/config.toml\nprintf effect > writer-marker\nprintf 'rustc fixture\\n'\n")).unwrap();
+                std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+                "/mnt/project/rustc --version; cargo test --offline --locked".into()
             }
             _ => {
                 let wrapper = project.join("timeout");

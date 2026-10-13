@@ -1,18 +1,34 @@
 use super::*;
 
 fn checked(script: &str) -> Result<Vec<ReifiedRustCommandProvider>, String> {
+    use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(root.path()).unwrap();
+    let project = base.join("project");
+    let bin = base.join("proxies");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::write(bin.join("rustup"), b"\x7fELFfixture").unwrap();
+    std::fs::set_permissions(bin.join("rustup"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    for name in ["rustc", "cargo", "rustdoc", "rustfmt"] {
+        std::fs::hard_link(bin.join("rustup"), bin.join(name)).unwrap();
+    }
+    super::super::validate_proxies(&bin).unwrap();
     let input = ReifiedNamespacePlanInput::new(
         vec![super::super::super::ReifiedMountDeclaration::host(
-            root.path(),
-            root.path(),
+            &project,
+            &project,
             super::super::super::ReifiedMountAccess::ReadWrite,
         )],
-        root.path(),
+        &project,
         vec!["/bin/sh".into(), "-c".into(), script.into()],
         super::super::super::NetworkPosture::Deny,
     );
-    inspect(&input, "/usr/bin:/bin")
+    inspect(
+        &input,
+        &format!("{}:/usr/bin:/bin", bin.display()),
+        &[ReifiedExecutionSubstrateMount::new(&bin, &bin)],
+    )
 }
 
 #[test]
@@ -108,11 +124,11 @@ fn fake_namespace_wrapper_sources_are_not_standard_providers() {
     )
     .with_execution_substrate(vec![ReifiedExecutionSubstrateMount::new("/usr/bin", &fake)]);
     assert!(super::super::super::ReifiedNamespacePlan::derive(input.clone()).is_ok());
-    assert!(inspect(&input, "/usr/bin").is_err());
+    assert!(inspect(&input, "/usr/bin", &[]).is_err());
     let absent =
         input.with_execution_substrate(vec![ReifiedExecutionSubstrateMount::new("/aux", &fake)]);
     assert!(super::super::super::ReifiedNamespacePlan::derive(absent.clone()).is_ok());
-    assert!(inspect(&absent, "/usr/bin:/aux").is_err());
+    assert!(inspect(&absent, "/usr/bin:/aux", &[]).is_err());
 }
 
 #[test]
@@ -135,7 +151,7 @@ fn standard_aliases_revalidate_the_frozen_host_identity() {
     .with_execution_substrate(vec![ReifiedExecutionSubstrateMount::new(
         "/mnt/std", "/usr/bin",
     )]);
-    let bindings = inspect(&input, "/mnt/std").unwrap();
+    let bindings = inspect(&input, "/mnt/std", &[]).unwrap();
     assert_eq!(bindings.len(), 1);
     let binding = &bindings[0];
     assert_eq!(
@@ -183,7 +199,7 @@ fn host_alias_identity_cannot_replace_actual_namespace_alias_resolution() {
     .with_scratch_tmp_namespace_path("/.alan-alias-test-tmp")
     .with_execution_substrate(substrate);
     super::super::super::ReifiedNamespacePlan::derive(input.clone()).unwrap();
-    assert!(inspect(&input, "/usr/bin:/bin").is_err());
+    assert!(inspect(&input, "/usr/bin:/bin", &[]).is_err());
 }
 
 #[cfg(target_os = "linux")]
@@ -207,5 +223,180 @@ fn system_cross_root_alias_requires_its_actual_target_projection() {
         .execution_substrate
         .retain(|mount| !matches!(mount.namespace_path.to_str(), Some("/usr/lib" | "/lib")));
     super::super::super::ReifiedNamespacePlan::derive(input.clone()).unwrap();
-    assert!(inspect(&input, "/usr/bin:/bin").is_err());
+    assert!(inspect(&input, "/usr/bin:/bin", &[]).is_err());
+}
+
+#[test]
+fn ordinary_rust_names_and_project_proxy_layouts_are_not_query_proof() {
+    use std::os::unix::fs::PermissionsExt;
+    for alias in [false, true] {
+        for access in [
+            super::super::super::ReifiedMountAccess::ReadOnly,
+            super::super::super::ReifiedMountAccess::ReadWrite,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let project = std::fs::canonicalize(root.path()).unwrap();
+            let bin = project.join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            std::fs::write(bin.join("rustup"), b"\x7fELFproject-program").unwrap();
+            std::fs::set_permissions(bin.join("rustup"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            for name in ["rustc", "cargo", "rustdoc", "rustfmt"] {
+                std::fs::hard_link(bin.join("rustup"), bin.join(name)).unwrap();
+            }
+            super::super::validate_proxies(&bin).unwrap();
+            let namespace = if alias {
+                Path::new("/mnt/project")
+            } else {
+                &project
+            };
+            let proxy = ReifiedExecutionSubstrateMount::new(namespace.join("bin"), &bin);
+            for name in ["rustc", "cargo", "rustdoc", "rustfmt", "rustup"] {
+                let executable = namespace.join("bin").join(name);
+                for proxies in [&[][..], std::slice::from_ref(&proxy)] {
+                    let input = ReifiedNamespacePlanInput::new(
+                        vec![super::super::super::ReifiedMountDeclaration::host(
+                            namespace, &project, access,
+                        )],
+                        &project,
+                        vec![
+                            "/bin/sh".into(),
+                            "-c".into(),
+                            format!("{} --version; cargo test", executable.display()),
+                        ],
+                        super::super::super::NetworkPosture::Deny,
+                    );
+                    assert!(
+                        super::super::super::ReifiedNamespacePlan::derive(input.clone()).is_ok()
+                    );
+                    assert!(
+                        inspect(&input, "/usr/bin:/bin", proxies).is_err(),
+                        "{name}, {alias}, {access:?}"
+                    );
+                    let single = ReifiedNamespacePlanInput {
+                        argv: vec![
+                            "/bin/sh".into(),
+                            "-c".into(),
+                            format!("{} --version", executable.display()),
+                        ],
+                        ..input
+                    };
+                    assert!(inspect(&single, "/usr/bin:/bin", proxies).is_ok());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn forwarded_rustup_execution_requires_a_separate_request() {
+    assert!(checked("rustup run stable cargo --version; cargo test").is_err());
+    assert!(checked("rustup run stable rustc --version; cargo test").is_err());
+    assert!(checked("rustup run stable rustc --version").is_ok());
+}
+
+#[test]
+fn an_external_hard_link_does_not_make_a_project_controlled_proxy_trusted() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let root = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(root.path()).unwrap();
+    let project = base.join("project");
+    let bin = base.join("proxies");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::write(bin.join("rustup"), b"\x7fELFproject-linked-program").unwrap();
+    std::fs::set_permissions(bin.join("rustup"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::hard_link(bin.join("rustup"), bin.join("rustc")).unwrap();
+    symlink("rustup", bin.join("cargo")).unwrap();
+    super::super::validate_proxies(&bin).unwrap();
+    let input = ReifiedNamespacePlanInput::new(
+        vec![super::super::super::ReifiedMountDeclaration::host(
+            &project,
+            &project,
+            super::super::super::ReifiedMountAccess::ReadWrite,
+        )],
+        &project,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "rustc --version; cargo test".into(),
+        ],
+        super::super::super::NetworkPosture::Deny,
+    );
+    assert!(super::super::super::ReifiedNamespacePlan::derive(input.clone()).is_ok());
+    let proxies = [ReifiedExecutionSubstrateMount::new(&bin, &bin)];
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    assert!(inspect(&input, &path, &proxies).is_ok());
+    let linked = project.join("linked-program");
+    std::fs::hard_link(bin.join("rustup"), &linked).unwrap();
+    assert!(inspect(&input, &path, &proxies).is_err());
+    let single = ReifiedNamespacePlanInput {
+        argv: vec!["/bin/sh".into(), "-c".into(), "rustc --version".into()],
+        ..input.clone()
+    };
+    assert!(inspect(&single, &path, &proxies).is_ok());
+    std::fs::remove_file(linked).unwrap();
+    assert!(inspect(&input, &path, &proxies).is_ok());
+    let linked_file = base.join("granted-file");
+    std::fs::hard_link(bin.join("rustup"), &linked_file).unwrap();
+    for access in [
+        super::super::super::ReifiedMountAccess::ReadOnly,
+        super::super::super::ReifiedMountAccess::ReadWrite,
+    ] {
+        let mut file_grant = input.clone();
+        file_grant
+            .declarations
+            .push(super::super::super::ReifiedMountDeclaration::host(
+                &linked_file,
+                &linked_file,
+                access,
+            ));
+        assert!(super::super::super::ReifiedNamespacePlan::derive(file_grant.clone()).is_ok());
+        assert!(inspect(&file_grant, &path, &proxies).is_err());
+    }
+}
+
+#[test]
+fn a_file_grant_inside_a_proxy_directory_does_not_make_queries_trusted() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(root.path()).unwrap();
+    let cwd = base.join("scratch");
+    let bin = base.join("proxies");
+    std::fs::create_dir(&cwd).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::write(bin.join("rustup"), b"\x7fELFfile-granted-program").unwrap();
+    std::fs::set_permissions(bin.join("rustup"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::hard_link(bin.join("rustup"), bin.join("rustc")).unwrap();
+    super::super::validate_proxies(&bin).unwrap();
+    let input = ReifiedNamespacePlanInput::new(
+        vec![
+            super::super::super::ReifiedMountDeclaration::host(
+                &cwd,
+                &cwd,
+                super::super::super::ReifiedMountAccess::ReadWrite,
+            ),
+            super::super::super::ReifiedMountDeclaration::host(
+                bin.join("rustup"),
+                bin.join("rustup"),
+                super::super::super::ReifiedMountAccess::ReadOnly,
+            ),
+        ],
+        &cwd,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("{} --version; cargo test", bin.join("rustc").display()),
+        ],
+        super::super::super::NetworkPosture::Deny,
+    );
+    assert!(super::super::super::ReifiedNamespacePlan::derive(input.clone()).is_ok());
+    assert!(
+        inspect(
+            &input,
+            "/usr/bin:/bin",
+            &[ReifiedExecutionSubstrateMount::new(&bin, &bin)]
+        )
+        .is_err()
+    );
 }

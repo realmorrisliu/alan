@@ -138,7 +138,7 @@ existing file-server directory handles and refuse missing, non-directory, retarg
 or replaced roots before construction. This is a
 reconciliation-time check, not an atomic concurrent Host-mutation guarantee.
 
-This extension is a reviewable implementation candidate in draft PR #1046, not a
-change to the delivered single-grant baseline above. Adoption requires the user's
-review/merge decision and subsequent canonical synchronization. Existing fallback,
+The user merged this extension through PR #1046 on 2026-10-13
+(`465e3e47`). Implementation is delivered; canonical synchronization remains
+tracked in `support-linux-development-toolchains`. Existing fallback,
 approval, network, durable recovery and automatic-routing posture are unchanged.
