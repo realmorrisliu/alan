@@ -9,12 +9,11 @@ pub(super) fn project_selector(path: &str) -> (String, String) {
     (id, command)
 }
 
-pub(super) fn dispatch_with_pending_submissions(
-    app: &mut FileBackedApp,
-    event: FileBackedEvent,
+pub(super) fn unsettled_submissions(
+    app: &FileBackedApp,
     pending_turns: &VecDeque<PendingRootAgentTurn>,
-) -> Option<FileBackedAction> {
-    let blocked = pending_turns.iter().any(|turn| {
+) -> bool {
+    pending_turns.iter().any(|turn| {
         let owner = turn
             .submitted_process
             .map_or_else(|| app.agent_path.clone(), |pid| format!("/agent/{pid}"));
@@ -22,7 +21,15 @@ pub(super) fn dispatch_with_pending_submissions(
             || !app.queue.snapshot.as_ref().is_some_and(|q| {
                 q.known && q.paused && q.pending_submission_ids.contains(&turn.submission_id)
             })
-    });
+    })
+}
+
+pub(super) fn dispatch_with_pending_submissions(
+    app: &mut FileBackedApp,
+    event: FileBackedEvent,
+    pending_turns: &VecDeque<PendingRootAgentTurn>,
+) -> Option<FileBackedAction> {
+    let blocked = unsettled_submissions(app, pending_turns);
     if blocked
         && let FileBackedEvent::Terminal(crossterm::event::Event::Key(key)) = &event
         && key.code == crossterm::event::KeyCode::Enter
@@ -69,7 +76,10 @@ pub(super) fn dispatch_with_pending_submissions(
         && !app.project_boundary_available(blocked)
         || matches!(
             action,
-            Some(FileBackedAction::Project(ProjectControl::Revoke { .. }))
+            Some(
+                FileBackedAction::Project(ProjectControl::Revoke { .. })
+                    | FileBackedAction::RevokeCurrentProject
+            )
         ) && !app.project_recovery_boundary_available(blocked)
     {
         app.notice =

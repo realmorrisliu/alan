@@ -34,6 +34,7 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 python3 "$ROOT/scripts/test_cargo_cli_output.py"
 python3 "$ROOT/scripts/test_build_artifacts.py"
 python3 "$ROOT/scripts/test_service_scratch.py"
+python3 -m unittest discover -s "$ROOT/scripts/harness" -p test_repeated_development_fixtures.py
 
 cargo build --locked -p alan --bin alan
 "$ROOT/scripts/check-host-source-boundaries.sh"

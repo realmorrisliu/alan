@@ -128,9 +128,13 @@ pub struct ToolContext {
     /// Global configuration
     pub config: Arc<Config>,
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
+    namespace: Option<(u64, alan_ap::InProcessTransport)>,
 }
 
 impl ToolContext {
+    /// Maximum retained-evidence range, including room for JSON escaping on Tape.
+    pub const MAX_EVIDENCE_READ_BYTES: u64 = crate::evidence::MAX_EVIDENCE_READ_BYTES;
+
     /// Create a tool context from an explicit execution binding.
     pub fn from_binding(binding: ToolExecutionBinding, config: Arc<Config>) -> Self {
         Self {
@@ -139,7 +143,33 @@ impl ToolContext {
             scratch_dir: binding.scratch_dir,
             config,
             adapter: binding.adapter,
+            namespace: None,
         }
+    }
+
+    /// Bind the actual receiving Process identity and invocation namespace.
+    pub fn with_namespace(mut self, owner: u64, namespace: alan_ap::InProcessTransport) -> Self {
+        self.namespace = Some((owner, namespace));
+        self
+    }
+
+    /// Route AgentFS evidence reads without granting native Host authority.
+    pub fn read_namespace_evidence(
+        &self,
+        path: &str,
+        offset: u64,
+        length: u64,
+    ) -> Option<super::ToolResult> {
+        if !path.starts_with("/agent/") {
+            return None;
+        }
+        let namespace = self.namespace.clone();
+        let path = path.to_owned();
+        Some(Box::pin(async move {
+            let (owner, namespace) =
+                namespace.context("Tool Process has no namespace descriptor")?;
+            crate::runtime::read_action_evidence(namespace, owner, &path, offset, length).await
+        }))
     }
 
     /// Return the current execution binding.

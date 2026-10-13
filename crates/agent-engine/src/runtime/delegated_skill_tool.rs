@@ -222,6 +222,9 @@ where
         runtime
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, error_payload.clone());
+        runtime
+            .publish_prelaunch_rejection("Invalid delegated skill invocation payload.")
+            .await;
         emit(Event::Error {
             message: "Invalid delegated skill invocation payload.".to_string(),
             recoverable: true,
@@ -255,6 +258,11 @@ where
         runtime
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, error_payload);
+        runtime
+            .publish_prelaunch_rejection(
+                "Delegated skill invocation is not available in this runtime.",
+            )
+            .await;
         emit(Event::Error {
             message: "Delegated skill invocation is not available in this runtime.".to_string(),
             recoverable: true,
@@ -356,6 +364,8 @@ where
         Err(result) => (request.clone(), *result, None),
     };
 
+    let prelaunch_rejected =
+        child_run.is_none() && matches!(result.status, DelegatedSkillResultStatus::Failed);
     let (persisted_arguments, tape_record, rollout_record) =
         build_bounded_delegated_invocation_persistence(&persisted_request, result, child_run);
     let preview = tool_result_preview(&json!(tape_record.result.summary.clone()));
@@ -389,6 +399,11 @@ where
     runtime
         .machine
         .add_tool_message(&tool_call.id, &tool_call.name, tape_payload);
+    if prelaunch_rejected {
+        runtime
+            .publish_prelaunch_rejection(&tape_record.result.summary)
+            .await;
+    }
     Ok(VirtualToolOutcome::Continue {
         refresh_context: true,
     })

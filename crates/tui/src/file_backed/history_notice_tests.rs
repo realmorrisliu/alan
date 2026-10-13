@@ -1,5 +1,101 @@
 use super::*;
 use crate::composer::Composer;
+use crate::file_backed::app::Notice;
+use crate::history::HistoryCell;
+
+#[test]
+fn retained_runtime_error_retires_only_its_matching_runtime_notice() {
+    use alan_agent_protocol::{UiEvent, UiNoticeKind, UiNoticeSnapshot};
+    for (local, kind, text, retire) in [
+        (false, UiNoticeKind::Error, "delegation rejected", true),
+        (true, UiNoticeKind::Error, "delegation rejected", false),
+        (false, UiNoticeKind::Warning, "delegation rejected", false),
+        (false, UiNoticeKind::Error, "other failure", false),
+    ] {
+        let mut app = FileBackedApp::new("/agent/1".into());
+        app.composer.set_text("draft 中文😀");
+        let cursor = app.composer.cursor();
+        if local {
+            app.notice = Some(Notice::error(text));
+        } else {
+            app.apply_ui_event(UiEvent::Notice {
+                snapshot: UiNoticeSnapshot::new(kind, text),
+            });
+        }
+        app.apply_ui_event(UiEvent::Error {
+            message: "delegation rejected".into(),
+            recoverable: true,
+        });
+        assert_eq!(app.notice.is_none(), retire);
+        if !retire {
+            assert_eq!(app.notice.as_deref(), Some(text));
+            assert_eq!(app.notice.as_ref().unwrap().kind, kind);
+        }
+        assert_eq!(
+            app.transcript
+                .iter()
+                .filter(|cell| matches!(cell,
+                    HistoryCell::Error(message) if message == "delegation rejected"
+                ))
+                .count(),
+            1
+        );
+        for width in [48, 80, 120] {
+            let (lines, _) = live_region_lines_at(&app, width, 0);
+            if retire {
+                assert!(!lines.iter().any(|line| line.to_string().contains(text)));
+            }
+            assert_eq!(app.composer.text(), "draft 中文😀");
+            assert_eq!(app.composer.cursor(), cursor);
+        }
+    }
+}
+
+#[tokio::test]
+async fn hydrated_runtime_error_keeps_history_without_a_duplicate_footer() {
+    use crate::file_backed::{hydrate_and_open_tails, stdio_tests};
+    use alan_agent_protocol::{UiEvent, UiInputStatus, UiNoticeKind, UiNoticeSnapshot};
+
+    let (shell, _, _, _) = stdio_tests::live_root_agent().await;
+    let events = [
+        UiEvent::Notice {
+            snapshot: UiNoticeSnapshot::new(UiNoticeKind::Error, "delegation rejected"),
+        },
+        UiEvent::Error {
+            message: "delegation rejected".into(),
+            recoverable: true,
+        },
+        UiEvent::InputCompleted {
+            submission_ids: vec![stdio_tests::INPUT_ID.into()],
+            status: UiInputStatus::Completed,
+            error: None,
+        },
+    ];
+    for event in events {
+        shell
+            .write(
+                "/agent/root/machine/ui/events",
+                format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes(),
+            )
+            .await
+            .unwrap();
+    }
+    let mut app = FileBackedApp::new("/agent/root".into());
+    app.composer.set_text("draft 中文😀");
+    let cursor = app.composer.cursor();
+    let tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
+    tails.close().await;
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::Error("delegation rejected".into())]
+    );
+    assert!(app.notice.is_none());
+    assert!(!app.last_input_failed);
+    assert_eq!(app.composer.text(), "draft 中文😀");
+    assert_eq!(app.composer.cursor(), cursor);
+}
 
 #[test]
 fn queue_completion_preserves_runtime_notice_with_identical_text() {

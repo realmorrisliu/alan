@@ -1,0 +1,245 @@
+//! Admission of native sequences whose inspected Rust lookup inputs remain unchanged.
+use super::*;
+use crate::tools::sandbox::command_and_args;
+use crate::tools::sandbox::command_wrappers::{
+    command_wrapper_executables, is_env_assignment, shell_wrapper_inline_script,
+};
+
+const SEPARATE: &str = "Inspected Rust commands need separate requests after other programs or Rust execution; use literal cd/set, then run each build/test/application separately";
+
+fn rust_command(words: &[String]) -> Option<(&str, &[String])> {
+    let (name, args) = command_and_args(words)?;
+    PROXIES.contains(&name).then_some((name, args))
+}
+
+fn query(name: &str, args: &[String]) -> bool {
+    if name == "rustup" && args.first().is_some_and(|arg| arg == "run") {
+        return args.get(2).is_some_and(|name| query(name, &args[3..]));
+    }
+    if name == "cargo" {
+        return crate::tools::sandbox::command_options::cargo_global_query(args);
+    }
+    let args = if args.first().is_some_and(|arg| arg.starts_with('+')) {
+        &args[1..]
+    } else {
+        args
+    };
+    matches!(args, [arg] if matches!(arg.as_str(), "--version" | "-V" | "-vV" | "--help" | "-h"))
+        && matches!(name, "rustup" | "rustc" | "rustdoc" | "rustfmt")
+}
+
+fn standard_provider(
+    executable: &str,
+    path: &str,
+    input: &ReifiedNamespacePlanInput,
+) -> Result<ReifiedRustCommandProvider, String> {
+    let name = Path::new(executable)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(SEPARATE)?;
+    let plan = super::super::ReifiedNamespacePlan::derive(input.clone())
+        .map_err(|error| error.to_string())?;
+    let mut mounts = plan
+        .declared_host_mounts
+        .iter()
+        .map(|mount| ReifiedExecutionSubstrateMount::new(&mount.namespace_path, &mount.host_path))
+        .chain(plan.execution_substrate.iter().cloned())
+        .collect::<Vec<_>>();
+    mounts.sort_by_key(|mount| std::cmp::Reverse(mount.namespace_path.components().count()));
+    let source = provider::resolve_projected(executable, path, &mounts)?;
+    let resolved = source
+        .map(|source| executable_digest(&source).map(|digest| (source, digest, false)))
+        .transpose()?;
+    if !resolved.as_ref().is_some_and(|(resolved, _, _)| {
+        [
+            PathBuf::from("/usr/bin").join(name),
+            PathBuf::from("/bin").join(name),
+        ]
+        .iter()
+        .any(|standard| std::fs::canonicalize(standard).is_ok_and(|standard| &standard == resolved))
+    }) {
+        return Err(SEPARATE.into());
+    }
+    Ok(ReifiedRustCommandProvider {
+        executable: resolved.as_ref().unwrap().0.to_string_lossy().into_owned(),
+        path: String::new(),
+        resolved,
+    })
+}
+
+fn wrappers(
+    words: &[String],
+    path: &str,
+    input: &ReifiedNamespacePlanInput,
+) -> Result<Vec<ReifiedRustCommandProvider>, String> {
+    command_wrapper_executables(words)
+        .into_iter()
+        .filter_map(|executable| {
+            if matches!(executable, "command" | "exec" | "builtin") {
+                return None;
+            }
+            let name = Path::new(executable)
+                .file_name()
+                .and_then(|name| name.to_str());
+            Some(
+                if matches!(name, Some("env" | "nice" | "nohup" | "timeout" | "stdbuf")) {
+                    standard_provider(executable, path, input)
+                } else {
+                    Err(SEPARATE.into())
+                },
+            )
+        })
+        .collect()
+}
+
+pub(super) fn inspect(
+    input: &ReifiedNamespacePlanInput,
+    path: &str,
+) -> Result<Vec<ReifiedRustCommandProvider>, String> {
+    let Some(script) =
+        shell_wrapper_inline_script(&input.argv).map_err(|error| error.to_string())?
+    else {
+        return if rust_command(&input.argv).is_some() {
+            wrappers(&input.argv, path, input)
+        } else {
+            Ok(Vec::new())
+        };
+    };
+    inspect_script(&script, path, input)
+}
+
+fn inspect_script(
+    script: &str,
+    path: &str,
+    input: &ReifiedNamespacePlanInput,
+) -> Result<Vec<ReifiedRustCommandProvider>, String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_bash::LANGUAGE.into())
+        .map_err(|error| error.to_string())?;
+    let tree = parser.parse(script, None).ok_or(SEPARATE)?;
+    let mut nodes = Vec::new();
+    let mut commands = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        if node.kind() == "command" {
+            let words = crate::tools::sandbox::shell_commands(&script[node.byte_range()])
+                .map_err(|error| error.to_string())?;
+            commands.extend(words.into_iter().map(|words| (node, words)));
+        }
+        nodes.push(node);
+        pending.extend(node.children(&mut node.walk()));
+    }
+    commands.sort_by_key(|(node, _)| node.start_byte());
+    let Some(last) = commands
+        .iter()
+        .rev()
+        .find(|(_, words)| rust_command(words).is_some())
+        .map(|(node, _)| *node)
+    else {
+        return Ok(Vec::new());
+    };
+    if tree.root_node().has_error()
+        || nodes.iter().any(|node| {
+            matches!(
+                node.kind(),
+                "&" | "command_substitution" | "process_substitution"
+            ) || node.is_named()
+                && node.start_byte() < last.end_byte()
+                && !matches!(
+                    node.kind(),
+                    "program"
+                        | "list"
+                        | "command"
+                        | "command_name"
+                        | "word"
+                        | "raw_string"
+                        | "string"
+                        | "string_content"
+                        | "concatenation"
+                        | "comment"
+                        | "redirected_statement"
+                        | "heredoc_redirect"
+                        | "heredoc_body"
+                        | "heredoc_start"
+                        | "heredoc_end"
+                        | "variable_assignment"
+                        | "variable_name"
+                        | "number"
+                        | "pipeline"
+                        | "subshell"
+                        | "compound_statement"
+                )
+                || node.kind() == "variable_assignment"
+                    && node.start_byte() < last.end_byte()
+                    && (node.parent().is_none_or(|parent| {
+                        !commands.iter().any(|(command, words)| {
+                            *command == parent && rust_command(words).is_some()
+                        })
+                    }) || !is_env_assignment(&script[node.byte_range()]))
+        })
+    {
+        return Err(SEPARATE.into());
+    }
+    let mut changed = false;
+    let mut providers = Vec::new();
+    for (node, words) in commands
+        .iter()
+        .take_while(|(node, _)| node.start_byte() <= last.start_byte())
+    {
+        if let Some((name, args)) = rust_command(words) {
+            if changed {
+                return Err(SEPARATE.into());
+            }
+            let mut ancestor = node.parent();
+            while let Some(parent) = ancestor {
+                if !matches!(parent.kind(), "program" | "list")
+                    && !(parent.kind() == "pipeline"
+                        && name == "rustc"
+                        && parent.end_byte() == node.end_byte())
+                {
+                    return Err(SEPARATE.into());
+                }
+                ancestor = parent.parent();
+            }
+            providers.extend(wrappers(words, path, input)?);
+            changed = !query(name, args);
+        } else if command_and_args(words)
+            .is_some_and(|(name, args)| name == "git" && args == ["--version"])
+        {
+            providers.extend(wrappers(words, path, input)?);
+            let (_, args) = command_and_args(words).ok_or(SEPARATE)?;
+            providers.push(standard_provider(
+                &words[words.len() - args.len() - 1],
+                path,
+                input,
+            )?);
+        } else if words.first().is_some_and(|word| word == "printf")
+            && words.get(1).is_some_and(|format| {
+                !format.starts_with('-')
+                    && (!format.contains('%') || matches!(format.as_str(), "%s" | "%s\\n"))
+            })
+        {
+        } else if words.first().is_some_and(|word| word == "cat") {
+            providers.push(standard_provider("cat", path, input)?);
+        } else {
+            let mut ancestor = node.parent();
+            let mut nested = false;
+            while let Some(parent) = ancestor {
+                nested |= !matches!(parent.kind(), "program" | "list");
+                ancestor = parent.parent();
+            }
+            changed |= nested
+                || (!words.first().is_some_and(|word| word == "cd")
+                    && !(words.first().is_some_and(|word| word == "set")
+                        && words[1..]
+                            .iter()
+                            .all(|arg| matches!(arg.as_str(), "-e" | "-u" | "-eu" | "-ue"))));
+        }
+    }
+    Ok(providers)
+}
+
+#[cfg(test)]
+#[path = "rustup_sequence_tests.rs"]
+mod tests;

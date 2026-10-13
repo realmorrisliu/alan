@@ -121,6 +121,16 @@ impl HostDirFs {
         &self.root
     }
 
+    /// Whether the backing path still names the directory retained by this export.
+    pub fn backing_root_is_current(&self) -> bool {
+        let Ok(retained) = self.root_dir.metadata() else {
+            return false;
+        };
+        std::fs::symlink_metadata(&self.root).is_ok_and(|current| {
+            current.is_dir() && current.dev() == retained.dev() && current.ino() == retained.ino()
+        })
+    }
+
     pub const fn access(&self) -> HostDirAccess {
         self.access
     }

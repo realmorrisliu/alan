@@ -1,0 +1,340 @@
+## Current opaque-writer qualification and delivery gates — 2026-10-13
+
+P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work
+require a separate request before inspected Rust execution, including initially
+private Cargo/Rustup homes. Bounded read-only producers, genuine system queries
+and verified standard wrappers retain narrow support; dynamic/asynchronous shell
+control and loader overrides refuse before effects. The thread is replied to and
+resolved. `51d1ed4c` also updates quinn-proto to 0.11.18 for five newly disclosed
+advisories; both default CLI feature graphs and binaries are unchanged.
+
+Four fresh Linux model qualifications pass on `51d1ed4c`: F2 r1/r2/r3 and F5 r2.
+The other twenty-six slots inherit the linked semantic applicability audits and
+actual committed build-input freezes. The original thirty slots/eighty-five
+attempts remain immutable; six new model-started attempts add four PASS and two
+collector FAIL, for ninety-one total (68 PASS/23 FAIL). Three new prelaunch
+failures remain separate. Original first outcomes stay 21 PASS/9 FAIL (70%).
+The admission audit's fourteen Linux records represent seven phase commands in
+four slots; twelve macOS test-only refusals do not execute in production.
+
+Tasks 3.2, 3.5 and 4.3 close again. Task 4.4 closes on the source head's normal
+quality/distribution checks, strict OpenSpec, independent reviews, all sixteen
+passing CI checks and completed same-head Codex no-major-findings review
+(#6130992270). Checklist is 18/19. This documentation recording still requires
+its own current-head CI/completed review before reporting merge readiness.
+Task 4.5 remains open for user merge and canonical adoption; no merge is authorized.
+Earlier entries below record historical evidence, not current delivery status.
+
+The four renewals use gpt-6.1-sol/medium and normal scoped approvals. Delegation
+fails at the child namespace cwd boundary; the root Agent completes each task,
+so delegation is not qualified. Existing assisted Linux F4 results stay assisted.
+Shared auth is authorized, not credential independence. Provider usage/cost and
+physical Herdr geometry/cursor/scroll gestures remain unmeasured; automatic
+routing stays off. These fixture results do not establish general unassisted
+self-bootstrap. Final receipts, accounting and hashes are below in native-runs.md.
+
+## Latest mixed Cargo short-option repair — 2026-10-13
+
+Completed review of 8b56c4b1 added P2 #4250308685: valid root queries in mixed
+short-option clusters still required unused frontends. The shared scanner now
+recognizes h/V before Z/C consume attached or separate values; a real h exits
+before later flags. The same scanner preserves directory-change refusal before
+and after the subcommand, without treating option values or -- payload as flags.
+Forty Rustup checks, two local parser checks and 96 native checks pass, including
+33 confined root queries with ordinary frontends/compilers removed. Eighty real
+Cargo1.97 probes retain34 exit0/46 genuine error controls; aliases and forwarded
+frontend flags remain separately inspected. Original30 slots/85 attempts and
+limits stay unchanged. Task4.4 remains open17/19 for new committed-head CI and
+completed review; user merge/canonical closure remains separate. Earlier entries
+below are historical evidence, not current merge readiness.
+
+## Latest Cargo root query dispatch repair — 2026-10-13
+
+All sixteen checks passed on c9bfe9a3, but its completed review found valid
+P2 #4249812214: root queries before a trailing frontend require unused children.
+The direct repair uses one shared option parser on ordinary and Rustup Cargo;
+root help precedes alias expansion, while version/list still inspect selected
+aliases and refuse default-short-alias combinations that can dispatch. Named or
+frontend help retains its own checks. Real208 child probes retain200 exit0 and
+8 genuine default-alias failures, alongside40 portable/96 native checks and
+450 original scripts/310 Cargo argument parity. Original30 slots/85 attempts,
+first outcomes and all limits remain unchanged. Task4.4 stays open17/19 for the
+new committed-head CI/completed review; user merge remains separate. Entries
+below record historical delivery states, not current merge readiness.
+
+## Latest Cargo frontend query repair — 2026-10-12
+
+All sixteen checks passed on de04ab8d, but its completed review found valid
+P2 #4249496754: ordinary cargo fmt --help unnecessarily required later-proxy
+rustfmt. Known fmt/Clippy help and proven Clippy version queries now bind only
+their actual frontend, while still inspecting configuration and selected aliases.
+Fmt version/forwarded payload and custom commands retain conservative dependencies.
+Eleven real owned-runtime child probes, 38 portable checks and 94 native namespace
+checks pass, including eight actual confined queries without ordinary compilers.
+Old portable/native false-refusal controls and harness failures are retained.
+Original 30 slots/85 attempts and limits stay unchanged. Task 4.4 remains open
+(17/19) for the new committed-head CI/completed review; user merge is separate.
+Earlier delivery entries below are historical, superseded by this current status.
+
+## Latest shell lookup, cwd and Cargo helper repair — 2026-10-12
+
+All sixteen checks passed on b0034bd9, but its completed automated review found
+three additional valid findings: #4248653241/function shadowing,
+#4248653247/newly created cd targets and #4248653257/auxiliary Cargo frontends.
+Merge readiness remains withdrawn and task 4.4 remains open (17/19). The direct
+repair uses the existing Bash syntax parser to reject actual functions in Rust
+requests while preserving quoted Rust source/comments/heredocs, rejects alias/hash
+lookup changes and unqualified nested Rust shells, and treats missing cd targets
+as uncertain. Ordinary Cargo freezes command-specific PATH helpers, including
+rustdoc for documentation/default doctests and fmt/clippy/custom frontends.
+Fresh private Cargo home is initially empty; in-request helper mutation remains
+unqualified. No extra runtime or authority is granted. Original 30 slots/85
+attempts and all first outcomes remain unchanged. Native and source applicability
+are recorded in native-runs.md; committed-head CI/re-review and user merge remain.
+
+## Latest compiler configuration and query repair — 2026-10-12
+
+Completed review of 8c769439 reported P1 #4247811233 (compiler overrides) and
+P2 #4247811240 (compiler-free Cargo commands). Both require repair before merge.
+Compiler-using invocations now inspect inline, extra-file and visible ancestor
+Cargo configuration, reject unsupported compiler/wrapper/context overrides and
+selected aliases, and freeze validated bytes or absence for prelaunch revalidation.
+Only proven compiler-free commands skip the implicit PATH rustc check. Real Cargo
+1.97 probes show plain metadata/clean can invoke rustc; metadata --no-deps does not.
+Custom help, aliases, directory remapping and bounded literal configuration writes
+receive the same checks. Parent-traversing cd refuses uncertain native selection.
+No extra authority or compiler installation is added. Opaque program-internal
+configuration mutation within one shell request remains unqualified; separate
+configuration editing from execution. The original 30 slots/85 attempts and their
+first outcomes remain immutable. Task 4.4 stays open (17/19) until committed-head
+CI and completed automated re-review; user merge remains separate under 4.5.
+See [compiler/configuration evidence](native-runs.md#compiler-configuration-and-query-follow-up--2026-10-12).
+
+## Latest effective-provider review repair — 2026-10-12
+
+Completed review of 06f15be3 found valid P1 #4247205400: a later Rustup proxy
+must not determine inspection for an earlier ordinary PATH executable. The direct
+repair selects the first regular X_OK provider (or explicit absolute executable),
+freezes its path/content/proxy classification, and rechecks before effects.
+System Cargo's default PATH compiler decision is frozen too. Unproved alias
+chains and context-changing wrappers refuse conservatively. No mount authority
+or unrelated runtime is added. Earlier delivery entries below are historical;
+current-head CI and completed automated review remain open under task 4.4 (17/19).
+See [the latest native evidence](native-runs.md#effective-path-provider-follow-up--2026-10-12).
+
+## Latest exact-alias review repair — 2026-10-12
+
+Completed review of 10a475d1 found P1 #4246987405: raw cwd/Host-root comparisons
+could discard an override keyed to an alias's exact canonical target before
+selection was canonicalized. The direct repair snapshots canonical inspection
+cwd/roots before override filtering, preserves original inputs for plan validation,
+and starts implicit directory inspection from canonical cwd. Override keys and
+selection priority are unchanged. Task 4.4 remains open and checklist is 17/19.
+Seventeen portable regressions pass, including remapped and identity alias-only
+cases without a masking canonical child mount. Actual 10a native RED and four-case
+GREEN are retained; twelve old-10a/new complete environment comparisons pass for
+already-canonical inputs. Original matrix applicability is semantic equality of
+its already-canonical cwd/backing roots, not an unchanged raw identity code branch.
+Current committed-head gates and completed automated re-review remain required.
+
+## Latest post-repair automated review — 2026-10-12
+
+The Cargo manifest P2 was fixed in d719f3b6 and resolved; that head passed all
+sixteen checks. Its completed automated re-review found a valid Rustup remap P1
+(#4246709180). Merge readiness remains withdrawn and task 4.4 remains open.
+The direct repair preserves Host precedence checks and projects inspected effective
+selectors at all validated equivalent namespace directories after inspection.
+Identity mounts retain their original settings/selection branch; this does not
+assume historical user override maps were absent. Portable and native regression,
+new source applicability, independent review and committed current-head CI/review
+must close before readiness is restored. Checklist remains 17/19; user merge and
+canonical closure remain separate. No automatic merge is authorized.
+
+# Repeated real-development acceptance matrix — 2026-10-10
+
+Post-ready review reports valid Cargo prefix P2 `discussion_r4246031780`.
+The repaired candidate has fresh native boundary evidence and a complete
+selected-command no-impact audit; current-head CI and completed automated
+re-review are still required. The same thirty historical slots are inherited by
+the reviewed applicability ledger, with no original outcome or model count reset.
+See the latest section of native-runs.md; earlier all-input-equality statements
+remain limited to their recorded candidates.
+
+Latest 2026-10-12 aggregate v93 retains 85 development attempts and all 30/30
+applicable slots. Original first outcomes remain 21 PASS / 9 FAIL / 0 NOT_RUN
+(70% first-pass qualification). All 21 failed attempt records remain retained;
+two zero-model collector preflights and one historical unintended verifier model
+turn are separate. The three Linux F4 completions require corrective directory
+selection and a factual model acknowledgement. The other 27 selected completions
+have no corrective model advice; this does not establish zero unplanned
+intervention because read-only collector corrections remain enumerated.
+All selected completions have model-authored allowed source edits, protected
+behavior, terminal evidence and actual native exits within the original bound.
+No operator authors the selected solutions. Final audit verifies 85 receipt
+hashes and 4,694 selected artifact hashes. That recorded source applicability covers its frozen runtime and test-only
+relocation; the later Cargo parser repair has its own semantic applicability
+ledger and fresh binary/source freezes. Raw old-input equality is not claimed. Current-head CI and
+user merge/canonical closure remain separate gates.
+The retained candidate history below does not reset original outcomes.
+
+The layout, thirty fixture inputs/prompts, bounds and measurement fields are
+frozen at five families x two platforms x three repetitions. Runtime readiness
+is frozen separately before each Host's generation. Three macOS F1 first attempts
+have executed: two PASS and one FAIL for incomplete prospective tool identity.
+A fresh linked retry qualifies that failed slot without replacing its first
+outcome. The first F2 attempt also executed and remains FAIL after native preflight rejected
+the independent binary-check operand. A fresh linked F2 retry and original F2 r2/r3 now pass the complete independent
+checks on the repaired candidate. All three macOS F3 compiler-correction tasks
+also qualify. All three macOS F4 slots now qualify, retaining both failed r1
+attempts before its successful fresh retry. Fifteen slots qualify through thirty-four
+real model task attempts: eleven first PASS, four first FAIL and fifteen NOT_RUN.
+One unintended verifier model turn is recorded separately; the long-diff run is
+not zero-unplanned-intervention. All fifteen macOS slots have matching
+historical frozen-candidate proof, including the three F4 lifecycle reruns.
+The latest reviewed parent `a6ea2518` changes the shared diagnostic projector,
+one of that CLI's 437 compiled inputs, reopening final-source applicability.
+All fifteen macOS slots require conservative reruns. Six F1/F2 refreshes passed
+on `465e3e47`. All six retain a delegated-skill launch rejection followed by
+direct model fallback. The publication repair `bdf14ab0` passes CI, but native
+F3 r1 a3 fails required UI checks despite independently correct code: the same
+retained error repeats as a live footer after parent completion. The TUI repair
+`573cd12e` passes normal gates and all sixteen CI checks. Aggregate v45 retains
+forty-five attempts and three qualified F3 slots on this source. A detail-capture
+audit withholds an earlier claimed PASS while keeping its immutable receipt;
+the fresh retry captures the actual modal and changed page. Fifteen earlier
+qualified slots remain historical. The byte-identical ed6a65e6 documentation head
+passes all sixteen checks. F1 r1 a6 adds applicable small-repair evidence;
+aggregate v47 retains forty-six attempts and four final-source qualified slots.
+Fresh F1 r2/r3 a4 also qualify on byte-identical 95d6664c. Aggregate v50 retains
+forty-eight attempts and six final-source qualified slots. F2 r1 a5 and r2/r3 a4
+then qualify on byte-identical d97d7f70; aggregate v54 retains fifty-one attempts
+and nine final-source qualified slots. All three F4 refreshes qualify on
+byte-identical 19665cd9; one intervening collector-ordering FAIL stays retained
+before its fresh retry. Aggregate v59 records fifty-five attempts and twelve
+final-source slots. All three F5 refreshes qualify on byte-identical 81b6f361;
+aggregate v63 retains fifty-eight attempts and all fifteen macOS slots. All
+fifteen Linux tasks still require applicable final-source acceptance without
+resetting outcomes.
+Original outcomes and all earlier attempts are
+retained, without resetting the denominator; the remaining receipt rows are historical.
+Fresh baselines for the same thirty tasks match the original prompts, source
+bytes, assertions, bounds and long-diff bytes. Preparation/native checks add no
+model attempts. All fifteen Linux slots remain unexecuted for missing generation
+configuration; earlier Linux quality/Tool/PTY receipts do not qualify the newly
+integrated source. See `native-runs.md` for retained receipts.
+No earlier UI, Sandbox, Tool or CI receipt fills a slot.
+
+## Entry, identity and bounds
+
+- macOS: fresh Alan Shell invocation in Herdr; Linux: fresh invocation in an
+  ordinary PTY with actual required enforcing-backend readiness. Initial terminal
+  size is 80x24. Narrow/resize/cross-host smoke is additional coverage.
+- Effective source revision and production-source tree, native target/binary
+  digest, definition/config identity, Connection profile/provider/model/effort,
+  platform/kernel, selected git/Rust/PATH and grant IDs/access are required.
+- Target selection is gpt-6.1-sol medium, subject to real supported profile
+  inventory on both Hosts. Absence remains blocked; no substitute model. The
+  user's 2026-10-12 authorization permits only the selected managed ChatGPT auth
+  file to move between owning Host Stores; record shared auth and verify real
+  generation. No credential payload belongs in evidence or project grants.
+  No automatic routing; use explicit supported input semantics.
+- A repetition has a fresh fixture/Process identity. Recovery records every
+  continuation Process/boot identity and explicit selected rollout/checkpoint.
+  Record memory exposure without clearing user stores or claiming independent
+  statistical samples. Fixtures must not expose expected answers/verifier state.
+- Default wall limit is ten minutes per attempt, including waits. A time-limit
+  change is a pre-run matrix revision, never retrospective. Actual owned writers
+  must be cancelled/exited before reuse, and failure attempts are retained.
+- Runtime durable files stay with their System Store owners. A unique owned Host
+  qualification cache holds receipts/captures with source/effect inventories and
+  durable references. No personal credential contents or copied private stores.
+
+## Family checks
+
+| Family | Frozen fixture direction | Required model behavior and independent proof |
+| --- | --- | --- |
+| F1 small repair | Three small Rust expression defects with immutable failing tests and fresh symbol/input variants | Observe actual RED; model edits only the allowed production file; targeted and adjacent behavior GREEN; immutable tests/config and exact authorized diff checked |
+| F2 cross-file | Three small API/caller changes across two or three Rust files | Model updates definition and every declared caller; protected verifier exercises observable behavior; exact allowed files and no unrelated edits |
+| F3 failure correction | Three seeded real compiler/test/tool failures; no fabricated diagnostic | Actual Alan Tool result records failure before correction; model inspects its correlated diagnostic and fixes the cause; independent behavior passes without deleting/weakening tests or accepting exit-only success |
+| F4 cancel/revoke/recover | Each repetition has an append-only completed-effect ledger and observed delayed writer in a disposable grant | Observe writer live, cancel before scheduled effect, revoke and verify next unauthorized effect blocked; wait past scheduled time; explicitly select durable recovery and reapprove before continuation; completed ledger entry appears once, no late/duplicate write, truthful lifecycle/terminal states |
+| F5 long-output follow-up | Repetitions exercise long stdout, long stderr and a long initial diff, with a useful item beyond inline bounds | Inspect retained detail or truthful loss and original Action correlation; model obtains evidence through available supported paths and performs a bounded dependent answer/edit; protected verifier checks the referenced item, source diff and once-only effects; draft/cursor/detail return/scrollback remain usable |
+
+Host fixture setup is recorded separately from model authorship. For a long
+initial diff, baseline changes are Host setup and the model's additional diff is
+checked against that baseline. No operator may write the solution and label it a
+model coding success. If unavailable retained evidence prevents the dependent
+check, the task fails or is blocked; a truthful loss notice alone is not success.
+Tool literal text such as `server> ready`, comparisons and Markdown quotes remains
+content; generated role-prefix regression checks follow ADR-0059.
+
+## Thirty initial slots
+
+| Slot | Platform / Host | Family | Repetition | First outcome | Historical evidence and linked final refresh |
+| --- | --- | --- | --- | --- | --- |
+| macos-f1-r1 | macos / Herdr | F1 | 1 | FAIL: missing pre-run exact tool identity | native-runs.md; a2 PASS `71e2e625`; earlier-candidate a3 FAIL `7f7ddbdb`, a4 PASS `7b2e4c0c`; integrated-source a5 PASS `13432009`; notice-source a6 PASS `b1cf57f6`; a1 retained |
+| macos-f1-r2 | macos / Herdr | F1 | 2 | PASS | native-runs.md; original a1 `02cf4ac6`; earlier-candidate a2 PASS `1e499e15`; integrated-source a3 PASS `4144cce1`; notice-source a4 PASS `babcb125` |
+| macos-f1-r3 | macos / Herdr | F1 | 3 | PASS | native-runs.md; original a1 `9c9a1a6f`; earlier-candidate a2 PASS `997fd0dd`; integrated-source a3 PASS `d41c3bdb`; notice-source a4 PASS `c1df2cea` |
+| macos-f2-r1 | macos / Herdr | F2 | 1 | FAIL: independent binary-check operand rejected | native-runs.md; a2 PASS `c9dc9be0`; final-candidate a3 PASS `c1db6952`; a1 `6c0336f1` retained; integrated-source a4 PASS `e4b12f0b`; notice-source a5 PASS `9855d329` |
+| macos-f2-r2 | macos / Herdr | F2 | 2 | PASS | native-runs.md; original a1 `e3313a3a`; final-candidate a2 PASS `330cd58d`; integrated-source a3 PASS `6485ba9e`; notice-source a4 PASS `b143cd83` |
+| macos-f2-r3 | macos / Herdr | F2 | 3 | PASS | native-runs.md; original a1 `42c7ae59`; final-candidate a2 PASS `a8f7da36`; integrated-source a3 PASS `06a9b4c8`; notice-source a4 PASS `8974f584` |
+| macos-f3-r1 | macos / Herdr | F3 | 1 | PASS | native-runs.md; original a1 `41bc46fa`; earlier-candidate a2 PASS `8386abe9`; prelaunch-source a3 FAIL UI `497573d4`; notice-source a4 claim withheld by detail audit `ad41407a`; fresh a5 PASS `9113f519` |
+| macos-f3-r2 | macos / Herdr | F3 | 2 | PASS | native-runs.md; original a1 `a6e6c051`; earlier-candidate a2 PASS `c1eaa463`; notice-source a3 PASS `d29cf3a0` |
+| macos-f3-r3 | macos / Herdr | F3 | 3 | PASS | native-runs.md; original a1 `0ef06fc9`; earlier-candidate a2 PASS `58da21c8`; notice-source a3 PASS `b2ef5a92` |
+| macos-f4-r1 | macos / Herdr | F4 | 1 | FAIL: external grant revoke UI / wall bound | native-runs.md; a1 `a7d875ea`, a2 `2730d877` FAIL retained; fresh a3 PASS `bd740877`; final-candidate a4 PASS `ec82476c`; notice-source a5 PASS `f9fb329a` |
+| macos-f4-r2 | macos / Herdr | F4 | 2 | PASS | native-runs.md; original a1 `4abcf29e`; final-candidate a2 PASS `28841368`; notice-source a3 FAIL collector ordering `2fcab4ee`; fresh a4 PASS `8a694277` |
+| macos-f4-r3 | macos / Herdr | F4 | 3 | PASS | native-runs.md; original a1 `04dcb923`; final-candidate a2 PASS `104cf401`; notice-source a3 PASS `e7f8c766` |
+| macos-f5-r1 | macos / Herdr | F5 | 1 | FAIL: published retained reference denied; producer rerun | native-runs.md; a1 `c614c228`, a2 `98ad5294` FAIL retained; fresh a3 PASS `ffa05956`; notice-source a4 PASS `3378b40b` |
+| macos-f5-r2 | macos / Herdr | F5 | 2 | PASS | native-runs.md; original a1 receipt `e1514200`; notice-source a2 PASS `eebdb1d7` |
+| macos-f5-r3 | macos / Herdr | F5 | 3 | PASS | native-runs.md; original a1 receipt `95dbbfd9`; auxiliary lookup and unintended verifier turn disclosed; notice-source a2 PASS `70094038`, zero new verifier generation |
+| linux-f1-r1 | linux / ordinary PTY | F1 | 1 | PASS | native-runs.md; original a1 PASS `c4636708` on byte-identical 2277b693; protected checking, native exit and collector correction retained |
+| linux-f1-r2 | linux / ordinary PTY | F1 | 2 | PASS | native-runs.md; original a1 PASS `d8387d60` on byte-identical f497fbe7; protected checking, actual detail page and exits retained |
+| linux-f1-r3 | linux / ordinary PTY | F1 | 3 | PASS | native-runs.md; original a1 PASS `725de813` on byte-identical f497fbe7; protected checking, actual detail page, exits and ANSI-header collector correction retained |
+| linux-f2-r1 | linux / ordinary PTY | F2 | 1 | FAIL: operator checker used untranslatable namespace manifest path | native-runs.md; original a1 FAIL `58598a50` retained; fresh a2 PASS `9005e73b` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
+| linux-f2-r2 | linux / ordinary PTY | F2 | 2 | PASS | native-runs.md; original a1 PASS `3c89ebcd` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
+| linux-f2-r3 | linux / ordinary PTY | F2 | 3 | PASS | native-runs.md; original a1 PASS `b60eb51a` on byte-identical be25825a; protected library, both binaries, exact three-file effects, detail/draft and exits |
+| linux-f3-r1 | linux / ordinary PTY | F3 | 1 | PASS | native-runs.md; original a1 PASS `4f914795` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
+| linux-f3-r2 | linux / ordinary PTY | F3 | 2 | PASS | native-runs.md; original a1 PASS `6f1a6c22` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
+| linux-f3-r3 | linux / ordinary PTY | F3 | 3 | PASS | native-runs.md; original a1 PASS `13c3a0ae` on byte-identical 23e169e6; real compiler RED, model-only lib repair, protected behavior, original-error detail/draft and exits |
+| linux-f4-r1 | linux / ordinary PTY | F4 | 1 | FAIL: collector PID-domain assumption missed cancellation deadline | native-runs.md; original a1 FAIL `056a2301` retained; linked a2 FAIL `deb72654` retains lifecycle evidence beyond the bound; a5/a6/a7/a8/a9 failures and zero-model a3/a4 preflights retained; a10 assisted PASS `7883c9af` on 0f2958d9 completes the original task within 600 seconds |
+| linux-f4-r2 | linux / ordinary PTY | F4 | 2 | PASS | first actual model attempt a2 assisted PASS `e9c899f3` on 0f2958d9; prepared a1 never launched; original behavior/effects, native UI and exits independently verified |
+| linux-f4-r3 | linux / ordinary PTY | F4 | 3 | PASS | first actual model attempt a2 assisted PASS `60ced0f1` on 0f2958d9; prepared a1 never launched; original behavior/effects, native UI and exits independently verified |
+| linux-f5-r1 | linux / ordinary PTY | F5 | 1 | FAIL: incomplete collector qualification | native-runs.md; original failures retained; fresh a2 PASS `ed0a2fbf` |
+| linux-f5-r2 | linux / ordinary PTY | F5 | 2 | FAIL: incomplete collector qualification | native-runs.md; original failures retained; fresh a2 PASS `de882567` |
+| linux-f5-r3 | linux / ordinary PTY | F5 | 3 | FAIL: incomplete collector qualification | native-runs.md; original failures retained; fresh a3 PASS `4e4c5793` |
+
+## Per-attempt receipt and independent assertions
+
+Each receipt requires a unique slot/attempt ID, frozen prompt/fixture hashes,
+submission/request/action correlation, Process/boot and durable evidence references,
+source/binary/model identity, effective tools/backend/grants, start/end/elapsed
+measurement, raw terminal capture and verification report. The report records
+baseline/final source hashes, allowed diff, behavior checks, artifact locations,
+unauthorized-source/credential/runtime/network canary results where exercised,
+effect counts and owned-process/scratch cleanup. Do not infer backend confinement
+from command exit or an unconfigured native-test count.
+
+Interventions have timestamps, reason, actor and affected attempt: planned
+approval, planned lifecycle control, unplanned advice, operator source edit,
+environment repair or product repair. Separate approval-wait time when available.
+Final answers/captures are supporting evidence, not effect verification. Usage and
+cost fields remain unknown if provider evidence is absent; never derive pricing
+from guessed token counts.
+
+## Honest aggregation and correction
+
+First outcomes are PASS, FAIL, ENVIRONMENT_BLOCKED, UNSUPPORTED or NOT_RUN with a
+specific cause. Every initial slot stays in the thirty-slot denominator. Report
+executed attempts and qualified completions separately by family/platform;
+blocked/unsupported slots do not satisfy completed repetitions. Additional attempts
+link to the original slot with their source, changed inputs and intervention log.
+Report first-attempt success, assisted completion and zero-unplanned-intervention
+completion separately. Planned approval/lifecycle counts are visible even when
+there was no corrective help; this metric is not approval-free autonomy.
+
+A qualification conclusion requires at least three proven real-model completions
+in each platform/family, exact behavior/effects and the required lifecycle/terminal
+evidence. Original unsuccessful attempts remain part of the report. A production
+repair requires affected native reruns; if unaffected-slot applicability cannot be
+proved, rerun those slots too. Doc-only changes may retain native evidence when the
+production source and binary identity are demonstrably unchanged. No general
+self-bootstrap or auto-routing eligibility follows from this bounded sample.
