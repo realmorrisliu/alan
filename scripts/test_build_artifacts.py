@@ -35,6 +35,29 @@ class BuildArtifactTests(unittest.TestCase):
             (Path(artifacts.__file__).resolve().parent.parent / "rust-toolchain.toml").read_text())
         self.output = self.root / "output"
 
+    def test_checkout_owner_accepts_case_alias_but_not_a_subdirectory(self):
+        alias = self.owner.with_name(self.owner.name.upper())
+        if not alias.exists() or not alias.samefile(self.owner):
+            self.skipTest("requires a case-insensitive filesystem")
+        self.assertEqual(artifacts.owner_root(alias), self.owner)
+        child = self.owner / "child"
+        child.mkdir()
+        with self.assertRaisesRegex(ValueError, "checkout root"):
+            artifacts.owner_root(child)
+
+    def test_cli_target_uses_checkout_spelling_from_case_alias(self):
+        alias = self.owner.with_name(self.owner.name.upper())
+        if not alias.exists() or not alias.samefile(self.owner):
+            self.skipTest("requires a case-insensitive filesystem")
+        subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=self.owner,
+                       check=True, capture_output=True)
+        helper = Path(artifacts.__file__).resolve().with_name("cargo-cli-output.sh")
+        target = subprocess.check_output([
+            "bash", "-c", 'cd "$1"; source "$2"; alan_cli_target_dir "$PWD"',
+            "--", str(alias), str(helper),
+        ], text=True).strip()
+        self.assertEqual(target, str(self.owner / "target"))
+
     def test_new_output_is_registered_and_reusable_by_its_owner(self):
         with artifacts.build_lease(self.owner, [self.output], "task"):
             (self.output / "result").write_text("compiled")
