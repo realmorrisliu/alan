@@ -65,3 +65,13 @@ and strict OpenSpec validation passed (`target/review-quality.log`,
 `target/review-openspec.log`). The earlier native rerun exercised explicit PID
 bindings; this additional missing-binding case is deterministic qualification,
 not a new native run or current-head CI pass.
+
+## Verified implementation delivery — 2026-10-10
+
+PR #1043 is merged at `105903159ae0bd4243e6226aabdfdc8a76315f22`.
+All 16 checks on final implementation head `1645c20b` completed successfully.
+The earlier pending-CI/merge statements above retain their historical scope.
+The delivered selected-directory requirement is synchronized into canonical
+`agent-namespace-runtime` by this post-merge documentation closure. Original
+requirement/scenario identities are preserved. All five tasks are complete;
+the closure branch still requires review, checks and user merge.
