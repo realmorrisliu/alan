@@ -21,9 +21,11 @@ The original thirty selected qualifications, ninety-one model attempts and their
 raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
 No new model qualification is claimed for this repair. Native controls and
 full Engine regressions pass on the latest-main dependencies; see native-runs.md.
-Final original-provider applicability, committed build-input binding and
-current-head CI/completed review remain required before readiness. Tasks 4.3 and 4.4 reopen; checklist is 16/19. Task 4.5 still requires
-follow-up user merge and canonical adoption. Earlier entries below are historical records.
+Independent original-provider applicability and committed build-input binding
+are complete for source `74b9e5ad`: all thirty historical slots remain applicable,
+with no new model attempts. Task 4.3 closes; checklist is 17/19. Task 4.4 still
+requires current-head CI/completed review; task 4.5 requires follow-up user merge
+and canonical adoption. Earlier entries below are historical records.
 
 ## Current opaque-writer qualification and delivery gates — 2026-10-13
 
@@ -244,7 +246,7 @@ zero-model collector preflights remain retained. Task 3.4 closes; checklist is
 
 - [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
 - [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
-- [ ] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
+- [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
 - [ ] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
 - [ ] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
 

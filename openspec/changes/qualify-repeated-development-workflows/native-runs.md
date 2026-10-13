@@ -21,11 +21,25 @@ The original thirty selected qualifications, ninety-one model attempts and their
 raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
 No new model qualification is claimed for this repair. Native controls and
 full Engine regressions pass on the latest-main dependencies; see native-runs.md.
-Final original-provider applicability, committed build-input binding and
-current-head CI/completed review remain required before readiness. Tasks 4.3 and 4.4 reopen; checklist is 16/19. Task 4.5 still requires
-follow-up user merge and canonical adoption. Earlier entries below are historical records.
+Independent original-provider applicability and committed build-input binding
+are complete for source `74b9e5ad`: all thirty historical slots remain applicable,
+with no new model attempts. Task 4.3 closes; checklist is 17/19. Task 4.4 still
+requires current-head CI/completed review; task 4.5 requires follow-up user merge
+and canonical adoption. Earlier entries below are historical records.
 
 ## Rust query provider follow-up verification — 2026-10-13
+
+Source `74b9e5ad` binds all 880 actual project build-input instances across both
+Hosts to committed blobs. `source-applicability-ledger-v1.json` has SHA-256
+`fe6469e101e18de83c095df661bc86f2b8ba5c7c8c09dcefa781e7128144525c`.
+Aggregate `first-outcomes-v110.json` has SHA-256
+`718cd8079d759cc1be3f19ad4897f2000a428a156d4a9feef81054c6208661a3`;
+all thirty slot objects and their ninety-one attempt records are unchanged.
+The independent expanded historical audit has SHA-256
+`196222a161b74d3d173572a08b10562476946ec2b16a326527ae834f06c58b9b`.
+It binds all twelve renewal provider/grant contexts and checks every actual
+short/help/query spelling, rather than filtering only version-looking strings.
+Task 4.3 is closed; current-head CI/review and user merge remain distinct gates.
 
 The repair is based on merged main `7b0cbcf0`, retaining its Cargo.lock updates.
 The earlier public Sandbox API reproduction on `bbe9573f` remains a failure:
@@ -61,7 +75,7 @@ Relative to the prior qualified source, macOS production project inputs are
 unchanged; Linux changes only rustup.rs and rustup_sequence.rs. Main's already
 merged Cargo.lock updates are retained, so binary identity is not claimed unchanged.
 The full Engine regressions and public API controls use those updated dependencies.
-Final commit binding and CI remain outstanding.
+Committed project-input binding is complete as recorded above; CI remains outstanding.
 
 Evidence is retained under the task-owned Host cache
 `rustup-query-provider-review-v1/`:
