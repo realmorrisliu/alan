@@ -5,6 +5,7 @@ use alan_agent_protocol::{UiNoticeKind, UiNoticeSnapshot};
 pub(in crate::file_backed) struct Notice {
     pub kind: UiNoticeKind,
     pub submission: Option<String>,
+    pub runtime_owned: bool,
     message: String,
 }
 
@@ -16,6 +17,7 @@ impl Notice {
         Some(Self {
             kind: snapshot.kind,
             submission: None,
+            runtime_owned: true,
             message: snapshot.message,
         })
     }
@@ -28,6 +30,7 @@ impl Notice {
                 UiNoticeKind::None
             },
             submission: Some(id.into()),
+            runtime_owned: false,
             message,
         }
     }
@@ -52,6 +55,7 @@ impl From<String> for Notice {
         Self {
             kind: UiNoticeKind::None,
             submission: None,
+            runtime_owned: false,
             message,
         }
     }

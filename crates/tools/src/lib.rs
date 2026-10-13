@@ -42,7 +42,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands from the Process cwd, subject to namespace authority, policy, and execution-backend constraints. Prefer direct commands like rg, sed, git status, or curl. Avoid opaque interpreter wrappers like python -, python -c, bash -c, or sh -c unless genuinely required, because sandbox preflight may reject them conservatively."
+        "Execute shell commands from the Process cwd, subject to namespace authority, policy, and execution-backend constraints. Use cwd-relative operands for mounted project files; use file Tools for absolute Alan namespace paths such as /mnt/project/src/lib.rs. Namespace paths inside shell command text are not automatically translated. A refusal for such an operand alone does not mean the selected project needs another grant; use relative operands in its selected cwd. Prefer direct commands like rg, sed, git status, or curl. Avoid opaque interpreter wrappers like python -, python -c, bash -c, or sh -c unless genuinely required, because sandbox preflight may reject them conservatively."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -52,7 +52,7 @@ impl Tool for BashTool {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command to execute. Prefer direct commands instead of wrappers like python -, python -c, bash -c, or sh -c."
+                    "description": "Shell command from the selected Process cwd. Use cwd-relative operands for mounted project files; absolute Alan namespace paths in command text are not automatically translated. Prefer direct commands instead of wrappers like python -, python -c, bash -c, or sh -c."
                 },
                 "timeout": {
                     "type": "integer",

@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "delegated_skill_prelaunch_ui_tests.rs"]
+mod prelaunch_ui;
+
 #[tokio::test]
 async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
     let mut state = create_test_transition_state();
@@ -109,6 +112,15 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
     assert!(tool_result.contains("Delegated review completed."));
     assert!(tool_result.contains("child_run"));
     assert!(tool_result.contains("child-machine"));
+    assert_eq!(
+        state
+            .agent_files()
+            .read_ui_notice_snapshot()
+            .await
+            .unwrap()
+            .kind,
+        alan_agent_protocol::UiNoticeKind::None
+    );
 }
 
 #[tokio::test]

@@ -17,3 +17,4 @@ include!("tool_batch/failed_metadata.inc.rs");
 include!("tool_batch/action_metadata.inc.rs");
 include!("tool_batch/explicit_command.inc.rs");
 include!("tool_batch/read_only_metadata.inc.rs");
+include!("tool_batch/guard_output.inc.rs");

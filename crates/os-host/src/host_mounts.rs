@@ -3,6 +3,9 @@
 //! Runtime grant authority and live namespace projection belong to Host Mount
 //! Service. This adapter alone retains native backing paths.
 
+#[path = "host_mounts/text_projection.rs"]
+mod text_projection;
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -176,16 +179,7 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn project_text(&self, text: &str) -> String {
-        let mut projected = text.to_string();
-        let mut mounts = self.mounts.iter().collect::<Vec<_>>();
-        mounts.sort_by_key(|mount| std::cmp::Reverse(mount.host_path.as_os_str().len()));
-        for mount in mounts {
-            projected = projected.replace(
-                mount.host_path.to_string_lossy().as_ref(),
-                mount.namespace_path.to_string_lossy().as_ref(),
-            );
-        }
-        projected
+        text_projection::project_text(text, &self.mounts)
     }
 
     fn sandbox(&self) -> Result<Sandbox> {
@@ -216,6 +210,16 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
                         || projection.access == HostMountAccess::ReadOnly,
                     "Host Mount Tool authority cannot amplify export access"
                 );
+                // Sandbox construction must not move authority to a retargeted root.
+                anyhow::ensure!(
+                    canonical_host_path(&export.host_path).is_ok_and(|path| {
+                        path == export.host_path
+                            && export.tree.root() == path
+                            && export.tree.backing_root_is_current()
+                    }),
+                    "Host Mount backing changed or is unavailable at {}",
+                    projection.namespace_path.display()
+                );
                 Ok(NativeToolMount {
                     namespace_path: projection.namespace_path.clone(),
                     host_path: export.host_path.clone(),
@@ -239,21 +243,16 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             );
         }
         let at_namespace_root = requested_namespace_cwd == Path::new("/");
-        let selected = longest_namespace_mount(&mounts, &requested_namespace_cwd)
-            .or_else(|| {
-                mounts
-                    .iter()
-                    .find(|mount| mount.access == HostMountAccess::ReadWrite)
-            })
-            .or_else(|| mounts.first())
-            .context("Tool Process has no active Host Mount")?;
-        let namespace_cwd = if at_namespace_root {
-            requested_namespace_cwd.clone()
-        } else if requested_namespace_cwd.starts_with(&selected.namespace_path) {
-            requested_namespace_cwd
+        let selected = if at_namespace_root {
+            mounts
+                .iter()
+                .find(|mount| mount.access == HostMountAccess::ReadWrite)
+                .or_else(|| mounts.first())
         } else {
-            selected.namespace_path.clone()
-        };
+            longest_namespace_mount(&mounts, &requested_namespace_cwd)
+        }
+        .context("Tool cwd is outside live Host Mount authority; choose an explicit directory")?;
+        let namespace_cwd = requested_namespace_cwd;
         let cwd = namespace_cwd
             .strip_prefix(&selected.namespace_path)
             .ok()
@@ -273,15 +272,27 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
             .iter()
             .find(|mount| mount.namespace_path == selected.namespace_path)
             .expect("selected grant is in the native projection");
+        // Keep the cwd grant first for command/runtime inspection.
+        let mut shell_mounts = vec![shell_mount.clone()];
+        shell_mounts.extend(
+            sandbox_mounts
+                .iter()
+                .filter(|mount| {
+                    mount.access == ReifiedMountAccess::ReadOnly
+                        && mount.namespace_path != selected.namespace_path
+                })
+                .cloned(),
+        );
         let excluded_roots = mounts
             .iter()
-            .filter(|mount| !mount.host_path.starts_with(&selected.host_path))
+            .filter(|mount| {
+                mount.access == HostMountAccess::ReadWrite
+                    && !mount.host_path.starts_with(&selected.host_path)
+            })
             .map(|mount| mount.host_path.clone())
             .collect();
-        let shell_sandbox = Sandbox::from_spec(SandboxSpec::from_host_mounts(
-            std::slice::from_ref(shell_mount),
-        ))
-        .with_excluded_host_roots(excluded_roots);
+        let shell_sandbox = Sandbox::from_spec(SandboxSpec::from_host_mounts(&shell_mounts))
+            .with_excluded_host_roots(excluded_roots);
         Ok(Arc::new(NativeToolExecutionAdapter {
             mounts,
             namespace_cwd,
@@ -423,7 +434,7 @@ mod tests {
     use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
     use alan_kernel::{LiveNamespace, MountFs, Namespace, Pid};
 
-    fn service() -> Arc<HostMountService> {
+    pub(super) fn service() -> Arc<HostMountService> {
         HostMountService::new(Arc::new(NativeHostMountExportAdapter))
     }
 
@@ -482,7 +493,7 @@ mod tests {
         request_id
     }
 
-    async fn approve(
+    pub(super) async fn approve(
         service: &Arc<HostMountService>,
         pid: u64,
         namespace_path: &str,
@@ -500,7 +511,7 @@ mod tests {
         .unwrap()
     }
 
-    fn binding(namespace_cwd: &str) -> ToolExecutionBinding {
+    pub(super) fn binding(namespace_cwd: &str) -> ToolExecutionBinding {
         ToolExecutionBinding::awaiting_host_projection(
             PathBuf::from(namespace_cwd),
             PathBuf::from("/tmp/alan-native-host-mount-test-scratch"),
@@ -969,3 +980,11 @@ mod tests {
         assert_eq!(data, expected);
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "host_mounts/native_development_tests.rs"]
+mod native_development_tests;
+
+#[cfg(test)]
+#[path = "host_mounts/shell_authority_tests.rs"]
+mod shell_authority_tests;
