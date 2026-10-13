@@ -299,7 +299,7 @@ fn semantic_idle_hydration_does_not_replay_drained_heading() {
         let source = "# head\n**one**\n**two**";
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(source.into()));
-        let drained = app.drain_committed_scrollback(width, 5);
+        let drained = app.drain_committed_scrollback(width, 7);
         assert_eq!(
             drained.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["", "head"]
@@ -385,11 +385,11 @@ fn semantic_second_drain_stream_tape_and_both_merges_keep_fence_context() {
         let source = "# head\n```diff\n+\tone\n-\ttwo\n+\tthree";
         app.transcript.push(HistoryCell::User("task".into()));
         app.push_output(source.into());
-        let first = app.drain_committed_scrollback(width, 6);
+        let first = app.drain_committed_scrollback(width, 8);
         assert!(!first.is_empty());
         let resized = if width == 40 { 120 } else { 40 };
         let before = app.styled_history_lines(resized);
-        let second = app.drain_committed_scrollback(resized, 5);
+        let second = app.drain_committed_scrollback(resized, 7);
         assert_eq!(
             [second.clone(), app.styled_history_lines(resized)].concat(),
             before

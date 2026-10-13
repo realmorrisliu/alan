@@ -227,18 +227,21 @@ async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint(
                 terminal
                     .backend()
                     .buffer()
-                    .cell((column, 2))
+                    .cell((column, 4))
                     .unwrap()
                     .symbol()
             })
             .collect::<String>();
-        assert!(header.starts_with("no project · model unknown"), "{header}");
+        assert!(
+            header.starts_with("Select project · model unknown"),
+            "{header}"
+        );
         let hint = (0..width as u16)
             .map(|column| {
                 terminal
                     .backend()
                     .buffer()
-                    .cell((column, 4))
+                    .cell((column, 6))
                     .unwrap()
                     .symbol()
             })

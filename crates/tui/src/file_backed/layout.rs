@@ -165,9 +165,16 @@ fn live_region_lines_at(
     now_ms: u64,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
+    // Keep the live composer visually separate from retained output. These
+    // rows share the ordinary viewport budget, including cursor placement.
+    lines.push(Line::default());
+    lines.push(Line::styled(
+        "─".repeat(width),
+        Style::default().fg(Color::DarkGray),
+    ));
     lines.push(app.context_line(width));
-    if app.activity_label().is_some() {
-        lines.push(activity_line(app, now_ms));
+    if let Some(line) = attention_line_at_width(app, now_ms, width) {
+        lines.push(line);
     }
     if let Some(notice) = app.composer.history_notice() {
         lines.push(Line::styled(
@@ -443,6 +450,113 @@ pub(super) fn activity_elapsed_second(app: &FileBackedApp, now_ms: u64) -> u64 {
         .unwrap_or(0)
 }
 
+fn attention_line_at_width(
+    app: &FileBackedApp,
+    now_ms: u64,
+    width: usize,
+) -> Option<Line<'static>> {
+    let line = attention_line(app, now_ms)?;
+    if line.width() <= width {
+        return Some(line);
+    }
+    // Keep the current state and most urgent admission cue on one physical
+    // row. Full observations remain available through /status and /queue.
+    let primary = if app.model_chooser.uncertain.is_some() {
+        "Model uncertain"
+    } else if app.model_chooser.pending.is_some() {
+        "Model pending"
+    } else if app.form.is_some() {
+        "Input required"
+    } else if let Some(pending) = &app.pending_yield {
+        if matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation) {
+            "Approval"
+        } else {
+            "Input required"
+        }
+    } else if app.project_selection.is_some() {
+        "Select project"
+    } else if app.activity.state == super::UiActivityState::Running {
+        "Run"
+    } else if app.activity.state == super::UiActivityState::Paused {
+        "Paused"
+    } else if app.last_input_failed {
+        "Failed"
+    } else {
+        ""
+    };
+    let queue = app.queue.snapshot.as_ref().filter(|q| q.known);
+    let secondary = match queue {
+        Some(q) if !q.uncertain_submission_ids.is_empty() => "uncertain".into(),
+        Some(q) if q.paused && primary != "Paused" => "paused".into(),
+        Some(q) if q.deferred => "deferred".into(),
+        Some(q) if !q.pending_submission_ids.is_empty() => {
+            format!("queued {}", q.pending_submission_ids.len())
+        }
+        Some(q) if !q.active_submission_ids.is_empty() && primary != "Run" => "active".into(),
+        None if !app.queue.owner.is_empty() => "q unknown".into(),
+        _ if primary == "Run" => "Esc stop".into(),
+        _ if primary == "Paused" => "/continue".into(),
+        _ => String::new(),
+    };
+    let text = if primary.is_empty() {
+        secondary
+    } else if secondary.is_empty() {
+        primary.into()
+    } else {
+        format!("{primary} {secondary}")
+    };
+    let text = if text.is_empty() {
+        "Context changed · /status".to_string()
+    } else {
+        text
+    };
+    let text = if unicode_width::UnicodeWidthStr::width(text.as_str()) <= width {
+        text
+    } else if !primary.is_empty() {
+        primary.into()
+    } else {
+        "Status unknown".into()
+    };
+    // These fallback labels are ASCII; clipping only affects extremely small panes.
+    Some(Line::styled(
+        text.chars().take(width).collect::<String>(),
+        if app.model_chooser.uncertain.is_some() {
+            Style::default().fg(Color::Red)
+        } else {
+            line.style
+        },
+    ))
+}
+
+pub(super) fn attention_line(app: &FileBackedApp, now_ms: u64) -> Option<Line<'static>> {
+    let labels = app.attention_labels();
+    if app.activity_label().is_some() {
+        let mut line = activity_line(app, now_ms);
+        if !labels.is_empty() {
+            line.spans.push(Span::styled(
+                format!(" · {}", labels.join(" · ")),
+                Style::default().fg(if app.model_chooser.uncertain.is_some() {
+                    Color::Red
+                } else {
+                    Color::Yellow
+                }),
+            ));
+        }
+        Some(line)
+    } else if labels.is_empty() {
+        None
+    } else {
+        let color = if app.last_input_failed || app.model_chooser.uncertain.is_some() {
+            Color::Red
+        } else if app.model_chooser.pending.is_some() || app.project_selection.is_some() {
+            Color::Cyan
+        } else {
+            Color::Yellow
+        };
+        Some(Line::styled(labels.join(" · "), Style::default().fg(color)))
+    }
+}
+
 fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
     if app.pending_yield.is_some()
         || app.form.is_some()
@@ -467,7 +581,7 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
             Style::default().fg(Color::Green),
         ),
         Span::styled(
-            format!("· ctrl+c/esc interrupt · {elapsed}s"),
+            format!("Working · {elapsed}s · Esc interrupt"),
             Style::default(),
         ),
     ])

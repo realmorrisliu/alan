@@ -103,7 +103,11 @@ async fn final_public_projection_receipt_matrix() {
                     .await
                     .unwrap();
                 receive_model(&shell, &mut app, &mut rx, false).await;
-                assert!(app.context_line(200).to_string().contains("next B"));
+                assert!(
+                    app.model
+                        .status()
+                        .contains("selected-next: profile / provider / B")
+                );
                 assert_eq!(app.model_chooser.pending, Some((owner.clone(), id.clone())));
                 publish_receipt(&shell, &owner, "unrelated", UiInputStatus::Completed).await;
                 receive_model(&shell, &mut app, &mut rx, true).await;
@@ -140,14 +144,22 @@ async fn final_public_projection_receipt_matrix() {
                 "failed" => {
                     assert_eq!(app.model.known(), Some(&initial));
                     assert!(app.notice.as_deref().unwrap().contains("rejected"));
-                    assert!(app.context_line(200).to_string().contains("active A"));
+                    assert!(app.context_line(200).to_string().contains("A / high"));
                 }
                 "success-unreadable" => {
                     assert!(app.model.known().is_none());
-                    assert!(!app.context_line(200).to_string().contains("next B"));
+                    assert!(
+                        !app.model
+                            .status()
+                            .contains("selected-next: profile / provider / B")
+                    );
                     assert!(!app.model.status().contains("provider / B"));
                 }
-                _ => assert!(app.context_line(200).to_string().contains("next B")),
+                _ => assert!(
+                    app.model
+                        .status()
+                        .contains("selected-next: profile / provider / B")
+                ),
             }
         })
         .await;
@@ -195,7 +207,7 @@ async fn final_owning_receipt_read_error_is_visible_uncertainty() {
         assert!(app.model_chooser.pending.is_none());
         assert_eq!(app.model_chooser.uncertain, Some((owner, id)));
         app.notice = None;
-        assert!(app.context_line(200).to_string().contains("uncertain"));
+        assert!(app.attention_labels().join(" · ").contains("uncertain"));
     })
     .await;
     watchers.stop().await;
@@ -292,7 +304,11 @@ async fn final_success_receipt_then_models_io_failure() {
         assert!(app.model.known().is_none());
         assert!(app.model.status().contains("unknown or unavailable"));
         assert!(!app.model.status().contains("provider / B"));
-        assert!(!app.context_line(200).to_string().contains("next B"));
+        assert!(
+            !app.model
+                .status()
+                .contains("selected-next: profile / provider / B")
+        );
         assert!(!app.model_chooser.active);
         assert!(app.completion.is_none());
         app.handle_command("/model");

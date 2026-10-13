@@ -134,7 +134,12 @@ async fn terminal_receipt_refreshes_hint_in_either_queue_event_order() {
                             None
                         }
                     );
-                    assert!(app.context_line(80).to_string().contains("unknown"));
+                    assert!(
+                        app.attention_labels()
+                            .join(" · ")
+                            .to_lowercase()
+                            .contains("unavailable")
+                    );
                     assert_eq!(app.transcript, history);
                     assert_eq!(app.composer.text(), "new draft 🧭");
                     if status != UiInputStatus::Completed {
@@ -300,7 +305,12 @@ async fn lifetime_removed_receipt_hint_queue_dispatch() {
             };
             queue::dispatch_queue_event(&shell, &mut app, &pending, event).await;
             assert!(app.notice.is_none());
-            assert!(app.context_line(80).to_string().contains("unknown"));
+            assert!(
+                app.attention_labels()
+                    .join(" · ")
+                    .to_lowercase()
+                    .contains("unavailable")
+            );
             assert_eq!(app.transcript, history);
             app.notice = Some("unrelated notice".into());
             queue::dispatch_queue_event(

@@ -83,7 +83,7 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
             }),
         });
         let before = app.styled_history_lines(width);
-        let drained = app.drain_committed_scrollback(width, 5);
+        let drained = app.drain_committed_scrollback(width, 7);
         let retained = app.styled_history_lines(width);
         assert!(!drained.is_empty() && !retained.is_empty());
         assert_eq!([drained, retained.clone()].concat(), before);
@@ -121,7 +121,7 @@ fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() 
             "# Heading\n```diff\n+    first\n-    second".into(),
         ));
         let before = app.styled_history_lines(width);
-        let drained = app.drain_committed_scrollback(width, 5);
+        let drained = app.drain_committed_scrollback(width, 7);
         let retained = app.styled_history_lines(width);
         assert!(!drained.is_empty());
         assert_eq!([drained, retained].concat(), before);
@@ -266,21 +266,21 @@ fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
         .map(|text| HistoryCell::Assistant(text.to_string()))
         .collect();
 
-    let drained = app.drain_committed_scrollback(8, 5);
+    let drained = app.drain_committed_scrollback(8, 7);
     let retained = app.rendered_history_lines(8);
-    let height = inline_viewport_height(&app, 8, 5);
+    let height = inline_viewport_height(&app, 8, 7);
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
 
     assert_eq!(drained.len(), 5);
     assert_eq!(retained.len(), 1);
-    assert_eq!(terminal.backend().cursor_position().y, 3);
+    assert_eq!(terminal.backend().cursor_position().y, 5);
     let prompt = (0..8)
         .map(|column| {
             terminal
                 .backend()
                 .buffer()
-                .cell((column, 3))
+                .cell((column, 5))
                 .unwrap()
                 .symbol()
         })
@@ -373,11 +373,13 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
     assert_eq!(line(0), ": pwd");
     assert_eq!(line(1), "");
     assert_eq!(line(2), "/workspace/alan");
-    assert!(line(3).starts_with("no project · model unknown · ready"));
-    assert_eq!(line(4), ":");
+    assert_eq!(line(3), "");
+    assert_eq!(line(4), "─".repeat(80));
+    assert!(line(5).starts_with("Select project · model unknown"));
+    assert_eq!(line(6), ":");
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(2, 4)
+        ratatui::layout::Position::new(2, 6)
     );
 }
 
@@ -388,12 +390,12 @@ fn prompt_shows_the_process_selected_next_model() {
 
     let backend = render(&app);
     let line = (0..80)
-        .map(|column| backend.buffer().cell((column, 0)).unwrap().symbol())
+        .map(|column| backend.buffer().cell((column, 2)).unwrap().symbol())
         .collect::<String>()
         .trim_end()
         .to_string();
 
-    assert!(line.starts_with("no project · next gpt-6-luna · high · ready"));
+    assert!(line.starts_with("Select project · gpt-6-luna / high"));
 }
 
 #[test]
@@ -409,8 +411,13 @@ fn model_and_status_remain_visible_across_prompt_widths() {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(text.contains("next gpt-6-luna"), "{text}");
-        assert!(text.ends_with("working"), "{text}");
+        assert!(text.contains("gpt-6-luna / high"), "{text}");
+        assert!(
+            super::super::layout::attention_line(&app, 0)
+                .unwrap()
+                .to_string()
+                .contains("Working")
+        );
     }
 
     app.set_pending_yield(PendingYieldCell {
@@ -425,15 +432,20 @@ fn model_and_status_remain_visible_across_prompt_widths() {
         reason: None,
         presentation: None,
     });
-    for (width, status) in [(40, "approval"), (60, "waiting for approval")] {
+    for (width, status) in [(40, "waiting for approval"), (60, "waiting for approval")] {
         let line = app.context_line(width);
         let text = line
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(text.contains("next gpt-6-luna"), "{text}");
-        assert!(text.ends_with(status), "{text}");
+        assert!(text.contains("gpt-6-luna / high"), "{text}");
+        assert!(
+            super::super::layout::attention_line(&app, 0)
+                .unwrap()
+                .to_string()
+                .contains(status)
+        );
     }
     for queue in [
         alan_agent_protocol::UiQueueSnapshot::default(),
@@ -478,14 +490,14 @@ fn model_and_status_remain_visible_across_prompt_widths() {
                     let line = app.context_line(width);
                     let text = line.to_string();
                     assert!(line.width() <= width, "{width}: {text}");
-                    let action = match (selecting, width < 48) {
-                        (true, true) => "selecting",
-                        (true, false) => "selecting project",
-                        (false, true) => "approval",
-                        (false, false) => "waiting for approval",
-                    };
-                    assert!(text.contains(action), "{width}: {text}");
-                    if width >= model.len() + 3 + action.len() {
+                    let attention = super::super::layout::attention_line(&app, 0)
+                        .unwrap()
+                        .to_string();
+                    assert!(attention.contains("waiting for approval"), "{attention}");
+                    if selecting {
+                        assert!(attention.contains("Selecting project"));
+                    }
+                    if width >= model.len() {
                         assert!(text.contains(model), "{width}: {text}");
                     }
                 }
@@ -535,7 +547,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
                 })
                 .sum::<usize>();
             let height = inline_viewport_height(&app, width, 22);
-            assert_eq!(height as usize, expected_hint_rows + 2, "{width}: {typed}");
+            assert_eq!(height as usize, expected_hint_rows + 4, "{width}: {typed}");
             heights.push(height);
             let mut terminal = Terminal::new(TestBackend::new(width as u16, height)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -560,7 +572,7 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
             );
             assert!(rendered.contains("select or revoke"), "{rendered}");
             let cursor = terminal.backend().cursor_position();
-            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 1));
+            assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 3));
             assert!(app.drain_committed_scrollback(width, 22).is_empty());
             assert!(
                 app.transcript.is_empty(),
@@ -599,7 +611,9 @@ fn completion_candidates_render_below_the_inline_prompt_without_entering_history
     app.composer.set_text("/");
     app.refresh_completion();
 
-    let backend = render(&app);
+    let mut terminal = Terminal::new(TestBackend::new(80, 14)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let backend = terminal.backend();
     let line = |row| {
         (0..80)
             .map(|column| backend.buffer().cell((column, row)).unwrap().symbol())
@@ -608,14 +622,14 @@ fn completion_candidates_render_below_the_inline_prompt_without_entering_history
             .to_string()
     };
 
-    assert_eq!(line(4), ": /");
-    assert!(line(5).contains("/project"));
-    assert!(line(6).contains("/compact"));
-    assert!(line(8).contains("/continue"));
-    assert!(line(9).contains("/discard"));
-    assert!(line(10).contains("/clear"));
+    assert_eq!(line(6), ": /");
+    assert!(line(7).contains("/project"));
+    assert!(line(8).contains("/compact"));
+    assert!(line(10).contains("/continue"));
+    assert!(line(11).contains("/discard"));
+    assert!(line(12).contains("/clear"));
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
-    assert_eq!(inline_viewport_height(&app, 80, 12), 11);
+    assert_eq!(inline_viewport_height(&app, 80, 14), 13);
 }
 
 #[test]
@@ -665,13 +679,13 @@ fn wrapped_multiline_prompt_keeps_its_cursor_in_the_inline_viewport() {
     app.composer.set_text("\nx");
 
     let height = inline_viewport_height(&app, 8, 24);
-    assert_eq!(height, 4);
+    assert_eq!(height, 6);
 
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(3, 2)
+        ratatui::layout::Position::new(3, 4)
     );
 }
 
@@ -686,9 +700,9 @@ fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
 
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(3, 4)
+        ratatui::layout::Position::new(3, 6)
     );
-    assert_eq!(height, 6);
+    assert_eq!(height, 8);
 }
 
 #[test]
@@ -703,7 +717,7 @@ fn word_wrapped_current_prompt_positions_cursor_after_the_rendered_word() {
 
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(8, 2)
+        ratatui::layout::Position::new(8, 4)
     );
 }
 
@@ -716,17 +730,17 @@ fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
     let mut terminal = Terminal::new(TestBackend::new(10, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
 
-    assert_eq!(height, 12);
+    assert_eq!(height, 14);
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(3, 10)
+        ratatui::layout::Position::new(3, 12)
     );
     let last_row = (0..10)
         .map(|column| {
             terminal
                 .backend()
                 .buffer()
-                .cell((column, 10))
+                .cell((column, 12))
                 .unwrap()
                 .symbol()
         })
@@ -750,11 +764,11 @@ fn multiline_unicode_paste_stays_inline_and_positions_the_cursor_by_display_widt
             .to_string()
     };
 
-    assert!(line(1).contains("你") && line(1).contains("好"));
-    assert_eq!(line(2), "  x");
+    assert!(line(3).contains("你") && line(3).contains("好"));
+    assert_eq!(line(4), "  x");
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(3, 2)
+        ratatui::layout::Position::new(3, 4)
     );
 }
 
@@ -863,9 +877,10 @@ fn compact_header_keeps_project_access_model_and_effort_at_pane_width() {
             let line = app.context_line(width);
             let text = line.to_string();
             assert!(line.width() <= width, "{width}: {text}");
-            assert!(text.contains("/fixture · read-only"), "{width}: {text}");
-            assert!(text.contains("next gpt-6.1-sol"), "{width}: {text}");
-            assert!(text.contains(if known { "queued 0" } else { "queue unknown" }));
+            assert!(text.contains("fixture · read-only"), "{width}: {text}");
+            assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");
+            assert!(!text.contains("queued 0"));
+            assert_eq!(app.attention_labels().is_empty(), known);
             if known || width >= 73 {
                 assert!(text.contains("medium"), "{width}: {text}");
             }
@@ -898,7 +913,7 @@ fn narrow_prompt_prioritizes_model_and_state_over_project_and_queue_detail() {
             let text = line.to_string();
             assert!(line.width() <= width, "{width}: {text}");
             assert!(
-                text.contains("gpt-6.1-sol") && text.contains("ready"),
+                text.contains("gpt-6.1-sol") && !text.contains("ready"),
                 "{width}: {text}"
             );
             assert!(
@@ -931,23 +946,10 @@ fn narrow_prompt_keeps_model_with_paused_deferred_and_uncertain_queue() {
         let text = line.to_string();
         assert!(line.width() <= width, "{width}: {text}");
         assert!(!text.starts_with(" · "), "{width}: {text}");
-        if width < 32 {
-            let identity = text.split(" · ").next().unwrap();
-            assert!(
-                identity.starts_with('g') && identity.ends_with('l'),
-                "{width}: {text}"
-            );
-            assert!(
-                text.contains("uncertain") || text.split_whitespace().any(|word| word == "unc"),
-                "{width}: {text}"
-            );
-            assert!(text.contains("paused"), "{width}: {text}");
-            continue;
-        }
         assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");
-        assert!(
-            text.contains("paused") && text.contains("uncertain"),
-            "{width}: {text}"
-        );
+        let attention = app.attention_labels().join(" · ");
+        for cue in ["Paused", "uncertain", "deferred", "Queued 1"] {
+            assert!(attention.contains(cue), "{attention}");
+        }
     }
 }

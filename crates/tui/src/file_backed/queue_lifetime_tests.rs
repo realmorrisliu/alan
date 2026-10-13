@@ -182,8 +182,11 @@ fn lifetime_active_admission_is_not_execution() {
         app.activity.state = state;
         for width in 16..=80 {
             let line = app.context_line(width);
-            let text = line.to_string();
-            assert!(line.width() <= width, "{width}: {text}");
+            let text = super::layout::attention_line(&app, 0)
+                .unwrap()
+                .to_string()
+                .to_lowercase();
+            assert!(line.width() <= width);
             assert!(
                 text.split_whitespace()
                     .any(|word| matches!(word, "active" | "act")),
@@ -199,10 +202,7 @@ fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
     let mut app = FileBackedApp::new("/agent/root".into());
     model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     for (queue, cues) in [
-        (
-            UiQueueSnapshot::default(),
-            &["queue unknown", "q ?", "q?"][..],
-        ),
+        (UiQueueSnapshot::default(), &["queue unavailable"][..]),
         (
             UiQueueSnapshot {
                 known: true,
@@ -261,15 +261,24 @@ fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
             app.last_input_failed = failed;
             for width in 16..=80 {
                 let line = app.context_line(width);
-                let text = line.to_string();
-                assert!(line.width() <= width, "{width}: {text}");
-                assert!(
-                    states
-                        .iter()
-                        .any(|s| text.split_whitespace().any(|word| word == *s)),
-                    "{width}: {text}"
-                );
-                assert!(cues.iter().any(|cue| text.contains(cue)), "{width}: {text}");
+                let text = super::layout::attention_line(&app, 0)
+                    .unwrap()
+                    .to_string()
+                    .to_lowercase();
+                assert!(line.width() <= width);
+                if state == UiActivityState::Idle && !failed {
+                    assert!(!text.contains("ready"), "{text}");
+                } else {
+                    assert!(
+                        states
+                            .iter()
+                            .any(|s| text.split_whitespace().any(|word| word == *s)),
+                        "{width}: {text}"
+                    );
+                }
+                if !(state == UiActivityState::Running && cues.contains(&"active")) {
+                    assert!(cues.iter().any(|cue| text.contains(cue)), "{width}: {text}");
+                }
                 if state != UiActivityState::Running {
                     assert!(
                         !text

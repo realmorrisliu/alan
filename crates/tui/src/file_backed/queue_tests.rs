@@ -26,7 +26,7 @@ async fn queue_initial_paused_hydration_is_not_ready() {
     let tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
         .await
         .unwrap();
-    let status = app.context_line(120).to_string();
+    let status = app.attention_labels().join(" · ").to_lowercase();
     assert!(
         status.contains("paused") && status.contains("queued 1"),
         "initial authoritative queue must precede Ready: {status}"
@@ -164,7 +164,12 @@ async fn queue_fresh_unknown_allows_authorization_not_settled_claim() {
     let tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
         .await
         .unwrap();
-    assert!(app.context_line(120).to_string().contains("queue unknown"));
+    assert!(
+        app.attention_labels()
+            .join(" · ")
+            .to_lowercase()
+            .contains("queue unavailable")
+    );
     assert!(
         app.project_boundary_available(false),
         "valid no-admission snapshot permits authorization/control request, not settled-queue guarantee"
@@ -306,7 +311,12 @@ async fn queue_invalid_and_reconnect_unknown_are_not_empty() {
     let (tails, _) = reattach_to_current_agent(&shell, "/agent/root", &mut app, &[])
         .await
         .unwrap();
-    assert!(app.context_line(120).to_string().contains("queue unknown"));
+    assert!(
+        app.attention_labels()
+            .join(" · ")
+            .to_lowercase()
+            .contains("queue unavailable")
+    );
     assert!(!app.project_boundary_available(false));
     tails.close().await;
 }

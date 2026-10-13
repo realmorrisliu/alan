@@ -116,13 +116,23 @@ async fn boundary_delayed_receipt_preserves_recalled_opposite_route() {
 #[tokio::test]
 async fn boundary_hydrated_narrow_status_uses_typed_state_color() {
     let (_, mut app, _) = fixture().await;
-    for (state, color) in [
-        (UiActivityState::Idle, Color::Green),
-        (UiActivityState::Running, Color::Cyan),
-        (UiActivityState::Paused, Color::Yellow),
+    for state in [
+        UiActivityState::Idle,
+        UiActivityState::Running,
+        UiActivityState::Paused,
     ] {
         app.activity.state = state;
-        assert_eq!(app.context_line(24).style.fg, Some(color));
+        assert!(app.context_line(24).width() <= 24);
+        let attention = super::layout::attention_line(&app, 0)
+            .map(|line| line.to_string())
+            .unwrap_or_default();
+        assert!(!attention.contains("ready"));
+        if state == UiActivityState::Running {
+            assert!(attention.contains("Working"));
+        }
+        if state == UiActivityState::Paused {
+            assert!(attention.contains("Paused"));
+        }
     }
 }
 #[tokio::test]

@@ -179,7 +179,7 @@ fn settled_input_uses_header_queue_status_without_a_duplicate_notice() {
         assert!(
             !lines
                 .iter()
-                .skip(1)
+                .skip(3)
                 .any(|line| line.to_string().contains("queued 0"))
         );
     }
@@ -207,7 +207,7 @@ fn paused_status_regression() {
     app.composer.set_text("draft 界");
     for width in [40, 60, 73, 80, 120] {
         let (lines, prompt) = live_region_lines_at(&app, width, 5_001);
-        let header = lines[0].to_string();
+        let header = lines[3].to_string().to_lowercase();
         assert_eq!(header.matches("paused").count(), 1, "{header}");
         let text = lines
             .iter()
@@ -229,8 +229,12 @@ fn paused_status_regression() {
     }
     app.activity = UiActivitySnapshot::running(1);
     let (lines, _) = live_region_lines_at(&app, 120, 5_001);
-    assert!(lines[0].to_string().contains("working · paused"));
-    assert!(lines[1].to_string().contains("interrupt · 5s"));
+    assert!(lines[3].to_string().contains("Paused"));
+    assert!(
+        lines[3]
+            .to_string()
+            .contains("Working · 5s · Esc interrupt")
+    );
 }
 
 #[test]
@@ -240,9 +244,9 @@ fn paused_status_real_wait_has_static_cue_without_clock() {
     app.activity = UiActivitySnapshot::paused(Some(1));
     app.activity.waiting_submission_ids.push("r0".into());
     let (lines, _) = live_region_lines_at(&app, 80, 5_001);
-    assert!(lines[1].to_string().contains("waiting for input"));
-    assert!(!lines[1].to_string().contains("interrupt"));
-    assert!(!lines[1].to_string().contains("5s"));
+    assert!(lines[3].to_string().contains("waiting for input"));
+    assert!(!lines[3].to_string().contains("interrupt"));
+    assert!(!lines[3].to_string().contains("5s"));
 }
 
 #[test]
@@ -250,7 +254,7 @@ fn paused_status_model_override_owns_narrow_color() {
     let mut app = FileBackedApp::new("/agent/root".into());
     crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     app.model_chooser.pending = Some(("/agent/1".into(), "B".into()));
-    assert_eq!(app.context_line(24).style.fg, Some(Color::Cyan));
+    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Cyan));
     for uncertain in [false, true] {
         if uncertain {
             app.model_chooser.uncertain = Some(("/agent/1".into(), "B".into()));
@@ -263,13 +267,14 @@ fn paused_status_model_override_owns_narrow_color() {
                     || (span.content.starts_with('g') && span.content.ends_with('l'))),
                 "{width}: {line}"
             );
-            assert!(
-                line.to_string()
-                    .contains(if uncertain { "uncertain" } else { "pending" })
-            );
+            assert!(app.attention_labels().join(" · ").contains(if uncertain {
+                "uncertain"
+            } else {
+                "Selecting model"
+            }));
         }
     }
-    assert_eq!(app.context_line(24).style.fg, Some(Color::Red));
+    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Red));
 }
 
 #[test]
@@ -324,15 +329,21 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
             for width in [40, 60, 73, 80, 120] {
                 let (lines, _) = live_region_lines_at(&app, width, 5_001);
                 assert!(
-                    lines[1].to_string().contains(cue),
+                    lines[3].to_string().contains(cue)
+                        || lines[3].to_string()
+                            == if cue == "waiting for approval" {
+                                "Approval"
+                            } else {
+                                "Input required"
+                            },
                     "cue={cue}, lines={lines:?}"
                 );
-                assert!(!lines[1].to_string().contains("interrupt"));
-                assert!(!lines[1].to_string().contains("5s"));
+                assert!(!lines[3].to_string().contains("interrupt"));
+                assert!(!lines[3].to_string().contains("5s"));
                 assert!(
                     !SPINNER
                         .iter()
-                        .any(|glyph| { lines[1].to_string().starts_with(&format!("{glyph} ·")) })
+                        .any(|glyph| { lines[3].to_string().starts_with(&format!("{glyph} ·")) })
                 );
             }
         }

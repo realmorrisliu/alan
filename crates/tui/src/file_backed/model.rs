@@ -36,30 +36,24 @@ impl ModelProjection {
     pub fn known(&self) -> Option<&UiModelSnapshot> {
         self.snapshot.as_ref().filter(|s| s.known)
     }
-    pub fn header(&self) -> String {
-        self.header_controls(true)
-    }
-    pub fn header_controls(&self, controls: bool) -> String {
-        let Some(s) = self.known() else {
-            return "unknown".into();
-        };
-        if let Some(active) = &s.active {
-            let mut label = format!("active {}", compact_binding(active, controls));
-            if let Some(next) = &s.selected_next
-                && next != active
-            {
-                label.push_str(&format!(" · next {}", compact_binding(next, controls)));
+    pub fn prompt_binding(&self, prefer_active: bool) -> Option<&UiModelBinding> {
+        self.known().and_then(|s| {
+            if prefer_active {
+                s.active.as_ref()
+            } else {
+                s.selected_next.as_ref()
             }
-            label
-        } else {
-            format!(
-                "next {}",
-                s.selected_next.as_ref().map_or_else(
-                    || "unknown".into(),
-                    |binding| compact_binding(binding, controls)
-                )
-            )
-        }
+        })
+    }
+    pub fn prompt_label(&self, prefer_active: bool) -> String {
+        let Some(binding) = self.prompt_binding(prefer_active) else {
+            return "model unknown".into();
+        };
+        let model = safe(&binding.model);
+        binding.reasoning.effort.map_or_else(
+            || format!("{model} / effort unknown"),
+            |effort| format!("{model} / {effort}"),
+        )
     }
     pub fn status(&self) -> String {
         let Some(s) = self.known() else {
@@ -99,19 +93,6 @@ impl FileBackedApp {
 
 pub(super) fn safe(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(200).collect()
-}
-fn compact_binding(binding: &UiModelBinding, controls: bool) -> String {
-    if !controls {
-        return safe(&binding.model);
-    }
-    format!(
-        "{} · {}",
-        safe(&binding.model),
-        binding
-            .reasoning
-            .effort
-            .map_or_else(|| "reasoning unknown".into(), |effort| effort.to_string())
-    )
 }
 fn binding_label(binding: Option<&UiModelBinding>) -> String {
     binding.map_or_else(

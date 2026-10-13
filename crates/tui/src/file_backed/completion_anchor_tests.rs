@@ -270,7 +270,7 @@ fn transient_menu_does_not_permanently_drain_near_full_history() {
                 }
                 app.drain_committed_scrollback(width, pane);
                 let retained = app.styled_history_lines(width);
-                assert_eq!(retained.is_empty(), pane == 3);
+                assert_eq!(retained.is_empty(), pane <= 5);
                 let candidates = (0..9)
                     .map(|i| {
                         CompletionCandidate::new(

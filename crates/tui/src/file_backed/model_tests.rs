@@ -15,9 +15,12 @@ fn binding(model: &str) -> UiModelBinding {
     }
 }
 pub(super) fn install_header_model(app: &mut FileBackedApp, model: &str) {
-    let mut s = snapshot("1", 1);
+    let mut s = snapshot(
+        "1",
+        app.model.known().map_or(1, |s| s.publication_version + 1),
+    );
     s.selected_next = Some(binding(model));
-    s.active = None;
+    s.active = Some(binding(model));
     app.model.apply("/agent/1", Some(s));
 }
 pub(super) fn snapshot(pid: &str, version: u64) -> UiModelSnapshot {
@@ -121,7 +124,7 @@ fn model_status_separates_active_next_admitted_and_legacy_unknown() {
         assert!(status.contains(text), "{status}");
     }
     let header = app.context_line(200).to_string();
-    assert!(header.contains("active A") && header.contains("next B"));
+    assert!(header.contains("B / high") && !header.contains("next"));
     for (activity, model) in [
         (UiActivityState::Idle, "B"),
         (UiActivityState::Running, "A"),
@@ -354,5 +357,156 @@ fn identical_active_and_next_binding_shows_one_model_and_actual_effort() {
     let mut value = snapshot("1", 1);
     value.selected_next = value.active.clone();
     projection.apply("/agent/1", Some(value));
-    assert_eq!(projection.header(), "active A · high");
+    assert_eq!(projection.prompt_label(true), "A / high");
+}
+
+#[test]
+fn quiet_composer_discloses_only_relevant_context_and_attention() {
+    let mut app = FileBackedApp::new("/agent/1".into());
+    install_header_model(&mut app, "gpt-6.1-sol");
+    app.queue.apply(
+        "/agent/1",
+        Some(alan_agent_protocol::UiQueueSnapshot {
+            known: true,
+            revision: 1,
+            ..Default::default()
+        }),
+    );
+    app.project = Some(ProjectMountReceipt {
+        grant_id: "grant".into(),
+        namespace_path: "/mnt/project".into(),
+        label: "alan".into(),
+        access: ProjectAccess::ReadOnly,
+    });
+    app.namespace_cwd = "/mnt/project/src".into();
+    assert_eq!(
+        app.context_line(80).to_string(),
+        "alan · read-only · gpt-6.1-sol / high"
+    );
+    assert!(super::layout::attention_line(&app, 0).is_none());
+    app.handle_command("/status");
+    let status = app.notice.as_ref().unwrap();
+    for expected in [
+        "cwd: /mnt/project/src",
+        "access: read-only",
+        "queued 0",
+        "selected-next:",
+    ] {
+        assert!(status.contains(expected), "{status}");
+    }
+    app.notice = None;
+    app.last_input_failed = true;
+    assert_eq!(
+        super::layout::attention_line(&app, 0).unwrap().to_string(),
+        "Failed"
+    );
+    app.last_input_failed = false;
+    app.queue.apply("/agent/1", None);
+    assert!(
+        super::layout::attention_line(&app, 0)
+            .unwrap()
+            .to_string()
+            .contains("Queue unavailable")
+    );
+}
+
+#[test]
+fn active_binding_difference_is_exceptional_not_idle_clutter() {
+    let mut app = ready();
+    assert!(app.context_line(80).to_string().contains("B / high"));
+    assert!(
+        !app.attention_labels()
+            .iter()
+            .any(|s| s.starts_with("Next:"))
+    );
+    app.activity = alan_agent_protocol::UiActivitySnapshot::running(0);
+    assert!(app.context_line(80).to_string().contains("A / high"));
+    assert!(
+        app.attention_labels()
+            .iter()
+            .any(|s| s == "Next: B · /status")
+    );
+    let status = super::layout::attention_line(&app, 8000)
+        .unwrap()
+        .to_string();
+    assert!(status.contains("Working · 8s · Esc interrupt"), "{status}");
+    assert!(status.contains("Queued 1"), "{status}");
+}
+
+#[test]
+fn missing_active_model_never_borrows_next_binding() {
+    for state in [UiActivityState::Running, UiActivityState::Paused] {
+        let mut app = ready();
+        app.activity.state = state;
+        app.model.snapshot.as_mut().unwrap().active = None;
+        assert!(app.context_line(80).to_string().contains("model unknown"));
+        assert!(!app.context_line(80).to_string().contains("B /"));
+        assert!(
+            app.model
+                .status()
+                .contains("selected-next: profile / provider / B")
+        );
+    }
+}
+
+#[test]
+fn short_narrow_buffer_keeps_model_and_urgent_state_above_cursor() {
+    use ratatui::{Terminal, backend::TestBackend};
+    for width in [16, 24, 40] {
+        for height in [6, 8] {
+            let mut app = ready();
+            install_header_model(&mut app, "gpt-6.1-sol");
+            app.activity.state = UiActivityState::Paused;
+            let q = app.queue.snapshot.as_mut().unwrap();
+            q.uncertain_submission_ids = vec!["uncertain".into()];
+            q.deferred = true;
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|f| draw(f, &app)).unwrap();
+            let rows = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            let text = rows.join("\n");
+            for cue in ["gpt-6.1-sol", "Paused", "uncertain"] {
+                assert!(text.contains(cue), "{width}x{height}: {text}");
+            }
+            let cursor = terminal.backend().cursor_position();
+            assert!(rows[cursor.y as usize].starts_with(": "));
+        }
+    }
+}
+
+#[test]
+fn short_narrow_buffer_keeps_unknown_queue_during_work() {
+    use ratatui::{Terminal, backend::TestBackend};
+    for state in [UiActivityState::Running, UiActivityState::Paused] {
+        let mut app = ready();
+        install_header_model(&mut app, "gpt-6.1-sol");
+        app.activity.state = state;
+        app.queue.apply("/agent/1", None);
+        let mut terminal = Terminal::new(TestBackend::new(16, 6)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let rows = (0..6)
+            .map(|y| {
+                (0..16)
+                    .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let text = rows.join("\n");
+        for cue in [
+            "gpt-6.1-sol",
+            "q unknown",
+            if state == UiActivityState::Running {
+                "Run"
+            } else {
+                "Paused"
+            },
+        ] {
+            assert!(text.contains(cue), "{state:?}: {text}");
+        }
+    }
 }

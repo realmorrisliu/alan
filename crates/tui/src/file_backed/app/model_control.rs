@@ -14,7 +14,26 @@ impl FileBackedApp {
         self.input_intent == InputIntent::Agent && self.composer.text().trim() == "/model"
     }
     pub(super) fn model_status_command(&mut self) -> Option<FileBackedAction> {
-        self.notice = Some(self.model.status().into());
+        let project = self.project.as_ref().map_or_else(
+            || "project access: no retained grant".to_string(),
+            |p| {
+                format!(
+                    "project: {} · access: {} · mount: {}",
+                    super::super::model::safe(&p.label),
+                    p.access.label(),
+                    p.namespace_path
+                )
+            },
+        );
+        self.notice = Some(
+            format!(
+                "cwd: {} · {project} · {} · {}",
+                self.namespace_cwd.display(),
+                self.model.status(),
+                self.queue.label()
+            )
+            .into(),
+        );
         None
     }
     fn model_control_available(&self) -> bool {
