@@ -47,10 +47,6 @@ pub(super) fn discover(
             validate_command_environment(words)?;
         }
     }
-    let mut command_providers = input
-        .map(|(input, _)| sequence::inspect(input, path))
-        .transpose()?
-        .unwrap_or_default();
     let cargo_config_files = input
         .map(|(input, commands)| cargo::inspect(input, commands))
         .transpose()?
@@ -79,6 +75,10 @@ pub(super) fn discover(
             proxies.push(ReifiedExecutionSubstrateMount::new(entry, source));
         }
     }
+    let mut command_providers = input
+        .map(|(input, _)| sequence::inspect(input, path, &proxies))
+        .transpose()?
+        .unwrap_or_default();
     if proxies.is_empty() && cargo_config_files.is_empty() && command_providers.is_empty() {
         return Ok(None);
     }

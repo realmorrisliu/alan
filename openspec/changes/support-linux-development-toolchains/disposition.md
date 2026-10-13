@@ -1,3 +1,12 @@
+## Current delivery — 2026-10-13
+
+The user merged PR #1046 as `465e3e47`; it is included in main `7b0cbcf0`.
+The implementation is delivered. Canonical synchronization and archive readiness
+remain outstanding; earlier candidate and unmerged statements below are historical.
+PR #1047 also merged as `8802b541`. Its subsequent Rust-query provider repair is
+tracked in `qualify-repeated-development-workflows`; this merge receipt does not
+qualify that uncommitted follow-up or broaden the native acceptance claims.
+
 # Disposition — 2026-10-10
 
 Implementation is authorized by the user's ordered development-qualification

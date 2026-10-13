@@ -136,3 +136,10 @@ descendant roots SHALL retain only their existing writable authority.
 - **WHEN** a literal supported read-only producer supplies the last Rustc command in a pipeline, without earlier opaque or project-code execution
 - **THEN** inspection preserves the existing invocation and verified provider bindings
 - **AND** a concurrent writer after Rustc, dynamic producers or nested cwd/environment controls refuse before effects
+
+#### Scenario: A Rust-named project query precedes inspected execution
+- **WHEN** a command uses an ordinary project-owned Rust-named executable with query-looking arguments before later inspected Rust execution
+- **THEN** the adapter requires separate execution requests before any program effects, including when the project or individual program is granted read-only
+- **AND** frozen identity/content or a project proxy-shaped directory alone MUST NOT count as proof of read-only query semantics
+- **AND** only actual native standard providers or validated Rustup proxies outside explicitly granted Host trees retain the bounded query-prelude exemption
+- **AND** forwarded rustup run calls require a separate request before later inspected Rust execution; standalone calls keep existing authority

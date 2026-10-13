@@ -1,3 +1,30 @@
+## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
+
+Direct follow-up review reproduced an additional execution-order gap on published
+head `bbe9573f`: a project-owned executable named rustc can implement --version
+by changing Cargo configuration before a later genuine Cargo call. Public Sandbox
+API native controls complete with exit 0 and writer/config/compiler effects.
+Executable identity/digest snapshots alone do not prove read-only query semantics.
+PR #1047 was subsequently merged as `8802b541` on 2026-10-13; this
+additional fix is a separate follow-up based on main `7b0cbcf0`. The merged
+head does not contain the fix, and follow-up readiness remains withdrawn.
+
+The shared adapter now admits query preludes only from actual native standard
+providers or validated Rustup proxies outside explicitly granted Host trees.
+Namespace projection and provider identity are checked and frozen; a project
+program, an ordinary custom runtime or forwarded rustup run consumes the one work
+slot and requires a separate request before later inspected Rust execution.
+Standalone requests retain their existing authority and execution behavior.
+No mount authority, automatic routing or model-development instance is added.
+
+The original thirty selected qualifications, ninety-one model attempts and their
+raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
+No new model qualification is claimed for this repair. Native controls and
+full Engine regressions pass on the latest-main dependencies; see native-runs.md.
+Final original-provider applicability, committed build-input binding and
+current-head CI/completed review remain required before readiness. Tasks 4.3 and 4.4 reopen; checklist is 16/19. Task 4.5 still requires
+follow-up user merge and canonical adoption. Earlier entries below are historical records.
+
 ## Current opaque-writer qualification and delivery gates — 2026-10-13
 
 P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work

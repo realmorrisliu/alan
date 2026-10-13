@@ -13,9 +13,6 @@ fn rust_command(words: &[String]) -> Option<(&str, &[String])> {
 }
 
 fn query(name: &str, args: &[String]) -> bool {
-    if name == "rustup" && args.first().is_some_and(|arg| arg == "run") {
-        return args.get(2).is_some_and(|name| query(name, &args[3..]));
-    }
     if name == "cargo" {
         return crate::tools::sandbox::command_options::cargo_global_query(args);
     }
@@ -28,15 +25,12 @@ fn query(name: &str, args: &[String]) -> bool {
         && matches!(name, "rustup" | "rustc" | "rustdoc" | "rustfmt")
 }
 
-fn standard_provider(
+fn projected_provider(
     executable: &str,
     path: &str,
     input: &ReifiedNamespacePlanInput,
+    proxies: &[ReifiedExecutionSubstrateMount],
 ) -> Result<ReifiedRustCommandProvider, String> {
-    let name = Path::new(executable)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or(SEPARATE)?;
     let plan = super::super::ReifiedNamespacePlan::derive(input.clone())
         .map_err(|error| error.to_string())?;
     let mut mounts = plan
@@ -44,27 +38,70 @@ fn standard_provider(
         .iter()
         .map(|mount| ReifiedExecutionSubstrateMount::new(&mount.namespace_path, &mount.host_path))
         .chain(plan.execution_substrate.iter().cloned())
+        .chain(proxies.iter().cloned())
         .collect::<Vec<_>>();
     mounts.sort_by_key(|mount| std::cmp::Reverse(mount.namespace_path.components().count()));
     let source = provider::resolve_projected(executable, path, &mounts)?;
     let resolved = source
-        .map(|source| executable_digest(&source).map(|digest| (source, digest, false)))
+        .map(|source| {
+            let proxy = provider::is_proxy(Some(&source), proxies)?;
+            executable_digest(&source).map(|digest| (source, digest, proxy))
+        })
         .transpose()?;
-    if !resolved.as_ref().is_some_and(|(resolved, _, _)| {
+    Ok(ReifiedRustCommandProvider {
+        executable: resolved.as_ref().map_or_else(
+            || executable.to_owned(),
+            |(source, _, _)| source.to_string_lossy().into_owned(),
+        ),
+        path: String::new(),
+        resolved,
+    })
+}
+
+fn standard_source(executable: &str, source: &Path) -> bool {
+    Path::new(executable).file_name().is_some_and(|name| {
         [
             PathBuf::from("/usr/bin").join(name),
             PathBuf::from("/bin").join(name),
         ]
         .iter()
-        .any(|standard| std::fs::canonicalize(standard).is_ok_and(|standard| &standard == resolved))
-    }) {
+        .any(|standard| std::fs::canonicalize(standard).is_ok_and(|path| path == source))
+    })
+}
+
+fn standard_provider(
+    executable: &str,
+    path: &str,
+    input: &ReifiedNamespacePlanInput,
+) -> Result<ReifiedRustCommandProvider, String> {
+    let binding = projected_provider(executable, path, input, &[])?;
+    if !binding
+        .resolved
+        .as_ref()
+        .is_some_and(|(source, _, _)| standard_source(executable, source))
+    {
         return Err(SEPARATE.into());
     }
-    Ok(ReifiedRustCommandProvider {
-        executable: resolved.as_ref().unwrap().0.to_string_lossy().into_owned(),
-        path: String::new(),
-        resolved,
-    })
+    Ok(binding)
+}
+
+fn query_provider(
+    executable: &str,
+    path: &str,
+    input: &ReifiedNamespacePlanInput,
+    proxies: &[ReifiedExecutionSubstrateMount],
+) -> Result<Option<ReifiedRustCommandProvider>, String> {
+    let binding = projected_provider(executable, path, input, proxies)?;
+    // A frozen file identity does not prove that a project program implements a read-only query.
+    let trusted = binding.resolved.as_ref().is_some_and(|(source, _, proxy)| {
+        standard_source(executable, source)
+            || *proxy
+                && !input.declarations.iter().any(|mount| {
+                    matches!(&mount.source, super::super::ReifiedMountSource::Host(root)
+                        if super::super::plan::paths_overlap(&canonicalize_existing_host_path(root), source.parent().unwrap()))
+                })
+    });
+    Ok(trusted.then_some(binding))
 }
 
 fn wrappers(
@@ -95,6 +132,7 @@ fn wrappers(
 pub(super) fn inspect(
     input: &ReifiedNamespacePlanInput,
     path: &str,
+    proxies: &[ReifiedExecutionSubstrateMount],
 ) -> Result<Vec<ReifiedRustCommandProvider>, String> {
     let Some(script) =
         shell_wrapper_inline_script(&input.argv).map_err(|error| error.to_string())?
@@ -105,13 +143,14 @@ pub(super) fn inspect(
             Ok(Vec::new())
         };
     };
-    inspect_script(&script, path, input)
+    inspect_script(&script, path, input, proxies)
 }
 
 fn inspect_script(
     script: &str,
     path: &str,
     input: &ReifiedNamespacePlanInput,
+    proxies: &[ReifiedExecutionSubstrateMount],
 ) -> Result<Vec<ReifiedRustCommandProvider>, String> {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -203,7 +242,14 @@ fn inspect_script(
                 ancestor = parent.parent();
             }
             providers.extend(wrappers(words, path, input)?);
-            changed = !query(name, args);
+            changed = true;
+            if query(name, args) && *node != last {
+                let executable = &words[words.len() - args.len() - 1];
+                if let Some(binding) = query_provider(executable, path, input, proxies)? {
+                    providers.push(binding);
+                    changed = false;
+                }
+            }
         } else if command_and_args(words)
             .is_some_and(|(name, args)| name == "git" && args == ["--version"])
         {

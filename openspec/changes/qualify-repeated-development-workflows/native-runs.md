@@ -1,3 +1,84 @@
+## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
+
+Direct follow-up review reproduced an additional execution-order gap on published
+head `bbe9573f`: a project-owned executable named rustc can implement --version
+by changing Cargo configuration before a later genuine Cargo call. Public Sandbox
+API native controls complete with exit 0 and writer/config/compiler effects.
+Executable identity/digest snapshots alone do not prove read-only query semantics.
+PR #1047 was subsequently merged as `8802b541` on 2026-10-13; this
+additional fix is a separate follow-up based on main `7b0cbcf0`. The merged
+head does not contain the fix, and follow-up readiness remains withdrawn.
+
+The shared adapter now admits query preludes only from actual native standard
+providers or validated Rustup proxies outside explicitly granted Host trees.
+Namespace projection and provider identity are checked and frozen; a project
+program, an ordinary custom runtime or forwarded rustup run consumes the one work
+slot and requires a separate request before later inspected Rust execution.
+Standalone requests retain their existing authority and execution behavior.
+No mount authority, automatic routing or model-development instance is added.
+
+The original thirty selected qualifications, ninety-one model attempts and their
+raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
+No new model qualification is claimed for this repair. Native controls and
+full Engine regressions pass on the latest-main dependencies; see native-runs.md.
+Final original-provider applicability, committed build-input binding and
+current-head CI/completed review remain required before readiness. Tasks 4.3 and 4.4 reopen; checklist is 16/19. Task 4.5 still requires
+follow-up user merge and canonical adoption. Earlier entries below are historical records.
+
+## Rust query provider follow-up verification — 2026-10-13
+
+The repair is based on merged main `7b0cbcf0`, retaining its Cargo.lock updates.
+The earlier public Sandbox API reproduction on `bbe9573f` remains a failure:
+project `rustc --version` writes Cargo configuration before genuine Cargo executes.
+This is adapter acceptance evidence, not a new model-authored development task.
+
+The repaired public API controls use fresh owned Linux projects and actual
+namespace/network confinement. Assertions establish:
+
+- The compound project query is refused before writer, configuration or compiler effects.
+- Genuine `git --version && rustc --version && cargo --version` followed by
+  `cargo test --offline --locked` succeeds, including its real library test.
+- A standalone project query still executes with its existing project authority;
+  its declared writer/configuration effects occur without a compiler invocation.
+
+Portable Rustup tests pass 48/48 on macOS. The Linux namespace suite passes
+106/106 with an explicitly provided owned Rust runtime, including real refusal
+controls for Git, archive extraction, Python, a substituted wrapper and the
+Rust-named project query. These suite runs precede the latest-main lockfile
+rebuild; the public API controls use the subsequent rebuilt CLI dependencies.
+Final current-source quality, compiled-input applicability and CI remain separate.
+
+Latest-main locked Engine regression subsequently passes 1464 tests on macOS and
+1484 on Linux, with one existing ignored test on each Host. Linux uses the explicit
+native runtime and two test threads. The first fully parallel Linux run retained
+1483 passes and one failure: an unchanged native capture command hit its 5-second
+timeout before the cancellation stage. That test passes in isolation and in the
+complete two-thread rerun; the timeout and both reruns remain recorded, rather
+than erasing the original failure or increasing its timeout.
+
+Actual Cargo dependency files bind 437 macOS and 443 Linux project input files.
+Relative to the prior qualified source, macOS production project inputs are
+unchanged; Linux changes only rustup.rs and rustup_sequence.rs. Main's already
+merged Cargo.lock updates are retained, so binary identity is not claimed unchanged.
+The full Engine regressions and public API controls use those updated dependencies.
+Final commit binding and CI remain outstanding.
+
+Evidence is retained under the task-owned Host cache
+`rustup-query-provider-review-v1/`:
+
+- `test-results-v2.json`: SHA-256 `0eb3e7513e8948bcac228b166f8dd2bfde96d8ea230291f185df8cd02f933d21`.
+- `public-api-canary.rs`: SHA-256 `eeff5d9bdbcc713b4affc84625cc7d314d3dc8ab90ca5e562967c88df3d8810a`.
+- `public-api-canary-results.json`: SHA-256 `fe14f2646f7c3b7e5c58b9a3103377a8d828682956f81008450d807c4a8cd752`.
+- `historical-query-provider-audit-v1.json`: SHA-256 `fd72f97771d9e474f85bc005dfb88730a5404f295249145a0efd857206f3dd35`.
+
+The historical query audit binds all 450 original structured Bash records,
+33 Linux launch phases and 12 renewal rollout copies. The 48 original Linux
+query records use the frozen external `.cargo/bin` providers; recorded project
+grants do not overlap that provider directory. The only original version-query
+sequence is the genuine three-tool query above. This is a query-provider audit,
+not a replacement for the thirty task receipts or complete final-source adoption.
+All original outcomes, assisted status, failed retries and unknown costs remain.
+
 ## Current opaque-writer qualification and delivery gates — 2026-10-13
 
 P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work
