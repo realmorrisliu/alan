@@ -1,3 +1,32 @@
+## Rustup hard-link review follow-up — 2026-10-13
+
+PR #1056 review comment #4253959287 identified a valid gap: canonical path
+separation does not establish separation from writable external hard links.
+The query prelude exemption now requires every physical link to the validated
+proxy inode to remain inside its bounded proxy directory. Symbolic aliases do
+not count as physical links. Existing proxy validation already rejects unknown
+entries and bounds the entire directory; standalone requests retain authority.
+
+Focused regressions pass 49/49, including external project and individual-file
+grants, normal internal hard links, symbolic aliases and standalone execution.
+Full locked Engine suites pass 1465 tests on macOS and 1485 on Linux, each with
+one ignored test. A real public Sandbox API old-source control admits the query
+chain with an external link; this proves admission, not malicious mutation.
+All five repaired native controls pass: external-link refusal, normal query
+success, project-query refusal before effects, genuine query/build success and
+standalone project execution. Two earlier harness failures remain retained.
+
+Evidence lives under `rustup-query-provider-review-v1/hardlink-review-v1` in the
+existing qualification cache. `verification-ledger-v1.json` SHA-256 is
+`c6e991602d802d7faefdc1cef5a5da4b5289edbcf9f5eb60b77e05c1e0877d3c`.
+The actual historical Rustup provider still has one physical link and SHA-256
+`9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792`,
+matching the retained provider audit. Thirty historical slots and ninety-one
+model attempts are unchanged; these are native adapter regressions, not new
+model development runs. Current-head CI/completed review and user merge remain
+open under tasks 4.4 and 4.5; earlier source/binary freezes describe their own
+historical commits and do not claim binary equality for this patch.
+
 ## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
 
 Direct follow-up review reproduced an additional execution-order gap on published

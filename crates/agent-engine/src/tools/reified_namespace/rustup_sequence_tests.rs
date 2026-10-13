@@ -296,6 +296,67 @@ fn forwarded_rustup_execution_requires_a_separate_request() {
 }
 
 #[test]
+fn an_external_hard_link_does_not_make_a_project_controlled_proxy_trusted() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let root = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(root.path()).unwrap();
+    let project = base.join("project");
+    let bin = base.join("proxies");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::write(bin.join("rustup"), b"\x7fELFproject-linked-program").unwrap();
+    std::fs::set_permissions(bin.join("rustup"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::hard_link(bin.join("rustup"), bin.join("rustc")).unwrap();
+    symlink("rustup", bin.join("cargo")).unwrap();
+    super::super::validate_proxies(&bin).unwrap();
+    let input = ReifiedNamespacePlanInput::new(
+        vec![super::super::super::ReifiedMountDeclaration::host(
+            &project,
+            &project,
+            super::super::super::ReifiedMountAccess::ReadWrite,
+        )],
+        &project,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "rustc --version; cargo test".into(),
+        ],
+        super::super::super::NetworkPosture::Deny,
+    );
+    assert!(super::super::super::ReifiedNamespacePlan::derive(input.clone()).is_ok());
+    let proxies = [ReifiedExecutionSubstrateMount::new(&bin, &bin)];
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    assert!(inspect(&input, &path, &proxies).is_ok());
+    let linked = project.join("linked-program");
+    std::fs::hard_link(bin.join("rustup"), &linked).unwrap();
+    assert!(inspect(&input, &path, &proxies).is_err());
+    let single = ReifiedNamespacePlanInput {
+        argv: vec!["/bin/sh".into(), "-c".into(), "rustc --version".into()],
+        ..input.clone()
+    };
+    assert!(inspect(&single, &path, &proxies).is_ok());
+    std::fs::remove_file(linked).unwrap();
+    assert!(inspect(&input, &path, &proxies).is_ok());
+    let linked_file = base.join("granted-file");
+    std::fs::hard_link(bin.join("rustup"), &linked_file).unwrap();
+    for access in [
+        super::super::super::ReifiedMountAccess::ReadOnly,
+        super::super::super::ReifiedMountAccess::ReadWrite,
+    ] {
+        let mut file_grant = input.clone();
+        file_grant
+            .declarations
+            .push(super::super::super::ReifiedMountDeclaration::host(
+                &linked_file,
+                &linked_file,
+                access,
+            ));
+        assert!(super::super::super::ReifiedNamespacePlan::derive(file_grant.clone()).is_ok());
+        assert!(inspect(&file_grant, &path, &proxies).is_err());
+    }
+}
+
+#[test]
 fn a_file_grant_inside_a_proxy_directory_does_not_make_queries_trusted() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();

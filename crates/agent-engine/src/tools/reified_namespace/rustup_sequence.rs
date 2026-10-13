@@ -85,6 +85,32 @@ fn standard_provider(
     Ok(binding)
 }
 
+fn proxy_links_stay_in_directory(source: &Path) -> bool {
+    let Ok(identity) = std::fs::metadata(source) else {
+        return false;
+    };
+    if identity.nlink() == 1 {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(source.parent().unwrap()) else {
+        return false;
+    };
+    let mut links = 0;
+    for entry in entries.take(PROXIES.len() + 1) {
+        let Ok(metadata) = entry.and_then(|entry| std::fs::symlink_metadata(entry.path())) else {
+            return false;
+        };
+        if metadata.is_file()
+            && metadata.dev() == identity.dev()
+            && metadata.ino() == identity.ino()
+        {
+            links += 1;
+        }
+    }
+    // Canonical paths do not reveal writable hard links outside the validated proxy directory.
+    links == identity.nlink()
+}
+
 fn query_provider(
     executable: &str,
     path: &str,
@@ -96,6 +122,7 @@ fn query_provider(
     let trusted = binding.resolved.as_ref().is_some_and(|(source, _, proxy)| {
         standard_source(executable, source)
             || *proxy
+                && proxy_links_stay_in_directory(source)
                 && !input.declarations.iter().any(|mount| {
                     matches!(&mount.source, super::super::ReifiedMountSource::Host(root)
                         if super::super::plan::paths_overlap(&canonicalize_existing_host_path(root), source.parent().unwrap()))

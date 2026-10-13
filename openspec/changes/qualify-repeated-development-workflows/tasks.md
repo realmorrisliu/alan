@@ -1,3 +1,12 @@
+## Current hard-link review follow-up — 2026-10-13
+
+PR #1056 P1 #4253959287 is repaired locally with inode/link-count validation for
+Rustup query preludes. Focused 49/49, full macOS 1465 and Linux 1485 tests and
+five real Linux controls pass. Historical thirty-slot applicability is retained;
+no model attempt is added. See native-runs.md for evidence and limitations.
+Checklist remains 17/19: current-head CI/completed review and user merge remain
+open. Earlier entries describe their historical heads, not current readiness.
+
 ## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
 
 Direct follow-up review reproduced an additional execution-order gap on published

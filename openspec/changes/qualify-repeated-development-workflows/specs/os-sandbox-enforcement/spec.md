@@ -142,4 +142,5 @@ descendant roots SHALL retain only their existing writable authority.
 - **THEN** the adapter requires separate execution requests before any program effects, including when the project or individual program is granted read-only
 - **AND** frozen identity/content or a project proxy-shaped directory alone MUST NOT count as proof of read-only query semantics
 - **AND** only actual native standard providers or validated Rustup proxies outside explicitly granted Host trees retain the bounded query-prelude exemption
+- **AND** a Rustup proxy with hard links outside its validated proxy directory receives no query-prelude exemption, including links reachable through directory or individual-file grants; symbolic aliases do not count as additional hard links
 - **AND** forwarded rustup run calls require a separate request before later inspected Rust execution; standalone calls keep existing authority
