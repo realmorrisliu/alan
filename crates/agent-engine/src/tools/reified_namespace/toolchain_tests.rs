@@ -1,129 +1,166 @@
 use super::*;
 
 #[test]
-fn default_execution_substrate_includes_trusted_path_directories() {
+fn default_execution_substrate_includes_command_path_directories() {
     let substrate = default_execution_substrate();
-
     for path in std::env::split_paths(LINUX_REIFIED_COMMAND_PATH) {
         assert!(
-            substrate.iter().any(|mount| {
-                mount.namespace_path == path.as_path() && mount.host_path == path.as_path()
-            }),
-            "missing trusted PATH substrate {}",
-            path.display()
+            substrate
+                .iter()
+                .any(|mount| mount.namespace_path == path && mount.host_path == path)
         );
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn user_path_smoke_allows_executable_dirs_under_visible_roots() {
+fn command_path_preserves_order_duplicates_and_alias_spelling() {
     let temp = tempfile::tempdir().unwrap();
-    let visible_root = temp.path().join("visible");
-    let visible_bin = visible_root.join("bin");
-    write_executable(&visible_bin.join("cargo"));
-    let path = std::env::join_paths([visible_bin.as_path()]).unwrap();
-
+    std::fs::create_dir(temp.path().join("first")).unwrap();
+    std::fs::create_dir(temp.path().join("second")).unwrap();
+    std::os::unix::fs::symlink("first", temp.path().join("alias")).unwrap();
+    let substrate = [ReifiedExecutionSubstrateMount::new(
+        "/opt/runtime",
+        temp.path(),
+    )];
+    let path = "/opt/runtime/second:/opt/runtime/alias:/opt/runtime/first:/opt/runtime/second";
     assert_eq!(
-        reified_namespace_user_path_unavailable_reason_with_roots(
-            Some(path.clone()),
-            std::slice::from_ref(&visible_root),
-            path,
-        ),
-        None
+        validate_linux_command_path(Some(path.into()), &substrate).unwrap(),
+        path
     );
 }
 
 #[cfg(unix)]
 #[test]
-fn user_path_smoke_rejects_unset_path() {
-    let temp = tempfile::tempdir().unwrap();
-    let visible_bin = temp.path().join("bin");
-    write_executable(&visible_bin.join("sh"));
-    let reified_path = std::env::join_paths([visible_bin.as_path()]).unwrap();
-
-    let reason = reified_namespace_user_path_unavailable_reason_with_roots(
+fn command_path_rejects_unset_empty_relative_parent_nul_and_non_utf8() {
+    use std::os::unix::ffi::OsStringExt;
+    let substrate = default_execution_substrate();
+    for path in [
         None,
-        &[temp.path().to_path_buf()],
-        reified_path,
-    )
-    .expect("unset PATH should block default selection");
-
-    assert!(reason.contains("current PATH is unset"));
-    assert!(reason.contains("preserve actual PATH/order"));
-}
-
-#[cfg(unix)]
-#[test]
-fn user_path_smoke_rejects_empty_path_entry() {
-    let temp = tempfile::tempdir().unwrap();
-    let visible_bin = temp.path().join("bin");
-    write_executable(&visible_bin.join("sh"));
-    let current_path = std::ffi::OsString::from(format!(":{}", visible_bin.display()));
-    let reified_path = std::env::join_paths([visible_bin.as_path()]).unwrap();
-
-    let reason = reified_namespace_user_path_unavailable_reason_with_roots(
-        Some(current_path),
-        &[temp.path().to_path_buf()],
-        reified_path,
-    )
-    .expect("empty PATH entries should block default selection");
-
-    assert!(reason.contains("empty component"));
-    assert!(reason.contains("current-directory lookup"));
-}
-
-#[cfg(unix)]
-#[test]
-fn user_path_smoke_rejects_executable_dirs_outside_visible_roots() {
-    let temp = tempfile::tempdir().unwrap();
-    let visible_root = temp.path().join("visible");
-    let user_bin = temp.path().join("home/alice/.cargo/bin");
-    write_executable(&visible_root.join("bin/sh"));
-    write_executable(&user_bin.join("cargo"));
-    let path = std::env::join_paths([visible_root.join("bin"), user_bin.clone()]).unwrap();
-    let reified_path = std::env::join_paths([visible_root.join("bin")]).unwrap();
-
-    let reason = reified_namespace_user_path_unavailable_reason_with_roots(
-        Some(path),
-        &[visible_root],
-        reified_path,
-    )
-    .expect("user-local executable PATH entry should block reified default selection");
-
-    assert!(reason.contains(user_bin.to_string_lossy().as_ref()));
-    assert!(reason.contains("preserve user PATH/toolchain mounts"));
-}
-
-#[cfg(unix)]
-#[test]
-fn user_path_smoke_rejects_reified_path_order_changes() {
-    let temp = tempfile::tempdir().unwrap();
-    let usr_bin = temp.path().join("usr/bin");
-    let local_bin = temp.path().join("usr/local/bin");
-    write_executable(&usr_bin.join("cargo"));
-    write_executable(&local_bin.join("cargo"));
-    let current_path = std::env::join_paths([usr_bin.as_path(), local_bin.as_path()]).unwrap();
-    let reified_path = std::env::join_paths([local_bin.as_path(), usr_bin.as_path()]).unwrap();
-
-    let reason = reified_namespace_user_path_unavailable_reason_with_roots(
-        Some(current_path),
-        &[temp.path().to_path_buf()],
-        reified_path,
-    )
-    .expect("reified PATH reordering should block default selection");
-
-    assert!(reason.contains("current PATH executable entry order differs"));
-    assert!(reason.contains("preserve actual PATH/order"));
-}
-
-#[cfg(unix)]
-fn write_executable(path: &Path) {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        Some("".into()),
+        Some(":/bin".into()),
+        Some("/bin:".into()),
+        Some("bin".into()),
+        Some("/bin/../sbin".into()),
+        Some("/bin\0".into()),
+        Some(std::ffi::OsString::from_vec(vec![0xff])),
+    ] {
+        assert!(
+            validate_linux_command_path(path.clone(), &substrate).is_err(),
+            "{path:?}"
+        );
     }
-    std::fs::write(path, b"#!/bin/sh\nexit 0\n").unwrap();
-    let mut permissions = std::fs::metadata(path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn command_path_rejects_existing_unprojected_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let reason =
+        validate_linux_command_path(Some(temp.path().as_os_str().into()), &[]).unwrap_err();
+    assert!(reason.contains("outside the reified execution substrate"));
+}
+
+#[cfg(unix)]
+#[test]
+fn command_path_rejects_unprojected_entries_before_and_after_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("missing");
+    let path = missing.as_os_str().to_os_string();
+    assert!(validate_linux_command_path(Some(path.clone()), &[]).is_err());
+    std::fs::create_dir(&missing).unwrap();
+    assert!(validate_linux_command_path(Some(path), &[]).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn command_path_rejects_dangling_and_absolute_remapped_aliases() {
+    let runtime = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir(runtime.path().join("bin")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("missing"),
+        runtime.path().join("dangling"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(runtime.path().join("bin"), runtime.path().join("absolute"))
+        .unwrap();
+    std::os::unix::fs::symlink("absolute", runtime.path().join("chain")).unwrap();
+    std::os::unix::fs::symlink("absent", runtime.path().join("relative-dangling")).unwrap();
+    std::os::unix::fs::symlink("cycle", runtime.path().join("cycle")).unwrap();
+    let substrate = [ReifiedExecutionSubstrateMount::new(
+        "/opt/runtime",
+        runtime.path(),
+    )];
+    for name in [
+        "dangling",
+        "dangling/child",
+        "absolute",
+        "chain",
+        "relative-dangling",
+        "relative-dangling/child",
+        "cycle",
+    ] {
+        for suffix in ["", "/"] {
+            assert!(
+                validate_linux_command_path(
+                    Some(format!("/opt/runtime/{name}{suffix}").into()),
+                    &substrate
+                )
+                .is_err(),
+                "{name}{suffix}"
+            );
+        }
+    }
+    assert!(validate_linux_command_path(Some("/opt/runtime/absent".into()), &substrate).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn command_path_rejects_alias_escape_and_file_entries() {
+    let temp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), temp.path().join("escape")).unwrap();
+    std::fs::write(temp.path().join("file"), "not a directory").unwrap();
+    let substrate = [ReifiedExecutionSubstrateMount::new(
+        "/opt/runtime",
+        temp.path(),
+    )];
+    assert!(
+        validate_linux_command_path(Some("/opt/runtime/escape".into()), &substrate)
+            .unwrap_err()
+            .contains("absolute PATH alias")
+    );
+    assert!(validate_linux_command_path(Some("/opt/runtime/file".into()), &substrate).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn command_path_checks_aliases_in_identical_host_and_namespace_roots() {
+    let runtime = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = canonicalize_existing_host_path(runtime.path());
+    std::fs::create_dir(root.join("bin")).unwrap();
+    std::os::unix::fs::symlink(root.join("bin"), root.join("absolute")).unwrap();
+    std::os::unix::fs::symlink("missing", runtime.path().join("dangling")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), runtime.path().join("escape")).unwrap();
+    std::os::unix::fs::symlink(root.join("bin"), outside.path().join("bridge")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("bridge"), root.join("external-chain")).unwrap();
+    std::os::unix::fs::symlink("../outside", root.join("parent-alias")).unwrap();
+    let substrate = [ReifiedExecutionSubstrateMount::new(&root, &root)];
+    let path = root.join("absolute").into_os_string();
+    assert!(validate_linux_command_path(Some(path), &substrate).is_ok());
+    for name in [
+        "dangling",
+        "dangling/child",
+        "escape",
+        "external-chain",
+        "parent-alias",
+    ] {
+        let path = root.join(name).into_os_string();
+        assert!(
+            validate_linux_command_path(Some(path), &substrate).is_err(),
+            "{name}"
+        );
+    }
 }

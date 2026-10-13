@@ -656,6 +656,23 @@ impl ToolProcessRunner {
 impl ToolProcessRunner {
     /// Execute one Tool image after the Alan OS adapter has validated its namespace binding.
     pub async fn run(&self, invocation: ToolProcessInvocation) -> ToolProcessOutcome {
+        self.run_with_namespace(invocation, None).await
+    }
+
+    /// Execute with the actual Process namespace supplied by its owning OS service.
+    pub async fn run_in_namespace(
+        &self,
+        invocation: ToolProcessInvocation,
+        namespace: alan_ap::InProcessTransport,
+    ) -> ToolProcessOutcome {
+        self.run_with_namespace(invocation, Some(namespace)).await
+    }
+
+    async fn run_with_namespace(
+        &self,
+        invocation: ToolProcessInvocation,
+        namespace: Option<alan_ap::InProcessTransport>,
+    ) -> ToolProcessOutcome {
         let name = invocation
             .executable
             .rsplit('/')
@@ -735,7 +752,10 @@ impl ToolProcessRunner {
             };
             self.register_process_binding(authority_pid, binding.clone());
         }
-        let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
+        let mut context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
+        if let Some(namespace) = namespace {
+            context = context.with_namespace(authority_pid, namespace);
+        }
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {
             self.inner.config.tool_timeout_secs
         } else {
@@ -805,12 +825,17 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
             return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
         }
         let outcome = self
-            .run(ToolProcessInvocation {
-                pid: invocation.pid.0,
-                parent: invocation.parent.map(|pid| pid.0),
-                executable: invocation.exec.executable,
-                args: invocation.exec.args,
-            })
+            .run_in_namespace(
+                ToolProcessInvocation {
+                    pid: invocation.pid.0,
+                    parent: invocation.parent.map(|pid| pid.0),
+                    executable: invocation.exec.executable,
+                    args: invocation.exec.args,
+                },
+                alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
+                    invocation.namespace,
+                ))),
+            )
             .await;
         alan_kernel::ProcessOutcome::exited(outcome.exit_code, outcome.output)
     }

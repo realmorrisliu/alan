@@ -1,6 +1,72 @@
 use super::super::*;
 use tempfile::TempDir;
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn test_reified_backend_carries_current_path_and_rejects_unknown_entries() {
+    const CASE: &str = "ALAN_TEST_REIFIED_PATH_CASE";
+    if let Ok(case) = std::env::var(CASE) {
+        let project = TempDir::new().unwrap();
+        let sandbox = Sandbox::with_backend(
+            project.path().to_path_buf(),
+            crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+        );
+        if case == "supported" {
+            let result = sandbox.exec("printenv PATH", project.path()).await.unwrap();
+            assert_eq!(result.exit_code, 0, "{}", result.stderr);
+            assert_eq!(
+                result.stdout,
+                format!("{}\n", std::env::var("PATH").unwrap())
+            );
+        } else {
+            assert_eq!(case, "unsupported");
+            let error = sandbox
+                .exec("printf effect > marker", project.path())
+                .await
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("linux command environment unavailable"),
+                "{error:#}"
+            );
+            assert!(!project.path().join("marker").exists());
+        }
+        return;
+    }
+    if !crate::tools::sandbox_backend::probe_linux_reification().is_selectable() {
+        eprintln!("skipping native current-PATH adapter test: namespace unavailable");
+        return;
+    }
+    let runtime = TempDir::new().unwrap();
+    let name = concat!(
+        module_path!(),
+        "::test_reified_backend_carries_current_path_and_rejects_unknown_entries"
+    );
+    let (_, name) = name.split_once("::").unwrap();
+    for (case, path) in [
+        ("supported", "/bin:/usr/bin:/sbin:/usr/sbin".to_string()),
+        (
+            "unsupported",
+            format!("/bin:{}/missing:/usr/bin", runtime.path().display()),
+        ),
+    ] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CASE, case)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+}
+
 #[tokio::test]
 async fn test_reified_backend_keeps_shape_parser_for_opaque_writers() {
     // Linux reified namespace still bind-mounts the writable host_mount as a whole,
@@ -146,9 +212,10 @@ fn test_reified_backend_preserves_native_paths_and_script_body() {
         host_copy.display()
     );
 
-    let plan = sandbox
-        .reified_namespace_plan_for_command(&script, temp.path(), false)
-        .unwrap();
+    let plan = crate::tools::reified_namespace::ReifiedNamespacePlan::derive(
+        sandbox.reified_namespace_input_for_command(&script, temp.path(), false),
+    )
+    .unwrap();
 
     assert_eq!(&plan.argv[..4], &["/bin/sh", "-p", "-f", "-c"]);
     assert_eq!(plan.argv.last(), Some(&script));
@@ -183,6 +250,37 @@ async fn test_reified_backend_exec_validates_quoted_host_host_mount_paths_with_s
         assert!(
             !message.contains("outside host_mount"),
             "quoted host host_mount path with spaces should not be truncated during validation: {message}"
+        );
+    }
+}
+
+#[test]
+fn readonly_cwd_requires_native_namespace_or_read_capability() {
+    let project = TempDir::new().unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: project.path().to_path_buf(),
+        host_path: project.path().to_path_buf(),
+        access: crate::tools::reified_namespace::ReifiedMountAccess::ReadOnly,
+    }]);
+    for backend in [
+        crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    ] {
+        let sandbox = Sandbox::from_spec_with_backend(spec.clone(), backend);
+        assert_eq!(
+            sandbox.command_cwd_is_authorized(project.path(), None),
+            backend == crate::tools::SandboxBackendKind::LinuxReifiedNamespace
+        );
+        assert!(sandbox.command_cwd_is_authorized(
+            project.path(),
+            Some(alan_agent_protocol::ToolCapability::Read)
+        ));
+        assert!(!sandbox.command_cwd_is_authorized(project.path().parent().unwrap(), None));
+        assert_eq!(
+            sandbox
+                .bash_path_guard_reason("cargo test", project.path())
+                .is_none(),
+            backend == crate::tools::SandboxBackendKind::LinuxReifiedNamespace
         );
     }
 }

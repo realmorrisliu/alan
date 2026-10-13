@@ -1,0 +1,956 @@
+//! Bounded Host inspection of standard Rustup proxy/runtime installations.
+use super::super::sandbox::command_options::cargo_subcommand;
+use super::plan::{
+    ReifiedRustCommandProvider, canonicalize_existing_host_path, contains_parent_component,
+};
+use super::{
+    ReifiedExecutionSubstrateMount, ReifiedMountSource, ReifiedNamespacePlanInput,
+    ReifiedRustupEnvironment,
+};
+use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+
+#[path = "rustup_cargo.rs"]
+mod cargo;
+#[path = "rustup_provider.rs"]
+mod provider;
+
+// shortcut: standard Rustup ELF layouts only; extend for a recorded linked/custom runtime task.
+const PROXIES: &[&str] = &[
+    "rustup",
+    "cargo",
+    "rustc",
+    "rustdoc",
+    "rustfmt",
+    "cargo-fmt",
+    "clippy-driver",
+    "cargo-clippy",
+    "cargo-miri",
+    "rls",
+    "rust-analyzer",
+    "rust-gdb",
+    "rust-gdbgui",
+    "rust-lldb",
+];
+
+pub(super) fn discover(
+    path: &str,
+    home: &Path,
+    toolchain_override: Option<String>,
+    input: Option<(&ReifiedNamespacePlanInput, &[Vec<String>])>,
+) -> Result<Option<ReifiedRustupEnvironment>, String> {
+    if let Some((input, commands)) = input {
+        provider::validate_shell_lookup(input, commands)?;
+        for words in commands {
+            validate_command_environment(words)?;
+        }
+    }
+    let mut command_providers = input
+        .map(|(input, _)| sequence::inspect(input, path))
+        .transpose()?
+        .unwrap_or_default();
+    let cargo_config_files = input
+        .map(|(input, commands)| cargo::inspect(input, commands))
+        .transpose()?
+        .unwrap_or_default();
+    let mut proxies = Vec::new();
+    let system = super::default_execution_substrate();
+    for entry in std::env::split_paths(path) {
+        if system
+            .iter()
+            .any(|mount| entry.starts_with(&mount.namespace_path))
+        {
+            continue;
+        }
+        if !entry.is_absolute() || contains_parent_component(&entry) {
+            return Err(format!("unsafe PATH entry {}", entry.display()));
+        }
+        if !entry.join("rustup").exists() {
+            continue;
+        }
+        let source = canonicalize_existing_host_path(&entry);
+        validate_proxies(&source)?;
+        if !proxies
+            .iter()
+            .any(|mount: &ReifiedExecutionSubstrateMount| mount.namespace_path == entry)
+        {
+            proxies.push(ReifiedExecutionSubstrateMount::new(entry, source));
+        }
+    }
+    if proxies.is_empty() && cargo_config_files.is_empty() && command_providers.is_empty() {
+        return Ok(None);
+    }
+    let mut selects_runtime = false;
+    if let Some((_, commands)) = input {
+        for words in commands {
+            let Some((name, args)) = super::super::sandbox::command_and_args(words) else {
+                continue;
+            };
+            if !PROXIES.contains(&name) {
+                continue;
+            }
+            let executable = &words[words.len() - args.len() - 1];
+            let binding = provider::snapshot(executable, path, &proxies)?;
+            let uses_proxy = binding.as_ref().is_some_and(|(_, _, proxy)| *proxy);
+            if !uses_proxy && name == "cargo" {
+                for executable in cargo::implicit_tools(args) {
+                    let resolved = provider::snapshot(&executable, path, &proxies)?;
+                    if resolved.as_ref().is_some_and(|(_, _, proxy)| *proxy) {
+                        return Err(format!(
+                            "mixed system Cargo and Rustup compiler/frontend {executable} selection is unsupported"
+                        ));
+                    }
+                    let entry = ReifiedRustCommandProvider {
+                        executable,
+                        path: path.into(),
+                        resolved,
+                    };
+                    if !command_providers.contains(&entry) {
+                        command_providers.push(entry);
+                    }
+                }
+            }
+            selects_runtime |=
+                uses_proxy && (name != "rustup" || args.first().is_some_and(|arg| arg == "run"));
+            let entry = ReifiedRustCommandProvider {
+                executable: executable.clone(),
+                path: path.into(),
+                resolved: binding,
+            };
+            if !command_providers.contains(&entry) {
+                command_providers.push(entry);
+            }
+        }
+    }
+    if !selects_runtime {
+        let executable_hashes = proxies
+            .iter()
+            .map(|mount| {
+                let path = mount.host_path.join("rustup");
+                executable_digest(&path).map(|digest| (path, digest))
+            })
+            .collect::<Result<_, _>>()?;
+        return Ok(Some(ReifiedRustupEnvironment {
+            settings: "version = \"12\"\n".into(),
+            toolchain_override,
+            proxy_mounts: proxies,
+            toolchain_mounts: Vec::new(),
+            metadata_hashes: Vec::new(),
+            executable_hashes,
+            command_providers,
+            cargo_config_files,
+        }));
+    }
+    if !home.is_absolute() || contains_parent_component(home) || home == Path::new("/") {
+        return Err("unsafe Rustup home metadata path".into());
+    }
+    let home =
+        std::fs::canonicalize(home).map_err(|error| format!("Rustup home unavailable: {error}"))?;
+    let source = home.join("settings.toml");
+    let bytes = read_metadata(&source)?;
+    let value: toml::Value =
+        toml::from_str(&bytes).map_err(|error| format!("invalid Rustup settings: {error}"))?;
+    if value.get("version").and_then(toml::Value::as_str) != Some("12") {
+        return Err("unsupported Rustup settings version".into());
+    }
+    let mut settings = toml::Table::new();
+    for key in [
+        "version",
+        "default_toolchain",
+        "default_host_triple",
+        "profile",
+    ] {
+        if let Some(value) = value.get(key) {
+            let text = value
+                .as_str()
+                .ok_or_else(|| format!("invalid Rustup {key}"))?;
+            if !safe_name(text) {
+                return Err(format!("unsafe Rustup {key}"));
+            }
+            settings.insert(key.into(), value.clone());
+        }
+    }
+    let mut overrides = toml::Table::new();
+    if let Some(input) = input
+        && let Some(values) = value.get("overrides")
+    {
+        let values = values.as_table().ok_or("invalid Rustup overrides")?;
+        let cwd = canonicalize_existing_host_path(&input.0.cwd);
+        let roots = input
+            .0
+            .declarations
+            .iter()
+            .filter_map(|mount| match &mount.source {
+                ReifiedMountSource::Host(root) => Some(canonicalize_existing_host_path(root)),
+                ReifiedMountSource::Virtual => None,
+            })
+            .collect::<Vec<_>>();
+        for (path, selector) in values {
+            let path = Path::new(path);
+            if cwd.starts_with(path)
+                || roots
+                    .iter()
+                    .any(|root| root.starts_with(path) || path.starts_with(root))
+            {
+                if !path.is_absolute() || contains_parent_component(path) {
+                    return Err("unsafe Rustup directory override".into());
+                }
+                let selector = selector
+                    .as_str()
+                    .ok_or("invalid Rustup directory override")?;
+                overrides.insert(
+                    path.to_str().ok_or("non-UTF-8 Rustup override")?.into(),
+                    selector.into(),
+                );
+            }
+        }
+    }
+    settings.insert("overrides".into(), overrides.into());
+    let runtime_parent = home.join("toolchains");
+    if std::fs::symlink_metadata(&runtime_parent)
+        .map_err(|error| format!("Rustup runtimes unavailable: {error}"))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("Rustup toolchains directory is an unsafe alias".into());
+    }
+    let mut toolchains = Vec::new();
+    for entry in std::fs::read_dir(&runtime_parent).map_err(|error| error.to_string())? {
+        if toolchains.len() >= 64 {
+            return Err("Rustup runtime catalog exceeds inspection bound".into());
+        }
+        let root = entry.map_err(|error| error.to_string())?.path();
+        toolchains.push(ReifiedExecutionSubstrateMount::new(&root, &root));
+    }
+    toolchains.sort_by(|left, right| left.host_path.cmp(&right.host_path));
+    let mut environment = ReifiedRustupEnvironment {
+        settings: toml::to_string(&settings).map_err(|error| error.to_string())?,
+        toolchain_override,
+        proxy_mounts: proxies,
+        toolchain_mounts: toolchains,
+        metadata_hashes: vec![(source, digest(&bytes))],
+        executable_hashes: Vec::new(),
+        command_providers,
+        cargo_config_files,
+    };
+    if let Some((input, commands)) = input {
+        let mut selected = Vec::new();
+        let remapped = input.declarations.iter().any(|mount| match &mount.source {
+            ReifiedMountSource::Host(root) => {
+                mount.namespace_path != canonicalize_existing_host_path(root)
+            }
+            ReifiedMountSource::Virtual => false,
+        });
+        let mut directory_selections = std::collections::BTreeMap::new();
+        let mut directories = Some(vec![canonicalize_existing_host_path(&input.cwd)]);
+        for words in commands {
+            let Some((mut name, mut args)) = super::super::sandbox::command_and_args(words) else {
+                continue;
+            };
+            if PROXIES.contains(&name) {
+                let executable = &words[words.len() - args.len() - 1];
+                let resolved = provider::resolve(executable, path, &environment.proxy_mounts)?;
+                if !provider::is_proxy(resolved.as_deref(), &environment.proxy_mounts)? {
+                    continue;
+                }
+            }
+            let prefix = &words[..words.len() - args.len() - 1];
+            let run_selector = if name == "rustup" && args.first().is_some_and(|arg| arg == "run") {
+                let selector = args.get(1).ok_or("missing Rustup run selector")?;
+                let command = args.get(2).ok_or("missing Rustup run command")?;
+                let inner_args = &args[3..];
+                if command == "rustup"
+                    || !PROXIES.contains(&command.as_str())
+                    || inner_args.first().is_some_and(|arg| arg.starts_with('+'))
+                {
+                    return Err(
+                        "unsupported inspected Rustup run command or nested selector".into(),
+                    );
+                }
+                name = command;
+                args = inner_args;
+                Some(selector.as_str())
+            } else {
+                None
+            };
+            if name == "cd" {
+                directories =
+                    directories.and_then(|directories| cd_directories(input, &directories, args));
+            }
+            if PROXIES.contains(&name) && name != "rustup" {
+                let explicit_selector = run_selector
+                    .or_else(|| args.first().and_then(|word| word.strip_prefix('+')))
+                    .or_else(|| {
+                        prefix
+                            .iter()
+                            .rev()
+                            .find_map(|word| word.strip_prefix("RUSTUP_TOOLCHAIN="))
+                    });
+                let selectors = if let Some(selector) = explicit_selector {
+                    vec![selector.to_string()]
+                } else if let Some(selector) = &environment.toolchain_override {
+                    vec![selector.clone()]
+                } else {
+                    let directories = directories.as_ref().ok_or(
+                        "Rust selection after shell cd needs a fixed selector or standalone cd",
+                    )?;
+                    let mut inspection = input.clone();
+                    let mut selectors = Vec::new();
+                    for directory in directories {
+                        inspection.cwd = directory.clone();
+                        let selector = active_selector(&inspection, &mut environment)?;
+                        if remapped
+                            && let Some(previous) = directory_selections
+                                .insert(inspection.cwd.clone(), selector.clone())
+                            && previous != selector
+                        {
+                            return Err("Rust directory selection changed during inspection".into());
+                        }
+                        if !selectors.contains(&selector) {
+                            selectors.push(selector);
+                        }
+                    }
+                    selectors
+                };
+                for selector in selectors {
+                    let root = runtime_for_selector(&selector, &environment)?
+                        .host_path
+                        .clone();
+                    validate_cli_targets(&root, name, args)?;
+                    if !selected.contains(&root) {
+                        selected.push(root.clone());
+                    }
+                    let subcommand = cargo_subcommand(args);
+                    let required: &[&str] = match (name, subcommand) {
+                        ("cargo", _)
+                            if super::super::sandbox::command_options::cargo_global_query(args) =>
+                        {
+                            &["cargo"]
+                        }
+                        ("cargo", Some("fmt")) | ("cargo-fmt", _) => &["cargo-fmt", "rustfmt"],
+                        ("cargo", Some("clippy")) | ("cargo-clippy", _) => {
+                            &["cargo-clippy", "clippy-driver"]
+                        }
+                        _ => &[name],
+                    };
+                    for name in required {
+                        let path = root.join("bin").join(name);
+                        validate_executable(&path, &root)?;
+                        if !environment
+                            .executable_hashes
+                            .iter()
+                            .any(|(existing, _)| *existing == path)
+                        {
+                            environment
+                                .executable_hashes
+                                .push((path.clone(), executable_digest(&path)?));
+                        }
+                    }
+                }
+            }
+        }
+        environment
+            .toolchain_mounts
+            .retain(|mount| selected.contains(&mount.host_path));
+        if remapped {
+            let plan = super::ReifiedNamespacePlan::derive(input.clone())
+                .map_err(|error| error.to_string())?;
+            let mut overrides = toml::Table::new();
+            // Pin effective selections only after all Host precedence checks have completed.
+            for (directory, selector) in directory_selections {
+                let mut projected = false;
+                for mount in &plan.declared_host_mounts {
+                    if let Some(path) = super::plan::translate_host_path_with_mounts(
+                        std::slice::from_ref(mount),
+                        &directory,
+                    ) {
+                        let key = path.to_str().ok_or("non-UTF-8 Rust directory projection")?;
+                        if let Some(previous) =
+                            overrides.insert(key.into(), selector.clone().into())
+                            && previous.as_str() != Some(&selector)
+                        {
+                            return Err("conflicting Rust directory projections".into());
+                        }
+                        projected = true;
+                    }
+                }
+                if !projected {
+                    return Err("Rust directory selection is outside delegated authority".into());
+                }
+            }
+            settings.insert("overrides".into(), overrides.into());
+            environment.settings = toml::to_string(&settings).map_err(|error| error.to_string())?;
+        }
+    }
+    for mount in &environment.toolchain_mounts {
+        let manifest = mount.host_path.join("lib/rustlib/multirust-config.toml");
+        environment
+            .metadata_hashes
+            .push((manifest.clone(), digest(&read_metadata(&manifest)?)));
+    }
+    for path in environment
+        .proxy_mounts
+        .iter()
+        .map(|mount| mount.host_path.join("rustup"))
+        .chain(environment.toolchain_mounts.iter().flat_map(|mount| {
+            ["cargo", "rustc", "rustdoc"].map(|name| mount.host_path.join("bin").join(name))
+        }))
+    {
+        environment
+            .executable_hashes
+            .push((path.clone(), executable_digest(&path)?));
+    }
+    Ok(Some(environment))
+}
+
+fn cd_directories(
+    input: &ReifiedNamespacePlanInput,
+    directories: &[PathBuf],
+    args: &[String],
+) -> Option<Vec<PathBuf>> {
+    let [path] = args else { return None };
+    // Parent traversal can cross remapped sibling mounts; refuse uncertain cwd selection.
+    if path.is_empty()
+        || path.starts_with(['-', '~'])
+        || Path::new(path)
+            .components()
+            .any(|part| part == std::path::Component::ParentDir)
+    {
+        return None;
+    }
+    // Absolute native paths must resolve through their existing delegated projection.
+    let projected = input
+        .declarations
+        .iter()
+        .filter_map(|mount| {
+            let ReifiedMountSource::Host(root) = &mount.source else {
+                return None;
+            };
+            Path::new(path)
+                .strip_prefix(&mount.namespace_path)
+                .ok()
+                .map(|suffix| (mount.namespace_path.components().count(), root.join(suffix)))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, path)| path);
+    let path = projected.as_deref().unwrap_or_else(|| Path::new(path));
+    // Keep both outcomes: a shell cd may fail or be conditional.
+    let mut possible = directories.to_vec();
+    for directory in directories {
+        let target = match std::fs::canonicalize(directory.join(path)) {
+            Ok(target) => target,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return None;
+            }
+            Err(_) => return None,
+        };
+        if !input.declarations.iter().any(|mount| match &mount.source {
+            ReifiedMountSource::Host(root) => {
+                target.starts_with(canonicalize_existing_host_path(root))
+            }
+            ReifiedMountSource::Virtual => false,
+        }) {
+            return None;
+        }
+        if !target.is_dir() {
+            continue;
+        }
+        if !possible.contains(&target) {
+            possible.push(target);
+            if possible.len() > 64 {
+                return None;
+            }
+        }
+    }
+    Some(possible)
+}
+
+fn validate_command_environment(words: &[String]) -> Result<(), String> {
+    let view = super::super::sandbox::command_and_args(words);
+    if view.is_some_and(|(name, _)| PROXIES.contains(&name))
+        && !super::super::sandbox::command_wrappers::command_preserves_execution_context(words)
+    {
+        return Err(
+            "Rust invocation wrapper changes the inspected PATH, environment or cwd".into(),
+        );
+    }
+    if view.is_some_and(|(name, args)| {
+        name == "rustup"
+            && !matches!(
+                args.first().map(String::as_str),
+                Some("run" | "--version" | "--help" | "-V" | "-h")
+            )
+    }) {
+        return Err("unsupported inspected Rustup management command".into());
+    }
+    if let Some(("printf", args)) = view {
+        let mut options = args.iter().take_while(|word| word.as_str() != "--");
+        while let Some(option) = options.next() {
+            let variable = if option == "-v" {
+                options.next().map(String::as_str)
+            } else {
+                option.strip_prefix("-v").filter(|value| !value.is_empty())
+            };
+            if variable.is_some_and(|name| {
+                cargo::compiler_override(name)
+                    || matches!(
+                        name,
+                        "PATH" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN" | "CARGO_HOME"
+                    )
+            }) {
+                return Err("printf cannot change the inspected Rust tool environment".into());
+            }
+        }
+    }
+    let prefix = view.map_or(words, |(_, args)| &words[..words.len() - args.len() - 1]);
+    let state_change = view.is_none()
+        || view.is_some_and(|(name, _)| {
+            matches!(
+                name,
+                "export"
+                    | "unset"
+                    | "readonly"
+                    | "declare"
+                    | "typeset"
+                    | "local"
+                    | "read"
+                    | "getopts"
+            )
+        });
+    let operands = if state_change { words } else { prefix };
+    for word in operands {
+        let name = word.split_once('=').map_or(word.as_str(), |(name, _)| name);
+        if matches!(
+            name.trim_end_matches('+'),
+            "PATH" | "RUSTUP_HOME" | "CARGO_HOME"
+        ) || cargo::compiler_override(name.trim_end_matches('+'))
+            || name.starts_with("LD_")
+            || name.starts_with("DYLD_")
+            || matches!(name, "GCONV_PATH" | "RUSTUP_FORCE_ARG0")
+            || (state_change && name.trim_end_matches('+') == "RUSTUP_TOOLCHAIN")
+        {
+            return Err(format!(
+                "command-local {name} cannot replace the inspected Linux tool environment"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn active_selector(
+    input: &ReifiedNamespacePlanInput,
+    environment: &mut ReifiedRustupEnvironment,
+) -> Result<String, String> {
+    if let Some(selector) = &environment.toolchain_override {
+        return Ok(selector.clone());
+    }
+    let settings: toml::Value = toml::from_str(&environment.settings)
+        .map_err(|error| format!("invalid private Rustup settings: {error}"))?;
+    for directory in input.cwd.ancestors() {
+        if let Some(selector) = settings
+            .get("overrides")
+            .and_then(|values| values.get(directory.to_str()?))
+            .and_then(toml::Value::as_str)
+        {
+            return Ok(selector.into());
+        }
+        for name in ["rust-toolchain", "rust-toolchain.toml"] {
+            let file = directory.join(name);
+            match std::fs::symlink_metadata(&file) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(format!("Rust toolchain file unavailable: {error}")),
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err("Rust toolchain file is an unsupported alias".into());
+                }
+                Ok(_) => {}
+            }
+            let canonical = std::fs::canonicalize(&file).map_err(|error| error.to_string())?;
+            if !input.declarations.iter().any(|mount| match &mount.source {
+                ReifiedMountSource::Host(root) => {
+                    canonical.starts_with(canonicalize_existing_host_path(root))
+                }
+                ReifiedMountSource::Virtual => false,
+            }) {
+                return Err("Rust toolchain file is outside delegated project authority".into());
+            }
+            let bytes = read_metadata(&canonical)?;
+            environment.metadata_hashes.push((file, digest(&bytes)));
+            if name == "rust-toolchain" && !bytes.trim_start().starts_with('[') {
+                if !bytes.is_ascii() {
+                    return Err("non-ASCII legacy Rust toolchain file".into());
+                }
+                return Ok(bytes.trim().into());
+            }
+            let value: toml::Value = toml::from_str(&bytes)
+                .map_err(|error| format!("invalid Rust toolchain file: {error}"))?;
+            let toolchain = value
+                .get("toolchain")
+                .and_then(toml::Value::as_table)
+                .ok_or("missing Rust toolchain table")?;
+            if let Some(profile) = toolchain.get("profile")
+                && !profile
+                    .as_str()
+                    .is_some_and(|profile| ["minimal", "default", "complete"].contains(&profile))
+            {
+                return Err("unsupported Rust toolchain profile".into());
+            }
+            if let Some(path) = toolchain.get("path") {
+                let path = path.as_str().ok_or("invalid Rust toolchain path")?;
+                if toolchain.contains_key("channel") {
+                    return Err("Rust toolchain file has channel and path".into());
+                }
+                return Ok(path.into());
+            }
+            let selector = toolchain
+                .get("channel")
+                .or_else(|| settings.get("default_toolchain"))
+                .and_then(toml::Value::as_str)
+                .ok_or("Rust toolchain file does not select an installed channel")?;
+            let root = &runtime_for_selector(selector, environment)?.host_path;
+            let manifest: toml::Value = toml::from_str(&read_metadata(
+                &root.join("lib/rustlib/multirust-config.toml"),
+            )?)
+            .map_err(|error| format!("invalid installed Rust component manifest: {error}"))?;
+            for key in ["components", "targets"] {
+                if let Some(requested) = toolchain.get(key) {
+                    let requested = requested
+                        .as_array()
+                        .ok_or("invalid Rust component/target list")?;
+                    for entry in requested {
+                        let name = entry.as_str().ok_or("invalid Rust component/target name")?;
+                        validate_component(&manifest, key, name)?;
+                    }
+                }
+            }
+            return Ok(selector.into());
+        }
+    }
+    settings
+        .get("default_toolchain")
+        .and_then(toml::Value::as_str)
+        .map(String::from)
+        .ok_or_else(|| "Rustup has no default toolchain".into())
+}
+
+fn validate_component(manifest: &toml::Value, key: &str, name: &str) -> Result<(), String> {
+    let found = manifest
+        .get("components")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|components| {
+            components.iter().any(|component| {
+                let package = component.get("pkg").and_then(toml::Value::as_str);
+                if key == "targets" {
+                    package == Some("rust-std")
+                        && component.get("target").and_then(toml::Value::as_str) == Some(name)
+                } else {
+                    package == Some(name) || package == Some(format!("{name}-preview").as_str())
+                }
+            })
+        });
+    if found {
+        Ok(())
+    } else {
+        Err(format!("required Rust component/target absent: {name}"))
+    }
+}
+
+fn validate_cli_targets(root: &Path, name: &str, args: &[String]) -> Result<(), String> {
+    if name == "cargo" && super::super::sandbox::command_options::cargo_global_query(args) {
+        return Ok(());
+    }
+    let cargo = matches!(name, "cargo" | "cargo-clippy");
+    if !cargo && !matches!(name, "rustc" | "rustdoc" | "clippy-driver") {
+        return Ok(());
+    }
+    let subcommand = cargo_subcommand(args);
+    let forwards = name == "cargo-clippy"
+        || (cargo && matches!(subcommand, Some("rustc" | "rustdoc" | "clippy")));
+    let mut words = args.iter();
+    let mut forwarded = false;
+    while let Some(word) = words.next() {
+        if word == "--" {
+            if !forwards || forwarded {
+                break;
+            }
+            forwarded = true;
+            continue;
+        }
+        let target = if word == "--target" {
+            words
+                .next()
+                .map(String::as_str)
+                .ok_or("missing Rust target option value")?
+        } else if let Some(target) = word.strip_prefix("--target=") {
+            target
+        } else {
+            continue;
+        };
+        let manifest: toml::Value = toml::from_str(&read_metadata(
+            &root.join("lib/rustlib/multirust-config.toml"),
+        )?)
+        .map_err(|error| format!("invalid installed Rust component manifest: {error}"))?;
+        let target = if cargo && !forwarded && target == "host-tuple" {
+            manifest
+                .get("components")
+                .and_then(toml::Value::as_array)
+                .and_then(|components| {
+                    components.iter().find(|component| {
+                        component.get("pkg").and_then(toml::Value::as_str) == Some("rustc")
+                    })
+                })
+                .and_then(|component| component.get("target").and_then(toml::Value::as_str))
+                .ok_or("installed Rust host target absent")?
+        } else {
+            target
+        };
+        validate_component(&manifest, "targets", target)?;
+    }
+    Ok(())
+}
+
+fn runtime_for_selector<'a>(
+    selector: &str,
+    environment: &'a ReifiedRustupEnvironment,
+) -> Result<&'a ReifiedExecutionSubstrateMount, String> {
+    let settings: toml::Value = toml::from_str(&environment.settings)
+        .map_err(|error| format!("invalid private Rustup settings: {error}"))?;
+    let host = settings
+        .get("default_host_triple")
+        .and_then(toml::Value::as_str)
+        .map(String::from)
+        .unwrap_or_else(|| {
+            let abi = if cfg!(target_env = "musl") {
+                "musl"
+            } else {
+                "gnu"
+            };
+            format!("{}-unknown-linux-{abi}", std::env::consts::ARCH)
+        });
+    let found = if Path::new(selector).is_absolute() {
+        environment
+            .toolchain_mounts
+            .iter()
+            .find(|mount| mount.namespace_path == Path::new(selector))
+    } else {
+        environment.toolchain_mounts.iter().find(|mount| {
+            if !safe_name(selector) {
+                return false;
+            }
+            let name = mount
+                .namespace_path
+                .file_name()
+                .and_then(|name| name.to_str());
+            name == Some(selector) || name == Some(format!("{selector}-{host}").as_str())
+        })
+    };
+    let runtime =
+        found.ok_or_else(|| format!("selected Rust runtime absent or unsupported: {selector}"))?;
+    validate_runtime(&runtime.host_path)?;
+    Ok(runtime)
+}
+
+pub(super) fn revalidate(environment: &ReifiedRustupEnvironment) -> Result<(), String> {
+    for binding in &environment.command_providers {
+        if provider::snapshot(
+            &binding.executable,
+            &binding.path,
+            &environment.proxy_mounts,
+        )? != binding.resolved
+        {
+            return Err("Rust command provider changed before execution".into());
+        }
+    }
+    for input in &environment.cargo_config_files {
+        cargo::revalidate(input)?;
+    }
+    for mount in &environment.proxy_mounts {
+        validate_proxies(&mount.host_path)?;
+    }
+    for mount in &environment.toolchain_mounts {
+        if mount.namespace_path != mount.host_path {
+            return Err("Rustup runtime has an unsupported namespace remap".into());
+        }
+        validate_runtime(&mount.host_path)?;
+    }
+    for (path, expected) in &environment.metadata_hashes {
+        if digest(&read_metadata(path)?) != *expected {
+            return Err("Rustup selection metadata changed before execution".into());
+        }
+    }
+    for (path, expected) in &environment.executable_hashes {
+        let root = environment
+            .proxy_mounts
+            .iter()
+            .chain(&environment.toolchain_mounts)
+            .find(|mount| path.starts_with(&mount.host_path))
+            .ok_or("Rust executable is outside its inspected roots")?;
+        validate_executable(path, &root.host_path)?;
+        if executable_digest(path)? != *expected {
+            return Err("Rust executable changed before execution".into());
+        }
+    }
+    Ok(())
+}
+
+fn executable_digest(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > 256 * 1024 * 1024 {
+        return Err("Rust executable exceeds inspection bound".into());
+    }
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| error.to_string())?
+        .take(256 * 1024 * 1024 + 1);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 65536];
+    let mut total = 0;
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if count == 0 {
+            break;
+        }
+        total += count;
+        if total > 256 * 1024 * 1024 {
+            return Err("Rust executable exceeds inspection bound".into());
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn validate_proxies(root: &Path) -> Result<(), String> {
+    let rustup = root.join("rustup");
+    let metadata = std::fs::symlink_metadata(&rustup).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("unsupported Rustup executable alias".into());
+    }
+    validate_executable(&rustup, root)?;
+    let mut count = 0;
+    for entry in std::fs::read_dir(root).map_err(|error| error.to_string())? {
+        count += 1;
+        if count > PROXIES.len() {
+            return Err("unsupported extra file in Rustup proxy directory".into());
+        }
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        if !name.to_str().is_some_and(|name| PROXIES.contains(&name)) {
+            return Err("unsupported extra file in Rustup proxy directory".into());
+        }
+        let path = std::fs::canonicalize(entry.path()).map_err(|error| error.to_string())?;
+        let proxy = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+        if !path.starts_with(root) || proxy.dev() != metadata.dev() || proxy.ino() != metadata.ino()
+        {
+            return Err("Rustup proxy escapes its validated executable".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_runtime(root: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(root)
+        .map_err(|error| format!("Rust runtime unavailable: {error}"))?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || std::fs::canonicalize(root).map_err(|error| error.to_string())? != root
+    {
+        return Err("Rust runtime root is an unsafe alias".into());
+    }
+    if !root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(safe_name)
+    {
+        return Err("unsafe Rust runtime name".into());
+    }
+    for entry in std::fs::read_dir(root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| ["bin", "lib", "libexec", "etc", "share"].contains(&name))
+        {
+            return Err("unsupported content in Rust runtime root".into());
+        }
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            return Err("Rust runtime directory is an unsafe alias".into());
+        }
+    }
+    for name in ["cargo", "rustc", "rustdoc"] {
+        validate_executable(&root.join("bin").join(name), root)?;
+    }
+    let manifest = root.join("lib/rustlib/multirust-config.toml");
+    if !std::fs::canonicalize(&manifest)
+        .map_err(|error| error.to_string())?
+        .starts_with(root)
+    {
+        return Err("Rust component metadata escapes its runtime".into());
+    }
+    read_metadata(&manifest)?;
+    Ok(())
+}
+
+fn validate_executable(path: &Path, root: &Path) -> Result<(), String> {
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("Rust executable unavailable: {error}"))?;
+    let metadata = std::fs::metadata(&canonical).map_err(|error| error.to_string())?;
+    if !canonical.starts_with(root) || !metadata.is_file() || metadata.mode() & 0o111 == 0 {
+        return Err("Rust executable escapes its runtime or is not executable".into());
+    }
+    let mut magic = [0; 4];
+    std::fs::File::open(canonical)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .map_err(|error| error.to_string())?;
+    if magic != *b"\x7fELF" {
+        return Err("unsupported Rust executable wrapper".into());
+    }
+    Ok(())
+}
+
+fn read_metadata(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("Rust metadata unavailable: {error}"))?;
+    if !metadata.is_file() || metadata.len() > 65536 {
+        return Err("unsafe or oversized Rust metadata file".into());
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|error| error.to_string())?
+        .take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > 65536 {
+        return Err("Rust metadata exceeds inspection bound".into());
+    }
+    String::from_utf8(bytes).map_err(|_| "Rust metadata is not UTF-8".into())
+}
+
+fn safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name != "."
+        && name != ".."
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+}
+
+fn digest(bytes: &str) -> String {
+    hex::encode(Sha256::digest(bytes.as_bytes()))
+}
+
+#[cfg(test)]
+#[path = "rustup_tests.rs"]
+mod tests;
+
+#[path = "rustup_sequence.rs"]
+mod sequence;

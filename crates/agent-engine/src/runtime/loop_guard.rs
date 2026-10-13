@@ -40,7 +40,7 @@ impl ToolLoopGuard {
 
         if self.same_tool_streak > self.repeat_limit {
             return Some(format!(
-                "Stopped due to repeated identical tool calls ({} in a row). You can adjust TOOL_REPEAT_LIMIT or revise the prompt to proceed.",
+                "Stopped due to repeated identical tool calls ({} in a row). Revise the task before trying again.",
                 self.same_tool_streak
             ));
         }
@@ -56,7 +56,7 @@ impl ToolLoopGuard {
             && self.tool_loop_count >= limit
         {
             return Some(format!(
-                "Stopped after reaching MAX_TOOL_LOOPS={} for this turn. You can continue by sending another user input or increase MAX_TOOL_LOOPS.",
+                "Stopped after reaching the Tool batch limit ({}) for this turn. Send another input to continue.",
                 limit
             ));
         }

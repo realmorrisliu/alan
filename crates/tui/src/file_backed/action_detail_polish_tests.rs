@@ -1,6 +1,114 @@
 use super::*;
 
 #[tokio::test]
+async fn details_polish_command_acquires_full_streams_and_preserves_raw_output() {
+    let long = (1..=3000)
+        .map(|i| {
+            if i == 2807 {
+                "QVALUE=42137\n".into()
+            } else {
+                format!("line {i:04} · server> ready · a > b\n")
+            }
+        })
+        .collect::<String>();
+    for stderr in [false, true] {
+        let raw = serde_json::json!({
+            "stdout": if stderr { "" } else { &long },
+            "stderr": if stderr { &long } else { "" },
+            "exit_code": 7,
+            "success": false,
+        })
+        .to_string();
+        let metadata = serde_json::json!({"title":"Command title",
+            "presentation":{"form":"command","cmdline":"original command",
+                "stdout":"bounded preview sentinel","stderr":"","exit_code":7,
+                "truncated":true}})
+        .to_string();
+        let (shell, path, id) = action_fixture(&raw, &metadata).await;
+        let rows = action_detail_io::read_detail(&shell, &path, &id)
+            .await
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(rows.iter().any(|line| line == "QVALUE=42137"));
+        assert!(
+            rows.iter()
+                .any(|line| line == "line 3000 · server> ready · a > b")
+        );
+        assert!(rows.iter().any(|line| line == "stdout"));
+        assert!(rows.iter().any(|line| line == "stderr"));
+        assert!(rows.iter().any(|line| line == "exit 7"));
+        assert!(!rows.iter().any(|line| line == "bounded preview sentinel"));
+        assert!(rows.iter().any(|line| line == "Original raw bytes"));
+        assert!(rows.iter().any(|line| line == &raw));
+        assert_eq!(
+            shell
+                .cat(&format!("{path}/actions/{id}/output"))
+                .await
+                .unwrap(),
+            raw.as_bytes()
+        );
+    }
+}
+
+#[tokio::test]
+async fn details_polish_command_reference_acquires_streams_without_preview_substitution() {
+    let raw = serde_json::json!({"stdout":"server> ready\nQVALUE=42137\n",
+        "stderr":"diagnostic\n","exit_code":0,"success":true})
+    .to_string();
+    let (shell, path, id) = action_fixture(&raw, "").await;
+    let preview = "bounded command sentinel";
+    let result = serde_json::json!({"type":"evidence_projection","title":"Command title",
+        "preview":preview,"result_preview":preview,
+        "reference":{"path":format!("{path}/actions/{id}/output"),"offset":0,"length":raw.len()},
+        "truncation":{"full_content_recoverable":true,"original_bytes":raw.len(),"preview_bytes":preview.len()}})
+    .to_string();
+    shell
+        .write(&format!("{path}/actions/{id}/result"), result.as_bytes())
+        .await
+        .unwrap();
+    let rows = action_detail_io::read_detail(&shell, &path, &id)
+        .await
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter()
+            .any(|line| line == "Recovered reference (retained original)")
+    );
+    assert!(rows.iter().any(|line| line == "QVALUE=42137"));
+    assert!(!rows.iter().any(|line| line == preview));
+    assert!(rows.iter().any(|line| line == &raw));
+}
+
+#[tokio::test]
+async fn details_polish_malformed_command_keeps_fallback_without_invented_streams() {
+    for value in [
+        serde_json::json!({"stdout":"output","exit_code":0}),
+        serde_json::json!({"stdout":"output","stderr":12,"exit_code":0}),
+        serde_json::json!({"stdout":"output","stderr":"error","exit_code":"0"}),
+    ] {
+        let raw = value.to_string();
+        let result =
+            serde_json::json!({"title":"Fallback title","result_preview":"fallback sentinel"})
+                .to_string();
+        let (shell, path, id) = action_fixture(&raw, &result).await;
+        let rows = action_detail_io::read_detail(&shell, &path, &id)
+            .await
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(rows.iter().any(|line| line == &raw));
+        assert!(rows.iter().any(|line| line == "fallback sentinel"));
+        assert!(
+            !rows
+                .iter()
+                .any(|line| matches!(line.as_str(), "stdout" | "stderr" | "exit 0"))
+        );
+    }
+}
+
+#[tokio::test]
 async fn details_polish_direct_inline_structured_has_clean_output_label_and_raw_bytes() {
     let content = (1..=200)
         .map(|i| format!("inline{i}\n"))

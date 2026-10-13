@@ -269,6 +269,45 @@ fn reattachment_does_not_treat_a_pre_submission_ui_error_as_current() {
 }
 
 #[test]
+fn recovered_delegation_error_does_not_override_parent_completion() {
+    let tape = correlated_records(
+        br#"{"version":1,"kind":"message","role":"assistant","content":"Direct repair verified."}
+"#,
+    );
+    let ui = br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":20}}
+{"type":"error","message":"Delegated skill launch rejected","recoverable":true}
+{"type":"input_completed","submission_ids":["00000000-0000-4000-8000-000000000001"],"status":"completed"}
+{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+"#;
+    let snapshot = stdio_task_snapshot_from_history(
+        &StdioTaskWaitContext {
+            submitted_at_ms: 20,
+            ..task("repair")
+        },
+        &tape,
+        ui,
+    )
+    .unwrap();
+    assert_eq!(
+        snapshot.completion,
+        Some(alan_agent_protocol::UiInputStatus::Completed)
+    );
+    assert!(snapshot.task_error.is_none());
+    assert_eq!(
+        snapshot.assistant_answer.as_deref(),
+        Some("Direct repair verified.")
+    );
+    let mut app = FileBackedApp::new("/agent/root".into());
+    for line in std::str::from_utf8(ui).unwrap().lines() {
+        app.apply_ui_event(serde_json::from_str(line).unwrap());
+    }
+    assert!(!app.last_input_failed);
+    assert!(app.transcript.iter().any(|cell| matches!(cell,
+        HistoryCell::Error(message) if message == "Delegated skill launch rejected"
+    )));
+}
+
+#[test]
 fn renderer_reconnect_does_not_reuse_an_older_identical_prompt() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.transcript = vec![

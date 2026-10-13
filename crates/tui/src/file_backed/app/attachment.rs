@@ -14,6 +14,7 @@ impl FileBackedApp {
         }
     }
     pub(in crate::file_backed) fn reset_for_root_process_change(&mut self) {
+        self.namespace_cwd = std::path::PathBuf::from("/");
         self.lose_model_receipts(&self.model.owner.clone());
         self.model_chooser.active = false;
         self.model_chooser.explicit = false;
