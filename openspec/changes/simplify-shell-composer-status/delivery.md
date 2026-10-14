@@ -20,3 +20,5 @@ PR #1059 review exposed two compact-layout regressions: overlapping model contro
 - Strict change validation and independent Spec/Standards review pass for the follow-up.
 - Fresh debug build in the same isolated Herdr fixture completed a real read-only hello.txt task. Running exposed Esc interrupt and completion returned to quiet context; rare overlapping states are covered by the production buffer tests, not claimed as live-model observations.
 - Follow-up commit/check/review state remains authoritative on the PR.
+
+A subsequent review found unsupported /queue hints in both wide and compact attention. All four presentation hints now use the existing /status command; the proposal was corrected to name that actual surface. A regression invokes the command extracted from the rendered hint at narrow/wide widths for uncertain, deferred and unavailable observations, verifies the matching queue details and verifies no work action is emitted. It reproduced unknown-command failure before the fix. The complete TUI suite now passes 404 tests (392 unit, 12 integration).

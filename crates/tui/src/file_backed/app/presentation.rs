@@ -111,10 +111,10 @@ impl FileBackedApp {
                 labels.push(format!("Queued {}", q.pending_submission_ids.len()));
             }
             if !q.uncertain_submission_ids.is_empty() {
-                labels.push("Input outcome uncertain · /queue".into());
+                labels.push("Input outcome uncertain · /status".into());
             }
             if q.deferred {
-                labels.push("Input deferred · /queue".into());
+                labels.push("Input deferred · /status".into());
             }
             if !q.active_submission_ids.is_empty()
                 && self.activity.state != UiActivityState::Running
@@ -122,7 +122,7 @@ impl FileBackedApp {
                 labels.push("Input active".into());
             }
         } else if !self.queue.owner.is_empty() {
-            labels.push("Queue unavailable · /queue".into());
+            labels.push("Queue unavailable · /status".into());
         }
         if self.prefers_active_model()
             && let Some(s) = self.model.known()

@@ -483,7 +483,7 @@ fn attention_line_at_width(
     } else if app.last_input_failed {
         "Failed /status"
     } else if !app.queue.owner.is_empty() {
-        "Queue /queue"
+        "Queue /status"
     } else {
         "Context /status"
     };

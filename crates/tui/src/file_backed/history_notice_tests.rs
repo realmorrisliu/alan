@@ -479,3 +479,38 @@ fn compact_execution_keeps_actions_with_every_queue_cue_in_real_buffer() {
         }
     }
 }
+
+#[test]
+fn queue_attention_action_opens_observed_details_without_submitting_work() {
+    use alan_agent_protocol::UiQueueSnapshot;
+    for state in ["uncertain", "deferred", "unavailable"] {
+        for width in [16, 120] {
+            let mut app = FileBackedApp::new("/agent/1".into());
+            let mut queue = UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                ..Default::default()
+            };
+            match state {
+                "uncertain" => queue.uncertain_submission_ids.push("input".into()),
+                "deferred" => queue.deferred = true,
+                _ => {}
+            }
+            app.queue
+                .apply("/agent/1", (state != "unavailable").then_some(queue));
+            let expected = app.queue.label();
+            let rendered = attention_line_at_width(&app, 0, width).unwrap().to_string();
+            let command = rendered
+                .split_whitespace()
+                .find(|word| word.starts_with('/'))
+                .unwrap();
+            assert!(app.handle_command(command).is_none(), "{rendered}");
+            let notice = app.notice.as_ref().unwrap();
+            assert!(
+                !notice.contains("unknown command"),
+                "{rendered}: {notice:?}"
+            );
+            assert!(notice.contains(&expected), "{rendered}: {notice:?}");
+        }
+    }
+}

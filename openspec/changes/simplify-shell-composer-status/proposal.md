@@ -6,7 +6,7 @@ The live prompt reads like a diagnostic log: role qualifiers, idle status and ze
 ## What Changes
 - Keep a blank row and a subtle rule above the flowing live composer.
 - Show project name, read-only limitation, and effective model/effort by default; omit idle/zero queue and active/next qualifiers.
-- Show running, pending, paused, failed and uncertain states only when applicable; preserve actionable warnings and exact model/queue details through /status and /queue.
+- Show running, pending, paused, failed and uncertain states only when applicable; preserve actionable warnings and exact model/queue details through /status.
 - Preserve completion anchoring, input routes, scrollback and runtime authority.
 
 ## Capabilities
