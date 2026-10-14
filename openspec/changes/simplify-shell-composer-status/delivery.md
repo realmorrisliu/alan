@@ -11,3 +11,12 @@ Base: `efba3346` (merged installation fix #1058). Scope: terminal presentation o
 - Detailed local evidence is under the isolated onboarding fixture's `evidence/composer-status/`. Native observations use Herdr's terminal buffer; screenshot access to Ghostty is unavailable. Smallest-pane state combinations are verified with the real production renderer's TestBackend, not a claim of physical-terminal coverage for every state.
 
 Native resize to 42 columns and per-character `/project` input passed with a stable two-row rule-to-input distance; original pane width restored. The final source suite has 401 passing tests. Complete quality and standalone distribution gates passed after the reviewed fixes, including the normal pre-commit hook. Published [PR #1059](https://github.com/realmorrisliu/alan/pull/1059); initial implementation head `22242d9c` has CI queued/running (not a pass claim). Current-head CI and review evidence is authoritative on the PR, allowing this checked-in delivery snapshot to stay stable. No merge or canonical adoption is claimed.
+
+## Review follow-up
+
+PR #1059 review exposed two compact-layout regressions: overlapping model control hid required-response cues, and queue metadata evicted execution actions. Both new regression tests failed on the reviewed implementation before the fix. Compact attention now prioritizes approval/form responses and binds running/paused labels to Esc stop or /continue, using at most two physical rows before dropping secondary metadata.
+
+- Updated terminal UI suite: 403 passing tests (391 unit, 12 integration). Production TestBackend coverage includes 16/24/40 columns with uncertain, paused, deferred, pending, active and unknown queue observations plus pending/uncertain model selection; the 16-by-6 unknown-queue case retains model, action and warning across wrapping.
+- Strict change validation and independent Spec/Standards review pass for the follow-up.
+- Fresh debug build in the same isolated Herdr fixture completed a real read-only hello.txt task. Running exposed Esc interrupt and completion returned to quiet context; rare overlapping states are covered by the production buffer tests, not claimed as live-model observations.
+- Follow-up commit/check/review state remains authoritative on the PR.

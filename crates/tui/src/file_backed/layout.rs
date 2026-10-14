@@ -459,13 +459,10 @@ fn attention_line_at_width(
     if line.width() <= width {
         return Some(line);
     }
-    // Keep the current state and most urgent admission cue on one physical
-    // row. Full observations remain available through /status and /queue.
-    let primary = if app.model_chooser.uncertain.is_some() {
-        "Model uncertain"
-    } else if app.model_chooser.pending.is_some() {
-        "Model pending"
-    } else if app.form.is_some() {
+    // Required responses and execution controls outrank background metadata.
+    // Use at most two physical rows so an urgent cue cannot evict its action.
+    let queue = app.queue.snapshot.as_ref().filter(|q| q.known);
+    let primary = if app.form.is_some() {
         "Input required"
     } else if let Some(pending) = &app.pending_yield {
         if matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation) {
@@ -476,50 +473,54 @@ fn attention_line_at_width(
     } else if app.project_selection.is_some() {
         "Select project"
     } else if app.activity.state == super::UiActivityState::Running {
-        "Run"
-    } else if app.activity.state == super::UiActivityState::Paused {
-        "Paused"
+        "Run Esc stop"
+    } else if app.activity.state == super::UiActivityState::Paused
+        || queue.is_some_and(|q| q.paused)
+    {
+        "Paused /continue"
+    } else if app.model_chooser.uncertain.is_some() || app.model_chooser.pending.is_some() {
+        "Model /status"
     } else if app.last_input_failed {
-        "Failed"
+        "Failed /status"
+    } else if !app.queue.owner.is_empty() {
+        "Queue /queue"
     } else {
-        ""
+        "Context /status"
     };
-    let queue = app.queue.snapshot.as_ref().filter(|q| q.known);
-    let secondary = match queue {
-        Some(q) if !q.uncertain_submission_ids.is_empty() => "uncertain".into(),
-        Some(q) if q.paused && primary != "Paused" => "paused".into(),
-        Some(q) if q.deferred => "deferred".into(),
-        Some(q) if !q.pending_submission_ids.is_empty() => {
-            format!("queued {}", q.pending_submission_ids.len())
+    let secondary = if app.model_chooser.uncertain.is_some() {
+        "model uncertain".into()
+    } else if app.model_chooser.pending.is_some() {
+        "model pending".into()
+    } else {
+        match queue {
+            Some(q) if !q.uncertain_submission_ids.is_empty() => "uncertain".into(),
+            Some(q) if q.paused && primary != "Paused /continue" => "paused".into(),
+            Some(q) if q.deferred => "deferred".into(),
+            Some(q) if !q.pending_submission_ids.is_empty() => {
+                format!("queued {}", q.pending_submission_ids.len())
+            }
+            Some(q) if !q.active_submission_ids.is_empty() && primary != "Run Esc stop" => {
+                "active".into()
+            }
+            None if !app.queue.owner.is_empty() => "q unknown".into(),
+            _ => String::new(),
         }
-        Some(q) if !q.active_submission_ids.is_empty() && primary != "Run" => "active".into(),
-        None if !app.queue.owner.is_empty() => "q unknown".into(),
-        _ if primary == "Run" => "Esc stop".into(),
-        _ if primary == "Paused" => "/continue".into(),
-        _ => String::new(),
     };
-    let text = if primary.is_empty() {
-        secondary
-    } else if secondary.is_empty() {
-        primary.into()
+    let combined = if secondary.is_empty() {
+        primary.to_string()
     } else {
         format!("{primary} {secondary}")
     };
-    let text = if text.is_empty() {
-        "Context changed · /status".to_string()
-    } else {
-        text
-    };
-    let text = if unicode_width::UnicodeWidthStr::width(text.as_str()) <= width {
-        text
-    } else if !primary.is_empty() {
+    let text = if wrapped_line_count(&[Line::from(combined.as_str())], width) <= 2 {
+        combined
+    } else if wrapped_line_count(&[Line::from(primary)], width) <= 2 {
         primary.into()
     } else {
-        "Status unknown".into()
+        // A pane too small even for the primary control still keeps its input usable.
+        primary.chars().take(width).collect()
     };
-    // These fallback labels are ASCII; clipping only affects extremely small panes.
     Some(Line::styled(
-        text.chars().take(width).collect::<String>(),
+        text,
         if app.model_chooser.uncertain.is_some() {
             Style::default().fg(Color::Red)
         } else {

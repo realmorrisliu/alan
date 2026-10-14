@@ -496,14 +496,18 @@ fn short_narrow_buffer_keeps_unknown_queue_during_work() {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        let text = rows.join("\n");
+        let text = rows
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         for cue in [
             "gpt-6.1-sol",
             "q unknown",
             if state == UiActivityState::Running {
-                "Run"
+                "Run Esc stop"
             } else {
-                "Paused"
+                "Paused /continue"
             },
         ] {
             assert!(text.contains(cue), "{state:?}: {text}");

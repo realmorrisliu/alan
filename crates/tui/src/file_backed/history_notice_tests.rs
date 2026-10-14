@@ -375,3 +375,107 @@ fn history_failure_is_visible_without_private_path_or_body_and_submission_surviv
     assert!(!rendered.contains("private-submission"));
     assert!(prompt.is_some());
 }
+
+#[test]
+fn compact_response_cue_survives_overlapping_model_control() {
+    use crate::history::PendingYieldCell;
+    use alan_agent_protocol::{UiActivitySnapshot, YieldKind};
+    for kind in [YieldKind::Confirmation, YieldKind::StructuredInput] {
+        for uncertain in [false, true] {
+            let mut app = FileBackedApp::new("/agent/1".into());
+            app.activity = UiActivitySnapshot::running(0);
+            app.model_chooser.pending = Some(("/agent/1".into(), "selection".into()));
+            if uncertain {
+                app.model_chooser.uncertain = app.model_chooser.pending.take();
+            }
+            app.set_pending_yield(PendingYieldCell {
+                request_id: "response".into(), kind: kind.clone(),
+                title: "Response needed".into(), prompt: None,
+                options: vec!["approve".into(), "reject".into()], default_option: None,
+                questions: if kind == YieldKind::StructuredInput {
+                    vec![serde_json::from_value(serde_json::json!({
+                        "id":"answer", "label":"Answer", "prompt":"Answer?", "kind":"text", "required":false
+                    })).unwrap()]
+                } else { Vec::new() },
+                capability: None, reason: None, presentation: None,
+            });
+            for width in [16, 24, 40] {
+                let line = attention_line_at_width(&app, 8000, width).unwrap();
+                let text = line.to_string().to_lowercase();
+                if kind == YieldKind::Confirmation {
+                    assert!(text.contains("approval"), "{width}: {text}");
+                } else {
+                    assert!(text.contains("input"), "{width}: {text}");
+                }
+                assert!(!text.contains("esc") && !text.contains("8s"), "{text}");
+                assert!(wrapped_line_count(&[line], width) <= 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_execution_keeps_actions_with_every_queue_cue_in_real_buffer() {
+    use alan_agent_protocol::{UiActivityState, UiQueueSnapshot};
+    use ratatui::{Terminal, backend::TestBackend};
+    for state in [UiActivityState::Running, UiActivityState::Paused] {
+        for queue_kind in [
+            "uncertain",
+            "paused",
+            "deferred",
+            "pending",
+            "active",
+            "unknown",
+            "model pending",
+            "model uncertain",
+        ] {
+            for width in [16, 24, 40] {
+                let mut app = FileBackedApp::new("/agent/1".into());
+                crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+                app.activity.state = state;
+                let mut q = UiQueueSnapshot {
+                    known: true,
+                    revision: 1,
+                    ..Default::default()
+                };
+                match queue_kind {
+                    "uncertain" => q.uncertain_submission_ids.push("input".into()),
+                    "paused" => q.paused = true,
+                    "deferred" => q.deferred = true,
+                    "pending" => q.pending_submission_ids.push("input".into()),
+                    "active" => q.active_submission_ids.push("input".into()),
+                    "model pending" => {
+                        app.model_chooser.pending = Some(("/agent/1".into(), "selection".into()))
+                    }
+                    "model uncertain" => {
+                        app.model_chooser.uncertain = Some(("/agent/1".into(), "selection".into()))
+                    }
+                    _ => q.known = false,
+                }
+                app.queue.apply("/agent/1", Some(q));
+                let mut terminal = Terminal::new(TestBackend::new(width, 8)).unwrap();
+                terminal.draw(|f| draw_at(f, &app, 8000)).unwrap();
+                let rows = (0..8)
+                    .map(|y| {
+                        (0..width)
+                            .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>();
+                let text = rows.join("\n");
+                for cue in [
+                    "gpt-6.1-sol",
+                    if state == UiActivityState::Running {
+                        "Esc"
+                    } else {
+                        "/continue"
+                    },
+                ] {
+                    assert!(text.contains(cue), "{width} {state:?} {queue_kind}: {text}");
+                }
+                let cursor = terminal.backend().cursor_position();
+                assert!(rows[cursor.y as usize].starts_with(": "));
+            }
+        }
+    }
+}
