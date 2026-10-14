@@ -231,7 +231,7 @@ fn candidate_cleanup_retains_failed_authority_and_requires_explicit_retry() {
 fn ordinary_cd_context_uses_observed_namespace_cwd_without_a_picker_receipt() {
     let mut app = FileBackedApp::new("/agent/1".into());
     crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
-    assert!(app.context_line(120).to_string().contains("no project"));
+    assert!(app.context_line(120).to_string().contains("Select project"));
     let mut snapshot = ActionSnapshot {
         id: "external-project-cd".into(),
         name: "cd".into(),
@@ -242,13 +242,13 @@ fn ordinary_cd_context_uses_observed_namespace_cwd_without_a_picker_receipt() {
     for status in ["running", "failed", "rejected"] {
         snapshot.status = status.into();
         app.observe_action_cwd(&snapshot);
-        assert!(app.context_line(120).to_string().contains("no project"));
+        assert!(app.context_line(120).to_string().contains("Select project"));
     }
     snapshot.status = "completed".into();
     app.observe_action_cwd(&snapshot);
     let context = app.context_line(120).to_string();
     assert!(context.contains("/mnt/project-request-1/src"), "{context}");
-    assert!(!context.contains("no project") && !context.contains("read-only"));
+    assert!(!context.contains("Select project") && !context.contains("read-only"));
     assert!(
         app.project.is_none(),
         "cwd does not create a project receipt"
@@ -258,13 +258,13 @@ fn ordinary_cd_context_uses_observed_namespace_cwd_without_a_picker_receipt() {
         let text = line.to_string();
         assert!(line.width() <= width, "{width}: {text}");
         assert!(
-            text.contains("gpt-6.1-sol") && text.contains("ready"),
+            text.contains("gpt-6.1-sol") && !text.contains("ready"),
             "{text}"
         );
     }
     snapshot.result = serde_json::json!({"outcome": {"cwd": "/"}}).to_string();
     app.observe_action_cwd(&snapshot);
-    assert!(app.context_line(120).to_string().contains("no project"));
+    assert!(app.context_line(120).to_string().contains("Select project"));
 }
 
 #[test]
@@ -279,5 +279,5 @@ fn root_change_discards_previous_ordinary_cd_context() {
     });
     app.reset_for_root_process_change();
     assert_eq!(app.namespace_cwd, std::path::PathBuf::from("/"));
-    assert!(app.context_line(120).to_string().contains("no project"));
+    assert!(app.context_line(120).to_string().contains("Select project"));
 }

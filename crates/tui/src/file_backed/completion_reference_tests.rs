@@ -35,7 +35,7 @@ fn references_wrapped_unicode_and_selected_clipping_share_layout() {
                     );
                     if pane == 30 && composer_rows < MAX_COMPOSER_LINES {
                         let menu = before.iter().position(|r| r.contains("ref0")).unwrap();
-                        assert_eq!(menu, 1 + composer_rows, "all composer rows precede menu");
+                        assert_eq!(menu, 3 + composer_rows, "all composer rows precede menu");
                     }
                     for _ in 0..8 {
                         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));

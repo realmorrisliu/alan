@@ -61,7 +61,7 @@ fn accessibility_critical_model_status_and_interrupt_use_default_foreground() {
     let mut terminal = Terminal::new(TestBackend::new(120, 8)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let buffer = terminal.backend().buffer();
-    for needle in ["model-critical", "working", "ctrl+c/esc interrupt"] {
+    for needle in ["model-critical", "Working", "Esc interrupt"] {
         let mut found = false;
         for y in 0..8 {
             let row = (0..120)

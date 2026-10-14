@@ -179,7 +179,7 @@ fn settled_input_uses_header_queue_status_without_a_duplicate_notice() {
         assert!(
             !lines
                 .iter()
-                .skip(1)
+                .skip(3)
                 .any(|line| line.to_string().contains("queued 0"))
         );
     }
@@ -207,7 +207,7 @@ fn paused_status_regression() {
     app.composer.set_text("draft 界");
     for width in [40, 60, 73, 80, 120] {
         let (lines, prompt) = live_region_lines_at(&app, width, 5_001);
-        let header = lines[0].to_string();
+        let header = lines[3].to_string().to_lowercase();
         assert_eq!(header.matches("paused").count(), 1, "{header}");
         let text = lines
             .iter()
@@ -229,8 +229,12 @@ fn paused_status_regression() {
     }
     app.activity = UiActivitySnapshot::running(1);
     let (lines, _) = live_region_lines_at(&app, 120, 5_001);
-    assert!(lines[0].to_string().contains("working · paused"));
-    assert!(lines[1].to_string().contains("interrupt · 5s"));
+    assert!(lines[3].to_string().contains("Paused"));
+    assert!(
+        lines[3]
+            .to_string()
+            .contains("Working · 5s · Esc interrupt")
+    );
 }
 
 #[test]
@@ -239,10 +243,15 @@ fn paused_status_real_wait_has_static_cue_without_clock() {
     let mut app = FileBackedApp::new("/agent/root".into());
     app.activity = UiActivitySnapshot::paused(Some(1));
     app.activity.waiting_submission_ids.push("r0".into());
-    let (lines, _) = live_region_lines_at(&app, 80, 5_001);
-    assert!(lines[1].to_string().contains("waiting for input"));
-    assert!(!lines[1].to_string().contains("interrupt"));
-    assert!(!lines[1].to_string().contains("5s"));
+    for width in [16, 40, 80, 120] {
+        let line = attention_line_at_width(&app, 5_001, width)
+            .unwrap()
+            .to_string();
+        assert!(line.to_lowercase().contains("input"), "{width}: {line}");
+        for misleading in ["/continue", "interrupt", "5s"] {
+            assert!(!line.contains(misleading), "{width}: {line}");
+        }
+    }
 }
 
 #[test]
@@ -250,7 +259,7 @@ fn paused_status_model_override_owns_narrow_color() {
     let mut app = FileBackedApp::new("/agent/root".into());
     crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     app.model_chooser.pending = Some(("/agent/1".into(), "B".into()));
-    assert_eq!(app.context_line(24).style.fg, Some(Color::Cyan));
+    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Cyan));
     for uncertain in [false, true] {
         if uncertain {
             app.model_chooser.uncertain = Some(("/agent/1".into(), "B".into()));
@@ -263,13 +272,14 @@ fn paused_status_model_override_owns_narrow_color() {
                     || (span.content.starts_with('g') && span.content.ends_with('l'))),
                 "{width}: {line}"
             );
-            assert!(
-                line.to_string()
-                    .contains(if uncertain { "uncertain" } else { "pending" })
-            );
+            assert!(app.attention_labels().join(" · ").contains(if uncertain {
+                "uncertain"
+            } else {
+                "Selecting model"
+            }));
         }
     }
-    assert_eq!(app.context_line(24).style.fg, Some(Color::Red));
+    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Red));
 }
 
 #[test]
@@ -278,6 +288,15 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
     use alan_agent_protocol::{UiActivitySnapshot, UiEvent, YieldKind};
     for kind in [YieldKind::Confirmation, YieldKind::StructuredInput] {
         let mut app = FileBackedApp::new("/agent/root".into());
+        app.queue.apply(
+            "/agent/root",
+            Some(alan_agent_protocol::UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                paused: true,
+                ..Default::default()
+            }),
+        );
         // The request watcher installs controls before the activity watcher publishes Paused.
         app.activity = UiActivitySnapshot::running(1);
         let questions = if matches!(kind, YieldKind::StructuredInput) {
@@ -324,15 +343,23 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
             for width in [40, 60, 73, 80, 120] {
                 let (lines, _) = live_region_lines_at(&app, width, 5_001);
                 assert!(
-                    lines[1].to_string().contains(cue),
+                    lines[3].to_string().contains(cue)
+                        || lines[3]
+                            .to_string()
+                            .contains(if cue == "waiting for approval" {
+                                "Approval"
+                            } else {
+                                "Input required"
+                            }),
                     "cue={cue}, lines={lines:?}"
                 );
-                assert!(!lines[1].to_string().contains("interrupt"));
-                assert!(!lines[1].to_string().contains("5s"));
+                assert!(!lines[3].to_string().contains("interrupt"));
+                assert!(!lines[3].to_string().contains("/continue"), "{lines:?}");
+                assert!(!lines[3].to_string().contains("5s"));
                 assert!(
                     !SPINNER
                         .iter()
-                        .any(|glyph| { lines[1].to_string().starts_with(&format!("{glyph} ·")) })
+                        .any(|glyph| { lines[3].to_string().starts_with(&format!("{glyph} ·")) })
                 );
             }
         }
@@ -363,4 +390,223 @@ fn history_failure_is_visible_without_private_path_or_body_and_submission_surviv
     assert!(!rendered.contains("private-error"));
     assert!(!rendered.contains("private-submission"));
     assert!(prompt.is_some());
+}
+
+#[test]
+fn compact_response_cue_survives_overlapping_model_control() {
+    use crate::history::PendingYieldCell;
+    use alan_agent_protocol::{UiActivitySnapshot, YieldKind};
+    for kind in [YieldKind::Confirmation, YieldKind::StructuredInput] {
+        for uncertain in [false, true] {
+            let mut app = FileBackedApp::new("/agent/1".into());
+            app.activity = UiActivitySnapshot::running(0);
+            app.model_chooser.pending = Some(("/agent/1".into(), "selection".into()));
+            if uncertain {
+                app.model_chooser.uncertain = app.model_chooser.pending.take();
+            }
+            app.set_pending_yield(PendingYieldCell {
+                request_id: "response".into(), kind: kind.clone(),
+                title: "Response needed".into(), prompt: None,
+                options: vec!["approve".into(), "reject".into()], default_option: None,
+                questions: if kind == YieldKind::StructuredInput {
+                    vec![serde_json::from_value(serde_json::json!({
+                        "id":"answer", "label":"Answer", "prompt":"Answer?", "kind":"text", "required":false
+                    })).unwrap()]
+                } else { Vec::new() },
+                capability: None, reason: None, presentation: None,
+            });
+            for width in [16, 24, 40] {
+                let line = attention_line_at_width(&app, 8000, width).unwrap();
+                let text = line.to_string().to_lowercase();
+                if kind == YieldKind::Confirmation {
+                    assert!(text.contains("approval"), "{width}: {text}");
+                } else {
+                    assert!(text.contains("input"), "{width}: {text}");
+                }
+                assert!(!text.contains("esc") && !text.contains("8s"), "{text}");
+                assert!(wrapped_line_count(&[line], width) <= 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_execution_keeps_actions_with_every_queue_cue_in_real_buffer() {
+    use alan_agent_protocol::{UiActivityState, UiQueueSnapshot};
+    use ratatui::{Terminal, backend::TestBackend};
+    for state in [UiActivityState::Running, UiActivityState::Paused] {
+        for queue_kind in [
+            "uncertain",
+            "paused",
+            "deferred",
+            "pending",
+            "active",
+            "unknown",
+            "model pending",
+            "model uncertain",
+        ] {
+            for width in [16, 24, 40] {
+                let mut app = FileBackedApp::new("/agent/1".into());
+                crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+                app.activity.state = state;
+                let mut q = UiQueueSnapshot {
+                    known: true,
+                    revision: 1,
+                    ..Default::default()
+                };
+                match queue_kind {
+                    "uncertain" => q.uncertain_submission_ids.push("input".into()),
+                    "paused" => q.paused = true,
+                    "deferred" => q.deferred = true,
+                    "pending" => q.pending_submission_ids.push("input".into()),
+                    "active" => q.active_submission_ids.push("input".into()),
+                    "model pending" => {
+                        app.model_chooser.pending = Some(("/agent/1".into(), "selection".into()))
+                    }
+                    "model uncertain" => {
+                        app.model_chooser.uncertain = Some(("/agent/1".into(), "selection".into()))
+                    }
+                    _ => q.known = false,
+                }
+                app.queue.apply("/agent/1", Some(q));
+                let mut terminal = Terminal::new(TestBackend::new(width, 8)).unwrap();
+                terminal.draw(|f| draw_at(f, &app, 8000)).unwrap();
+                let rows = (0..8)
+                    .map(|y| {
+                        (0..width)
+                            .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>();
+                let text = rows.join("\n");
+                for cue in [
+                    "gpt-6.1-sol",
+                    if state == UiActivityState::Running {
+                        "Esc"
+                    } else {
+                        "/continue"
+                    },
+                ] {
+                    assert!(text.contains(cue), "{width} {state:?} {queue_kind}: {text}");
+                }
+                let cursor = terminal.backend().cursor_position();
+                assert!(rows[cursor.y as usize].starts_with(": "));
+            }
+        }
+    }
+}
+
+#[test]
+fn queue_attention_action_opens_observed_details_without_submitting_work() {
+    use alan_agent_protocol::UiQueueSnapshot;
+    for state in ["uncertain", "deferred", "unavailable"] {
+        for width in [16, 120] {
+            let mut app = FileBackedApp::new("/agent/1".into());
+            let mut queue = UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                ..Default::default()
+            };
+            match state {
+                "uncertain" => queue.uncertain_submission_ids.push("input".into()),
+                "deferred" => queue.deferred = true,
+                _ => {}
+            }
+            app.queue
+                .apply("/agent/1", (state != "unavailable").then_some(queue));
+            let expected = app.queue.label();
+            let rendered = attention_line_at_width(&app, 0, width).unwrap().to_string();
+            let command = rendered
+                .split_whitespace()
+                .find(|word| word.starts_with('/'))
+                .unwrap();
+            assert!(app.handle_command(command).is_none(), "{rendered}");
+            let notice = app.notice.as_ref().unwrap();
+            assert!(
+                !notice.contains("unknown command"),
+                "{rendered}: {notice:?}"
+            );
+            assert!(notice.contains(&expected), "{rendered}: {notice:?}");
+        }
+    }
+}
+
+#[test]
+fn short_form_viewport_follows_focused_response_field() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.notice = Some("A preceding notice that wraps across several narrow terminal rows".into());
+    app.form = Some(crate::form::FormState::new(
+        "response".into(),
+        ["first", "second", "third"]
+            .into_iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "id":id, "label":id, "prompt":"Answer?", "kind":"text", "required":false
+                }))
+                .unwrap()
+            })
+            .collect(),
+    ));
+    for label in ["first", "second", "third", "first"] {
+        app.form.as_mut().unwrap().insert_char('v');
+        for width in [24, 40] {
+            for height in [1, 2, 4, 8] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| draw_at(f, &app, 0)).unwrap();
+                let text = (0..height)
+                    .map(|y| {
+                        (0..width)
+                            .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    text.contains(&format!("▶ {label} [text]: v")),
+                    "{width}x{height}: {text}"
+                );
+            }
+        }
+        app.form.as_mut().unwrap().next_field();
+    }
+}
+
+#[test]
+fn oversized_form_field_keeps_edit_tail_visible_before_option_help() {
+    use ratatui::{Terminal, backend::TestBackend};
+    for options in [false, true] {
+        let mut app = FileBackedApp::new("/agent/1".into());
+        let question = serde_json::from_value(serde_json::json!({
+            "id":"answer", "label":"A long field label ".repeat(10),
+            "prompt":"Answer?", "kind":if options {"single_select"} else {"text"},
+            "required":false,
+            "options": if options {(0..30).map(|i| serde_json::json!({"value":format!("choice-{i}"),"label":format!("Choice {i}")})).collect::<Vec<_>>()} else {vec![]}
+        })).unwrap();
+        app.form = Some(crate::form::FormState::new(
+            "response".into(),
+            vec![question],
+        ));
+        for ch in format!("{}末", "中文😀 ".repeat(30)).chars() {
+            app.form.as_mut().unwrap().insert_char(ch);
+        }
+        for width in [24, 40] {
+            for height in [1, 2, 4] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| draw_at(f, &app, 0)).unwrap();
+                let text = (0..height)
+                    .map(|y| {
+                        (0..width)
+                            .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    text.contains('末'),
+                    "options={options}, {width}x{height}: {text}"
+                );
+            }
+        }
+    }
 }

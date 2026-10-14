@@ -92,6 +92,11 @@ impl FormState {
         Value::Object(map).to_string()
     }
 
+    /// The focused field through its editable value, excluding trailing option help.
+    pub(crate) fn focused_input_line(&self) -> Option<String> {
+        self.focused().map(|field| field_input_line(field, true))
+    }
+
     /// One display line per field, the focused field marked.
     pub fn render_lines(&self) -> Vec<(String, bool)> {
         let mut lines: Vec<(String, bool)> = self
@@ -99,13 +104,7 @@ impl FormState {
             .iter()
             .enumerate()
             .map(|(idx, field)| {
-                let marker = if idx == self.focus { "▶" } else { " " };
-                let mut line = format!(
-                    "{marker} {} [{}]: {}",
-                    field.question.label,
-                    kind_label(field.question.kind),
-                    field.value
-                );
+                let mut line = field_input_line(field, idx == self.focus);
                 if !field.question.options.is_empty() {
                     let opts = field
                         .question
@@ -128,6 +127,16 @@ impl FormState {
         ));
         lines
     }
+}
+
+fn field_input_line(field: &FormField, focused: bool) -> String {
+    let marker = if focused { "▶" } else { " " };
+    format!(
+        "{marker} {} [{}]: {}",
+        field.question.label,
+        kind_label(field.question.kind),
+        field.value
+    )
 }
 
 fn kind_label(kind: StructuredInputKind) -> &'static str {

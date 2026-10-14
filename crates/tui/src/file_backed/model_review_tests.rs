@@ -100,7 +100,7 @@ async fn remaining_control_write_failure_is_uncertain_not_rejection() {
     model::write_selection(&shell, &mut app, &owner, &id, op).await;
     assert!(app.model_chooser.pending.is_none());
     assert_eq!(app.model_chooser.uncertain, Some((owner, id)));
-    assert!(app.context_line(200).to_string().contains("uncertain"));
+    assert!(app.attention_labels().join(" · ").contains("uncertain"));
 }
 #[test]
 fn remaining_running_slash_submit_routes_without_task_admission() {
@@ -173,7 +173,7 @@ fn review_receipt_loss_owner_scope_and_late_settlement() {
         Some((owner.clone(), id.clone()))
     );
     app.notice = None;
-    assert!(app.context_line(200).to_string().contains("uncertain"));
+    assert!(app.attention_labels().join(" · ").contains("uncertain"));
     app.handle_command("/model");
     assert!(!app.model_chooser.active);
     let receipt = alan_agent_protocol::UiEvent::InputCompleted {
@@ -238,7 +238,7 @@ async fn review_file_backed_malformed_receipt_preserves_uncertainty() {
             app.model_chooser.uncertain,
             Some((owner, "pending-model".into()))
         );
-        assert!(app.context_line(200).to_string().contains("uncertain"));
+        assert!(app.attention_labels().join(" · ").contains("uncertain"));
     })
     .await;
     watchers.stop().await;

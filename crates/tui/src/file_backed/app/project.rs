@@ -11,7 +11,7 @@ pub(super) fn default_commands() -> Vec<CompletionCandidate> {
         ("help", "show key bindings"),
         ("quit", "exit alan"),
         ("model", "choose selected-next from Process catalog"),
-        ("status", "inspect Process model bindings"),
+        ("status", "inspect project, model and queue"),
     ]
     .into_iter()
     .map(|(value, detail)| CompletionCandidate::new(value, Some(detail.to_string())))

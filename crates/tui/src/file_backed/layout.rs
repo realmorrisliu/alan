@@ -91,6 +91,16 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         .unwrap_or_default();
     let prompt_start =
         prompt_start.map(|index| history_height + wrapped_line_count(&live_lines[..index], width));
+    let focused_field = app.form.as_ref().and_then(|form| {
+        let fields = form.render_lines();
+        let focus = fields.iter().position(|(_, focused)| *focused)?;
+        let start = live_lines.len().checked_sub(fields.len())? + focus;
+        Some((
+            history_height + wrapped_line_count(&live_lines[..start], width),
+            wrapped_line_count(&live_lines[start..=start], width),
+            wrapped_line_count(&[Line::from(form.focused_input_line()?)], width),
+        ))
+    });
     lines.extend(live_lines);
 
     // Menu growth never changes the base input viewport or its scroll offset.
@@ -104,7 +114,22 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         ) as u16;
     let base_area = Rect::new(area.x, area.y, area.width, base_height);
     let cursor_position = prompt_start.map(|start| composer_cursor_position(app, width, start));
-    let scroll_y = cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(base_height));
+    let scroll_y = cursor_position
+        .map(|(_, y)| y.saturating_add(1).saturating_sub(base_height))
+        .or_else(|| {
+            // Forms have no composer cursor. Keep the focused field visible,
+            // scrolling decoration/history away before response controls.
+            focused_field.map(|(start, height, input_height)| {
+                let end = start
+                    + if height > base_height as usize {
+                        input_height
+                    } else {
+                        height
+                    };
+                end.saturating_sub(base_height as usize)
+                    .min(u16::MAX as usize) as u16
+            })
+        });
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(
         paragraph.scroll((scroll_y.unwrap_or_default(), 0)),
@@ -165,9 +190,16 @@ fn live_region_lines_at(
     now_ms: u64,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let mut lines = Vec::new();
+    // Keep the live composer visually separate from retained output. These
+    // rows share the ordinary viewport budget, including cursor placement.
+    lines.push(Line::default());
+    lines.push(Line::styled(
+        "─".repeat(width),
+        Style::default().fg(Color::DarkGray),
+    ));
     lines.push(app.context_line(width));
-    if app.activity_label().is_some() {
-        lines.push(activity_line(app, now_ms));
+    if let Some(line) = attention_line_at_width(app, now_ms, width) {
+        lines.push(line);
     }
     if let Some(notice) = app.composer.history_notice() {
         lines.push(Line::styled(
@@ -429,11 +461,10 @@ pub(super) fn frame_needs_redraw(
     now_ms: u64,
     last_drawn_second: Option<u64>,
 ) -> bool {
-    // Only Running work without actual user controls advances quietly; dirty events always draw.
+    // Only Running work without a pending response advances quietly; dirty events always draw.
     dirty
         || (matches!(app.activity.state, super::UiActivityState::Running)
-            && app.pending_yield.is_none()
-            && app.form.is_none()
+            && !app.has_pending_response()
             && last_drawn_second != Some(activity_elapsed_second(app, now_ms)))
 }
 
@@ -443,10 +474,118 @@ pub(super) fn activity_elapsed_second(app: &FileBackedApp, now_ms: u64) -> u64 {
         .unwrap_or(0)
 }
 
+fn attention_line_at_width(
+    app: &FileBackedApp,
+    now_ms: u64,
+    width: usize,
+) -> Option<Line<'static>> {
+    let line = attention_line(app, now_ms)?;
+    if line.width() <= width {
+        return Some(line);
+    }
+    // Required responses and execution controls outrank background metadata.
+    // Use at most two physical rows so an urgent cue cannot evict its action.
+    let queue = app.queue.snapshot.as_ref().filter(|q| q.known);
+    let primary = if app.form.is_some() {
+        "Input required"
+    } else if let Some(pending) = &app.pending_yield {
+        if matches!(pending.kind, alan_agent_protocol::YieldKind::Confirmation) {
+            "Approval"
+        } else {
+            "Input required"
+        }
+    } else if app.has_pending_response() {
+        "Input required"
+    } else if app.project_selection.is_some() {
+        "Select project"
+    } else if app.activity.state == super::UiActivityState::Running {
+        "Run Esc stop"
+    } else if app.activity.state == super::UiActivityState::Paused
+        || queue.is_some_and(|q| q.paused)
+    {
+        "Paused /continue"
+    } else if app.model_chooser.uncertain.is_some() || app.model_chooser.pending.is_some() {
+        "Model /status"
+    } else if app.last_input_failed {
+        "Failed /status"
+    } else if !app.queue.owner.is_empty() {
+        "Queue /status"
+    } else {
+        "Context /status"
+    };
+    let secondary = if app.model_chooser.uncertain.is_some() {
+        "model uncertain".into()
+    } else if app.model_chooser.pending.is_some() {
+        "model pending".into()
+    } else {
+        match queue {
+            Some(q) if !q.uncertain_submission_ids.is_empty() => "uncertain".into(),
+            Some(q) if q.paused && primary != "Paused /continue" => "paused".into(),
+            Some(q) if q.deferred => "deferred".into(),
+            Some(q) if !q.pending_submission_ids.is_empty() => {
+                format!("queued {}", q.pending_submission_ids.len())
+            }
+            Some(q) if !q.active_submission_ids.is_empty() && primary != "Run Esc stop" => {
+                "active".into()
+            }
+            None if !app.queue.owner.is_empty() => "q unknown".into(),
+            _ => String::new(),
+        }
+    };
+    let combined = if secondary.is_empty() {
+        primary.to_string()
+    } else {
+        format!("{primary} {secondary}")
+    };
+    let text = if wrapped_line_count(&[Line::from(combined.as_str())], width) <= 2 {
+        combined
+    } else if wrapped_line_count(&[Line::from(primary)], width) <= 2 {
+        primary.into()
+    } else {
+        // A pane too small even for the primary control still keeps its input usable.
+        primary.chars().take(width).collect()
+    };
+    Some(Line::styled(
+        text,
+        if app.model_chooser.uncertain.is_some() {
+            Style::default().fg(Color::Red)
+        } else {
+            line.style
+        },
+    ))
+}
+
+pub(super) fn attention_line(app: &FileBackedApp, now_ms: u64) -> Option<Line<'static>> {
+    let labels = app.attention_labels();
+    if app.activity_label().is_some() {
+        let mut line = activity_line(app, now_ms);
+        if !labels.is_empty() {
+            line.spans.push(Span::styled(
+                format!(" · {}", labels.join(" · ")),
+                Style::default().fg(if app.model_chooser.uncertain.is_some() {
+                    Color::Red
+                } else {
+                    Color::Yellow
+                }),
+            ));
+        }
+        Some(line)
+    } else if labels.is_empty() {
+        None
+    } else {
+        let color = if app.last_input_failed || app.model_chooser.uncertain.is_some() {
+            Color::Red
+        } else if app.model_chooser.pending.is_some() || app.project_selection.is_some() {
+            Color::Cyan
+        } else {
+            Color::Yellow
+        };
+        Some(Line::styled(labels.join(" · "), Style::default().fg(color)))
+    }
+}
+
 fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
-    if app.pending_yield.is_some()
-        || app.form.is_some()
-        || !matches!(app.activity.state, super::UiActivityState::Running)
+    if app.has_pending_response() || !matches!(app.activity.state, super::UiActivityState::Running)
     {
         let cue = if app.form.is_some() {
             "input form"
@@ -467,7 +606,7 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
             Style::default().fg(Color::Green),
         ),
         Span::styled(
-            format!("· ctrl+c/esc interrupt · {elapsed}s"),
+            format!("Working · {elapsed}s · Esc interrupt"),
             Style::default(),
         ),
     ])
