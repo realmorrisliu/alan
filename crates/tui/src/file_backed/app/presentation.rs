@@ -77,8 +77,12 @@ impl FileBackedApp {
 
     fn prefers_active_model(&self) -> bool {
         self.activity.state != UiActivityState::Idle
-            || self.pending_yield.is_some()
-            || self.form.is_some()
+            || self.has_pending_response()
+            || self
+                .queue
+                .snapshot
+                .as_ref()
+                .is_some_and(|queue| queue.known && !queue.active_submission_ids.is_empty())
     }
 
     pub(in crate::file_backed) fn attention_labels(&self) -> Vec<String> {

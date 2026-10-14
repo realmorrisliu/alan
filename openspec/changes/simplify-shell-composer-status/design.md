@@ -10,8 +10,8 @@ Non-goals: new authority, model selection changes, localization framework or Too
 ## Decisions
 - Separate project/model context from conditional attention. Keep English UI wording consistent with the current product; use short actionable labels.
 - Retained project receipt supplies the label/access; otherwise display observed namespace cwd without inventing a grant. /status includes cwd, receipt/access and existing detailed model/queue observations.
-- Display selected-next while idle, active binding during running/paused work or a pending response. A differing next binding is an exception cue. Unknown observations stay explicit; known idle/zero queue disappears.
-- One existing live-region layout owns blank row, rule, context, attention, notices and composer. Do not put separators into durable history. Keep existing Activity controls and queue ownership unchanged.
+- Display selected-next while idle, active binding during running/paused work, a pending response, or a known active queue observation that precedes the activity event. A differing next binding is an exception cue. Unknown observations stay explicit; known idle/zero queue disappears.
+- One existing live-region layout owns blank row, rule, context, attention, notices and composer. Forms without a composer cursor scroll to keep the focused response field visible, giving it priority over decoration and earlier output in short panes. A field taller than the pane follows the editable value end rather than trailing option help. Do not put separators into durable history. Keep existing Activity controls and queue ownership unchanged.
 - Compact attention gives required responses priority over model-control metadata and keeps execution actions (Esc stop or /continue) attached to their state. It may use up to two physical rows before dropping secondary metadata; include both rows in the composer budget.
 - Retain context-specific detail hints; do not add a permanent shortcut footer. Narrow widths sacrifice location detail before model; warnings wrap and remain reachable above the prompt.
 

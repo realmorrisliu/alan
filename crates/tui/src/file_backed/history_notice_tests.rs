@@ -530,3 +530,83 @@ fn queue_attention_action_opens_observed_details_without_submitting_work() {
         }
     }
 }
+
+#[test]
+fn short_form_viewport_follows_focused_response_field() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut app = FileBackedApp::new("/agent/1".into());
+    app.notice = Some("A preceding notice that wraps across several narrow terminal rows".into());
+    app.form = Some(crate::form::FormState::new(
+        "response".into(),
+        ["first", "second", "third"]
+            .into_iter()
+            .map(|id| {
+                serde_json::from_value(serde_json::json!({
+                    "id":id, "label":id, "prompt":"Answer?", "kind":"text", "required":false
+                }))
+                .unwrap()
+            })
+            .collect(),
+    ));
+    for label in ["first", "second", "third", "first"] {
+        app.form.as_mut().unwrap().insert_char('v');
+        for width in [24, 40] {
+            for height in [1, 2, 4, 8] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| draw_at(f, &app, 0)).unwrap();
+                let text = (0..height)
+                    .map(|y| {
+                        (0..width)
+                            .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    text.contains(&format!("▶ {label} [text]: v")),
+                    "{width}x{height}: {text}"
+                );
+            }
+        }
+        app.form.as_mut().unwrap().next_field();
+    }
+}
+
+#[test]
+fn oversized_form_field_keeps_edit_tail_visible_before_option_help() {
+    use ratatui::{Terminal, backend::TestBackend};
+    for options in [false, true] {
+        let mut app = FileBackedApp::new("/agent/1".into());
+        let question = serde_json::from_value(serde_json::json!({
+            "id":"answer", "label":"A long field label ".repeat(10),
+            "prompt":"Answer?", "kind":if options {"single_select"} else {"text"},
+            "required":false,
+            "options": if options {(0..30).map(|i| serde_json::json!({"value":format!("choice-{i}"),"label":format!("Choice {i}")})).collect::<Vec<_>>()} else {vec![]}
+        })).unwrap();
+        app.form = Some(crate::form::FormState::new(
+            "response".into(),
+            vec![question],
+        ));
+        for ch in format!("{}末", "中文😀 ".repeat(30)).chars() {
+            app.form.as_mut().unwrap().insert_char(ch);
+        }
+        for width in [24, 40] {
+            for height in [1, 2, 4] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| draw_at(f, &app, 0)).unwrap();
+                let text = (0..height)
+                    .map(|y| {
+                        (0..width)
+                            .map(|x| terminal.backend().buffer().cell((x, y)).unwrap().symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    text.contains('末'),
+                    "options={options}, {width}x{height}: {text}"
+                );
+            }
+        }
+    }
+}

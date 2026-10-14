@@ -514,3 +514,37 @@ fn short_narrow_buffer_keeps_unknown_queue_during_work() {
         }
     }
 }
+
+#[test]
+fn active_queue_binding_precedes_next_before_activity_event() {
+    let mut app = ready();
+    app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 2,
+            active_submission_ids: vec!["running".into()],
+            ..Default::default()
+        }),
+    );
+    assert_eq!(app.activity.state, UiActivityState::Idle);
+    for width in [16, 80] {
+        assert!(app.context_line(width).to_string().contains("A / high"));
+    }
+    assert!(
+        app.attention_labels()
+            .iter()
+            .any(|label| label == "Next: B · /status")
+    );
+    app.model.snapshot.as_mut().unwrap().active = None;
+    assert!(app.context_line(80).to_string().contains("model unknown"));
+    app.queue.apply(
+        "/agent/1",
+        Some(UiQueueSnapshot {
+            known: true,
+            revision: 3,
+            ..Default::default()
+        }),
+    );
+    assert!(app.context_line(80).to_string().contains("B / high"));
+}

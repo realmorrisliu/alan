@@ -91,6 +91,16 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         .unwrap_or_default();
     let prompt_start =
         prompt_start.map(|index| history_height + wrapped_line_count(&live_lines[..index], width));
+    let focused_field = app.form.as_ref().and_then(|form| {
+        let fields = form.render_lines();
+        let focus = fields.iter().position(|(_, focused)| *focused)?;
+        let start = live_lines.len().checked_sub(fields.len())? + focus;
+        Some((
+            history_height + wrapped_line_count(&live_lines[..start], width),
+            wrapped_line_count(&live_lines[start..=start], width),
+            wrapped_line_count(&[Line::from(form.focused_input_line()?)], width),
+        ))
+    });
     lines.extend(live_lines);
 
     // Menu growth never changes the base input viewport or its scroll offset.
@@ -104,7 +114,22 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
         ) as u16;
     let base_area = Rect::new(area.x, area.y, area.width, base_height);
     let cursor_position = prompt_start.map(|start| composer_cursor_position(app, width, start));
-    let scroll_y = cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(base_height));
+    let scroll_y = cursor_position
+        .map(|(_, y)| y.saturating_add(1).saturating_sub(base_height))
+        .or_else(|| {
+            // Forms have no composer cursor. Keep the focused field visible,
+            // scrolling decoration/history away before response controls.
+            focused_field.map(|(start, height, input_height)| {
+                let end = start
+                    + if height > base_height as usize {
+                        input_height
+                    } else {
+                        height
+                    };
+                end.saturating_sub(base_height as usize)
+                    .min(u16::MAX as usize) as u16
+            })
+        });
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(
         paragraph.scroll((scroll_y.unwrap_or_default(), 0)),
