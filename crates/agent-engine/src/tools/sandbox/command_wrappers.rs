@@ -127,7 +127,7 @@ pub(super) fn validate_direct_command_shapes(
 /// Extract the inline script of a shell wrapper command (`sh -c <script>`,
 /// `bash -c <script>`, …) so it can be recursively inspected. Returns `None`
 /// for non-wrapper commands or wrappers without an inline script argument.
-pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
+pub(in crate::tools) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
     let view = nested_evaluator_view(words);
     if let Some(view) = &view {
         let options = view
@@ -317,7 +317,136 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     }
 }
 
-pub(super) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn command_preserves_execution_context(words: &[String]) -> bool {
+    let Some(mut index) = next_command_offset(words) else {
+        return true;
+    };
+    loop {
+        let command = command_basename(&words[index]);
+        let args = &words[index + 1..];
+        let next = if command == "env" {
+            env_command_offset(args)
+        } else {
+            transparent_wrapper_offset(command, args)
+        };
+        let Some(next) = next else { return true };
+        let flags = &args[..next];
+        if command == "env" && !env_preserves_execution_context(flags) {
+            return false;
+        }
+        if matches!(command, "command" | "exec")
+            && flags.iter().any(|arg| {
+                arg.strip_prefix('-')
+                    .filter(|flag| !flag.starts_with('-'))
+                    .is_some_and(|flag| flag.contains(if command == "command" { 'p' } else { 'c' }))
+            })
+        {
+            return false;
+        }
+        index += 1 + next;
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn env_preserves_execution_context(flags: &[String]) -> bool {
+    let protected = |name: &str| {
+        matches!(
+            name,
+            "PATH" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN" | "CARGO_HOME"
+        ) || rust_compiler_override(name)
+    };
+    for (index, flag) in flags.iter().enumerate() {
+        if flag == "--" {
+            break;
+        }
+        if matches!(flag.as_str(), "--ignore-environment" | "--chdir")
+            || flag.starts_with("--chdir=")
+        {
+            return false;
+        }
+        if flag.strip_prefix("--unset=").is_some_and(protected)
+            || flag == "--unset" && flags.get(index + 1).is_some_and(|name| protected(name))
+        {
+            return false;
+        }
+        if let Some(short) = flag.strip_prefix('-').filter(|flag| !flag.starts_with('-')) {
+            for (offset, ch) in short.char_indices() {
+                if matches!(ch, 'i' | 'C') {
+                    return false;
+                }
+                if ch == 'u' {
+                    let name = &short[offset + 1..];
+                    if protected(name)
+                        || name.is_empty()
+                            && flags.get(index + 1).is_some_and(|name| protected(name))
+                    {
+                        return false;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    true
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn rust_compiler_override(name: &str) -> bool {
+    matches!(
+        name,
+        "RUSTC"
+            | "RUSTC_WRAPPER"
+            | "RUSTC_WORKSPACE_WRAPPER"
+            | "RUSTDOC"
+            | "RUSTFMT"
+            | "CARGO_BUILD_RUSTC"
+            | "CARGO_BUILD_RUSTC_WRAPPER"
+            | "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"
+            | "CARGO_BUILD_RUSTDOC"
+    ) || name.starts_with("CARGO_ALIAS_")
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn writes_cargo_configuration(
+    script: &str,
+    files: &[std::path::PathBuf],
+    directories: &[std::path::PathBuf],
+) -> Result<bool> {
+    let configured = |word: &str| {
+        super::path_like_subtokens(word).iter().any(|word| {
+            directories.iter().any(|cwd| {
+                let candidate = super::lexically_normalize_path(&cwd.join(word));
+                files
+                    .iter()
+                    .any(|file| file == &candidate || file.starts_with(&candidate))
+            })
+        })
+    };
+    for pair in super::shell_tokens_with_spans(script)?.windows(2) {
+        let operator = &pair[0];
+        if matches!(operator.decoded.as_str(), ">" | ">>" | ">|" | "<>")
+            && script[operator.raw_start..operator.raw_end] == operator.decoded
+            && configured(&pair[1].decoded)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(super::shell_commands(script)?.iter().any(|words| {
+        command_and_args(words).is_some_and(|(name, args)| {
+            let mutation = matches!(
+                name,
+                "cp" | "mv" | "rm" | "touch" | "tee" | "install" | "ln" | "dd" | "truncate"
+            ) || name == "sed"
+                && args
+                    .iter()
+                    .any(|arg| arg.starts_with("-i") || arg.starts_with("--in-place"));
+            mutation && args.iter().any(|arg| configured(arg))
+        })
+    }))
+}
+
+pub(in crate::tools) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {
     let view = nested_evaluator_view(words)?;
     Some((view.command, view.args))
 }
@@ -363,6 +492,9 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
         break;
     }
 
+    while args.get(index).is_some_and(|arg| is_env_assignment(arg)) {
+        index += 1;
+    }
     args.get(index)?;
     Some(index)
 }
@@ -562,7 +694,7 @@ fn setsid_wrapper_offset(args: &[String]) -> Option<usize> {
     Some(index)
 }
 
-pub(super) fn is_env_assignment(word: &str) -> bool {
+pub(in crate::tools) fn is_env_assignment(word: &str) -> bool {
     let Some((name, _)) = word.split_once('=') else {
         return false;
     };
@@ -570,6 +702,27 @@ pub(super) fn is_env_assignment(word: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn command_wrapper_executables(words: &[String]) -> Vec<&str> {
+    let mut wrappers = Vec::new();
+    let Some(mut index) = next_command_offset(words) else {
+        return wrappers;
+    };
+    loop {
+        let name = command_basename(&words[index]);
+        let args = &words[index + 1..];
+        let next = if name == "env" {
+            env_command_offset(args)
+        } else {
+            transparent_wrapper_offset(name, args)
+        };
+        let Some(next) = next else { break };
+        wrappers.push(words[index].as_str());
+        index += next + 1;
+    }
+    wrappers
 }
 
 fn is_shell_eval_builtin(command: &str) -> bool {
@@ -743,4 +896,33 @@ fn is_exec_wrapper_flag(arg: &str) -> bool {
 
 fn has_inline_exec_argv0(arg: &str) -> bool {
     arg.starts_with("-a") && arg.len() > 2
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+pub(in crate::tools) fn inspect_shell_lookup(command: &str) -> Result<(bool, Vec<Vec<String>>)> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
+    let normalized = super::normalize_shell_line_continuations(command);
+    let tree = parser
+        .parse(&normalized, None)
+        .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;
+    let mut changed = tree.root_node().has_error();
+    let mut commands = Vec::new();
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        changed |= matches!(
+            node.kind(),
+            "function_definition" | "command_substitution" | "process_substitution"
+        );
+        if node.kind() == "command" {
+            let actual = super::shell_commands(&normalized[node.byte_range()])?;
+            changed |= actual.iter().any(|words| {
+                command_and_args(words)
+                    .is_some_and(|(name, _)| matches!(name, "alias" | "unalias" | "hash"))
+            });
+            commands.extend(actual);
+        }
+        pending.extend(node.named_children(&mut node.walk()));
+    }
+    Ok((changed, commands))
 }

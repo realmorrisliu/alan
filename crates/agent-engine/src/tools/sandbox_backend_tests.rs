@@ -64,14 +64,19 @@ fn landlock_enforces_host_mount_write_boundary_on_linux() {
     use std::os::unix::process::CommandExt;
     let host_mount = tempfile::tempdir().unwrap();
     let host_mount_path = host_mount.path().to_path_buf();
-    let escape_file =
-        std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(".alan_landlock_escape_test");
-    let _ = std::fs::remove_file(&escape_file);
+    // Landlock permits ambient /tmp; this private fixture must be outside that allowance.
+    let outside = tempfile::Builder::new()
+        .prefix(".alan-landlock-test-")
+        .tempdir_in(std::env::var_os("HOME").unwrap())
+        .unwrap();
+    let escape_file = outside.path().join("escape-canary");
+    std::fs::write(&escape_file, "unchanged").unwrap();
 
-    let run = |script: String| {
+    let run = |path: &Path| {
         let root = host_mount_path.clone();
         let mut cmd = std::process::Command::new("sh");
-        cmd.arg("-c").arg(script);
+        cmd.args(["-c", "printf changed > \"$1\"", "alan-landlock-write"])
+            .arg(path);
         // SAFETY: pre_exec runs in the forked child; the closure owns root
         // and performs only the bounded Landlock setup before exec.
         unsafe {
@@ -83,16 +88,16 @@ fn landlock_enforces_host_mount_write_boundary_on_linux() {
     // If the in-host_mount write fails, this environment cannot apply
     // Landlock (e.g. a restricted runner) — skip rather than fail.
     let inside = host_mount.path().join("inside.txt");
-    if !run(format!("echo hi > {}", inside.display())).success() || !inside.exists() {
+    if !run(&inside).success() || !inside.exists() {
         return;
     }
 
-    let blocked = run(format!("echo hi > {}", escape_file.display()));
+    let blocked = run(&escape_file);
     assert!(
         !blocked.success(),
         "out-of-host_mount write should be denied"
     );
-    assert!(!escape_file.exists());
+    assert_eq!(std::fs::read_to_string(&escape_file).unwrap(), "unchanged");
 }
 
 #[cfg(target_os = "linux")]
@@ -353,6 +358,56 @@ fn linux_reification_selection_requires_toolchain_smoke() {
             true
         ),
         SandboxBackendKind::LinuxReifiedNamespace
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_recursive_readonly_probe_rejects_writable_child_mounts() {
+    let report = probe_linux_reification();
+    if !report.read_only_remount.is_available() {
+        eprintln!(
+            "skipping recursive readonly probe: {:?}",
+            report.audit_fields()
+        );
+        return;
+    }
+    let tree = create_linux_probe_tree("legacy readonly helper").unwrap();
+    let helper = tree.root.join("mount-helper");
+    std::fs::write(
+        &helper,
+        r#"#!/bin/sh
+set -eu
+case "$*" in *remount,bind,ro*/nested) exit 0;; esac
+exec "$ALAN_TEST_REAL_MOUNT" "$@"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = linux_unshare_shell_command(
+        &format!(
+            "{}\n{LINUX_RECURSIVE_READ_ONLY_PROBE}",
+            super::super::reified_namespace::LINUX_READ_ONLY_MOUNT_TREE
+        ),
+        &[&tree.source, &tree.target],
+    )
+    .unwrap();
+    let real_mount = command
+        .get_envs()
+        .find(|(key, _)| *key == "ALAN_PROBE_MOUNT_BIN")
+        .unwrap()
+        .1
+        .unwrap()
+        .to_os_string();
+    command
+        .env("ALAN_TEST_REAL_MOUNT", real_mount)
+        .env("ALAN_PROBE_MOUNT_BIN", &helper);
+
+    let result = run_linux_probe("legacy readonly helper", command);
+    assert!(!result.is_available(), "writable child mount was accepted");
+    assert_eq!(
+        std::fs::read(tree.source.join("probe-file")).unwrap(),
+        b"probe"
     );
 }
 

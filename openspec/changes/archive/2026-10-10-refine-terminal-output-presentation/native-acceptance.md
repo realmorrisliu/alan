@@ -109,7 +109,7 @@ unqualified on this candidate.
 
 The subsequently discovered model-directory gap has a separate repair and a
 successful targeted native rerun recorded in
-`../refresh-model-process-directory/acceptance.md`. The original failed task
+`../2026-10-10-refresh-model-process-directory/acceptance.md`. The original failed task
 above remains part of the baseline; it is not reclassified as a pass.
 
 ## Notice and detail targeted native acceptance

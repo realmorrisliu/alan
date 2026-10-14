@@ -22,9 +22,10 @@ def git(owner, *args):
 
 def owner_root(path):
     path = Path(path).resolve(strict=True)
-    if Path(git(path, "rev-parse", "--show-toplevel")).resolve() != path:
+    checkout = Path(git(path, "rev-parse", "--show-toplevel")).resolve(strict=True)
+    if not checkout.samefile(path):
         raise ValueError("build owner must be a checkout root")
-    return path
+    return checkout
 
 
 def registry(owner):

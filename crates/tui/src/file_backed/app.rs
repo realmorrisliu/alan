@@ -53,6 +53,7 @@ pub(super) enum FileBackedAction {
         op: alan_agent_protocol::Op,
     },
     Project(ProjectControl),
+    RevokeCurrentProject,
     Interrupt,
     Quit,
 }
@@ -299,6 +300,7 @@ impl FileBackedApp {
             | FileBackedEvent::ProjectHostCompleted { .. }
             | FileBackedEvent::ProjectCwdWritten { .. }
             | FileBackedEvent::ProjectGrantObserved { .. }
+            | FileBackedEvent::ProjectGrantLocated { .. }
             | FileBackedEvent::QueueChanged { .. }
             | FileBackedEvent::QueueUnavailable { .. }
             | FileBackedEvent::RootAgentPidRefresh(_)
@@ -803,8 +805,7 @@ impl FileBackedApp {
                         grant_id,
                     }))
                 } else {
-                    self.notice = Some("no project grant is active".into());
-                    None
+                    Some(FileBackedAction::RevokeCurrentProject)
                 }
             }
             "project" => {

@@ -72,6 +72,28 @@ fn test_tool_definition_new() {
 }
 
 #[test]
+fn responses_function_tools_preserve_optional_arguments_explicitly() {
+    let schema = serde_json::json!({"type":"object","required":["path"],
+        "properties":{"path":{"type":"string"},"offset":{"type":"integer"},
+            "byte_offset":{"type":"integer"}}});
+    for stream in [false, true] {
+        let request = build_responses_request_for_model(
+            "gpt-6.1-sol".into(),
+            crate::GenerationRequest::new().with_tool(crate::ToolDefinition {
+                name: "read_file".into(),
+                description: "Read a file".into(),
+                parameters: schema.clone(),
+            }),
+            stream,
+        )
+        .unwrap();
+        let wire = serde_json::to_value(request).unwrap();
+        assert_eq!(wire["tools"][0]["strict"], false);
+        assert_eq!(wire["tools"][0]["parameters"], schema);
+    }
+}
+
+#[test]
 fn test_chat_completion_request_serialization() {
     let request = OpenAiChatCompletionsRequest {
         model: "gpt-4".to_string(),

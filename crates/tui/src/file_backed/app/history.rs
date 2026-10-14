@@ -393,6 +393,13 @@ impl FileBackedApp {
             UiEvent::Notice { .. } if paired_notice => {}
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
             UiEvent::Error { message, .. } => {
+                if self.notice.as_ref().is_some_and(|notice| {
+                    notice.runtime_owned
+                        && notice.kind == UiNoticeKind::Error
+                        && &**notice == message.as_str()
+                }) {
+                    self.notice = None;
+                }
                 if expected_error.as_deref() != Some(message.as_str()) {
                     self.push_error(message);
                 }

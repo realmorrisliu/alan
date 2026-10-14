@@ -96,3 +96,20 @@ receipts are `target/submission-notice-red.log` and
 `target/submission-notice-green.log`. Other local notices belong to request,
 model or project controls and must remain protected from queue updates; no other
 ordinary input producer requiring this repair was found.
+
+## Final delivery verification — 2026-10-10
+
+Final head `2c30cf38b2bb064ff6262e777c11dd77cb4f93bc` passed all 16 PR checks;
+automatic review completed without further findings. Both review threads are
+resolved. The user merged PR #1044 as `faf747c2f5e8c389992144093250b4d5e538eeb5`,
+whose 15 main checks also passed. Earlier pending-CI/merge paragraphs retain
+their historical scope and are superseded by this receipt.
+
+Fresh isolated ordinary PTY acceptance at 80×22 on the final repair source
+confirmed queued admission updates the initial notice, cancellation preserves
+the Runtime pause warning, explicit `/continue` clears the stale notice and
+executes the queued effect exactly once. After the cancelled command delay,
+`effects.log` is exactly `queued-once\n`; the cancelled tail is absent, README
+is unchanged and `/quit` exits 0. No provider request was needed for these
+explicit Tool commands. Receipt: `target/submission-notice-native-acceptance.json`.
+The full 30-slot matrix remains evidence for its earlier frozen candidate.

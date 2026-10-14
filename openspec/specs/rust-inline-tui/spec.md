@@ -301,7 +301,10 @@ recovery contract belong to the owning stream service.
 
 ### Requirement: Renderer file updates are classified into display tiers
 
-The TUI SHALL classify each renderer-visible file update as permanent transcript content, ephemeral live-region status, or suppressed lifecycle detail.
+The TUI SHALL classify each renderer-visible file update as permanent transcript
+content, ephemeral live-region status, or suppressed lifecycle detail. A plan
+change SHALL retain a compact permanent record and access to its corresponding
+full snapshot rather than repeatedly printing the complete snapshot inline.
 
 #### Scenario: Machine hydration is suppressed
 
@@ -313,6 +316,19 @@ The TUI SHALL classify each renderer-visible file update as permanent transcript
 
 - **WHEN** AgentFS surfaces user input, assistant output, a completed Tool result, a plan snapshot, or a fatal error
 - **THEN** the TUI renders it as permanent transcript content
+- **AND** a plan snapshot is represented by a compact change record with available progress and current-step information
+- **AND** the corresponding full plan remains inspectable subject to explicit retention limits
+
+#### Scenario: A historical plan is inspected after a newer update
+- **WHEN** the user opens the detail of an earlier plan record
+- **THEN** Alan shows that record's full snapshot or its explicit unavailability
+- **AND** it does not substitute the newest plan or infer missing steps
+- **AND** closing detail restores the same draft and transcript position
+
+#### Scenario: A plan observation repeats without a change
+- **WHEN** an already represented plan snapshot is observed again
+- **THEN** the renderer does not append a duplicate plan change record
+- **AND** distinct later snapshots remain separately represented
 
 ### Requirement: Composer history persists across launches
 
@@ -329,7 +345,7 @@ In its ordinary single-line idle state, the inline prompt SHALL have one Agent
 context/status line immediately above the editable input line. It SHALL show
 the selected project/cwd, effective model or explicit unknown value, and current
 Agent state. It SHALL follow transcript flow rather than occupy a fixed screen
-position. Multiline drafts and temporary controls SHALL expand only as needed.
+position. Multiline drafts and temporary controls SHALL expand only as needed. Without a local project-picker receipt, an observed successful ordinary directory action SHALL provide the namespace cwd for context; the renderer MUST NOT infer a project label or grant access from that cwd. A Root Agent Process replacement SHALL discard the previous Root's observed cwd.
 
 #### Scenario: Idle Agent accepts input
 - **WHEN** the Agent is ready for a new single-line input
@@ -382,6 +398,18 @@ position. Multiline drafts and temporary controls SHALL expand only as needed.
 - **AND** running, paused work or a current response retains active-model priority
 - **AND** full status can still distinguish both bindings
 
+
+#### Scenario: External project authority and ordinary directory selection
+- **WHEN** an existing public Host control grants a directory and the Root completes an ordinary directory action without a local project-picker receipt
+- **THEN** the context line displays the observed namespace cwd subject to existing width priorities
+- **AND** no project label or read-only access claim is invented from the path
+- **AND** running, failed or rejected directory actions do not replace the last observed cwd
+
+#### Scenario: Root replacement clears previous directory context
+- **WHEN** the attached Root Agent Process changes
+- **THEN** the previous Root's observed cwd is discarded before rendering the new Root
+- **AND** retained project authority and pending-control fencing continue to use their existing owners
+
 ### Requirement: Semantic transcript hierarchy survives terminal constraints
 The TUI SHALL distinguish user input, assistant prose, code, Tool summaries,
 failures and transient status through consistent spacing and semantic styles.
@@ -422,3 +450,129 @@ The terminal renderer SHALL settle an exact locally tracked submission from its 
 - **WHEN** a tracked submission leaves the active queue and its correlated completed, failed or cancelled receipt then arrives
 - **THEN** its stale unconfirmed outcome hint is retired immediately without requiring another queue event
 - **AND** its real terminal result and unrelated UI content remain intact
+
+### Requirement: Terminal presentation has no renderer-generated role prefixes
+The TUI SHALL present semantic actions, content and authoritative states without
+generating role labels of the form `xxx>`. This requirement SHALL cover transcript,
+live status, pending requests, errors, expanded details and re-rendered retained
+history. It MUST NOT remove or rewrite identical literal text from user input,
+Agent answers, code, Markdown quotations or Tool output. Input route markers and
+request-response semantics SHALL retain their existing behavior.
+
+#### Scenario: Every semantic output surface uses the new presentation
+- **WHEN** Alan renders a Tool, plan, pending input, error, thinking detail or another role-bearing UI element
+- **THEN** it does not add a role name followed by `>`
+- **AND** meaningful operations, statuses, request choices and error information remain distinguishable
+
+#### Scenario: Literal content resembles a former prefix
+- **WHEN** input, an answer, code or Tool content contains `tool>`, `server> ready`, `a > b` or a Markdown quotation
+- **THEN** the renderer preserves that source content under its ordinary content-rendering rules
+- **AND** it does not apply a global prefix-removal pass
+
+#### Scenario: Older history is rendered
+- **WHEN** retained structured history can be rendered again
+- **THEN** newly generated UI uses the new presentation without rewriting durable evidence
+- **AND** opaque historical text and already committed native scrollback are not guessed at or rewritten
+
+### Requirement: Output hierarchy communicates actions and states
+The TUI SHALL distinguish answer content, routine activity, requests and failures
+through concrete wording and restrained visual hierarchy. It SHALL keep normal
+activity compact and preserve authoritative failed, rejected, cancelled, waiting
+and unknown states. Color or icons alone MUST NOT convey essential outcomes.
+Detail discovery SHALL remain visible in the applicable context without
+repeating an identical hint on every routine Action.
+
+#### Scenario: Routine work precedes an answer
+- **WHEN** several Tools complete before an Agent answer
+- **THEN** their summaries omit redundant titles, paths and repeated detail-hint rows
+- **AND** the answer remains visually distinct from routine activity
+
+#### Scenario: Attention is required
+- **WHEN** a request, failure or unknown outcome is displayed
+- **THEN** its actual state and available user action are explicit
+- **AND** it is not hidden inside a successful activity summary or converted into a success
+
+### Requirement: A retained runtime error does not repeat as a live notice
+The terminal SHALL retire a matching runtime-owned Error notice when the same
+runtime error is retained in transcript history. It MUST preserve unrelated
+runtime notices and local notices, including identical local text. Notice
+retirement MUST NOT change input completion, Process lifecycle, original error
+evidence or the draft/cursor. Hydrating the existing notice/error event pair SHALL
+apply the same rule without deleting history or replaying work.
+
+#### Scenario: Delegation fails but the parent completes its direct fallback
+- **WHEN** the runtime publishes a matching Error notice and retained error, then completes the parent's task
+- **THEN** the error appears once in history without remaining as a duplicate live footer
+- **AND** the parent's actual Completed receipt and unchanged draft remain authoritative
+
+#### Scenario: Local or unrelated notices must survive
+- **WHEN** a retained runtime error has the same text as a local notice or a different text/severity from a runtime notice
+- **THEN** that notice remains visible with its original ownership and severity
+- **AND** text similarity alone does not authorize retirement
+
+### Requirement: Delegated skill prelaunch rejection remains visible without changing authority
+The runtime SHALL publish delegated-skill prelaunch rejection through existing
+AgentFS notice and retained terminal-error surfaces when the invocation is invalid,
+unavailable, cannot resolve its target or fails before child launch. Publication
+MUST NOT invent an Action or child Process, broaden the child namespace, retry
+effects or replace the original Tool result and parent continuation. A failed
+presentation write SHALL preserve the recorded rejection and report the
+publication failure through existing diagnostics. Successful launches and child
+wait/cancel/exit states SHALL retain their existing lifecycle semantics.
+
+#### Scenario: A child cwd is outside its explicit delegated namespace
+- **WHEN** child launch rejects the delegated cwd before creating a child Process
+- **THEN** the file-backed terminal receives the actual launch rejection independently of the model's commentary
+- **AND** the parent retains the failed Tool result and may choose its existing direct Tool path without gaining authority
+- **AND** turn settlement and a subsequent input do not erase the retained rejection or imply that delegation succeeded
+
+#### Scenario: Presentation cannot be published
+- **WHEN** the prelaunch rejection is recorded but its UI publication fails
+- **THEN** parent advancement and the original failed Tool result remain unchanged
+- **AND** diagnostics identify the unavailable presentation without creating an Action or retrying child launch
+
+### Requirement: Tool loop guard stops remain visible in file-backed history
+The runtime SHALL publish the actual stop reason through the existing AgentFS
+notice and terminal-error event surfaces when repeated identical Tool calls or
+the configured Tool batch limit stops a turn. The reason SHALL
+remain in transcript history after the turn settles and after a subsequent
+input clears the current notice. The stop MUST NOT execute the refused Tool,
+replay earlier effects, imply successful task completion or advertise unsupported
+environment overrides.
+
+#### Scenario: Repeated call is refused before execution
+- **WHEN** the repeated-call guard prevents the next identical Tool invocation
+- **THEN** the file-backed terminal receives a retained error and current notice explaining the stop
+- **AND** no Action or Process is created for the refused invocation
+
+#### Scenario: Batch limit stops further advancement
+- **WHEN** the configured Tool batch limit ends the current turn
+- **THEN** the completed batch's original results remain and its stop reason is published through the same file-backed error surfaces
+- **AND** settling the turn or starting another input does not erase its historical error or replay the completed batch
+
+### Requirement: Explicit project revocation uses authoritative current-Root evidence
+The terminal UI SHALL discover the current Root's active project grant for
+`/project revoke` when no retained project-picker or recovery receipt exists, using bounded public
+Host Mount grant/request files, matching requester identity and observed cwd by
+namespace path components. It SHALL select the longest matching prefix and refuse
+ambiguous, malformed, unavailable or stale evidence. Discovery MUST NOT create
+authority, infer access from cwd, revoke another Root's grants or select arbitrary
+grants at `/`. It SHALL reuse the existing confirmed leave-cwd-before-revoke
+sequence, retain uncertain authority until acknowledgment and never resume work
+implicitly. Read-only discovery SHALL preserve responsive input and exit.
+
+#### Scenario: Externally granted current project is explicitly revoked
+- **WHEN** the current Root has selected an SDK-granted project without a local picker receipt and the user invokes `/project revoke` at a settled boundary
+- **THEN** matching active grant/request evidence identifies that Root's current project
+- **AND** a correlated successful cwd control leaves the project before Host revocation
+- **AND** only actual Host acknowledgment confirms revocation; paused work stays paused
+
+#### Scenario: Discovery cannot establish a unique current project
+- **WHEN** current cwd has no matching active grant, evidence is malformed or unavailable, or two equally specific grants match
+- **THEN** the UI reports no matching authority or an explicit lookup failure without claiming all grants are absent
+- **AND** no cwd control or grant mutation is sent
+
+#### Scenario: Context changes during discovery
+- **WHEN** Root identity, cwd or the settled input boundary changes before discovery completes
+- **THEN** the stale result sends no directory control or revocation
+- **AND** a subsequent explicit command must discover authority in its current context

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 alan_cli_build_lease() {
-    local root="$1" target_dir="$2" purpose="$3" script="$4"
+    local root target_dir="$2" purpose="$3" script="$4"
+    root="$(git -C "$1" rev-parse --show-toplevel)"
     shift 4
     exec python3 "$root/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$root}" \
         run --workspace "$root" --target-dir "$target_dir" --purpose "$purpose" \
@@ -10,7 +11,9 @@ alan_cli_build_lease() {
 
 # Cargo resolves config files and both target-dir environment spellings for us.
 alan_cli_target_dir() {
-    local root="$1"
+    local root
+    root="$(git -C "$1" rev-parse --show-toplevel)"
+    cd "$root"
     if [[ -n "${ALAN_STANDALONE_TARGET_DIR:-}" ]]; then
         python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$ALAN_STANDALONE_TARGET_DIR"
     else
@@ -22,7 +25,8 @@ alan_cli_target_dir() {
 
 # Use the artifact from this invocation, including configured cross targets.
 alan_build_cli() {
-    local root="$1" target_dir="$2"
+    local root target_dir="$2"
+    root="$(git -C "$1" rev-parse --show-toplevel)"
     shift 2
     python3 "$root/scripts/build_artifacts.py" --owner "${ALAN_BUILD_OWNER:-$root}" \
         run --workspace "$root" --target-dir "$target_dir" -- \

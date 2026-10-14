@@ -17,7 +17,7 @@ durable contract.
 
 - [alan9 system naming decision](./adr/0057-name-the-agent-operating-system-alan9.md)
 - [Unified command and Agent interaction (accepted direction)](./adr/0058-unify-command-and-agent-interaction.md)
-- [Terminal actions without role labels (accepted design, implementation in progress)](./adr/0059-present-terminal-actions-without-role-labels.md)
+- [Terminal actions without role labels (implemented)](./adr/0059-present-terminal-actions-without-role-labels.md)
 - [Terminal-host product decision](./adr/0054-retire-desktop-client-prefer-terminal-hosts.md)
 - [Mixed Agent Machine direction](./adr/0055-agent-machine-composes-typed-capabilities.md)
 - [Architecture](./architecture.md)

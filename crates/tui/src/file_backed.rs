@@ -232,6 +232,13 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         grant_read_pending = false;
                         project_io::observe_grant(&mut app, &grant_id, active);
                     }
+                    FileBackedEvent::ProjectGrantLocated { owner, cwd, result } => {
+                        let current = watchers.root_agent_pid.and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid));
+                        let blocked = project_dispatch::unsettled_submissions(&app, &pending_root_agent_turns);
+                        if let Some((owner, id, command)) = project_io::finish_discovery(&mut app, owner, current, cwd, blocked, result) {
+                            project_io::write_cwd(&mut app, &shell, owner, id, command, &mut jobs, &tx);
+                        }
+                    }
                     FileBackedEvent::RootAgentPidRefresh(result) => {
                         let retry = matches!(&result, Ok(Some(_)));
                         watchers.pending_root_agent_pid_result = Some(result);
@@ -395,7 +402,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 FileBackedAction::SelectModel { owner, id, op } => {
                                     model::start_selection(&shell, &mut app, owner, id, op, &mut jobs, &tx);
                                 }
-                                FileBackedAction::Project(command) => {
+                                action @ (FileBackedAction::Project(_) | FileBackedAction::RevokeCurrentProject) => {
                                     let Some(handler) = config.project_control.as_ref() else {
                                         app.push_error("local project selection is unavailable in this Host".into());
                                         dirty = true;
@@ -405,15 +412,19 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         app.push_error("Root owner unavailable; project operation not sent".into());
                                         continue;
                                     };
-                                    match command {
-                                        command @ ProjectControl::Mount { .. } => {
+                                    match action {
+                                        FileBackedAction::Project(command @ ProjectControl::Mount { .. }) => {
                                             project_io::start(&mut app, handler, command, owner, &mut jobs, &tx);
                                         }
-                                        ProjectControl::Revoke { grant_id } => {
+                                        FileBackedAction::Project(ProjectControl::Revoke { grant_id }) => {
                                             let (id, command) = project_dispatch::project_selector("/");
                                             app.stage_project_control(owner.clone(), id.clone(), None, Some(grant_id));
                                             project_io::write_cwd(&mut app, &shell, owner, id, command, &mut jobs, &tx);
                                         }
+                                        FileBackedAction::RevokeCurrentProject => {
+                                            project_io::start_discovery(&mut app, &shell, owner, &mut jobs, &tx);
+                                        }
+                                        _ => unreachable!(),
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
