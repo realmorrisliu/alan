@@ -221,6 +221,13 @@ where
         .generate_response_with_retry(request, runtime.llm_request_timeout_secs, cancel)
         .await;
 
+    if result
+        .as_ref()
+        .is_err_and(|error| error.is::<crate::agent_machine::task_budget::Exhausted>())
+    {
+        return Err(result.unwrap_err());
+    }
+
     match review_generation_result(result) {
         ReviewOutcome::Allow => {
             runtime.machine.record_guardian_review(false);

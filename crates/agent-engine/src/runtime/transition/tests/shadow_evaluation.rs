@@ -9,6 +9,7 @@ struct Evaluator {
     close_recorder: bool,
     cancel: Option<CancellationToken>,
     malformed: bool,
+    hold: bool,
 }
 
 #[async_trait::async_trait]
@@ -33,6 +34,9 @@ impl LlmProvider for Evaluator {
         assert!(history.iter().any(|item| matches!(item, RolloutItem::Event(e)
             if e.event_type == "machine_evaluation_v1" && e.payload["outcome"]["state"] == "started")));
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.hold {
+            std::future::pending::<()>().await;
+        }
         if self.malformed {
             return Err(alan_llm::MalformedEvaluationResponse.into());
         }
@@ -55,6 +59,16 @@ fn attach(
     cancel: Option<CancellationToken>,
     malformed: bool,
 ) -> (Arc<AtomicUsize>, Arc<Mutex<Vec<serde_json::Value>>>) {
+    attach_with_hold(state, close_recorder, cancel, malformed, false)
+}
+
+fn attach_with_hold(
+    state: &mut RuntimeLoopState,
+    close_recorder: bool,
+    cancel: Option<CancellationToken>,
+    malformed: bool,
+    hold: bool,
+) -> (Arc<AtomicUsize>, Arc<Mutex<Vec<serde_json::Value>>>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let observations = Arc::new(Mutex::new(Vec::new()));
     let llmfs = alan_llmfs::LlmFs::new();
@@ -68,6 +82,7 @@ fn attach(
             close_recorder,
             cancel,
             malformed,
+            hold,
         }),
     );
     let mut ns = alan_kernel::Namespace::new();
@@ -103,6 +118,52 @@ fn attach(
             }
         });
     (calls, observations)
+}
+
+#[tokio::test]
+async fn task_budget_deadline_aborts_and_settles_paid_typed_evaluation_before_returning() {
+    let (mut state, _directory, input, _, generation) =
+        dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
+    let (calls, observations) = attach_with_hold(&mut state, false, None, false, true);
+    state.core_config.task_budget.execution_seconds = std::num::NonZeroU64::new(1).unwrap();
+    crate::runtime::task_budget::begin(&mut state)
+        .await
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        state.observe_input_shadow(&input, &cancel),
+    )
+    .await
+    .expect("typed evaluation cleanup must finish")
+    .unwrap_err();
+    assert!(
+        error.is::<crate::agent_machine::task_budget::Exhausted>(),
+        "{error:#}"
+    );
+    assert!(!cancel.is_cancelled());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(generation.recorded_requests().is_empty());
+    {
+        let values = observations.lock().unwrap();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0]["outcome"]["state"], "started");
+        assert_eq!(values[1]["outcome"]["state"], "cancelled");
+    }
+    assert_eq!(
+        state
+            .machine
+            .task_budget
+            .as_ref()
+            .unwrap()
+            .snapshot()
+            .await
+            .model_calls,
+        1
+    );
+    // Reconciliation of the acknowledged evaluation must never call it again.
+    state.observe_input_shadow(&input, &cancel).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

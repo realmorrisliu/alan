@@ -257,9 +257,11 @@ where
                         .and_then(|v| v.as_str())
                         .map(ToString::to_string)
                         .or_else(|| first_resume_text(&content));
-                    let choice_str = choice
-                        .as_deref()
-                        .unwrap_or_else(|| default_confirmation_choice(&pending));
+                    let choice_str = choice.as_deref().unwrap_or_else(|| {
+                        crate::approval::runtime_confirmation_default_choice(
+                            &pending.checkpoint_type,
+                        )
+                    });
                     let modifications = result
                         .get("modifications")
                         .and_then(|v| v.as_str())
@@ -273,6 +275,14 @@ where
                             .is_some_and(|batch| !batch.resume_with_generation);
                     if !rejects_explicit_command {
                         *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                    }
+                    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE {
+                        super::task_budget::resolve(
+                            runtime.machine,
+                            &pending,
+                            choice_str == "approve",
+                        )
+                        .await?;
                     }
                     runtime.machine.take_pending(&request_id);
                     return handle_confirmation_resolution(
@@ -354,10 +364,6 @@ fn first_resume_text(content: &[ContentPart]) -> Option<String> {
         }
         _ => None,
     })
-}
-
-fn default_confirmation_choice(_pending: &crate::approval::PendingConfirmation) -> &'static str {
-    "approve"
 }
 
 fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
@@ -449,6 +455,34 @@ async fn handle_confirmation_resolution(
     let allow_tool_escalation_replay =
         pending.checkpoint_type == crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE;
 
+    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
+        && choice_str != "approve"
+    {
+        if let Some(batch) = replay_tool_batch {
+            if !batch.resume_with_generation
+                && let Some(tool_call) = batch.tool_calls.first().cloned()
+            {
+                return Ok(RuntimeOpAction::FinishRejectedExplicitCommand { tool_call });
+            }
+            for call in batch.tool_calls {
+                runtime.machine.add_tool_message(
+                    &call.id,
+                    &call.name,
+                    json!({"status":"cancelled", "reason":"task budget extension declined"}),
+                );
+            }
+        }
+        runtime
+            .machine
+            .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        super::ui_surfaces::turn_completed(&runtime.agent_files, false).await?;
+        super::ui_surfaces::warning(
+            &runtime.agent_files,
+            "Task stopped: additional budget was declined; completed effects are preserved.",
+        )
+        .await?;
+        return Ok(RuntimeOpAction::NoTurn);
+    }
     if choice_str != "approve"
         && let Some(batch) = replay_tool_batch.as_ref()
         && !batch.resume_with_generation

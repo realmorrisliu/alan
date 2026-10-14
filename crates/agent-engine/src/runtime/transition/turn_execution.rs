@@ -491,6 +491,9 @@ where
         {
             Ok(response) => response,
             Err(error) => {
+                if error.is::<crate::agent_machine::task_budget::Exhausted>() {
+                    return Err(error);
+                }
                 if cancel.is_cancelled()
                     && check_turn_cancelled(
                         &mut state.machine,

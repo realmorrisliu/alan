@@ -6,6 +6,10 @@
 pub(crate) mod accepted_submission;
 pub(crate) mod directory_control;
 mod explicit_command;
+mod submission;
+pub(crate) use submission::{
+    handle_submission_with_cancel, handle_submission_with_cancel_and_steering,
+};
 mod namespace_environment;
 pub(crate) use namespace_environment::read_action_evidence;
 pub(crate) mod owner_work;
@@ -132,7 +136,9 @@ impl RuntimeLoopState {
     }
 
     pub(crate) fn namespace_generation(&self) -> NamespaceGeneration {
-        self.environment.generation()
+        self.environment
+            .generation()
+            .with_task_budget(self.machine.task_budget.clone())
     }
 
     pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
@@ -249,6 +255,7 @@ pub(super) async fn dispatch_virtual_tool_call<E, F>(
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     cancel: &CancellationToken,
+    task_cancel: &CancellationToken,
     allow_approved_tool_escalation_execution: bool,
     emit: &mut E,
 ) -> Result<super::virtual_tool::VirtualToolOutcome>
@@ -258,13 +265,13 @@ where
 {
     let agent_files = state.agent_files();
     let host_mount_requests = state.environment.host_mount_requests();
-    if cancel.is_cancelled()
+    if task_cancel.is_cancelled()
         && super::turn_support::check_turn_cancelled(
             &mut state.machine,
             &agent_files,
             &host_mount_requests,
             emit,
-            cancel,
+            task_cancel,
         )
         .await?
     {
@@ -314,6 +321,7 @@ where
                 tool_call,
                 tool_arguments,
                 cancel,
+                task_cancel,
                 emit,
             )
             .await
@@ -491,7 +499,103 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    if inputs.cancel.is_cancelled() {
+        super::turn_support::check_turn_cancelled(
+            &mut state.machine,
+            &state.environment.agent_files(),
+            &state.environment.host_mount_requests(),
+            emit,
+            inputs.cancel,
+        )
+        .await?;
+        return Ok(ToolOrchestratorOutcome::EndTurn);
+    }
+    let budget = state.machine.task_budget.clone();
+    if let Some(budget) = budget {
+        budget
+            .reserve(crate::agent_machine::task_budget::Admission::Tool)
+            .await?;
+        let operation_state = &mut *state;
+        let operation_emit = &mut *emit;
+        let result = budget
+            .run(inputs.cancel, |stop| async move {
+                orchestrate_tool_call_inner(
+                    loop_guard,
+                    operation_state,
+                    tool_call,
+                    ToolOrchestratorInputs {
+                        cancel: &stop,
+                        ..inputs
+                    },
+                    (
+                        allow_approved_unknown_effect_execution,
+                        allow_approved_tool_escalation_execution,
+                    ),
+                    inputs.cancel,
+                    operation_emit,
+                )
+                .await
+            })
+            .await;
+        if inputs.cancel.is_cancelled()
+            && result
+                .as_ref()
+                .is_err_and(|error| error.is::<crate::agent_machine::task_budget::Exhausted>())
+        {
+            if !state.machine.submission_was_cancelled() {
+                super::turn_support::check_turn_cancelled(
+                    &mut state.machine,
+                    &state.environment.agent_files(),
+                    &state.environment.host_mount_requests(),
+                    emit,
+                    inputs.cancel,
+                )
+                .await?;
+            }
+            return Ok(ToolOrchestratorOutcome::EndTurn);
+        }
+        result
+    } else {
+        orchestrate_tool_call_inner(
+            loop_guard,
+            state,
+            tool_call,
+            inputs,
+            (
+                allow_approved_unknown_effect_execution,
+                allow_approved_tool_escalation_execution,
+            ),
+            inputs.cancel,
+            emit,
+        )
+        .await
+    }
+}
+
+async fn orchestrate_tool_call_inner<E, F>(
+    loop_guard: &mut ToolLoopGuard,
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    inputs: ToolOrchestratorInputs<'_>,
+    approved_execution: (bool, bool),
+    task_cancel: &CancellationToken,
+    emit: &mut E,
+) -> Result<ToolOrchestratorOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let (allow_approved_unknown_effect_execution, allow_approved_tool_escalation_execution) =
+        approved_execution;
     let tool_arguments = tool_call.arguments.clone();
+
+    if inputs.explicit_command
+        && let Some(outcome) =
+            explicit_command::try_standalone_cd(state, tool_call, emit, inputs.cancel, task_cancel)
+                .await?
+    {
+        return Ok(outcome);
+    }
 
     if let Some(msg) = loop_guard.before_tool_call(&tool_call.name, &tool_arguments) {
         super::ui_surfaces::error_notice(&state.agent_files(), &msg).await?;
@@ -513,6 +617,7 @@ where
         tool_call,
         &tool_arguments,
         inputs.cancel,
+        task_cancel,
         allow_approved_tool_escalation_execution,
         emit,
     )
@@ -566,6 +671,7 @@ where
 
     let execution_runtime = tool_execution_runtime(state);
     let execution_request = ToolExecutionRequest {
+        task_cancel,
         tool_call,
         tool_arguments: &tool_arguments,
         tool_timeout_secs: resolved_tool.timeout_secs,
@@ -612,7 +718,7 @@ where
             approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
         let allow_approved_tool_escalation_execution =
             approved_tool_escalation_call_index.is_some_and(|approved_index| approved_index == idx);
-        match orchestrate_tool_call(
+        let result = orchestrate_tool_call(
             loop_guard,
             state,
             tool_call,
@@ -621,8 +727,30 @@ where
             allow_approved_tool_escalation_execution,
             emit,
         )
-        .await?
-        {
+        .await;
+        let outcome = match result {
+            Err(error) if error.is::<crate::agent_machine::task_budget::Exhausted>() => {
+                let paused = super::task_budget::pause_tool_batch(
+                    state,
+                    error
+                        .downcast_ref::<crate::agent_machine::task_budget::Exhausted>()
+                        .expect("typed exhaustion"),
+                    &tool_calls[idx..],
+                    !inputs.explicit_command,
+                    emit,
+                )
+                .await?;
+                return Ok(if paused {
+                    ToolBatchOrchestratorOutcome::PauseTurn
+                } else {
+                    ToolBatchOrchestratorOutcome::EndTurn {
+                        surfaces_refreshed: false,
+                    }
+                });
+            }
+            result => result?,
+        };
+        match outcome {
             ToolOrchestratorOutcome::ContinueToolBatch {
                 refresh_context: call_refresh,
             } => {
@@ -743,221 +871,6 @@ where
     }
 }
 
-pub(crate) async fn handle_submission_with_cancel<E, F>(
-    state: &mut RuntimeLoopState,
-    submission: Submission,
-    emit: &mut E,
-    cancel: &CancellationToken,
-) -> Result<()>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    handle_submission_with_cancel_and_steering(state, submission, emit, cancel, None).await
-}
-
-pub(crate) async fn handle_submission_with_cancel_and_steering<E, F>(
-    state: &mut RuntimeLoopState,
-    submission: Submission,
-    emit: &mut E,
-    cancel: &CancellationToken,
-    steering_broker: Option<&TurnInputBroker>,
-) -> Result<()>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    if submission.intent == alan_agent_protocol::InputIntent::Command {
-        return explicit_command::handle_explicit_command(
-            state,
-            submission.id,
-            submission.op,
-            emit,
-            cancel,
-            steering_broker,
-        )
-        .await;
-    }
-    if matches!(submission.op, Op::Resume { .. }) {
-        state.observe_input_shadow(&submission, cancel).await?;
-    }
-    if owner_work::handle(state, &submission, emit, cancel).await? {
-        return Ok(());
-    }
-
-    let mut tape_writer = if matches!(submission.op, Op::Turn { .. }) {
-        Some(accepted_submission::begin_turn_dispatch(state, &submission).await?)
-    } else {
-        None
-    };
-    let op = submission.op;
-
-    let result = async {
-        let action = match handle_runtime_op_with_writer(state, op, &mut tape_writer, emit).await? {
-            RuntimeOpAction::NoTurn => return Ok(()),
-            RuntimeOpAction::ReplayApprovedToolCall {
-                tool_call,
-                approved_unknown_effect_call_id,
-                approved_tool_escalation_call_id,
-            } => RuntimeOpAction::ReplayApprovedToolBatch {
-                tool_calls: vec![tool_call],
-                resume_with_generation: true,
-                approved_unknown_effect_call_id,
-                approved_tool_escalation_call_id,
-            },
-            action => action,
-        };
-        match action {
-            RuntimeOpAction::NoTurn => Ok(()),
-            RuntimeOpAction::RunTurn {
-                turn_kind,
-                user_input,
-                activate_task,
-            } => {
-                let writer = tape_writer
-                    .as_ref()
-                    .expect("generation owns the Tape lease");
-                state.machine.set_turn_activity(TurnActivityState::Running);
-                let turn_outcome = match run_turn_with_writer(
-                    state,
-                    turn_kind,
-                    user_input,
-                    emit,
-                    cancel,
-                    steering_broker,
-                    writer,
-                )
-                .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        state.machine.set_turn_activity(TurnActivityState::Idle);
-                        return Err(err);
-                    }
-                };
-                state.machine.set_turn_activity(
-                    if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                        TurnActivityState::Paused
-                    } else {
-                        TurnActivityState::Idle
-                    },
-                );
-                if activate_task {
-                    state.machine.activate_task();
-                }
-                Ok(())
-            }
-            RuntimeOpAction::ReplayApprovedToolCall { .. } => {
-                unreachable!("single replay normalized to batch")
-            }
-            RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
-                explicit_command::finish_failed_explicit_command(
-                    state,
-                    &tool_call,
-                    "command was not approved",
-                    Some("rejected"),
-                    emit,
-                )
-                .await
-            }
-            RuntimeOpAction::ReplayApprovedToolBatch {
-                tool_calls,
-                resume_with_generation,
-                approved_unknown_effect_call_id,
-                approved_tool_escalation_call_id,
-            } => {
-                let writer = tape_writer.as_ref().expect("replay owns the Tape lease");
-                if !resume_with_generation {
-                    return explicit_command::replay_command(
-                        state,
-                        &tool_calls,
-                        approved_unknown_effect_call_id.as_deref(),
-                        approved_tool_escalation_call_id.as_deref(),
-                        ToolOrchestratorInputs {
-                            explicit_command: false,
-                            cancel,
-                            steering_broker,
-                        },
-                        writer,
-                        emit,
-                    )
-                    .await;
-                }
-                state.machine.set_turn_activity(TurnActivityState::Running);
-                match replay_approved_tool_batch_with_writer(
-                    state,
-                    &tool_calls,
-                    approved_unknown_effect_call_id.as_deref(),
-                    approved_tool_escalation_call_id.as_deref(),
-                    ToolOrchestratorInputs {
-                        explicit_command: false,
-                        cancel,
-                        steering_broker,
-                    },
-                    writer,
-                    emit,
-                )
-                .await
-                {
-                    Ok(outcome) => match outcome {
-                        ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                            let turn_outcome = match run_turn_with_writer(
-                                state,
-                                TurnRunKind::ResumeTurn,
-                                None,
-                                emit,
-                                cancel,
-                                steering_broker,
-                                writer,
-                            )
-                            .await
-                            {
-                                Ok(outcome) => outcome,
-                                Err(err) => {
-                                    state.machine.set_turn_activity(TurnActivityState::Idle);
-                                    return Err(err);
-                                }
-                            };
-                            state.machine.set_turn_activity(
-                                if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                                    TurnActivityState::Paused
-                                } else {
-                                    TurnActivityState::Idle
-                                },
-                            );
-                        }
-                        ToolBatchOrchestratorOutcome::PauseTurn => {
-                            state.machine.set_turn_activity(TurnActivityState::Paused);
-                        }
-                        ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
-                            finalize_replayed_tool_end_turn_best_effort(
-                                state,
-                                cancel,
-                                surfaces_refreshed,
-                                "approved-tool-replay-ended-turn",
-                                "after approved tool replay batch",
-                            )
-                            .await;
-                        }
-                    },
-                    Err(err) => {
-                        state.machine.set_turn_activity(TurnActivityState::Idle);
-                        return Err(err);
-                    }
-                };
-                Ok(())
-            }
-        }
-    }
-    .await;
-    if let Some(writer) = tape_writer {
-        let closed = writer.finish().await;
-        result.and(closed)
-    } else {
-        result
-    }
-}
-
 pub(super) async fn run_deferred_runtime_action_with_cancel(
     state: &mut RuntimeLoopState,
     action: DeferredRuntimeAction,
@@ -965,14 +878,29 @@ pub(super) async fn run_deferred_runtime_action_with_cancel(
 ) -> DeferredRuntimeActionExit {
     match action {
         DeferredRuntimeAction::TurnMemoryPromotion(job) => {
-            let generation = state.namespace_generation();
-            match super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
-                &generation,
-                &job,
-                cancel,
-            )
-            .await
+            if let Some(budget) = &job.budget
+                && let Err(error) = budget.resume().await
             {
+                warn!(%error, "Deferred memory job's original task budget is closed");
+                return DeferredRuntimeActionExit::Completed;
+            }
+            let generation = state
+                .environment
+                .generation()
+                .with_task_budget(job.budget.clone());
+            let result =
+                super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
+                    &generation,
+                    &job,
+                    cancel,
+                )
+                .await;
+            if let Some(budget) = &job.budget
+                && let Err(error) = budget.settle(!cancel.is_cancelled()).await
+            {
+                warn!(%error, "Failed to settle deferred memory task budget");
+            }
+            match result {
                 Ok(()) => DeferredRuntimeActionExit::Completed,
                 Err(_) if cancel.is_cancelled() => DeferredRuntimeActionExit::Cancelled,
                 Err(err) => {

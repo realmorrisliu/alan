@@ -105,7 +105,15 @@ impl RuntimeLoopState {
         submission: &Submission,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        dispatch_input(&mut self.machine, &self.environment, submission, cancel).await
+        if self.environment.shadow_evaluation.is_some() {
+            // Paid advice must be admitted before evaluation. Ordinary durable
+            // dispatch itself consumes neither a Tool nor a model call.
+            super::task_budget::begin(self).await?;
+            dispatch_input(&mut self.machine, &self.environment, submission, cancel).await
+        } else {
+            self.machine.dispatch_input(submission).await?;
+            super::task_budget::begin(self).await
+        }
     }
 
     pub(crate) async fn observe_input_shadow(
@@ -307,6 +315,46 @@ async fn observe_input_shadow(
 }
 
 pub(crate) async fn evaluate_captured_choice(
+    machine: &mut AgentMachine,
+    environment: &NamespaceRuntimeEnvironment,
+    evaluation_environment: NamespaceRuntimeEnvironment,
+    request: ChoiceEvaluationRequest,
+    observation: Observation,
+    window: (Instant, Instant),
+    cancel: &CancellationToken,
+) -> Result<()> {
+    if let Some(budget) = machine.task_budget.clone() {
+        budget
+            .reserve(crate::agent_machine::task_budget::Admission::Model)
+            .await?;
+        return budget
+            .run(cancel, |operation_cancel| async move {
+                evaluate_admitted_choice(
+                    machine,
+                    environment,
+                    evaluation_environment,
+                    request,
+                    observation,
+                    window,
+                    &operation_cancel,
+                )
+                .await
+            })
+            .await;
+    }
+    evaluate_admitted_choice(
+        machine,
+        environment,
+        evaluation_environment,
+        request,
+        observation,
+        window,
+        cancel,
+    )
+    .await
+}
+
+async fn evaluate_admitted_choice(
     machine: &mut AgentMachine,
     environment: &NamespaceRuntimeEnvironment,
     evaluation_environment: NamespaceRuntimeEnvironment,

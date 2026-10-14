@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 #[derive(Debug, thiserror::Error)]
 #[error("generation fallback lacks a reliable terminal result; never retry implicitly")]
-struct FallbackUncertainty;
+pub(super) struct FallbackUncertainty;
 
 pub(super) async fn handle<E, F>(
     state: &mut RuntimeLoopState,

@@ -51,6 +51,43 @@ impl crate::tools::ToolExecutionAuthority for MetadataCwdAuthority {
 }
 
 #[tokio::test]
+async fn budget_paused_cd_resumes_the_process_directory_without_native_shell_replay() {
+    let (mut state, _) = create_namespace_test_state_and_shell().await;
+    let tools = ToolRegistry::new();
+    let runner = crate::tools::ToolProcessRunner::from_registry(&tools);
+    let binding = crate::tools::ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/source"), PathBuf::from("/tmp"),
+    ).with_adapter(Arc::new(MetadataCwdAdapter));
+    runner.register_process_binding(1, binding);
+    runner.register_process_authority(1, Arc::new(MetadataCwdAuthority));
+    state.environment = state.environment.clone().with_tool_process_context(1, runner);
+    state.core_config.task_budget.tool_calls = std::num::NonZeroU64::new(1).unwrap();
+    crate::runtime::task_budget::begin(&mut state).await.unwrap();
+    state.machine.task_budget.as_ref().unwrap()
+        .reserve(crate::agent_machine::task_budget::Admission::Tool).await.unwrap();
+    let submission = Submission {
+        id:"budget-cd".into(), intent:alan_agent_protocol::InputIntent::Command,
+        op:Op::Input { parts:vec![alan_agent_protocol::ContentPart::text("cd src")], mode:InputMode::FollowUp },
+    };
+    handle_submission_with_cancel(&mut state, submission, &mut |_| async {}, &CancellationToken::new()).await.unwrap();
+    assert_eq!(state.tool_execution().default_cwd().unwrap(), PathBuf::from("/mnt/source"));
+    assert!(state.agent_files().action_ids().await.unwrap().is_empty());
+    let request_id = state.machine.pending_request_ids().into_iter().next().unwrap();
+    handle_submission_with_cancel(&mut state, Submission::new(Op::Resume {
+        request_id:request_id.clone(), content:vec![alan_agent_protocol::ContentPart::structured(json!({"choice":"approve"}))],
+    }), &mut |_| async {}, &CancellationToken::new()).await.unwrap();
+    assert_eq!(state.tool_execution().default_cwd().unwrap(), PathBuf::from("/mnt/source/src"));
+    assert_eq!(state.agent_files().action_ids().await.unwrap().len(), 1);
+    let snapshot = state.machine.task_budget.as_ref().unwrap().snapshot().await;
+    assert_eq!(snapshot.tool_calls, 2);
+    assert_eq!(snapshot.model_calls, 0);
+    assert!(snapshot.foreground_complete);
+    handle_submission_with_cancel(&mut state, Submission::new(Op::Resume {request_id,content:vec![]}), &mut |_| async {}, &CancellationToken::new()).await.unwrap();
+    assert_eq!(state.tool_execution().default_cwd().unwrap(), PathBuf::from("/mnt/source/src"));
+    assert_eq!(state.agent_files().action_ids().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn standalone_cd_handler_projects_actual_cwd_and_failure_without_command_presentation() {
     let (mut state, shell) = create_namespace_test_state_and_shell().await;
     let tools = ToolRegistry::new();

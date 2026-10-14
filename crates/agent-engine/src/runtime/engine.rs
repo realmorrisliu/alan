@@ -535,6 +535,11 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
 
+        if let Err(error) = super::task_budget::publish_wait(&mut state).await {
+            let _ = ready_tx.send(Err(format!("restore task budget wait: {error:#}")));
+            return;
+        }
+
         info!(
             process_path = %state.process_path(),
             agent_path = %state.agent_path(),

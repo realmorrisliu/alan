@@ -208,6 +208,7 @@ pub struct NamespaceRuntimeEnvironment {
 pub(crate) struct NamespaceGeneration {
     root: InProcessTransport,
     llm_connection: String,
+    budget: Option<crate::agent_machine::task_budget::TaskBudget>,
 }
 
 /// Narrow handle for files owned by one AgentFS process layout.
@@ -333,11 +334,13 @@ impl NamespaceRuntimeEnvironment {
             return NamespaceGeneration {
                 root: callable.root.clone(),
                 llm_connection: callable.connection.clone(),
+                budget: None,
             };
         }
         NamespaceGeneration {
             root: self.root.clone(),
             llm_connection: self.llm_connection.clone(),
+            budget: None,
         }
     }
 

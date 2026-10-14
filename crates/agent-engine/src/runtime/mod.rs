@@ -28,6 +28,7 @@ mod response_guardrails;
 mod shadow_evaluation;
 mod steering_queue;
 mod submission_handlers;
+mod task_budget;
 #[cfg(test)]
 pub(crate) mod test_host_mount;
 mod tool_authorization;

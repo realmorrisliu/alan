@@ -155,6 +155,7 @@ pub(super) async fn handle_invoke_delegated_skill<E, F>(
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     cancel: &CancellationToken,
+    task_cancel: &CancellationToken,
     emit: &mut E,
 ) -> Result<VirtualToolOutcome>
 where
@@ -166,6 +167,7 @@ where
         tool_call,
         tool_arguments,
         cancel,
+        task_cancel,
         emit,
         |runtime, spec, cancel| Box::pin(spawn_and_join_delegated_child(runtime, spec, cancel)),
     )
@@ -177,6 +179,7 @@ pub(super) async fn handle_invoke_delegated_skill_with_spawn<E, F, S>(
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     cancel: &CancellationToken,
+    task_cancel: &CancellationToken,
     emit: &mut E,
     spawn_child: S,
 ) -> Result<VirtualToolOutcome>
@@ -289,14 +292,14 @@ where
             };
             match child_result {
                 Ok(mut child_result) => {
-                    if cancel.is_cancelled()
+                    if task_cancel.is_cancelled()
                         && child_result.is_cancelled()
                         && check_turn_cancelled(
                             &mut *runtime.machine,
                             &runtime.agent_files,
                             &runtime.host_mount_requests,
                             emit,
-                            cancel,
+                            task_cancel,
                         )
                         .await?
                     {
@@ -325,13 +328,13 @@ where
                     )
                 }
                 Err(err) => {
-                    if cancel.is_cancelled()
+                    if task_cancel.is_cancelled()
                         && check_turn_cancelled(
                             &mut *runtime.machine,
                             &runtime.agent_files,
                             &runtime.host_mount_requests,
                             emit,
-                            cancel,
+                            task_cancel,
                         )
                         .await?
                     {

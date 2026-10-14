@@ -24,6 +24,14 @@ struct LlmCapabilitiesDoc {
 }
 
 impl NamespaceGeneration {
+    pub(crate) fn with_task_budget(
+        mut self,
+        budget: Option<crate::agent_machine::task_budget::TaskBudget>,
+    ) -> Self {
+        self.budget = budget;
+        self
+    }
+
     pub async fn read_llm_connection_capabilities(&self) -> Result<NamespaceLlmCapabilities> {
         let path = format!("/mnt/llm/connections/{}/capabilities", self.llm_connection);
         let client = NamespaceClient::new(self.root.clone());
@@ -50,6 +58,25 @@ impl NamespaceGeneration {
     }
 
     pub async fn generate_controlled(
+        &self,
+        request: &GenerationRequest,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<GenerationResponse> {
+        if let Some(budget) = &self.budget {
+            budget
+                .reserve(crate::agent_machine::task_budget::Admission::Model)
+                .await?;
+            return budget
+                .run(cancel, |stop| async move {
+                    self.generate_unmetered(request, timeout_secs, &stop).await
+                })
+                .await;
+        }
+        self.generate_unmetered(request, timeout_secs, cancel).await
+    }
+
+    async fn generate_unmetered(
         &self,
         request: &GenerationRequest,
         timeout_secs: u64,
@@ -131,6 +158,32 @@ impl NamespaceGeneration {
     }
 
     pub async fn generate_with_text_events_controlled<E, F>(
+        &self,
+        request: &GenerationRequest,
+        emit: &mut E,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<(GenerationResponse, bool)>
+    where
+        E: FnMut(Event) -> F,
+        F: std::future::Future<Output = ()>,
+    {
+        if let Some(budget) = &self.budget {
+            budget
+                .reserve(crate::agent_machine::task_budget::Admission::Model)
+                .await?;
+            return budget
+                .run(cancel, |stop| async move {
+                    self.generate_stream_unmetered(request, emit, timeout_secs, &stop)
+                        .await
+                })
+                .await;
+        }
+        self.generate_stream_unmetered(request, emit, timeout_secs, cancel)
+            .await
+    }
+
+    async fn generate_stream_unmetered<E, F>(
         &self,
         request: &GenerationRequest,
         emit: &mut E,
