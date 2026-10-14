@@ -239,7 +239,7 @@ native Tool authority, Agent metadata, or loader identity.
 
 #### Scenario: Process omits a package reference
 
-- **WHEN** a package exists in the channel catalog but is not referenced at
+- **WHEN** a package exists in the product Package Service catalog but is not referenced at
   Process creation
 - **THEN** the Process cannot read `/lib/pkg/<package-id>`
 - **AND** its Agent capability view does not contain that package's Skills

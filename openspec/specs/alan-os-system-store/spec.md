@@ -27,7 +27,7 @@ No compatibility reader SHALL remain after migration.
 - **THEN** it reports the source without deleting or loading it
 - **AND** removal is offered only after explicit import succeeds
 
-#### Scenario: Explicit legacy roots follow the active channel
+#### Scenario: Legacy inspection rejects retired channel selection
 - **WHEN** an old inspection request attempts to derive source roots from an active dev-channel override
 - **THEN** the current command rejects that obsolete runtime selection
 - **AND** it directs the caller to explicit historical-source inspection without changing `.alan` or `.alan-dev` content

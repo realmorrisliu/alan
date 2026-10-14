@@ -126,8 +126,8 @@ discover, read, migrate, copy, or delete state through the historical
 #### Scenario: Local state from old app exists
 - **WHEN** local macOS state remains under the historical `AlanNative` support
   path after the hard cut
-- **THEN** Alan for macOS does not inspect, migrate, copy, rewrite, or delete it
-- **AND** current state is read and written only through current channel paths
+- **THEN** Alan does not inspect, migrate, copy, rewrite, or delete it
+- **AND** current state is read and written only through the explicitly bound product System Store and Host Store
 
 ### Requirement: Brand validation is explicit and allowlisted
 The repository SHALL include a focused brand validation step that rejects

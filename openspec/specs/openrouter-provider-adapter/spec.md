@@ -22,7 +22,7 @@ configuration value, provider catalog entry, and provider construction path
 without providing automatic migration or alias behavior.
 
 #### Scenario: Saved connection metadata uses the retired provider value
-- **WHEN** the active channel Connection Service metadata contains
+- **WHEN** Connection Service metadata in the explicitly bound product System Store contains
   `openrouter_openai_chat_completions_compatible` in
   `profiles.<id>.provider` or `credentials.<id>.provider_family`
 - **THEN** alan treats the file as containing unsupported legacy configuration
