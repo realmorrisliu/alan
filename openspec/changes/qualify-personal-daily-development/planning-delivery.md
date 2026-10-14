@@ -33,3 +33,18 @@ product-store binding. The existing foreground_history_is_product_store_owned_an
 test already verifies same-store recall and isolated-store separation. No runtime
 behavior or prior historical archive changes are involved. New-head CI/review
 remain separate from the original head’s passing checks.
+
+## Retained storage-contract audit
+
+The next review found the same obsolete channel identity in retained active input
+deltas and accepted package ADRs. The follow-up also audits the Connection/durable
+state/attachment ADRs, the remaining input delta and current handoff/task text.
+Active requirements now use explicitly bound product stores. The standalone delta
+reuses the adopted canonical installation requirements and drops an already-applied
+rename, so later synchronization cannot restore `alan-dev` or channel ownership.
+Original dated test receipts and pre-existing archives remain historical evidence.
+
+The proactive-memory plan remains parked. Its disposition explicitly rejects the
+retained channel/Host-directory backing premises and forbids synchronizing them
+without replacement; this does not reactivate its tasks. Package, Connection and
+File-Server Service ownership and authorization boundaries remain unchanged.

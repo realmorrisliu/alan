@@ -52,7 +52,7 @@ findings and required current-head CI passed. The store and command audit found
 Package Store transactions, Connection metadata, credential writes and legacy
 migration already serialized through their owning locks.
 `alan host status/stop` require an explicit `ALAN_INSTANCE_RUNTIME_DIR`; ordinary
-`alan connection` operations use the channel stores directly, and only a native
+`alan connection` operations use the explicitly bound product stores directly, and only a native
 Connection request attaches to its explicitly selected instance. Review and
 current-head CI evidence for the remaining slices remains under task 4.1.
 The `--resume` selector shipped in PR #981, and PR #982 verifies that explicit

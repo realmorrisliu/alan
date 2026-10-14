@@ -1,8 +1,10 @@
 # System services own durable state
 
-Status: accepted
+Status: accepted; storage identity refined 2026-10-14 after merged PR #1042.
+The [current System Store contract](../../openspec/specs/alan-os-system-store/spec.md)
+uses an explicitly bound product store rather than install channels.
 
-Alan OS Host provides a channel-isolated System Store backing root, while each
+Alan OS Host provides an explicitly bound product System Store backing root, while each
 File-Server Service owns the format and lifecycle of its packages, rollouts,
 Memory Stores, Agent Definitions, or service metadata. Alan OS does not write
 runtime state into host-directory `.alan` trees, treat `~/.alan` as system

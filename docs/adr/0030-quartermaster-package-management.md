@@ -5,7 +5,10 @@
 Status: Accepted. Extends [ADR-0024](0024-plan9-kernel-model.md) and
 [ADR-0027](0027-north-star-capability-map.md). The normative v0 behavior lives
 in OpenSpec `package-management-contract`. ADR-0052 supersedes this ADR's
-original Host-directory source model.
+original Host-directory source model. Storage identity was refined on 2026-10-14
+after merged PR #1042: one explicitly bound product System Store replaces install
+channels; Package Service ownership and explicit Process references are unchanged.
+See the current [System Store contract](../../openspec/specs/alan-os-system-store/spec.md).
 
 ## Context
 
@@ -25,7 +28,7 @@ The missing organ is still real, but its owner and boundaries are now clear.
 
 The formal component is **Package Service**. It is a required File-Server
 Service started and supervised by Service Manager. It publishes a mountable
-handle at `/srv/package` and owns its install-channel subtree of the System
+handle at `/srv/package` and owns its subtree of the explicitly bound product System
 Store.
 
 The subsystem's product name remains **Quartermaster** and its command remains
@@ -66,12 +69,13 @@ Host network or credential authority.
 
 ### D4. Package data belongs to the System Store
 
-Package Service owns `services/packages` in the active channel System Store.
+Package Service owns `services/packages` in the explicitly bound product System Store.
 Its backing layout and serialization are private implementation details.
 Agent-visible identity is a package id, immutable revision, service handle, and
 namespace projection—not a Host filesystem path.
 
-Stable and dev stores are independent. Publication is transactional, and store
+Isolated tests bind separate stores; build profiles do not select product data.
+Publication is transactional, and store
 corruption fails closed rather than being repaired from an ambient source.
 
 ### D5. Package is the distribution unit

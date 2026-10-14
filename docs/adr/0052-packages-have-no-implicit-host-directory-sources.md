@@ -1,8 +1,9 @@
 # Packages have no implicit Host directory sources
 
-Status: accepted
+Status: accepted; product-store identity refined 2026-10-14 after merged PR #1042.
+See the [current package contract](../../openspec/specs/package-management-contract/spec.md).
 
-Package Service and its install-channel System Store are the only package
+Package Service and its explicitly bound product System Store are the only package
 authority. Alan OS does not scan workspace, AgentRoot, `~/.agents`, or other
 Host directories as implicit local-source providers and preserves no overlay
 precedence for them. Host content must first enter through an explicit Host

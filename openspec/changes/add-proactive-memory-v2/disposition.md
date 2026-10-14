@@ -11,3 +11,10 @@ Parked pending Machine/evidence ownership. System Store and explicit Memory Stor
 Do not execute the retained tasks until an explicit new planning decision
 replaces the affected design and deltas. Remaining artifacts are a design
 inventory, not implementation authorization or accepted canonical behavior.
+
+Storage refinement (2026-10-14): all retained channel-scoped and Host-directory
+backing clauses are historical rejected premises after merged PR #1042. They MUST
+NOT be synchronized as requirements, even during a later reactivation; first replace
+them with explicit product-store and namespace-mount ownership under
+[the current contract](../../specs/alan-os-system-store/spec.md). This does not
+reactivate proactive memory or authorize policy learning.
