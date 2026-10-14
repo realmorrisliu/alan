@@ -243,10 +243,15 @@ fn paused_status_real_wait_has_static_cue_without_clock() {
     let mut app = FileBackedApp::new("/agent/root".into());
     app.activity = UiActivitySnapshot::paused(Some(1));
     app.activity.waiting_submission_ids.push("r0".into());
-    let (lines, _) = live_region_lines_at(&app, 80, 5_001);
-    assert!(lines[3].to_string().contains("waiting for input"));
-    assert!(!lines[3].to_string().contains("interrupt"));
-    assert!(!lines[3].to_string().contains("5s"));
+    for width in [16, 40, 80, 120] {
+        let line = attention_line_at_width(&app, 5_001, width)
+            .unwrap()
+            .to_string();
+        assert!(line.to_lowercase().contains("input"), "{width}: {line}");
+        for misleading in ["/continue", "interrupt", "5s"] {
+            assert!(!line.contains(misleading), "{width}: {line}");
+        }
+    }
 }
 
 #[test]
@@ -283,6 +288,15 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
     use alan_agent_protocol::{UiActivitySnapshot, UiEvent, YieldKind};
     for kind in [YieldKind::Confirmation, YieldKind::StructuredInput] {
         let mut app = FileBackedApp::new("/agent/root".into());
+        app.queue.apply(
+            "/agent/root",
+            Some(alan_agent_protocol::UiQueueSnapshot {
+                known: true,
+                revision: 1,
+                paused: true,
+                ..Default::default()
+            }),
+        );
         // The request watcher installs controls before the activity watcher publishes Paused.
         app.activity = UiActivitySnapshot::running(1);
         let questions = if matches!(kind, YieldKind::StructuredInput) {
@@ -330,15 +344,17 @@ fn paused_status_confirmation_and_form_keep_static_controls() {
                 let (lines, _) = live_region_lines_at(&app, width, 5_001);
                 assert!(
                     lines[3].to_string().contains(cue)
-                        || lines[3].to_string()
-                            == if cue == "waiting for approval" {
+                        || lines[3]
+                            .to_string()
+                            .contains(if cue == "waiting for approval" {
                                 "Approval"
                             } else {
                                 "Input required"
-                            },
+                            }),
                     "cue={cue}, lines={lines:?}"
                 );
                 assert!(!lines[3].to_string().contains("interrupt"));
+                assert!(!lines[3].to_string().contains("/continue"), "{lines:?}");
                 assert!(!lines[3].to_string().contains("5s"));
                 assert!(
                     !SPINNER

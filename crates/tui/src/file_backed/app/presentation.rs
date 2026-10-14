@@ -2,8 +2,14 @@ use super::*;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 impl FileBackedApp {
+    pub(in crate::file_backed) fn has_pending_response(&self) -> bool {
+        self.pending_yield.is_some()
+            || self.form.is_some()
+            || !self.activity.waiting_submission_ids.is_empty()
+    }
+
     pub(in crate::file_backed) fn activity_label(&self) -> Option<&str> {
-        if self.pending_yield.is_some() || self.form.is_some() {
+        if self.has_pending_response() {
             return Some("waiting for input");
         }
         match self.activity.state {
@@ -103,7 +109,9 @@ impl FileBackedApp {
             labels.push("Failed".into());
         }
         let queue = self.queue.snapshot.as_ref().filter(|q| q.known);
-        if self.activity.state == UiActivityState::Paused || queue.is_some_and(|q| q.paused) {
+        if !self.has_pending_response()
+            && (self.activity.state == UiActivityState::Paused || queue.is_some_and(|q| q.paused))
+        {
             labels.push("Paused · /continue".into());
         }
         if let Some(q) = queue {

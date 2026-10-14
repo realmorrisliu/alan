@@ -436,11 +436,10 @@ pub(super) fn frame_needs_redraw(
     now_ms: u64,
     last_drawn_second: Option<u64>,
 ) -> bool {
-    // Only Running work without actual user controls advances quietly; dirty events always draw.
+    // Only Running work without a pending response advances quietly; dirty events always draw.
     dirty
         || (matches!(app.activity.state, super::UiActivityState::Running)
-            && app.pending_yield.is_none()
-            && app.form.is_none()
+            && !app.has_pending_response()
             && last_drawn_second != Some(activity_elapsed_second(app, now_ms)))
 }
 
@@ -470,6 +469,8 @@ fn attention_line_at_width(
         } else {
             "Input required"
         }
+    } else if app.has_pending_response() {
+        "Input required"
     } else if app.project_selection.is_some() {
         "Select project"
     } else if app.activity.state == super::UiActivityState::Running {
@@ -559,9 +560,7 @@ pub(super) fn attention_line(app: &FileBackedApp, now_ms: u64) -> Option<Line<'s
 }
 
 fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
-    if app.pending_yield.is_some()
-        || app.form.is_some()
-        || !matches!(app.activity.state, super::UiActivityState::Running)
+    if app.has_pending_response() || !matches!(app.activity.state, super::UiActivityState::Running)
     {
         let cue = if app.form.is_some() {
             "input form"
