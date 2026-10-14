@@ -1,5 +1,11 @@
 # Disposition — 2026-09-27
 
+## Planning handoff — 2026-10-14
+
+Personal daily-use delivery now follows qualify-personal-daily-development/roadmap.md. Explicit input and bounded recovery have shipped; this plan does not silently close broader unchecked clauses in this change.
+
+See [the accepted roadmap](../qualify-personal-daily-development/roadmap.md).
+
 Presentation update (2026-09-29): the user selected compact `: ` / `! ` markers
 under a two-line Agent context prompt. The renderer-host delta and design here
 reflect that target, shipped by PR #1026 (merge `0bcdcbe5`) on 2026-10-06.

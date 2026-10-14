@@ -3,7 +3,9 @@
 ## Purpose
 Defines Service Manager as the first system Process and sole owner of bounded
 alan9 service and Root Agent lifecycle.
+
 ## Requirements
+
 ### Requirement: Service Manager is the first system Process
 alan9 Host SHALL create Kernel and start one Service Manager Process. Service
 Manager SHALL be the sole owner of later system service and Root Agent Process
@@ -48,14 +50,14 @@ system degraded and await explicit retry.
 
 ### Requirement: Root recovery belongs to its foreground instance
 Root replacement SHALL use its instance's latest durable rollout without rereading
-the channel selector. A new invocation SHALL read that selector only for explicit
+the product-store recovery selector. A new invocation SHALL read that selector only for explicit
 `alan --resume`. An instance without a durable rollout SHALL restart fresh.
 Agent Runtime Service SHALL flush and terminate the prior Machine recorder before
 loading its replacement; a flush failure SHALL prevent that recovery.
 
 #### Scenario: Root restarts while another invocation publishes a rollout
 - **WHEN** Root fails after readiness and another invocation has changed the
-  channel selector
+  product-store recovery selector
 - **THEN** replacement uses its own instance's latest durable rollout
 - **AND** replacement remains subject to the bounded restart policy
 
@@ -66,13 +68,13 @@ loading its replacement; a flush failure SHALL prevent that recovery.
 
 #### Scenario: Root has no durable rollout
 - **WHEN** best-effort startup creates no durable rollout and Root later restarts
-- **THEN** replacement starts fresh without consulting the channel selector
+- **THEN** replacement starts fresh without consulting the product-store recovery selector
 - **AND** a later successful durable startup becomes the instance's recovery source
 
 ### Requirement: Service Manager supervises Package Service
 
 Service Manager SHALL start Package Service as a required File-Server Service,
-grant only its channel System Store binding and required preinstalled package
+grant only its explicitly supplied System Store binding and required preinstalled package
 sources, and require publication of `/srv/package` before package-dependent
 Processes become ready. It SHALL compose only explicitly referenced immutable
 package handles into child namespaces and descriptors. It MUST NOT translate a

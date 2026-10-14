@@ -31,7 +31,7 @@ semantics.
 | durable execution evidence | rollout and checkpoint files |
 | cross-Process continuity | Memory Stores and handoff files |
 | service discovery | `/srv` handles |
-| model operations | LLM Connections and provider adapters; typed evaluation is planned |
+| model operations | LLM Connections and provider adapters; finite-choice evaluation is delivered |
 | Tool effects | spawned Tool Processes and file writes |
 | terminal presentation | renderer hosts |
 | app domain truth | app-owned domain core and file-server adapter |
@@ -49,19 +49,12 @@ Roots and endpoints while using the same product stores. Reusing one explicit
 runtime directory allows only one owner; another invocation fails to acquire
 it rather than sharing its Root. Actual Alan process exit shuts down its
 instance; a terminal-host view detach is separate from process exit. New
-invocations start fresh by default; explicit durable recovery is the accepted
-direction, but its selection and queue/cwd restoration flow remains active
-work. Interactive `!` requests a command through the governed `bash` Tool,
-while `:` forces Agent routing. The lifecycle revision to
-[ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md) supersedes its
-historical background-Host behavior.
-This describes the shipped CLI behavior. The canonical `alan-os-host-lifecycle`,
-`alan-shell`, renderer and attachment lifecycle specs still contain parts of the
-prior channel-wide contract; their implemented startup and cross-invocation
-isolation subset is synchronized by the active unified-input change. Explicit
-recovery selection and restoration remain separate unimplemented work. Herdr
-view-detach acceptance is also still pending and is not inferred from the
-ordinary-terminal or automated concurrency checks.
+invocations start fresh by default; `alan --resume` explicitly selects durable
+recovery with current-authority validation and paused pending work. Interactive
+`!` requests an exact command through the governed native Tool path; `:` selects
+Agent reasoning. PR #1032 records recovery, view-detach, revocation and no-repeat
+acceptance. Broader platform and workflow evidence remains separately qualified.
+See [ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md).
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed. Rust Host platform adapters remain. Herdr supplies terminal topology,
@@ -69,8 +62,10 @@ not Alan execution authority.
 See [ADR-0054](adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 
 The current engine is generation-driven. The accepted mixed Machine direction
-is in [ADR-0055](adr/0055-agent-machine-composes-typed-capabilities.md); evaluation
-operations and complete state/projection alignment are not implemented. Existing
+is in [ADR-0055](adr/0055-agent-machine-composes-typed-capabilities.md); finite-choice
+evaluation, no-effect shadow advice and one bounded read-only mixed program have
+shipped. General mixed transitions and complete state/projection alignment remain
+unfinished; automatic input routing is disabled. Existing
 rollout/checkpoint recovery is not equivalent to the namespace text Tape alone.
 
 Package Service currently distributes Skills. Embedded boot units and Tool
@@ -97,9 +92,8 @@ Alan/System Store/services/
 ```
 
 A rollout uses its own record id and records the producing Process path. The
-planned recovery flow creates a new Process and rollout from an explicitly
-selected source record; runtime selection, authority validation and recoverable
-queue/cwd state remain under implementation. Memory Stores are explicit file
+explicit recovery flow creates invocation-local execution from selected durable
+evidence, validating current authority and retaining unresolved work paused. Memory Stores are explicit file
 trees and use Process provenance. Live Process tables, PIDs, descriptors,
 namespaces, and tasks are ephemeral.
 
@@ -114,3 +108,18 @@ namespaces, and tasks are ephemeral.
 - terminal-host integration cannot grant mounts, credentials or action approval;
   the foreground CLI composition owns instance shutdown, while a view detach is
   distinct from actual Alan process exit.
+
+## Accepted next delivery
+
+[ADR-0060](adr/0060-explicit-delegation-separates-approval-and-isolation.md) separates
+project delegation, approval posture and actual execution isolation. Host Mount
+Service remains file-grant authority; Agent Runtime owns action policy; Guardian
+judges eligible actions without granting rights. System 1 is a work mode, not a
+new Process or privileged service. Current Guardian uses the main Connection and
+fixed default policy; dedicated reviewer configuration is a tracked delivery gap.
+
+Project continuity extends existing evidence and Memory Stores. It does not make
+Root permanent or introduce a global Project executor. Fully trusted native
+Host-account execution is a separately accepted future option with no same-account
+tamper-resistance claim. No proposed CLI flags are available merely because this
+architecture note exists. See the [ordered plan](../openspec/changes/qualify-personal-daily-development/roadmap.md).

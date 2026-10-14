@@ -211,3 +211,10 @@ Do not recreate a sidebar, workspace manager or terminal emulator. Herdr-native
 Alan detection is not yet implemented; ordinary terminal operation comes first.
 Read a change's disposition before executing its tasks; parked/cancelled work
 does not authorize implementation.
+
+
+## Personal daily-use work
+
+When implementing autonomy, trust or continuity, follow ADR-0060 and
+`openspec/changes/qualify-personal-daily-development/roadmap.md`. Read the owning
+change's disposition and verify delivered controls before using them.

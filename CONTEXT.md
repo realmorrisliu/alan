@@ -37,7 +37,7 @@ Processes can mount or bind into their namespace.
 
 **Package Service** — The File-Server Service that owns installed package
 content, catalog state, lifecycle, and namespace projections. It persists only
-through its channel System Store subtree and never discovers Host directories
+through its product System Store subtree and never discovers Host directories
 implicitly. Its mountable control surface is published at `/srv/package`.
 
 **Quartermaster / `q`** — The product name and `/bin/q` command for package
@@ -71,9 +71,9 @@ when the alan9 Host restarts, preventing PID reuse from attaching to a
 different Process.
 _Avoid_: Session ID, durable Process ID
 
-**Shell Process** — An ordinary Process executing Alan Shell with its own Alan
-OS credentials, namespace, descriptors, and current directory. Renderer input
-attaches to it; commands it starts become child Processes.
+**Shell Process** — An ordinary command-execution Process with its own credentials,
+namespace, descriptors and current directory. The shipped bare Alan entry renders
+its Root Agent directly; it does not create an extra Shell Process.
 _Avoid_: Host shell session, Runtime console
 
 **Agent Process** — An ordinary Process that conforms to the agent file layout.
@@ -96,10 +96,9 @@ _Avoid_: Agent CLI profile, Workspace agent overlay
 **Agent Runtime Service** — The internal File-Server Service that executes
 Agent Processes and serves AgentFS.
 
-**Local Entry Service** — The system File-Server Service that creates a local
-Shell Process from the Login Namespace Template and hands its namespace to an
-authorized local renderer. It owns entry creation, not the child Processes
-later started from that Shell.
+**Local Entry Service** — A retained entry-service contract for creating a local
+command Process from a namespace template. It is not the shipped bare Alan
+foreground startup path or the owner of Root Agent lifecycle.
 _Avoid_: Local Session Service, Shell Manager
 
 **Host Mount Service** — The Host-backed File-Server Service that owns Host
@@ -122,7 +121,8 @@ consumed by the transition function.
 
 **Turn** — Currently one user-input generation/Tool loop. ADR-0055 accepts
 event-driven Machine advancement with deterministic, evaluation and generation
-operations; that mixed-capability implementation is pending.
+operations; finite-choice evaluation and one bounded read-only mixed program have
+shipped, while general mixed transitions remain unfinished.
 
 **Yield** — A transition pause that exposes a pending request through AgentFS.
 
@@ -137,24 +137,25 @@ child Agent Process launch. Live lifecycle remains authoritative in `/proc`.
 
 ## Files, commands, and knowledge
 
-Entries marked accepted target follow ADR-0058; runtime implementation remains pending.
+Explicit command and Agent overrides are shipped. Automatic input classification
+remains accepted direction and disabled pending qualification.
 
-**Direct Command Execution (accepted target)** — An execution path for a submitted
+**Direct Command Execution** — An execution path for a submitted
 Host shell script that does not require model generation. Its command
 and result share Agent context and remain subject to execution permissions
 and governance.
 _Avoid_: Unrestricted execution, Host bypass
 
-**Command Override (accepted target)** — The `!` prefix selecting direct command
+**Command Override** — The `!` prefix selecting direct command
 handling for one submission. It does not establish a persistent input mode.
 _Avoid_: Shell session switch, Permission override
 
-**Agent Override (accepted target)** — The `:` prefix selecting Agent interpretation
+**Agent Override** — The `:` prefix selecting Agent interpretation
 for one submission. It permits governed actions requested by the user and does
 not mean explanation-only or a persistent mode.
 _Avoid_: Read-only mode, Conversation session switch
 
-**Interaction Working Directory (accepted target)** — The Agent Process-owned
+**Interaction Working Directory** — The Agent Process-owned
 Host Mount reference and relative location, resolved by the Host adapter to a
 native execution directory shared by attached clients and command actions,
 changed by a standalone explicit user `cd` in execution order. An individual Agent action's
@@ -169,12 +170,12 @@ _Avoid_: Execution authorization, Permission inference
 **AgentFS** — The file server mounted at `/agent`. It exposes agent IO,
 requests, actions, children, machine state, plans, notices, and streams.
 
-**alan9 Control Command (accepted target)** — A task-oriented executable, primarily
+**alan9 Control Command** — A task-oriented executable, primarily
 for Agents, that encapsulates internal aP operations under caller-scoped authority.
 It reuses service owners and ordinary execution evidence; users need not learn aP.
 _Avoid_: Privileged manager API, Protocol operation catalog
 
-**Project File Access (accepted target)** — Agent read/edit/search and native shell
+**Project File Access** — Agent read/edit/search and native shell
 commands use consistent public project paths and the same authorized Host backing
 files. Structured adapters resolve paths internally; committed edits are visible
 across tools. Virtual services need not be materialized as project files.
@@ -205,7 +206,7 @@ used by an Agent Process. Secret material remains in its owning host store.
 **alan9 Host** — The product composition around one alan9 instance. A bare or
 redirected Agent-execution invocation boots it in the foreground and owns its
 external lifetime; the Service Manager owns internal service and Process
-lifecycle. The install channel selects persistent configuration and stores,
+lifecycle. One product System Store / Host Store pair supplies persistent state,
 not a shared live runtime. An explicitly targeted client may attach over aP to a
 selected live instance.
 _Avoid_: Runtime Manager, Session Host, app-owned runtime, per-channel runtime
@@ -299,3 +300,36 @@ input loop in `crates/tui`, backed by AgentFS and `/proc` files.
 
 The former desktop shell-core/FFI implementation has been removed. External
 terminal hosts own spaces, tabs and panes; Alan owns its Process execution.
+
+## Explicit autonomy and continuity (accepted direction)
+
+These terms describe ADR-0060 and its active changes; their new controls are not
+shipped by the documentation decision.
+
+**Project Delegation** — An explicit user authorization for a bounded set of
+resource/action capabilities associated with project work. Saving it is a separate
+choice from approving one operation; it is not a new Process identity.
+_Avoid_: Remembered approval, learned permission, project runtime
+
+**Approval Posture** — The user's choice of governed autonomous action decisions
+or invocation-local fully trusted execution. It does not describe which resources
+an Agent can reach or whether the operating system confines its effects.
+_Avoid_: Permission level, System 1 authority
+
+**Execution Isolation** — The actual boundary restricting native execution,
+distinguished from unrestricted execution with the launching Host account’s rights.
+_Avoid_: Approval mode, guaranteed safety
+
+**Guardian** — The no-tools reviewer that judges eligible Agent-proposed actions
+against user intent and policy. Its result is evidence for governance, not a grant.
+_Avoid_: Permission owner, privileged System 1 Agent
+
+**Project Continuity Summary** — Inspectable, correctable and deletable derived
+context for continuing a project's goals and work, with references to execution
+evidence. It contains no permission to resume or repeat actions.
+_Avoid_: Persistent Root, project authority, complete checkpoint
+
+**Unplanned Rescue** — Human correction or intervention needed to finish an Agent
+task beyond ordinary task clarification and initial authorization, including
+runtime/environment repair, corrective steering and operator-authored completion.
+_Avoid_: Every human message, normal approval

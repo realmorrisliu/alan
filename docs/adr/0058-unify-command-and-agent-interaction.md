@@ -1,5 +1,12 @@
 # Unify command and Agent interaction
 
+Current delivery note, 2026-10-14: explicit input, foreground lifetime and bounded
+recovery/detach/revocation/no-repeat acceptance shipped through #1032; real model
+switching followed in its owning delivery. Automatic input routing remains disabled
+and unqualified. Older dated “in progress” statements below are historical slices,
+not assertions that explicit recovery is absent. Project delegation/trust is now
+accepted future direction under [ADR-0060](0060-explicit-delegation-separates-approval-and-isolation.md).
+
 Lifetime direction revised 2026-09-27: the user selected independent foreground
 Alan invocations and explicitly selected recovery. The older background lifetime
 assumptions below are superseded as target direction by
@@ -139,6 +146,6 @@ or replaced roots before construction. This is a
 reconciliation-time check, not an atomic concurrent Host-mutation guarantee.
 
 The user merged this extension through PR #1046 on 2026-10-13
-(`465e3e47`). Implementation is delivered; canonical synchronization remains
-tracked in `support-linux-development-toolchains`. Existing fallback,
+(`465e3e47`). Implementation is delivered; canonical synchronization is included in its 2026-10-14 archive closure patch.
+See the archived change for merged implementation and current documentation receipts. Existing fallback,
 approval, network, durable recovery and automatic-routing posture are unchanged.

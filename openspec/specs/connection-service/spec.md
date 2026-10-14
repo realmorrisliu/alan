@@ -9,7 +9,7 @@ and bounded native credential requests without exposing Host secrets.
 ### Requirement: Connection Service owns profile metadata
 Connection Service SHALL own provider/model settings, profile identity,
 defaults, Process selection, validation status, and publication of callable LLM
-connection trees. Metadata SHALL be channel-scoped in System Store.
+connection trees. Metadata SHALL belong to the explicit product or isolated-test System Store binding supplied by the Host; executable names MUST NOT select its storage.
 
 #### Scenario: Agent selects a profile
 - **WHEN** its launch context passes an installed Connection reference
