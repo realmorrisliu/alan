@@ -23,3 +23,13 @@ Canonical synchronization reflects earlier merged code. New delegation, trusted
 posture, budget and continuity deltas remain under active changes and must not be
 mistaken for shipped controls. Review/CI/merge of this documentation branch remains
 separate from local validation, as does implementation of the new plan.
+
+## Planning PR review follow-up
+
+PR #1060 review found two remaining canonical synchronization issues. Remove the
+old proposal/adoption qualifier from delivered read-only dependency projection and
+its cumulative trust delta, and align composer-history scope with the shipped
+product-store binding. The existing foreground_history_is_product_store_owned_and_restarts_typed
+test already verifies same-store recall and isolated-store separation. No runtime
+behavior or prior historical archive changes are involved. New-head CI/review
+remain separate from the original head’s passing checks.

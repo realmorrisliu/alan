@@ -136,8 +136,6 @@ native writable authority. Other writable grants and grants held only by another
 Process MUST NOT gain native access through this projection. The Host adapter
 SHALL preserve each grant's effective access, current reconciliation and native
 path containment without command rewriting or inferred common-parent authority.
-This is a proposed extension to ADR-0058's delivered single-grant slice; adoption
-requires review and user merge of this delivery.
 
 #### Scenario: A project builds against its separately granted read-only dependency
 - **WHEN** the Process holds the selected project and a live separate read-only dependency grant

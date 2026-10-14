@@ -332,13 +332,13 @@ full snapshot rather than repeatedly printing the complete snapshot inline.
 
 ### Requirement: Composer history persists across launches
 
-The TUI composer SHALL support standard readline editing and SHALL persist prior submissions in channel-scoped user state for recall across launches.
+The TUI composer SHALL support standard readline editing and SHALL persist prior submissions in the product System Store shell-ui subtree for recall across launches. Explicitly isolated store bindings SHALL retain independent history; the retired installation channel SHALL NOT select a history file.
 
 #### Scenario: A later launch recalls history
 
-- **WHEN** a user submits text, exits the TUI, and launches it again in the same channel
+- **WHEN** a user submits text, exits the TUI, and launches it again with the same product store binding
 - **THEN** history-previous recalls the earlier submission
-- **AND** stable and dev installations do not share the history file implicitly
+- **AND** a launch bound to a different isolated product store does not recall those submissions
 
 ### Requirement: Agent input uses a contextual two-line prompt
 In its ordinary single-line idle state, the inline prompt SHALL have one Agent
