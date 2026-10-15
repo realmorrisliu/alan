@@ -53,12 +53,12 @@ impl NamespaceOperationCleanup {
 
     pub(crate) fn check_admission(&self) -> Result<()> {
         ensure!(
-            !self.tasks.is_closed(),
-            "Process operation scope has closed"
-        );
-        ensure!(
             !self.uncertain.load(Ordering::Acquire),
             NamespaceOperationUncertainty
+        );
+        ensure!(
+            !self.tasks.is_closed(),
+            "Process operation scope has closed"
         );
         Ok(())
     }
@@ -169,8 +169,9 @@ impl OperationLease {
     }
 
     pub(super) async fn retire(&mut self) -> Result<(), NamespaceOperationUncertainty> {
+        let attempt = CleanupAttempt::new(self.cleanup.uncertain.clone());
         let path = self.path.clone().ok_or(NamespaceOperationUncertainty)?;
-        let result = CleanupAttempt::new(self.cleanup.uncertain.clone())
+        let result = attempt
             .retire(self.client.clone(), path, self.command)
             .await;
         self.armed = false;
@@ -186,6 +187,9 @@ impl Drop for OperationLease {
         if let Some(path) = &self.path {
             self.cleanup
                 .abort_on_drop(self.client.clone(), path.clone(), self.command);
+        } else {
+            // Allocation may have taken effect before its identity reached the caller.
+            self.cleanup.uncertain.store(true, Ordering::Release);
         }
     }
 }

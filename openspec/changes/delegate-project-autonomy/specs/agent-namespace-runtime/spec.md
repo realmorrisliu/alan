@@ -65,6 +65,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** ordinary model or Tool cancellation/error cleanup cannot acknowledge its control within the adapter's finite retirement bound
 - **THEN** it returns unconfirmed cleanup, retains the known operation identity, prevents subsequent operation admission and automatic retry, and publishes neither successful task completion nor a clean budget-extension pause; a refused redundant model abort requires terminal-status confirmation before retry
 
+#### Scenario: Allocation ends before its operation identity is captured
+- **WHEN** an unsettled model or Tool allocation ends without a captured control identity
+- **THEN** retirement remains unconfirmed and the owning operation scope rejects further admission and successful completion; missing identity is not evidence that allocation or its effects never happened
+
 #### Scenario: Descendant evidence is recovered without its parent authority
 - **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
 - **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits

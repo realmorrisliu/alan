@@ -87,7 +87,14 @@ where
     }
     let result = handle_submission_inner(state, submission, emit, cancel, steering_broker).await;
     let result = if computational || other_resume || budget_resume || explicit_interrupt {
-        result.and_then(|()| state.environment.operation_cleanup.check_admission())
+        match (
+            result,
+            state.environment.operation_cleanup.check_admission(),
+        ) {
+            (result, Ok(())) => result,
+            (Ok(()), Err(scope)) => Err(scope),
+            (Err(error), Err(scope)) => Err(scope.context(error)),
+        }
     } else {
         result
     };

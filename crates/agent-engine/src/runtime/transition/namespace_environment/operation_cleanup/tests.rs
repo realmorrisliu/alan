@@ -90,6 +90,45 @@ fn armed(
 }
 
 #[tokio::test]
+async fn allocation_without_identity_never_reopens_admission_or_confirms_cleanup() {
+    for explicit_retirement in [false, true] {
+        let (cleanup, server, client) = fixture(false);
+        let mut operation = cleanup.lease(client.clone(), b"cancel").unwrap();
+        if explicit_retirement {
+            assert!(operation.retire().await.is_err());
+            assert!(
+                cleanup
+                    .check_admission()
+                    .unwrap_err()
+                    .is::<NamespaceOperationUncertainty>()
+            );
+        }
+        drop(operation);
+        assert!(
+            cleanup
+                .check_admission()
+                .unwrap_err()
+                .is::<NamespaceOperationUncertainty>()
+        );
+        assert!(cleanup.lease(client, b"cancel").is_err());
+        assert!(
+            cleanup
+                .finish()
+                .await
+                .unwrap_err()
+                .is::<NamespaceOperationUncertainty>()
+        );
+        assert!(
+            cleanup
+                .check_admission()
+                .unwrap_err()
+                .is::<NamespaceOperationUncertainty>()
+        );
+        assert_eq!(server.walks.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
 async fn retirement_waits_for_control_acknowledgement_and_closes_admission() {
     let (cleanup, server, client) = fixture(false);
     drop(armed(
@@ -233,10 +272,12 @@ async fn uncertain_cleanup_rejects_tool_and_models_before_namespace_io() {
         "/agent/1",
         "default",
     );
-    environment
-        .operation_cleanup
-        .uncertain
-        .store(true, Ordering::Release);
+    drop(
+        environment
+            .operation_cleanup
+            .lease(NamespaceClient::new(environment.root.clone()), b"cancel")
+            .unwrap(),
+    );
     let result = environment
         .tool_execution()
         .run_action("test", "/bin/test", Vec::<String>::new())

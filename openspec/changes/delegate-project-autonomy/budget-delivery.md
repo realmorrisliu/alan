@@ -324,6 +324,37 @@ paths verify that marker and non-retry behavior. The original failed run is reta
 
 ## Known qualification gaps
 
+### Unidentified allocation follow-up — 2026-10-15
+
+The next regression reproduced an allocation lease being dropped without a captured
+operation identity while its scope still permitted admission and confirmed cleanup.
+Both explicit retirement and Drop now retain typed uncertainty in that scope when
+identity is absent. Existing Tool, generation and typed-evaluation admission checks
+therefore reject subsequent namespace IO. This is deliberately conservative even
+when allocation may have failed before producing an effect. It does not discover
+an unknown PID, prove an unidentified operation stopped, or qualify crash recovery.
+Known-identity retirement retains its existing finite control path.
+
+Independent review found that checking the scope only for successful results could
+still turn an allocation error into a clean budget pause on the next retry. A real
+LLM File-Server allocation/read-failure regression reproduced that false success.
+The shared submission boundary now checks the scope on both success and failure,
+keeping its concrete uncertainty underneath the original error context. Scope
+closure also preserves that typed uncertainty. The integration fixture exercises
+one-model exhaustion and cancellation after allocation, with no provider request,
+no extension wait and no terminal completion. This does not locate or stop the
+unidentified allocation.
+
+Clean `b80e85ca` native acceptance also resolved the apparent startup failure: queue
+`known:false` before first admitted input is existing evidence behavior, explicitly
+covered by the queue projection suite. The terminal accepted the first text-only
+task and returned exactly 1–500, with one model, zero Tools and 17318ms retained
+accounting; the invocation exited cleanly. Ctrl-C arrived after task completion,
+so this is not running-cancellation acceptance. The earlier no-task probes and
+supervisor timeout remain recorded. Five native model admissions have occurred
+across these isolated checks; pilot/formal tasks remain zero. Initial queue labeling
+is an observed UI clarity issue, not evidence of a startup regression.
+
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation
 coverage; this does not implement a general mixed-program scheduler. Uncertain model
 or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
