@@ -178,6 +178,7 @@ pub(crate) struct TaskBudget {
     recorder: Option<RolloutRecorder>,
     ancestors: Vec<TaskBudget>,
     changed: Arc<tokio::sync::Notify>,
+    process_stop: CancellationToken,
 }
 
 impl TaskBudget {
@@ -242,6 +243,7 @@ impl TaskBudget {
             recorder,
             ancestors: Vec::new(),
             changed: Arc::new(tokio::sync::Notify::new()),
+            process_stop: CancellationToken::new(),
         })
     }
 
@@ -281,6 +283,10 @@ impl TaskBudget {
 
     async fn reserve_local(&self, admission: Admission, descendant: bool) -> Result<()> {
         let mut state = self.state.lock().await;
+        anyhow::ensure!(
+            !self.process_stop.is_cancelled(),
+            "Agent Process has exited"
+        );
         if state.poisoned {
             bail!("task budget evidence is uncertain; execution remains paused");
         }
@@ -315,6 +321,10 @@ impl TaskBudget {
 
     async fn remaining_time_local(&self, descendant: bool) -> Result<Duration> {
         let state = self.state.lock().await;
+        anyhow::ensure!(
+            !self.process_stop.is_cancelled(),
+            "Agent Process has exited"
+        );
         if state.poisoned {
             bail!("task budget evidence is uncertain; execution remains paused");
         }
@@ -337,6 +347,10 @@ impl TaskBudget {
 
     pub(crate) async fn resume(&self) -> Result<()> {
         self.validate_ancestry().await?;
+        anyhow::ensure!(
+            !self.process_stop.is_cancelled(),
+            "Agent Process has exited"
+        );
         let mut state = self.state.lock().await;
         let mut next = state.observed();
         if next.phase == Phase::Completed {
@@ -467,7 +481,7 @@ impl TaskBudget {
         tokio::pin!(future);
         tokio::select! {
             result = &mut future => result,
-            error = self.ancestor_stopped() => {
+            error = self.admission_stopped() => {
                 cancel.cancel();
                 match future.await {
                     Err(cleanup) => Err(cleanup.context(error)),

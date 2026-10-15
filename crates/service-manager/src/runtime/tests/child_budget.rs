@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Notify;
 
 #[derive(Debug, Default)]
@@ -8,10 +8,23 @@ struct HeldGeneration {
     entered: Notify,
     release: Notify,
     calls: AtomicUsize,
+    settled: AtomicBool,
 }
 
 #[derive(Debug)]
-struct Provider(Arc<HeldGeneration>);
+struct Provider {
+    gate: Arc<HeldGeneration>,
+    inner: MockLlmProvider,
+    hold_call: usize,
+}
+
+struct HeldCall(Arc<HeldGeneration>);
+
+impl Drop for HeldCall {
+    fn drop(&mut self) {
+        self.0.settled.store(true, Ordering::SeqCst);
+    }
+}
 
 #[async_trait::async_trait]
 impl LlmProvider for Provider {
@@ -19,11 +32,12 @@ impl LlmProvider for Provider {
         &mut self,
         request: alan_llm::GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<alan_llm::StreamChunk>> {
-        if self.0.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.0.entered.notify_one();
-            self.0.release.notified().await;
+        if self.gate.calls.fetch_add(1, Ordering::SeqCst) == self.hold_call {
+            let _held = HeldCall(self.gate.clone());
+            self.gate.entered.notify_one();
+            self.gate.release.notified().await;
         }
-        MockLlmProvider::new().generate_stream(request).await
+        self.inner.generate_stream(request).await
     }
 
     fn provider_name(&self) -> &'static str {
@@ -105,7 +119,11 @@ async fn agent_executable_cannot_start_without_or_escape_its_parent_task_budget(
             )
             .unwrap(),
         ),
-        LlmClient::new(Provider(gate.clone())),
+        LlmClient::new(Provider {
+            gate: gate.clone(),
+            inner: MockLlmProvider::new(),
+            hold_call: 0,
+        }),
         ToolRegistry::new(),
     ))
     .await
@@ -194,4 +212,110 @@ pub(super) fn admitted_parent_fixture() -> (MockLlmProvider, ToolRegistry, Arc<N
         warnings: vec![],
     }]);
     (provider, tools, entered, release)
+}
+
+#[tokio::test]
+async fn parent_process_abort_stops_inflight_child_without_a_fresh_allowance() {
+    for via_ctl in [false, true] {
+        let gate = Arc::new(HeldGeneration::default());
+        let (provider, tools, entered, release) = admitted_parent_fixture();
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        std::fs::create_dir_all(&stores.tmp).unwrap();
+        let mut process = AgentProcessConfig {
+            store_bindings: Some(stores),
+            ..Default::default()
+        };
+        process.agent_config.core_config.memory.enabled = false;
+        let launch = ProcessLaunchContext::root().with_descriptor(
+            alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
+            alan_agent_engine::ProcessDescriptor::with_file_tree(
+                "/lib/agents/root",
+                alan_agent_engine::ProcessFileTree::new(BTreeMap::new()).unwrap(),
+            )
+            .unwrap(),
+        );
+        let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
+            process,
+            launch,
+            LlmClient::new(Provider {
+                gate: gate.clone(),
+                inner: provider,
+                hold_call: 1,
+            }),
+            tools,
+        ))
+        .await
+        .unwrap();
+        let parent = manager.root_pid();
+        let shell = alan_shell::Shell::new(manager.root_namespace.clone());
+        shell
+            .write("/agent/root/io/input", b"hold parent task")
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        let child = spawn_child(&shell, parent).await;
+        tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+            .await
+            .unwrap();
+        if via_ctl {
+            shell
+                .write(&format!("/proc/{}/ctl", parent.0), b"cancel")
+                .await
+                .unwrap();
+        } else {
+            manager.terminate_unit("root-agent", 137).await.unwrap();
+        }
+        let stopped =
+            tokio::time::timeout(Duration::from_secs(2), child_output(&shell, &child)).await;
+        let settled = gate.settled.load(Ordering::SeqCst);
+        let calls = gate.calls.load(Ordering::SeqCst);
+        gate.release.notify_one();
+        release.notify_one();
+        let new_parent = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let pid = manager.root_pid();
+                if pid != Pid(0) && pid != parent {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            gate.calls.load(Ordering::SeqCst),
+            2,
+            "Root replacement must not replay old work"
+        );
+        assert_eq!(
+            manager.procfs.try_observe_process_lifecycle(new_parent),
+            Some((Status::Running, None))
+        );
+        manager.shutdown().await.unwrap();
+        let output = stopped.expect("an aborted parent must stop the child's admitted model work");
+        assert!(settled, "child Process completion must await model cleanup");
+        assert_eq!(
+            calls, 2,
+            "no replacement task or model retry may be admitted"
+        );
+        let result =
+            alan_agent_engine::AgentExecutableResult::from_process_output(&output).unwrap();
+        assert_eq!(
+            result.status,
+            alan_agent_engine::AgentExecutableStatus::Failed
+        );
+        assert!(
+            result.pause.is_none(),
+            "a dead ancestor cannot receive child-local extension"
+        );
+    }
 }

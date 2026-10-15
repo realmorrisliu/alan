@@ -152,6 +152,26 @@ extension for someone else's ledger. Automatic descendant restart, subtree recov
 and a correlated parent/child continuation UX are not delivered by this slice; do
 not use a failed child or Root fallback to qualify delegated success.
 
+### Agent Process exit boundary under verification — 2026-10-15
+
+The existing Process cleanup guard now closes its trusted budget binding even when
+Kernel control aborts the runtime future. Every captured ledger for that Process,
+including old deferred work, shares the exit signal; child and grandchild bindings
+inherit cancellation. New admission and resume fail after exit, while an admitted
+descendant operation uses its existing cancellation/cleanup path before reporting
+failure. This cannot grant a child-local extension for a dead ancestor. It does
+not rewrite an interrupted ledger as completed or refund consumed calls/time;
+existing recovery conservatively accounts for its unclosed active interval.
+
+Each replacement Root Agent Process receives a fresh live binding before explicit
+recovery validates the original durable budget. The exited Process's captured
+work remains stopped. Source integration covers both Service Manager-recorded exit
+and direct `/proc/<pid>/ctl` cancellation while a real child Agent Process holds a
+model call, settled model cleanup, no retry/replay and a replacement Root reaching
+readiness. Ledger tests cover old/current allowances, grandchildren and cleanup
+time. These are source tests, not physical terminal or arbitrary host-effect
+cleanup acceptance. Correlated subtree recovery and inherited-stop UX remain open.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation

@@ -41,6 +41,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** a foreground answer, fallback or cancellation finishes while admitted descendants are still cleaning up
 - **THEN** its terminal completion event is withheld until cleanup and owning submission finalization succeed, terminal source-owner projections do not announce idle before that cleanup, final evidence and IO time remain charged, and uncertain finalization does not publish a successful completion
 
+#### Scenario: An Agent Process is forcibly ended
+- **WHEN** Kernel control or the host ends an Agent Process while its captured descendant work remains in flight
+- **THEN** the Process exit closes admission for its captured ledgers and descendants, admitted descendant operations cancel and settle through existing cleanup before reporting failure, consumed budget is retained without offering child-local extension for a dead ancestor, and a replacement Process does not revive the exited Process's captured work
+
 #### Scenario: Descendant evidence is recovered without its parent authority
 - **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
 - **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits

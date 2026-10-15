@@ -173,6 +173,7 @@ impl AgentRuntimeService {
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
         let mut template = template.clone();
+        template.task_budget_binding = Default::default();
         root_recovery::select(
             &mut template.process,
             template.resume_persisted_rollout,
@@ -275,11 +276,12 @@ impl AgentRuntimeService {
         if invocation.exec.executable != AGENT_EXECUTABLE {
             return ProcessOutcome::exited(127, b"alan-agent: executable mismatch\n");
         }
-        let _cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
+        let mut cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
         let mut launch = match self.prepare_launch(&invocation) {
             Ok(launch) => launch,
             Err(error) => return process_error(error),
         };
+        cleanup.bind_budget(launch.template.task_budget_binding.clone());
         let result = self.run_prepared_agent(&invocation, &mut launch).await;
         if let Err(error) = &result
             && let Some(ready) = launch.ready.take()

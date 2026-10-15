@@ -359,3 +359,78 @@ async fn completion_drain_keeps_final_io_time_charged_and_recovers_conservativel
     assert_eq!(snapshot.elapsed_millis, 5000);
     assert!(snapshot.foreground_complete);
 }
+
+#[tokio::test]
+async fn process_exit_retires_old_current_and_grandchild_allowances_without_reset() {
+    let binding = TaskBudgetBinding::default();
+    let old = start(&binding, "old", limits(30, 8, 8)).await;
+    old.reserve(Admission::Model).await.unwrap();
+    old.finish_foreground().await.unwrap();
+    old.resume().await.unwrap(); // Captured background work retains its old ledger.
+    let current = start(&binding, "current", limits(30, 8, 8)).await;
+    let child_binding = binding.child().unwrap();
+    let child = start(&child_binding, "child", limits(30, 8, 8)).await;
+    let grandchild_binding = child_binding.child().unwrap();
+    let grandchild = start(&grandchild_binding, "grandchild", limits(30, 8, 8)).await;
+    grandchild.reserve(Admission::Model).await.unwrap();
+    binding.process_exited();
+    for budget in [&old, &current, &child, &grandchild] {
+        let error = budget.reserve(Admission::Tool).await.unwrap_err();
+        assert!(
+            !error.is::<Exhausted>(),
+            "a dead Process cannot receive more allowance"
+        );
+        assert!(budget.resume().await.is_err());
+        assert_eq!(budget.snapshot().await.model_calls, 1);
+        assert_eq!(budget.snapshot().await.tool_calls, 0);
+    }
+    assert!(binding.child().is_err());
+    assert!(child_binding.child().is_err());
+    assert!(grandchild_binding.child().is_err());
+    let fresh = start(
+        &TaskBudgetBinding::default(),
+        "new-process",
+        limits(30, 8, 8),
+    )
+    .await;
+    fresh.reserve(Admission::Model).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn process_exit_cancels_grandchild_and_awaits_its_cleanup_without_refund() {
+    let binding = TaskBudgetBinding::default();
+    let parent = start(&binding, "parent", limits(30, 8, 8)).await;
+    let child_binding = binding.child().unwrap();
+    let child = start(&child_binding, "child", limits(30, 8, 8)).await;
+    let grandchild = start(
+        &child_binding.child().unwrap(),
+        "grandchild",
+        limits(30, 8, 8),
+    )
+    .await;
+    grandchild.reserve(Admission::Model).await.unwrap();
+    let cleaned = Arc::new(AtomicBool::new(false));
+    let operation_cleaned = cleaned.clone();
+    let stop = async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        binding.process_exited();
+    };
+    let cancel = CancellationToken::new();
+    let operation = grandchild.run(&cancel, |cancel| async move {
+        cancel.cancelled().await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        operation_cleaned.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    let (result, _) = tokio::join!(operation, stop);
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("Agent Process exited"));
+    assert!(!error.is::<Exhausted>());
+    assert!(cleaned.load(Ordering::SeqCst));
+    for budget in [&parent, &child, &grandchild] {
+        let snapshot = budget.snapshot().await;
+        assert_eq!(snapshot.elapsed_millis, 3000);
+        assert_eq!(snapshot.model_calls, 1);
+        assert!(!snapshot.descendants_active);
+    }
+}

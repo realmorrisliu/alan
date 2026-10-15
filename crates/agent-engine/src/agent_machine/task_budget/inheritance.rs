@@ -26,11 +26,16 @@ impl Drop for DescendantLease {
 pub struct TaskBudgetBinding {
     current: Arc<Mutex<Option<TaskBudget>>>,
     parent: Option<TaskBudget>,
+    process_stop: super::CancellationToken,
 }
 
 impl TaskBudgetBinding {
     /// Capture the current parent task; subsequent parent tasks cannot replace it.
     pub fn child(&self) -> Result<Self> {
+        ensure!(
+            !self.process_stop.is_cancelled(),
+            "parent Agent Process has exited"
+        );
         let parent = self
             .current
             .lock()
@@ -40,7 +45,13 @@ impl TaskBudgetBinding {
         Ok(Self {
             current: Default::default(),
             parent: Some(parent),
+            process_stop: self.process_stop.child_token(),
         })
+    }
+
+    /// Notify the trusted host's Process-exit guard; captured work cannot outlive it.
+    pub fn process_exited(&self) {
+        self.process_stop.cancel();
     }
 
     pub(crate) fn parent(&self) -> Option<TaskBudget> {
@@ -48,7 +59,12 @@ impl TaskBudgetBinding {
     }
 
     pub(crate) async fn bind(&self, budget: &mut TaskBudget) -> Result<()> {
+        ensure!(
+            !self.process_stop.is_cancelled(),
+            "Agent Process has exited"
+        );
         budget.attach_ancestors(parent_chain(self.parent())).await?;
+        budget.process_stop = self.process_stop.clone();
         *self.current.lock().expect("task budget binding poisoned") = Some(budget.clone());
         Ok(())
     }
@@ -86,7 +102,8 @@ impl TaskBudget {
         for ancestor in &self.ancestors {
             let state = ancestor.state.lock().await;
             ensure!(
-                !state.poisoned
+                !ancestor.process_stop.is_cancelled()
+                    && !state.poisoned
                     && state.snapshot.phase == Phase::Running
                     && !state.snapshot.foreground_complete,
                 "Parent task budget stopped before child execution"
@@ -128,6 +145,7 @@ impl TaskBudget {
         );
         if let Some(parent) = ancestors.last() {
             self.changed = parent.changed.clone();
+            self.process_stop = parent.process_stop.child_token();
         }
         self.ancestors = ancestors;
         Ok(())
@@ -178,24 +196,30 @@ impl TaskBudget {
         None
     }
 
-    pub(super) async fn ancestor_stopped(&self) -> anyhow::Error {
-        if self.ancestors.is_empty() {
-            return std::future::pending().await;
-        }
-        loop {
-            let changed = self.changed.notified();
-            tokio::pin!(changed);
-            changed.as_mut().enable();
-            for ancestor in &self.ancestors {
-                let state = ancestor.state.lock().await;
-                if state.poisoned
-                    || state.snapshot.phase != Phase::Running
-                    || state.snapshot.foreground_complete
-                {
-                    return anyhow!("Parent task budget stopped; child work must settle");
-                }
+    pub(super) async fn admission_stopped(&self) -> anyhow::Error {
+        let ancestor_stopped = async {
+            if self.ancestors.is_empty() {
+                return std::future::pending().await;
             }
-            changed.await;
+            loop {
+                let changed = self.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                for ancestor in &self.ancestors {
+                    let state = ancestor.state.lock().await;
+                    if state.poisoned
+                        || state.snapshot.phase != Phase::Running
+                        || state.snapshot.foreground_complete
+                    {
+                        return anyhow!("Parent task budget stopped; child work must settle");
+                    }
+                }
+                changed.await;
+            }
+        };
+        tokio::select! {
+            _ = self.process_stop.cancelled() => anyhow!("Agent Process exited; task work must settle"),
+            error = ancestor_stopped => error,
         }
     }
 }
