@@ -222,8 +222,22 @@ the runtime-selected default, and shares a compact consumed/limit/proposal summa
 between fresh and recalculated recovery waits. Zero increases are omitted; recovered
 upper-bound time remains labeled. A recovered native wait also initially showed
 `model unknown` until the response despite retaining the admitted binding; that
-observation and extension acceptance remain open. The initial fixture's missing
+model-observation gap remains open. The initial fixture's missing
 `memory.strict_store` was corrected before any model request and retained separately.
+
+A fresh clean `d3da75e0` candidate verified the revised display in the same isolated
+Herdr fixture. Its pause showed each summary line once, all three consumed/total
+allowances and the waiting-for-approval cue. Exit and explicit recovery retained
+one model call, zero Tools and 2767ms without dispatch. Numeric `2` approved the
+proposed increase: the model limit rose from one to two with consumption still one.
+The retained Tool was attempted once and charged; it was denied because no Host
+project directory was authorized. The second model call accurately reported that
+failure. Final accounting retained the same task, two models, one Tool attempt and
+6954ms, with foreground completion. The namespace-listing task did not succeed;
+this proves budget controls, not a successful development task or wider authority.
+Both native candidates are stopped. Total fixture model admissions are three;
+pilot starts and formal qualification remain zero. Empty-input rejection is covered
+by source tests rather than another live-model run.
 
 CI for `948e51e4` failed an older cause-read timeout test on its one-second wall
 clock assertion, then cancelled the paired Linux job. The test now uses Tokio's
