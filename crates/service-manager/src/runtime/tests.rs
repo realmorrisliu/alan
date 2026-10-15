@@ -480,7 +480,7 @@ async fn root_agent_is_replaced_without_pid_continuity() {
 
 #[tokio::test]
 async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
-    let (provider, tools, entered, release) = child_budget::admitted_parent_fixture();
+    let (provider, tools, entered, release, _) = child_budget::admitted_parent_fixture();
     let temp = tempfile::tempdir().unwrap();
     let stores = alan_agent_engine::AgentRuntimeStoreBindings {
         rollouts: temp.path().join("rollouts"),
@@ -975,3 +975,5 @@ mod skill_lifecycle;
 
 mod child_budget;
 mod input_shadow;
+
+mod root_abort;

@@ -18,7 +18,9 @@ pub use evaluation::{
     NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
 };
 mod host_mount_requests;
+mod operation_cleanup;
 mod process_files;
+pub(crate) use operation_cleanup::NamespaceOperationCleanup;
 mod tool_execution;
 
 use std::{
@@ -179,6 +181,7 @@ pub struct NamespaceToolActionOutput {
 #[derive(Clone)]
 pub struct NamespaceRuntimeEnvironment {
     pub(crate) task_budget_binding: crate::TaskBudgetBinding,
+    pub(crate) operation_cleanup: NamespaceOperationCleanup,
     pub(crate) shadow_evaluation: Option<Arc<super::super::shadow_evaluation::ShadowEvaluation>>,
     pub(crate) work_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     pub(crate) evaluation_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
@@ -210,6 +213,7 @@ pub(crate) struct NamespaceGeneration {
     root: InProcessTransport,
     llm_connection: String,
     budget: Option<crate::agent_machine::task_budget::TaskBudget>,
+    operation_cleanup: NamespaceOperationCleanup,
 }
 
 /// Narrow handle for files owned by one AgentFS process layout.
@@ -248,6 +252,7 @@ pub(crate) struct NamespaceChildLaunch {
 /// Narrow handle for Tool package discovery, policy capability, and execution.
 #[derive(Clone)]
 pub(crate) struct NamespaceToolExecution {
+    operation_cleanup: NamespaceOperationCleanup,
     root: InProcessTransport,
     process_files: NamespaceProcessFiles,
     agent_files: NamespaceAgentFiles,
@@ -289,6 +294,7 @@ impl NamespaceRuntimeEnvironment {
     ) -> Self {
         Self {
             task_budget_binding: Default::default(),
+            operation_cleanup: Default::default(),
             shadow_evaluation: None,
             evaluation_publisher: None,
             work_publisher: None,
@@ -343,12 +349,14 @@ impl NamespaceRuntimeEnvironment {
                 root: callable.root.clone(),
                 llm_connection: callable.connection.clone(),
                 budget: None,
+                operation_cleanup: self.operation_cleanup.clone(),
             };
         }
         NamespaceGeneration {
             root: self.root.clone(),
             llm_connection: self.llm_connection.clone(),
             budget: None,
+            operation_cleanup: self.operation_cleanup.clone(),
         }
     }
 
@@ -393,6 +401,7 @@ impl NamespaceRuntimeEnvironment {
 
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         NamespaceToolExecution {
+            operation_cleanup: self.operation_cleanup.clone(),
             root: self.root.clone(),
             process_files: self.process_files(),
             agent_files: self.agent_files(),

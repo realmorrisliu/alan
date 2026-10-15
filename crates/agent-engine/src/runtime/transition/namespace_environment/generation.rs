@@ -97,10 +97,11 @@ impl NamespaceGeneration {
         let request_doc = LlmRequestDoc::from_generation_request(request)?;
         let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
         let client = NamespaceClient::new(self.root.clone());
-        let generation_id = start_generation_controlled(
+        let (generation_id, mut operation) = start_generation_controlled(
             &client,
             &self.llm_connection,
             &request_bytes,
+            &self.operation_cleanup,
             timeout_secs,
             cancel,
         )
@@ -116,6 +117,7 @@ impl NamespaceGeneration {
         )
         .await
         .with_context(|| format!("read llmfs generation {generation_id}"))?;
+        operation.settled();
         Ok(response)
     }
 
@@ -209,10 +211,11 @@ impl NamespaceGeneration {
         let request_doc = LlmRequestDoc::from_generation_request(request)?;
         let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
         let client = NamespaceClient::new(self.root.clone());
-        let generation_id = start_generation_controlled(
+        let (generation_id, mut operation) = start_generation_controlled(
             &client,
             &self.llm_connection,
             &request_bytes,
+            &self.operation_cleanup,
             timeout_secs,
             cancel,
         )
@@ -233,6 +236,7 @@ impl NamespaceGeneration {
         )
         .await
         .with_context(|| format!("read llmfs generation {generation_id}"))?;
+        operation.settled();
         Ok(response)
     }
 }
@@ -257,11 +261,17 @@ impl NamespaceTurnRuntime {
             let request_doc = LlmRequestDoc::from_generation_request(&request)?;
             let request_bytes =
                 serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
-            let generation_id =
-                start_generation(&client, &generation.llm_connection, &request_bytes).await?;
+            let (generation_id, mut operation) = start_generation(
+                &client,
+                &generation.llm_connection,
+                &request_bytes,
+                &generation.operation_cleanup,
+            )
+            .await?;
             let generation_response =
                 read_generation_response(&client, &generation.llm_connection, &generation_id)
                     .await?;
+            operation.settled();
             let response = generation_response.content;
 
             agent_files.write_assistant_output(&response).await?;
@@ -452,30 +462,40 @@ pub(super) async fn start_generation(
     client: &NamespaceClient,
     llm_connection: &str,
     request: &[u8],
-) -> Result<String> {
+    cleanup: &super::NamespaceOperationCleanup,
+) -> Result<(String, super::operation_cleanup::OperationLease)> {
+    let mut operation = cleanup.lease(client.clone(), b"abort")?;
     let clone_path = format!("/mnt/llm/connections/{llm_connection}/clone");
     let generation_id = client
         .clone_via_open(&clone_path)
         .await
         .context("llmfs clone returned generation id")?;
 
+    operation.capture(format!(
+        "/mnt/llm/connections/{llm_connection}/{generation_id}/ctl"
+    ))?;
     cause::commit_generation(client, llm_connection, &generation_id, request).await?;
-    Ok(generation_id)
+    Ok((generation_id, operation))
 }
 
 async fn start_generation_controlled(
     client: &NamespaceClient,
     llm_connection: &str,
     request: &[u8],
+    cleanup: &super::NamespaceOperationCleanup,
     timeout_secs: u64,
     cancel: &CancellationToken,
-) -> Result<String> {
+) -> Result<(String, super::operation_cleanup::OperationLease)> {
+    let mut operation = cleanup.lease(client.clone(), b"abort")?;
     let clone_path = format!("/mnt/llm/connections/{llm_connection}/clone");
     let generation_id = client
         .clone_via_open(&clone_path)
         .await
         .context("llmfs clone returned generation id")?;
 
+    operation.capture(format!(
+        "/mnt/llm/connections/{llm_connection}/{generation_id}/ctl"
+    ))?;
     let commit = cause::commit_generation(client, llm_connection, &generation_id, request);
     let result = run_generation_step_with_controls(
         commit,
@@ -487,7 +507,7 @@ async fn start_generation_controlled(
     )
     .await;
     match result {
-        Ok(()) => Ok(generation_id),
+        Ok(()) => Ok((generation_id, operation)),
         Err(err) => Err(err),
     }
 }

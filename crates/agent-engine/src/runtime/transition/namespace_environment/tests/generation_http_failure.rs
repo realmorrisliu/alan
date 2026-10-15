@@ -67,6 +67,7 @@ async fn local_http_openrouter401_engine_failed_commit() {
                 &client,
                 "default",
                 &serde_json::to_vec(&doc).unwrap(),
+                &environment.operation_cleanup,
             )
             .await
             .unwrap_err()

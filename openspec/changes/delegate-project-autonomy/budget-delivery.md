@@ -172,6 +172,38 @@ readiness. Ledger tests cover old/current allowances, grandchildren and cleanup
 time. These are source tests, not physical terminal or arbitrary host-effect
 cleanup acceptance. Correlated subtree recovery and inherited-stop UX remain open.
 
+### Dropped runtime operation retirement under verification — 2026-10-15
+
+Root's own in-flight work also needs retirement when Kernel abort drops the runtime
+future. Source regressions reproduced a live model stream and an executing Tool
+Process surviving that drop. Allocated generation and Tool operations now retain
+adapter-owned cancellation guards; evaluation reuses the same tracked Drop cleanup.
+Admission is checked before allocation/spawn. A guard retains a returned identity
+before rechecking scope, so uncertainty racing allocation cannot leave a known PID
+or operation unguarded. Evaluation also rechecks before commit. A review regression
+first observed namespace IO before uncertain Tool admission was rejected; it now
+covers Tool, generation and evaluation with zero IO, plus retirement of a captured
+identity when uncertainty arrives during allocation.
+Confirmed terminal results disarm the guards. Dropped operations issue bounded
+existing `abort`/`cancel` control writes without rerunning the effect.
+
+Runtime exit waits for these cleanup jobs before closing its rollout writer.
+Timeout, failed control acknowledgement or a panicked cleanup job retains an
+unconfirmed-cleanup error; it does not turn interrupted work into a completed task.
+A refused abort of an already-terminal model requires a confirming status read.
+The scoped tracker owns only retirement jobs, not Agent execution or Process
+lifecycle; existing Kernel, Runtime and rollout ownership remains unchanged.
+The existing tokio-util dependency enables its task-tracking feature; no package
+version or new package is introduced.
+
+Source integration now stops an established model stream and an executing registered
+Tool after direct Root Kernel cancellation. Additional tests hold the control
+acknowledgement, fail/time out/panic cleanup, check closed admission and confirm
+runtime exit still drains/closes its writer while returning uncertainty. These do
+not qualify arbitrary OS effects or allocation/dispatch identity-loss windows.
+Interrupted execution evidence remains subject to existing explicit recovery and
+unknown-effect reconciliation, never automatic replay.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation

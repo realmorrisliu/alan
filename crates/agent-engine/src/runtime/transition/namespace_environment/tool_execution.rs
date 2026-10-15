@@ -150,9 +150,11 @@ impl NamespaceToolExecution {
         if cancel.is_cancelled() {
             bail!("tool process cancelled before spawn");
         }
+        let mut operation = self.operation_cleanup.lease(self.client(), b"cancel")?;
         let read_only_before =
             evidence.and_then(|evidence| self.read_only_context(tool_name, evidence));
         let pid = self.process_files.spawn_process(executable, args).await?;
+        operation.capture(format!("/proc/{pid}/ctl"))?;
         let result = tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;
@@ -181,6 +183,7 @@ impl NamespaceToolExecution {
                 }
             }
         };
+        operation.settled();
         let action_exit_code = logical_tool_action_exit_code(&result);
         let native_receipt = self.tool_process_context.as_ref().and_then(|context| {
             context

@@ -164,9 +164,20 @@ async fn agent_executable_cannot_start_without_or_escape_its_parent_task_budget(
     manager.shutdown().await.unwrap();
 }
 
-pub(super) fn admitted_parent_fixture() -> (MockLlmProvider, ToolRegistry, Arc<Notify>, Arc<Notify>)
-{
-    struct HoldTool(Arc<Notify>, Arc<Notify>);
+pub(super) fn admitted_parent_fixture() -> (
+    MockLlmProvider,
+    ToolRegistry,
+    Arc<Notify>,
+    Arc<Notify>,
+    Arc<AtomicBool>,
+) {
+    struct HeldTool(Arc<AtomicBool>);
+    impl Drop for HeldTool {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    struct HoldTool(Arc<Notify>, Arc<Notify>, Arc<AtomicBool>);
     impl alan_agent_engine::tools::Tool for HoldTool {
         fn name(&self) -> &str {
             "hold_parent_task"
@@ -184,7 +195,9 @@ pub(super) fn admitted_parent_fixture() -> (MockLlmProvider, ToolRegistry, Arc<N
         ) -> alan_agent_engine::tools::ToolResult {
             let entered = self.0.clone();
             let release = self.1.clone();
+            let settled = self.2.clone();
             Box::pin(async move {
+                let _held = HeldTool(settled);
                 entered.notify_one();
                 release.notified().await;
                 Ok(json!({"done":true}))
@@ -194,7 +207,8 @@ pub(super) fn admitted_parent_fixture() -> (MockLlmProvider, ToolRegistry, Arc<N
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
     let mut tools = ToolRegistry::new();
-    tools.register(HoldTool(entered.clone(), release.clone()));
+    let settled = Arc::new(AtomicBool::new(false));
+    tools.register(HoldTool(entered.clone(), release.clone(), settled.clone()));
     let provider = MockLlmProvider::new().with_responses(vec![alan_llm::GenerationResponse {
         content: String::new(),
         thinking: None,
@@ -211,14 +225,14 @@ pub(super) fn admitted_parent_fixture() -> (MockLlmProvider, ToolRegistry, Arc<N
         provider_response_status: None,
         warnings: vec![],
     }]);
-    (provider, tools, entered, release)
+    (provider, tools, entered, release, settled)
 }
 
 #[tokio::test]
 async fn parent_process_abort_stops_inflight_child_without_a_fresh_allowance() {
     for via_ctl in [false, true] {
         let gate = Arc::new(HeldGeneration::default());
-        let (provider, tools, entered, release) = admitted_parent_fixture();
+        let (provider, tools, entered, release, _) = admitted_parent_fixture();
         let temp = tempfile::tempdir().unwrap();
         let stores = alan_agent_engine::AgentRuntimeStoreBindings {
             rollouts: temp.path().join("rollouts"),

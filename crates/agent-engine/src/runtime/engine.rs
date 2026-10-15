@@ -353,6 +353,7 @@ fn spawn_with_prepared_runtime_environment(
     host_capabilities: crate::skills::SkillHostCapabilities,
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
+    let operation_cleanup = environment.operation_cleanup.clone();
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     let (ready_tx, ready_rx) =
@@ -980,6 +981,7 @@ fn spawn_with_prepared_runtime_environment(
         task_handle,
         ready_rx,
         recorder,
+        operation_cleanup,
     ))
 }
 

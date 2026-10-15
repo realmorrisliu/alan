@@ -27,9 +27,9 @@ use turn_execution::run_turn_with_writer;
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
-    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceTapeWriter,
-    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
-    PendingActionPublication,
+    NamespaceGeneration, NamespaceHostMountRequests, NamespaceOperationCleanup,
+    NamespaceProcessFiles, NamespaceTapeWriter, NamespaceToolActionEvidence,
+    NamespaceToolExecution, NamespaceToolProcessError, PendingActionPublication,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,

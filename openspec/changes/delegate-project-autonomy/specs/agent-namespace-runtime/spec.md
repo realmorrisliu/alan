@@ -45,6 +45,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** Kernel control or the host ends an Agent Process while its captured descendant work remains in flight
 - **THEN** the Process exit closes admission for its captured ledgers and descendants, admitted descendant operations cancel and settle through existing cleanup before reporting failure, consumed budget is retained without offering child-local extension for a dead ancestor, and a replacement Process does not revive the exited Process's captured work
 
+#### Scenario: Runtime future is dropped during an allocated operation
+- **WHEN** forced Process termination drops a runtime with an allocated model or Tool operation
+- **THEN** adapter-owned guards retire that operation through bounded existing controls, runtime exit waits for tracked retirement before closing its writer, and timeout, failed acknowledgement or cleanup panic remains an unconfirmed outcome rather than successful completion or permission to replay the effect
+
 #### Scenario: Descendant evidence is recovered without its parent authority
 - **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
 - **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits
