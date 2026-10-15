@@ -9,6 +9,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** a task reaches any configured execution budget
 - **THEN** further dependent work pauses with a readable reason and retained state
 
+#### Scenario: Budget confirmation appears in the terminal
+- **WHEN** a live or recovered budget confirmation is rendered from AgentFS
+- **THEN** it uses confirmation controls with the runtime's default rejection, shows consumed and total time/Tool/model allowances and the proposed increase once, labels recovered upper-bound time, and omits zero increases
+
 #### Scenario: Task resumes after restart
 - **WHEN** a user selects a paused task for recovery
 - **THEN** its consumed budget remains accounted and no completed effect is replayed

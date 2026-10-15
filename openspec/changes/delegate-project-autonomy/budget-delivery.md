@@ -204,6 +204,32 @@ not qualify arbitrary OS effects or allocation/dispatch identity-loss windows.
 Interrupted execution evidence remains subject to existing explicit recovery and
 unknown-effect reconciliation, never automatic replay.
 
+## Isolated native budget acceptance — 2026-10-15
+
+A clean `948e51e4` binary ran through Herdr with isolated Host/System Stores, an
+empty project directory and no Host project grant. A real read-only namespace task
+paused at one admitted model request before Tool dispatch. Exit and explicit
+`--resume` preserved the same task, one model call, zero Tools and 3302ms charged
+time; recovery itself made no new call. Rejecting extension stopped the task with
+the same consumption. This is native acceptance work, not a pilot or formal
+daily-use task, and the installed product was not changed.
+
+The run exposed duplicate budget text and lost confirmation controls: the file
+renderer classified `task_budget_extension` as custom input. Source regressions
+also reproduced omission of the runtime's default option from AgentFS. The
+follow-up recognizes the existing budget request kind as confirmation, projects
+the runtime-selected default, and shares a compact consumed/limit/proposal summary
+between fresh and recalculated recovery waits. Zero increases are omitted; recovered
+upper-bound time remains labeled. A recovered native wait also initially showed
+`model unknown` until the response despite retaining the admitted binding; that
+observation and extension acceptance remain open. The initial fixture's missing
+`memory.strict_store` was corrected before any model request and retained separately.
+
+CI for `948e51e4` failed an older cause-read timeout test on its one-second wall
+clock assertion, then cancelled the paired Linux job. The test now uses Tokio's
+paused clock for the same timeout and descriptor-cleanup checks; the runtime's
+100ms bound is unchanged. New-head CI must pass independently.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation

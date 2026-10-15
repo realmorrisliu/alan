@@ -192,7 +192,7 @@ async fn stat_bounded_missing_oversize_bad_and_short_published_causes() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cause_read_error_and_100ms_timeout_clunk_fid_preserving_io() {
     for mode in ["error", "pending"] {
         let fs = CauseFs::new(VALID, VALID.len() as u64, mode);

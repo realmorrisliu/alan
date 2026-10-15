@@ -96,6 +96,37 @@ async fn waiting(machine: AgentMachine, tools: bool) -> (RuntimeLoopState, Strin
 }
 
 #[tokio::test]
+async fn budget_confirmation_file_keeps_default_and_visible_accounting() {
+    let (state, request_id) = waiting(AgentMachine::new(), true).await;
+    let shell = alan_shell::Shell::new(state.environment.root_transport());
+    let options: serde_json::Value = serde_json::from_slice(
+        &shell
+            .cat(&format!("/agent/1/requests/{request_id}/options"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(options["default_option"], "reject");
+    let summary = &state.machine.pending_confirmation().unwrap().summary;
+    assert!(summary.contains("models 1/1"), "{summary}");
+    assert!(summary.contains("tools 0/256"), "{summary}");
+    assert!(summary.contains("1 model call"), "{summary}");
+    assert!(!summary.contains("0 Tool attempts"), "{summary}");
+}
+
+#[tokio::test]
+async fn budget_confirmation_labels_recovered_time_and_zero_addition() {
+    let (state, _) = waiting(AgentMachine::new(), false).await;
+    let mut spent = state.machine.task_budget.as_ref().unwrap().snapshot().await;
+    spent.recovered_time_upper_bound = true;
+    let summary = confirmation_summary("Resume retained task", &spent, &Extension::default());
+    assert!(summary.contains("recovered upper bound"), "{summary}");
+    assert!(summary.contains("models 1/1"), "{summary}");
+    assert!(summary.contains("no additional budget"), "{summary}");
+    assert!(!summary.contains("Additional allowance:"), "{summary}");
+}
+
+#[tokio::test]
 async fn extension_covers_cleanup_overrun_without_refunding_spent_time() {
     let mut state = state(AgentMachine::new());
     state.core_config.task_budget.execution_seconds = NonZeroU64::new(1).unwrap();

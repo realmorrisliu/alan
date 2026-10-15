@@ -67,6 +67,43 @@ fn extension(
     Ok(additional)
 }
 
+fn confirmation_summary(
+    title: &str,
+    spent: &crate::agent_machine::task_budget::Snapshot,
+    additional: &Extension,
+) -> String {
+    let additions = [
+        (additional.execution_seconds, "second"),
+        (additional.tool_calls, "Tool call"),
+        (additional.model_calls, "model call"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, unit)| format!("{count} {unit}{}", if count == 1 { "" } else { "s" }))
+    .collect::<Vec<_>>()
+    .join(", ");
+    let proposal = if additions.is_empty() {
+        "Resume using remaining allowance; no additional budget".into()
+    } else {
+        format!("Additional allowance: {additions}")
+    };
+    let time_note = if spent.recovered_time_upper_bound {
+        " (recovered upper bound)"
+    } else {
+        ""
+    };
+    format!(
+        "{title}\nUsed: time {}.{:03}/{}s{time_note}; tools {}/{}; models {}/{}\n{proposal}",
+        spent.elapsed_millis / 1000,
+        spent.elapsed_millis % 1000,
+        spent.limits.execution_seconds,
+        spent.tool_calls,
+        spent.limits.tool_calls,
+        spent.model_calls,
+        spent.limits.model_calls,
+    )
+}
+
 pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
     anyhow::ensure!(
         state.machine.task_budget_wait.is_none(),
@@ -179,9 +216,10 @@ where
         .as_ref()
         .filter(|work| work.outcome == crate::agent_machine::owner_work::Outcome::BudgetPaused);
     let additional = extension(&snapshot, limits, owner)?;
-    let summary = format!(
-        "{}; add {}s execution, {} Tool attempts and {} model requests?",
-        exhausted, additional.execution_seconds, additional.tool_calls, additional.model_calls,
+    let summary = confirmation_summary(
+        &format!("Task budget reached: {}", exhausted.dimension),
+        &snapshot,
+        &additional,
     );
     let generation_binding = state
         .environment
@@ -302,16 +340,10 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
         let additional = extension(&actual, limits, owner_work.as_ref())?;
         wait.resume_only = additional == Extension::default();
         wait.checkpoint.checkpoint_id = format!("task_budget_{}", uuid::Uuid::new_v4());
-        wait.checkpoint.details["budget"] = serde_json::to_value(actual)?;
+        wait.checkpoint.details["budget"] = serde_json::to_value(&actual)?;
         wait.checkpoint.details["additional"] = serde_json::to_value(&additional)?;
-        wait.checkpoint.summary = if wait.resume_only {
-            "Resume retained work using the previously approved remaining allowance?".into()
-        } else {
-            format!(
-                "Recovered task; retain spent counts and add {}s execution, {} Tool attempts and {} model requests? Unsettled execution time is conservatively accounted.",
-                additional.execution_seconds, additional.tool_calls, additional.model_calls
-            )
-        };
+        wait.checkpoint.summary =
+            confirmation_summary("Resume retained task", &actual, &additional);
         if let Some(batch) = &mut wait.continuation {
             batch
                 .tool_calls
