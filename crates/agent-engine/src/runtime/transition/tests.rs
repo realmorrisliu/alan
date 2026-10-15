@@ -23,6 +23,7 @@ use std::{
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+mod completion_budget;
 mod next_turn_disposition;
 mod owner_work;
 mod shadow_evaluation;

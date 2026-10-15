@@ -684,6 +684,11 @@ where
             .cancel_owned_request(request_id, &work.waiting_request().request_id)
             .await?;
     }
+    if !matches!(work.outcome, Outcome::Waiting { .. })
+        && let Some(budget) = &state.machine.task_budget
+    {
+        budget.prepare_completion().await?;
+    }
     state
         .environment
         .publish_work(Some(work.projection()?))

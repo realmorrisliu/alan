@@ -26,6 +26,44 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let mut completions = Vec::new();
+    let result = {
+        let mut ordered_emit = |event| {
+            if matches!(event, Event::TurnCompleted { .. }) {
+                completions.push(event);
+                futures::future::Either::Left(std::future::ready(()))
+            } else {
+                futures::future::Either::Right(emit(event))
+            }
+        };
+        handle_and_settle_submission(
+            state,
+            submission,
+            &mut ordered_emit,
+            cancel,
+            steering_broker,
+        )
+        .await
+    };
+    if result.is_ok() {
+        for completion in completions {
+            emit(completion).await;
+        }
+    }
+    result
+}
+
+async fn handle_and_settle_submission<E, F>(
+    state: &mut RuntimeLoopState,
+    submission: Submission,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    steering_broker: Option<&TurnInputBroker>,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
     let explicit_interrupt = matches!(submission.op, Op::Interrupt);
     let computational = matches!(
         submission.op,

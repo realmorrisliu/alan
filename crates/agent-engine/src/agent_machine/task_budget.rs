@@ -63,6 +63,7 @@ pub(crate) struct Extension {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Phase {
     Running,
+    Settling,
     Paused,
     Completed,
 }
@@ -222,7 +223,8 @@ impl TaskBudget {
         recorder: Option<RolloutRecorder>,
     ) -> Result<Self> {
         snapshot.validate()?;
-        if snapshot.phase == Phase::Running || snapshot.descendants_active {
+        if matches!(snapshot.phase, Phase::Running | Phase::Settling) || snapshot.descendants_active
+        {
             // A wall clock cannot reconstruct a lost monotonic interval. Charge
             // the remaining time rather than silently reset it after a crash.
             snapshot.elapsed_millis = snapshot.elapsed_millis.max(snapshot.limits.milliseconds()?);
@@ -271,7 +273,7 @@ impl TaskBudget {
         }
         state.snapshot = next;
         state.poisoned = false;
-        state.running_since = (state.snapshot.phase == Phase::Running
+        state.running_since = (matches!(state.snapshot.phase, Phase::Running | Phase::Settling)
             || state.snapshot.descendants_active)
             .then_some(checkpoint_started);
         Ok(())
@@ -372,6 +374,25 @@ impl TaskBudget {
             Phase::Paused
         };
         self.persist(&mut state, next).await
+    }
+
+    /// Stop descendants before publishing a final projection, while keeping final
+    /// evidence/IO time charged until the submission's owning settlement barrier.
+    pub(crate) async fn prepare_completion(&self) -> Result<()> {
+        let mut state = self.state.lock().await;
+        anyhow::ensure!(
+            !state.poisoned,
+            "task budget evidence is uncertain; completion withheld"
+        );
+        let mut next = state.observed();
+        if next.phase == Phase::Completed {
+            return Ok(());
+        }
+        next.phase = Phase::Settling;
+        self.persist(&mut state, next).await?;
+        drop(state);
+        self.await_descendants().await;
+        Ok(())
     }
 
     pub(crate) async fn finish_foreground(&self) -> Result<()> {

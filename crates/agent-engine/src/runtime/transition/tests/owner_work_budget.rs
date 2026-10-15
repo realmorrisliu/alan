@@ -1,6 +1,43 @@
 use super::*;
 
 #[tokio::test]
+async fn owner_completion_waits_for_descendant_cleanup_before_agentfs_idle() {
+    let (_dir, mut state, reads, calls, generation) =
+        fixture(Some("hostfs"), None, usize::MAX).await;
+    let input = control("Which crate defines HostDirFs?");
+    state.machine.accept_submission(input.id.clone());
+    crate::runtime::task_budget::begin(&mut state)
+        .await
+        .unwrap();
+    let parent = state.machine.task_budget.clone().unwrap();
+    let (cleanup, release, child) = super::super::completion_budget::held_descendant(parent).await;
+    let files = state.agent_files();
+    let transition = submit(&mut state, input);
+    let inspect = async {
+        cleanup.notified().await;
+        let activity = files.read_ui_activity_snapshot().await.unwrap();
+        release.notify_one();
+        activity.state
+    };
+    let (result, during_cleanup) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(transition, inspect)
+        })
+        .await
+        .unwrap();
+    result.unwrap();
+    assert!(child.await.unwrap().is_err());
+    assert_ne!(during_cleanup, alan_agent_protocol::UiActivityState::Idle);
+    assert_eq!(
+        files.read_ui_activity_snapshot().await.unwrap().state,
+        alan_agent_protocol::UiActivityState::Idle
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 3);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(generation.recorded_requests().is_empty());
+}
+
+#[tokio::test]
 async fn owner_budget_extension_resumes_the_program_without_repeating_source_reads() {
     let (_dir, mut state, reads, calls, generation) =
         fixture(Some("hostfs"), None, usize::MAX).await;

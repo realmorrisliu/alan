@@ -37,6 +37,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** a parent pauses, cancels or finishes while admitted descendant operations remain unsettled
 - **THEN** further descendant admission stops, in-flight operations are cancelled and awaited, cleanup time remains charged, and a crash during that unsettled interval cannot recover a free paused allowance or a fresh task identity
 
+#### Scenario: Foreground completion waits for descendant cleanup and finalization
+- **WHEN** a foreground answer, fallback or cancellation finishes while admitted descendants are still cleaning up
+- **THEN** its terminal completion event is withheld until cleanup and owning submission finalization succeed, terminal source-owner projections do not announce idle before that cleanup, final evidence and IO time remain charged, and uncertain finalization does not publish a successful completion
+
 #### Scenario: Descendant evidence is recovered without its parent authority
 - **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
 - **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits

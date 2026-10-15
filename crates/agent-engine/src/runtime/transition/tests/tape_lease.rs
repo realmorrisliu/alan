@@ -7,6 +7,7 @@ struct CountTapeOpens {
     tape_path: u64,
     writes: AtomicUsize,
     cancel_on_tape_close: Option<CancellationToken>,
+    fail_on_tape_close: bool,
     writer_fid: std::sync::Mutex<Option<Fid>>,
     closing_queue: std::sync::Mutex<
         Option<Arc<std::sync::Mutex<crate::agent_machine::input_queue::MachineInputQueue>>>,
@@ -60,6 +61,9 @@ impl FileServer for CountTapeOpens {
             }
             cancel.cancel();
         }
+        if self.fail_on_tape_close && *self.writer_fid.lock().unwrap() == Some(fid) {
+            return Err(ErrorCode::Io);
+        }
         Ok(())
     }
 }
@@ -79,6 +83,7 @@ async fn approved_replay_and_resumed_generation_share_one_tape_lease() {
             tape_path,
             writes: AtomicUsize::new(0),
             cancel_on_tape_close: None,
+            fail_on_tape_close: false,
             writer_fid: Default::default(),
             closing_queue: Default::default(),
         });
@@ -394,9 +399,10 @@ async fn manual_compaction_retains_the_tape_lease_until_generation_finishes() {
         .unwrap();
 }
 
-#[tokio::test]
-async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
-    let cancel = CancellationToken::new();
+async fn tape_close_state(
+    cancel: &CancellationToken,
+    fail_on_tape_close: bool,
+) -> (RuntimeLoopState, InProcessTransport) {
     let inner = alan_agentfs::AgentFs::new();
     let tape_path = inner
         .walk(Fid::ROOT, Fid(9), &["machine".into(), "tape".into()])
@@ -409,6 +415,7 @@ async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
         tape_path,
         writes: AtomicUsize::new(0),
         cancel_on_tape_close: Some(cancel.clone()),
+        fail_on_tape_close,
         writer_fid: Default::default(),
         closing_queue: Default::default(),
     });
@@ -438,6 +445,13 @@ async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
     ));
     state.core_config.memory.enabled = false;
     *agentfs.closing_queue.lock().unwrap() = Some(state.machine.input_queue());
+    (state, root)
+}
+
+#[tokio::test]
+async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
+    let cancel = CancellationToken::new();
+    let (mut state, root) = tape_close_state(&cancel, false).await;
     let submission = Submission::new(Op::Turn {
         parts: vec![alan_agent_protocol::ContentPart::text("task")],
         context: None,
@@ -472,4 +486,29 @@ async fn cancellation_after_tape_completion_does_not_cancel_the_answer() {
         })
         .collect();
     assert_eq!(statuses, [alan_agent_protocol::UiInputStatus::Completed]);
+}
+
+#[tokio::test]
+async fn failed_tape_close_withholds_the_terminal_completion_event() {
+    let cancel = CancellationToken::new();
+    let (mut state, _) = tape_close_state(&cancel, true).await;
+    let submission = Submission::new(Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("task")],
+        context: None,
+    });
+    let mut completions = 0;
+    let mut emit = |event| {
+        completions += usize::from(matches!(event, Event::TurnCompleted { .. }));
+        async {}
+    };
+    let result = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel).await;
+    assert!(result.is_err(), "uncertain Tape close must remain an error");
+    assert!(
+        cancel.is_cancelled(),
+        "the failure occurs at the Tape close barrier"
+    );
+    assert_eq!(
+        completions, 0,
+        "a failed finalization must not publish success"
+    );
 }

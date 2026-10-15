@@ -126,8 +126,23 @@ The parent awaits their cleanup while its active clock continues. A durable paus
 record identifies unsettled descendants; recovery conservatively charges the
 recorded time allowance rather than treating that interval as a free human wait.
 Budget-ledger foreground/terminal completion is not recorded until cleanup settles.
-This does not yet defer the runtime's existing earlier completion events; terminal
-UI/event publication ordering remains a whole-transition acceptance gap.
+
+### Foreground completion publication under verification — 2026-10-15
+
+The submission boundary withholds `TurnCompleted` events until dispatch, Tape close
+and owning budget settlement succeed. Other events still stream normally. Normal
+answers, empty-answer fallback and explicit interrupt do not announce completion
+while descendant cleanup is held; a failed Tape close withholds the buffered
+completion. This does not turn a finalization error into a successful cancellation.
+
+The source-owner program also drains descendants before publishing its terminal
+work projection or AgentFS idle state. Its new internal settling phase closes
+admission while continuing to charge final evidence and IO time; recovery of an
+unclosed settling interval charges the same conservative upper bound as an active
+interval. Settled human waiting remains uncharged. Source integration tests cover
+held cleanup, the real AgentFS activity projection, late Tape-close failure and
+settling-clock recovery. They do not qualify physical terminal presentation or all
+error/Process-exit paths.
 
 Recovered descendant evidence retains its original ancestor identities. Missing or
 foreign bindings fail before startup publication or model admission. Current Agent

@@ -332,3 +332,30 @@ async fn failed_child_admission_acknowledgement_never_refunds_ancestor_spending(
     assert_eq!(parent.snapshot().await.model_calls, 1);
     assert_eq!(child.snapshot().await.model_calls, 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn completion_drain_keeps_final_io_time_charged_and_recovers_conservatively() {
+    let binding = TaskBudgetBinding::default();
+    let parent = start(&binding, "parent", limits(10, 8, 8)).await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    parent.prepare_completion().await.unwrap();
+    assert!(parent.reserve(Admission::Tool).await.is_err());
+    tokio::time::advance(Duration::from_secs(4)).await;
+    let snapshot = parent.snapshot().await;
+    assert_eq!(snapshot.phase, Phase::Settling);
+    assert_eq!(snapshot.elapsed_millis, 5000);
+    let recovered = TaskBudget::restore(snapshot, None)
+        .unwrap()
+        .snapshot()
+        .await;
+    assert_eq!(recovered.phase, Phase::Paused);
+    assert_eq!(recovered.elapsed_millis, 10_000);
+    assert!(recovered.recovered_time_upper_bound);
+    assert!(!recovered.foreground_complete);
+    parent.finish_foreground().await.unwrap();
+    tokio::time::advance(Duration::from_secs(600)).await;
+    let snapshot = parent.snapshot().await;
+    assert_eq!(snapshot.phase, Phase::Paused);
+    assert_eq!(snapshot.elapsed_millis, 5000);
+    assert!(snapshot.foreground_complete);
+}
