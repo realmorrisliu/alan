@@ -195,6 +195,12 @@ impl RuntimeSubmissionQueues {
     }
 
     pub(super) async fn activate_binding(&self, input: &Submission) -> Result<()> {
+        if !matches!(
+            input.op,
+            alan_agent_protocol::Op::Input { .. } | alan_agent_protocol::Op::Turn { .. }
+        ) {
+            return Ok(());
+        }
         let Some(environment) = &self.environment else {
             return Ok(());
         };
@@ -216,12 +222,7 @@ impl RuntimeSubmissionQueues {
         let bindings = environment.model_bindings.lock().await;
         let Some(binding) = binding else {
             anyhow::ensure!(
-                bindings.authority.is_none()
-                    || !matches!(
-                        input.op,
-                        alan_agent_protocol::Op::Input { .. }
-                            | alan_agent_protocol::Op::Turn { .. }
-                    ),
+                bindings.authority.is_none(),
                 "legacy input has no captured callable binding; cannot restore safely"
             );
             *environment
@@ -230,20 +231,7 @@ impl RuntimeSubmissionQueues {
                 .expect("active binding snapshot") = None;
             return Ok(());
         };
-        let callable = if let Some(callable) = bindings.captured.get(&input.id) {
-            callable.clone()
-        } else if let Some(authority) = &bindings.authority {
-            authority.restore(&binding.callable_binding).await?
-        } else {
-            anyhow::bail!(
-                "captured callable unavailable: {}",
-                binding.callable_binding.model
-            );
-        };
-        anyhow::ensure!(
-            callable.identity == binding.callable_binding,
-            "restored callable identity mismatch"
-        );
+        let callable = bindings.restore(&input.id, &binding).await?;
         *environment
             .active_binding
             .write()

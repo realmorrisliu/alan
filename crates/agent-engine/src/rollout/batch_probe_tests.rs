@@ -40,6 +40,25 @@ impl RolloutRecorder {
         mpsc::UnboundedReceiver<Vec<RolloutItem>>,
         oneshot::Sender<()>,
     ) {
+        self.batch_gate(persist_before_release, |items| {
+            items.iter().any(|item| {
+                matches!(item,
+            RolloutItem::Event(event) if event.event_type == "machine_evaluation_v1"
+                && event.payload["outcome"]["state"] != "started")
+            })
+        })
+    }
+
+    /// Fence the first matching batch or its acknowledgement without changing its bytes.
+    pub(crate) fn batch_gate(
+        &self,
+        persist_before_release: bool,
+        matches_batch: impl Fn(&[RolloutItem]) -> bool + Send + 'static,
+    ) -> (
+        Self,
+        mpsc::UnboundedReceiver<Vec<RolloutItem>>,
+        oneshot::Sender<()>,
+    ) {
         let backing = self.clone();
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (observed_tx, observed_rx) = mpsc::unbounded_channel();
@@ -48,9 +67,7 @@ impl RolloutRecorder {
             let mut release = Some(release_rx);
             while let Some(command) = rx.recv().await {
                 let gated = matches!(&command, RolloutCmd::PersistBatch { items, .. }
-                    if release.is_some() && items.iter().any(|item| matches!(item,
-                        RolloutItem::Event(event) if event.event_type == "machine_evaluation_v1"
-                            && event.payload["outcome"]["state"] != "started")));
+                    if release.is_some() && matches_batch(items));
                 if gated {
                     let RolloutCmd::PersistBatch { items, ack } = command else {
                         unreachable!()

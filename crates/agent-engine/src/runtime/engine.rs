@@ -126,6 +126,7 @@ struct RuntimeSubmissionQueues {
     recorder: Option<crate::rollout::RolloutRecorder>,
     environment: Option<NamespaceRuntimeEnvironment>,
     deferred_model: Option<alan_agent_protocol::UiModelBinding>,
+    budget_wait_model: Option<alan_agent_protocol::UiModelBinding>,
     pending_directory_actions: VecDeque<(String, super::transition::PendingActionPublication)>,
     completed_directory_ids: HashSet<String>,
     directory_publication_retry: std::time::Instant,
@@ -147,6 +148,7 @@ impl RuntimeSubmissionQueues {
             recorder: None,
             environment: None,
             deferred_model: None,
+            budget_wait_model: None,
             pending_directory_actions: VecDeque::new(),
             completed_directory_ids: HashSet::new(),
             directory_publication_retry: std::time::Instant::now(),
@@ -249,23 +251,6 @@ fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("AgentMachine is running without persistent recorder; using in-memory mode: {err}")
 }
 
-async fn create_persistent_machine(
-    process_path: &str,
-    model: &str,
-    rollouts_dir: Option<&std::path::PathBuf>,
-    rollout_cwd: Option<&std::path::Path>,
-    reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-) -> anyhow::Result<AgentMachine> {
-    AgentMachine::new_with_recorder_options(
-        process_path,
-        model,
-        rollouts_dir.map(|dir| dir.as_path()),
-        rollout_cwd,
-        reasoning_effort,
-    )
-    .await
-}
-
 struct AgentMachineLaunchContext<'a> {
     process_path: &'a str,
     agent_path: &'a str,
@@ -305,10 +290,10 @@ async fn initialize_agent_machine(
         }
         machine
     } else {
-        match create_persistent_machine(
+        match AgentMachine::new_with_recorder_options(
             launch.process_path,
             launch.model,
-            rollouts_dir,
+            rollouts_dir.map(|dir| dir.as_path()),
             rollout_cwd,
             reasoning_effort,
         )
@@ -370,6 +355,7 @@ fn spawn_with_prepared_runtime_environment(
     host_capabilities: crate::skills::SkillHostCapabilities,
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
+    let operation_cleanup = environment.operation_cleanup.clone();
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     let (ready_tx, ready_rx) =
@@ -470,7 +456,13 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let machine = startup.machine;
+        let mut machine = startup.machine;
+        if let Some(budget) = &mut machine.task_budget
+            && let Err(error) = environment.task_budget_binding.bind(budget).await
+        {
+            let _ = ready_tx.send(Err(format!("restore task budget ancestry: {error:#}")));
+            return;
+        }
         if let Err(error) = environment
             .publish_evaluation(machine.evaluation_observation.clone())
             .await
@@ -535,6 +527,11 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
 
+        if let Err(error) = super::task_budget::publish_wait(&mut state).await {
+            let _ = ready_tx.send(Err(format!("restore task budget wait: {error:#}")));
+            return;
+        }
+
         info!(
             process_path = %state.process_path(),
             agent_path = %state.agent_path(),
@@ -550,6 +547,7 @@ fn spawn_with_prepared_runtime_environment(
         queues.recorder = state.machine.input_recorder();
         queues.model_process_path = state.process_path();
         queues.environment = Some(state.environment.clone());
+        queues.observe_budget_wait_model(&state);
         if let Err(error) = queues.initialize_process_observations(&state).await {
             let _ = ready_tx.send(Err(format!("{error:#}")));
             return;
@@ -565,6 +563,7 @@ fn spawn_with_prepared_runtime_environment(
         let mut namespace_batch_admitted = false;
         loop {
             queues.publish_directory_actions(&state.agent_files()).await;
+            queues.observe_budget_wait_model(&state);
             queues.observe_models().await;
             super::queue_publication::observe(&queues.outer_queue).await;
             if !shutdown_requested && !namespace_batch_admitted {
@@ -986,6 +985,7 @@ fn spawn_with_prepared_runtime_environment(
         task_handle,
         ready_rx,
         recorder,
+        operation_cleanup,
     ))
 }
 

@@ -23,10 +23,12 @@ use std::{
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+mod completion_budget;
 mod next_turn_disposition;
 mod owner_work;
 mod shadow_evaluation;
 mod tape_lease;
+mod task_budget;
 pub(crate) mod tool_batch;
 
 async fn maybe_compact_context_for_request<E, F>(

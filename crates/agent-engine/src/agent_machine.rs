@@ -1,6 +1,5 @@
 //! AgentMachine state management.
 
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::error;
@@ -9,17 +8,16 @@ use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot}
 
 #[cfg(test)]
 use crate::rollout::CompactedItem;
-use crate::rollout::{
-    ContextItemRecord, EffectRecord, ReferenceContextSnapshotRecord, RolloutRecorder,
-    build_durable_tool_payload,
-};
+use crate::rollout::{EffectRecord, RolloutRecorder, build_durable_tool_payload};
 use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
+mod context_observation;
 pub(crate) mod evaluation;
 pub(crate) mod input_queue;
 pub(crate) mod owner_work;
 mod recovery;
 mod runtime_control;
+pub(crate) mod task_budget;
 mod transition_state;
 
 use runtime_control::{ResponsesContinuationState, RollbackOutcome};
@@ -27,8 +25,8 @@ use transition_state::MachineTransitionState;
 pub(crate) use transition_state::{
     DeferredRuntimeAction, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
     HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE, HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
-    NormalizedToolCall, PendingHostMountRequest, PendingYield, TurnActivityState,
-    is_auto_mid_turn_compaction_emergency,
+    NormalizedToolCall, PendingHostMountRequest, PendingToolReplayBatch, PendingYield,
+    TurnActivityState, is_auto_mid_turn_compaction_emergency,
 };
 
 pub use recovery::{
@@ -66,6 +64,8 @@ pub(crate) struct AgentMachine {
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
     pub(crate) evaluation_observation: Option<serde_json::Value>,
     pub(crate) owner_work: Option<owner_work::Snapshot>,
+    pub(crate) task_budget: Option<task_budget::TaskBudget>,
+    pub(crate) task_budget_wait: Option<task_budget::waiting::Wait>,
     /// Whether the current automatic compaction cycle already attempted a silent memory flush.
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
@@ -91,6 +91,8 @@ impl AgentMachine {
             latest_memory_flush_attempt: None,
             evaluation_observation: None,
             owner_work: None,
+            task_budget: None,
+            task_budget_wait: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         }
@@ -225,6 +227,8 @@ impl AgentMachine {
             latest_memory_flush_attempt: None,
             evaluation_observation: None,
             owner_work: None,
+            task_budget: None,
+            task_budget_wait: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })
@@ -800,125 +804,6 @@ impl AgentMachine {
         Ok(())
     }
 
-    /// Record turn context snapshot to persistence (enqueue only; background writer performs IO)
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "arguments map directly to the durable turn-context record fields"
-    )]
-    #[cfg(test)]
-    pub fn record_turn_context(
-        &self,
-        model: &str,
-        reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-        system_prompt: &str,
-        context_items: &[ContextItem],
-        tools: &[String],
-        memory_enabled: bool,
-        active_skills: &[String],
-    ) {
-        let Some(recorder) = self.recorder.clone() else {
-            return;
-        };
-
-        let items: Vec<ContextItemRecord> = context_items
-            .iter()
-            .map(|item| ContextItemRecord {
-                id: item.id.clone(),
-                kind: item.kind.clone(),
-                title: item.title.clone(),
-                content: item.content.clone(),
-                fingerprint: item.fingerprint.clone(),
-            })
-            .collect();
-        let tools = tools.to_vec();
-        let active_skills = active_skills.to_vec();
-        if let Err(err) = recorder.record_turn_context_nowait(
-            model,
-            reasoning_effort,
-            system_prompt,
-            items,
-            tools,
-            memory_enabled,
-            active_skills,
-            None,
-        ) {
-            error!(error = %err, "Failed to record turn context");
-        }
-    }
-
-    /// Record turn context snapshot only when the observed prompt context changed.
-    /// Returns `true` if a snapshot was recorded, `false` if it was skipped.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "arguments map directly to the durable turn-context record fields"
-    )]
-    pub fn record_turn_context_if_changed(
-        &mut self,
-        model: &str,
-        reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-        system_prompt: &str,
-        context_items: &[ContextItem],
-        tools: &[String],
-        memory_enabled: bool,
-        active_skills: &[String],
-        context_delta: &ContextItemsDelta,
-    ) -> bool {
-        let fingerprint = fingerprint_turn_context_observation(
-            model,
-            reasoning_effort,
-            system_prompt,
-            context_items,
-            tools,
-            memory_enabled,
-            active_skills,
-        );
-
-        if !context_delta.changed
-            && self.last_turn_context_snapshot_fingerprint.as_deref() == Some(fingerprint.as_str())
-        {
-            return false;
-        }
-
-        self.last_turn_context_snapshot_fingerprint = Some(fingerprint);
-        let Some(recorder) = self.recorder.clone() else {
-            return true;
-        };
-
-        let items: Vec<ContextItemRecord> = context_items
-            .iter()
-            .map(|item| ContextItemRecord {
-                id: item.id.clone(),
-                kind: item.kind.clone(),
-                title: item.title.clone(),
-                content: item.content.clone(),
-                fingerprint: item.fingerprint.clone(),
-            })
-            .collect();
-        let tools = tools.to_vec();
-        let active_skills = active_skills.to_vec();
-        let reference_context = Some(ReferenceContextSnapshotRecord {
-            revision: self.tape.context_revision(),
-            changed: context_delta.changed,
-            reordered: context_delta.reordered,
-            added: context_delta.added_ids.len(),
-            updated: context_delta.updated_ids.len(),
-            removed: context_delta.removed_ids.len(),
-        });
-        if let Err(err) = recorder.record_turn_context_nowait(
-            model,
-            reasoning_effort,
-            system_prompt,
-            items,
-            tools,
-            memory_enabled,
-            active_skills,
-            reference_context,
-        ) {
-            error!(error = %err, "Failed to record turn context");
-        }
-        true
-    }
-
     /// Flush pending writes to disk and wait for the writer queue to drain.
     pub async fn flush(&self) {
         if let Some(recorder) = self.recorder.as_ref()
@@ -937,50 +822,6 @@ impl AgentMachine {
     pub(crate) fn memory_record_id(&self) -> &str {
         &self.memory_record_id
     }
-}
-
-fn fingerprint_turn_context_observation(
-    model: &str,
-    reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    system_prompt: &str,
-    context_items: &[ContextItem],
-    tools: &[String],
-    memory_enabled: bool,
-    active_skills: &[String],
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(model.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(
-        reasoning_effort
-            .map(alan_agent_protocol::ReasoningEffort::as_str)
-            .unwrap_or("unset")
-            .as_bytes(),
-    );
-    hasher.update(b"\n");
-    hasher.update(system_prompt.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(if memory_enabled { b"1" } else { b"0" });
-    hasher.update(b"\n");
-
-    for item in context_items {
-        hasher.update(item.id.as_bytes());
-        hasher.update(b"\n");
-        hasher.update(item.fingerprint.as_bytes());
-        hasher.update(b"\n");
-    }
-    hasher.update(b"--tools--\n");
-    for tool in tools {
-        hasher.update(tool.as_bytes());
-        hasher.update(b"\n");
-    }
-    hasher.update(b"--skills--\n");
-    for skill in active_skills {
-        hasher.update(skill.as_bytes());
-        hasher.update(b"\n");
-    }
-
-    format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
 impl Default for AgentMachine {

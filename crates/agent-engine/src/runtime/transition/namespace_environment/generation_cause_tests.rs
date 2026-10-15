@@ -192,7 +192,7 @@ async fn stat_bounded_missing_oversize_bad_and_short_published_causes() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cause_read_error_and_100ms_timeout_clunk_fid_preserving_io() {
     for mode in ["error", "pending"] {
         let fs = CauseFs::new(VALID, VALID.len() as u64, mode);
@@ -222,13 +222,16 @@ async fn cancellation_wins_pending_cause_and_clunks_owned_fid() {
         let cancel = cancel.clone();
         async move {
             let client = fs.client();
+            let cleanup = super::super::super::NamespaceOperationCleanup::default();
+            let mut operation = cleanup.lease(client.clone(), b"abort").unwrap();
+            operation
+                .capture("/mnt/llm/connections/default/g0/ctl".into())
+                .unwrap();
             super::super::run_generation_step_with_controls(
                 commit_generation(&client, "default", "g0", b"request"),
-                &client,
-                "default",
-                "g0",
                 1,
                 &cancel,
+                &mut operation,
             )
             .await
         }
@@ -240,8 +243,10 @@ async fn cancellation_wins_pending_cause_and_clunks_owned_fid() {
         .unwrap()
         .unwrap()
         .unwrap_err();
-    assert_eq!(error.to_string(), "LLM request cancelled");
-    // failed commit data, cancelled cause events, best-effort abort ctl
+    assert!(error.is::<super::super::super::NamespaceOperationUncertainty>());
+    assert!(format!("{error:#}").contains("LLM request cancelled"));
+    assert!(!crate::retry::is_retryable(&error));
+    // Failed commit data, cancelled cause events, unconfirmed abort ctl.
     assert_clunks(&fs, 3).await;
 }
 
