@@ -168,6 +168,20 @@ impl OperationLease {
         self.armed = false;
     }
 
+    pub(super) async fn retire_on_error<T>(&mut self, result: Result<T>) -> Result<T> {
+        match result {
+            Err(error) if self.path.is_none() && error.is::<super::client::CloneNotOpened>() => {
+                self.settled();
+                Err(error)
+            }
+            Err(error) => Err(match self.retire().await {
+                Ok(()) => error,
+                Err(cleanup) => error.context(cleanup),
+            }),
+            result => result,
+        }
+    }
+
     pub(super) async fn retire(&mut self) -> Result<(), NamespaceOperationUncertainty> {
         let attempt = CleanupAttempt::new(self.cleanup.uncertain.clone());
         let path = self.path.clone().ok_or(NamespaceOperationUncertainty)?;

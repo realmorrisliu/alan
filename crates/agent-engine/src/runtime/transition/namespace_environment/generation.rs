@@ -266,11 +266,13 @@ impl NamespaceTurnRuntime {
             let request_doc = LlmRequestDoc::from_generation_request(&request)?;
             let request_bytes =
                 serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
-            let (generation_id, mut operation) = start_generation(
+            let (generation_id, mut operation) = start_generation_controlled(
                 &client,
                 &generation.llm_connection,
                 &request_bytes,
                 &generation.operation_cleanup,
+                0,
+                &CancellationToken::new(),
             )
             .await?;
             let generation_response =
@@ -463,27 +465,7 @@ fn assemble_llmfs_tool_calls(
     (tool_calls, warnings)
 }
 
-pub(super) async fn start_generation(
-    client: &NamespaceClient,
-    llm_connection: &str,
-    request: &[u8],
-    cleanup: &super::NamespaceOperationCleanup,
-) -> Result<(String, super::operation_cleanup::OperationLease)> {
-    let mut operation = cleanup.lease(client.clone(), b"abort")?;
-    let clone_path = format!("/mnt/llm/connections/{llm_connection}/clone");
-    let generation_id = client
-        .clone_via_open(&clone_path)
-        .await
-        .context("llmfs clone returned generation id")?;
-
-    operation.capture(format!(
-        "/mnt/llm/connections/{llm_connection}/{generation_id}/ctl"
-    ))?;
-    cause::commit_generation(client, llm_connection, &generation_id, request).await?;
-    Ok((generation_id, operation))
-}
-
-async fn start_generation_controlled(
+pub(super) async fn start_generation_controlled(
     client: &NamespaceClient,
     llm_connection: &str,
     request: &[u8],
@@ -491,16 +473,25 @@ async fn start_generation_controlled(
     timeout_secs: u64,
     cancel: &CancellationToken,
 ) -> Result<(String, super::operation_cleanup::OperationLease)> {
+    if cancel.is_cancelled() {
+        cleanup.check_admission()?;
+        bail!("LLM request cancelled before allocation");
+    }
     let mut operation = cleanup.lease(client.clone(), b"abort")?;
     let clone_path = format!("/mnt/llm/connections/{llm_connection}/clone");
-    let generation_id = client
-        .clone_via_open(&clone_path)
-        .await
-        .context("llmfs clone returned generation id")?;
-
-    operation.capture(format!(
-        "/mnt/llm/connections/{llm_connection}/{generation_id}/ctl"
-    ))?;
+    let mut retained = None;
+    let allocation = wait_generation_step(
+        client.clone_via_open_retained(&clone_path, &mut retained),
+        timeout_secs,
+        cancel,
+    )
+    .await
+    .context("llmfs clone returned generation id");
+    if let Some(id) = &retained {
+        operation.capture(format!("/mnt/llm/connections/{llm_connection}/{id}/ctl"))?;
+    }
+    operation.retire_on_error(allocation).await?;
+    let generation_id = retained.expect("successful allocation retained its ID");
     let commit = cause::commit_generation(client, llm_connection, &generation_id, request);
     let result =
         run_generation_step_with_controls(commit, timeout_secs, cancel, &mut operation).await;
@@ -519,7 +510,19 @@ async fn run_generation_step_with_controls<T, Fut>(
 where
     Fut: std::future::Future<Output = Result<T>>,
 {
-    let result = if timeout_secs == 0 {
+    let result = wait_generation_step(operation, timeout_secs, cancel).await;
+    lease.retire_on_error(result).await
+}
+
+async fn wait_generation_step<T, Fut>(
+    operation: Fut,
+    timeout_secs: u64,
+    cancel: &CancellationToken,
+) -> Result<T>
+where
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    if timeout_secs == 0 {
         tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
@@ -537,13 +540,6 @@ where
                 Err(_) => Err(anyhow::anyhow!("LLM request timed out")),
             },
         }
-    };
-    match result {
-        Err(error) => Err(match lease.retire().await {
-            Ok(()) => error,
-            Err(cleanup) => error.context(cleanup),
-        }),
-        result => result,
     }
 }
 

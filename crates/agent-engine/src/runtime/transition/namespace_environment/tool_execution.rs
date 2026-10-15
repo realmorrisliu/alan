@@ -153,11 +153,44 @@ impl NamespaceToolExecution {
         let mut operation = self.operation_cleanup.lease(self.client(), b"cancel")?;
         let read_only_before =
             evidence.and_then(|evidence| self.read_only_context(tool_name, evidence));
-        let pid = self.process_files.spawn_process(executable, args).await?;
-        operation.capture(format!("/proc/{pid}/ctl"))?;
+        let deadline = async {
+            if timeout_secs == 0 {
+                std::future::pending::<()>().await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)).await;
+            }
+        };
+        tokio::pin!(deadline);
+        let mut retained = None;
+        let mut category = super::NamespaceToolObservationFailure::ResultUnavailable;
+        let allocation = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                category = super::NamespaceToolObservationFailure::Cancelled;
+                Err(anyhow::anyhow!("Tool allocation cancelled"))
+            },
+            _ = &mut deadline => {
+                category = super::NamespaceToolObservationFailure::Timeout;
+                Err(anyhow::anyhow!("Tool allocation timed out"))
+            },
+            result = self.process_files.spawn_process(executable, args, &mut retained) => result,
+        };
+        let allocation = if let Some(pid) = &retained {
+            operation.capture(format!("/proc/{pid}/ctl"))?;
+            allocation.map_err(|error| {
+                error.context(NamespaceToolProcessError {
+                    category,
+                    pid: pid.clone(),
+                })
+            })
+        } else {
+            allocation
+        };
+        let pid = operation.retire_on_error(allocation).await?;
         let result = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(super::NamespaceToolObservationFailure::Cancelled),
+            _ = &mut deadline => Err(super::NamespaceToolObservationFailure::Timeout),
             result = self.process_files.read_process_result(&pid, timeout_secs) => {
                 result.map_err(|err| {
                     if err.downcast_ref::<tokio::time::error::Elapsed>().is_some() {

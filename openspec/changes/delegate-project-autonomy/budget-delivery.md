@@ -322,7 +322,7 @@ returns its concrete uncertainty type, so both adapter paths retain typed detect
 alongside their original error. The cause-cancellation regression and both held-ack
 paths verify that marker and non-retry behavior. The original failed run is retained.
 
-## Known qualification gaps
+## Allocation follow-ups
 
 ### Unidentified allocation follow-up — 2026-10-15
 
@@ -354,6 +354,49 @@ so this is not running-cancellation acceptance. The earlier no-task probes and
 supervisor timeout remain recorded. Five native model admissions have occurred
 across these isolated checks; pilot/formal tasks remain zero. Initial queue labeling
 is an observed UI clarity issue, not evidence of a startup regression.
+
+### Allocation cancellation, deadlines and retained identity — 2026-10-15
+
+Two source regressions then reproduced model and Tool allocation ignoring
+cancellation while awaiting the allocator acknowledgement. Generation now observes
+its existing cancellation/request timeout during allocation as well as commit and
+response observation. Tool allocation and result observation share one operation
+deadline. The Machine task/ancestor deadline reaches these same cancellation paths;
+it is not replaced by a new allowance or supervisor-only limit.
+
+The aP helpers retain an allocated ID before awaiting commit acknowledgement and
+guard their allocator descriptors. Generation and Tool callers keep that retained
+ID even when allocation observation is cancelled, times out or fails. They use the
+existing finite retirement path before returning the original failure. A known
+Tool PID retains its observation category; failed retirement or absent identity
+remains typed uncertainty. Only an acknowledged stale-namespace rejection clears
+that rejected launch identity before its existing bounded retry. No unknown effect
+is redispatched. A cancellation already observed before allocation performs no
+namespace IO and does not itself poison a healthy operation scope.
+
+Paused-clock regressions cover both generation entry points and a real Kernel Tool
+Process, each before identity read and after identity read with held acknowledgement,
+under user cancellation, the task deadline and the operation timeout. Known model
+operations abort without a provider request, and a known running Tool is cancelled;
+unidentified operations close admission instead of claiming clean settlement. Counts
+remain one model or one Tool attempt. These are source fixtures, not native terminal
+or arbitrary Host-effect/crash acceptance. The earlier held-control regression now
+cancels at the actual data-write boundary and asserts that retirement was attempted,
+preserving its original acknowledgement coverage after allocation became cancellable.
+
+Review caught a zero-timeout compatibility regression: zero still means no Tool
+operation timer, while cancellation and the finite Machine budget remain active.
+One timer future now spans allocation/result observation only for a nonzero limit.
+A real Tool regression waits five virtual seconds, then covers successful release
+and cancellation with zero timeout. The first complete workspace run also exposed
+missing model mounts being mislabeled as uncertain allocation. Clone-path/required
+Process-metadata failures before allocator open now carry a local typed proof that
+allocation never started; only that proof with no captured identity settles the
+unused lease. The missing-mount regression still requires the original error and
+no provider fallback, and now checks that the scope remains healthy. Both original
+failures are retained; they are not accepted as qualification results.
+
+## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation
 coverage; this does not implement a general mixed-program scheduler. Uncertain model

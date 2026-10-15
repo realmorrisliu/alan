@@ -69,6 +69,16 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** an unsettled model or Tool allocation ends without a captured control identity
 - **THEN** retirement remains unconfirmed and the owning operation scope rejects further admission and successful completion; missing identity is not evidence that allocation or its effects never happened
 
+#### Scenario: Cancellation or a deadline arrives during allocation
+- **WHEN** model or Tool allocation is awaiting its identity or commit acknowledgement and cancellation, the task deadline, or the operation timeout arrives
+- **THEN** allocation observation returns within the existing finite retirement bound, any already-read control identity is retained for retirement, and an unidentified or unconfirmed operation cannot become a clean completion or budget-extension wait
+- **AND** cancellation observed before allocation starts performs no allocation IO and does not itself mark a healthy operation scope uncertain
+- **AND** a zero Tool operation timeout retains its existing no-operation-timer meaning without disabling cancellation or the finite Machine task budget
+
+#### Scenario: Failure proves the allocator was never opened
+- **WHEN** clone-path lookup or required Process metadata fails before the allocator open is attempted
+- **THEN** the original failure remains visible without claiming an unknown allocated operation or poisoning a healthy operation scope, and no missing mounted Connection is replaced by a hidden provider fallback
+
 #### Scenario: Descendant evidence is recovered without its parent authority
 - **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
 - **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits
