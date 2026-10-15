@@ -61,6 +61,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** forced Process termination drops a runtime with an allocated model or Tool operation
 - **THEN** adapter-owned guards retire that operation through bounded existing controls, runtime exit waits for tracked retirement before closing its writer, and timeout, failed acknowledgement or cleanup panic remains an unconfirmed outcome rather than successful completion or permission to replay the effect
 
+#### Scenario: Active operation cleanup cannot confirm its control
+- **WHEN** ordinary model or Tool cancellation/error cleanup cannot acknowledge its control within the adapter's finite retirement bound
+- **THEN** it returns unconfirmed cleanup, retains the known operation identity, prevents subsequent operation admission and automatic retry, and publishes neither successful task completion nor a clean budget-extension pause; a refused redundant model abort requires terminal-status confirmation before retry
+
 #### Scenario: Descendant evidence is recovered without its parent authority
 - **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
 - **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits

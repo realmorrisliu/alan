@@ -107,16 +107,10 @@ impl NamespaceGeneration {
         )
         .await?;
         let read_response = read_generation_response(&client, &self.llm_connection, &generation_id);
-        let response = run_generation_read_with_controls(
-            read_response,
-            &client,
-            &self.llm_connection,
-            &generation_id,
-            timeout_secs,
-            cancel,
-        )
-        .await
-        .with_context(|| format!("read llmfs generation {generation_id}"))?;
+        let response =
+            run_generation_step_with_controls(read_response, timeout_secs, cancel, &mut operation)
+                .await
+                .with_context(|| format!("read llmfs generation {generation_id}"))?;
         operation.settled();
         Ok(response)
     }
@@ -128,7 +122,11 @@ impl NamespaceGeneration {
         cancel_message: &'static str,
     ) -> Result<GenerationResponse> {
         match self.generate_controlled(&request, 0, cancel).await {
-            Err(_) if cancel.is_cancelled() => Err(anyhow::anyhow!(cancel_message)),
+            Err(error)
+                if cancel.is_cancelled() && !error.is::<super::NamespaceOperationUncertainty>() =>
+            {
+                Err(anyhow::anyhow!(cancel_message))
+            }
             result => result,
         }
     }
@@ -239,16 +237,10 @@ impl NamespaceGeneration {
             &generation_id,
             emit,
         );
-        let response = run_generation_read_with_controls(
-            read_response,
-            &client,
-            &self.llm_connection,
-            &generation_id,
-            timeout_secs,
-            cancel,
-        )
-        .await
-        .with_context(|| format!("read llmfs generation {generation_id}"))?;
+        let response =
+            run_generation_step_with_controls(read_response, timeout_secs, cancel, &mut operation)
+                .await
+                .with_context(|| format!("read llmfs generation {generation_id}"))?;
         operation.settled();
         Ok(response)
     }
@@ -510,89 +502,49 @@ async fn start_generation_controlled(
         "/mnt/llm/connections/{llm_connection}/{generation_id}/ctl"
     ))?;
     let commit = cause::commit_generation(client, llm_connection, &generation_id, request);
-    let result = run_generation_step_with_controls(
-        commit,
-        client,
-        llm_connection,
-        &generation_id,
-        timeout_secs,
-        cancel,
-    )
-    .await;
+    let result =
+        run_generation_step_with_controls(commit, timeout_secs, cancel, &mut operation).await;
     match result {
         Ok(()) => Ok((generation_id, operation)),
         Err(err) => Err(err),
     }
 }
 
-async fn abort_generation(
-    client: &NamespaceClient,
-    llm_connection: &str,
-    generation_id: &str,
-) -> Result<()> {
-    let ctl_path = format!("/mnt/llm/connections/{llm_connection}/{generation_id}/ctl");
-    client.write_document(&ctl_path, b"abort").await
-}
-
 async fn run_generation_step_with_controls<T, Fut>(
     operation: Fut,
-    client: &NamespaceClient,
-    llm_connection: &str,
-    generation_id: &str,
     timeout_secs: u64,
     cancel: &CancellationToken,
+    lease: &mut super::operation_cleanup::OperationLease,
 ) -> Result<T>
 where
     Fut: std::future::Future<Output = Result<T>>,
 {
-    if timeout_secs == 0 {
+    let result = if timeout_secs == 0 {
         tokio::select! {
-            _ = cancel.cancelled() => {
-                let _ = abort_generation(client, llm_connection, generation_id).await;
-                Err(anyhow::anyhow!("LLM request cancelled"))
-            }
+            biased;
+            _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
             result = operation => result,
         }
     } else {
         tokio::select! {
-            _ = cancel.cancelled() => {
-                let _ = abort_generation(client, llm_connection, generation_id).await;
-                Err(anyhow::anyhow!("LLM request cancelled"))
-            }
+            biased;
+            _ = cancel.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
             result = tokio::time::timeout(
                 tokio::time::Duration::from_secs(timeout_secs),
                 operation,
             ) => match result {
                 Ok(result) => result,
-                Err(_) => {
-                    let _ = abort_generation(client, llm_connection, generation_id).await;
-                    Err(anyhow::anyhow!("LLM request timed out"))
-                }
+                Err(_) => Err(anyhow::anyhow!("LLM request timed out")),
             },
         }
+    };
+    match result {
+        Err(error) => Err(match lease.retire().await {
+            Ok(()) => error,
+            Err(cleanup) => error.context(cleanup),
+        }),
+        result => result,
     }
-}
-
-async fn run_generation_read_with_controls<T, Fut>(
-    operation: Fut,
-    client: &NamespaceClient,
-    llm_connection: &str,
-    generation_id: &str,
-    timeout_secs: u64,
-    cancel: &CancellationToken,
-) -> Result<T>
-where
-    Fut: std::future::Future<Output = Result<T>>,
-{
-    run_generation_step_with_controls(
-        operation,
-        client,
-        llm_connection,
-        generation_id,
-        timeout_secs,
-        cancel,
-    )
-    .await
 }
 
 async fn read_generation_response(

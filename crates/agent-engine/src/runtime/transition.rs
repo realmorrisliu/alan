@@ -28,8 +28,9 @@ pub(super) use namespace_environment::NamespaceRequestRecord;
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceOperationCleanup,
-    NamespaceProcessFiles, NamespaceTapeWriter, NamespaceToolActionEvidence,
-    NamespaceToolExecution, NamespaceToolProcessError, PendingActionPublication,
+    NamespaceOperationUncertainty, NamespaceProcessFiles, NamespaceTapeWriter,
+    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
+    PendingActionPublication,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,

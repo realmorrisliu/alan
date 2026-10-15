@@ -156,31 +156,26 @@ impl NamespaceToolExecution {
         let pid = self.process_files.spawn_process(executable, args).await?;
         operation.capture(format!("/proc/{pid}/ctl"))?;
         let result = tokio::select! {
-            _ = cancel.cancelled() => {
-                let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;
-                return Err(NamespaceToolProcessError {
-                    category: super::NamespaceToolObservationFailure::Cancelled,
-                    pid,
-                }.into());
-            }
+            biased;
+            _ = cancel.cancelled() => Err(super::NamespaceToolObservationFailure::Cancelled),
             result = self.process_files.read_process_result(&pid, timeout_secs) => {
-                match result {
-                    Ok(result) => result,
-                    Err(err) => {
-                        let _ = self
-                            .process_files
-                            .write_process_control_for_pid(&pid, "cancel")
-                            .await;
-                        return Err(NamespaceToolProcessError {
-                            category: if err.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
-                                super::NamespaceToolObservationFailure::Timeout
-                            } else {
-                                super::NamespaceToolObservationFailure::ResultUnavailable
-                            },
-                            pid,
-                        }.into());
+                result.map_err(|err| {
+                    if err.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
+                        super::NamespaceToolObservationFailure::Timeout
+                    } else {
+                        super::NamespaceToolObservationFailure::ResultUnavailable
                     }
-                }
+                })
+            }
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(category) => {
+                let error = anyhow::Error::new(NamespaceToolProcessError { category, pid });
+                return Err(match operation.retire().await {
+                    Ok(()) => error,
+                    Err(cleanup) => error.context(cleanup),
+                });
             }
         };
         operation.settled();

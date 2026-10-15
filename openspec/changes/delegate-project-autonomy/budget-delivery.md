@@ -290,6 +290,38 @@ regressions cover the foreground pause and nonstream exhaustion, one admitted mo
 zero Tools and no next attempt. This is source timing acceptance, not a live-provider
 latency measurement or native reviewer qualification.
 
+## Active cancellation control follow-up — 2026-10-15
+
+The next audit reproduced normal generation cancellation waiting indefinitely for
+the control acknowledgement, before its bounded Drop cleanup could run. Active model
+and Tool cleanup now use the same adapter-owned one-second retirement attempt as
+dropped operations. Error settlement is awaited before a model retry. A rejected
+redundant model abort still requires a terminal-status read within that bound.
+Timeout, failed acknowledgement or a dropped/panicked attempt keeps the operation
+scope unconfirmed and rejects later model/Tool admission. Tool errors retain their
+PID and observation category. No effect is redispatched by retirement.
+
+The typed uncertainty is preserved through retry classification, reviewer handling,
+compaction, generation cancellation and source-owner work. The accepted-submission
+completion gate also rejects a successful result when its operation scope is
+unconfirmed, including best-effort paths that previously hid cancellation errors;
+it does not publish a normal completion or a clean budget-extension request.
+
+Twenty-one focused source cleanup tests pass. New held-acknowledgement regressions cover
+both generation entry points, zero provider requests, closed subsequent admission
+and withheld cancellation completion, plus an actual Tool Process retaining its PID
+and cancellation category after its runner stops. Existing cases cover acknowledged controls,
+failed/timed-out/panicked retirement, terminal model confirmation, real Tool/Process
+cleanup and descendant completion. These are source fixtures, not native fault
+injection or proof that arbitrary Host effects have stopped. Allocation before an
+identity is captured and active-crash transfer windows remain separate gaps.
+
+The first workspace run caught an uncertainty marker hidden inside an `anyhow::Error`
+context; independent correctness review identified the same defect. Retirement now
+returns its concrete uncertainty type, so both adapter paths retain typed detection
+alongside their original error. The cause-cancellation regression and both held-ack
+paths verify that marker and non-retry behavior. The original failed run is retained.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation

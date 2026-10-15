@@ -40,7 +40,7 @@ mod tool_policy;
 mod tool_presentation;
 mod tool_resolution;
 mod transition;
-pub(crate) use transition::read_action_evidence;
+pub(crate) use transition::{NamespaceOperationUncertainty, read_action_evidence};
 mod turn_input;
 mod turn_memory;
 mod turn_support;

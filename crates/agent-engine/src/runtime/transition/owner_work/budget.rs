@@ -17,7 +17,9 @@ where
         state.machine.mark_submission_cancelled();
     }
     if let Err(error) = &result
-        && (error.is::<NamespaceEvaluationUncertainty>() || error.is::<FallbackUncertainty>())
+        && (error.is::<NamespaceEvaluationUncertainty>()
+            || error.is::<super::super::NamespaceOperationUncertainty>()
+            || error.is::<FallbackUncertainty>())
     {
         return result;
     }

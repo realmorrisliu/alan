@@ -1,4 +1,4 @@
-//! Bounded retirement of adapter operations whose owning runtime was dropped.
+//! Bounded retirement of cancelled operations and operations whose runtime was dropped.
 
 use super::client::NamespaceClient;
 use anyhow::{Result, ensure};
@@ -8,6 +8,10 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio_util::task::TaskTracker;
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("namespace operation cleanup is unconfirmed")]
+pub(crate) struct NamespaceOperationUncertainty;
 
 #[derive(Clone, Default)]
 pub(crate) struct NamespaceOperationCleanup {
@@ -21,7 +25,7 @@ impl NamespaceOperationCleanup {
         self.tasks.wait().await;
         ensure!(
             !self.uncertain.load(Ordering::Acquire),
-            "namespace operation cleanup is unconfirmed"
+            NamespaceOperationUncertainty
         );
         Ok(())
     }
@@ -36,41 +40,10 @@ impl NamespaceOperationCleanup {
             self.uncertain.store(true, Ordering::Release);
             return;
         };
-        let mut attempt = CleanupAttempt {
-            uncertain: self.uncertain.clone(),
-            confirmed: false,
-        };
+        let retirement = CleanupAttempt::new(self.uncertain.clone()).retire(client, path, command);
         self.tasks.spawn_on(
             async move {
-                let result = tokio::time::timeout(Duration::from_secs(1), async {
-                    match client.write_document(&path, command).await {
-                        Ok(()) => Ok(()),
-                        Err(error)
-                            if command == b"abort"
-                                && error.downcast_ref::<alan_ap::ErrorCode>()
-                                    == Some(&alan_ap::ErrorCode::BadRequest) =>
-                        {
-                            // An already-terminal model operation refuses another abort.
-                            let status = client
-                                .read_file(&format!("{}/status", path.trim_end_matches("/ctl")))
-                                .await?;
-                            let status: serde_json::Value = serde_json::from_slice(&status)?;
-                            ensure!(
-                                matches!(
-                                    status["status"].as_str(),
-                                    Some("done" | "error" | "rejected" | "aborted")
-                                ),
-                                "model operation is not terminal"
-                            );
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    }
-                })
-                .await;
-                if matches!(result, Ok(Ok(()))) {
-                    attempt.confirm();
-                } else {
+                if retirement.await.is_err() {
                     tracing::warn!("Dropped runtime operation cleanup is unconfirmed");
                 }
             },
@@ -78,14 +51,14 @@ impl NamespaceOperationCleanup {
         );
     }
 
-    pub(super) fn check_admission(&self) -> Result<()> {
+    pub(crate) fn check_admission(&self) -> Result<()> {
         ensure!(
             !self.tasks.is_closed(),
             "Process operation scope has closed"
         );
         ensure!(
             !self.uncertain.load(Ordering::Acquire),
-            "previous operation cleanup is unconfirmed"
+            NamespaceOperationUncertainty
         );
         Ok(())
     }
@@ -112,8 +85,51 @@ struct CleanupAttempt {
     confirmed: bool,
 }
 impl CleanupAttempt {
-    fn confirm(&mut self) {
-        self.confirmed = true;
+    fn new(uncertain: Arc<AtomicBool>) -> Self {
+        Self {
+            uncertain,
+            confirmed: false,
+        }
+    }
+
+    async fn retire(
+        mut self,
+        client: NamespaceClient,
+        path: String,
+        command: &'static [u8],
+    ) -> Result<(), NamespaceOperationUncertainty> {
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            match client.write_document(&path, command).await {
+                Ok(()) => Ok(()),
+                Err(error)
+                    if command == b"abort"
+                        && error.downcast_ref::<alan_ap::ErrorCode>()
+                            == Some(&alan_ap::ErrorCode::BadRequest) =>
+                {
+                    // An already-terminal model operation refuses another abort.
+                    let status = client
+                        .read_file(&format!("{}/status", path.trim_end_matches("/ctl")))
+                        .await?;
+                    let status: serde_json::Value = serde_json::from_slice(&status)?;
+                    ensure!(
+                        matches!(
+                            status["status"].as_str(),
+                            Some("done" | "error" | "rejected" | "aborted")
+                        ),
+                        "model operation is not terminal"
+                    );
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
+        })
+        .await;
+        if matches!(result, Ok(Ok(()))) {
+            self.confirmed = true;
+            Ok(())
+        } else {
+            Err(NamespaceOperationUncertainty)
+        }
     }
 }
 
@@ -150,6 +166,15 @@ impl OperationLease {
 
     pub(super) fn settled(&mut self) {
         self.armed = false;
+    }
+
+    pub(super) async fn retire(&mut self) -> Result<(), NamespaceOperationUncertainty> {
+        let path = self.path.clone().ok_or(NamespaceOperationUncertainty)?;
+        let result = CleanupAttempt::new(self.cleanup.uncertain.clone())
+            .retire(self.client.clone(), path, self.command)
+            .await;
+        self.armed = false;
+        result
     }
 }
 

@@ -20,7 +20,7 @@ pub use evaluation::{
 mod host_mount_requests;
 mod operation_cleanup;
 mod process_files;
-pub(crate) use operation_cleanup::NamespaceOperationCleanup;
+pub(crate) use operation_cleanup::{NamespaceOperationCleanup, NamespaceOperationUncertainty};
 mod tool_execution;
 
 use std::{

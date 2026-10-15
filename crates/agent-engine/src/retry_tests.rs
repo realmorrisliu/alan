@@ -2,6 +2,15 @@ use super::*;
 use alan_ap::ErrorCode;
 
 #[test]
+fn uncertain_cleanup_wins_over_transient_cause_and_context() {
+    let error = anyhow::Error::new(ErrorCode::Io)
+        .context(GenerationCause::new("stream_error:unavailable"))
+        .context(crate::runtime::NamespaceOperationUncertainty)
+        .context("temporary stream connection failure");
+    assert!(!is_retryable(&error));
+}
+
+#[test]
 fn typed_permanent_cause_wins_over_transient_context() {
     for reason in [
         "stream_error:authentication",

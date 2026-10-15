@@ -221,10 +221,10 @@ where
         .generate_response_with_retry(request, runtime.llm_request_timeout_secs, cancel)
         .await;
 
-    if result
-        .as_ref()
-        .is_err_and(|error| error.is::<crate::agent_machine::task_budget::Exhausted>())
-    {
+    if result.as_ref().is_err_and(|error| {
+        error.is::<crate::agent_machine::task_budget::Exhausted>()
+            || error.is::<super::transition::NamespaceOperationUncertainty>()
+    }) {
         return Err(result.unwrap_err());
     }
 
