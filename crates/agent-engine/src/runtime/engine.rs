@@ -126,6 +126,7 @@ struct RuntimeSubmissionQueues {
     recorder: Option<crate::rollout::RolloutRecorder>,
     environment: Option<NamespaceRuntimeEnvironment>,
     deferred_model: Option<alan_agent_protocol::UiModelBinding>,
+    budget_wait_model: Option<alan_agent_protocol::UiModelBinding>,
     pending_directory_actions: VecDeque<(String, super::transition::PendingActionPublication)>,
     completed_directory_ids: HashSet<String>,
     directory_publication_retry: std::time::Instant,
@@ -147,6 +148,7 @@ impl RuntimeSubmissionQueues {
             recorder: None,
             environment: None,
             deferred_model: None,
+            budget_wait_model: None,
             pending_directory_actions: VecDeque::new(),
             completed_directory_ids: HashSet::new(),
             directory_publication_retry: std::time::Instant::now(),
@@ -545,6 +547,7 @@ fn spawn_with_prepared_runtime_environment(
         queues.recorder = state.machine.input_recorder();
         queues.model_process_path = state.process_path();
         queues.environment = Some(state.environment.clone());
+        queues.observe_budget_wait_model(&state);
         if let Err(error) = queues.initialize_process_observations(&state).await {
             let _ = ready_tx.send(Err(format!("{error:#}")));
             return;
@@ -560,6 +563,7 @@ fn spawn_with_prepared_runtime_environment(
         let mut namespace_batch_admitted = false;
         loop {
             queues.publish_directory_actions(&state.agent_files()).await;
+            queues.observe_budget_wait_model(&state);
             queues.observe_models().await;
             super::queue_publication::observe(&queues.outer_queue).await;
             if !shutdown_requested && !namespace_batch_admitted {

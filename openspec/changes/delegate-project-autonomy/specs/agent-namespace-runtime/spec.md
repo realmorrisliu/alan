@@ -17,6 +17,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** a user selects a paused task for recovery
 - **THEN** its consumed budget remains accounted and no completed effect is replayed
 
+#### Scenario: A recovered budget wait retains a different model
+- **WHEN** a recovered task awaits budget approval with a validated original binding that differs from the selected next-input model
+- **THEN** the Process-owned model observation identifies the retained model and reasoning controls separately from the next-input selection, without inventing running or admitted input; resolving the wait clears that paused projection, and missing or mismatched binding evidence remains unknown rather than falling back to the selected-next model
+
 #### Scenario: Shadow advice consumes the remaining allowance
 - **WHEN** no-effect input advice exhausts the task budget before ordinary generation
 - **THEN** the original input and settled evaluation evidence remain available at the budget pause, no further paid model or Tool admission occurs before explicit extension, and uncertain evidence or user cancellation is not treated as clean exhaustion

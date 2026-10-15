@@ -222,7 +222,7 @@ the runtime-selected default, and shares a compact consumed/limit/proposal summa
 between fresh and recalculated recovery waits. Zero increases are omitted; recovered
 upper-bound time remains labeled. A recovered native wait also initially showed
 `model unknown` until the response despite retaining the admitted binding; that
-model-observation gap remains open. The initial fixture's missing
+model-observation gap is addressed in the follow-up below. The initial fixture's missing
 `memory.strict_store` was corrected before any model request and retained separately.
 
 A fresh clean `d3da75e0` candidate verified the revised display in the same isolated
@@ -235,14 +235,47 @@ project directory was authorized. The second model call accurately reported that
 failure. Final accounting retained the same task, two models, one Tool attempt and
 6954ms, with foreground completion. The namespace-listing task did not succeed;
 this proves budget controls, not a successful development task or wider authority.
-Both native candidates are stopped. Total fixture model admissions are three;
-pilot starts and formal qualification remain zero. Empty-input rejection is covered
-by source tests rather than another live-model run.
+Both earlier native candidates are stopped. At that checkpoint fixture model
+admissions were three, with no pilot or formal qualification task. Empty-input
+rejection had source coverage; its later native acceptance is recorded below.
 
 CI for `948e51e4` failed an older cause-read timeout test on its one-second wall
 clock assertion, then cancelled the paired Linux job. The test now uses Tokio's
 paused clock for the same timeout and descriptor-cleanup checks; the runtime's
 100ms bound is unchanged. New-head CI must pass independently.
+
+## Recovered waiting-task model observation — 2026-10-15
+
+The native `model unknown` observation was reproduced through Runtime startup:
+model A reached its budget pause, next-input selection changed to B, and a fresh
+Runtime/AgentFS recovered the wait with no active input. Its initial model snapshot
+had next-input B but no retained A. The Machine had already restored and validated
+A; the existing observation path only considered currently executing inputs.
+
+The existing Process-local model publisher now derives its paused budget binding
+from the Machine-owned wait at stable loop boundaries and before Ready. It exposes
+that binding only when it matches the already-restored callable. Model selection
+and actual running activity keep their existing owners; no queue input or running
+state is synthesized. Resolving or cancelling the wait clears this projection.
+Missing, null, malformed or mismatched binding evidence cannot infer a model from
+the current selection. The observation includes only the existing safe model and
+reasoning fields, without Connection restore revisions or credential references.
+
+Source checks cover separate next-input B, rejection and explicit extension under
+the retained A controls, cleanup after completion and invalid observation evidence.
+The full workspace passed 3148 tests, with zero failures and 15 existing ignored
+tests across 100 suites; both independent review axes passed the source snapshot.
+
+An isolated Herdr candidate built from reviewed tree `d3f579bf` requested only the
+internal plan Tool. It paused before dispatch at one model call, zero Tools and
+3049ms. Exit and explicit `--resume` retained the same task and spending, and the
+first waiting prompt showed `gpt-6.1-sol / medium` without another model request or
+invented running activity. Empty Enter defaulted to rejection, preserving those
+counts and executing no Tool. The fixture task was deliberately cancelled, not
+counted as successful development. The invocation is stopped; total fixture model
+admissions are now four, with pilot/formal starts still zero. This does not qualify
+subtree recovery or broaden the existing budget slice. Final source identity and
+binary equality are retained with the per-head evidence receipt.
 
 ## Known qualification gaps
 
