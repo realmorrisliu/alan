@@ -157,18 +157,31 @@ impl NamespaceGeneration {
                         return Err(error);
                     }
                     last_error = Some(error);
-                    let delay = crate::retry::backoff_delay(attempt + 1);
-                    tokio::select! {
-                        _ = cancel.cancelled() => {
-                            return Err(anyhow::anyhow!("LLM request cancelled"));
-                        }
-                        _ = tokio::time::sleep(delay) => {}
-                    }
+                    self.wait_before_retry(attempt + 1, cancel).await?;
                 }
             }
         }
 
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
+    }
+
+    pub(crate) async fn wait_before_retry(
+        &self,
+        attempt: u32,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        let delay = crate::retry::backoff_delay(attempt);
+        let wait = |stop: CancellationToken| async move {
+            tokio::select! {
+                _ = stop.cancelled() => Err(anyhow::anyhow!("LLM request cancelled")),
+                _ = tokio::time::sleep(delay) => Ok(()),
+            }
+        };
+        if let Some(budget) = &self.budget {
+            budget.run(cancel, wait).await
+        } else {
+            wait(cancel.clone()).await
+        }
     }
 
     pub async fn generate_with_text_events_controlled<E, F>(

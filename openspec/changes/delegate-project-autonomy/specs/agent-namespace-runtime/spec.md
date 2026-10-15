@@ -29,6 +29,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** already-admitted work settles after the elapsed-time limit
 - **THEN** an explicit extension request covers the recorded overrun and a fresh finite tranche, includes other exhausted dimensions, and never refunds consumed time or calls
 
+#### Scenario: Execution time expires during retry backoff
+- **WHEN** a settled retryable model failure leaves a retry delay longer than the task's remaining execution time
+- **THEN** foreground generation, reviewer and deferred-memory retries stop waiting at the applicable task deadline without admitting another model or Tool call; the wait retains the original task's cancellation and ancestor bounds
+
 #### Scenario: The original model binding cannot be restored
 - **WHEN** a budget pause carries a selectable Connection binding whose captured revision is unavailable or revoked
 - **THEN** recovery fails without silently substituting the current default or selected-next model

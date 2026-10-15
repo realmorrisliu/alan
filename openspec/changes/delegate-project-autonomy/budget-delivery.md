@@ -277,6 +277,19 @@ admissions are now four, with pilot/formal starts still zero. This does not qual
 subtree recovery or broaden the existing budget slice. Final source identity and
 binary equality are retained with the per-head evidence receipt.
 
+## Retry backoff deadline follow-up — 2026-10-15
+
+The integration audit found that streaming generation and the shared reviewer/memory
+generation path checked budget at each model admission but slept through the next
+retry delay without its deadline. Source tests reproduced a settled retryable failure
+near a one-second limit returning after that limit. Both paths now use one existing
+generation-adapter wait backed by the same ledger's cancellation/deadline operation;
+waiting reserves no additional Tool or model call. Unbudgeted adapter callers retain
+their existing bounded retry count and cancellation behavior. Two paused-clock source
+regressions cover the foreground pause and nonstream exhaustion, one admitted model,
+zero Tools and no next attempt. This is source timing acceptance, not a live-provider
+latency measurement or native reviewer qualification.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation

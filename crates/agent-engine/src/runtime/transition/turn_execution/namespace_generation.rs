@@ -96,13 +96,7 @@ impl NamespaceTurnGeneration {
                         return Err(error);
                     }
                     last_error = Some(error);
-                    let delay = crate::retry::backoff_delay(attempt + 1);
-                    tokio::select! {
-                        _ = cancel.cancelled() => {
-                            return Err(anyhow::anyhow!("LLM request cancelled"));
-                        }
-                        _ = tokio::time::sleep(delay) => {}
-                    }
+                    generation.wait_before_retry(attempt + 1, cancel).await?;
                 }
             }
         }
