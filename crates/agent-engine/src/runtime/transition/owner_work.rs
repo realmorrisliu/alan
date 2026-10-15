@@ -2,11 +2,13 @@
 use super::*;
 use crate::agent_machine::owner_work::{Evidence, FallbackEvidence, Outcome, Snapshot, digest};
 use crate::runtime::tool_policy::{SandboxConfinement, ToolPolicyDecision, evaluate_tool_policy};
-use crate::tape::{Message, ToolRequest};
+use crate::tape::ToolRequest;
 use alan_agent_protocol::{ContentPart, InputIntent, InputMode, OwnerWorkRequest};
 use anyhow::{Context, ensure};
 use std::time::Duration;
 use tokio::time::Instant;
+
+pub(super) mod budget;
 
 #[derive(Debug, thiserror::Error)]
 #[error("generation fallback lacks a reliable terminal result; never retry implicitly")]
@@ -41,45 +43,34 @@ where
         } = &work.outcome
         && owned == request_id
     {
-        let owner = response_owner(content).and_then(|owner| {
-            ensure!(
-                work.request.candidates.iter().any(|c| c.id == owner),
-                "owner response outside candidates"
-            );
-            Ok(owner)
-        });
         ensure!(
             state.machine.pending_yield(request_id).is_some(),
             "owner response lacks an owned pending request"
         );
-        // Admission is still correlated with the original work, never the delivery UUID.
         state.machine.accept_submission(work.work_id.clone());
-        let result = match &owner {
-            Ok(owner) => validate_owner(state, &work, owner, emit, cancel).await,
-            Err(error) => Err(anyhow::anyhow!(error.to_string())),
-        };
-        work.outcome = if cancel.is_cancelled() {
-            state.machine.mark_submission_cancelled();
-            Outcome::Cancelled
-        } else {
-            match result {
-                Ok(()) => Outcome::Completed {
-                    owner: owner.unwrap(),
-                },
-                Err(error) => Outcome::Failed {
-                    reason: error.to_string(),
-                },
-            }
-        };
-        let failure = if let Outcome::Failed { reason } = &work.outcome {
-            Some(reason.clone())
-        } else {
-            None
-        };
-        settle(state, work, emit).await?;
-        if let Some(reason) = failure {
-            anyhow::bail!(reason);
+        let result = response_owner(content).and_then(|owner| {
+            ensure!(
+                work.request
+                    .candidates
+                    .iter()
+                    .any(|candidate| candidate.id == owner),
+                "owner response outside candidates"
+            );
+            work.selected_owner = Some(owner);
+            Ok(())
+        });
+        if let Err(error) = result {
+            work.outcome = Outcome::Failed {
+                reason: error.to_string(),
+            };
+            settle(state, work, emit).await?;
+            return Err(error);
         }
+        state.machine.persist_owner_work(work.clone()).await?;
+        state.machine.take_pending(request_id);
+        work.outcome = Outcome::Started;
+        state.machine.persist_owner_work(work.clone()).await?;
+        budget::run(state, work, emit, cancel).await?;
         return Ok(true);
     }
     let parts = match &submission.op {
@@ -110,7 +101,7 @@ where
         !state.machine.has_pending_interaction(),
         "owner work cannot replace an owned wait"
     );
-    let mut work = Snapshot {
+    let work = Snapshot {
         version: 1,
         work_id: submission.id.clone(),
         source_rollout_id: state
@@ -125,6 +116,11 @@ where
         generation_calls: 0,
         fallback: None,
         owned_request: None,
+        selected_owner: None,
+        validated_sources: 0,
+        pending_read: None,
+        evaluator_binding: None,
+        budget_resumes: 0,
         outcome: Outcome::Started,
     };
     state.machine.persist_owner_work(work.clone()).await?;
@@ -136,35 +132,7 @@ where
     state.machine.set_turn_activity(TurnActivityState::Running);
     crate::runtime::ui_surfaces::turn_started(&state.agent_files()).await?;
     emit(Event::TurnStarted {}).await;
-    let result = advance(state, &mut work, emit, cancel).await;
-    if cancel.is_cancelled() {
-        state.machine.mark_submission_cancelled();
-    }
-    // Cancellation never settles an operation whose terminal acknowledgement is uncertain.
-    if let Err(error) = &result
-        && (error
-            .downcast_ref::<NamespaceEvaluationUncertainty>()
-            .is_some()
-            || error.downcast_ref::<FallbackUncertainty>().is_some())
-    {
-        return result.map(|_| true);
-    }
-    if cancel.is_cancelled() {
-        work.outcome = Outcome::Cancelled;
-    } else if let Err(error) = result {
-        work.outcome = Outcome::Failed {
-            reason: error.to_string(),
-        };
-    }
-    let failure = if let Outcome::Failed { reason } = &work.outcome {
-        Some(reason.clone())
-    } else {
-        None
-    };
-    settle(state, work, emit).await?;
-    if let Some(reason) = failure {
-        anyhow::bail!(reason);
-    }
+    budget::run(state, work, emit, cancel).await?;
     Ok(true)
 }
 
@@ -211,24 +179,41 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    for candidate in &work.request.candidates {
-        for source in &candidate.sources {
-            let content = read_source(state, source, emit, cancel).await?;
-            ensure!(
-                work.evidence.iter().map(|e| e.content.len()).sum::<usize>() + content.len()
-                    <= 128 * 1024,
-                "work source capture exceeds document budget"
-            );
-            work.evidence.push(Evidence {
-                owner: candidate.id.clone(),
-                source: source.clone(),
-                sha256: digest(content.as_bytes()),
-                content,
-            });
-        }
+    if let Some(owner) = work.selected_owner.clone() {
+        validate_owner(state, work, &owner, emit, cancel).await?;
+        work.outcome = Outcome::Completed { owner };
+        return Ok(());
+    }
+    let sources = work
+        .request
+        .candidates
+        .iter()
+        .flat_map(|candidate| {
+            candidate
+                .sources
+                .iter()
+                .map(|source| (candidate.id.clone(), source.clone()))
+        })
+        .collect::<Vec<_>>();
+    for (owner, source) in sources.into_iter().skip(work.evidence.len()) {
+        let content = read_source(state, work, &source, emit, cancel).await?;
+        ensure!(
+            work.evidence.iter().map(|e| e.content.len()).sum::<usize>() + content.len()
+                <= 128 * 1024,
+            "work source capture exceeds document budget"
+        );
+        work.evidence.push(Evidence {
+            owner,
+            source,
+            sha256: digest(content.as_bytes()),
+            content,
+        });
+        state.machine.persist_owner_work(work.clone()).await?;
     }
     state.machine.persist_owner_work(work.clone()).await?;
     if let Some(owner) = literal_owner(work) {
+        work.selected_owner = Some(owner.clone());
+        state.machine.persist_owner_work(work.clone()).await?;
         validate_owner(state, work, &owner, emit, cancel).await?;
         work.outcome = Outcome::Completed { owner };
         return Ok(());
@@ -249,6 +234,15 @@ where
         authority.capture_evaluation(&work.request.evaluator_profile),
     )
     .await?;
+    if let Some(binding) = &work.evaluator_binding {
+        ensure!(
+            &captured.identity == binding,
+            "admitted evaluator revision unavailable"
+        );
+    } else {
+        work.evaluator_binding = Some(captured.identity.clone());
+        state.machine.persist_owner_work(work.clone()).await?;
+    }
     let candidates = work
         .request
         .candidates
@@ -282,7 +276,11 @@ where
     };
     let observation = crate::agent_machine::evaluation::Observation {
         identity: crate::agent_machine::evaluation::Identity {
-            source_rollout_id: work.source_rollout_id.clone(),
+            source_rollout_id: state
+                .machine
+                .rollout_id()
+                .context("evaluation lacks rollout")?
+                .into(),
             submission_id: work.work_id.clone(),
             input_sha256: work.request_sha256.clone(),
             surface: crate::runtime::EvaluationSurface::MachineControl,
@@ -303,33 +301,53 @@ where
         elapsed_ms: None,
         usage: None,
     };
-    work.evaluator_calls = 1;
-    state.machine.persist_owner_work(work.clone()).await?;
-    crate::runtime::shadow_evaluation::evaluate_captured_choice(
-        &mut state.machine,
-        &state.environment,
-        NamespaceRuntimeEnvironment::new(
-            captured.root,
-            state.environment.agent_path(),
-            captured.connection,
-        ),
-        request.clone(),
-        observation,
-        (start, expires),
-        cancel,
-    )
-    .await?;
+    if work.evaluator_calls == 0 {
+        if let Some(budget) = &state.machine.task_budget {
+            budget
+                .reserve(crate::agent_machine::task_budget::Admission::Model)
+                .await?;
+        }
+        work.evaluator_calls = 1;
+        state.machine.persist_owner_work(work.clone()).await?;
+        crate::runtime::shadow_evaluation::evaluate_reserved_choice(
+            &mut state.machine,
+            &state.environment,
+            NamespaceRuntimeEnvironment::new(
+                captured.root,
+                state.environment.agent_path(),
+                captured.connection,
+            ),
+            request.clone(),
+            observation,
+            (start, expires),
+            cancel,
+        )
+        .await?;
+    }
     let observation: crate::agent_machine::evaluation::Observation = serde_json::from_value({
         let mut value = state
             .machine
             .evaluation_observation
             .clone()
-            .context("evaluation lacks acknowledged result")?;
-        value.as_object_mut().unwrap().remove("cost_microusd");
+            .context("admitted evaluation lacks terminal evidence")
+            .context(NamespaceEvaluationUncertainty::Settlement)?;
+        value
+            .as_object_mut()
+            .context("invalid evaluation evidence")?
+            .remove("cost_microusd");
         value
     })?;
+    ensure!(
+        observation.identity.submission_id == work.work_id
+            && observation.identity.input_sha256 == work.request_sha256
+            && observation.identity.surface == crate::runtime::EvaluationSurface::MachineControl
+            && Some(&observation.identity.callable) == work.evaluator_binding.as_ref(),
+        "evaluation evidence differs from retained work"
+    );
     match observation.outcome {
         crate::agent_machine::evaluation::Outcome::Selected { candidate_id } => {
+            work.selected_owner = Some(candidate_id.clone());
+            state.machine.persist_owner_work(work.clone()).await?;
             validate_owner(state, work, &candidate_id, emit, cancel).await?;
             work.outcome = Outcome::Completed {
                 owner: candidate_id,
@@ -364,6 +382,15 @@ where
                 q.cost_microusd <= 1000 && !q.provenance.is_empty() && q.provenance.len() <= 1024
             }) {
                 ensure!(!cancel.is_cancelled(), "owner work cancelled");
+                if work.generation_calls != 0 {
+                    wait(state, work, "generation_result_unavailable", emit).await?;
+                    return Ok(());
+                }
+                if let Some(budget) = &state.machine.task_budget {
+                    budget
+                        .reserve(crate::agent_machine::task_budget::Admission::Model)
+                        .await?;
+                }
                 work.generation_calls = 1;
                 work.fallback = Some(FallbackEvidence {
                     callable:binding.as_ref().unwrap().1.identity.clone(),
@@ -387,6 +414,8 @@ where
                     owner: String,
                 }
                 let selected: Selection = serde_json::from_str(&result.content)?;
+                work.selected_owner = Some(selected.owner.clone());
+                state.machine.persist_owner_work(work.clone()).await?;
                 validate_owner(state, work, &selected.owner, emit, cancel).await?;
                 work.outcome = Outcome::Completed {
                     owner: selected.owner,
@@ -395,6 +424,9 @@ where
                 wait(state, work, "generation_budget_unavailable", emit).await?;
             }
         }
+        crate::agent_machine::evaluation::Outcome::Cancelled => {
+            wait(state, work, "evaluation_stopped_by_budget", emit).await?;
+        }
         outcome => anyhow::bail!("evaluation did not select an owner: {outcome:?}"),
     }
     Ok(())
@@ -402,6 +434,7 @@ where
 
 async fn read_source<E, F>(
     state: &mut RuntimeLoopState,
+    work: &mut Snapshot,
     source: &alan_agent_protocol::OwnerSourceRange,
     emit: &mut E,
     cancel: &CancellationToken,
@@ -441,57 +474,61 @@ where
         ),
         "source read requires additional authorization"
     );
-    let call = NormalizedToolCall {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "read_file".into(),
-        arguments: arguments.clone(),
-    };
-    state
-        .machine
-        .add_assistant_message_with_tool_calls_and_reasoning(
-            "",
-            vec![ToolRequest {
-                id: call.id.clone(),
-                name: call.name.clone(),
+    let call = match &work.pending_read {
+        Some(call) => {
+            ensure!(
+                call.name == "read_file" && call.arguments == arguments,
+                "pending source read changed after budget pause"
+            );
+            call.clone()
+        }
+        None => {
+            let call = NormalizedToolCall {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "read_file".into(),
                 arguments,
-            }],
-            None,
-            None,
-            &[],
+            };
+            work.pending_read = Some(call.clone());
+            state.machine.persist_owner_work(work.clone()).await?;
+            state
+                .machine
+                .add_assistant_message_with_tool_calls_and_reasoning(
+                    "",
+                    vec![ToolRequest {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                    }],
+                    None,
+                    None,
+                    &[],
+                );
+            call
+        }
+    };
+    if state.machine.tool_payload_by_call_id(&call.id).is_none() {
+        let outcome = super::orchestrate_tool_call(
+            &mut ToolLoopGuard::new(None, 1),
+            state,
+            &call,
+            ToolOrchestratorInputs {
+                explicit_command: false,
+                cancel,
+                steering_broker: None,
+            },
+            false,
+            false,
+            emit,
+        )
+        .await?;
+        ensure!(
+            matches!(outcome, ToolOrchestratorOutcome::ContinueToolBatch { .. }),
+            "source read did not complete"
         );
-    let outcome = super::orchestrate_tool_call(
-        &mut ToolLoopGuard::new(None, 1),
-        state,
-        &call,
-        ToolOrchestratorInputs {
-            explicit_command: false,
-            cancel,
-            steering_broker: None,
-        },
-        false,
-        false,
-        emit,
-    )
-    .await?;
-    ensure!(
-        matches!(outcome, ToolOrchestratorOutcome::ContinueToolBatch { .. }),
-        "source read did not complete"
-    );
+    }
     let value = state
         .machine
-        .messages()
-        .iter()
-        .rev()
-        .find_map(|m| {
-            if let Message::Tool { responses } = m {
-                responses
-                    .iter()
-                    .find(|r| r.id == call.id)
-                    .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.text_content()).ok())
-            } else {
-                None
-            }
-        })
+        .tool_payload_by_call_id(&call.id)
         .context("source read result unavailable")?;
     ensure!(
         value["success"] == true
@@ -507,12 +544,13 @@ where
             && content.split('\n').count() == (source.end_line - source.start_line + 1) as usize,
         "source range exceeds capture bound or was projected"
     );
+    work.pending_read = None;
     Ok(content.into())
 }
 
 async fn validate_owner<E, F>(
     state: &mut RuntimeLoopState,
-    work: &Snapshot,
+    work: &mut Snapshot,
     owner: &str,
     emit: &mut E,
     cancel: &CancellationToken,
@@ -526,17 +564,25 @@ where
         .candidates
         .iter()
         .find(|c| c.id == owner)
-        .context("selected owner outside captured candidates")?;
-    for source in &candidate.sources {
+        .context("selected owner outside captured candidates")?
+        .clone();
+    for source in candidate.sources.iter().skip(work.validated_sources) {
         let evidence = work
             .evidence
             .iter()
             .find(|e| e.owner == owner && e.source == *source)
             .context("owner lacks captured evidence")?;
+        let expected = evidence.sha256.clone();
         ensure!(
-            digest(read_source(state, source, emit, cancel).await?.as_bytes()) == evidence.sha256,
+            digest(
+                read_source(state, work, source, emit, cancel)
+                    .await?
+                    .as_bytes()
+            ) == expected,
             "owner evidence changed or authority was revoked"
         );
+        work.validated_sources += 1;
+        state.machine.persist_owner_work(work.clone()).await?;
     }
     Ok(())
 }
@@ -619,11 +665,16 @@ where
     Ok(())
 }
 
-async fn settle<E, F>(state: &mut RuntimeLoopState, work: Snapshot, emit: &mut E) -> Result<()>
+async fn settle<E, F>(state: &mut RuntimeLoopState, mut work: Snapshot, emit: &mut E) -> Result<()>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    if matches!(work.outcome, Outcome::Cancelled | Outcome::Failed { .. }) {
+        state
+            .machine
+            .retire_owner_read(&mut work, "owner work stopped");
+    }
     state.machine.persist_owner_work(work.clone()).await?;
     if matches!(work.outcome, Outcome::Cancelled)
         && let Some(request_id) = &work.owned_request
@@ -666,12 +717,18 @@ pub(super) async fn generate_fallback(
     );
     let stop = cancel.child_token();
     let generation = state.namespace_generation();
-    let operation = generation.generate_controlled(request, 0, &stop);
+    let operation = generation.generate_admitted(request, 0, &stop);
     tokio::pin!(operation);
     tokio::select! { biased;
         _ = cancel.cancelled() => {},
         _ = tokio::time::sleep_until(expires) => {},
-        result = &mut operation => return result.map_err(|error| error.context(FallbackUncertainty)),
+        result = &mut operation => return result.map_err(|error| {
+            if error.root_cause().is::<crate::agent_machine::task_budget::Exhausted>() {
+                error
+            } else {
+                error.context(FallbackUncertainty)
+            }
+        }),
     }
     // Let existing generation control abort its allocated operation before dropping it.
     stop.cancel();

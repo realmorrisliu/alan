@@ -23,6 +23,10 @@ pub(crate) use runtime_inputs::SubmissionRuntime;
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
     NoTurn,
+    ContinueOwnerWork {
+        work_id: String,
+        approved: bool,
+    },
     RunTurn {
         turn_kind: TurnRunKind,
         user_input: Option<Vec<ContentPart>>,
@@ -454,6 +458,15 @@ async fn handle_confirmation_resolution(
         && is_unknown_effect_confirmation(&pending);
     let allow_tool_escalation_replay =
         pending.checkpoint_type == crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE;
+
+    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
+        && let Some(work) = runtime.machine.budget_owner_work(&pending)?
+    {
+        return Ok(RuntimeOpAction::ContinueOwnerWork {
+            work_id: work.work_id,
+            approved: choice_str == "approve",
+        });
+    }
 
     if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
         && choice_str != "approve"

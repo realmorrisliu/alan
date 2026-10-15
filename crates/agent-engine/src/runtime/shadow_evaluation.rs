@@ -372,6 +372,29 @@ pub(crate) async fn evaluate_captured_choice(
         budget
             .reserve(crate::agent_machine::task_budget::Admission::Model)
             .await?;
+    }
+    evaluate_reserved_choice(
+        machine,
+        environment,
+        evaluation_environment,
+        request,
+        observation,
+        window,
+        cancel,
+    )
+    .await
+}
+
+pub(crate) async fn evaluate_reserved_choice(
+    machine: &mut AgentMachine,
+    environment: &NamespaceRuntimeEnvironment,
+    evaluation_environment: NamespaceRuntimeEnvironment,
+    request: ChoiceEvaluationRequest,
+    observation: Observation,
+    window: (Instant, Instant),
+    cancel: &CancellationToken,
+) -> Result<()> {
+    if let Some(budget) = machine.task_budget.clone() {
         return budget
             .run(cancel, |operation_cancel| async move {
                 evaluate_admitted_choice(

@@ -25,6 +25,10 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** a budget pause carries a selectable Connection binding whose captured revision is unavailable or revoked
 - **THEN** recovery fails without silently substituting the current default or selected-next model
 
+#### Scenario: A bounded mixed program waits for additional budget
+- **WHEN** the existing source-owner Machine program exhausts its task allowance during source capture, model selection or validation
+- **THEN** its budget checkpoint preserves the exact unfinished read and program progress, explicit extension resumes the program without replaying completed effects, repeating settled model calls or substituting ordinary generation; resumed final validation rechecks current source authority and bytes within an explicitly sufficient finite allowance, and changed evaluator authority or uncertain settlement never permits an implicit retry
+
 ### Requirement: Pending decisions preserve dependency ordering
 A pending permission or clarification SHALL keep its original correlated operation. Other work SHALL proceed only if it is independently authorized and does not consume that operation’s result or rely on its unresolved authority. Unknown dependence SHALL preserve ordering, and repeated observations SHALL NOT create duplicate prompts or effects.
 

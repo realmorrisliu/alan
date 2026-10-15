@@ -67,6 +67,18 @@ impl NamespaceGeneration {
             budget
                 .reserve(crate::agent_machine::task_budget::Admission::Model)
                 .await?;
+        }
+        self.generate_admitted(request, timeout_secs, cancel).await
+    }
+
+    /// Run after the caller has reserved and recorded this model attempt.
+    pub(crate) async fn generate_admitted(
+        &self,
+        request: &GenerationRequest,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<GenerationResponse> {
+        if let Some(budget) = &self.budget {
             return budget
                 .run(cancel, |stop| async move {
                     self.generate_unmetered(request, timeout_secs, &stop).await

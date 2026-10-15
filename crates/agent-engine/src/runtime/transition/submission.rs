@@ -167,6 +167,9 @@ where
         };
         match action {
             RuntimeOpAction::NoTurn => Ok(()),
+            RuntimeOpAction::ContinueOwnerWork { work_id, approved } => {
+                owner_work::budget::resume(state, &work_id, approved, emit, cancel).await
+            }
             RuntimeOpAction::RunTurn {
                 turn_kind,
                 user_input,

@@ -28,8 +28,8 @@ Tests cover concurrency, cross-dimension exhaustion, waiting, time-limit cleanup
 real rollout recovery, failed flush, cancelled acknowledgement before/after write,
 identity reuse, backwards evidence, selective extension and malformed configuration.
 The latest focused `cargo test -p alan-agent-engine budget --lib` run passed 45
-tests. The engine-library run after input/binding lifecycle fixes passed 1499 tests, with one
-existing ignored test. Quality and native qualification are tracked separately;
+tests. The engine-library run after mixed-program budget continuation passed 1508 tests,
+with one existing ignored test. Quality and native qualification are tracked separately;
 these counts do not establish native UI acceptance.
 
 ## Runtime wiring under verification
@@ -82,16 +82,44 @@ Time extension requests cover already-recorded cleanup overrun plus a fresh fini
 tranche, without refunding consumption. All exhausted dimensions are included in one
 proposal. Declining an extension marks the task cancelled rather than completed.
 
+### Bounded mixed-program continuation — 2026-10-15
+
+The existing source-owner Machine program now checkpoints its ordered source prefix,
+unfinished read identity, selected owner, validation cursor and evaluator identity
+inside the acknowledged budget wait. Explicit budget resume advances a monotonic
+program revision; the existing historical duplicate-snapshot guard remains intact.
+Captured source evidence and model selections are retained instead of restarting the
+program or entering ordinary generation. Final validation restarts after suspension
+so previously checked source bytes and authority must still be valid in the resumed
+Process. The explicit finite proposal covers the full fresh validation pass; all old
+spending remains charged, and unfinished validation reads are retired before the new
+pass. A resume revision permits this validation reset without weakening replay guards. Model admission is reserved once before recording
+its attempt and invoking the existing bounded operation; fallback is not double charged.
+
+Source integration tests cover repeated one-Tool extensions, recovery into a fresh
+Process/namespace/rollout before evaluation and fallback, retained user selection,
+changed/ungranted evaluator rejection, empty/negative replies, interrupt cleanup,
+foreign checkpoints, replacement of unfinished read identity and fresh-Process
+revocation/change of an already-validated first source while later sources remain
+readable. An actual deadline/completion-gate regression covers a successful first
+validation result retained with a zero cursor; it is not reused after suspension.
+State mismatch is rejected before extending budget or consuming the request. Requests are rebound
+to the new invocation; local request strings may legitimately repeat across separate
+namespaces. Decline/cancellation retires an unexecuted read without dispatching it.
+This does not qualify native terminal presentation or arbitrary active-crash replay.
+
 ## Known qualification gaps
 
-Task 2.4 remains unchecked. Mixed-Machine owner work still needs an exact budget
-continuation rather than losing its program state or entering ordinary generation.
-Input-shadow budget pause/resume now has source integration coverage; physical
-terminal acceptance remains pending. Descendant Agent Process accounting
+Task 2.4 remains unchecked. The existing source-owner program has budget continuation
+coverage; this does not implement a general mixed-program scheduler. Uncertain model
+or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
+and active-crash transfer edges still need acceptance. Input-shadow budget pause/resume
+has source integration coverage; physical terminal acceptance remains pending. Descendant Agent Process accounting
 needs an explicit aggregate or delegated finite-allowance contract and acceptance;
 independent per-Process defaults do not prove a task-tree cap. Whole-transition
 time boundaries and all cancellation/error paths still need acceptance. Native UI,
-installed-binary and complete repository tests are not yet qualified.
+installed-binary and task-tree qualification are pending; source test counts remain
+separate from those acceptance claims.
 
 ## Remaining integration, in order
 

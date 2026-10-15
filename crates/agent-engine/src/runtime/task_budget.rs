@@ -17,9 +17,10 @@ mod tests;
 fn extension(
     spent: &crate::agent_machine::task_budget::Snapshot,
     limits: &crate::TaskBudgetLimits,
+    owner: Option<&crate::agent_machine::owner_work::Snapshot>,
 ) -> Result<Extension> {
     let time_limit = spent.limits.execution_seconds.get().saturating_mul(1000);
-    Ok(Extension {
+    let mut additional = Extension {
         execution_seconds: if spent.elapsed_millis >= time_limit {
             spent
                 .elapsed_millis
@@ -40,7 +41,30 @@ fn extension(
         } else {
             0
         },
-    })
+    };
+    if let Some(work) = owner
+        && let Some(selected) = &work.selected_owner
+    {
+        let sources = work
+            .request
+            .candidates
+            .iter()
+            .find(|candidate| &candidate.id == selected)
+            .context("budget continuation selected an unknown owner")?
+            .sources
+            .len();
+        let remaining = spent
+            .limits
+            .tool_calls
+            .get()
+            .saturating_sub(spent.tool_calls);
+        additional.tool_calls = additional.tool_calls.max(
+            u64::try_from(sources)
+                .context("source count exceeds Tool allowance")?
+                .saturating_sub(remaining),
+        );
+    }
+    Ok(additional)
 }
 
 pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
@@ -145,7 +169,12 @@ where
     budget.settle(false).await?;
     let snapshot = budget.snapshot().await;
     let limits = &state.core_config.task_budget;
-    let additional = extension(&snapshot, limits)?;
+    let owner = state
+        .machine
+        .owner_work
+        .as_ref()
+        .filter(|work| work.outcome == crate::agent_machine::owner_work::Outcome::BudgetPaused);
+    let additional = extension(&snapshot, limits, owner)?;
     let summary = format!(
         "{}; add {}s execution, {} Tool attempts and {} model requests?",
         exhausted, additional.execution_seconds, additional.tool_calls, additional.model_calls,
@@ -166,6 +195,8 @@ where
             "budget": snapshot,
             "additional": additional,
             "generation_binding": generation_binding,
+            "owner_work": state.machine.owner_work.as_ref().filter(|work|
+                work.outcome == crate::agent_machine::owner_work::Outcome::BudgetPaused),
         }),
         options: vec!["reject".into(), "approve".into()],
     };
@@ -175,6 +206,7 @@ where
         resume_only: false,
     };
     wait.budget()?;
+    crate::agent_machine::owner_work::checkpoint_work(&wait.checkpoint)?;
     if let Some(recorder) = state.machine.recorder() {
         recorder
             .persist_batch(vec![RolloutItem::Event(EventRecord {
@@ -227,6 +259,7 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
         .context("budget wait lacks its ledger")?
         .snapshot()
         .await;
+    let owner_work = state.machine.budget_owner_work(&wait.checkpoint)?;
     anyhow::ensure!(
         wait.budget()?.task_id == actual.task_id,
         "budget wait belongs to a different task"
@@ -262,7 +295,7 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
     }
     if wait.budget()? != actual {
         let limits = &state.core_config.task_budget;
-        let additional = extension(&actual, limits)?;
+        let additional = extension(&actual, limits, owner_work.as_ref())?;
         wait.resume_only = additional == Extension::default();
         wait.checkpoint.checkpoint_id = format!("task_budget_{}", uuid::Uuid::new_v4());
         wait.checkpoint.details["budget"] = serde_json::to_value(actual)?;
@@ -291,6 +324,12 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
         }
         state.machine.task_budget_wait = Some(wait.clone());
     }
+    if let Some(work) = owner_work {
+        state
+            .environment
+            .publish_work(Some(work.projection()?))
+            .await?;
+    }
     let pending = wait.checkpoint;
     let id = state
         .agent_files()
@@ -318,6 +357,7 @@ pub(crate) async fn resolve(
     pending: &PendingConfirmation,
     approved: bool,
 ) -> Result<()> {
+    machine.budget_owner_work(pending)?;
     anyhow::ensure!(
         machine
             .task_budget_wait
