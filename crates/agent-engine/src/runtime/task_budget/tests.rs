@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_machine::task_budget::Dimension;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 use crate::runtime::submission_handlers::RuntimeOpAction;
 use crate::runtime::transition::{NamespaceRuntimeEnvironment, handle_runtime_op};
@@ -6,6 +7,34 @@ use alan_agent_protocol::{ContentPart, Op};
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, MountFs, Namespace};
 use std::{num::NonZeroU64, sync::Arc};
+
+struct RecoveryBindingAuthority {
+    callable: crate::runtime::model_binding::CapturedCallable,
+    revoked: bool,
+}
+
+#[async_trait::async_trait]
+impl crate::runtime::model_binding::ConnectionAuthority for RecoveryBindingAuthority {
+    async fn capture(
+        &self,
+        _: Option<&str>,
+    ) -> Result<crate::runtime::model_binding::CapturedCallable> {
+        anyhow::bail!("recovery must restore the admitted binding")
+    }
+    async fn restore(
+        &self,
+        identity: &crate::runtime::model_binding::CallableIdentity,
+    ) -> Result<crate::runtime::model_binding::CapturedCallable> {
+        anyhow::ensure!(
+            !self.revoked && identity == &self.callable.identity,
+            "admitted model revision revoked"
+        );
+        Ok(self.callable.clone())
+    }
+    async fn catalog(&self) -> Result<serde_json::Value> {
+        anyhow::bail!("recovery must not select from the current catalog")
+    }
+}
 
 fn state(machine: AgentMachine) -> RuntimeLoopState {
     let mut namespace = Namespace::new();
@@ -64,6 +93,191 @@ async fn waiting(machine: AgentMachine, tools: bool) -> (RuntimeLoopState, Strin
         panic!("expected correlated wait")
     };
     (state, request_id.clone())
+}
+
+#[tokio::test]
+async fn extension_covers_cleanup_overrun_without_refunding_spent_time() {
+    let mut state = state(AgentMachine::new());
+    state.core_config.task_budget.execution_seconds = NonZeroU64::new(1).unwrap();
+    begin(&mut state).await.unwrap();
+    state
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .reserve(crate::agent_machine::task_budget::Admission::Model)
+        .await
+        .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_millis(3800)).await;
+    state.core_config.task_budget.execution_seconds = NonZeroU64::new(5).unwrap();
+    pause(
+        &mut state,
+        &Exhausted {
+            dimension: Dimension::Time,
+        },
+        None,
+        &mut |_| async {},
+    )
+    .await
+    .unwrap();
+    let spent = state.machine.task_budget.as_ref().unwrap().snapshot().await;
+    let proposal: Extension = serde_json::from_value(
+        state.machine.pending_confirmation().unwrap().details["additional"].clone(),
+    )
+    .unwrap();
+    assert!(proposal.execution_seconds >= 8);
+    assert_eq!(proposal.model_calls, 1);
+    let id = state
+        .machine
+        .pending_request_ids()
+        .into_iter()
+        .next()
+        .unwrap();
+    handle_runtime_op(
+        &mut state,
+        Op::Resume {
+            request_id: id,
+            content: vec![ContentPart::structured(
+                serde_json::json!({"choice":"approve"}),
+            )],
+        },
+        &mut |_| async {},
+    )
+    .await
+    .unwrap();
+    let resumed = state.machine.task_budget.as_ref().unwrap().snapshot().await;
+    assert_eq!(resumed.elapsed_millis, spent.elapsed_millis);
+    assert_eq!(resumed.model_calls, spent.model_calls);
+    assert!(
+        state
+            .machine
+            .task_budget
+            .as_ref()
+            .unwrap()
+            .remaining_time()
+            .await
+            .unwrap()
+            >= std::time::Duration::from_secs(5)
+    );
+}
+
+#[tokio::test]
+async fn budget_recovery_restores_the_original_binding_and_rejects_revoked_revisions() {
+    use crate::runtime::model_binding::{CallableIdentity, CapturedCallable, InputBinding};
+    let directory = tempfile::TempDir::new().unwrap();
+    let machine = AgentMachine::new_with_recorder_in_dir("/proc/1", "test", directory.path())
+        .await
+        .unwrap();
+    let mut source = state(machine);
+    let callable = CapturedCallable {
+        identity: CallableIdentity {
+            profile: "original".into(),
+            provider: "test".into(),
+            model: "original-model".into(),
+            credential_ref: Some("credential-reference".into()),
+            revision: "original-revision".into(),
+        },
+        root: source.environment.root_transport(),
+        connection: "original".into(),
+        config: crate::Config::default(),
+    };
+    let binding = InputBinding {
+        callable_binding: callable.identity.clone(),
+        request_controls: Default::default(),
+    };
+    *source.environment.active_binding.write().unwrap() = Some((binding.clone(), callable.clone()));
+    begin(&mut source).await.unwrap();
+    source
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .reserve(crate::agent_machine::task_budget::Admission::Model)
+        .await
+        .unwrap();
+    pause(
+        &mut source,
+        &Exhausted {
+            dimension: Dimension::ModelCalls,
+        },
+        None,
+        &mut |_| async {},
+    )
+    .await
+    .unwrap();
+    for disposition in ["available", "revoked", "missing", "foreign"] {
+        let machine = AgentMachine::load_from_rollout_in_dir(
+            source.machine.rollout_path().unwrap(),
+            "/proc/2",
+            "test",
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        let mut recovered = state(machine);
+        recovered.environment =
+            recovered
+                .environment
+                .with_connection_authority(Arc::new(RecoveryBindingAuthority {
+                    callable: callable.clone(),
+                    revoked: disposition == "revoked",
+                }));
+        let mut next = callable.clone();
+        next.identity.model = "selected-next-model".into();
+        recovered.environment.model_bindings.lock().await.confirmed = Some(next);
+        let details = &mut recovered
+            .machine
+            .task_budget_wait
+            .as_mut()
+            .unwrap()
+            .checkpoint
+            .details;
+        if disposition == "missing" {
+            details
+                .as_object_mut()
+                .unwrap()
+                .remove("generation_binding");
+        } else if disposition == "foreign" {
+            details["budget"]["task_id"] = serde_json::json!("foreign-task");
+        }
+        let published = publish_wait(&mut recovered).await;
+        if disposition != "available" {
+            assert!(published.is_err());
+            assert!(recovered.machine.pending_request_ids().is_empty());
+            assert!(
+                recovered
+                    .environment
+                    .active_binding
+                    .read()
+                    .unwrap()
+                    .is_none()
+            );
+        } else {
+            assert!(published.unwrap().is_some());
+            assert_eq!(
+                recovered
+                    .environment
+                    .active_binding
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .0,
+                binding
+            );
+        }
+        let snapshot = recovered
+            .machine
+            .task_budget
+            .as_ref()
+            .unwrap()
+            .snapshot()
+            .await;
+        assert_eq!(snapshot.model_calls, 1);
+        assert_eq!(snapshot.limits.model_calls.get(), 1);
+        assert_eq!(snapshot.phase, Phase::Paused);
+    }
 }
 
 #[tokio::test]
@@ -147,6 +361,7 @@ async fn empty_or_negative_budget_response_does_not_resume_generation() {
         .await
         .unwrap();
         assert!(matches!(action, RuntimeOpAction::NoTurn));
+        assert!(state.machine.submission_was_cancelled());
         assert_eq!(
             state
                 .machine
@@ -173,6 +388,14 @@ async fn budget_decline_settles_empty_explicit_continuation_without_repeating_co
     ] {
         let mut state = state(AgentMachine::new());
         begin(&mut state).await.unwrap();
+        state
+            .machine
+            .task_budget
+            .as_ref()
+            .unwrap()
+            .reserve(crate::agent_machine::task_budget::Admission::Model)
+            .await
+            .unwrap();
         let result = serde_json::json!({"status":"completed", "output":"already done"});
         state
             .machine
@@ -180,7 +403,7 @@ async fn budget_decline_settles_empty_explicit_continuation_without_repeating_co
         pause(
             &mut state,
             &Exhausted {
-                dimension: Dimension::Time,
+                dimension: Dimension::ModelCalls,
             },
             Some(PendingToolReplayBatch {
                 tool_calls: vec![],

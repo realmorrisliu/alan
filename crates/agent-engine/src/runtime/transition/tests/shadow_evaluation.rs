@@ -167,6 +167,200 @@ async fn task_budget_deadline_aborts_and_settles_paid_typed_evaluation_before_re
 }
 
 #[tokio::test]
+async fn shadow_budget_exhaustion_retains_input_and_extension_resumes_only_generation() {
+    for (held, recover) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (mut state, directory, input, _, generation) =
+            dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
+        state.machine.accept_submission(input.id.clone());
+        state.core_config.memory.enabled = false;
+        state.core_config.openai_responses_model = "budget-mock".into();
+        if held {
+            state.core_config.task_budget.execution_seconds = std::num::NonZeroU64::new(1).unwrap();
+            crate::runtime::task_budget::begin(&mut state)
+                .await
+                .unwrap();
+            state.core_config.task_budget.execution_seconds =
+                std::num::NonZeroU64::new(10).unwrap();
+        } else {
+            state.core_config.task_budget.model_calls = std::num::NonZeroU64::new(1).unwrap();
+            crate::runtime::task_budget::begin(&mut state)
+                .await
+                .unwrap();
+            state
+                .machine
+                .task_budget
+                .as_ref()
+                .unwrap()
+                .reserve(crate::agent_machine::task_budget::Admission::Model)
+                .await
+                .unwrap();
+        }
+        let (calls, observations) = attach_with_hold(&mut state, false, None, false, held);
+        state
+            .dispatch_input(&input, &CancellationToken::new())
+            .await
+            .unwrap();
+        handle_submission_with_cancel(
+            &mut state,
+            input.clone(),
+            &mut |_| async {},
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(state.machine.has_pending_interaction());
+        assert_eq!(calls.load(Ordering::SeqCst), usize::from(held));
+        assert!(generation.recorded_requests().is_empty());
+        assert_eq!(
+            state
+                .machine
+                .messages()
+                .iter()
+                .filter(|m| m.text_content() == "exact task")
+                .count(),
+            1
+        );
+        let retained = observations.lock().unwrap().last().unwrap().clone();
+        if held {
+            assert_eq!(retained["outcome"]["state"], "cancelled");
+        } else {
+            assert_eq!(retained["outcome"]["reason"], "task_budget_exhausted");
+            assert_eq!(retained["outcome"]["evaluator_calls"], 0);
+            state
+                .observe_input_shadow(&input, &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+        if recover {
+            state.machine = AgentMachine::load_from_rollout_in_dir(
+                state.machine.rollout_path().unwrap(),
+                "/proc/2",
+                "test",
+                directory.path(),
+            )
+            .await
+            .unwrap();
+            state.environment = namespace_environment_with_live_process(generation.clone()).await;
+            crate::runtime::task_budget::publish_wait(&mut state)
+                .await
+                .unwrap();
+        }
+        let id = state
+            .machine
+            .pending_request_ids()
+            .into_iter()
+            .next()
+            .unwrap();
+        let outcome = advance_accepted_submission(
+            &mut state,
+            Submission::new(Op::Resume {
+                request_id: id.clone(),
+                content: vec![alan_agent_protocol::ContentPart::structured(
+                    json!({"choice":"approve"}),
+                )],
+            }),
+            &TurnInputBroker::default(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(outcome.result.unwrap(), TransitionCompletion::Completed),
+            "held={held}, pending={:?}, generation_calls={}",
+            state.machine.pending_confirmation(),
+            generation.recorded_requests().len()
+        );
+        assert_eq!(generation.recorded_requests().len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), usize::from(held));
+        assert_eq!(
+            state
+                .machine
+                .messages()
+                .iter()
+                .filter(|m| m.text_content() == "exact task")
+                .count(),
+            1
+        );
+        assert_eq!(
+            state
+                .machine
+                .task_budget
+                .as_ref()
+                .unwrap()
+                .snapshot()
+                .await
+                .model_calls,
+            2
+        );
+        let duplicate = advance_accepted_submission(
+            &mut state,
+            Submission::new(Op::Resume {
+                request_id: id,
+                content: vec![],
+            }),
+            &TurnInputBroker::default(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(duplicate.result.is_ok());
+        assert_eq!(generation.recorded_requests().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn uncertain_budget_advice_publication_never_dispatches_the_original_input() {
+    let (mut state, _directory, input, _, generation) =
+        dispatch_failure_fixture(Some(InputMode::FollowUp)).await;
+    let (calls, _) = attach(&mut state, false, None, false);
+    state.core_config.task_budget.model_calls = std::num::NonZeroU64::new(1).unwrap();
+    crate::runtime::task_budget::begin(&mut state)
+        .await
+        .unwrap();
+    state
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .reserve(crate::agent_machine::task_budget::Admission::Model)
+        .await
+        .unwrap();
+    state.environment = state.environment.with_evaluation_publisher(|_| async {
+        Err(
+            anyhow::Error::new(crate::agent_machine::task_budget::Exhausted {
+                dimension: crate::agent_machine::task_budget::Dimension::Time,
+            })
+            .context(crate::runtime::NamespaceEvaluationUncertainty::Settlement),
+        )
+    });
+    let error = state
+        .dispatch_input(&input, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(error.is::<crate::runtime::NamespaceEvaluationUncertainty>());
+    assert!(state.machine.messages().is_empty());
+    assert!(
+        !state
+            .machine
+            .input_queue()
+            .lock()
+            .unwrap()
+            .settled_ids
+            .contains(&input.id)
+    );
+    assert!(
+        state
+            .machine
+            .input_queue()
+            .lock()
+            .unwrap()
+            .bindings
+            .contains_key(&input.id)
+    );
+    assert!(generation.recorded_requests().is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn accepted_input_records_command_advice_without_selecting_command_dispatch() {
     let (mut state, dir, input, _, generation) =
         dispatch_failure_fixture(Some(InputMode::FollowUp)).await;

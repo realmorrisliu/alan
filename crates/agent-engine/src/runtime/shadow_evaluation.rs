@@ -131,7 +131,12 @@ pub(super) async fn dispatch_input(
     submission: &Submission,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    observe_input_shadow(machine, environment, submission, cancel).await?;
+    if let Err(error) = observe_input_shadow(machine, environment, submission, cancel).await {
+        // Keep input on the normal Tape/pause path; the exhausted ledger still blocks paid work.
+        if !settled_budget_exhaustion(&error) || cancel.is_cancelled() {
+            return Err(error);
+        }
+    }
     machine.dispatch_input(submission).await
 }
 
@@ -223,7 +228,10 @@ async fn observe_input_shadow(
                     || prior.identity.source_rollout_id == recorder.rollout_id())
             {
                 ensure!(
-                    prior.outcome.bypass_reason() == bypass
+                    (prior.outcome.bypass_reason() == bypass
+                        || (bypass.is_none()
+                            && prior.outcome.bypass_reason()
+                                == Some(BypassReason::TaskBudgetExhausted)))
                         && prior.identity.input_sha256 == digest
                         && prior.identity.callable == shadow.identity
                         && prior.identity.surface == shadow.surface
@@ -298,7 +306,8 @@ async fn observe_input_shadow(
         })
         .await;
     }
-    evaluate_captured_choice(
+    let mut unadmitted = observation.clone();
+    let result = evaluate_captured_choice(
         machine,
         environment,
         NamespaceRuntimeEnvironment::new(
@@ -311,7 +320,43 @@ async fn observe_input_shadow(
         (started_at, expires),
         cancel,
     )
-    .await
+    .await;
+    if result.as_ref().is_err_and(settled_budget_exhaustion)
+        && !machine
+            .evaluation_observation
+            .as_ref()
+            .is_some_and(|prior| {
+                prior["identity"]["submission_id"] == unadmitted.identity.submission_id
+            })
+    {
+        unadmitted.outcome = Outcome::Bypassed {
+            reason: BypassReason::TaskBudgetExhausted,
+            evaluator_calls: 0,
+        };
+        unadmitted.elapsed_ms = Some(started_at.elapsed().as_millis().min(u64::MAX as u128) as u64);
+        bounded(
+            Instant::now() + Duration::from_secs(1),
+            &CancellationToken::new(),
+            async {
+                machine
+                    .persist_evaluation_observation(serde_json::to_value(unadmitted)?)
+                    .await?;
+                environment
+                    .publish_evaluation(machine.evaluation_observation.clone())
+                    .await
+            },
+        )
+        .await
+        .context(super::NamespaceEvaluationUncertainty::Settlement)?;
+    }
+    result
+}
+
+fn settled_budget_exhaustion(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .is::<crate::agent_machine::task_budget::Exhausted>()
+        && !error.is::<super::NamespaceEvaluationUncertainty>()
 }
 
 pub(crate) async fn evaluate_captured_choice(

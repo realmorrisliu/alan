@@ -28,7 +28,7 @@ Tests cover concurrency, cross-dimension exhaustion, waiting, time-limit cleanup
 real rollout recovery, failed flush, cancelled acknowledgement before/after write,
 identity reuse, backwards evidence, selective extension and malformed configuration.
 The latest focused `cargo test -p alan-agent-engine budget --lib` run passed 45
-tests. The current-source full engine-library run passed 1494 tests, with one
+tests. The engine-library run after input/binding lifecycle fixes passed 1499 tests, with one
 existing ignored test. Quality and native qualification are tracked separately;
 these counts do not establish native UI acceptance.
 
@@ -61,12 +61,33 @@ Tool batches, real Process timeout cleanup and unknown-effect reconciliation,
 typed evaluation cancellation settlement, `cd` budget resume without a shell, and
 explicit-command rejection after cleanup already recorded a terminal result.
 
+### Input and model continuity follow-up — 2026-10-15
+
+Clean shadow-advice budget exhaustion preserves the original input on Tape and
+reaches the ordinary budget pause before further model or Tool admission. A refused
+evaluation records a zero-call `task_budget_exhausted` bypass; a started evaluation
+retains its settled cancellation evidence. Uncertain evidence or user cancellation
+still prevents dispatch. Resume continues generation without repeating the advice
+or appending the input twice, including recovery from a durable budget pause into
+a fresh environment. This does not qualify arbitrary crashes between queue dispatch
+and the first durable Tape message; that transfer barrier remains to be audited.
+
+Continuation controls preserve the admitted model. Budget waits record its non-secret
+binding and reuse the existing Connection restoration validator during recovery;
+an unavailable/revoked revision, missing binding evidence or foreign task identity
+cannot silently select the current default. Hosts with fixed namespace connections
+record a null selectable binding and retain their explicitly supplied environment.
+
+Time extension requests cover already-recorded cleanup overrun plus a fresh finite
+tranche, without refunding consumption. All exhausted dimensions are included in one
+proposal. Declining an extension marks the task cancelled rather than completed.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. Mixed-Machine owner work still needs an exact budget
 continuation rather than losing its program state or entering ordinary generation.
-Shadow evaluation exhaustion during input preparation needs a correlated budget
-pause with the original undispatched input. Descendant Agent Process accounting
+Input-shadow budget pause/resume now has source integration coverage; physical
+terminal acceptance remains pending. Descendant Agent Process accounting
 needs an explicit aggregate or delegated finite-allowance contract and acceptance;
 independent per-Process defaults do not prove a task-tree cap. Whole-transition
 time boundaries and all cancellation/error paths still need acceptance. Native UI,

@@ -12,6 +12,19 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 #### Scenario: Task resumes after restart
 - **WHEN** a user selects a paused task for recovery
 - **THEN** its consumed budget remains accounted and no completed effect is replayed
+
+#### Scenario: Shadow advice consumes the remaining allowance
+- **WHEN** no-effect input advice exhausts the task budget before ordinary generation
+- **THEN** the original input and settled evaluation evidence remain available at the budget pause, no further paid model or Tool admission occurs before explicit extension, and uncertain evidence or user cancellation is not treated as clean exhaustion
+
+#### Scenario: Cancellation cleanup exceeds the time allowance
+- **WHEN** already-admitted work settles after the elapsed-time limit
+- **THEN** an explicit extension request covers the recorded overrun and a fresh finite tranche, includes other exhausted dimensions, and never refunds consumed time or calls
+
+#### Scenario: The original model binding cannot be restored
+- **WHEN** a budget pause carries a selectable Connection binding whose captured revision is unavailable or revoked
+- **THEN** recovery fails without silently substituting the current default or selected-next model
+
 ### Requirement: Pending decisions preserve dependency ordering
 A pending permission or clarification SHALL keep its original correlated operation. Other work SHALL proceed only if it is independently authorized and does not consume that operation’s result or rely on its unresolved authority. Unknown dependence SHALL preserve ordering, and repeated observations SHALL NOT create duplicate prompts or effects.
 

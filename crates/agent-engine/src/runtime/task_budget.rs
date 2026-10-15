@@ -3,7 +3,7 @@
 use alan_agent_protocol::{Event, YieldKind};
 use anyhow::{Context, Result};
 
-use crate::agent_machine::task_budget::{Dimension, Exhausted, Extension, Phase, TaskBudget};
+use crate::agent_machine::task_budget::{Exhausted, Extension, Phase, TaskBudget};
 use crate::approval::{PendingConfirmation, TASK_BUDGET_CHECKPOINT_TYPE};
 
 use super::transition::RuntimeLoopState;
@@ -13,6 +13,35 @@ use crate::rollout::{EventRecord, RolloutItem};
 
 #[cfg(test)]
 mod tests;
+
+fn extension(
+    spent: &crate::agent_machine::task_budget::Snapshot,
+    limits: &crate::TaskBudgetLimits,
+) -> Result<Extension> {
+    let time_limit = spent.limits.execution_seconds.get().saturating_mul(1000);
+    Ok(Extension {
+        execution_seconds: if spent.elapsed_millis >= time_limit {
+            spent
+                .elapsed_millis
+                .saturating_sub(time_limit)
+                .div_ceil(1000)
+                .checked_add(limits.execution_seconds.get())
+                .context("task budget time extension overflow")?
+        } else {
+            0
+        },
+        tool_calls: if spent.tool_calls >= spent.limits.tool_calls.get() {
+            limits.tool_calls.get()
+        } else {
+            0
+        },
+        model_calls: if spent.model_calls >= spent.limits.model_calls.get() {
+            limits.model_calls.get()
+        } else {
+            0
+        },
+    })
+}
 
 pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
     anyhow::ensure!(
@@ -116,24 +145,18 @@ where
     budget.settle(false).await?;
     let snapshot = budget.snapshot().await;
     let limits = &state.core_config.task_budget;
-    let additional = match exhausted.dimension {
-        Dimension::Time => Extension {
-            execution_seconds: limits.execution_seconds.get(),
-            ..Default::default()
-        },
-        Dimension::ToolCalls => Extension {
-            tool_calls: limits.tool_calls.get(),
-            ..Default::default()
-        },
-        Dimension::ModelCalls => Extension {
-            model_calls: limits.model_calls.get(),
-            ..Default::default()
-        },
-    };
+    let additional = extension(&snapshot, limits)?;
     let summary = format!(
         "{}; add {}s execution, {} Tool attempts and {} model requests?",
         exhausted, additional.execution_seconds, additional.tool_calls, additional.model_calls,
     );
+    let generation_binding = state
+        .environment
+        .active_binding
+        .read()
+        .expect("active binding snapshot")
+        .as_ref()
+        .map(|(binding, _)| binding.clone());
     let pending = PendingConfirmation {
         checkpoint_id: format!("task_budget_{}", uuid::Uuid::new_v4()),
         checkpoint_type: TASK_BUDGET_CHECKPOINT_TYPE.into(),
@@ -142,6 +165,7 @@ where
             "kind": TASK_BUDGET_CHECKPOINT_TYPE,
             "budget": snapshot,
             "additional": additional,
+            "generation_binding": generation_binding,
         }),
         options: vec!["reject".into(), "approve".into()],
     };
@@ -203,27 +227,42 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
         .context("budget wait lacks its ledger")?
         .snapshot()
         .await;
+    anyhow::ensure!(
+        wait.budget()?.task_id == actual.task_id,
+        "budget wait belongs to a different task"
+    );
+    let value = wait
+        .checkpoint
+        .details
+        .get("generation_binding")
+        .context("budget wait lacks admitted generation binding evidence")?;
+    if !value.is_null() {
+        let binding: super::model_binding::InputBinding = serde_json::from_value(value.clone())?;
+        let active = state
+            .environment
+            .active_binding
+            .read()
+            .expect("active binding snapshot")
+            .as_ref()
+            .map(|(binding, _)| binding.clone());
+        if active.as_ref() != Some(&binding) {
+            let callable = state
+                .environment
+                .model_bindings
+                .lock()
+                .await
+                .restore(&wait.budget()?.task_id, &binding)
+                .await?;
+            *state
+                .environment
+                .active_binding
+                .write()
+                .expect("active binding snapshot") = Some((binding, callable));
+        }
+    }
     if wait.budget()? != actual {
         let limits = &state.core_config.task_budget;
-        let additional = Extension {
-            execution_seconds: if actual.elapsed_millis
-                >= actual.limits.execution_seconds.get().saturating_mul(1000)
-            {
-                limits.execution_seconds.get()
-            } else {
-                0
-            },
-            tool_calls: if actual.tool_calls >= actual.limits.tool_calls.get() {
-                limits.tool_calls.get()
-            } else {
-                0
-            },
-            model_calls: if actual.model_calls >= actual.limits.model_calls.get() {
-                limits.model_calls.get()
-            } else {
-                0
-            },
-        };
+        let additional = extension(&actual, limits)?;
         wait.resume_only = additional == Extension::default();
         wait.checkpoint.checkpoint_id = format!("task_budget_{}", uuid::Uuid::new_v4());
         wait.checkpoint.details["budget"] = serde_json::to_value(actual)?;

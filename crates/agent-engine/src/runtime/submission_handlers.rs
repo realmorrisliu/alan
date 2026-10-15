@@ -458,6 +458,7 @@ async fn handle_confirmation_resolution(
     if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
         && choice_str != "approve"
     {
+        runtime.machine.mark_submission_cancelled();
         if let Some(batch) = replay_tool_batch {
             if !batch.resume_with_generation
                 && let Some(tool_call) = batch.tool_calls.first().cloned()
@@ -475,7 +476,7 @@ async fn handle_confirmation_resolution(
         runtime
             .machine
             .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
-        super::ui_surfaces::turn_completed(&runtime.agent_files, false).await?;
+        super::ui_surfaces::turn_completed(&runtime.agent_files, true).await?;
         super::ui_surfaces::warning(
             &runtime.agent_files,
             "Task stopped: additional budget was declined; completed effects are preserved.",
