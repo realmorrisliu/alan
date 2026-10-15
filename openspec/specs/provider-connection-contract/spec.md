@@ -4,7 +4,9 @@
 Defines provider and connection-profile contracts, including provider
 capabilities, authentication boundaries, host credential storage, request
 controls, model metadata, and explicit degradation.
+
 ## Requirements
+
 ### Requirement: Provider and connection contracts live in OpenSpec
 alan SHALL specify provider capabilities, provider authentication, connection
 profiles, request controls, provider-specific degradation, and host credential
@@ -40,9 +42,9 @@ respective layers.
 alan SHALL store non-secret connection metadata separately from secret-bearing
 credentials and managed login state.
 
-V1 non-secret metadata lives in the Connection Service subtree of the active
-channel System Store as `connections.toml`, with this logical shape. Credentials
-and managed login state remain in the matching channel Host Store.
+V1 non-secret metadata lives in the Connection Service subtree of the product
+System Store as `connections.toml`, with this logical shape. Credentials
+and managed login state remain in the paired Host Store.
 
 ```toml
 version = 1
@@ -70,8 +72,8 @@ Rules:
 - `connections.toml` stores profile and credential metadata only.
 - Secret-bearing credentials live in a host-managed store outside `agent.toml`.
 - Managed ChatGPT login state remains outside `connections.toml`.
-- Existing ChatGPT managed login uses the managed auth owner in the active
-  channel Host Store.
+- Existing ChatGPT managed login uses the managed auth owner in the paired
+  Host Store.
 - `secret_string` credentials use a host-managed secret store with file
   permissions equivalent to `0600` unless replaced by a stronger host backend
   such as keychain or keyring.
@@ -238,22 +240,6 @@ Provider-specific requirements:
 - **AND** they do not recompute alan-level precedence, defaults, or validation
   owned by `provider-request-controls`
 
-### Requirement: Cross-channel connection reuse is explicit
-Alan SHALL require an explicit user action before copying or importing stable
-connection profile metadata or auth material into the dev channel.
-
-#### Scenario: User requests profile import
-- **WHEN** a future import command copies a stable profile into the dev channel
-- **THEN** the command identifies the source channel and target channel explicitly
-- **AND** it writes new metadata to the dev System Store and new credential references to the dev Host Store
-- **AND** it does not make the dev profile a live reference to stable credential storage
-
-#### Scenario: Managed auth is reused
-- **WHEN** a future command or UI flow allows managed-auth reuse across channels
-- **THEN** the user must approve that operation explicitly
-- **AND** the resulting dev-channel auth state is stored under the dev-channel managed auth store
-- **AND** routine dev startup still does not read stable managed auth as implicit fallback
-
 ### Requirement: Provider and connection vocabulary is Process-shaped
 Alan SHALL distinguish provider family, provider descriptor, credential reference,
 connection profile, default profile, resolved connection, and Process connection
@@ -300,7 +286,7 @@ file-server management surface requires its own accepted contract.
 
 #### Scenario: Operator lists connection profiles
 - **WHEN** an operator runs `alan connection list`
-- **THEN** the CLI reads the active channel's connection and credential metadata owners directly
+- **THEN** the CLI reads the explicitly bound product connection and credential metadata owners directly
 - **AND** the read-only command does not launch or mutate an Agent Process
 
 ### Requirement: Host auth remains separate from provider execution
@@ -313,24 +299,14 @@ callback owned by the initiating host operation but SHALL NOT require a persiste
 - **THEN** the initiating host auth operation receives and validates the callback
 - **AND** only the host auth owner may grant or persist credential authority
 
-### Requirement: Connection state remains channel-scoped
-Stable and dev channels SHALL keep distinct connection metadata, credential references, and managed
-auth roots. Agent Process creation SHALL fail truthfully when its active channel cannot resolve a
-profile rather than borrowing another channel's state.
-
-#### Scenario: Dev Process has no dev connection
-- **WHEN** a dev-channel Agent Process is spawned without a resolvable dev connection profile
-- **THEN** creation reports the missing connection
-- **AND** stable connection or credential state is not consumed implicitly
-
 ### Requirement: Legacy connection metadata migrates once
-Alan SHALL migrate non-secret legacy connection metadata into the channel
+Alan SHALL migrate non-secret legacy connection metadata into the product
 System Store, verify the service-readable result, and delete the legacy file.
 Credential bytes SHALL remain in the owning Host credential store and no
 compatibility reader SHALL remain.
 
 #### Scenario: Legacy profile is valid
-- **WHEN** upgrade finds a valid legacy profile and credential reference
+- **WHEN** an operator explicitly selects legacy authored-state cleanup and it finds a valid legacy profile and credential reference
 - **THEN** the metadata is imported and verified before the old file is deleted
 - **AND** secret bytes are never copied into System Store
 
@@ -431,3 +407,22 @@ Process authority or native grant/range validation.
 - **WHEN** the old wire adapter and repeated mixed arguments are observed during qualification
 - **THEN** the failure remains retained and the causal interpretation is distinguished from a direct server trace
 - **AND** wire tests and a fresh unchanged-task native retry are required before claiming a qualified completion
+
+### Requirement: Connection resolution stays within its explicit store pair
+Connection and auth operations SHALL resolve metadata and credentials only through their supplied product or isolated test bindings. A missing profile SHALL fail without consulting legacy stores. Legacy adoption SHALL preserve valid credential references without writing secret bytes into System Store.
+
+#### Scenario: Selected product store lacks a connection
+- **WHEN** Agent creation cannot resolve a profile in its bound product store
+- **THEN** it reports the missing connection
+- **AND** it does not borrow a profile or auth state from a historical stable/dev store
+
+#### Scenario: Legacy managed auth is adopted
+- **WHEN** the operator explicitly adopts a verified legacy store pair
+- **THEN** credential ownership is transferred into the canonical Host store through its owner
+- **AND** profile references resolve without a live fallback to the old source
+- **AND** the original source pair remains intact by default
+
+#### Scenario: Retired runtime channel override is supplied
+- **WHEN** a data-using command receives `ALAN_INSTALL_CHANNEL` or a retired `alan-dev` invocation name
+- **THEN** it reports the obsolete selection before opening writable stores
+- **AND** it does not reinterpret the request as authority to use personal product data

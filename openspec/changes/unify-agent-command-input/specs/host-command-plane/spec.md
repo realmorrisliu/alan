@@ -7,7 +7,8 @@ attachment, Host Mount authorization, credentials and platform integration.
 Operations on a live instance SHALL require an explicitly selected instance
 endpoint or an existing authorized handle; a channel name MUST NOT select another
 terminal's live runtime implicitly. Durable profile/credential operations SHALL
-retain their existing channel store and native authorization boundaries without
+use the explicitly bound product System Store and paired Host credential store,
+retaining native authorization boundaries without
 starting a background Host. Internal namespace
 operations and service control SHALL remain owned by existing aP services.
 Task-oriented alan9 command executables MAY encapsulate those operations as thin,
@@ -33,7 +34,7 @@ paths to use supported task operations.
 - **THEN** it reports the missing target rather than launching or selecting a channel-wide Host
 - **AND** it does not infer authority from a PID, path or Herdr identifier
 
-#### Scenario: Credential command updates a shared channel store
+#### Scenario: Credential command updates the shared product stores
 - **WHEN** an operator changes a connection profile or credential outside a running Alan instance
 - **THEN** the existing owning service/native adapter validates and commits that operation
 - **AND** concurrent updates cannot silently overwrite one another or borrow another instance's authority

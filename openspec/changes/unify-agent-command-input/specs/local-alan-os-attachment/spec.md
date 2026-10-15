@@ -44,7 +44,7 @@ operation when the selected ready instance does not support it.
 - **WHEN** the selected instance has exited or no longer accepts its attachment
   socket
 - **THEN** the client reports that target as unavailable
-- **AND** it does not start or select another instance for the same channel
+- **AND** it does not start or select another instance or borrow a different Root
 
 #### Scenario: An older instance is still starting
 - **WHEN** an explicitly selected instance endpoint is not yet ready

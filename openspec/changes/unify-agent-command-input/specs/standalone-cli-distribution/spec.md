@@ -1,92 +1,63 @@
 > Installation identity and ownership upgrade requirements are superseded by
-> [unify-alan-installation-and-cache-lifecycle](../../../unify-alan-installation-and-cache-lifecycle/specs/standalone-cli-distribution/spec.md).
+> [unify-alan-installation-and-cache-lifecycle](../../../archive/2026-10-14-unify-alan-installation-and-cache-lifecycle/specs/standalone-cli-distribution/spec.md).
 > This change retains foreground lifetime and input/recovery ownership.
-
-## RENAMED Requirements
-
-- FROM: `### Requirement: Standalone distribution contains the CLI and Host binaries`
-- TO: `### Requirement: Standalone distribution contains the foreground CLI`
 
 ## MODIFIED Requirements
 
 ### Requirement: Standalone distribution contains the foreground CLI
 
 The supported local and release distribution SHALL provide `alan` as a
-standalone executable with its linked foreground alan9 composition. It SHALL NOT
-require or distribute independent `alan-os-host` or `alan-os-host-dev` product
-executables, an app bundle or an embedded GUI. A development CLI alias MAY be
-provided as `alan-dev` using the existing install-channel contract. Native
-adapters and service libraries remain part of the product composition.
+standalone executable with its linked foreground alan9 composition. It SHALL
+NOT require or distribute separate product executables named `alan-os-host` or
+`alan-os-host-dev`. The distribution MUST NOT provide an `alan-dev` alias or a second install channel. Native platform adapters and service
+libraries remain part of the CLI composition.
 
 #### Scenario: Release archive is assembled
 
 - **WHEN** a release archive is produced for a supported target
-- **THEN** it contains the foreground CLI executable and no separate product Host executable
+- **THEN** it contains only the `alan` executable and distribution metadata
+- **AND** its manifest identifies the target and the CLI entry points
+- **AND** it does not contain separate Host executables
 - **AND** it does not contain `Alan.app`, a GUI executable, Sparkle metadata, or
   an appcast
-- **AND** its manifest identifies the target and each executable
 
 #### Scenario: CLI alias is installed
 
-- **WHEN** a developer installs the local development channel
-- **THEN** `alan-dev` resolves to the development CLI entry point
-- **AND** stable and development System/Host Store roots remain channel
-  isolated
+- **WHEN** an old installation contains an owned `alan-dev` alias
+- **THEN** the unified installer verifies ownership before retiring it
+- **AND** it does not create another development alias or runtime channel
+
+#### Scenario: Local development build is installed
+
+- **WHEN** a developer explicitly installs a local build
+- **THEN** it installs the same `alan` entry point
+- **AND** compiler profile selection does not select a different product data identity
 
 ### Requirement: Installation is explicit and non-destructive
 
-The repository SHALL provide one installer with an explicit destination for
-the standalone binaries. The installer MUST refuse to overwrite a non-owned
-file and MUST NOT edit shell startup files, user data stores, credentials,
-installed applications, or launchd registrations.
-
-For an existing installation, the installer MAY replace the selected channel's
-CLI executable only when its ownership manifest records that path and its
-current content matches the recorded digest. A modified executable or a
-missing ownership record is a conflict; the installer MUST preserve both the
-file and existing manifest. Before changing any executable or the manifest,
-the installer MUST preflight all existing selected-channel paths it will
-replace or retire. Any conflict MUST fail the upgrade before mutation, leaving
-all existing executables and the manifest unchanged.
+The repository SHALL provide one installer with a configurable destination for
+the standalone `alan` CLI. The installer MUST refuse to overwrite
+or retire a non-owned or modified file and MUST NOT edit shell startup files,
+user data stores, credentials, installed applications, or launchd registrations.
+Before changing files, it MUST verify every existing owned current or legacy installation path it
+will replace or retire against the applicable verified ownership manifest.
 
 #### Scenario: Destination is empty
 
-- **WHEN** the installer is run with an empty destination directory for a
-  selected channel
-- **THEN** it installs the selected channel's CLI entry point
+- **WHEN** the installer is run with an empty destination directory for Alan
+- **THEN** it installs `alan`
 - **AND** it does not install a separate Host executable
 - **AND** a subsequent `alan --version` exits successfully without starting a
-  Host
+  foreground instance
 
 #### Scenario: Owned legacy Host is retired on upgrade
 
-- **WHEN** an existing channel installation records a separate Host executable
-  in its ownership manifest and is upgraded to the foreground CLI distribution
-- **THEN** the installer removes that executable only if it still matches the
-  previously recorded owned content, before replacing the manifest
-- **AND** a modified or unowned file is preserved and reported as a conflict
-  without discarding its existing ownership record
-- **AND** stable and development channel ownership remain separate
-
-#### Scenario: Upgrade replaces the manifest-owned CLI executable
-
-- **WHEN** an existing selected-channel CLI executable matches the digest in
-  its ownership manifest and the installer receives a new executable
-- **THEN** the installer replaces it and records the new digest
-- **AND** a modified executable or missing ownership record fails with the
-  conflicting path while preserving the executable and existing manifest
-- **AND** the other install channel remains unchanged
-
-#### Scenario: Upgrade preflights the complete selected-channel install
-
-- **WHEN** an upgrade must replace the CLI and remove a previously owned Host
-  executable
-- **THEN** the installer verifies every existing path it will change against
-  the selected channel's ownership manifest before changing any path
-- **AND** any modified or unowned executable fails with the conflicting path
-  while preserving all existing executables and the manifest
-- **AND** when preflight succeeds, the CLI replacement, Host removal and
-  manifest update complete as one upgrade operation
+- **WHEN** an existing install manifest records a legacy Host executable and
+  its current digest still matches
+- **THEN** the installer removes that executable while upgrading to the
+  foreground CLI distribution
+- **AND** a modified or unowned path fails preflight without changing the
+  existing CLI, Host, or manifest
 
 #### Scenario: Upgrade is interrupted by a handled signal
 
@@ -100,6 +71,14 @@ all existing executables and the manifest unchanged.
 - **WHEN** a requested target path contains a file not owned by the installer
 - **THEN** installation fails with the exact conflicting path
 - **AND** the existing file is unchanged
+
+#### Scenario: Old stable and dev entry points coexist
+
+- **WHEN** installation upgrades verified stable and dev ownership manifests
+- **THEN** it publishes one ownership manifest and one `alan` entry point
+- **AND** it retires only unchanged owned aliases and obsolete Host executables
+- **AND** a conflict in either old installation fails preflight before any replacement
+- **AND** installation does not select or migrate either old data store
 
 ### Requirement: Host lifecycle remains a runtime concern
 

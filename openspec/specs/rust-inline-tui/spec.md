@@ -332,24 +332,23 @@ full snapshot rather than repeatedly printing the complete snapshot inline.
 
 ### Requirement: Composer history persists across launches
 
-The TUI composer SHALL support standard readline editing and SHALL persist prior submissions in channel-scoped user state for recall across launches.
+The TUI composer SHALL support standard readline editing and SHALL persist prior submissions in the product System Store shell-ui subtree for recall across launches. Explicitly isolated store bindings SHALL retain independent history; the retired installation channel SHALL NOT select a history file.
 
 #### Scenario: A later launch recalls history
 
-- **WHEN** a user submits text, exits the TUI, and launches it again in the same channel
+- **WHEN** a user submits text, exits the TUI, and launches it again with the same product store binding
 - **THEN** history-previous recalls the earlier submission
-- **AND** stable and dev installations do not share the history file implicitly
+- **AND** a launch bound to a different isolated product store does not recall those submissions
 
 ### Requirement: Agent input uses a contextual two-line prompt
 In its ordinary single-line idle state, the inline prompt SHALL have one Agent
 context/status line immediately above the editable input line. It SHALL show
-the selected project/cwd, effective model or explicit unknown value, and current
-Agent state. It SHALL follow transcript flow rather than occupy a fixed screen
+the selected project/cwd and effective model or explicit unknown value. Ordinary idle state and zero queue counts SHALL remain implicit; actionable state SHALL appear in a separate conditional line. It SHALL follow transcript flow rather than occupy a fixed screen
 position. Multiline drafts and temporary controls SHALL expand only as needed. Without a local project-picker receipt, an observed successful ordinary directory action SHALL provide the namespace cwd for context; the renderer MUST NOT infer a project label or grant access from that cwd. A Root Agent Process replacement SHALL discard the previous Root's observed cwd.
 
 #### Scenario: Idle Agent accepts input
 - **WHEN** the Agent is ready for a new single-line input
-- **THEN** the first prompt line shows actual context and ready state
+- **THEN** the first prompt line shows actual project context and model/effort without ready, active or next qualifiers
 - **AND** the second line accepts input with an explicit Agent or command route marker
 
 #### Scenario: Cursor follows the inline draft after earlier output
@@ -359,13 +358,13 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 
 #### Scenario: Attention is required
 - **WHEN** work is queued, paused, failed or waiting for approval
-- **THEN** the status line distinguishes that state from working and ready
+- **THEN** a conditional status line distinguishes that state from working and ordinary idle input
 - **AND** the applicable action is visible without consulting logs
 - **AND** elapsed activity and queue indicators do not masquerade as completion
 
 #### Scenario: Settled queue pause stays calm
 - **WHEN** activity is paused with no waiting submission, no pending user request, and no active work
-- **THEN** the context line retains truthful paused queue state without repeating the same paused label
+- **THEN** the conditional status line retains truthful paused queue state without repeating the same paused label
 - **AND** the live footer does not show a working spinner glyph, interrupt invitation or elapsed-work clock
 - **AND** the renderer does not change Machine pause state or automatically continue queued work
 
@@ -409,6 +408,22 @@ position. Multiline drafts and temporary controls SHALL expand only as needed. W
 - **WHEN** the attached Root Agent Process changes
 - **THEN** the previous Root's observed cwd is discarded before rendering the new Root
 - **AND** retained project authority and pending-control fencing continue to use their existing owners
+
+#### Scenario: User requests complete context
+- **WHEN** the user invokes /status
+- **THEN** actual observed cwd, retained project access, model bindings and queue observation remain inspectable
+- **AND** unknown state is explicit and does not invent authority or successful completion
+
+#### Scenario: Quiet input follows completed output
+- **WHEN** output settles and no request, failure or queue attention is pending
+- **THEN** one blank row and a subtle terminal-width rule separate output from the project/model line and editable input
+- **AND** zero queue counts and idle labels are omitted without adding permanent transcript decorations
+- **AND** filtering completion candidates preserves the input anchor
+
+#### Scenario: Model bindings differ
+- **WHEN** active work retains an earlier binding while the selected next model differs
+- **THEN** during running, paused or response-pending work the ordinary model label identifies the active binding and a conditional next-model cue explains the difference
+- **AND** /status retains both complete binding observations
 
 ### Requirement: Semantic transcript hierarchy survives terminal constraints
 The TUI SHALL distinguish user input, assistant prose, code, Tool summaries,

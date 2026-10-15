@@ -38,6 +38,12 @@ clean-code, clean-architecture, or standalone-distribution check fails.
 - **THEN** dependency-resolving quality commands run in locked mode and fail
 - **AND** the quality gate leaves Cargo.lock byte-for-byte unchanged
 
+#### Scenario: Gate output is cached or retired
+- **WHEN** local maintenance or CI caching handles quality-gate artifacts
+- **THEN** it resolves the actual owned host-target output directory
+- **AND** it preserves the build-artifact-lifecycle ownership and concurrency rules
+- **AND** cached artifacts never substitute for running the required current-source checks
+
 ### Requirement: Rust lint semantics are reproducible
 Alan SHALL pin one explicit Rust toolchain including rustfmt and Clippy. Local
 quality checks and CI MUST use that pinned version.

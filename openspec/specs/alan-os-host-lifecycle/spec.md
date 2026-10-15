@@ -12,15 +12,13 @@ foreground alan9 instance, including its Kernel, Process table, services, and
 instance-local Root Agent Process. When `ALAN_INSTANCE_RUNTIME_DIR` is unset,
 the CLI SHALL allocate a unique temporary runtime directory. When it is set,
 that exact directory SHALL select the instance endpoint, and only one invocation
-may own it. The install channel SHALL select configuration and persistent store
-boundaries, not a singleton live runtime. Service Manager SHALL retain ownership
+may own it. Host composition SHALL supply explicit product store bindings without selecting an installation channel or singleton live runtime. Service Manager SHALL retain ownership
 of services and the Root Agent Process within the invocation. Bare `alan` MUST
 NOT launch or attach to a separate background Host. Herdr SHALL NOT be required
 for ordinary terminal operation.
 
 #### Scenario: Two terminal sessions start Alan
-- **WHEN** two terminal sessions start `alan` for the same user and install
-  channel without `ALAN_INSTANCE_RUNTIME_DIR`, or with distinct runtime
+- **WHEN** two terminal sessions start `alan` for the same user without `ALAN_INSTANCE_RUNTIME_DIR`, or with distinct runtime
   directories
 - **THEN** each owns an independent Root Agent, Process table, input queue, cwd,
   and runtime endpoint
@@ -81,8 +79,8 @@ NOT replay automatically.
 
 ### Requirement: Product composition preserves production adapters
 Foreground product composition SHALL use the existing production providers,
-channel stores, and governance. Mock providers and ephemeral test stores SHALL
-require explicit development or test selection; foreground composition MUST NOT
+product stores, and governance. Mock providers and ephemeral test stores SHALL
+require explicit isolated test bindings; foreground composition MUST NOT
 itself select a test Host or weaken authorization.
 
 #### Scenario: Product composition fails

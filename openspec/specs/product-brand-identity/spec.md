@@ -126,8 +126,8 @@ discover, read, migrate, copy, or delete state through the historical
 #### Scenario: Local state from old app exists
 - **WHEN** local macOS state remains under the historical `AlanNative` support
   path after the hard cut
-- **THEN** Alan for macOS does not inspect, migrate, copy, rewrite, or delete it
-- **AND** current state is read and written only through current channel paths
+- **THEN** Alan does not inspect, migrate, copy, rewrite, or delete it
+- **AND** current state is read and written only through the explicitly bound product System Store and Host Store
 
 ### Requirement: Brand validation is explicit and allowlisted
 The repository SHALL include a focused brand validation step that rejects
@@ -172,7 +172,12 @@ identifiers.
 #### Scenario: Command or system identifier is displayed
 - **WHEN** docs, help text, scripts, tests, paths, package metadata, or terminal
   output refer to literal command syntax or machine identifiers
-- **THEN** they may use lowercase identifiers such as `alan`, `alan-dev`,
-  `app.alanworks.macos`, and `alan-macos`
+- **THEN** they use `alan` for current CLI entry points and may use lowercase
+  package, path and other machine identifiers
 - **AND** they do not imply those lowercase identifiers are the app's
   user-visible brand spelling
+
+#### Scenario: Migration documentation names retired commands
+- **WHEN** documentation explains historical installation adoption or archived behavior
+- **THEN** it may identify `alan-dev` and retired desktop identifiers as historical inputs
+- **AND** it does not recommend them as a current install or runtime channel

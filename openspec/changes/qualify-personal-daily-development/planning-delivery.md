@@ -1,0 +1,50 @@
+# Planning delivery — 2026-10-14
+
+Q1–Q16 are confirmed. ADR-0060, four independent changes, glossary/current-guide
+updates and the four merged-change closures are prepared on
+`codex/plan-personal-autonomy-20261014`, based on main `ea929481`.
+This record describes local documentation, not a merged PR or new runtime delivery.
+
+## Verification
+
+- CI-pinned `@fission-ai/openspec@1.4.1 validate --all --strict`:70 passed,0 failed.
+- `scripts/check-openspec-current-surfaces.sh`:pass.
+- `git diff --check`:pass.
+- Relative Markdown file links in changed/new Markdown:0 missing targets.
+- Independent governance/authority and daily-use/continuity reviews:pass after
+  correcting missing owner deltas, aggregate reviewer fallback and task-denominator
+  accounting. Exact source evidence was used for older merge receipts.
+- No tracked files in pre-existing historical archives changed. Newly archived
+  changes retain their earlier evidence, original outcomes and qualification limits.
+- No production code, personal store migration, website edits, model task runs or
+  new two-week qualification was performed by this documentation delivery.
+
+Canonical synchronization reflects earlier merged code. New delegation, trusted
+posture, budget and continuity deltas remain under active changes and must not be
+mistaken for shipped controls. Review/CI/merge of this documentation branch remains
+separate from local validation, as does implementation of the new plan.
+
+## Planning PR review follow-up
+
+PR #1060 review found two remaining canonical synchronization issues. Remove the
+old proposal/adoption qualifier from delivered read-only dependency projection and
+its cumulative trust delta, and align composer-history scope with the shipped
+product-store binding. The existing foreground_history_is_product_store_owned_and_restarts_typed
+test already verifies same-store recall and isolated-store separation. No runtime
+behavior or prior historical archive changes are involved. New-head CI/review
+remain separate from the original head’s passing checks.
+
+## Retained storage-contract audit
+
+The next review found the same obsolete channel identity in retained active input
+deltas and accepted package ADRs. The follow-up also audits the Connection/durable
+state/attachment ADRs, the remaining input delta and current handoff/task text.
+Active requirements now use explicitly bound product stores. The standalone delta
+reuses the adopted canonical installation requirements and drops an already-applied
+rename, so later synchronization cannot restore `alan-dev` or channel ownership.
+Original dated test receipts and pre-existing archives remain historical evidence.
+
+The proactive-memory plan remains parked. Its disposition explicitly rejects the
+retained channel/Host-directory backing premises and forbids synchronizing them
+without replacement; this does not reactivate its tasks. Package, Connection and
+File-Server Service ownership and authorization boundaries remain unchanged.

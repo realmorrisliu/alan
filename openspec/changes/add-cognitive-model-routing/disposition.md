@@ -1,5 +1,11 @@
 # Disposition — 2026-09-20
 
+## Planning handoff — 2026-10-14
+
+The delegate-project-autonomy change reuses existing Connection capabilities for Guardian qualification. It does not require general mixed-Machine completion, new cognitive Process types, or automatic input routing.
+
+See [the accepted roadmap](../qualify-personal-daily-development/roadmap.md).
+
 ## Current delivery — 2026-10-09
 
 PR #1035 merged at `cb0ec7ec7746a8f5b2af77782b281bbce7a838f0`.

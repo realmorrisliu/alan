@@ -1,0 +1,363 @@
+## Final adoption and archive receipt — 2026-10-14
+
+PR #1057 merged as `df961b0c`; its thirteen requirement blocks across seven
+canonical owners were verified against current main `ea929481` before archival.
+Task 4.5 is complete and the checklist is 19/19. The later merged composer
+change #1059 (`f2a98f4b`) refines the shared prompt requirement; this archive
+does not reapply an older block over that refinement. No new model attempt or
+expanded qualification is claimed. The original 21 PASS / 9 FAIL first outcomes,
+assisted Linux F4, unqualified delegation, and unmeasured cost/physical gestures
+remain unchanged. Further daily-use qualification belongs to
+`qualify-personal-daily-development`.
+
+This archive move is prepared in the current documentation worktree; it is not
+a claim that this bookkeeping commit has already merged. Earlier entries below
+retain the delivery state at their recorded revisions.
+
+## Current delivery status — 2026-10-13
+
+Implementation and follow-up are merged: #1047 at `8802b541`, #1056 at
+`34396740`; predecessor #1046 at `465e3e47` and UI/directory closure #1045 at
+`d2d044b5` are also merged. Local main was fast-forwarded to `d2d044b5`.
+The final repair head `d42b0c58` passed all sixteen checks and completed Codex
+review without major issues; both P1 threads are resolved. Local focused 50/50,
+macOS 1466/Linux 1486 Engine tests (one ignored each), five native Linux controls,
+quality/distribution and strict OpenSpec passed as recorded in native-runs.md.
+
+This documentation delivery synchronizes thirteen requirement blocks across seven
+canonical owners. Checklist is 18/19; task 4.5 remains open for final adoption. Its own
+review/CI and user merge remain required before canonical adoption on main and
+archive-readiness are final. The change remains active until that delivery lands;
+no historical archive is modified. See [delivery.md](delivery.md).
+
+Thirty selected slots and ninety-one model attempts remain immutable history;
+first outcomes remain 21 PASS/9 FAIL (70%). Linux F4 remains assisted, delegation
+is not qualified, usage/cost and physical terminal gestures remain unmeasured,
+and automatic routing/general unassisted self-bootstrap are not qualified.
+Earlier status entries below describe their historical revisions.
+
+## Current prelaunch link revalidation repair — 2026-10-13
+
+P1 #4254072238 is repaired by retaining the query-specific topology requirement
+and rechecking it before execution. RED-to-GREEN, focused 50/50, full macOS 1466
+and Linux 1486 (one ignored each), and five rebuilt native controls pass; both
+independent reviews report no findings. See native-runs.md. Checklist remains
+17/19 until current-head CI/completed review and user merge/canonical closure.
+
+## Current hard-link review follow-up — 2026-10-13
+
+PR #1056 P1 #4253959287 is repaired locally with inode/link-count validation for
+Rustup query preludes. Focused 49/49, full macOS 1465 and Linux 1485 tests and
+five real Linux controls pass. Historical thirty-slot applicability is retained;
+no model attempt is added. See native-runs.md for evidence and limitations.
+Checklist remains 17/19: current-head CI/completed review and user merge remain
+open. Earlier entries describe their historical heads, not current readiness.
+
+## Current Rust-query provider repair and delivery withdrawal — 2026-10-13
+
+Direct follow-up review reproduced an additional execution-order gap on published
+head `bbe9573f`: a project-owned executable named rustc can implement --version
+by changing Cargo configuration before a later genuine Cargo call. Public Sandbox
+API native controls complete with exit 0 and writer/config/compiler effects.
+Executable identity/digest snapshots alone do not prove read-only query semantics.
+PR #1047 was subsequently merged as `8802b541` on 2026-10-13; this
+additional fix is a separate follow-up based on main `7b0cbcf0`. The merged
+head does not contain the fix, and follow-up readiness remains withdrawn.
+
+The shared adapter now admits query preludes only from actual native standard
+providers or validated Rustup proxies outside explicitly granted Host trees.
+Namespace projection and provider identity are checked and frozen; a project
+program, an ordinary custom runtime or forwarded rustup run consumes the one work
+slot and requires a separate request before later inspected Rust execution.
+Standalone requests retain their existing authority and execution behavior.
+No mount authority, automatic routing or model-development instance is added.
+
+The original thirty selected qualifications, ninety-one model attempts and their
+raw evidence remain immutable history; first outcomes remain 21 PASS/9 FAIL.
+No new model qualification is claimed for this repair. Native controls and
+full Engine regressions pass on the latest-main dependencies; see native-runs.md.
+Independent original-provider applicability and committed build-input binding
+are complete for source `74b9e5ad`: all thirty historical slots remain applicable,
+with no new model attempts. Task 4.3 closes; checklist is 17/19. Task 4.4 still
+requires current-head CI/completed review; task 4.5 requires follow-up user merge
+and canonical adoption. Earlier entries below are historical records.
+
+## Current opaque-writer qualification and delivery gates — 2026-10-13
+
+P1 #4250587942 is fixed in `e4c3cfc6`: opaque programs or earlier Rust work
+require a separate request before inspected Rust execution, including initially
+private Cargo/Rustup homes. Bounded read-only producers, genuine system queries
+and verified standard wrappers retain narrow support; dynamic/asynchronous shell
+control and loader overrides refuse before effects. The thread is replied to and
+resolved. `51d1ed4c` also updates quinn-proto to 0.11.18 for five newly disclosed
+advisories; both default CLI feature graphs and binaries are unchanged.
+
+Four fresh Linux model qualifications pass on `51d1ed4c`: F2 r1/r2/r3 and F5 r2.
+The other twenty-six slots inherit the linked semantic applicability audits and
+actual committed build-input freezes. The original thirty slots/eighty-five
+attempts remain immutable; six new model-started attempts add four PASS and two
+collector FAIL, for ninety-one total (68 PASS/23 FAIL). Three new prelaunch
+failures remain separate. Original first outcomes stay 21 PASS/9 FAIL (70%).
+The admission audit's fourteen Linux records represent seven phase commands in
+four slots; twelve macOS test-only refusals do not execute in production.
+
+Tasks 3.2, 3.5 and 4.3 close again. Task 4.4 closes on the source head's normal
+quality/distribution checks, strict OpenSpec, independent reviews, all sixteen
+passing CI checks and completed same-head Codex no-major-findings review
+(#6130992270). Checklist is 18/19. This documentation recording still requires
+its own current-head CI/completed review before reporting merge readiness.
+Task 4.5 remains open for user merge and canonical adoption; no merge is authorized.
+Earlier entries below record historical evidence, not current delivery status.
+
+The four renewals use gpt-6.1-sol/medium and normal scoped approvals. Delegation
+fails at the child namespace cwd boundary; the root Agent completes each task,
+so delegation is not qualified. Existing assisted Linux F4 results stay assisted.
+Shared auth is authorized, not credential independence. Provider usage/cost and
+physical Herdr geometry/cursor/scroll gestures remain unmeasured; automatic
+routing stays off. These fixture results do not establish general unassisted
+self-bootstrap. Final receipts, accounting and hashes are below in native-runs.md.
+
+## Latest mixed Cargo short-option repair — 2026-10-13
+
+Completed review of 8b56c4b1 added P2 #4250308685: valid root queries in mixed
+short-option clusters still required unused frontends. The shared scanner now
+recognizes h/V before Z/C consume attached or separate values; a real h exits
+before later flags. The same scanner preserves directory-change refusal before
+and after the subcommand, without treating option values or -- payload as flags.
+Forty Rustup checks, two local parser checks and 96 native checks pass, including
+33 confined root queries with ordinary frontends/compilers removed. Eighty real
+Cargo1.97 probes retain34 exit0/46 genuine error controls; aliases and forwarded
+frontend flags remain separately inspected. Original30 slots/85 attempts and
+limits stay unchanged. Task4.4 remains open17/19 for new committed-head CI and
+completed review; user merge/canonical closure remains separate. Earlier entries
+below are historical evidence, not current merge readiness.
+
+## Latest Cargo root query dispatch repair — 2026-10-13
+
+All sixteen checks passed on c9bfe9a3, but its completed review found valid
+P2 #4249812214: root queries before a trailing frontend require unused children.
+The direct repair uses one shared option parser on ordinary and Rustup Cargo;
+root help precedes alias expansion, while version/list still inspect selected
+aliases and refuse default-short-alias combinations that can dispatch. Named or
+frontend help retains its own checks. Real208 child probes retain200 exit0 and
+8 genuine default-alias failures, alongside40 portable/96 native checks and
+450 original scripts/310 Cargo argument parity. Original30 slots/85 attempts,
+first outcomes and all limits remain unchanged. Task4.4 stays open17/19 for the
+new committed-head CI/completed review; user merge remains separate. Entries
+below record historical delivery states, not current merge readiness.
+
+## Latest Cargo frontend query repair — 2026-10-12
+
+All sixteen checks passed on de04ab8d, but its completed review found valid
+P2 #4249496754: ordinary cargo fmt --help unnecessarily required later-proxy
+rustfmt. Known fmt/Clippy help and proven Clippy version queries now bind only
+their actual frontend, while still inspecting configuration and selected aliases.
+Fmt version/forwarded payload and custom commands retain conservative dependencies.
+Eleven real owned-runtime child probes, 38 portable checks and 94 native namespace
+checks pass, including eight actual confined queries without ordinary compilers.
+Old portable/native false-refusal controls and harness failures are retained.
+Original 30 slots/85 attempts and limits stay unchanged. Task 4.4 remains open
+(17/19) for the new committed-head CI/completed review; user merge is separate.
+Earlier delivery entries below are historical, superseded by this current status.
+
+## Latest shell lookup, cwd and Cargo helper repair — 2026-10-12
+
+All sixteen checks passed on b0034bd9, but its completed automated review found
+three additional valid findings: #4248653241/function shadowing,
+#4248653247/newly created cd targets and #4248653257/auxiliary Cargo frontends.
+Merge readiness remains withdrawn and task 4.4 remains open (17/19). The direct
+repair uses the existing Bash syntax parser to reject actual functions in Rust
+requests while preserving quoted Rust source/comments/heredocs, rejects alias/hash
+lookup changes and unqualified nested Rust shells, and treats missing cd targets
+as uncertain. Ordinary Cargo freezes command-specific PATH helpers, including
+rustdoc for documentation/default doctests and fmt/clippy/custom frontends.
+Fresh private Cargo home is initially empty; in-request helper mutation remains
+unqualified. No extra runtime or authority is granted. Original 30 slots/85
+attempts and all first outcomes remain unchanged. Native and source applicability
+are recorded in native-runs.md; committed-head CI/re-review and user merge remain.
+
+## Latest compiler configuration and query repair — 2026-10-12
+
+Completed review of 8c769439 reported P1 #4247811233 (compiler overrides) and
+P2 #4247811240 (compiler-free Cargo commands). Both require repair before merge.
+Compiler-using invocations now inspect inline, extra-file and visible ancestor
+Cargo configuration, reject unsupported compiler/wrapper/context overrides and
+selected aliases, and freeze validated bytes or absence for prelaunch revalidation.
+Only proven compiler-free commands skip the implicit PATH rustc check. Real Cargo
+1.97 probes show plain metadata/clean can invoke rustc; metadata --no-deps does not.
+Custom help, aliases, directory remapping and bounded literal configuration writes
+receive the same checks. Parent-traversing cd refuses uncertain native selection.
+No extra authority or compiler installation is added. Opaque program-internal
+configuration mutation within one shell request remains unqualified; separate
+configuration editing from execution. The original 30 slots/85 attempts and their
+first outcomes remain immutable. Task 4.4 stays open (17/19) until committed-head
+CI and completed automated re-review; user merge remains separate under 4.5.
+See [compiler/configuration evidence](native-runs.md#compiler-configuration-and-query-follow-up--2026-10-12).
+
+## Latest effective-provider review repair — 2026-10-12
+
+Completed review of 06f15be3 found valid P1 #4247205400: a later Rustup proxy
+must not determine inspection for an earlier ordinary PATH executable. The direct
+repair selects the first regular X_OK provider (or explicit absolute executable),
+freezes its path/content/proxy classification, and rechecks before effects.
+System Cargo's default PATH compiler decision is frozen too. Unproved alias
+chains and context-changing wrappers refuse conservatively. No mount authority
+or unrelated runtime is added. Earlier delivery entries below are historical;
+current-head CI and completed automated review remain open under task 4.4 (17/19).
+See [the latest native evidence](native-runs.md#effective-path-provider-follow-up--2026-10-12).
+
+## Latest exact-alias review repair — 2026-10-12
+
+Completed review of 10a475d1 found P1 #4246987405: raw cwd/Host-root comparisons
+could discard an override keyed to an alias's exact canonical target before
+selection was canonicalized. The direct repair snapshots canonical inspection
+cwd/roots before override filtering, preserves original inputs for plan validation,
+and starts implicit directory inspection from canonical cwd. Override keys and
+selection priority are unchanged. Task 4.4 remains open and checklist is 17/19.
+Seventeen portable regressions pass, including remapped and identity alias-only
+cases without a masking canonical child mount. Actual 10a native RED and four-case
+GREEN are retained; twelve old-10a/new complete environment comparisons pass for
+already-canonical inputs. Original matrix applicability is semantic equality of
+its already-canonical cwd/backing roots, not an unchanged raw identity code branch.
+Current committed-head gates and completed automated re-review remain required.
+
+## Latest post-repair automated review — 2026-10-12
+
+The Cargo manifest P2 was fixed in d719f3b6 and resolved; that head passed all
+sixteen checks. Its completed automated re-review found a valid Rustup remap P1
+(#4246709180). Merge readiness remains withdrawn and task 4.4 remains open.
+The direct repair preserves Host precedence checks and projects inspected effective
+selectors at all validated equivalent namespace directories after inspection.
+Identity mounts retain their original settings/selection branch; this does not
+assume historical user override maps were absent. Portable and native regression,
+new source applicability, independent review and committed current-head CI/review
+must close before readiness is restored. Checklist remains 17/19; user merge and
+canonical closure remain separate. No automatic merge is authorized.
+
+## 1. Preconditions and executable evidence
+
+- [x] 1.1 Verify predecessor Linux toolchain/ADR-0058 candidate authority qualification, code review and current-head CI; keep user merge/canonical closure as final-delivery gates; pin UI/toolchain revisions without substituting prior scripted/native UI receipts.
+- [x] 1.2 Trace existing CLI/Process/AgentFS/rollout, Host grant controls, harness collectors and terminal evidence paths; freeze supported operator controls and actual owned stores.
+- [x] 1.3 Prepare five-family disposable fixture variants, protected expected-result checks and exact baseline/effect inventories; self-check new nontrivial collection/assertion logic for missing and duplicate evidence.
+- [x] 1.4 Verify actual model/profile/medium effort and enforcing backend on both Hosts; freeze all thirty slot prompts/inputs, bounds and measurement fields before generation, and each Host's source/binary/readiness identities before generation on that Host. Keep this task open until both Hosts are ready; ready-Host execution may proceed independently.
+
+Linux's first native task freeze on 2026-10-12 pins unchanged candidate 2277b693,
+the actual known ChatGPT catalog and gpt-6.1-sol/medium selection, Git 2.53.0 and
+Rust/Cargo 1.96.0 in the selected task cwd under linux_reified_namespace. Shared
+macOS auth is explicitly user-authorized; it is not credential independence.
+Readiness and input preparation add no completed development slot.
+
+## 2. macOS real-model tasks in Herdr
+
+The checks below retain completed historical repetitions. The shared-projector
+review repair reopens final-source applicability for all fifteen macOS rows.
+Six linked F1/F2 refreshes passed on `465e3e47`. The subsequent prelaunch-source
+F3 r1 a3 fails UI qualification despite independently correct code. Task 4.2
+requires applicable final-candidate native evidence for all fifteen rows. The
+notice repair now has three qualified F3 repetitions, including a fresh retry
+after an insufficient-detail capture audit. F1 r1 a6 also qualifies on the
+byte-identical documentation head ed6a65e6. F1 r2/r3 a4 qualify on the
+byte-identical 95d6664c head. All three F2 refreshes now qualify on byte-identical
+d97d7f70. All three F4 refreshes now qualify on byte-identical 19665cd9,
+retaining one intervening collector-ordering FAIL and its fresh retry. Aggregate
+v59 retains fifty-five attempts and twelve applicable slots. All three F5
+refreshes also qualify on byte-identical 81b6f361: aggregate v63 retains
+fifty-eight attempts and all fifteen macOS slots. All fifteen Linux tasks remain.
+Historical checkmarks do not qualify new behavior.
+
+- [x] 2.1 Run small RED-to-GREEN repair three times with real model-authored code, independent behavior/diff checks and retained first outcomes.
+- [x] 2.2 Run cross-file changes three times with all required callers updated and no unrelated edits.
+- [x] 2.3 Run actual compiler/test/tool failure correction three times with retained diagnostic and cause verification.
+- [x] 2.4 Run cancel/revoke/explicit recovery three times, observing live descendants and once-only completed effects.
+- [x] 2.5 Run long stdout/stderr/diff follow-up three times with retained details, result correlation and independent bounded edit/answer verification.
+
+## 3. Linux real-model tasks in ordinary PTY
+
+- [x] 3.1 Run small RED-to-GREEN repair three times under the qualified enforcing backend and exact selected tools.
+- [x] 3.2 Run cross-file changes three times with exact sources, artifacts and granted authority.
+- [x] 3.3 Run actual compiler/test/tool failure correction three times; refuse false passes and record unsupported slots separately.
+- [x] 3.4 Run cancel/revoke/explicit recovery three times, verifying blocked later effects and no replay after reapproval.
+- [x] 3.5 Run long stdout/stderr/diff follow-up three times with retained detail and exact follow-up effects.
+
+All three Linux F2 repetitions qualify on unchanged be25825a. The original r1
+checker-path failure and fresh retry remain retained; r2/r3 pass their original
+first attempts. Protected library behavior, both binary results, exact three-file
+effects, native detail/draft and exits pass. Task 3.2 closes.
+All three Linux F3 repetitions also qualify on unchanged 23e169e6, retaining
+actual E0425/E0583/E0308 diagnostics before model-only lib repairs, original
+protected behavior, failed-Action details, Unicode draft return and native exits.
+Task 3.3 closed at checklist 12/19. r1 retains its incremental-heading collector
+correction; r2/r3 have none. Six Linux F4/F5 tasks were still open at that point.
+Linux F4 now qualifies three assisted repetitions on unchanged 0f2958d9. Each
+retains cancel/130 and native group exit, blocked late effects, revoke/actual denied
+read, exact owned recovery, once-only ledger, model-authored lib repair, protected
+behavior, native detail/draft and exits within 600 seconds. One corrective native
+directory selection and one factual model acknowledgement are recorded per run;
+none is zero-unplanned-intervention. Seven failed development attempts and two
+zero-model collector preflights remain retained. Task 3.4 closes; checklist is
+13/19. The three Linux F5 repetitions remained open at that historical point.
+
+## 4. Findings, final candidate and delivery
+
+- [x] 4.1 Review first outcomes and retained evidence by platform/family; reproduce any observed UI/reliability defects and identify existing owners before code edits.
+- [x] 4.2 Fix observed shared causes, run affected Rust/collector checks and final-candidate native reruns, including narrow-terminal/cross-host smoke where implicated; retain original attempts and truthful unresolved limitations.
+- [x] 4.3 Audit all thirty slots and corrected attempts for model authorship, lifecycle, terminal and exact effect proof; publish first-attempt/assisted/zero-unplanned-intervention outcomes, wall times and missing usage explicitly.
+- [x] 4.4 Run full quality, strict OpenSpec and applicable distribution checks, review the final diff, resolve findings and collect passing current-head CI in reviewable PRs.
+- [x] 4.5 After user merge, verify revisions/checks, sync the harness and observed-repair deltas to canonical owners, update disposition and verify archive-readiness.
+
+## Final native and evidence audit — 2026-10-12
+
+All three Linux F5 repetitions now qualify, retaining their original collector
+failures and the additional 600-second diff timeout. No original bound, prompt,
+authority, producer-once requirement or protected assertion changes. Checklist
+is 17/19 after tasks 3.5 and 4.1–4.3 close. Aggregate v93 retains 85 development
+attempts, first outcomes 21 PASS / 9 FAIL / 0 NOT_RUN, and 30 applicable slots.
+The independent audit verifies all attempt receipt hashes and 4,694 artifacts
+for the selected completions. Per-family wall times, assisted outcomes, collector
+interventions and missing provider cost/usage are published in native-runs.md.
+
+The two final review findings concern test placement; both are repaired without
+production changes or widened visibility, and eight focused tests pass.
+Unchanged production bodies and the other frozen inputs preserve existing native
+runtime applicability; raw all-input equality is no longer claimed. Long detail
+navigation remains laborious (Home and 10-line Space pages, no End); this is a
+reported usability limit, not a missing proof or a newly implemented feature.
+Task 4.4 still requires the committed head's review and full CI. Task 4.5 waits
+for user merges and canonical closure. This matrix does not qualify general
+unassisted self-bootstrap, automatic routing or statistical independence.
+
+## Current-source delivery gates — 2026-10-12
+
+Committed head ceb71ee6 passes all sixteen current-head checks, including both
+platform suites, quality, coverage, release builds and CodeQL. Both final review
+axes are resolved and normal quality/distribution plus strict OpenSpec 70/70
+pass. Task 4.4 closes; checklist is 18/19. This documentation-only recording
+still needs its own CI; no user merge or canonical adoption is claimed. Task 4.5
+remains open for user merges of #1045/#1046/#1047 and subsequent canonical closure.
+
+## Post-ready automated review follow-up — 2026-10-12
+
+Marking #1047 ready triggered Codex review. Its subsequent P2
+`discussion_r4246031780` is valid: Cargo selectors/global options hide the
+subcommand from the manifest read-role check. The previous gate closure covers
+its historical head, not completion of that later review. Task 4.4 reopens;
+checklist is 17/19 until the repaired head's CI and completed automated re-review.
+
+The existing Cargo parser is shared with Rustup inspection without changing its
+body or surrounding selection code. Five manifest tests, two Rustup prefix tests,
+six actual macOS Seatbelt prefix read/write boundaries and a fresh Linux native
+fixture pass. Linux verifies three real prefix builds against read-only sources
+and four negative pre-effect refusals, plus existing isolation/lifecycle guards.
+A newly built standalone CLI also compiles a read-only manifest from writable
+scratch with +1.97.0/--color, normal scoped approval, no model input and native exit0.
+
+All 66 selected initial/resumed/verifier rollout references are validated. A
+cache-only compiled comparison inspects 450 structured Bash argument occurrences
+(including 193 completed records, duplicates and cancelled/proposed requests):
+3,415 token roles agree with the original candidate, with no nested wrapper
+scripts or parser refusals in this corpus. The unchanged Rustup parser/selection,
+unchanged policy/rights owners, fresh 437/440-input binary freezes and targeted
+native controls support inheritance of the same thirty slots. No original
+receipt, first outcome or elapsed time is rewritten; no new model slot is added.
+The independent applicability ledger and retained operational failures are in
+native-runs.md. User merge/canonical closure remains task 4.5.

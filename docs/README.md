@@ -25,6 +25,14 @@ durable contract.
 - [OpenSpec Long-Lived Specs](../openspec/specs/)
 - [Active OpenSpec Changes](../openspec/changes/)
 
+## Accepted Next Delivery
+
+- [Explicit delegation, approval and isolation decision](./adr/0060-explicit-delegation-separates-approval-and-isolation.md)
+- [Personal daily-use roadmap](../openspec/changes/qualify-personal-daily-development/roadmap.md)
+- [Document ownership and closure map](../openspec/changes/qualify-personal-daily-development/document-map.md)
+
+These are accepted plans, not claims of shipped trust modes or daily-use qualification.
+
 ## Current Behavior And Guides
 
 These are the best entry points for understanding what the repository

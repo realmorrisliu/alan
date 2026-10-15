@@ -1,6 +1,6 @@
 # Agent Machine composes deterministic and typed model capabilities
 
-Status: accepted direction, 2026-09-19; not implemented. Extends ADR-0024 and
+Status: accepted direction, 2026-09-19; partially delivered. Extends ADR-0024 and
 supersedes the generation-only interpretation of the AI Turing Machine analogy.
 
 Agent Machine advances from events, current state and capability results.
@@ -32,6 +32,10 @@ Rubrics may be ordinary definition/Skill files. q installation is not execution
 authorization; there is no new cognitive package kind or global execution
 manager. Memory feedback does not automatically promote policy or permissions.
 
-Owning unimplemented proposal: `add-cognitive-model-routing`. Its runtime deltas
-must be implemented, verified and synced before replacing canonical generation
-contracts. The next planning pass selects a bounded vertical implementation slice.
+Delivery update, 2026-10-14: #1035 shipped finite-choice Connection evaluation
+and no-effect Machine shadow advice; #1039/#1040 shipped and synchronized a bounded
+read-only source-owner Machine program. General mixed transitions remain unfinished
+and automatic input routing remains unqualified and disabled. The owning change
+is [add-cognitive-model-routing](../../openspec/changes/add-cognitive-model-routing/disposition.md).
+[ADR-0060](0060-explicit-delegation-separates-approval-and-isolation.md) reuses these
+boundaries for planned Guardian work without making System 1 an authority tier.

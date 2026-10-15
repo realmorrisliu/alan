@@ -7,6 +7,7 @@ explicit namespace source intake, System Store lifecycle, immutable revisions,
 Process-scoped `/lib/pkg` projection, and the Quartermaster `q` command.
 
 ## Requirements
+
 ### Requirement: Package Service is a supervised system service
 
 alan9 SHALL run Package Service as a required File-Server Service started and
@@ -28,16 +29,22 @@ supervised by Service Manager. Its Process SHALL publish the mountable
 
 ### Requirement: Package Service owns its durable state
 
-Package Service SHALL own the package subtree of the active install-channel
+Package Service SHALL own the package subtree of the explicitly bound product
 System Store, including catalog records, staged transactions, immutable
 revisions, materialization manifests, and reference-retirement state. No raw
 backing path SHALL be part of package identity or an Agent-visible record.
 
 #### Scenario: Stable and dev install the same package id
 
-- **WHEN** stable and dev Package Services install the same package id
-- **THEN** each service updates only its own channel System Store subtree
-- **AND** neither channel can resolve the other channel's revision
+- **WHEN** historical stable and dev stores contain the same package id during adoption
+- **THEN** only the explicitly selected source's package records are adopted
+- **AND** records from the other source are neither merged nor deleted
+
+#### Scenario: Independent invocations install the same package id
+
+- **WHEN** independent invocations Package Services install the same package id
+- **THEN** each service updates only its explicitly bound product System Store subtree
+- **AND** publication preserves transaction isolation and immutable live revisions
 
 #### Scenario: Agent inspects package metadata
 
@@ -232,7 +239,7 @@ native Tool authority, Agent metadata, or loader identity.
 
 #### Scenario: Process omits a package reference
 
-- **WHEN** a package exists in the channel catalog but is not referenced at
+- **WHEN** a package exists in the product Package Service catalog but is not referenced at
   Process creation
 - **THEN** the Process cannot read `/lib/pkg/<package-id>`
 - **AND** its Agent capability view does not contain that package's Skills
@@ -280,7 +287,13 @@ while preventing new resolution, and SHALL be idempotent.
 
 #### Scenario: Empty channel boots after installation
 
-- **WHEN** Package Service opens an empty channel store
+- **WHEN** an old installation selects an empty historical channel store
+- **THEN** the current product does not seed or open that channel as an active identity
+- **AND** it requires the explicit migration or canonical product startup path
+
+#### Scenario: Empty product store boots after installation
+
+- **WHEN** Package Service opens an empty product store
 - **THEN** it seeds the current first-party package revisions idempotently
 - **AND** Root Agent references resolve through the ordinary package path
 
@@ -350,3 +363,20 @@ be operator-uninstallable in v0.
 - **WHEN** an operator invokes `q uninstall` for a first-party preinstalled
   package
 - **THEN** the command fails without changing the catalog
+
+### Requirement: Embedded seeding does not accumulate per-process source copies
+First-party package seeding SHALL use the ordinary validated snapshot and immutable revision contract without persistent per-process Host source copies. Enumeration of package identities MUST NOT write files. Exported bytes, identities, filtering and digest semantics SHALL remain equivalent to the existing package contract.
+
+#### Scenario: Repeated product invocations seed unchanged Skills
+- **WHEN** many invocations seed the same embedded first-party content
+- **THEN** they reuse the owning Package Service's deterministic revisions
+- **AND** no new PID-keyed Skill extraction directory remains
+
+#### Scenario: Embedded content violates snapshot constraints
+- **WHEN** embedded entries exceed package limits or contain invalid paths or duplicate identities
+- **THEN** ordinary snapshot validation rejects them before publication
+- **AND** trusted origin does not bypass validation
+
+#### Scenario: Consumers request package identities
+- **WHEN** boot constructs references from preinstalled package IDs
+- **THEN** enumeration does not materialize another Host directory tree

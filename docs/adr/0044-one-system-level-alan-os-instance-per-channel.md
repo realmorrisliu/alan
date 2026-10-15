@@ -1,6 +1,6 @@
 # One system-level Alan OS instance per channel
 
-> Superseded for live runtime ownership on 2026-09-27 by ADR-0056 and ADR-0058: each bare `alan` invocation owns a foreground instance; install channels still select persistent configuration and store boundaries. The text below records the former decision.
+> Superseded for live runtime ownership on 2026-09-27 by ADR-0056 and ADR-0058: each bare `alan` invocation owns a foreground instance; persistent configuration now uses explicit product System Store / Host Store bindings (2026-10-14 refinement after merged PR #1042), independently of live runtime identity. The text below records the former decision.
 
 Status: superseded 2026-09-27
 

@@ -1,5 +1,11 @@
 # Disposition — 2026-09-26
 
+## Planning handoff — 2026-10-14
+
+The personal daily-use roadmap prioritizes project delegation, approval-friction reduction and continuity before further input-routing qualification. Guardian permission judgment has independent gates; routing remains disabled.
+
+See [the accepted roadmap](../qualify-personal-daily-development/roadmap.md).
+
 ## Current delivery — 2026-10-09
 
 The explicit-input predecessor shipped in #1032; generic finite-choice capability,
