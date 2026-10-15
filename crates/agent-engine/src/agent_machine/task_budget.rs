@@ -2,6 +2,7 @@
 
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -14,7 +15,9 @@ use crate::rollout::{EventRecord, RolloutItem, RolloutRecorder};
 
 pub(crate) const EVENT_TYPE: &str = "agent_task_budget_v1";
 
+mod inheritance;
 pub(crate) mod waiting;
+pub use inheritance::TaskBudgetBinding;
 
 /// Finite limits for one logical task, including retries and reviewer requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +72,12 @@ pub(crate) enum Phase {
 pub(crate) struct Snapshot {
     pub version: u16,
     pub task_id: String,
+    /// Captured ancestor tasks; recovery cannot detach their admission bounds.
+    #[serde(default)]
+    pub parent_tasks: Vec<String>,
+    /// A paused owner may still be awaiting admitted descendant cleanup.
+    #[serde(default)]
+    pub descendants_active: bool,
     pub limits: TaskBudgetLimits,
     pub tool_calls: u64,
     pub model_calls: u64,
@@ -86,7 +95,22 @@ impl Snapshot {
         if self.version != 1 || self.task_id.trim().is_empty() {
             bail!("invalid task budget identity or version");
         }
+        anyhow::ensure!(
+            self.parent_tasks.iter().all(|id| !id.trim().is_empty())
+                && !self.parent_tasks.contains(&self.task_id)
+                && self
+                    .parent_tasks
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    == self.parent_tasks.len(),
+            "invalid task budget ancestry"
+        );
         self.limits.milliseconds()?;
+        anyhow::ensure!(
+            self.phase != Phase::Completed || !self.descendants_active,
+            "completed task budget retains unsettled descendants"
+        );
         if self.tool_calls > self.limits.tool_calls.get()
             || self.model_calls > self.limits.model_calls.get()
         {
@@ -130,11 +154,13 @@ struct State {
     snapshot: Snapshot,
     running_since: Option<Instant>,
     poisoned: bool,
+    active_descendants: Arc<AtomicUsize>,
 }
 
 impl State {
     fn observed(&self) -> Snapshot {
         let mut next = self.snapshot.clone();
+        next.descendants_active = self.active_descendants.load(Ordering::Acquire) > 0;
         if let Some(started) = self.running_since {
             next.elapsed_millis = next
                 .elapsed_millis
@@ -149,17 +175,33 @@ impl State {
 pub(crate) struct TaskBudget {
     state: Arc<Mutex<State>>,
     recorder: Option<RolloutRecorder>,
+    ancestors: Vec<TaskBudget>,
+    changed: Arc<tokio::sync::Notify>,
 }
 
 impl TaskBudget {
+    #[cfg(test)]
     pub(crate) async fn start(
         task_id: String,
         limits: TaskBudgetLimits,
         recorder: Option<RolloutRecorder>,
     ) -> Result<Self> {
+        Self::start_with_parent(task_id, limits, recorder, None).await
+    }
+
+    pub(crate) async fn start_with_parent(
+        task_id: String,
+        limits: TaskBudgetLimits,
+        recorder: Option<RolloutRecorder>,
+        parent: Option<TaskBudget>,
+    ) -> Result<Self> {
+        let ancestors = inheritance::parent_chain(parent);
+        let parent_tasks = inheritance::task_ids(&ancestors).await;
         let snapshot = Snapshot {
             version: 1,
             task_id,
+            parent_tasks,
+            descendants_active: false,
             limits,
             tool_calls: 0,
             model_calls: 0,
@@ -169,7 +211,8 @@ impl TaskBudget {
             recovered_time_upper_bound: false,
         };
         snapshot.validate()?;
-        let budget = Self::restore(snapshot, recorder)?;
+        let mut budget = Self::restore(snapshot, recorder)?;
+        budget.attach_ancestors(ancestors).await?;
         budget.resume().await?;
         Ok(budget)
     }
@@ -179,20 +222,24 @@ impl TaskBudget {
         recorder: Option<RolloutRecorder>,
     ) -> Result<Self> {
         snapshot.validate()?;
-        if snapshot.phase == Phase::Running {
+        if snapshot.phase == Phase::Running || snapshot.descendants_active {
             // A wall clock cannot reconstruct a lost monotonic interval. Charge
             // the remaining time rather than silently reset it after a crash.
             snapshot.elapsed_millis = snapshot.elapsed_millis.max(snapshot.limits.milliseconds()?);
             snapshot.recovered_time_upper_bound = true;
             snapshot.phase = Phase::Paused;
+            snapshot.descendants_active = false;
         }
         Ok(Self {
             state: Arc::new(Mutex::new(State {
                 snapshot,
                 running_since: None,
                 poisoned: false,
+                active_descendants: Default::default(),
             })),
             recorder,
+            ancestors: Vec::new(),
+            changed: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -208,6 +255,7 @@ impl TaskBudget {
         // Dropping this future while awaiting the acknowledgement must also
         // fail closed: the writer can still commit the admission afterward.
         state.poisoned = true;
+        self.changed.notify_waiters();
         if let Some(recorder) = &self.recorder {
             let item = RolloutItem::Event(EventRecord {
                 event_type: EVENT_TYPE.into(),
@@ -223,18 +271,19 @@ impl TaskBudget {
         }
         state.snapshot = next;
         state.poisoned = false;
-        state.running_since =
-            (state.snapshot.phase == Phase::Running).then_some(checkpoint_started);
+        state.running_since = (state.snapshot.phase == Phase::Running
+            || state.snapshot.descendants_active)
+            .then_some(checkpoint_started);
         Ok(())
     }
 
-    pub(crate) async fn reserve(&self, admission: Admission) -> Result<()> {
+    async fn reserve_local(&self, admission: Admission, descendant: bool) -> Result<()> {
         let mut state = self.state.lock().await;
         if state.poisoned {
             bail!("task budget evidence is uncertain; execution remains paused");
         }
         let mut next = state.observed();
-        if next.phase != Phase::Running {
+        if next.phase != Phase::Running || (descendant && next.foreground_complete) {
             bail!("task budget is not running");
         }
         if next.elapsed_millis >= next.limits.milliseconds()? {
@@ -262,13 +311,13 @@ impl TaskBudget {
         self.persist(&mut state, next).await
     }
 
-    pub(crate) async fn remaining_time(&self) -> Result<Duration> {
+    async fn remaining_time_local(&self, descendant: bool) -> Result<Duration> {
         let state = self.state.lock().await;
         if state.poisoned {
             bail!("task budget evidence is uncertain; execution remains paused");
         }
         let next = state.observed();
-        if next.phase != Phase::Running {
+        if next.phase != Phase::Running || (descendant && next.foreground_complete) {
             bail!("task budget is not running");
         }
         let remaining = next
@@ -285,6 +334,7 @@ impl TaskBudget {
     }
 
     pub(crate) async fn resume(&self) -> Result<()> {
+        self.validate_ancestry().await?;
         let mut state = self.state.lock().await;
         let mut next = state.observed();
         if next.phase == Phase::Completed {
@@ -301,12 +351,20 @@ impl TaskBudget {
             "task budget evidence is uncertain; execution remains paused"
         );
         let mut next = state.observed();
-        if !completed && next.phase == Phase::Paused {
+        if !completed && next.phase == Phase::Paused && state.running_since.is_none() {
             return Ok(());
         }
         if next.phase == Phase::Completed {
             anyhow::ensure!(completed, "completed task budget cannot be paused");
             return Ok(());
+        }
+        if next.descendants_active {
+            next.phase = Phase::Paused;
+            self.persist(&mut state, next).await?;
+            drop(state);
+            self.await_descendants().await;
+            state = self.state.lock().await;
+            next = state.observed();
         }
         next.phase = if completed {
             Phase::Completed
@@ -328,6 +386,14 @@ impl TaskBudget {
         }
         if next.foreground_complete && next.phase == Phase::Paused {
             return Ok(());
+        }
+        if next.descendants_active {
+            next.phase = Phase::Paused;
+            self.persist(&mut state, next).await?;
+            drop(state);
+            self.await_descendants().await;
+            state = self.state.lock().await;
+            next = state.observed();
         }
         next.foreground_complete = true;
         next.phase = Phase::Paused;
@@ -373,16 +439,32 @@ impl TaskBudget {
             !parent.is_cancelled(),
             "task operation cancelled before admission"
         );
+        let _lease = self.acquire_ancestors().await?;
         let remaining = self.remaining_time().await?;
         let cancel = parent.child_token();
         let future = operation(cancel.clone());
         tokio::pin!(future);
         tokio::select! {
             result = &mut future => result,
+            error = self.ancestor_stopped() => {
+                cancel.cancel();
+                match future.await {
+                    Err(cleanup) => Err(cleanup.context(error)),
+                    Ok(_) => Err(error),
+                }
+            }
             _ = tokio::time::sleep(remaining) => {
                 cancel.cancel();
+                let inherited = self.ancestor_time_error().await;
+                let settled = future.await;
+                if let Some(error) = inherited {
+                    return match settled {
+                        Err(cleanup) => Err(cleanup.context(error)),
+                        Ok(_) => Err(error),
+                    };
+                }
                 let exhausted = Exhausted { dimension: Dimension::Time };
-                match future.await {
+                match settled {
                     // Keep uncertain cleanup evidence in the error chain. A
                     // deadline must never turn an unconfirmed abort into a
                     // safely settled operation that can be resumed implicitly.
@@ -407,6 +489,7 @@ pub(crate) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
                 "completed task budget changed after settlement"
             );
             if next.tool_calls < prior.tool_calls
+                || next.parent_tasks != prior.parent_tasks
                 || (prior.foreground_complete && !next.foreground_complete)
                 || next.model_calls < prior.model_calls
                 || next.elapsed_millis < prior.elapsed_millis

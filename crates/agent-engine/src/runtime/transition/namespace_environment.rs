@@ -178,6 +178,7 @@ pub struct NamespaceToolActionOutput {
 /// Namespace-backed environment for an Agent Process.
 #[derive(Clone)]
 pub struct NamespaceRuntimeEnvironment {
+    pub(crate) task_budget_binding: crate::TaskBudgetBinding,
     pub(crate) shadow_evaluation: Option<Arc<super::super::shadow_evaluation::ShadowEvaluation>>,
     pub(crate) work_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     pub(crate) evaluation_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
@@ -287,6 +288,7 @@ impl NamespaceRuntimeEnvironment {
         llm_connection: impl Into<String>,
     ) -> Self {
         Self {
+            task_budget_binding: Default::default(),
             shadow_evaluation: None,
             evaluation_publisher: None,
             work_publisher: None,
@@ -302,6 +304,12 @@ impl NamespaceRuntimeEnvironment {
             action_recorder: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
         }
+    }
+
+    /// Bind trusted Process ancestry supplied by Agent Runtime Service.
+    pub fn with_task_budget_binding(mut self, binding: crate::TaskBudgetBinding) -> Self {
+        self.task_budget_binding = binding;
+        self
     }
 
     /// Bind the Alan OS working directory selected by Agent Runtime Service.

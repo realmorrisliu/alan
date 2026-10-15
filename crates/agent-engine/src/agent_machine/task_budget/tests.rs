@@ -378,6 +378,8 @@ fn config_and_recovery_reject_zero_overflow_or_invalid_evidence() {
     let snapshot = Snapshot {
         version: 1,
         task_id: "task".into(),
+        parent_tasks: Vec::new(),
+        descendants_active: false,
         limits: limits(1, 1),
         tool_calls: 2,
         model_calls: 0,

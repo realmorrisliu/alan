@@ -108,15 +108,45 @@ to the new invocation; local request strings may legitimately repeat across sepa
 namespaces. Decline/cancellation retires an unexecuted read without dispatching it.
 This does not qualify native terminal presentation or arbitrary active-crash replay.
 
+### Descendant accounting under verification — 2026-10-15
+
+Agent Runtime Service passes a trusted Process-bound budget binding alongside its
+existing launch template. Child arguments, definitions and configuration cannot
+select that binding. Launch captures the current parent task, including its
+ancestry; a subsequent parent task cannot move a previously captured child onto a
+fresh allowance. Every descendant model/Tool attempt charges each ancestor ledger
+once before its own acknowledged admission. Concurrent children share the same
+ledger locks; partial or uncertain acknowledgement never refunds earlier charges.
+Child-local extension does not enlarge an ancestor allowance. Deferred parent jobs
+retain their own budget but cannot reopen a completed foreground task for children.
+
+Operations also use the shortest applicable time allowance. Parent pause or
+completion stops further descendant admission and cancels in-flight operations.
+The parent awaits their cleanup while its active clock continues. A durable paused
+record identifies unsettled descendants; recovery conservatively charges the
+recorded time allowance rather than treating that interval as a free human wait.
+Budget-ledger foreground/terminal completion is not recorded until cleanup settles.
+This does not yet defer the runtime's existing earlier completion events; terminal
+UI/event publication ordering remains a whole-transition acceptance gap.
+
+Recovered descendant evidence retains its original ancestor identities. Missing or
+foreign bindings fail before startup publication or model admission. Current Agent
+Executable lifecycle still exits a child on a terminal result or human wait; an
+exhausted/stopped ancestor fails the child closed rather than offering a child-local
+extension for someone else's ledger. Automatic descendant restart, subtree recovery
+and a correlated parent/child continuation UX are not delivered by this slice; do
+not use a failed child or Root fallback to qualify delegated success.
+
 ## Known qualification gaps
 
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation
 coverage; this does not implement a general mixed-program scheduler. Uncertain model
 or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
 and active-crash transfer edges still need acceptance. Input-shadow budget pause/resume
-has source integration coverage; physical terminal acceptance remains pending. Descendant Agent Process accounting
-needs an explicit aggregate or delegated finite-allowance contract and acceptance;
-independent per-Process defaults do not prove a task-tree cap. Whole-transition
+has source integration coverage; physical terminal acceptance remains pending. Descendant
+admission and cleanup accounting now have implementation under verification;
+native task-tree acceptance, inherited-stop presentation and explicit subtree recovery
+remain open. Whole-transition
 time boundaries and all cancellation/error paths still need acceptance. Native UI,
 installed-binary and task-tree qualification are pending; source test counts remain
 separate from those acceptance claims.

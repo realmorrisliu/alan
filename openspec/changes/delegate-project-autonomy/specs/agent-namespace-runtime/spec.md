@@ -29,6 +29,18 @@ Every autonomous task SHALL have finite configured elapsed-time, Tool-call and m
 - **WHEN** the existing source-owner Machine program exhausts its task allowance during source capture, model selection or validation
 - **THEN** its budget checkpoint preserves the exact unfinished read and program progress, explicit extension resumes the program without replaying completed effects, repeating settled model calls or substituting ordinary generation; resumed final validation rechecks current source authority and bytes within an explicitly sufficient finite allowance, and changed evaluator authority or uncertain settlement never permits an implicit retry
 
+#### Scenario: Descendant work shares the task allowance
+- **WHEN** an Agent Process creates descendants during an admitted task
+- **THEN** Agent Runtime Service captures the original ancestor ledgers, model and Tool admission charges each applicable ancestor once, concurrency cannot overspend them, and a new parent task or child-local extension cannot replace or enlarge the captured allowance
+
+#### Scenario: A parent stops while descendants are cleaning up
+- **WHEN** a parent pauses, cancels or finishes while admitted descendant operations remain unsettled
+- **THEN** further descendant admission stops, in-flight operations are cancelled and awaited, cleanup time remains charged, and a crash during that unsettled interval cannot recover a free paused allowance or a fresh task identity
+
+#### Scenario: Descendant evidence is recovered without its parent authority
+- **WHEN** recovery cannot bind the descendant's recorded ancestor task identities to the original live admission bounds
+- **THEN** startup fails before model or Tool admission instead of turning the descendant into an independent task with fresh limits
+
 ### Requirement: Pending decisions preserve dependency ordering
 A pending permission or clarification SHALL keep its original correlated operation. Other work SHALL proceed only if it is independently authorized and does not consume that operation’s result or rely on its unresolved authority. Unknown dependence SHALL preserve ordering, and repeated observations SHALL NOT create duplicate prompts or effects.
 

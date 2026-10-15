@@ -249,23 +249,6 @@ fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("AgentMachine is running without persistent recorder; using in-memory mode: {err}")
 }
 
-async fn create_persistent_machine(
-    process_path: &str,
-    model: &str,
-    rollouts_dir: Option<&std::path::PathBuf>,
-    rollout_cwd: Option<&std::path::Path>,
-    reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-) -> anyhow::Result<AgentMachine> {
-    AgentMachine::new_with_recorder_options(
-        process_path,
-        model,
-        rollouts_dir.map(|dir| dir.as_path()),
-        rollout_cwd,
-        reasoning_effort,
-    )
-    .await
-}
-
 struct AgentMachineLaunchContext<'a> {
     process_path: &'a str,
     agent_path: &'a str,
@@ -305,10 +288,10 @@ async fn initialize_agent_machine(
         }
         machine
     } else {
-        match create_persistent_machine(
+        match AgentMachine::new_with_recorder_options(
             launch.process_path,
             launch.model,
-            rollouts_dir,
+            rollouts_dir.map(|dir| dir.as_path()),
             rollout_cwd,
             reasoning_effort,
         )
@@ -470,7 +453,13 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let machine = startup.machine;
+        let mut machine = startup.machine;
+        if let Some(budget) = &mut machine.task_budget
+            && let Err(error) = environment.task_budget_binding.bind(budget).await
+        {
+            let _ = ready_tx.send(Err(format!("restore task budget ancestry: {error:#}")));
+            return;
+        }
         if let Err(error) = environment
             .publish_evaluation(machine.evaluation_observation.clone())
             .await

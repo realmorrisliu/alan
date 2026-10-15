@@ -480,6 +480,16 @@ async fn root_agent_is_replaced_without_pid_continuity() {
 
 #[tokio::test]
 async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
+    let (provider, tools, entered, release) = child_budget::admitted_parent_fixture();
+    let temp = tempfile::tempdir().unwrap();
+    let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+        rollouts: temp.path().join("rollouts"),
+        metadata: temp.path().join("metadata"),
+        checkpoints: temp.path().join("checkpoints"),
+        cache: temp.path().join("cache"),
+        tmp: temp.path().join("tmp"),
+    };
+    std::fs::create_dir_all(&stores.tmp).unwrap();
     let definition = alan_agent_engine::ProcessFileTree::new(BTreeMap::new()).unwrap();
     let launch_context = ProcessLaunchContext::root()
         .with_descriptor(
@@ -492,15 +502,28 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
             alan_agent_engine::ProcessDescriptor::new("/memory").unwrap(),
         );
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
-        AgentProcessConfig::default(),
+        AgentProcessConfig {
+            store_bindings: Some(stores),
+            ..Default::default()
+        },
         launch_context,
-        LlmClient::new(SlowMockLlmProvider::default()),
-        ToolRegistry::new(),
+        LlmClient::new(SlowMockLlmProvider(provider)),
+        tools,
     ))
     .await
     .unwrap();
     let root_pid = manager.root_pid();
     let shell = alan_shell::Shell::new(manager.root_namespace.clone());
+    shell
+        .write(
+            "/agent/root/io/input",
+            b"hold the parent task while its children run",
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
     let namespace_path = format!("/proc/{}/namespace", root_pid.0);
     let before_generation = shell.stat(&namespace_path).await.unwrap().qid.version;
     let namespace = String::from_utf8(shell.cat(&namespace_path).await.unwrap()).unwrap();
@@ -732,6 +755,7 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
     );
     assert!(shell.stat(&format!("/agent/{forged_pid}")).await.is_err());
 
+    release.notify_one();
     manager.shutdown().await.unwrap();
 }
 
@@ -949,4 +973,5 @@ mod unavailable_command;
 mod boot_namespace;
 mod skill_lifecycle;
 
+mod child_budget;
 mod input_shadow;

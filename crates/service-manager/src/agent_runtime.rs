@@ -49,6 +49,7 @@ pub(crate) struct RootAgentTemplate {
     generation_capabilities: ProviderCapabilities,
     llm_connection: String,
     input_shadow: Option<crate::InputShadowSelection>,
+    task_budget_binding: alan_agent_engine::TaskBudgetBinding,
 }
 
 impl RootAgentTemplate {
@@ -62,6 +63,7 @@ impl RootAgentTemplate {
         input_shadow: Option<crate::InputShadowSelection>,
     ) -> Self {
         Self {
+            task_budget_binding: Default::default(),
             process,
             resume_persisted_rollout,
             input_shadow,
@@ -435,6 +437,7 @@ impl AgentRuntimeService {
             format!("/agent/{}", pid.0),
             launch.template.llm_connection.clone(),
         )
+        .with_task_budget_binding(launch.template.task_budget_binding.clone())
         .with_evaluation_publisher({
             let agent = agent.clone();
             move |observation| {
@@ -761,6 +764,7 @@ fn child_template(
         .filter(|name| name != "alan-agent" && name != "q")
         .collect::<Vec<_>>();
     Ok(RootAgentTemplate {
+        task_budget_binding: parent.task_budget_binding.child()?,
         process,
         resume_persisted_rollout: false,
         input_shadow: None,

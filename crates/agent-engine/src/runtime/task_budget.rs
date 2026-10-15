@@ -86,15 +86,19 @@ pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
             .map(str::to_owned)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         state.machine.task_budget = Some(
-            TaskBudget::start(
+            TaskBudget::start_with_parent(
                 id,
                 state.core_config.task_budget.clone(),
                 state.machine.recorder(),
+                state.environment.task_budget_binding.parent(),
             )
             .await?,
         );
     } else if let Some(budget) = &state.machine.task_budget {
         budget.resume().await?;
+    }
+    if let Some(budget) = &mut state.machine.task_budget {
+        state.environment.task_budget_binding.bind(budget).await?;
     }
     Ok(())
 }
