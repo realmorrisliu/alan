@@ -2393,9 +2393,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openrouter-rs"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57433115a0711e681bc3c17ff3c3621a1b098589f8a79d09e49d1763a7bc0090"
+checksum = "ec9fc8bfa7f8012a2b4288a0a4d0ac1279cace0d4481e0c7682c508b90a17d6c"
 dependencies = [
  "derive_builder",
  "dotenvy_macro",
@@ -3552,7 +3552,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
