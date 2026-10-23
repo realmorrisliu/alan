@@ -439,6 +439,34 @@ separate from those acceptance claims.
 The provisional code defaults (1800 execution seconds, 256 Tool attempts, 64 model
 requests) are not frozen daily-use qualification thresholds. The initial pilot plan
 uses 600 seconds, 30 Tool attempts and 10 model requests per task, with zero task
-retries; that plan has not started a model task. It remains paused at preflight until
-the runtime can enforce all three dimensions. No monetary cost is inferred from an
+retries. Its two-repository read-only preflight started on 2026-10-23 with clean
+candidate `ff1e39e0`, enforced configuration and an additional 660-second Host
+supervisor. See [actual outcomes](../qualify-personal-daily-development/pilot-results.md).
+This is bounded measurement while the named qualification gaps remain open, not
+completion of task 2.4 or formal sampling. No monetary cost is inferred from an
 admission counter.
+
+## Native active cancellation and explicit recovery — 2026-10-23 assessment
+
+Clean `ff1e39e0` has all sixteen CI checks passing. Its isolated Herdr run observed
+one admitted active task, sent one Ctrl-C, and received the matching `cancelled`
+completion. The queue paused with no active, pending or uncertain inputs; its
+completed budget retained one model call, zero Tools and 133ms. The original
+observer incorrectly required idle activity and `foreground_complete`; its false
+result is preserved separately from the contract audit. Ordinary interrupt pauses
+the queue, and ledger settlement uses the completed phase independently of the
+foreground flag. This does not measure termination of remote provider computation.
+
+A subsequent fresh invocation explicitly selected latest history with `--resume`.
+Its new rollout copied the same admission and budget records, retained spending,
+and became idle with an empty queue without another model or Tool admission. It
+exited cleanly. This verifies this cancelled foreground task, not general history
+selection, arbitrary active-crash or subtree recovery. The earlier failed private
+Connection observer and its un-interrupted completed task remain failures of that
+cancellation attempt; neither is overwritten. Native fixture model admissions total
+seven, separate from the newly started pilot and the still-zero formal sample.
+
+The run also identifies follow-up UI evidence: model text is buffered until a
+successful response before publishing chunks; Bash source-read titles are dominated
+by commands; a clean first-input queue can appear as unavailable. These are not
+claims that the corresponding UI problems are fixed.

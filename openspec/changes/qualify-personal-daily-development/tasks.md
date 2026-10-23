@@ -3,7 +3,7 @@
 ## 1. Delivery bookkeeping and pilot
 - [ ] 1.1 Verify the merged canonical closure of Linux, installation, repeated development and composer; validate exact deltas, archive references and current disposition receipts.
 - [ ] 1.2 Freeze a finite pilot plan and isolated Alan/website snapshots; verify the primary website checkout and its deployment remain unchanged.
-- [ ] 1.3 Collect real-task interruption and failure evidence through macOS Herdr; self-check ledger accounting against every admitted task and retained output.
+- [x] 1.3 Collect real-task interruption and failure evidence through macOS Herdr; self-check ledger accounting against every admitted task and retained output. See [the two-task preflight](pilot-results.md); formal sampling is still unstarted.
 - [ ] 1.4 Freeze numeric budgets, task mix, comparison subset and counting rules before formal qualification; verify pilot outcomes cannot be substituted for formal results.
 
 ## 2. Capability prerequisites and observed fixes
