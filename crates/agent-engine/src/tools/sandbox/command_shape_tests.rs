@@ -23,18 +23,18 @@ async fn quoted_search_filter_works_with_read_only_mount_without_enabling_shell_
     ] {
         let found = sandbox
             .exec_with_timeout_and_capability(
-                "rg --files --glob '*.rs'",
+                "find . -name '*.rs'",
                 temp.path(),
                 None,
                 Some(alan_agent_protocol::ToolCapability::Read),
             )
             .await
             .unwrap();
-        assert_eq!(found.exit_code, 0);
-        assert_eq!(found.stdout.trim(), "fixture.rs");
+        assert_eq!(found.exit_code, 0, "{}", found.stderr);
+        assert_eq!(found.stdout.trim(), "./fixture.rs");
         let rejected = sandbox
             .exec_with_timeout_and_capability(
-                "rg --files *.rs",
+                "find . -name *.rs",
                 temp.path(),
                 None,
                 Some(alan_agent_protocol::ToolCapability::Read),

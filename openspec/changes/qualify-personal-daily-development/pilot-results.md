@@ -63,7 +63,7 @@ Actual usage-derived monetary cost is unknown; admission counts are not a price.
    operands or quoted `rg --glob` filters; do not loosen resource enforcement to
    hide a rejected command. Verify advice on the actual active backend.
    The follow-up now adds this advice to the existing Tool description and command
-   schema. A source regression executes the quoted filter under a read-only mount
+   schema. A source regression executes a portable `find` filename filter under a read-only mount
    with the detected backend and the path-guard fallback, while an unquoted glob
    stays rejected. This is source verification only: a fresh native candidate must
    rerun the unchanged frozen task before claiming improved model behavior. Neither
@@ -86,3 +86,25 @@ candidate bindings, original rollouts, task receipts, retained answer, terminal
 reads, ledger audit and clean exit records. Earlier native cancellation/recovery
 evidence remains under the `20261014` fixture, separated from these pilot tasks.
 Observer failures are retained; correcting an observer did not retry a task.
+
+## Fresh guidance candidate follow-up
+
+Clean candidate `bec2cb85`, built after the dependency fixes, served the new Bash
+description and command schema in its live namespace manifest. G1 reran P1's exact
+prompt on the same source snapshot, model/effort and 600s/30-Tool/10-model limits.
+It again exhausted ten model admissions with nine Tool attempts and no final
+answer, after 99.193s. One unquoted source glob was still attempted and rejected.
+The guidance correction therefore has no qualified model-improvement result.
+
+The operator did not close this invocation before the predeclared 660-second
+supervisor deadline. It ended with exit 143 while its task budget remained paused.
+An Enter sent afterward reached the idle shell, not the Runtime; the subsequent
+completed-budget assertion failed. This is retained as a harness/operator failure,
+not a successful default-rejection check. No budget was extended. At this
+checkpoint G2 had not started; neither original pilot outcome is replaced by this separate cohort.
+
+CI also reproduced an undeclared test-tool prerequisite: the first quoted-filter
+regression required `rg`, absent in the test/coverage jobs, and exited 127. A
+restricted-PATH local run reproduced it. The corrected regression uses portable
+`find` to exercise the same real quoted-filter and unquoted-expansion boundary;
+it does not install another tool or relax the sandbox. Fresh CI remains required.
