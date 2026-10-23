@@ -61,14 +61,14 @@ pub(crate) struct PlanSnapshot {
 }
 
 /// Tool call normalized at the Machine transition boundary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct NormalizedToolCall {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) arguments: serde_json::Value,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct PendingToolReplayBatch {
     pub(crate) tool_calls: Vec<NormalizedToolCall>,
     pub(crate) resume_with_generation: bool,
@@ -537,6 +537,10 @@ impl AgentMachine {
 
     pub(crate) fn drain_deferred_runtime_actions(&mut self) -> VecDeque<DeferredRuntimeAction> {
         std::mem::take(&mut self.transition_state.deferred_runtime_actions)
+    }
+
+    pub(crate) fn has_deferred_runtime_actions(&self) -> bool {
+        !self.transition_state.deferred_runtime_actions.is_empty()
     }
 
     pub(crate) fn can_auto_mid_turn_compact(

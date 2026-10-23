@@ -413,6 +413,9 @@ impl AgentMachine {
         machine.recover_input_queue(&event_records)?;
         machine.evaluation_observation = super::evaluation::recover(&event_records)?;
         machine.owner_work = super::owner_work::recover(&event_records)?;
+        let recovered_budget = super::task_budget::recover(&event_records)?;
+        machine.task_budget_wait =
+            super::task_budget::waiting::recover(&event_records, recovered_budget.as_ref())?;
         if let Some(work) = machine.owner_work.clone()
             && let super::owner_work::Outcome::Waiting { request_id, .. } = &work.outcome
         {
@@ -492,6 +495,13 @@ impl AgentMachine {
                 machine.recorder = None;
                 durability_error = Some(error);
             }
+        }
+
+        if let Some(snapshot) = recovered_budget {
+            machine.task_budget = Some(super::task_budget::TaskBudget::restore(
+                snapshot,
+                machine.recorder(),
+            )?);
         }
 
         Ok((machine, durability_error))

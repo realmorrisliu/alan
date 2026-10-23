@@ -99,43 +99,21 @@ where
         name: "bash".to_string(),
         arguments: serde_json::json!({"command": command.clone()}),
     };
-    let standalone_cd = crate::tools::parse_standalone_cd(&command);
-    if !matches!(&standalone_cd, Ok(None)) {
-        emit(Event::ToolCallStarted {
-            title: Some("cd".to_string()),
-            id: submission_id.clone(),
-            name: "cd".to_string(),
-            audit: None,
-        })
-        .await;
-        state.machine.set_turn_activity(TurnActivityState::Running);
-        let outcome = match standalone_cd {
-            Ok(Some(_directory)) if cancel.is_cancelled() => {
-                state.machine.mark_submission_cancelled();
-                Err(anyhow::anyhow!(
-                    "standalone cd was cancelled before execution"
-                ))
-            }
-            Ok(Some(directory)) => state.environment.change_process_directory(&directory),
-            Err(error) => Err(error),
-            Ok(None) => unreachable!("standalone cd match excludes no-op inputs"),
-        };
-        return finish_standalone_cd(state, &submission_id, &command, outcome, emit).await;
+    if matches!(crate::tools::parse_standalone_cd(&command), Ok(None)) {
+        state
+            .machine
+            .add_assistant_message_with_tool_calls_and_reasoning(
+                "",
+                vec![crate::tape::ToolRequest {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.arguments.clone(),
+                }],
+                None,
+                None,
+                &[],
+            );
     }
-
-    state
-        .machine
-        .add_assistant_message_with_tool_calls_and_reasoning(
-            "",
-            vec![crate::tape::ToolRequest {
-                id: tool_call.id.clone(),
-                name: tool_call.name.clone(),
-                arguments: tool_call.arguments.clone(),
-            }],
-            None,
-            None,
-            &[],
-        );
     let mut loop_guard = ToolLoopGuard::new(None, state.runtime_config.tool_repeat_limit);
     state.machine.set_turn_activity(TurnActivityState::Running);
     let mut command_error = None;
@@ -176,6 +154,25 @@ where
         Ok(ToolOrchestratorOutcome::PauseTurn) => {
             retain_pending_tool_batch(state, std::slice::from_ref(&tool_call));
             state.machine.set_turn_activity(TurnActivityState::Paused);
+            Ok(())
+        }
+        Err(error) if error.is::<crate::agent_machine::task_budget::Exhausted>() => {
+            let paused = crate::runtime::task_budget::pause_tool_batch(
+                state,
+                error
+                    .downcast_ref::<crate::agent_machine::task_budget::Exhausted>()
+                    .expect("typed exhaustion"),
+                std::slice::from_ref(&tool_call),
+                false,
+                emit,
+            )
+            .await?;
+            if paused {
+                state.machine.set_turn_activity(TurnActivityState::Paused);
+            } else {
+                record_missing_command_action(state, &tool_call, None, None).await?;
+                state.machine.set_turn_activity(TurnActivityState::Idle);
+            }
             Ok(())
         }
         Err(error) => {
@@ -244,6 +241,16 @@ async fn record_missing_command_action(
     approval: Option<&str>,
 ) -> Result<()> {
     let payload = state.machine.tool_payload_by_call_id(&tool_call.id);
+    if payload.is_some()
+        && tool_call
+            .arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|command| !matches!(crate::tools::parse_standalone_cd(command), Ok(None)))
+    {
+        // The Process-directory path owns its own correlated Action result.
+        return Ok(());
+    }
     if payload
         .as_ref()
         .and_then(|payload| {
@@ -321,6 +328,61 @@ where
     .await;
     state.machine.set_turn_activity(TurnActivityState::Idle);
     Ok(())
+}
+
+/// A standalone explicit `cd` changes the owning Process, including budget replay.
+pub(super) async fn try_standalone_cd<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    emit: &mut E,
+    cancel: &CancellationToken,
+    task_cancel: &CancellationToken,
+) -> Result<Option<ToolOrchestratorOutcome>>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    if tool_call.name != "bash" {
+        return Ok(None);
+    }
+    let Some(command) = tool_call
+        .arguments
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let standalone_cd = crate::tools::parse_standalone_cd(command);
+    if matches!(standalone_cd, Ok(None)) {
+        return Ok(None);
+    }
+    emit(Event::ToolCallStarted {
+        title: Some("cd".into()),
+        id: tool_call.id.clone(),
+        name: "cd".into(),
+        audit: None,
+    })
+    .await;
+    let outcome = match standalone_cd {
+        Ok(Some(_)) if cancel.is_cancelled() => {
+            if task_cancel.is_cancelled() {
+                state.machine.mark_submission_cancelled();
+                Err(anyhow::anyhow!(
+                    "standalone cd was cancelled before execution"
+                ))
+            } else {
+                return Err(crate::agent_machine::task_budget::Exhausted {
+                    dimension: crate::agent_machine::task_budget::Dimension::Time,
+                }
+                .into());
+            }
+        }
+        Ok(Some(directory)) => state.environment.change_process_directory(&directory),
+        Err(error) => Err(error),
+        Ok(None) => unreachable!("non-cd commands already returned"),
+    };
+    finish_standalone_cd(state, &tool_call.id, command, outcome, emit).await?;
+    Ok(Some(ToolOrchestratorOutcome::EndTurn))
 }
 
 async fn finish_standalone_cd<E, F>(

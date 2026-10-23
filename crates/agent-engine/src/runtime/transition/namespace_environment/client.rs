@@ -5,6 +5,10 @@ use anyhow::{Context, Result, bail};
 
 static NEXT_FID: AtomicU64 = AtomicU64::new(10_000);
 
+#[derive(Debug, thiserror::Error)]
+#[error("clone allocation was not opened")]
+pub(super) struct CloneNotOpened;
+
 pub(super) struct InputFrame {
     pub(super) message: String,
     pub(super) bytes_consumed: usize,
@@ -336,39 +340,49 @@ impl NamespaceClient {
         path: &str,
         retained: &mut Option<String>,
     ) -> Result<()> {
-        let fid = self.walk_to(path).await?;
+        let fid = NamespaceFidGuard::new(
+            self.clone(),
+            self.walk_to(path).await.context(CloneNotOpened)?,
+        );
         let read = async {
-            self.open(fid, OpenMode::ReadWrite).await?;
-            let id = String::from_utf8(self.read_at(fid, 0, 128).await?)
+            self.open(fid.fid(), OpenMode::ReadWrite).await?;
+            let id = String::from_utf8(self.read_at(fid.fid(), 0, 128).await?)
                 .with_context(|| format!("{path} returned non-utf8 id"))?;
             *retained = Some(id);
             Ok(())
         }
         .await;
-        let cleanup = self.clunk(fid).await;
+        let cleanup = fid.close().await;
         read.and(cleanup)
     }
 
     pub(super) async fn clone_with_document(&self, path: &str, data: &[u8]) -> Result<String> {
-        let fid = self.walk_to(path).await?;
-        match async {
-            self.open(fid, OpenMode::ReadWrite).await?;
-            let id = String::from_utf8(self.read_at(fid, 0, 128).await?)
+        let mut id = None;
+        self.clone_with_document_retained(path, data, &mut id)
+            .await?;
+        Ok(id.expect("successful clone read retained its ID"))
+    }
+
+    pub(super) async fn clone_with_document_retained(
+        &self,
+        path: &str,
+        data: &[u8],
+        retained: &mut Option<String>,
+    ) -> Result<()> {
+        let fid = NamespaceFidGuard::new(
+            self.clone(),
+            self.walk_to(path).await.context(CloneNotOpened)?,
+        );
+        let write = async {
+            self.open(fid.fid(), OpenMode::ReadWrite).await?;
+            let id = String::from_utf8(self.read_at(fid.fid(), 0, 128).await?)
                 .with_context(|| format!("{path} returned non-utf8 id"))?;
-            self.write_all_opened(fid, data).await?;
-            Ok(id)
+            *retained = Some(id);
+            self.write_all_opened(fid.fid(), data).await
         }
-        .await
-        {
-            Ok(id) => {
-                self.clunk(fid).await?;
-                Ok(id)
-            }
-            Err(err) => {
-                let _ = self.clunk(fid).await;
-                Err(err)
-            }
-        }
+        .await;
+        let cleanup = fid.close().await;
+        write.and(cleanup)
     }
 
     pub(super) async fn read_stream_from(&self, path: &str, offset: u64) -> Result<Vec<u8>> {

@@ -271,11 +271,13 @@ impl NamespaceAgentFiles {
     ) -> Result<String> {
         let kind = crate::approval::runtime_confirmation_control_kind(&pending.checkpoint_type)
             .unwrap_or("confirmation");
+        let payload = crate::approval::runtime_confirmation_yield_payload(pending);
         let options = serde_json::to_string(&serde_json::json!({
             "checkpoint_id": pending.checkpoint_id.clone(),
             "checkpoint_type": pending.checkpoint_type.clone(),
             "details": pending.details.clone(),
             "options": pending.options.clone(),
+            "default_option": payload.default_option,
         }))?;
         self.write_request(
             NamespaceRequestRecord::new(kind, pending.summary.clone()).with_options(options),

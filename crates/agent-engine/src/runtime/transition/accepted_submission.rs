@@ -78,6 +78,11 @@ pub(crate) fn advance_accepted_submission<'a>(
         ) {
             let checkpoint = state.dispatch_input(&submission, cancel).await;
             if let Err(error) = checkpoint {
+                if let Some(budget) = &state.machine.task_budget
+                    && let Err(settle_error) = budget.settle(false).await
+                {
+                    tracing::warn!(%settle_error, "Failed to settle budget after input preparation failure");
+                }
                 let publish = crate::runtime::ui_surfaces::error_notice(
                     &state.agent_files(),
                     &format!("Input {} preparation failed; ordinary execution did not start and recovery disposition is uncertain: {error}", submission.id),
@@ -112,7 +117,7 @@ pub(crate) fn advance_accepted_submission<'a>(
 
         let cancelled_before_start =
             cancel.is_cancelled() && matches!(submission.op, Op::Turn { .. } | Op::Input { .. });
-        let mut result = if cancelled_before_start {
+        let result = if cancelled_before_start {
             let removal = state.machine.remove_input(&submission).await;
             state.machine.mark_submission_cancelled();
             if let Err(error) = removal {
@@ -129,8 +134,19 @@ pub(crate) fn advance_accepted_submission<'a>(
             drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
         } else {
             handle_submission_with_cancel(state, submission, &mut emit, cancel).await
-        }
-        .map(|()| {
+        };
+        // A pre-start cancellation bypasses submission dispatch, so it must
+        // also close any budget opened during input preparation here.
+        let result = if cancelled_before_start {
+            if let Some(budget) = &state.machine.task_budget {
+                budget.settle(result.is_ok()).await.and(result)
+            } else {
+                result
+            }
+        } else {
+            result
+        };
+        let mut result = result.map(|()| {
             if state.machine.has_pending_interaction() {
                 TransitionCompletion::Paused
             } else {

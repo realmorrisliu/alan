@@ -2,6 +2,50 @@ use super::super::*;
 use tempfile::TempDir;
 
 #[tokio::test]
+async fn quoted_search_filter_works_with_read_only_mount_without_enabling_shell_globs() {
+    use crate::tools::reified_namespace::ReifiedMountAccess;
+
+    let temp = TempDir::new().unwrap();
+    tokio::fs::write(temp.path().join("fixture.rs"), "// source\n")
+        .await
+        .unwrap();
+    tokio::fs::write(temp.path().join("fixture.txt"), "other\n")
+        .await
+        .unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: "/mnt/project".into(),
+        host_path: temp.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadOnly,
+    }]);
+    for sandbox in [
+        Sandbox::from_spec(spec.clone()),
+        Sandbox::from_spec_with_backend(spec, crate::tools::SandboxBackendKind::HostMountPathGuard),
+    ] {
+        let found = sandbox
+            .exec_with_timeout_and_capability(
+                "find . -name '*.rs'",
+                temp.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap();
+        assert_eq!(found.exit_code, 0, "{}", found.stderr);
+        assert_eq!(found.stdout.trim(), "./fixture.rs");
+        let rejected = sandbox
+            .exec_with_timeout_and_capability(
+                "find . -name *.rs",
+                temp.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Read),
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected.to_string().contains("glob expansion"));
+    }
+}
+
+#[tokio::test]
 async fn test_sandbox_exec_blocks_mutating_variable_expansion() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(

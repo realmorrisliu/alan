@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "owner_work_publication.rs"]
 mod publication;
 
+#[path = "owner_work_budget.rs"]
+mod budget;
+
 struct SourceTool {
     reads: Arc<AtomicUsize>,
     revoke_after: usize,
@@ -161,6 +164,44 @@ fn control(question: &str) -> Submission {
     .unwrap()
 }
 
+fn evaluator_callable(
+    machine: &AgentMachine,
+    calls: Arc<AtomicUsize>,
+    selection: Option<&str>,
+) -> CapturedCallable {
+    let llmfs = alan_llmfs::LlmFs::new();
+    llmfs.register_connection_profile(
+        "evaluator",
+        alan_llmfs::ConnectionProfile::new("test", "pinned", "ref"),
+        Box::new(ChoiceProvider {
+            calls,
+            selection: selection.map(str::to_owned),
+            recorder: machine.input_recorder().unwrap(),
+            cancel: None,
+            hold_after_cancel: false,
+        }),
+    );
+    let mut ns = alan_kernel::Namespace::new();
+    ns.mount(
+        "/mnt/llm",
+        alan_ap::InProcessTransport::new(Arc::new(llmfs)),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+    CapturedCallable {
+        identity: CallableIdentity {
+            profile: "evaluator".into(),
+            provider: "test".into(),
+            model: "pinned".into(),
+            credential_ref: Some("ref".into()),
+            revision: "fixture-v1".into(),
+        },
+        root,
+        connection: "evaluator".into(),
+        config: Config::default(),
+    }
+}
+
 async fn fixture(
     selection: Option<&str>,
     quote: Option<u64>,
@@ -198,37 +239,7 @@ async fn fixture(
     response.finish_reason = Some("stop".into());
     let provider = alan_llm::MockLlmProvider::new().with_responses(vec![response]);
     let probe = provider.clone();
-    let llmfs = alan_llmfs::LlmFs::new();
-    llmfs.register_connection_profile(
-        "evaluator",
-        alan_llmfs::ConnectionProfile::new("test", "pinned", "ref"),
-        Box::new(ChoiceProvider {
-            calls: calls.clone(),
-            selection: selection.map(str::to_owned),
-            recorder: machine.input_recorder().unwrap(),
-            cancel: None,
-            hold_after_cancel: false,
-        }),
-    );
-    let mut ns = alan_kernel::Namespace::new();
-    ns.mount(
-        "/mnt/llm",
-        alan_ap::InProcessTransport::new(Arc::new(llmfs)),
-        alan_kernel::Access::ReadWrite,
-    );
-    let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
-    let captured = CapturedCallable {
-        identity: CallableIdentity {
-            profile: "evaluator".into(),
-            provider: "test".into(),
-            model: "pinned".into(),
-            credential_ref: Some("ref".into()),
-            revision: "fixture-v1".into(),
-        },
-        root,
-        connection: "evaluator".into(),
-        config: Config::default(),
-    };
+    let captured = evaluator_callable(&machine, calls.clone(), selection);
     let mut state =
         tool_batch::create_test_state_with_machine_tools_and_provider(machine, tools, provider)
             .await;
