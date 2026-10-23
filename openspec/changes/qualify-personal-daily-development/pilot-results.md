@@ -62,6 +62,12 @@ Actual usage-derived monetary cost is unknown; admission counts are not a price.
    tasks used ordinary source globs rejected by path validation. Prefer explicit
    operands or quoted `rg --glob` filters; do not loosen resource enforcement to
    hide a rejected command. Verify advice on the actual active backend.
+   The follow-up now adds this advice to the existing Tool description and command
+   schema. A source regression executes the quoted filter under a read-only mount
+   with the detected backend and the path-guard fallback, while an unquoted glob
+   stays rejected. This is source verification only: a fresh native candidate must
+   rerun the unchanged frozen task before claiming improved model behavior. Neither
+   original pilot outcome is replaced or qualified by the guidance edit.
 3. Improve source-inspection Action summaries: long `Bash` commands and an
    `exit 0` plus source-header preview obscure the useful file/range/result.
    Keep the command, full output and failures available in details/scrollback.

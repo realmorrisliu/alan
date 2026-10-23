@@ -21,6 +21,7 @@ None.
 ### Modified Capabilities
 
 - `runtime-harness-contract`: Personal daily-use sample, intervention metrics, budgets and honest comparison.
+- `host-mount-tool-process-sandbox-projection`: Explain unsupported shell expansion and supported search filters at the existing Bash guidance boundary, following the observed pilot refusals.
 
 ## Impact
 

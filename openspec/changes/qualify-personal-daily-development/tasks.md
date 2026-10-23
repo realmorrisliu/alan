@@ -1,7 +1,7 @@
 # Tasks
 
 ## 1. Delivery bookkeeping and pilot
-- [ ] 1.1 Verify the merged canonical closure of Linux, installation, repeated development and composer; validate exact deltas, archive references and current disposition receipts.
+- [x] 1.1 Verify the merged canonical closure of Linux, installation, repeated development and composer; validate exact deltas, archive references and current disposition receipts. See [post-merge verification](planning-delivery.md#post-merge-verification--2026-10-23).
 - [ ] 1.2 Freeze a finite pilot plan and isolated Alan/website snapshots; verify the primary website checkout and its deployment remain unchanged.
 - [x] 1.3 Collect real-task interruption and failure evidence through macOS Herdr; self-check ledger accounting against every admitted task and retained output. See [the two-task preflight](pilot-results.md); formal sampling is still unstarted.
 - [ ] 1.4 Freeze numeric budgets, task mix, comparison subset and counting rules before formal qualification; verify pilot outcomes cannot be substituted for formal results.
