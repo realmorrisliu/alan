@@ -13,6 +13,7 @@ use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
 mod context_observation;
 pub(crate) mod evaluation;
+pub(crate) mod guardian_shadow;
 pub(crate) mod input_queue;
 pub(crate) mod owner_work;
 mod recovery;
@@ -63,6 +64,7 @@ pub(crate) struct AgentMachine {
     /// Latest persisted memory-flush attempt snapshot.
     latest_memory_flush_attempt: Option<MemoryFlushAttemptSnapshot>,
     pub(crate) evaluation_observation: Option<serde_json::Value>,
+    guardian_shadow: guardian_shadow::State,
     pub(crate) owner_work: Option<owner_work::Snapshot>,
     pub(crate) task_budget: Option<task_budget::TaskBudget>,
     pub(crate) task_budget_wait: Option<task_budget::waiting::Wait>,
@@ -90,6 +92,7 @@ impl AgentMachine {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             evaluation_observation: None,
+            guardian_shadow: Default::default(),
             owner_work: None,
             task_budget: None,
             task_budget_wait: None,
@@ -226,6 +229,7 @@ impl AgentMachine {
             latest_compaction_attempt: None,
             latest_memory_flush_attempt: None,
             evaluation_observation: None,
+            guardian_shadow: Default::default(),
             owner_work: None,
             task_budget: None,
             task_budget_wait: None,

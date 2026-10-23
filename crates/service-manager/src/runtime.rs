@@ -43,12 +43,20 @@ pub struct InputShadowSelection {
     pub surface: alan_agent_engine::runtime::EvaluationSurface,
 }
 
+/// Host-authored, invocation-only reviewer selection; never Agent Definition config.
+#[derive(Debug, Clone)]
+pub struct GuardianShadowSelection {
+    pub profile: String,
+    pub policy: Option<String>,
+}
+
 /// Explicit inputs supplied by the platform Host to Service Manager.
 pub struct ServiceManagerConfig {
     pub process: AgentProcessConfig,
     /// Restore the previously selected Root Agent rollout for this invocation.
     pub resume_root: bool,
     pub input_shadow: Option<InputShadowSelection>,
+    pub guardian_shadow: Option<GuardianShadowSelection>,
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
     pub package_store: Option<std::path::PathBuf>,
@@ -117,6 +125,7 @@ impl ServiceManagerConfig {
             process,
             resume_root: false,
             input_shadow: None,
+            guardian_shadow: None,
             llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
                 llm_client,
             )))),
@@ -268,6 +277,7 @@ impl ServiceManager {
             process: config.process,
             resume_root: config.resume_root,
             input_shadow: config.input_shadow,
+            guardian_shadow: config.guardian_shadow,
             launch_context: config.launch_context,
             tools: config.tools,
             host_capabilities,
@@ -394,6 +404,7 @@ struct AssembleInputs {
     process: AgentProcessConfig,
     resume_root: bool,
     input_shadow: Option<InputShadowSelection>,
+    guardian_shadow: Option<GuardianShadowSelection>,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
@@ -414,6 +425,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         mut process,
         resume_root,
         input_shadow,
+        guardian_shadow,
         mut launch_context,
         tools,
         host_capabilities,
@@ -663,7 +675,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     process.memory_store_bound = launch_context
         .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
         .is_some();
-    let root_template = RootAgentTemplate::new(
+    let mut root_template = RootAgentTemplate::new(
         process,
         launch_context,
         host_capabilities,
@@ -672,6 +684,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         resume_root,
         input_shadow,
     );
+    root_template.guardian_shadow = guardian_shadow;
     let root = agent_runtime
         .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
         .await?;

@@ -131,6 +131,20 @@ impl ConnectionAuthority for ProcessConnection {
 }
 
 impl ConnectionService {
+    /// Capture a user-selected generation reviewer without changing Process selection.
+    pub(crate) async fn capture_reviewer(
+        &self,
+        profile: &str,
+        process_namespace: &alan_kernel::LiveNamespace,
+    ) -> Result<CapturedCallable> {
+        self.refresh().await?;
+        ensure!(
+            self.metadata().profiles.contains_key(profile),
+            "reviewer profile unavailable"
+        );
+        self.capture_model(profile, None, process_namespace).await
+    }
+
     /// Capture an explicitly selected evaluator without touching generation selection.
     pub(crate) async fn capture_evaluation(
         &self,

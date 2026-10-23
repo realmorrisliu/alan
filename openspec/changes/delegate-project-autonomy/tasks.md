@@ -21,3 +21,4 @@
 ## Workflow follow-up
 - Sync only delivered deltas and archive after verified merge. Full-trust posture has its own change and cannot be silently enabled here.
 - The [Guardian deadline slice](guardian-delivery.md) records partial task 2.2 work; it does not close dedicated reviewer, fallback or stale-decision gates.
+- The [Guardian shadow configuration slice](guardian-shadow-delivery.md) records explicit no-effect capture and policy selection; it does not activate or qualify a new reviewer.

@@ -49,6 +49,6 @@ pub use package::{
 };
 pub use process_launch::ProcessLaunchContext;
 pub use runtime::{
-    BOOT_ID_PATH, BOOT_STATE_PATH, InputShadowSelection, LlmClientFactory, ServiceManager,
-    ServiceManagerConfig,
+    BOOT_ID_PATH, BOOT_STATE_PATH, GuardianShadowSelection, InputShadowSelection, LlmClientFactory,
+    ServiceManager, ServiceManagerConfig,
 };

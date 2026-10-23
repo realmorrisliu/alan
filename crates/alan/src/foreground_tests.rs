@@ -2,6 +2,29 @@ use super::*;
 use alan_agent_protocol::InputIntent;
 use alan_tui::composer::{Composer, HistoryEntry, load_history};
 
+#[test]
+fn guardian_policy_is_a_bounded_explicit_utf8_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("policy.md");
+    assert!(load_guardian_policy(&path).is_err());
+    std::fs::write(&path, "original policy").unwrap();
+    let snapshot = load_guardian_policy(&path).unwrap();
+    for contents in [vec![b' '; 10], vec![0xff], vec![b'x'; 65_537]] {
+        std::fs::write(&path, contents).unwrap();
+        assert!(load_guardian_policy(&path).is_err());
+    }
+    std::fs::write(&path, "界".repeat(21_846)).unwrap();
+    assert!(
+        load_guardian_policy(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("64 KiB")
+    );
+    std::fs::write(&path, "x".repeat(65_536)).unwrap();
+    assert_eq!(load_guardian_policy(&path).unwrap().len(), 65_536);
+    assert_eq!(snapshot, "original policy");
+}
+
 fn config(store: &alan_os_host::SystemStorePaths) -> alan_tui::FileBackedRunConfig {
     interactive_config(
         alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(

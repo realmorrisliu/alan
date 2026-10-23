@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 mod completion_budget;
 mod guardian_review;
+mod guardian_shadow;
 mod next_turn_disposition;
 mod owner_work;
 mod shadow_evaluation;

@@ -183,6 +183,7 @@ pub struct NamespaceRuntimeEnvironment {
     pub(crate) task_budget_binding: crate::TaskBudgetBinding,
     pub(crate) operation_cleanup: NamespaceOperationCleanup,
     pub(crate) shadow_evaluation: Option<Arc<super::super::shadow_evaluation::ShadowEvaluation>>,
+    pub(crate) guardian_shadow: Option<Arc<super::super::guardian::GuardianShadow>>,
     pub(crate) work_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     pub(crate) evaluation_publisher: Option<super::super::shadow_evaluation::EvaluationPublisher>,
     root: InProcessTransport,
@@ -210,6 +211,7 @@ pub struct NamespaceRuntimeEnvironment {
 /// Narrow file-native handle for one mounted LLM Connection.
 #[derive(Clone)]
 pub(crate) struct NamespaceGeneration {
+    identity: Option<super::super::model_binding::CallableIdentity>,
     root: InProcessTransport,
     llm_connection: String,
     budget: Option<crate::agent_machine::task_budget::TaskBudget>,
@@ -296,6 +298,7 @@ impl NamespaceRuntimeEnvironment {
             task_budget_binding: Default::default(),
             operation_cleanup: Default::default(),
             shadow_evaluation: None,
+            guardian_shadow: None,
             evaluation_publisher: None,
             work_publisher: None,
             root,
@@ -342,10 +345,23 @@ impl NamespaceRuntimeEnvironment {
         self
     }
 
+    /// Attach an explicit Host-selected reviewer for evidence only, never authorization.
+    pub fn with_guardian_shadow(
+        mut self,
+        callable: super::super::model_binding::CapturedCallable,
+        policy: Option<String>,
+    ) -> Result<Self> {
+        self.guardian_shadow = Some(Arc::new(super::super::guardian::GuardianShadow::new(
+            callable, policy,
+        )?));
+        Ok(self)
+    }
+
     pub(crate) fn generation(&self) -> NamespaceGeneration {
         if let Some((_, callable)) = &*self.active_binding.read().expect("active binding snapshot")
         {
             return NamespaceGeneration {
+                identity: Some(callable.identity.clone()),
                 root: callable.root.clone(),
                 llm_connection: callable.connection.clone(),
                 budget: None,
@@ -353,6 +369,7 @@ impl NamespaceRuntimeEnvironment {
             };
         }
         NamespaceGeneration {
+            identity: None,
             root: self.root.clone(),
             llm_connection: self.llm_connection.clone(),
             budget: None,

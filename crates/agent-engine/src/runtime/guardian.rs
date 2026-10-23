@@ -17,6 +17,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::transition::{NamespaceGeneration, NamespaceOperationUncertainty};
 
+mod shadow;
+pub(crate) use crate::agent_machine::guardian_shadow::Assessment as ReviewOutcome;
+pub(crate) use shadow::{GuardianShadow, ShadowReviewRequest};
+
 /// Built-in policy; trusted-user policy selection is not wired yet.
 pub(crate) const DEFAULT_REVIEWER_POLICY: &str = include_str!("guardian_policy.md");
 
@@ -82,18 +86,6 @@ pub(crate) struct ReviewContext<'a> {
 pub(crate) enum GuardianDecision {
     Allow,
     Deny,
-}
-
-/// The outcome the control flow acts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReviewOutcome {
-    /// Reviewer approved — the action may run (still sandboxed).
-    Allow,
-    /// Reviewer denied — rationale drives self-correction.
-    Deny { rationale: String },
-    /// Reviewer could not decide (error/timeout/unparseable) — fall back to the
-    /// human. Never an auto-allow.
-    Unavailable { reason: String },
 }
 
 /// Build the no-tools review request.

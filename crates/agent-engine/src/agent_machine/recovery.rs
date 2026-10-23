@@ -412,6 +412,7 @@ impl AgentMachine {
         machine.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
         machine.recover_input_queue(&event_records)?;
         machine.evaluation_observation = super::evaluation::recover(&event_records)?;
+        machine.guardian_shadow = super::guardian_shadow::recover(&event_records)?;
         machine.owner_work = super::owner_work::recover(&event_records)?;
         let recovered_budget = super::task_budget::recover(&event_records)?;
         machine.task_budget_wait =
