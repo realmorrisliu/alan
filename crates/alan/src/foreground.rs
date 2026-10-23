@@ -46,12 +46,20 @@ pub(super) async fn run_bare_in_foreground_instance(
     mode: BareRunMode,
     resume_root: bool,
     shadow_evaluator: Option<String>,
+    guardian_shadow: Option<String>,
+    guardian_policy: Option<PathBuf>,
 ) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
     let mut config = HostBootConfig::product_with_root_resume(resume_root)?;
+    if let Some(profile) = guardian_shadow {
+        let policy = guardian_policy
+            .map(|path| load_guardian_policy(&path))
+            .transpose()?;
+        config = config.with_guardian_shadow(profile, policy);
+    }
     if let Some(profile) = shadow_evaluator {
         let surface = match mode {
             BareRunMode::Interactive => alan_agent_engine::runtime::EvaluationSurface::Interactive,
@@ -187,4 +195,20 @@ pub(super) async fn run_bare_in_foreground_instance(
     let exit_code = run_result?;
     server_result?;
     Ok(exit_code)
+}
+
+fn load_guardian_policy(path: &Path) -> Result<String> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .with_context(|| format!("open Guardian shadow policy {}", path.display()))?
+        .take(65_537)
+        .read_to_end(&mut bytes)
+        .context("read Guardian shadow policy")?;
+    anyhow::ensure!(
+        bytes.len() <= 65_536,
+        "Guardian shadow policy exceeds 64 KiB"
+    );
+    let text = String::from_utf8(bytes).context("read Guardian shadow policy as UTF-8")?;
+    anyhow::ensure!(!text.trim().is_empty(), "Guardian shadow policy is empty");
+    Ok(text)
 }

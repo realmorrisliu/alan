@@ -974,6 +974,7 @@ mod boot_namespace;
 mod skill_lifecycle;
 
 mod child_budget;
+mod guardian_shadow;
 mod input_shadow;
 
 mod root_abort;

@@ -4,6 +4,80 @@ use crate::connection::process_binding::ProcessConnection;
 use alan_agent_engine::runtime::model_binding::ConnectionAuthority;
 
 #[tokio::test]
+async fn reviewer_capture_is_independent_and_failure_preserves_main_selection() {
+    let service = ConnectionService::ephemeral().unwrap();
+    for name in ["main", "reviewer"] {
+        service
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: name.into(),
+                profile: profile(),
+            })
+            .await
+            .unwrap();
+    }
+    service
+        .apply(ConnectionCommand::SetDefault {
+            profile_id: "main".into(),
+        })
+        .await
+        .unwrap();
+    service.select(42, "main").unwrap();
+    let mut connections = service.metadata();
+    connections.credentials.insert(
+        "openai-main".into(),
+        crate::ConnectionCredential {
+            kind: crate::CredentialKind::SecretString,
+            provider_family: ProviderId::OpenAiResponses,
+            label: "fixture".into(),
+            backend: "host_credential_store".into(),
+        },
+    );
+    service
+        .apply(ConnectionCommand::ReplaceMetadata {
+            expected: service.metadata().fingerprint().unwrap(),
+            connections,
+        })
+        .await
+        .unwrap();
+    service
+        .attach_callable_registry(
+            Arc::new(alan_llmfs::LlmFs::new()),
+            Arc::new(TestLlmClientFactory::default()),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    let namespace = alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new());
+    let before = service.metadata().fingerprint().unwrap();
+    let captured = service
+        .capture_reviewer("reviewer", &namespace)
+        .await
+        .unwrap();
+    assert_eq!(captured.identity.profile, "reviewer");
+    assert_eq!(
+        captured.identity.credential_ref.as_deref(),
+        Some("openai-main")
+    );
+    assert!(
+        service
+            .capture_reviewer("missing", &namespace)
+            .await
+            .is_err()
+    );
+    assert_eq!(service.selected_profile(42).as_deref(), Some("main"));
+    assert_eq!(service.default_profile().as_deref(), Some("main"));
+    assert_eq!(service.metadata().fingerprint().unwrap(), before);
+    let authority = ProcessConnection {
+        service,
+        profile: "main".into(),
+        namespace,
+        evaluator: None,
+    };
+    assert!(authority.capture_evaluation("reviewer").await.is_err());
+}
+
+#[tokio::test]
 async fn managed_none_catalog_exact_restore_preserves_full_authority() {
     for provider in [
         ProviderId::Chatgpt,

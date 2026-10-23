@@ -225,6 +225,7 @@ impl HostBootConfig {
             process,
             resume_root,
             input_shadow: None,
+            guardian_shadow: None,
             launch_context,
             connection_store: Some(connection_store),
             package_store: Some(system_store.packages()?),
@@ -265,6 +266,19 @@ impl HostBootConfig {
         self.0.input_shadow = Some(alan_service_manager::InputShadowSelection {
             profile: profile.into(),
             surface,
+        });
+        self
+    }
+
+    /// Select an evidence-only reviewer for this invocation's Root Agent.
+    pub fn with_guardian_shadow(
+        mut self,
+        profile: impl Into<String>,
+        policy: Option<String>,
+    ) -> Self {
+        self.0.guardian_shadow = Some(alan_service_manager::GuardianShadowSelection {
+            profile: profile.into(),
+            policy,
         });
         self
     }

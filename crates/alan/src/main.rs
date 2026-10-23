@@ -28,6 +28,12 @@ struct Cli {
     /// Record typed input advice using this evaluator profile; never auto-run advice.
     #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
     shadow_evaluator: Option<String>,
+    /// Compare an independent Guardian reviewer; never use it to authorize actions.
+    #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    guardian_shadow: Option<String>,
+    /// Explicit UTF-8 policy file for the shadow reviewer (at most 64 KiB).
+    #[arg(long, requires = "guardian_shadow")]
+    guardian_policy: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -427,6 +433,10 @@ async fn main() -> Result<()> {
         cli.shadow_evaluator.is_none() || cli.command.is_none(),
         "`--shadow-evaluator` only applies to bare `alan`"
     );
+    anyhow::ensure!(
+        cli.guardian_shadow.is_none() || cli.command.is_none(),
+        "`--guardian-shadow` only applies to bare `alan`"
+    );
 
     let uses_product_stores = matches!(
         &cli.command,
@@ -661,6 +671,8 @@ async fn main() -> Result<()> {
                 mode,
                 cli.resume,
                 cli.shadow_evaluator,
+                cli.guardian_shadow,
+                cli.guardian_policy,
             )
             .await;
             if remove_runtime_dir
@@ -873,6 +885,31 @@ mod tests {
             Some("evaluation")
         );
         assert!(Cli::try_parse_from(["alan", "--shadow-evaluator", ""]).is_err());
+    }
+
+    #[test]
+    fn guardian_shadow_is_explicit_and_policy_requires_its_profile() {
+        assert!(
+            Cli::try_parse_from(["alan"])
+                .unwrap()
+                .guardian_shadow
+                .is_none()
+        );
+        assert!(Cli::try_parse_from(["alan", "--guardian-shadow", ""]).is_err());
+        assert!(Cli::try_parse_from(["alan", "--guardian-policy", "policy.md"]).is_err());
+        let cli = Cli::try_parse_from([
+            "alan",
+            "--guardian-shadow",
+            "reviewer",
+            "--guardian-policy",
+            "policy.md",
+        ])
+        .unwrap();
+        assert_eq!(cli.guardian_shadow.as_deref(), Some("reviewer"));
+        assert_eq!(
+            cli.guardian_policy,
+            Some(std::path::PathBuf::from("policy.md"))
+        );
     }
 
     #[test]

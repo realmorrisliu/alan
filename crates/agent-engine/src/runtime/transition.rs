@@ -355,6 +355,7 @@ pub(super) fn tool_authorization_runtime(
     let generation = state.namespace_generation();
     let agent_files = state.agent_files();
     let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
+    let guardian_shadow = state.environment.guardian_shadow.clone();
     super::tool_authorization::ToolAuthorizationRuntime::new(
         &mut state.machine,
         &state.runtime_config.policy_engine,
@@ -362,6 +363,7 @@ pub(super) fn tool_authorization_runtime(
         generation,
         agent_files,
         llm_request_timeout_secs,
+        guardian_shadow,
     )
 }
 
