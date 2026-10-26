@@ -32,48 +32,15 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod launch_template;
 mod process_cleanup;
+pub(crate) use launch_template::RootAgentTemplate;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
 use process_cleanup::ProcessCleanup;
 
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
-
-#[derive(Clone)]
-pub(crate) struct RootAgentTemplate {
-    process: AgentProcessConfig,
-    pub(crate) resume_persisted_rollout: bool,
-    launch_context: ProcessLaunchContext,
-    host_capabilities: SkillHostCapabilities,
-    generation_capabilities: ProviderCapabilities,
-    llm_connection: String,
-    input_shadow: Option<crate::InputShadowSelection>,
-    task_budget_binding: alan_agent_engine::TaskBudgetBinding,
-}
-
-impl RootAgentTemplate {
-    pub(crate) fn new(
-        process: AgentProcessConfig,
-        launch_context: ProcessLaunchContext,
-        host_capabilities: SkillHostCapabilities,
-        generation_capabilities: ProviderCapabilities,
-        llm_connection: String,
-        resume_persisted_rollout: bool,
-        input_shadow: Option<crate::InputShadowSelection>,
-    ) -> Self {
-        Self {
-            task_budget_binding: Default::default(),
-            process,
-            resume_persisted_rollout,
-            input_shadow,
-            launch_context,
-            host_capabilities,
-            generation_capabilities,
-            llm_connection,
-        }
-    }
-}
 
 pub(crate) struct RootAgentProcess {
     pid: Pid,
@@ -492,6 +459,14 @@ impl AgentRuntimeService {
                 30_000,
             )?;
         }
+        if let Some(selection) = &launch.template.guardian_shadow {
+            let profile = &selection.profile;
+            let captured = self
+                .connection
+                .capture_reviewer(profile, &launch.namespace)
+                .await?;
+            environment = environment.with_guardian_shadow(captured, selection.policy.clone())?;
+        }
         let mut controller = spawn_with_namespace_environment(
             launch.template.process.clone(),
             environment,
@@ -770,6 +745,7 @@ fn child_template(
         process,
         resume_persisted_rollout: false,
         input_shadow: None,
+        guardian_shadow: None,
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),

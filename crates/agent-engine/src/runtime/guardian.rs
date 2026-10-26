@@ -1,22 +1,67 @@
 //! Guardian reviewer: judges reviewer-routed escalations against a policy.
 //!
-//! A single-shot, no-tools LLM call. The OS sandbox + the deterministic red line
+//! A bounded, no-tools LLM review. The OS sandbox + the deterministic red line
 //! remain the security boundary; the reviewer only decides whether a
 //! reviewer-routed escalation runs or is denied. It is fail-safe: any error or
 //! unparseable output yields [`ReviewOutcome::Unavailable`] (→ human), never an
 //! auto-allow.
 //!
-//! Reviewer connection selection (dedicated profile vs main model) is a later
-//! refinement; today `review()` runs on the caller-supplied client (the main
-//! model is the documented fallback).
+//! Production currently reviews through the admitted main Connection. Dedicated
+//! Connection and trusted-user policy selection remain a separate delivery.
 
 #[cfg(test)]
 use crate::llm::LlmClient;
 use alan_llm::{GenerationRequest, GenerationResponse, Message};
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
-/// Default reviewer policy (user-overridable).
+use super::transition::{NamespaceGeneration, NamespaceOperationUncertainty};
+
+mod shadow;
+pub(crate) use crate::agent_machine::guardian_shadow::Assessment as ReviewOutcome;
+pub(crate) use shadow::{GuardianShadow, ShadowReviewRequest};
+
+/// Built-in policy; trusted-user policy selection is not wired yet.
 pub(crate) const DEFAULT_REVIEWER_POLICY: &str = include_str!("guardian_policy.md");
+
+const MAX_REVIEW_SECS: u64 = 30;
+
+/// Bound the existing main-model review, including retries, without dropping cleanup.
+pub(crate) async fn generate_review(
+    generation: &NamespaceGeneration,
+    request: GenerationRequest,
+    timeout_secs: u64,
+    cancel: &CancellationToken,
+) -> anyhow::Result<GenerationResponse> {
+    let seconds = if timeout_secs == 0 {
+        MAX_REVIEW_SECS
+    } else {
+        timeout_secs.min(MAX_REVIEW_SECS)
+    };
+    let stop = cancel.child_token();
+    let _guard = stop.clone().drop_guard();
+    let operation = generation.generate_response_with_retry(request, timeout_secs, &stop);
+    tokio::pin!(operation);
+    let reason = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => "reviewer cancelled",
+        _ = tokio::time::sleep(std::time::Duration::from_secs(seconds)) => {
+            "reviewer aggregate deadline exceeded"
+        },
+        result = &mut operation => return result,
+    };
+    stop.cancel();
+    // Cancellation must settle the namespace operation before a human wait is safe.
+    match operation.await {
+        Err(error)
+            if error.is::<crate::agent_machine::task_budget::Exhausted>()
+                || error.is::<NamespaceOperationUncertainty>() =>
+        {
+            Err(error)
+        }
+        _ => anyhow::bail!(reason),
+    }
+}
 
 const REVIEWER_SYSTEM_PREAMBLE: &str = "\
 You are a security reviewer for an autonomous agent. Decide whether one proposed \
@@ -41,18 +86,6 @@ pub(crate) struct ReviewContext<'a> {
 pub(crate) enum GuardianDecision {
     Allow,
     Deny,
-}
-
-/// The outcome the control flow acts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReviewOutcome {
-    /// Reviewer approved — the action may run (still sandboxed).
-    Allow,
-    /// Reviewer denied — rationale drives self-correction.
-    Deny { rationale: String },
-    /// Reviewer could not decide (error/timeout/unparseable) — fall back to the
-    /// human. Never an auto-allow.
-    Unavailable { reason: String },
 }
 
 /// Build the no-tools review request.
@@ -155,6 +188,11 @@ pub(crate) fn review_generation_result(
     generated: anyhow::Result<GenerationResponse>,
 ) -> ReviewOutcome {
     match generated {
+        Ok(response) if !response.tool_calls.is_empty() || !response.warnings.is_empty() => {
+            ReviewOutcome::Unavailable {
+                reason: "reviewer returned tools or response warnings".to_string(),
+            }
+        }
         Ok(response) => match parse_assessment(&response.content) {
             Ok((GuardianDecision::Allow, _)) => ReviewOutcome::Allow,
             Ok((GuardianDecision::Deny, rationale)) => ReviewOutcome::Deny {
@@ -252,6 +290,24 @@ mod tests {
     fn parse_rejects_unknown_decision() {
         assert!(parse_assessment("{\"decision\":\"maybe\"}").is_err());
         assert!(parse_assessment("no json here").is_err());
+    }
+
+    #[test]
+    fn allow_text_with_tools_or_response_warnings_is_unavailable() {
+        let mut tools = response("{\"decision\":\"allow\"}");
+        tools.tool_calls.push(alan_llm::ToolCall {
+            id: Some("unexpected".into()),
+            name: "bash".into(),
+            arguments: serde_json::json!({"command": "echo unexpected"}),
+        });
+        let mut warned = response("{\"decision\":\"allow\"}");
+        warned.warnings.push("Dropped malformed tool call".into());
+        for response in [tools, warned] {
+            assert!(matches!(
+                review_generation_result(Ok(response)),
+                ReviewOutcome::Unavailable { .. }
+            ));
+        }
     }
 
     fn client(content: &str) -> LlmClient {

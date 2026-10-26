@@ -17,8 +17,8 @@ use crate::{
 
 use super::{
     guardian::{
-        DEFAULT_REVIEWER_POLICY, ReviewContext, ReviewOutcome, build_review_request,
-        build_transcript, review_generation_result,
+        DEFAULT_REVIEWER_POLICY, ReviewContext, ReviewOutcome, ShadowReviewRequest,
+        build_review_request, build_transcript, generate_review, review_generation_result,
     },
     tool_policy::{EscalationRoute, SandboxConfinement, ToolPolicyDecision, evaluate_tool_policy},
     turn_support::tool_result_preview,
@@ -216,10 +216,13 @@ where
         approval_request: details,
     };
     let request = build_review_request(&review_context);
-    let result = runtime
-        .generation
-        .generate_response_with_retry(request, runtime.llm_request_timeout_secs, cancel)
-        .await;
+    let result = generate_review(
+        &runtime.generation,
+        request,
+        runtime.llm_request_timeout_secs,
+        cancel,
+    )
+    .await;
 
     if result.as_ref().is_err_and(|error| {
         error.is::<crate::agent_machine::task_budget::Exhausted>()
@@ -227,8 +230,26 @@ where
     }) {
         return Err(result.unwrap_err());
     }
+    anyhow::ensure!(!cancel.is_cancelled(), "Tool review cancelled");
 
-    match review_generation_result(result) {
+    let baseline = review_generation_result(result);
+    if let Some(shadow) = &runtime.guardian_shadow {
+        shadow
+            .observe(
+                runtime.machine,
+                &runtime.generation,
+                ShadowReviewRequest {
+                    call_id: &tool_call.id,
+                    context: review_context,
+                    baseline: &baseline,
+                    timeout_secs: runtime.llm_request_timeout_secs,
+                },
+                cancel,
+            )
+            .await?;
+    }
+    anyhow::ensure!(!cancel.is_cancelled(), "Tool review cancelled");
+    match baseline {
         ReviewOutcome::Allow => {
             runtime.machine.record_guardian_review(false);
             Ok(EscalationReviewOutcome::Authorized)

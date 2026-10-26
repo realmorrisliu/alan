@@ -5,6 +5,7 @@ use alan_ap::OpenMode;
 use alan_llm::{GenerationRequest, GenerationResponse};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::client::NamespaceClient;
@@ -24,6 +25,27 @@ struct LlmCapabilitiesDoc {
 }
 
 impl NamespaceGeneration {
+    pub(crate) fn request_fingerprint(request: &GenerationRequest) -> Result<String> {
+        let mut document = serde_json::to_value(LlmRequestDoc::from_generation_request(request)?)?;
+        document.sort_all_objects();
+        Ok(hex::encode(Sha256::digest(serde_json::to_vec(&document)?)))
+    }
+
+    pub(crate) fn identity(&self) -> Option<&crate::runtime::model_binding::CallableIdentity> {
+        self.identity.as_ref()
+    }
+
+    pub(crate) fn with_callable(
+        &self,
+        callable: &crate::runtime::model_binding::CapturedCallable,
+    ) -> Self {
+        Self {
+            root: callable.root.clone(),
+            llm_connection: callable.connection.clone(),
+            identity: Some(callable.identity.clone()),
+            ..self.clone()
+        }
+    }
     pub(crate) fn with_task_budget(
         mut self,
         budget: Option<crate::agent_machine::task_budget::TaskBudget>,
