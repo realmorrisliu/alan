@@ -28,7 +28,7 @@ fn native_scrollback_keeps_wide_characters_and_row_boundaries() {
                 )
             }))
             .unwrap();
-        let mut parser = vt100::Parser::new(2, width, 0);
+        let mut parser = vt100::Parser::new(2.try_into().unwrap(), width.try_into().unwrap(), 0);
         parser.process(&output);
         let rows = parser.screen().rows(0, width).collect::<Vec<_>>();
         assert_eq!(rows[0].trim_end(), text);
