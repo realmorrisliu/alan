@@ -206,6 +206,7 @@ where
         tool_call,
         &tool_call.arguments,
         &cancel,
+        &cancel,
         false,
         emit,
     )
@@ -236,6 +237,7 @@ where
         runtime,
         tool_call,
         tool_arguments,
+        cancel,
         cancel,
         emit,
         spawn_child,

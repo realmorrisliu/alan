@@ -493,6 +493,7 @@ async fn deferred_memory_promotion_uses_namespace_llmfs() {
         prompt_cache: PromptAssemblyCache::new(Vec::new()),
     };
     let job = TurnMemoryPromotionJob {
+        budget: None,
         memory_dir: memory_dir.clone(),
         process_path: "sess-namespace".to_string(),
         active_turn_user_messages: vec!["Remember this namespace fact.".to_string()],
@@ -662,6 +663,7 @@ async fn run_turn_memory_promotion_job_timeout_zero_can_be_cancelled() {
         delay: Duration::from_secs(10),
     });
     let job = TurnMemoryPromotionJob {
+        budget: None,
         memory_dir: memory_dir.clone(),
         process_path: "sess-cancelled".to_string(),
         active_turn_user_messages: vec!["My name is Morris.".to_string()],

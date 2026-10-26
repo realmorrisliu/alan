@@ -894,6 +894,8 @@ mod semantic_tests;
 mod shadow_admission_tests;
 
 #[cfg(test)]
+mod budget_confirmation_tests;
+#[cfg(test)]
 #[path = "file_backed/stdio_idle_tests.rs"]
 mod stdio_idle_tests;
 #[cfg(test)]

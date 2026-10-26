@@ -80,9 +80,9 @@ impl ProcessRunner for LogicalFailureRunner {
     }
 }
 
-struct AbortObservedRunner {
-    started: Arc<Notify>,
-    dropped: Arc<Notify>,
+pub(super) struct AbortObservedRunner {
+    pub(super) started: Arc<Notify>,
+    pub(super) dropped: Arc<Notify>,
 }
 
 struct AbortDropGuard {
@@ -144,6 +144,14 @@ impl LlmProvider for BlockingStreamProvider {
 async fn tool_test_environment(
     runner: Arc<dyn ProcessRunner>,
 ) -> (NamespaceRuntimeEnvironment, Shell) {
+    let root = InProcessTransport::new(tool_test_root(runner).await);
+    (
+        NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
+        Shell::new(root),
+    )
+}
+
+pub(super) async fn tool_test_root(runner: Arc<dyn ProcessRunner>) -> Arc<dyn FileServer> {
     let procfs = ProcFs::new();
     let agentfs = Arc::new(AgentFs::new());
     let binfs = Arc::new(alan_ap::reference::MemFs::new());
@@ -194,11 +202,7 @@ async fn tool_test_environment(
         InProcessTransport::new(agentfs),
         Access::ReadWrite,
     );
-    let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
-    (
-        NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
-        Shell::new(root),
-    )
+    Arc::new(MountFs::new(root_namespace))
 }
 
 struct BlockingReadFs {

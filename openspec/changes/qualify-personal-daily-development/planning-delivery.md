@@ -1,5 +1,10 @@
 # Planning delivery — 2026-10-14
 
+Current status: planning merged in PR #1060 at `a4ad5992`; canonical adoption was
+rechecked on 2026-10-23 against fetched main `9313b5a0`. This delivers the planning
+and earlier canonical closure, not the new autonomy controls. The original
+pre-merge verification record follows; see the post-merge verification below.
+
 Q1–Q16 are confirmed. ADR-0060, four independent changes, glossary/current-guide
 updates and the four merged-change closures are prepared on
 `codex/plan-personal-autonomy-20261014`, based on main `ea929481`.
@@ -48,3 +53,31 @@ The proactive-memory plan remains parked. Its disposition explicitly rejects the
 retained channel/Host-directory backing premises and forbids synchronizing them
 without replacement; this does not reactivate its tasks. Package, Connection and
 File-Server Service ownership and authorization boundaries remain unchanged.
+
+## Post-merge verification — 2026-10-23
+
+Fetched main `9313b5a0943cac3a1251b9418bef7d8e24213cc4` contains the planning merge
+`a4ad5992c80aaa8706bf4d8df7f5f614a3a14e4f`. Canonical specs and historical archives
+have no changes between those commits or between the planning merge and the
+published budget/evidence branch `224f2b8a`.
+
+The four archived changes in the document map contain 53 requirement entries:
+47 match canonical text after whitespace normalization and three removed entries
+remain absent. The other three differences are accounted for:
+
+- The earlier repeated-development prompt block is superseded by the later
+  composer block, which matches the canonical contextual two-line prompt.
+- Read-only dependency projection has lost its obsolete proposed/adoption
+  qualifier, as required by the planning PR review; its behavior remains adopted.
+- The legacy inspection scenario has a corrected title; its body still rejects
+  retired channel selection instead of deriving new authority from it.
+
+All twelve direct relative Markdown links in the four archives' 45 Markdown files
+resolve. External URLs and anchor existence were not retested. The current-surface
+guard passes and CI-pinned OpenSpec 1.4.1 strict validation passes 70/70. Existing
+archive bytes were not edited. These are closure checks, not reruns of historical
+model tasks or evidence of the new delegation/continuity implementations.
+
+Audit details are retained with the two-task pilot evidence under
+`~/Library/Caches/Alan/daily-use-pilot/20261023/evidence/` in
+`canonical-closure-audit.json` and `archive-relative-links.json`.

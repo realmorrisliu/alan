@@ -72,6 +72,28 @@ pub(crate) struct ProcessBindings {
 }
 
 impl ProcessBindings {
+    pub(crate) async fn restore(
+        &self,
+        input_id: &str,
+        binding: &InputBinding,
+    ) -> Result<CapturedCallable> {
+        let callable = if let Some(callable) = self.captured.get(input_id) {
+            callable.clone()
+        } else if let Some(authority) = &self.authority {
+            authority.restore(&binding.callable_binding).await?
+        } else {
+            anyhow::bail!(
+                "captured callable unavailable: {}",
+                binding.callable_binding.model
+            );
+        };
+        anyhow::ensure!(
+            callable.identity == binding.callable_binding,
+            "restored callable identity mismatch"
+        );
+        Ok(callable)
+    }
+
     pub(crate) fn resolve(
         &self,
         callable: &CapturedCallable,

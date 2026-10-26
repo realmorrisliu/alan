@@ -48,6 +48,7 @@ pub struct NamespaceEvaluation {
     request: ChoiceEvaluationRequest,
     expires: Instant,
     armed: bool,
+    operation_cleanup: super::NamespaceOperationCleanup,
 }
 
 fn component(value: &str) -> bool {
@@ -68,6 +69,7 @@ impl NamespaceRuntimeEnvironment {
         deadline_ms: u64,
         cancel: &CancellationToken,
     ) -> Result<NamespaceEvaluation> {
+        self.operation_cleanup.check_admission()?;
         request.validate().map_err(|_| Malformed)?;
         ensure!(
             component(&self.llm_connection) && identity.profile == self.llm_connection,
@@ -135,6 +137,7 @@ impl NamespaceRuntimeEnvironment {
             request,
             expires,
             armed: true,
+            operation_cleanup: self.operation_cleanup.clone(),
         })
     }
 }
@@ -162,6 +165,7 @@ impl NamespaceEvaluation {
     /// Commit at most once, then validate typed advice against captured provenance.
     /// Errors do not retry generation, evaluation, or any effect.
     pub async fn commit(mut self, cancel: &CancellationToken) -> Result<ChoiceEvaluationResponse> {
+        self.operation_cleanup.check_admission()?;
         let mut data_fid: Option<Fid> = None;
         let mut terminal_observed = false;
         let work = async {
@@ -341,14 +345,9 @@ async fn abort(client: &NamespaceClient, path: &str) -> Result<()> {
 
 impl Drop for NamespaceEvaluation {
     fn drop(&mut self) {
-        if self.armed
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
-        {
-            let client = self.client.clone();
-            let path = self.path("ctl");
-            runtime.spawn(async move {
-                let _ = abort(&client, &path).await;
-            });
+        if self.armed {
+            self.operation_cleanup
+                .abort_on_drop(self.client.clone(), self.path("ctl"), b"abort");
         }
     }
 }

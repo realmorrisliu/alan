@@ -1,6 +1,7 @@
 # Personal daily-use acceptance
 
-Status: future sample; no runs or success claims yet.
+Status: formal sample not started. Bounded read-only pilot outcomes are recorded
+[separately](pilot-results.md); they do not qualify real development readiness.
 
 | Repository | Representative work | Independent acceptance |
 | --- | --- | --- |

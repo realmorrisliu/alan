@@ -147,6 +147,7 @@ pub(crate) enum BypassReason {
     ExplicitCommand,
     ExplicitAgent,
     RequestResponse,
+    TaskBudgetExhausted,
 }
 
 impl Outcome {

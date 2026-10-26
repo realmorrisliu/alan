@@ -26,6 +26,11 @@ fn snapshot() -> Snapshot {
         generation_calls: 0,
         fallback: None,
         owned_request: None,
+        selected_owner: None,
+        validated_sources: 0,
+        pending_read: None,
+        evaluator_binding: None,
+        budget_resumes: 0,
         outcome: Outcome::Started,
     }
 }
@@ -160,4 +165,62 @@ fn completed_work_requires_real_captured_ranges_and_rejects_terminal_conflicts()
     forged.evidence[0].content = "changed".into();
     assert!(forged.validate().is_err());
     assert!(completed.projection().unwrap().get("request").is_none());
+}
+
+#[test]
+fn budget_checkpoint_requires_the_same_program_and_preserves_its_unfinished_read() {
+    let start = snapshot();
+    let mut paused = start.clone();
+    paused.outcome = Outcome::BudgetPaused;
+    paused.pending_read = Some(super::super::NormalizedToolCall {
+        id: "read-once".into(),
+        name: "read_file".into(),
+        arguments: serde_json::json!({"path":"/mnt/source/lib.rs","offset":1,"limit":1}),
+    });
+    let checkpoint = crate::approval::PendingConfirmation {
+        checkpoint_id: "task_budget_owned".into(),
+        checkpoint_type: crate::approval::TASK_BUDGET_CHECKPOINT_TYPE.into(),
+        summary: "Continue source owner work?".into(),
+        options: vec!["reject".into(), "approve".into()],
+        details: serde_json::json!({
+            "budget":{"version":1,"task_id":start.work_id,"limits":crate::TaskBudgetLimits::default(),
+                "tool_calls":0,"model_calls":64,"elapsed_millis":0,"phase":"paused",
+                "foreground_complete":false,"recovered_time_upper_bound":false},
+            "additional":{"model_calls":64},"generation_binding":null,"owner_work":paused,
+        }),
+    };
+    let wait = super::super::task_budget::waiting::Wait {
+        checkpoint,
+        continuation: None,
+        resume_only: false,
+    };
+    let wait_event = |wait: &super::super::task_budget::waiting::Wait| EventRecord {
+        event_type: super::super::task_budget::waiting::WAIT_EVENT.into(),
+        payload: serde_json::to_value(wait).unwrap(),
+        timestamp: "test".into(),
+    };
+    assert_eq!(
+        recover(&[event(&start), wait_event(&wait)]).unwrap(),
+        Some(paused.clone())
+    );
+    assert!(recover(&[event(&start), event(&paused)]).is_err());
+    let mut corrupt = wait.clone();
+    corrupt.checkpoint.details["owner_work"]["work_id"] = serde_json::json!(uuid::Uuid::new_v4());
+    assert!(recover(&[event(&start), wait_event(&corrupt)]).is_err());
+    corrupt = wait.clone();
+    corrupt.checkpoint.details["owner_work"]["pending_read"]["id"] =
+        serde_json::json!("another-read");
+    assert!(recover(&[event(&start), wait_event(&wait), wait_event(&corrupt)]).is_err());
+    let mut invalid_resume = paused;
+    invalid_resume.outcome = Outcome::Started;
+    invalid_resume.budget_resumes = 2;
+    assert!(recover(&[event(&start), wait_event(&wait), event(&invalid_resume)]).is_err());
+    invalid_resume.budget_resumes = 1;
+    assert_eq!(
+        recover(&[event(&start), wait_event(&wait), event(&invalid_resume)])
+            .unwrap()
+            .unwrap()
+            .outcome,
+        Outcome::Interrupted
+    );
 }

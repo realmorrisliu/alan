@@ -39,6 +39,7 @@ pub(super) struct ToolExecutionRequest<'a> {
     pub(super) approval: &'static str,
     pub(super) allow_approved_unknown_effect_execution: bool,
     pub(super) cancel: &'a CancellationToken,
+    pub(super) task_cancel: &'a CancellationToken,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +67,7 @@ where
         approval,
         allow_approved_unknown_effect_execution,
         cancel,
+        task_cancel,
     } = request;
     let effect_lifecycle = ToolEffectLifecycle::for_call(
         runtime.machine,
@@ -257,7 +259,7 @@ where
         );
     }
     // Preserve the spawned Process before cancellation resets transition state.
-    if cancel.is_cancelled() {
+    if task_cancel.is_cancelled() {
         let payload = match &tool_result {
             Ok(value) => Some(tool_payload_for_tape(&runtime.agent_files, value).await),
             Err(error) if error.downcast_ref::<NamespaceToolProcessError>().is_some() => {
@@ -271,13 +273,13 @@ where
                 .add_tool_message(&tool_call.id, &tool_call.name, payload);
         }
     }
-    if cancel.is_cancelled()
+    if task_cancel.is_cancelled()
         && check_turn_cancelled(
             runtime.machine,
             &runtime.agent_files,
             &runtime.host_mount_requests,
             emit,
-            cancel,
+            task_cancel,
         )
         .await?
     {

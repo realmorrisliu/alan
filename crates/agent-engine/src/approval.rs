@@ -11,6 +11,7 @@ pub const TOOL_ESCALATION_CONTROL_KIND: &str = "tool_escalation_confirmation";
 pub const EFFECT_REPLAY_CHECKPOINT_TYPE: &str = "effect_replay_confirmation";
 pub const EFFECT_REPLAY_CHECKPOINT_PREFIX: &str = "effect_replay_";
 pub const EFFECT_REPLAY_CONTROL_KIND: &str = "effect_replay_confirmation";
+pub const TASK_BUDGET_CHECKPOINT_TYPE: &str = "task_budget_extension";
 
 pub const RUNTIME_CONFIRMATION_CONTROL_SOURCE: &str = "runtime/submission_handlers";
 pub const RUNTIME_CONFIRMATION_CONTROL_VERSION: u64 = 1;
@@ -19,6 +20,7 @@ pub fn runtime_confirmation_control_kind(checkpoint_type: &str) -> Option<&'stat
     match checkpoint_type {
         TOOL_ESCALATION_CHECKPOINT_TYPE => Some(TOOL_ESCALATION_CONTROL_KIND),
         EFFECT_REPLAY_CHECKPOINT_TYPE => Some(EFFECT_REPLAY_CONTROL_KIND),
+        TASK_BUDGET_CHECKPOINT_TYPE => Some(TASK_BUDGET_CHECKPOINT_TYPE),
         _ => None,
     }
 }
@@ -27,6 +29,7 @@ pub fn runtime_confirmation_checkpoint_prefix(checkpoint_type: &str) -> Option<&
     match checkpoint_type {
         TOOL_ESCALATION_CHECKPOINT_TYPE => Some(TOOL_ESCALATION_CHECKPOINT_PREFIX),
         EFFECT_REPLAY_CHECKPOINT_TYPE => Some(EFFECT_REPLAY_CHECKPOINT_PREFIX),
+        TASK_BUDGET_CHECKPOINT_TYPE => Some("task_budget_"),
         _ => None,
     }
 }
@@ -38,7 +41,9 @@ pub fn is_runtime_confirmation_checkpoint_type(checkpoint_type: &str) -> bool {
 pub fn replays_tool_calls(checkpoint_type: &str) -> bool {
     matches!(
         checkpoint_type,
-        TOOL_ESCALATION_CHECKPOINT_TYPE | EFFECT_REPLAY_CHECKPOINT_TYPE
+        TOOL_ESCALATION_CHECKPOINT_TYPE
+            | EFFECT_REPLAY_CHECKPOINT_TYPE
+            | TASK_BUDGET_CHECKPOINT_TYPE
     )
 }
 
@@ -54,7 +59,7 @@ pub struct PendingStructuredInputRequest {
     pub questions: Vec<alan_agent_protocol::StructuredInputQuestion>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct PendingConfirmation {
     pub checkpoint_id: String,
     pub checkpoint_type: String,
@@ -63,14 +68,24 @@ pub struct PendingConfirmation {
     pub options: Vec<String>,
 }
 
+/// Budget extension requires an explicit approval rather than an empty response.
+pub(crate) fn runtime_confirmation_default_choice(checkpoint_type: &str) -> &'static str {
+    if checkpoint_type == TASK_BUDGET_CHECKPOINT_TYPE {
+        "reject"
+    } else {
+        "approve"
+    }
+}
+
 /// Builds the protocol payload for a runtime-owned confirmation checkpoint.
 pub fn runtime_confirmation_yield_payload(
     pending: &PendingConfirmation,
 ) -> ConfirmationYieldPayload {
+    let preferred = runtime_confirmation_default_choice(&pending.checkpoint_type);
     let default_option = pending
         .options
         .iter()
-        .find(|option| option.as_str() == "approve")
+        .find(|option| option.as_str() == preferred)
         .cloned()
         .or_else(|| pending.options.first().cloned());
 
@@ -231,6 +246,28 @@ mod tests {
             payload.presentation_hints,
             vec![AdaptivePresentationHint::Dangerous]
         );
+    }
+
+    #[test]
+    fn budget_extension_requires_an_explicit_positive_choice() {
+        let pending = PendingConfirmation {
+            checkpoint_id: "task_budget_1".into(),
+            checkpoint_type: TASK_BUDGET_CHECKPOINT_TYPE.into(),
+            summary: "Add model calls".into(),
+            details: serde_json::json!({}),
+            options: vec!["approve".into(), "reject".into()],
+        };
+        assert_eq!(
+            runtime_confirmation_default_choice(&pending.checkpoint_type),
+            "reject"
+        );
+        let payload = runtime_confirmation_yield_payload(&pending);
+        assert_eq!(payload.default_option.as_deref(), Some("reject"));
+        assert_eq!(
+            payload.presentation_hints,
+            vec![AdaptivePresentationHint::Dangerous]
+        );
+        assert!(!is_effect_replay_confirmation(&pending.checkpoint_type));
     }
 
     #[test]

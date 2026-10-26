@@ -49,6 +49,7 @@ pub(crate) struct RootAgentTemplate {
     generation_capabilities: ProviderCapabilities,
     llm_connection: String,
     input_shadow: Option<crate::InputShadowSelection>,
+    task_budget_binding: alan_agent_engine::TaskBudgetBinding,
 }
 
 impl RootAgentTemplate {
@@ -62,6 +63,7 @@ impl RootAgentTemplate {
         input_shadow: Option<crate::InputShadowSelection>,
     ) -> Self {
         Self {
+            task_budget_binding: Default::default(),
             process,
             resume_persisted_rollout,
             input_shadow,
@@ -171,6 +173,7 @@ impl AgentRuntimeService {
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
         let mut template = template.clone();
+        template.task_budget_binding = Default::default();
         root_recovery::select(
             &mut template.process,
             template.resume_persisted_rollout,
@@ -273,11 +276,12 @@ impl AgentRuntimeService {
         if invocation.exec.executable != AGENT_EXECUTABLE {
             return ProcessOutcome::exited(127, b"alan-agent: executable mismatch\n");
         }
-        let _cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
+        let mut cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
         let mut launch = match self.prepare_launch(&invocation) {
             Ok(launch) => launch,
             Err(error) => return process_error(error),
         };
+        cleanup.bind_budget(launch.template.task_budget_binding.clone());
         let result = self.run_prepared_agent(&invocation, &mut launch).await;
         if let Err(error) = &result
             && let Some(ready) = launch.ready.take()
@@ -435,6 +439,7 @@ impl AgentRuntimeService {
             format!("/agent/{}", pid.0),
             launch.template.llm_connection.clone(),
         )
+        .with_task_budget_binding(launch.template.task_budget_binding.clone())
         .with_evaluation_publisher({
             let agent = agent.clone();
             move |observation| {
@@ -761,6 +766,7 @@ fn child_template(
         .filter(|name| name != "alan-agent" && name != "q")
         .collect::<Vec<_>>();
     Ok(RootAgentTemplate {
+        task_budget_binding: parent.task_budget_binding.child()?,
         process,
         resume_persisted_rollout: false,
         input_shadow: None,

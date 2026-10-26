@@ -92,8 +92,14 @@ async fn shutdown_drains_and_joins_the_rollout_writer() {
     });
     let recorder_state = Arc::new(OnceLock::new());
     recorder_state.set(Some(recorder)).unwrap();
-    let controller =
-        RuntimeController::spawned(submission_tx, shutdown_tx, task, ready_rx, recorder_state);
+    let controller = RuntimeController::spawned(
+        submission_tx,
+        shutdown_tx,
+        task,
+        ready_rx,
+        recorder_state,
+        Default::default(),
+    );
 
     controller.shutdown().await.unwrap();
 
@@ -142,8 +148,14 @@ async fn external_process_abort_finishes_runtime_before_closing_rollout_writer()
     let task = tokio::spawn(std::future::pending::<()>());
     let recorder_state = Arc::new(OnceLock::new());
     recorder_state.set(Some(recorder)).unwrap();
-    let controller =
-        RuntimeController::spawned(submission_tx, shutdown_tx, task, ready_rx, recorder_state);
+    let controller = RuntimeController::spawned(
+        submission_tx,
+        shutdown_tx,
+        task,
+        ready_rx,
+        recorder_state,
+        Default::default(),
+    );
     let runtime_handle = controller.handle.clone();
 
     drop(controller);
