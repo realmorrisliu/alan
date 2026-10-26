@@ -142,6 +142,7 @@ fn build_bounded_delegated_tape_record(
     bound_delegated_result_sidecars(&mut result);
 
     let record = DelegatedSkillInvocationRecord {
+        host_mounts: request.host_mounts.clone(),
         skill_id,
         target,
         task,
@@ -156,6 +157,9 @@ fn build_bounded_delegated_tape_record(
         "target": record.target,
         "task": record.task,
     });
+    if !record.host_mounts.is_empty() {
+        arguments["host_mounts"] = json!(record.host_mounts);
+    }
     if let Some(cwd) = record.cwd.as_ref() {
         arguments["cwd"] = json!(cwd);
     }
@@ -331,6 +335,7 @@ mod tests {
 
     fn request() -> DelegatedSkillInvocationRequest {
         DelegatedSkillInvocationRequest {
+            host_mounts: Vec::new(),
             skill_id: "repo-review".to_string(),
             target: "reviewer".to_string(),
             task: "Review the current diff and summarize risks.".to_string(),
@@ -340,8 +345,25 @@ mod tests {
     }
 
     #[test]
+    fn persistence_retains_explicit_mount_selection() {
+        let mut request = request();
+        request.host_mounts = vec![alan_agent_protocol::SpawnHostMount {
+            grant: "grant-project".into(),
+            target: "/mnt/source".into(),
+            access: alan_agent_protocol::SpawnMountAccess::ReadOnly,
+        }];
+        let (arguments, record) = build_bounded_delegated_tape_record(
+            &request,
+            DelegatedSkillResult::failed("denied", None),
+        );
+        assert_eq!(record.host_mounts, request.host_mounts);
+        assert_eq!(arguments["host_mounts"], json!(request.host_mounts));
+    }
+
+    #[test]
     fn persistence_truncates_invocation_fields() {
         let request = DelegatedSkillInvocationRequest {
+            host_mounts: Vec::new(),
             skill_id: "s".repeat(MAX_DELEGATED_SKILL_ID_CHARS + 40),
             target: "t".repeat(MAX_DELEGATED_TARGET_CHARS + 40),
             task: "x".repeat(MAX_DELEGATED_TASK_CHARS + 200),

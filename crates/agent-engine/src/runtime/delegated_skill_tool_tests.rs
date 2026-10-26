@@ -14,7 +14,8 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
         arguments: json!({
             "skill_id": "repo-review",
             "target": "reviewer",
-            "task": "Review the current diff and summarize risks."
+            "task": "Review the current diff and summarize risks.",
+            "host_mounts": [{"grant": "grant-project", "target": "/mnt/source", "access": "read_only"}]
         }),
     };
 
@@ -74,8 +75,15 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
         }
     );
     assert_eq!(spec.handles, vec![SpawnHandle::ApprovalScope]);
-    assert!(spec.host_mounts.is_empty());
-    assert_eq!(spec.launch.cwd, None);
+    assert_eq!(
+        spec.host_mounts,
+        vec![alan_agent_protocol::SpawnHostMount {
+            grant: "grant-project".into(),
+            target: "/mnt/source".into(),
+            access: alan_agent_protocol::SpawnMountAccess::ReadOnly,
+        }]
+    );
+    assert_eq!(spec.launch.cwd, Some(PathBuf::from("/mnt/source")));
     assert_eq!(
         spec.launch.timeout_secs,
         Some(DEFAULT_DELEGATED_TIMEOUT_SECS)
@@ -85,7 +93,7 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
         .as_ref()
         .expect("delegated launch should carry classified requirements")
         .requirements;
-    assert!(!requirements.iter().any(|requirement| matches!(
+    assert!(requirements.iter().any(|requirement| matches!(
         requirement,
         alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
             path: Some(path)

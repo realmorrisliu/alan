@@ -4,6 +4,7 @@ use super::*;
 async fn redaction_expansion_preserves_delegated_output_reference_and_child_paths() {
     let (state, shell) = create_namespace_transition_state_and_shell();
     let request = DelegatedSkillInvocationRequest {
+        host_mounts: Vec::new(),
         skill_id: "repo-review".to_string(),
         target: "reviewer".to_string(),
         task: "Review local files".to_string(),
@@ -131,6 +132,7 @@ async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths(
     {
         let (state, shell) = create_namespace_transition_state_and_shell();
         let request = DelegatedSkillInvocationRequest {
+            host_mounts: Vec::new(),
             skill_id: "repo-review".to_string(),
             target: "reviewer".to_string(),
             task: "Review local files".to_string(),

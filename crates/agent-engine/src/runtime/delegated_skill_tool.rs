@@ -31,6 +31,7 @@ pub(super) const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
 pub(super) const MAX_DELEGATED_TARGET_CHARS: usize = 120;
 pub(super) const MAX_DELEGATED_TASK_CHARS: usize = 1_000;
 pub(super) const MAX_DELEGATED_PATH_CHARS: usize = 1_000;
+pub(super) const MAX_DELEGATED_HOST_MOUNTS: usize = 16;
 pub(super) const DEFAULT_DELEGATED_TIMEOUT_SECS: u64 = 900;
 pub(super) const MAX_DELEGATED_TIMEOUT_SECS: u64 = 86_400;
 
@@ -40,6 +41,7 @@ pub(super) struct DelegatedSkillInvocationRequest {
     pub(super) target: String,
     pub(super) task: String,
     pub(super) cwd: Option<PathBuf>,
+    pub(super) host_mounts: Vec<alan_agent_protocol::SpawnHostMount>,
     pub(super) timeout_secs: Option<u64>,
 }
 
@@ -54,6 +56,7 @@ impl DelegatedSkillInvocationRequest {
             target: self.target.clone(),
             task: self.task.clone(),
             cwd,
+            host_mounts: self.host_mounts.clone(),
             timeout_secs,
         }
     }
@@ -66,6 +69,7 @@ pub(super) fn parse_delegated_skill_invocation_request(
     let target = arguments.get("target")?.as_str()?.trim().to_string();
     let task = arguments.get("task")?.as_str()?.trim().to_string();
     let cwd = parse_optional_path_argument(arguments, "cwd")?;
+    let host_mounts = parse_host_mounts(arguments)?;
     let timeout_secs = parse_optional_timeout_secs_argument(arguments, "timeout_secs")?;
     if skill_id.is_empty() || target.is_empty() || task.is_empty() {
         return None;
@@ -75,8 +79,36 @@ pub(super) fn parse_delegated_skill_invocation_request(
         target,
         task,
         cwd,
+        host_mounts,
         timeout_secs,
     })
+}
+
+fn parse_host_mounts(
+    arguments: &serde_json::Value,
+) -> Option<Vec<alan_agent_protocol::SpawnHostMount>> {
+    let Some(value) = arguments.get("host_mounts") else {
+        return Some(Vec::new());
+    };
+    if value.as_array()?.len() > MAX_DELEGATED_HOST_MOUNTS {
+        return None;
+    }
+    let mounts: Vec<alan_agent_protocol::SpawnHostMount> =
+        serde_json::from_value(value.clone()).ok()?;
+    for mount in &mounts {
+        if mount.grant.trim().is_empty()
+            || mount.grant.chars().count() > MAX_DELEGATED_SKILL_ID_CHARS
+            || !mount.target.is_absolute()
+            || mount.target.to_str()?.chars().count() > MAX_DELEGATED_PATH_CHARS
+            || mount
+                .target
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return None;
+        }
+    }
+    Some(mounts)
 }
 
 fn parse_optional_path_argument(
@@ -137,6 +169,21 @@ pub(super) fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                     "type": "string",
                     "description": "Optional Alan OS namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
                     "maxLength": MAX_DELEGATED_PATH_CHARS
+                },
+                "host_mounts": {
+                    "type": "array",
+                    "description": "Explicit parent-held Host Mount grants for the child. Select grant IDs from /mnt/host-mount/grants; the service verifies current ownership, access and revocation. No project grant is inherited automatically.",
+                    "maxItems": MAX_DELEGATED_HOST_MOUNTS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "grant": {"type": "string", "minLength": 1, "maxLength": MAX_DELEGATED_SKILL_ID_CHARS},
+                            "target": {"type": "string", "minLength": 1, "maxLength": MAX_DELEGATED_PATH_CHARS},
+                            "access": {"type": "string", "enum": ["read_only", "read_write"]}
+                        },
+                        "required": ["grant", "target", "access"],
+                        "additionalProperties": false
+                    }
                 },
                 "timeout_secs": {
                     "type": "integer",
@@ -526,12 +573,12 @@ fn build_delegated_spawn_spec(
     request: &DelegatedSkillInvocationRequest,
     target: alan_agent_protocol::SpawnTarget,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
-    let parent_namespace_cwd = Some(runtime.child_namespace_cwd());
-    let cwd = request
-        .cwd
-        .as_deref()
-        .map(|path| resolve_delegated_launch_path(path, parent_namespace_cwd, "cwd"))
-        .transpose()?;
+    let parent_namespace_cwd = runtime.child_namespace_cwd();
+    let cwd = Some(resolve_delegated_launch_path(
+        request.cwd.as_deref().unwrap_or(parent_namespace_cwd),
+        Some(parent_namespace_cwd),
+        "cwd",
+    )?);
     let requirements = classify_delegated_task_requirements(&request.task, cwd.as_deref());
     Ok(SpawnSpec {
         target,
@@ -546,7 +593,7 @@ fn build_delegated_spawn_spec(
             output_dir: None,
         },
         handles: vec![SpawnHandle::ApprovalScope],
-        host_mounts: Vec::new(),
+        host_mounts: request.host_mounts.clone(),
         runtime_overrides: SpawnRuntimeOverrides::default(),
         delegated: Some(DelegatedSpawnContext { requirements }),
     })
@@ -612,6 +659,41 @@ mod tests {
         assert_eq!(result.skill_id, "repo-review");
         assert_eq!(result.target, "reviewer");
         assert_eq!(result.task, "Review the current diff and summarize risks.");
+    }
+
+    #[test]
+    fn explicit_mounts_are_bounded_and_never_inferred() {
+        let mut args = json!({"skill_id":"repo-review", "target":"reviewer", "task":"Read file"});
+        assert!(
+            parse_delegated_skill_invocation_request(&args)
+                .unwrap()
+                .host_mounts
+                .is_empty()
+        );
+        let mount = json!({"grant":"grant-project", "target":"/mnt/source", "access":"read_only"});
+        args["host_mounts"] = json!([mount]);
+        assert_eq!(
+            parse_delegated_skill_invocation_request(&args)
+                .unwrap()
+                .host_mounts
+                .len(),
+            1
+        );
+        for invalid in [
+            json!(null),
+            json!([{"grant":"", "target":"/mnt/source", "access":"read_only"}]),
+            json!([{"grant":"g", "target":"relative", "access":"read_only"}]),
+            json!([{"grant":"g", "target":"/mnt/../source", "access":"read_only"}]),
+            json!([{"grant":"g", "target":"/mnt/source", "access":"owner"}]),
+            json!([{"grant":"g", "target":"/mnt/source", "access":"read_only", "host_path":"/tmp"}]),
+            json!(vec![mount; MAX_DELEGATED_HOST_MOUNTS + 1]),
+        ] {
+            args["host_mounts"] = invalid;
+            assert!(
+                parse_delegated_skill_invocation_request(&args).is_none(),
+                "{args}"
+            );
+        }
     }
 
     #[test]

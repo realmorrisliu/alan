@@ -470,3 +470,73 @@ The run also identifies follow-up UI evidence: model text is buffered until a
 successful response before publishing chunks; Bash source-read titles are dominated
 by commands; a clean first-input queue can appear as unavailable. These are not
 claims that the corresponding UI problems are fixed.
+
+## Native descendant preflight — 2026-10-26
+
+Clean `662d14baa3be1fb075873c289688f53c6aad1058`, frozen binary SHA-256
+`d94ebc10f096987b4e929d493415e7bb17d462e5a4a05fa0cd3c1f541949f8fa`, ran
+through Herdr with isolated stores and an explicitly selected read-only project.
+The case allowed 180 execution seconds, 16 Tools and eight model admissions;
+the Host supervisor allowed 300 seconds. It asked the Root to delegate a single
+fixture read to the installed `repo-coding` / `repo-worker` target.
+
+This required case **failed**. The child started and attempted `read_file`, but
+its namespace cwd was `/` and it lacked the selected project Host execution
+adapter. The Root reported the failure and stopped. The final Root ledger retained
+four model admissions and two Tool attempts, including the child's two model
+admissions and one Tool attempt; these nested counters must not be summed again.
+The fixture remained unchanged, the queue settled, and `/quit` exited with code
+zero without supervisor expiry. This proves accounting for this failed child
+attempt, not successful task-tree, inherited-exhaustion or subtree recovery
+acceptance. The later cases were not run after this prerequisite failed.
+
+Source inspection identifies two relevant paths to repair and verify together:
+`build_delegated_spawn_spec` leaves an omitted cwd unset and supplies no Host
+mounts, although its public schema promises inherited cwd; the child planner then
+defaults to `/`. Capability evaluation treats an unspecified mount requirement as
+satisfied by any mount, including service mounts, so this child was misleadingly
+classified `satisfied`. The model also appended a negated modification constraint,
+which the lexical classifier treated as write/shell/side-effect requirements.
+A repair must preserve explicit grant ownership and narrowing; copying every
+parent mount or granting additional write access is not an acceptable workaround.
+
+Private evidence is retained under
+`~/Library/Caches/Alan/native-budget-closure/20261023/` (the directory was prepared
+on October 23; the rollout timestamps identify the actual October 26 run): frozen
+plan and binary, unchanged fixture, terminal transcript, public Process/AgentFS
+snapshot, rollout hashes, final ledgers and clean-exit receipt. No task retry was
+performed and the formal daily-use sample remains zero.
+
+The first local repair now resolves omitted delegated cwd to the parent's current
+namespace cwd before classification. A regression requires `/mnt/source` in both
+the launch and the read requirement; another verifies that `/agent`,
+`/mnt/host-mount` and `/mnt/llm` cannot satisfy that project requirement. The 59
+delegated-runtime tests and four capability-classification tests pass. This is
+only a source-level correction: explicit Host Mount selection still needs wiring
+into the delegated Tool interface and retained invocation evidence. The service's
+existing `SpawnHostMount` validation, access narrowing and revocation remain the
+authority; implicit grant discovery from cwd is forbidden by the canonical
+Host Mount contract. Successful native delegation is still unverified.
+
+The next local slice exposes bounded `host_mounts` selections in
+`invoke_delegated_skill`, forwards the existing `SpawnHostMount` values unchanged,
+and retains them in invocation/rollout arguments. No implicit projection was
+added. Native task-tree acceptance still needs rerunning with an explicitly
+selected read-only grant; the original failed run remains retained.
+
+Local validation of that slice: 61 delegated-runtime focused tests pass. The full
+Agent Engine and Service Manager test commands pass 1,734 tests with one existing
+ignored test and no failures, including Host Mount non-inheritance, remapping,
+read-only amplification rejection and revocation coverage. CI-pinned OpenSpec
+1.4.1 strict validation of this change passes (its telemetry upload failed after
+the successful validation). These source checks do not replace native successful
+child read, inherited-budget exhaustion, or cancellation/recovery acceptance.
+
+Independent specification review found that early cwd rejection hid the typed
+missing-capability decision. The final repair evaluates capability mismatch
+before the mandatory cwd coverage check; every otherwise accepted delegated or
+ordinary launch still checks cwd before spawning. The planner/evaluator regression
+retains the missing project read requirement and `ParentPath` recovery. Both
+independent review axes report no remaining findings. Final full Agent Engine and
+Service Manager validation passes 1,735 tests with one existing ignored test;
+this still does not establish native success.
