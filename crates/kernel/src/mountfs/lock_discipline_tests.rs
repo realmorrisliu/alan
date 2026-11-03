@@ -1,87 +1,261 @@
 //! Lock discipline for the mount table.
 //!
-//! `MountFs::state` is a fair `tokio::sync::Mutex`: a waiter that is *handed the
-//! permit* but then stops being polled keeps it, and every later waiter queues
-//! behind it while no guard exists. Product code that holds an established future
-//! in one `select!` arm must therefore never await inside another arm's body — the
-//! awaiting arm would starve behind the permit its sibling was handed.
+//! `MountFs::state` is a fair `tokio::sync::Mutex`. A waiter that has been *handed
+//! the permit* and then stops being polled keeps it, so every later waiter queues
+//! behind it while no guard is alive. That is the shape behind the redirected-input
+//! stall: one `select!` arm held a pinned future that had queued on this lock while
+//! the other arm's body awaited the root-agent probe.
 //!
-//! These tests pin that behaviour so the rule in `wait_for_stdio_answer_after_submit`
-//! stays legible: if a tokio upgrade ever makes the mutex starvation-free, the first
-//! test fails and tells the reader the rule is obsolete instead of load-bearing.
-use super::*;
-use std::time::Duration;
+//! Two things are pinned here:
+//! - the mechanism, with the waiter's and the prober's task ids recorded so the
+//!   "same task re-locked" explanation is excluded by measurement, not by argument
+//!   (`just lock-discipline` builds with `--cfg tokio_unstable` to print real ids);
+//! - the cancel pressure the product path applies, as walk/clunk/cancel rounds over
+//!   a backing server the test can hold open.
+#![allow(
+    unexpected_cfgs,
+    reason = "task ids are read only under a `--cfg tokio_unstable` build"
+)]
 
-fn mounted_fs() -> Arc<MountFs> {
+use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc as StdArc, Mutex as StdMutex};
+use std::time::Duration;
+use tokio::sync::Notify;
+
+/// Current tokio task id, when the build enables `--cfg tokio_unstable`.
+fn task_id() -> Option<String> {
+    #[cfg(tokio_unstable)]
+    {
+        tokio::task::try_id().map(|id| format!("{id:?}"))
+    }
+    #[cfg(not(tokio_unstable))]
+    {
+        None
+    }
+}
+
+fn show_id(id: Option<String>) -> String {
+    match id {
+        Some(id) => format!("task {id}"),
+        None => "task id unavailable (build with --cfg tokio_unstable)".to_string(),
+    }
+}
+
+/// Backing server whose walks park until the test opens the gate.
+struct GatedFs {
+    inner: Arc<dyn FileServer>,
+    open: AtomicBool,
+    changed: Notify,
+}
+
+impl GatedFs {
+    fn new(inner: Arc<dyn FileServer>) -> Self {
+        Self {
+            inner,
+            open: AtomicBool::new(true),
+            changed: Notify::new(),
+        }
+    }
+
+    fn hold(&self) {
+        self.open.store(false, Ordering::SeqCst);
+    }
+
+    fn release(&self) {
+        self.open.store(true, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+
+    async fn wait_open(&self) {
+        loop {
+            let changed = self.changed.notified();
+            if self.open.load(Ordering::SeqCst) {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
+#[async_trait]
+impl FileServer for GatedFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        self.wait_open().await;
+        self.inner.walk(fid, newfid, names).await
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        self.inner.open(fid, mode).await
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        self.inner.read(fid, offset, count).await
+    }
+
+    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        self.inner.write(fid, offset, data).await
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        self.inner.stat(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.inner.clunk(fid).await
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        self.inner.create(fid, newfid, name, kind).await
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.inner.remove(fid).await
+    }
+}
+
+fn mounted_fs(backing: Arc<dyn FileServer>) -> Arc<MountFs> {
     let mut ns = Namespace::new();
     ns.mount(
         "/data",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        InProcessTransport::new(backing),
         crate::namespace::Access::ReadWrite,
     );
     Arc::new(MountFs::new(ns))
 }
 
-/// Acquiring the mount table succeeds immediately (it is free, not held).
 async fn assert_mount_table_is_free(fs: &MountFs) {
-    let guard = tokio::time::timeout(Duration::from_millis(100), fs.state.lock())
+    let guard = tokio::time::timeout(Duration::from_millis(250), fs.state.lock())
         .await
-        .expect("mount table lock must be free: an assignment is stuck on an unpolled waiter");
+        .expect("mount table lock must be free");
     drop(guard);
 }
 
+/// A waiter handed the permit keeps it while it is not polled, and the prober that
+/// starves behind it is a *different* task: this excludes the "same task re-locked"
+/// explanation by measurement.
 #[tokio::test]
-async fn a_waiter_handed_the_permit_strands_later_waiters_until_it_is_polled_again() {
-    let fs = mounted_fs();
+async fn an_unpolled_waiter_holds_the_permit_and_a_different_task_starves() {
+    let fs = mounted_fs(Arc::new(alan_ap::reference::MemFs::new()));
     let names = vec!["data".to_string()];
-    // Hold the mount table so the walk below has to queue.
+    let queued = StdArc::new(Notify::new());
+    let resume = StdArc::new(Notify::new());
+    let waiter_id: StdArc<StdMutex<Option<String>>> = StdArc::new(StdMutex::new(None));
+
+    // Hold the mount table so the walker below has to queue.
     let guard = fs.state.lock().await;
-    let walk = fs.walk(Fid::ROOT, Fid(20_001), &names);
-    tokio::pin!(walk);
-    // Poll the walk exactly once: its lock acquisition joins the FIFO queue.
-    let expired = tokio::time::Instant::now();
-    assert!(
-        tokio::time::timeout_at(expired, &mut walk).await.is_err(),
-        "the walk cannot finish while the mount table is held"
-    );
+    let walker = {
+        let fs = fs.clone();
+        let queued = queued.clone();
+        let resume = resume.clone();
+        let waiter_id = waiter_id.clone();
+        tokio::spawn(async move {
+            *waiter_id.lock().expect("id slot") = task_id();
+            let walk = fs.walk(Fid::ROOT, Fid(50_001), &names);
+            tokio::pin!(walk);
+            // One poll: the lock acquisition joins the FIFO queue, then this future is
+            // parked for good while the task awaits the gate instead.
+            let expired = tokio::time::Instant::now();
+            let _first_poll = tokio::time::timeout_at(expired, &mut walk).await;
+            queued.notify_waiters();
+            resume.notified().await;
+            tokio::time::timeout(Duration::from_secs(1), &mut walk)
+                .await
+                .expect("resumed waiter must finish")
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(1), queued.notified())
+        .await
+        .expect("the walker must reach the lock queue");
     drop(guard);
 
-    // The permit is handed to the unpolled waiter: later acquisitions starve even
-    // though no guard is alive.
-    let starved = tokio::time::timeout(Duration::from_millis(100), fs.state.lock()).await;
-    assert!(
-        starved.is_err(),
-        "an unpolled queued waiter must hold the permit; if this now succeeds, the \
-         mutex is starvation-free and the select-arm rule is obsolete"
+    // A different task probes the (free) mount table and starves behind the permit
+    // the unpolled waiter is holding.
+    let starved = {
+        let fs = fs.clone();
+        tokio::spawn(async move {
+            let prober = task_id();
+            let blocked = tokio::time::timeout(Duration::from_millis(150), fs.state.lock()).await;
+            (prober, blocked.is_err())
+        })
+    }
+    .await
+    .expect("prober task must not panic");
+    let (prober_id, starved) = starved;
+    let waiter_id = waiter_id.lock().expect("id slot").clone();
+    eprintln!(
+        "lock discipline: waiter={} prober={} starved={starved}",
+        show_id(waiter_id.clone()),
+        show_id(prober_id.clone())
     );
+    assert!(
+        starved,
+        "a later waiter must starve while the permit sits with an unpolled waiter"
+    );
+    if let (Some(waiter), Some(prober)) = (&waiter_id, &prober_id) {
+        assert_ne!(
+            waiter,
+            prober,
+            "the waiter ({}) must not be the probing task ({}), or this would be a same-task re-lock",
+            show_id(Some(waiter.clone())),
+            show_id(Some(prober.clone()))
+        );
+    }
 
-    // Polling the waiter again releases the permit and the mount table recovers.
-    let resumed = tokio::time::timeout(Duration::from_secs(1), &mut walk).await;
-    assert!(
-        resumed.is_ok(),
-        "resuming the waiter must let the walk finish"
-    );
+    // Polling the waiter again hands the permit on and the mount table recovers.
+    resume.notify_waiters();
+    walker
+        .await
+        .expect("walker task must not panic")
+        .expect("walk must succeed");
     assert_mount_table_is_free(&fs).await;
-    let _ = fs.clunk(Fid(20_001)).await;
+    let _ = fs.clunk(Fid(50_001)).await;
 }
 
-/// The recovery half of the rule as product code uses it: a walker that is polled
-/// keeps the mount table usable for everyone else.
+/// The cancel pressure the product path applies: walks cancelled mid-acquisition and
+/// mid-backing-call, with a clunk racing each reservation, must never leave the
+/// mount table stranded.
 #[tokio::test]
-async fn polling_a_queued_waiter_keeps_the_mount_table_usable() {
-    let fs = mounted_fs();
+async fn walk_clunk_and_cancel_rounds_never_strand_the_mount_table() {
+    let gated = Arc::new(GatedFs::new(Arc::new(alan_ap::reference::MemFs::new())));
+    let fs = mounted_fs(gated.clone());
     let names = vec!["data".to_string()];
-    let guard = fs.state.lock().await;
-    let walk = fs.walk(Fid::ROOT, Fid(20_002), &names);
-    tokio::pin!(walk);
-    let expired = tokio::time::Instant::now();
-    assert!(tokio::time::timeout_at(expired, &mut walk).await.is_err());
-    drop(guard);
-    // Poll it to completion instead of leaving it queued.
-    let walked = tokio::time::timeout(Duration::from_secs(1), &mut walk)
-        .await
-        .expect("a polled waiter must finish");
-    assert!(walked.is_ok(), "walk failed: {walked:?}");
-    assert_mount_table_is_free(&fs).await;
-    let _ = fs.clunk(Fid(20_002)).await;
+    for round in 0..200u64 {
+        let fid = Fid(60_000 + round);
+        if round % 3 == 0 {
+            // Cancel while the backing walk is parked inside the gated server.
+            gated.hold();
+            let cancelled =
+                tokio::time::timeout(Duration::from_millis(1), fs.walk(Fid::ROOT, fid, &names))
+                    .await;
+            assert!(
+                cancelled.is_err(),
+                "round {round}: gated walk must be cancelled"
+            );
+            gated.release();
+        } else {
+            // Cancel while the walk is queued for the mount table: hold it to force
+            // the queue, then let the deadline fire.
+            let guard = fs.state.lock().await;
+            let cancelled = tokio::time::timeout_at(
+                tokio::time::Instant::now(),
+                fs.walk(Fid::ROOT, fid, &names),
+            )
+            .await;
+            drop(guard);
+            assert!(
+                cancelled.is_err(),
+                "round {round}: queued walk must be cancelled"
+            );
+        }
+        // A clunk races the reservation the cancelled walk may have left behind.
+        let _ = fs.clunk(fid).await;
+        assert_mount_table_is_free(&fs).await;
+    }
 }
