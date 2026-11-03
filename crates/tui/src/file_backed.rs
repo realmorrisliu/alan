@@ -631,6 +631,11 @@ async fn wait_for_stdio_answer_after_submit(
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Every established future in this loop is polled by its own arm; nothing is left
+    // queued on a shared lock while another arm's body awaits (see
+    // `mountfs::lock_discipline_tests`). `interrupt` is the one future pinned across
+    // iterations, so it must stay a pure signal wait: a caller that made it issue
+    // namespace requests could strand them here while a branch body runs.
     loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
