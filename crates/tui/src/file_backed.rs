@@ -704,11 +704,20 @@ async fn wait_for_stdio_answer_after_submit(
                         &mut snapshot,
                     );
                     tokio::pin!(refresh);
+                    // Every await in this loop must be its own select arm. A future left
+                    // queued on a shared lock while another arm's body awaits keeps the
+                    // permit it was handed, so the awaiting arm starves behind it: the
+                    // namespace read then blocks for as long as the other arm takes.
+                    let mut probe: Option<ProbeFuture<'_>> = None;
                     loop {
                         tokio::select! {
                             result = &mut refresh => break result,
                             _ = root_agent_pid_tick.tick() => {
-                                probe_root_agent_attachment(shell, attachment).await?;
+                                probe = Some(Box::pin(probe_root_agent_attachment(shell, attachment)));
+                            }
+                            result = async { probe.as_mut().expect("probe future").await }, if probe.is_some() => {
+                                probe = None;
+                                result?;
                             }
                         }
                     }
@@ -731,6 +740,9 @@ async fn wait_for_stdio_answer_after_submit(
         }
     }
 }
+
+/// A root-agent probe in flight, polled as its own select arm.
+type ProbeFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
 
 /// A root-agent liveness probe must never gate the answer: a stalled namespace read
 /// is retried on the next tick instead of wedging the wait.
