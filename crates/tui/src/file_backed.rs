@@ -708,7 +708,7 @@ async fn wait_for_stdio_answer_after_submit(
                         tokio::select! {
                             result = &mut refresh => break result,
                             _ = root_agent_pid_tick.tick() => {
-                                tail::require_stdio_attachment_current(shell, attachment).await?;
+                                probe_root_agent_attachment(shell, attachment).await?;
                             }
                         }
                     }
@@ -719,7 +719,7 @@ async fn wait_for_stdio_answer_after_submit(
                 }
             }
             _ = root_agent_pid_tick.tick() => {
-                tail::require_stdio_attachment_current(shell, attachment).await?;
+                probe_root_agent_attachment(shell, attachment).await?;
             }
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
@@ -729,6 +729,26 @@ async fn wait_for_stdio_answer_after_submit(
                 }
             }
         }
+    }
+}
+
+/// A root-agent liveness probe must never gate the answer: a stalled namespace read
+/// is retried on the next tick instead of wedging the wait.
+const ROOT_AGENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+async fn probe_root_agent_attachment(
+    shell: &alan_shell::Shell,
+    attachment: &StdioTailAttachment,
+) -> Result<()> {
+    match tokio::time::timeout(
+        ROOT_AGENT_PROBE_TIMEOUT,
+        tail::require_stdio_attachment_current(shell, attachment),
+    )
+    .await
+    {
+        Ok(result) => result,
+        // The probe is advisory; a stalled read is retried on the next tick.
+        Err(_) => Ok(()),
     }
 }
 
