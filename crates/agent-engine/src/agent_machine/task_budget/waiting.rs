@@ -65,3 +65,59 @@ pub(crate) fn recover(events: &[EventRecord], latest: Option<&Snapshot>) -> Resu
     }
     Ok(wait)
 }
+
+pub(crate) const INHERITED_WAIT_EVENT: &str = "agent_inherited_budget_wait_v1";
+
+/// Child continuation evidence; only the owning ancestor may receive an extension.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InheritedWait {
+    pub budget: Snapshot,
+    pub ancestor_task_id: String,
+    pub dimension: super::Dimension,
+    pub continuation: Option<PendingToolReplayBatch>,
+}
+
+impl InheritedWait {
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.budget.validate()?;
+        ensure!(
+            self.budget.phase == Phase::Paused
+                && !self.budget.foreground_complete
+                && self.budget.parent_tasks.contains(&self.ancestor_task_id),
+            "inherited budget wait lacks its original ancestor or paused task"
+        );
+        Ok(())
+    }
+}
+
+pub(crate) fn recover_inherited(
+    events: &[EventRecord],
+    latest: Option<&Snapshot>,
+) -> Result<Option<InheritedWait>> {
+    let Some(latest) =
+        latest.filter(|budget| !budget.foreground_complete && budget.phase != Phase::Completed)
+    else {
+        return Ok(None);
+    };
+    let Some(event) = events
+        .iter()
+        .rev()
+        .find(|event| event.event_type == INHERITED_WAIT_EVENT)
+    else {
+        return Ok(None);
+    };
+    let wait: InheritedWait = serde_json::from_value(event.payload.clone())
+        .context("invalid inherited budget continuation")?;
+    wait.validate()?;
+    if wait.budget.task_id != latest.task_id {
+        return Ok(None);
+    }
+    ensure!(
+        wait.budget.parent_tasks == latest.parent_tasks
+            && wait.budget.model_calls <= latest.model_calls
+            && wait.budget.tool_calls <= latest.tool_calls,
+        "inherited budget wait differs from current ancestry or accounting"
+    );
+    Ok(Some(wait))
+}

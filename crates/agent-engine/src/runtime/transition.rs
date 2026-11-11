@@ -730,6 +730,25 @@ where
         )
         .await;
         let outcome = match result {
+            Err(error) if error.is::<crate::agent_machine::task_budget::InheritedExhaustion>() => {
+                let remaining = tool_calls[idx..]
+                    .iter()
+                    .filter(|call| state.machine.tool_payload_by_call_id(&call.id).is_none())
+                    .cloned()
+                    .collect();
+                super::task_budget::preserve_inherited_wait(
+                    state,
+                    error
+                        .downcast_ref::<crate::agent_machine::task_budget::InheritedExhaustion>()
+                        .expect("typed inherited exhaustion"),
+                    Some(crate::agent_machine::PendingToolReplayBatch {
+                        tool_calls: remaining,
+                        resume_with_generation: !inputs.explicit_command,
+                    }),
+                )
+                .await?;
+                return Err(error);
+            }
             Err(error) if error.is::<crate::agent_machine::task_budget::Exhausted>() => {
                 let paused = super::task_budget::pause_tool_batch(
                     state,

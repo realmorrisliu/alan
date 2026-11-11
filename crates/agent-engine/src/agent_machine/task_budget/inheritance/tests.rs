@@ -38,6 +38,8 @@ async fn siblings_share_parent_admission_and_local_extension_cannot_widen_it() {
     child_b.reserve(Admission::Model).await.unwrap();
     let error = child_a.reserve(Admission::Tool).await.unwrap_err();
     assert!(error.to_string().contains("Parent task budget"));
+    let inherited = error.downcast_ref::<InheritedExhaustion>().unwrap();
+    assert_eq!(inherited.ancestor_task_id, "parent");
     assert!(
         !error.is::<Exhausted>(),
         "must not offer an irrelevant child-local extension"
@@ -151,6 +153,8 @@ async fn shorter_parent_deadline_is_enforced_without_a_child_extension_prompt() 
         .await
         .unwrap_err();
     assert!(error.to_string().contains("Parent task budget"));
+    let inherited = error.downcast_ref::<InheritedExhaustion>().unwrap();
+    assert_eq!(inherited.ancestor_task_id, "parent");
     assert!(!error.is::<Exhausted>());
     assert_eq!(parent.snapshot().await.elapsed_millis, 4000);
     assert_eq!(child.snapshot().await.elapsed_millis, 4000);
@@ -433,4 +437,64 @@ async fn process_exit_cancels_grandchild_and_awaits_its_cleanup_without_refund()
         assert_eq!(snapshot.model_calls, 1);
         assert!(!snapshot.descendants_active);
     }
+}
+
+#[tokio::test]
+async fn inherited_exhaustion_names_original_ancestor_and_only_its_extension_unblocks() {
+    let binding = TaskBudgetBinding::default();
+    let ancestor = start(&binding, "ancestor", limits(30, 10, 1)).await;
+    let child_binding = binding.child().unwrap();
+    let child = start(&child_binding, "child", limits(30, 10, 8)).await;
+    let grandchild = start(
+        &child_binding.child().unwrap(),
+        "grandchild",
+        limits(30, 10, 8),
+    )
+    .await;
+    grandchild.reserve(Admission::Model).await.unwrap();
+    let error = grandchild.reserve(Admission::Tool).await.unwrap_err();
+    let exhausted = error.downcast_ref::<InheritedExhaustion>().unwrap();
+    assert_eq!(exhausted.ancestor_task_id, "ancestor");
+    assert_eq!(exhausted.dimension, super::super::Dimension::ModelCalls);
+    assert!(!error.is::<Exhausted>());
+    child
+        .extend(&Extension {
+            model_calls: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    child.resume().await.unwrap();
+    assert!(
+        grandchild
+            .reserve(Admission::Tool)
+            .await
+            .unwrap_err()
+            .is::<InheritedExhaustion>()
+    );
+    ancestor
+        .extend(&Extension {
+            model_calls: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    ancestor.resume().await.unwrap();
+    grandchild.reserve(Admission::Tool).await.unwrap();
+    for ledger in [&ancestor, &child, &grandchild] {
+        let snapshot = ledger.snapshot().await;
+        assert_eq!((snapshot.model_calls, snapshot.tool_calls), (1, 1));
+    }
+}
+
+#[tokio::test]
+async fn ancestor_non_budget_errors_keep_their_type_without_becoming_extendable() {
+    let binding = TaskBudgetBinding::default();
+    let parent = start(&binding, "parent", limits(10, 8, 8)).await;
+    let error = parent
+        .inherited_error(std::io::Error::other("uncertain persistence").into())
+        .await;
+    assert!(error.is::<std::io::Error>());
+    assert!(!error.is::<InheritedExhaustion>());
+    assert!(!error.is::<Exhausted>());
 }

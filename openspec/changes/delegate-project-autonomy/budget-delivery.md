@@ -540,3 +540,76 @@ retains the missing project read requirement and `ParentPath` recovery. Both
 independent review axes report no remaining findings. Final full Agent Engine and
 Service Manager validation passes 1,735 tests with one existing ignored test;
 this still does not establish native success.
+
+## Native explicit child authority and inherited limit — 2026-10-26
+
+Committed `4c809df896c9f8655c394e9839b7a6dffffd8d3f` passed the normal quality
+hook, including standalone debug installation and release archive checks. Its
+frozen native binary SHA-256 is
+`06cc4c055f6e87174812f355dafa7a93ef5f2f0c6d8acc065135ad55b06e3a61`.
+Both following cases used isolated stores, Herdr, a single read-only fixture,
+180 execution seconds, 16 Tool attempts, and a 300-second Host supervisor.
+No task retries or budget extensions were admitted.
+
+The explicit-grant case passed its narrow acceptance: a parent Tool invocation
+selected `request-1` at `/mnt/project-request-1` with read-only access; the child
+successfully read `fixture.txt`, and the parent returned its expected text. Root
+spending was four model admissions and two Tool attempts, including the child's
+two model admissions and one Tool attempt, over 25,055ms active time. The grant
+selection was retained in the parent Tool evidence. The fixture was unchanged,
+the queue settled, and `/quit` exited zero. This test supplied the verified grant
+selector in the task; it does not prove autonomous discovery or general daily-use
+success. The submission helper initially read a wrong observer filename and failed
+before sending any task; correcting the filename resulted in one actual submission.
+Evidence: `~/Library/Caches/Alan/native-budget-closure/20261026-repaired/`.
+
+The inherited-limit case used two model admissions for the whole task tree. It
+stopped at exactly two admissions and one Tool attempt (the delegation); the child
+received its first model response but did not execute the requested file read.
+Only the Root published a budget-extension wait. Empty Enter selected the default
+rejection, cancelled the input and completed the Root budget with unchanged
+spending (19,283ms). After clean exit, a new explicit `--resume` invocation retained
+the same completed task identity and counters, became idle with an empty queue,
+and admitted no additional Tool or model work. Both invocations exited zero.
+
+This is **partial acceptance, not successful resumable subtree exhaustion**:
+the child exited with code one and `child_failed`, because ancestor exhaustion
+was flattened into `Parent task budget prevents continuation` by
+`task_budget/inheritance.rs`. Its ledger remained paused, but the parent received
+a failed Tool result rather than a resumable child continuation. Preserve typed
+ancestor exhaustion without allowing a child-local extension, and verify parent
+extension/recovery of the original subtree before closing this gap. A terminal
+snapshot also transiently showed `model unknown` and an unconfirmed-input warning
+while the correlated budget wait existed; subsequent snapshots recovered the
+correct model. This presentation discrepancy still needs diagnosis.
+Evidence: `~/Library/Caches/Alan/native-budget-closure/20261026-exhausted/`.
+Neither case counts toward the formal fifty-task cohort. Task 2.4 remains open.
+
+### Inherited-exhaustion repair sequence
+
+The native failure crosses three existing owners, rather than only an error
+message. Machine admission must retain a typed ancestor task identity and exhausted
+dimension without exposing it as child-local `Exhausted`. Machine continuation must
+retain the unfinished Tool batch/model step and original ancestry before reporting
+an inherited wait. Agent Runtime Service and the delegated supervisor must preserve
+that wait instead of converting every paused child into exit code one; parent
+continuation must reconnect the original child work rather than replay the
+`invoke_delegated_skill` Tool as a new launch.
+
+A local first slice now preserves typed ancestor exhaustion at admission and time
+boundaries; non-budget errors retain their original error chain. This alone does
+not change the child failure UI or implement subtree continuation. The subsequent
+runtime slice must prove all of the following before replacing the retained native
+failure with a passing result: only the owning ancestor offers extension; declined
+or cancelled waits settle the subtree; extension retains all original spending
+and executes the child's pending Tool once; completed child effects are not replayed;
+and cross-invocation restoration fails closed unless original ancestor bindings,
+current grant authority and durable continuation can be re-established. Existing
+generic paused-child handling and explicit Root recovery are insufficient evidence.
+
+The typed-error slice passes 45 focused task-budget tests. Added ledger-level
+coverage identifies an exhausted grandparent, rejects bypass through an intermediate
+child extension, preserves spending when the original ancestor is extended, and
+keeps unrelated persistence errors typed rather than relabeling them as extendable
+budget exhaustion. This is not a runtime subtree-resume test; the slice remains
+uncommitted pending continuation integration and broader verification.

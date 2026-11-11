@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow, ensure};
 
-use super::{Admission, AtomicUsize, Ordering, Phase, TaskBudget};
+use super::{Admission, AtomicUsize, Exhausted, InheritedExhaustion, Ordering, Phase, TaskBudget};
 
 pub(super) struct DescendantLease {
     active: Vec<Arc<AtomicUsize>>,
@@ -87,12 +87,20 @@ pub(super) async fn task_ids(ancestors: &[TaskBudget]) -> Vec<String> {
     ids
 }
 
-fn inherited_error(error: anyhow::Error) -> anyhow::Error {
-    // Do not offer a child-local extension for an exhausted ancestor ledger.
-    anyhow!("Parent task budget prevents continuation: {error}")
-}
-
 impl TaskBudget {
+    async fn inherited_error(&self, error: anyhow::Error) -> anyhow::Error {
+        if let Some(exhausted) = error.downcast_ref::<Exhausted>() {
+            // Keep ownership typed without exposing local Exhausted in the source chain.
+            InheritedExhaustion {
+                ancestor_task_id: self.snapshot().await.task_id,
+                dimension: exhausted.dimension,
+            }
+            .into()
+        } else {
+            error.context("Parent task budget prevents continuation")
+        }
+    }
+
     pub(super) async fn acquire_ancestors(&self) -> Result<DescendantLease> {
         self.validate_ancestry().await?;
         let mut lease = DescendantLease {
@@ -165,10 +173,9 @@ impl TaskBudget {
         // failed or racing reservations remain charged rather than being refunded.
         self.remaining_time_local(false).await?;
         for ancestor in &self.ancestors {
-            ancestor
-                .reserve_local(admission, true)
-                .await
-                .map_err(inherited_error)?;
+            if let Err(error) = ancestor.reserve_local(admission, true).await {
+                return Err(ancestor.inherited_error(error).await);
+            }
         }
         self.reserve_local(admission, false).await
     }
@@ -177,12 +184,11 @@ impl TaskBudget {
         self.validate_ancestry().await?;
         let mut remaining = self.remaining_time_local(false).await?;
         for ancestor in &self.ancestors {
-            remaining = remaining.min(
-                ancestor
-                    .remaining_time_local(true)
-                    .await
-                    .map_err(inherited_error)?,
-            );
+            let ancestor_remaining = match ancestor.remaining_time_local(true).await {
+                Ok(remaining) => remaining,
+                Err(error) => return Err(ancestor.inherited_error(error).await),
+            };
+            remaining = remaining.min(ancestor_remaining);
         }
         Ok(remaining)
     }
@@ -190,7 +196,7 @@ impl TaskBudget {
     pub(super) async fn ancestor_time_error(&self) -> Option<anyhow::Error> {
         for ancestor in &self.ancestors {
             if let Err(error) = ancestor.remaining_time_local(true).await {
-                return Some(inherited_error(error));
+                return Some(ancestor.inherited_error(error).await);
             }
         }
         None

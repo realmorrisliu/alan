@@ -106,6 +106,19 @@ where
         {
             Err(error)
         }
+        Err(error) if error.is::<crate::agent_machine::task_budget::InheritedExhaustion>() => {
+            if !cancel.is_cancelled() {
+                crate::runtime::task_budget::preserve_inherited_wait(
+                    state,
+                    error
+                        .downcast_ref::<crate::agent_machine::task_budget::InheritedExhaustion>()
+                        .expect("typed inherited exhaustion"),
+                    None,
+                )
+                .await?;
+            }
+            Err(error)
+        }
         Err(error) if error.is::<crate::agent_machine::task_budget::Exhausted>() => {
             if cancel.is_cancelled() {
                 crate::runtime::turn_support::cancel_current_task(

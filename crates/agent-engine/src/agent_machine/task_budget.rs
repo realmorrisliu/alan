@@ -127,7 +127,8 @@ pub(crate) enum Admission {
     Model,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Dimension {
     Time,
     ToolCalls,
@@ -147,6 +148,16 @@ impl std::fmt::Display for Dimension {
 #[derive(Debug, thiserror::Error)]
 #[error("Task budget exhausted: {dimension}; explicit additional allowance is required")]
 pub(crate) struct Exhausted {
+    pub dimension: Dimension,
+}
+
+/// An ancestor owns this stop; it must never authorize a child-local extension.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "Parent task budget prevents continuation: task {ancestor_task_id} exhausted {dimension}; explicit ancestor allowance is required"
+)]
+pub(crate) struct InheritedExhaustion {
+    pub ancestor_task_id: String,
     pub dimension: Dimension,
 }
 

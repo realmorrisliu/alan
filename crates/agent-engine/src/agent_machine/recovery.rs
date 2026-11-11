@@ -414,6 +414,10 @@ impl AgentMachine {
         machine.evaluation_observation = super::evaluation::recover(&event_records)?;
         machine.owner_work = super::owner_work::recover(&event_records)?;
         let recovered_budget = super::task_budget::recover(&event_records)?;
+        machine.inherited_budget_wait = super::task_budget::waiting::recover_inherited(
+            &event_records,
+            recovered_budget.as_ref(),
+        )?;
         machine.task_budget_wait =
             super::task_budget::waiting::recover(&event_records, recovered_budget.as_ref())?;
         if let Some(work) = machine.owner_work.clone()

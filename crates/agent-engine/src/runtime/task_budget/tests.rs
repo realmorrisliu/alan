@@ -716,3 +716,103 @@ async fn cancelling_a_budget_wait_does_not_restore_it_or_block_new_work() {
         0
     );
 }
+
+#[tokio::test]
+async fn inherited_wait_preserves_ordered_work_without_a_child_extension_or_automatic_resume() {
+    use crate::agent_machine::task_budget::{Admission, InheritedExhaustion};
+    let directory = tempfile::TempDir::new().unwrap();
+    let machine = AgentMachine::new_with_recorder_in_dir("/proc/child", "test", directory.path())
+        .await
+        .unwrap();
+    let mut source = state(machine);
+    let parent = TaskBudget::start(
+        "ancestor".into(),
+        source.core_config.task_budget.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+    parent.reserve(Admission::Model).await.unwrap();
+    let child = TaskBudget::start_with_parent(
+        "child".into(),
+        source.core_config.task_budget.clone(),
+        source.machine.recorder(),
+        Some(parent),
+    )
+    .await
+    .unwrap();
+    let error = child.reserve(Admission::Model).await.unwrap_err();
+    source.machine.task_budget = Some(child);
+    let continuation = PendingToolReplayBatch {
+        tool_calls: vec![NormalizedToolCall {
+            id: "pending-read".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path":"fixture.txt"}),
+        }],
+        resume_with_generation: true,
+    };
+    preserve_inherited_wait(
+        &mut source,
+        error.downcast_ref::<InheritedExhaustion>().unwrap(),
+        Some(continuation.clone()),
+    )
+    .await
+    .unwrap();
+    // The submission boundary must not erase the more precise Tool continuation.
+    preserve_inherited_wait(
+        &mut source,
+        error.downcast_ref::<InheritedExhaustion>().unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+    let original = source.machine.inherited_budget_wait.clone().unwrap();
+    assert_eq!(original.continuation, Some(continuation));
+    assert!(source.machine.task_budget_wait.is_none());
+    assert!(source.machine.pending_request_ids().is_empty());
+    source.machine.flush_recorder().await.unwrap();
+    let machine = AgentMachine::load_from_rollout_in_dir(
+        source.machine.rollout_path().unwrap(),
+        "/proc/recovered",
+        "test",
+        directory.path(),
+    )
+    .await
+    .unwrap();
+    let mut recovered = state(machine);
+    assert_eq!(
+        recovered.machine.inherited_budget_wait.as_ref(),
+        Some(&original)
+    );
+    assert!(
+        begin(&mut recovered)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("original ancestor budget")
+    );
+    let snapshot = recovered
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .await;
+    assert_eq!((snapshot.model_calls, snapshot.tool_calls), (0, 0));
+    assert!(recovered.machine.pending_request_ids().is_empty());
+    let mut invalid = original.clone();
+    invalid.ancestor_task_id = "unrelated".into();
+    assert!(invalid.validate().is_err());
+    let events = vec![EventRecord {
+        event_type: crate::agent_machine::task_budget::waiting::INHERITED_WAIT_EVENT.into(),
+        payload: serde_json::to_value(&original).unwrap(),
+        timestamp: String::new(),
+    }];
+    let mut completed = snapshot.clone();
+    completed.phase = Phase::Completed;
+    assert!(
+        crate::agent_machine::task_budget::waiting::recover_inherited(&events, Some(&completed))
+            .unwrap()
+            .is_none()
+    );
+}

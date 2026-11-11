@@ -11,6 +11,9 @@ use crate::agent_machine::PendingToolReplayBatch;
 use crate::agent_machine::task_budget::waiting::{WAIT_EVENT, Wait};
 use crate::rollout::{EventRecord, RolloutItem};
 
+mod inherited;
+pub(crate) use inherited::preserve_inherited_wait;
+
 #[cfg(test)]
 mod tests;
 
@@ -116,7 +119,12 @@ pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
         }
         None => true,
     };
+    anyhow::ensure!(
+        starts_new || state.machine.inherited_budget_wait.is_none(),
+        "child task is waiting for its original ancestor budget; ordinary continuation is forbidden"
+    );
     if starts_new {
+        state.machine.inherited_budget_wait = None;
         let id = state
             .machine
             .current_submission_id()

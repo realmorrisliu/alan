@@ -66,6 +66,7 @@ pub(crate) struct AgentMachine {
     pub(crate) owner_work: Option<owner_work::Snapshot>,
     pub(crate) task_budget: Option<task_budget::TaskBudget>,
     pub(crate) task_budget_wait: Option<task_budget::waiting::Wait>,
+    pub(crate) inherited_budget_wait: Option<task_budget::waiting::InheritedWait>,
     /// Whether the current automatic compaction cycle already attempted a silent memory flush.
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
@@ -93,6 +94,7 @@ impl AgentMachine {
             owner_work: None,
             task_budget: None,
             task_budget_wait: None,
+            inherited_budget_wait: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         }
@@ -229,6 +231,7 @@ impl AgentMachine {
             owner_work: None,
             task_budget: None,
             task_budget_wait: None,
+            inherited_budget_wait: None,
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })
