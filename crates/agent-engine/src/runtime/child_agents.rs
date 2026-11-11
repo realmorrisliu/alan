@@ -47,6 +47,8 @@ struct ChildProcessLaunch<'a> {
     parent_descriptors: &'a BTreeMap<u32, String>,
     requested_spec: &'a SpawnSpec,
     cancel: Option<&'a CancellationToken>,
+    /// Pending request id to reconnect instead of starting a fresh task.
+    resume: Option<&'a str>,
 }
 
 impl ChildNamespacePlan {
@@ -87,14 +89,16 @@ pub(crate) async fn spawn_child_runtime_cancellable(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
+    resume: Option<&str>,
 ) -> Result<DelegatedChildRunSupervisor> {
-    spawn_child_runtime_inner(parent, spec, Some(cancel)).await
+    spawn_child_runtime_inner(parent, spec, Some(cancel), resume).await
 }
 
 async fn spawn_child_runtime_inner(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
+    resume: Option<&str>,
 ) -> Result<DelegatedChildRunSupervisor> {
     ensure_not_cancelled(cancel)?;
     validate_child_launch_contract(&spec)?;
@@ -109,6 +113,7 @@ async fn spawn_child_runtime_inner(
         parent_descriptors: &parent_descriptors,
         requested_spec: &spec,
         cancel,
+        resume,
     }
     .spawn()
     .await?;
@@ -203,7 +208,7 @@ impl ChildProcessLaunch<'_> {
                         &attempt_spec,
                     ),
                     spawn: attempt_spec.clone(),
-                    resume: None,
+                    resume: self.resume.map(ToString::to_string),
                 };
                 Ok((plan, decision, descriptors, request))
             })();
