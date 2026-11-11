@@ -122,10 +122,14 @@ pub(crate) async fn begin(state: &mut RuntimeLoopState) -> Result<()> {
         }
         None => true,
     };
-    anyhow::ensure!(
-        starts_new || state.machine.inherited_budget_wait.is_none(),
-        "child task is waiting for its original ancestor budget; ordinary continuation is forbidden"
-    );
+    if !starts_new
+        && state.machine.inherited_budget_wait.is_some()
+        && !inherited::lift_inherited(state).await?
+    {
+        anyhow::bail!(
+            "child task is waiting for its original ancestor budget; ordinary continuation is forbidden"
+        );
+    }
     if starts_new {
         state.machine.inherited_budget_wait = None;
         let id = state

@@ -95,6 +95,34 @@ pub(crate) async fn resolve_inherited(
     Ok(())
 }
 
+/// Lift a recorded inherited stop once its owning ancestor admits again.
+///
+/// The child grants nothing itself; it only observes that the recorded ancestor
+/// extended. Missing ancestry or a changed task identity leaves the wait in place.
+pub(crate) async fn lift_inherited(state: &mut RuntimeLoopState) -> Result<bool> {
+    let Some(wait) = state.machine.inherited_budget_wait.clone() else {
+        return Ok(false);
+    };
+    let budget = state
+        .machine
+        .task_budget
+        .as_ref()
+        .context("inherited wait lacks child budget")?;
+    ensure!(
+        budget.snapshot().await.task_id == wait.budget.task_id,
+        "inherited wait belongs to a different task"
+    );
+    if !budget
+        .ancestor_admits(&wait.ancestor_task_id, wait.dimension)
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+    state.machine.inherited_budget_wait = None;
+    Ok(true)
+}
+
 pub(crate) async fn pause_inherited<E, F>(
     state: &mut RuntimeLoopState,
     exhausted: &InheritedExhaustion,

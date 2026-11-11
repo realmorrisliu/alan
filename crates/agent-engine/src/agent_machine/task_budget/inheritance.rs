@@ -180,6 +180,40 @@ impl TaskBudget {
         self.reserve_local(admission, false).await
     }
 
+    /// Whether the recorded ancestor currently admits `dimension` again.
+    ///
+    /// Read-only: lifting an inherited stop must never consume the allowance it
+    /// observes, and an ancestor that cannot be found stays closed.
+    pub(crate) async fn ancestor_admits(
+        &self,
+        ancestor_task_id: &str,
+        dimension: super::Dimension,
+    ) -> Result<bool> {
+        self.validate_ancestry().await?;
+        for ancestor in &self.ancestors {
+            let state = ancestor.state.lock().await;
+            if state.snapshot.task_id != ancestor_task_id {
+                continue;
+            }
+            if state.poisoned
+                || state.snapshot.phase != Phase::Running
+                || state.snapshot.foreground_complete
+            {
+                return Ok(false);
+            }
+            let snapshot = &state.snapshot;
+            let limits = &snapshot.limits;
+            return Ok(match dimension {
+                super::Dimension::ModelCalls => snapshot.model_calls < limits.model_calls.get(),
+                super::Dimension::ToolCalls => snapshot.tool_calls < limits.tool_calls.get(),
+                super::Dimension::Time => {
+                    snapshot.elapsed_millis < limits.execution_seconds.get() * 1_000
+                }
+            });
+        }
+        Ok(false)
+    }
+
     pub(crate) async fn remaining_time(&self) -> Result<std::time::Duration> {
         self.validate_ancestry().await?;
         let mut remaining = self.remaining_time_local(false).await?;
