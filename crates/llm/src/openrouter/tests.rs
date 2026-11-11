@@ -239,11 +239,8 @@ async fn maps_stream_text_reasoning_completion_and_errors() {
             id: Some("resp-stream".to_string()),
             model: Some("model".to_string()),
             finish_reason: Some("tool_calls".to_string()),
-            usage: Some(json!({
-                "prompt_tokens": 2,
-                "completion_tokens": 3,
-                "total_tokens": 5
-            })),
+            tool_calls: vec![],
+            usage: Some(ResponseUsage::new(2, 3, 5)),
         },
     ])
     .boxed();

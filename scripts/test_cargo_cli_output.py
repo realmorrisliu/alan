@@ -35,7 +35,6 @@ class CargoCliOutputTests(unittest.TestCase):
             '[workspace]\n[[bin]]\nname = "alan"\npath = "main.rs"\n'
         )
         (self.repo / "main.rs").write_text("fn main() {}\n")
-        shutil.copy2(SCRIPTS.parent / "rust-toolchain.toml", self.repo / "rust-toolchain.toml")
         self.env = {key: value for key, value in os.environ.items()
                     if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}
         self.env["ALAN_CLI_INSTALL_DIR"] = str(self.root / "bin")

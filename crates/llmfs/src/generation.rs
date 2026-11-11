@@ -221,7 +221,7 @@ impl Connection {
             (&self.generation_starts, self.limits.max_generations)
         };
         starts
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 if max.is_some_and(|max| current >= max) {
                     None
                 } else {
