@@ -113,13 +113,32 @@ async fn a_relaunched_child_republishes_the_same_inherited_request_identity() {
             _ => None,
         })
         .expect("the pause publishes a yield");
-    let first = source
+    let recorded = source
         .machine
         .inherited_budget_wait
         .as_ref()
         .expect("the pause records the wait")
-        .checkpoint
         .clone();
+    // Namespace request ids are per-process counters, so the durable key is the
+    // recorded checkpoint identity, which must survive the relaunch unchanged.
+    assert!(
+        recorded
+            .checkpoint
+            .checkpoint_id
+            .starts_with(crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE),
+        "unexpected checkpoint id {}",
+        recorded.checkpoint.checkpoint_id
+    );
+    assert_eq!(
+        recorded.checkpoint.details["checkpoint_id"],
+        serde_json::json!(recorded.checkpoint.checkpoint_id),
+        "the published details must carry the durable key"
+    );
+    assert_ne!(
+        published_id, recorded.checkpoint.checkpoint_id,
+        "namespace request ids are per-process counters and must not be the durable key"
+    );
+    let first = recorded.checkpoint.clone();
     source.machine.flush_recorder().await.unwrap();
 
     // A new invocation must expose the same request, or the ancestor's resume
@@ -134,13 +153,25 @@ async fn a_relaunched_child_republishes_the_same_inherited_request_identity() {
     .unwrap();
     let mut relaunched = state(recovered);
     assert!(relaunched.machine.inherited_budget_wait.is_some());
+    let durable = relaunched
+        .machine
+        .inherited_budget_wait
+        .as_ref()
+        .expect("the relaunched child recovers the wait")
+        .checkpoint
+        .checkpoint_id
+        .clone();
+    assert_eq!(
+        durable, recorded.checkpoint.checkpoint_id,
+        "the durable key must survive a relaunch"
+    );
     let republished = publish_inherited_wait(&mut relaunched)
         .await
         .unwrap()
         .expect("the inherited wait is republished");
-    assert_eq!(
-        republished, published_id,
-        "the request identity must survive a relaunch"
+    assert!(
+        republished.starts_with("r"),
+        "a namespace request id is still allocated for the UI, got {republished}"
     );
     assert_eq!(
         relaunched.machine.pending_confirmation(),

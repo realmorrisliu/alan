@@ -169,6 +169,7 @@ fn inherited_pause_handoff_names_the_owning_ancestor_instead_of_v1_failure() {
         inherited: Some(InheritedPause {
             ancestor_task_id: "ancestor-1".to_string(),
             dimension: "model".to_string(),
+            checkpoint_id: "inherited_budget_1".to_string(),
         }),
     });
 

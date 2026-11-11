@@ -42,6 +42,7 @@ async fn inherited_pause_records_the_reconnect_and_stops_the_parent_turn() {
                         inherited: Some(InheritedPause {
                             ancestor_task_id: "ancestor-1".to_string(),
                             dimension: "model_calls".to_string(),
+                            checkpoint_id: "inherited_budget_1".to_string(),
                         }),
                     }),
                     child_run: None,
@@ -171,6 +172,7 @@ async fn a_parent_owned_allowance_stops_through_the_local_extension_gate() {
                         inherited: Some(InheritedPause {
                             ancestor_task_id: owner_id,
                             dimension: "model_calls".to_string(),
+                            checkpoint_id: "inherited_budget_1".to_string(),
                         }),
                     }),
                     child_run: None,
@@ -259,6 +261,7 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
                             inherited: Some(InheritedPause {
                                 ancestor_task_id: owner_id,
                                 dimension: "model_calls".to_string(),
+                                checkpoint_id: "inherited_budget_1".to_string(),
                             }),
                         }),
                         child_run: None,

@@ -25,15 +25,16 @@ fn checkpoint(
     exhausted: &InheritedExhaustion,
     budget: &crate::agent_machine::task_budget::Snapshot,
 ) -> PendingConfirmation {
+    let checkpoint_id = format!(
+        "{INHERITED_BUDGET_CHECKPOINT_TYPE}_{}",
+        uuid::Uuid::new_v4()
+    );
     let dimension = serde_json::to_value(exhausted.dimension)
         .ok()
         .and_then(|value| value.as_str().map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string());
     PendingConfirmation {
-        checkpoint_id: format!(
-            "{INHERITED_BUDGET_CHECKPOINT_TYPE}_{}",
-            uuid::Uuid::new_v4()
-        ),
+        checkpoint_id: checkpoint_id.clone(),
         checkpoint_type: INHERITED_BUDGET_CHECKPOINT_TYPE.into(),
         summary: format!(
             "Parent task budget reached: ancestor {} exhausted {dimension}. Only that ancestor can extend it.",
@@ -41,6 +42,7 @@ fn checkpoint(
         ),
         details: serde_json::json!({
             "kind": INHERITED_BUDGET_CHECKPOINT_TYPE,
+            "checkpoint_id": checkpoint_id,
             "ancestor_task_id": exhausted.ancestor_task_id,
             "dimension": exhausted.dimension,
             "budget": budget,

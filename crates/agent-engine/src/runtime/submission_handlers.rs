@@ -324,6 +324,24 @@ where
                     "Host Mount pending requests are resolved from service status above"
                 ),
                 None => {
+                    // A relaunched child has no pending yield for its inherited
+                    // stop; the ancestor's resume names the durable checkpoint
+                    // instead, which is the authorization to continue.
+                    let inherited = runtime
+                        .machine
+                        .inherited_budget_wait
+                        .as_ref()
+                        .map(|wait| wait.checkpoint.clone())
+                        .filter(|checkpoint| checkpoint.checkpoint_id == request_id);
+                    if let Some(checkpoint) = inherited {
+                        super::task_budget::resolve_inherited(runtime.machine, &checkpoint, true)
+                            .await?;
+                        return Ok(RuntimeOpAction::RunTurn {
+                            turn_kind: TurnRunKind::ResumeTurn,
+                            user_input: None,
+                            activate_task: false,
+                        });
+                    }
                     emit(Event::Error {
                         message: format!(
                             "Resume request_id '{}' does not match any pending yield.",

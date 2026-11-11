@@ -42,6 +42,8 @@ pub(super) struct ChildRuntimePause {
 pub(super) struct InheritedPause {
     pub(super) ancestor_task_id: String,
     pub(super) dimension: String,
+    /// Durable key the ancestor must send back to authorize a resume.
+    pub(super) checkpoint_id: String,
 }
 
 /// Normalized lifecycle and handoff evidence for one delegated Child Run.
