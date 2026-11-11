@@ -657,8 +657,11 @@ What this does **not** establish:
   ancestor extension reconnecting the original subtree.
 - The child-side lift applies inside one runtime; across a process boundary the
   child exits paused and cannot observe the ancestor, so the reconnect record and
-  resume launch are the only path. The reconnect itself is proven at source level
-  through the launch seam, not by a real second process.
+  resume launch are the only path. `3cb1a710` makes that path possible: the
+  inherited wait persists its own decision, engine startup republishes it, and a
+  test shows the republished request identity equals the one the first invocation
+  published. What is still unproven is a real second process round trip — the
+  resume is exercised through the launch seam, not by launching two processes.
 - Cross-invocation restoration fails closed when the recorded ancestor binding or
   continuation cannot be re-established; that path has source coverage only.
 
