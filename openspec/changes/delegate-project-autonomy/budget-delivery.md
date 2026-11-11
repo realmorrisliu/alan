@@ -640,6 +640,16 @@ pause recording the reconnect and surfacing the typed ancestor stop, recovery
 keeping the latest record per tool call, and rejection of a record without
 ancestor identity. The repository quality gate passes on each slice.
 
+`eb4c709e` closes the loop with end-to-end evidence rather than per-slice
+bookkeeping. The spawn seam carries the reconnect request, so the test observes
+what each launch received: a child stops on an allowance this task owns, the
+parent pauses with that call as its continuation, the owner extends, and the call
+runs again with `inherited_budget-1` before the record is consumed. It asserts
+exactly two launches (none, then the reconnect) and that the record is gone
+afterwards, so the call cannot run a third time.
+`budget_limits_virtual_tool_batch_and_preserves_only_unexecuted_calls` covers the
+complementary rule that completed calls are never put back into a paused batch.
+
 What this does **not** establish:
 
 - No native acceptance run was performed. The 2026-10-26 `partial_inherited_limit`
@@ -647,11 +657,10 @@ What this does **not** establish:
   ancestor extension reconnecting the original subtree.
 - The child-side lift applies inside one runtime; across a process boundary the
   child exits paused and cannot observe the ancestor, so the reconnect record and
-  resume launch are the only path.
+  resume launch are the only path. The reconnect itself is proven at source level
+  through the launch seam, not by a real second process.
 - Cross-invocation restoration fails closed when the recorded ancestor binding or
   continuation cannot be re-established; that path has source coverage only.
-- Completed-effect non-replay is inherited from the existing replay-batch
-  semantics, not separately proven for a reconnect.
 
 Task 2.4 remains unchecked. Whole-transition time boundaries, native UI and
 task-tree qualification remain open, and no source test count substitutes for
