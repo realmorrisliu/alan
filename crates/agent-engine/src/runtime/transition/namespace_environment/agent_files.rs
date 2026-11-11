@@ -446,6 +446,16 @@ impl NamespaceAgentFiles {
         String::from_utf8(self.client().read_file(&path).await?).context("request kind is utf8")
     }
 
+    /// Confirmation details recorded with a pending child request, when present.
+    pub(crate) async fn read_request_details(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let path = format!("{}/requests/{id}/options", self.agent_path);
+        let Ok(bytes) = self.client().read_file(&path).await else {
+            return Ok(None);
+        };
+        let options: serde_json::Value = serde_json::from_slice(&bytes)?;
+        Ok(options.get("details").cloned())
+    }
+
     pub(crate) async fn request_events_offset(&self) -> Result<u64> {
         self.child_tree_events_offset("requests").await
     }

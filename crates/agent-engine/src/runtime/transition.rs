@@ -736,7 +736,7 @@ where
                     .filter(|call| state.machine.tool_payload_by_call_id(&call.id).is_none())
                     .cloned()
                     .collect();
-                super::task_budget::preserve_inherited_wait(
+                let paused = super::task_budget::pause_inherited(
                     state,
                     error
                         .downcast_ref::<crate::agent_machine::task_budget::InheritedExhaustion>()
@@ -745,9 +745,16 @@ where
                         tool_calls: remaining,
                         resume_with_generation: !inputs.explicit_command,
                     }),
+                    emit,
                 )
                 .await?;
-                return Err(error);
+                return Ok(if paused {
+                    ToolBatchOrchestratorOutcome::PauseTurn
+                } else {
+                    ToolBatchOrchestratorOutcome::EndTurn {
+                        surfaces_refreshed: false,
+                    }
+                });
             }
             Err(error) if error.is::<crate::agent_machine::task_budget::Exhausted>() => {
                 let paused = super::task_budget::pause_tool_batch(

@@ -12,6 +12,8 @@ pub const EFFECT_REPLAY_CHECKPOINT_TYPE: &str = "effect_replay_confirmation";
 pub const EFFECT_REPLAY_CHECKPOINT_PREFIX: &str = "effect_replay_";
 pub const EFFECT_REPLAY_CONTROL_KIND: &str = "effect_replay_confirmation";
 pub const TASK_BUDGET_CHECKPOINT_TYPE: &str = "task_budget_extension";
+/// Request kind a delegated child publishes when only an ancestor can lift its stop.
+pub const INHERITED_BUDGET_CHECKPOINT_TYPE: &str = "inherited_budget";
 
 pub const RUNTIME_CONFIRMATION_CONTROL_SOURCE: &str = "runtime/submission_handlers";
 pub const RUNTIME_CONFIRMATION_CONTROL_VERSION: u64 = 1;
@@ -21,6 +23,7 @@ pub fn runtime_confirmation_control_kind(checkpoint_type: &str) -> Option<&'stat
         TOOL_ESCALATION_CHECKPOINT_TYPE => Some(TOOL_ESCALATION_CONTROL_KIND),
         EFFECT_REPLAY_CHECKPOINT_TYPE => Some(EFFECT_REPLAY_CONTROL_KIND),
         TASK_BUDGET_CHECKPOINT_TYPE => Some(TASK_BUDGET_CHECKPOINT_TYPE),
+        INHERITED_BUDGET_CHECKPOINT_TYPE => Some(INHERITED_BUDGET_CHECKPOINT_TYPE),
         _ => None,
     }
 }
@@ -30,6 +33,7 @@ pub fn runtime_confirmation_checkpoint_prefix(checkpoint_type: &str) -> Option<&
         TOOL_ESCALATION_CHECKPOINT_TYPE => Some(TOOL_ESCALATION_CHECKPOINT_PREFIX),
         EFFECT_REPLAY_CHECKPOINT_TYPE => Some(EFFECT_REPLAY_CHECKPOINT_PREFIX),
         TASK_BUDGET_CHECKPOINT_TYPE => Some("task_budget_"),
+        INHERITED_BUDGET_CHECKPOINT_TYPE => Some("inherited_budget_"),
         _ => None,
     }
 }

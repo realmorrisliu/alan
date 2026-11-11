@@ -816,3 +816,106 @@ async fn inherited_wait_preserves_ordered_work_without_a_child_extension_or_auto
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn inherited_pause_publishes_an_ancestor_owned_wait_without_offering_a_local_decision() {
+    use crate::agent_machine::task_budget::{Admission, InheritedExhaustion};
+    use alan_agent_protocol::Event;
+    let directory = tempfile::TempDir::new().unwrap();
+    let machine = AgentMachine::new_with_recorder_in_dir("/proc/child", "test", directory.path())
+        .await
+        .unwrap();
+    let mut source = state(machine);
+    let parent = TaskBudget::start(
+        "ancestor".into(),
+        source.core_config.task_budget.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+    parent.reserve(Admission::Model).await.unwrap();
+    let child = TaskBudget::start_with_parent(
+        "child".into(),
+        source.core_config.task_budget.clone(),
+        source.machine.recorder(),
+        Some(parent),
+    )
+    .await
+    .unwrap();
+    let error = child.reserve(Admission::Model).await.unwrap_err();
+    let typed = error
+        .downcast_ref::<InheritedExhaustion>()
+        .expect("ancestor exhaustion stays typed");
+    let exhausted = InheritedExhaustion {
+        ancestor_task_id: typed.ancestor_task_id.clone(),
+        dimension: typed.dimension,
+    };
+    source.machine.task_budget = Some(child);
+    let budget = source.machine.task_budget.as_ref().unwrap();
+    let before = budget.snapshot().await;
+
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Event>::new()));
+    let sink = events.clone();
+    let mut emit = move |event: Event| {
+        sink.lock().unwrap().push(event);
+        async {}
+    };
+    let continuation = PendingToolReplayBatch {
+        tool_calls: vec![NormalizedToolCall {
+            id: "pending-read".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path":"fixture.txt"}),
+        }],
+        resume_with_generation: true,
+    };
+    let paused = pause_inherited(
+        &mut source,
+        &exhausted,
+        Some(continuation.clone()),
+        &mut emit,
+    )
+    .await
+    .unwrap();
+    drop(emit);
+
+    assert!(paused, "an inherited stop must pause rather than fail");
+    let wait = source
+        .machine
+        .inherited_budget_wait
+        .as_ref()
+        .expect("inherited wait is recorded");
+    assert_eq!(wait.ancestor_task_id, exhausted.ancestor_task_id);
+    assert_eq!(wait.dimension, exhausted.dimension);
+    assert_eq!(wait.continuation, Some(continuation));
+    // The child must never offer itself the allowance its ancestor owns.
+    assert!(source.machine.task_budget_wait.is_none());
+    assert!(!source.machine.pending_request_ids().is_empty());
+
+    let after = source
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .await;
+    assert_eq!(
+        (after.model_calls, after.tool_calls),
+        (before.model_calls, before.tool_calls),
+        "pausing must not admit another model or Tool call"
+    );
+
+    let events = events.lock().unwrap();
+    let yield_event = events
+        .iter()
+        .find(|event| matches!(event, Event::Yield { .. }))
+        .expect("the pause is published as a yield");
+    let Event::Yield { kind, .. } = yield_event else {
+        unreachable!("filtered to Yield")
+    };
+    assert_eq!(
+        kind,
+        &alan_agent_protocol::YieldKind::Custom(
+            super::inherited::INHERITED_BUDGET_CHECKPOINT_TYPE.to_string()
+        )
+    );
+}

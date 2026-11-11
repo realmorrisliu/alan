@@ -33,6 +33,15 @@ pub(super) enum ChildRuntimeStatus {
 pub(super) struct ChildRuntimePause {
     pub(super) request_id: String,
     pub(super) kind: YieldKind,
+    /// Set when the paused child is stopped by an ancestor-owned task budget.
+    pub(super) inherited: Option<InheritedPause>,
+}
+
+/// The ancestor that must extend an inherited budget stop, plus the dimension it hit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct InheritedPause {
+    pub(super) ancestor_task_id: String,
+    pub(super) dimension: String,
 }
 
 /// Normalized lifecycle and handoff evidence for one delegated Child Run.
@@ -243,6 +252,10 @@ impl ChildRuntimeResult {
         &self,
         output_reference: Option<DelegatedSkillOutputRef>,
     ) -> DelegatedSkillResult {
+        let inherited = self
+            .pause
+            .as_ref()
+            .and_then(|pause| pause.inherited.clone());
         let (pause_kind, request_id) = self
             .pause
             .as_ref()
@@ -253,14 +266,23 @@ impl ChildRuntimeResult {
                 )
             })
             .unwrap_or_else(|| ("unknown".to_string(), None));
-        let mut delegated = DelegatedSkillResult::failed(
-            format!(
+        let summary = match &inherited {
+            Some(inherited) => format!(
+                "Delegated Child Run paused on inherited task budget: ancestor {} exhausted {}. Only that ancestor can extend it; child work is preserved.",
+                inherited.ancestor_task_id, inherited.dimension
+            ),
+            None => format!(
                 "Delegated Child Run paused for {pause_kind} and cannot continue in v1 delegated execution."
             ),
+        };
+        let mut delegated = DelegatedSkillResult::failed(
+            summary,
             Some(serde_json::json!({
                 "error_kind": "child_paused",
                 "pause_kind": pause_kind,
-                "request_id": request_id
+                "request_id": request_id,
+                "ancestor_task_id": inherited.as_ref().map(|value| value.ancestor_task_id.clone()),
+                "dimension": inherited.as_ref().map(|value| value.dimension.clone()),
             })),
         );
         delegated.error_kind = Some("child_paused".to_string());

@@ -12,6 +12,8 @@ use crate::agent_machine::task_budget::waiting::{WAIT_EVENT, Wait};
 use crate::rollout::{EventRecord, RolloutItem};
 
 mod inherited;
+pub(crate) use inherited::pause_inherited;
+#[cfg(test)]
 pub(crate) use inherited::preserve_inherited_wait;
 
 #[cfg(test)]
@@ -374,7 +376,19 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
             .publish_work(Some(work.projection()?))
             .await?;
     }
-    let pending = wait.checkpoint;
+    let id = register_wait(state, wait.checkpoint, wait.continuation).await?;
+    Ok(Some(id))
+}
+
+/// Record a paused decision and publish it as this invocation's pending yield.
+///
+/// Shared by the local `Exhausted` wait and the inherited-wait pause so both
+/// reach the same UI, replay-batch and turn-activity bookkeeping.
+pub(super) async fn register_wait(
+    state: &mut RuntimeLoopState,
+    pending: PendingConfirmation,
+    continuation: Option<PendingToolReplayBatch>,
+) -> Result<String> {
     let id = state
         .agent_files()
         .write_confirmation_request(&pending)
@@ -382,7 +396,7 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
     state
         .machine
         .set_confirmation_for_request(id.clone(), pending.clone());
-    if let Some(batch) = wait.continuation {
+    if let Some(batch) = continuation {
         state.machine.set_tool_replay_batch(
             pending.checkpoint_id,
             batch.tool_calls,
@@ -393,7 +407,7 @@ pub(crate) async fn publish_wait(state: &mut RuntimeLoopState) -> Result<Option<
         .machine
         .set_turn_activity(crate::agent_machine::TurnActivityState::Paused);
     super::ui_surfaces::paused(&state.agent_files(), Some(&state.machine)).await?;
-    Ok(Some(id))
+    Ok(id)
 }
 
 pub(crate) async fn resolve(
