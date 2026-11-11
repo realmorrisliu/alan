@@ -153,6 +153,14 @@ CLI behavior and macOS Rust platform adapters; no Apple UI build is needed.
 - `tracing` for observability.
 - Document public APIs with `///` comments.
 - Keep modules small enough that ownership is legible.
+- Async `select!` discipline: a future pinned across iterations is polled by its
+  own arm, never left queued on a shared lock while another arm's body awaits. A
+  fair `tokio::sync::Mutex` hands the permit to whichever waiter it picks, and an
+  unpolled holder starves every later waiter while no guard is alive — the failure
+  looks like "someone is queued but nobody holds the lock". Evidence and the
+  reproducer live in `crates/kernel/src/mountfs/lock_discipline_tests.rs`
+  (`just lock-discipline`); re-awaiting the *same* future inside an arm body is
+  safe, awaiting a different one is not.
 - Use inline tests for small local behavior, adjacent extracted white-box
   suites for large private-access tests, and crate integration tests for public
   boundaries. Follow `rust-test-placement-contract` in OpenSpec.

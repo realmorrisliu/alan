@@ -8,6 +8,10 @@ default:
 test:
     python3 scripts/build_artifacts.py run -- cargo test --workspace
 
+# Mount-table lock discipline tests, with tokio task ids in the output
+lock-discipline:
+    RUSTFLAGS="--cfg tokio_unstable" cargo test -p alan-kernel --lib mountfs::lock_discipline_tests -- --nocapture
+
 # Run the canonical non-mutating quality gate and workspace tests
 check: quality test
     @echo "✅ All checks passed"

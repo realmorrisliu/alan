@@ -31,8 +31,6 @@ class BuildArtifactTests(unittest.TestCase):
             '[package]\nname="artifact-fixture"\nversion="0.1.0"\n'
             '[workspace]\n[[bin]]\nname="fixture"\npath="main.rs"\n')
         (self.owner / "main.rs").write_text("fn main() {}\n")
-        (self.owner / "rust-toolchain.toml").write_text(
-            (Path(artifacts.__file__).resolve().parent.parent / "rust-toolchain.toml").read_text())
         self.output = self.root / "output"
 
     def test_checkout_owner_accepts_case_alias_but_not_a_subdirectory(self):

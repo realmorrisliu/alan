@@ -104,7 +104,7 @@ fn fenced_default_body_and_dim_boundaries_reach_native_ansi_at_73_by_22() {
         !ansi.contains("\u{1b}[4m"),
         "block must not emit underline SGR"
     );
-    let mut terminal = vt100::Parser::new(22, 73, 0);
+    let mut terminal = vt100::Parser::new(22.try_into().unwrap(), 73.try_into().unwrap(), 0);
     terminal.process(ansi.as_bytes());
     assert!(
         terminal

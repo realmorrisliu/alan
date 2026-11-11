@@ -346,6 +346,22 @@ mod command_tests {
             let task = StdioTaskWaitContext::new("!printf partial").unwrap();
             let id = task.record.submission_id.clone();
             let path = format!("/agent/{pid}");
+            // A UI event already on the stream parks the attach at the live edge, which
+            // is what exposed the answer wait wedging on its root-agent probe.
+            shell
+                .write(
+                    &format!("{path}/machine/ui/events"),
+                    format!(
+                        "{}\n",
+                        serde_json::to_string(&UiEvent::Notice {
+                            snapshot: alan_agent_protocol::UiNoticeSnapshot::none(),
+                        })
+                        .unwrap()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
             let mut attachment = tail::open_stdio_tail_attachment(&shell, "/agent/root")
                 .await
                 .unwrap();

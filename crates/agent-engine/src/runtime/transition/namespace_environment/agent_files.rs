@@ -507,29 +507,27 @@ impl NamespaceAgentFiles {
         reference: &NamespaceEvidenceReference,
         preview: Option<String>,
         child_run: Option<serde_json::Value>,
-    ) -> std::result::Result<Vec<u8>, EvidenceResolutionError> {
+    ) -> std::result::Result<Vec<u8>, Box<EvidenceResolutionError>> {
         let client = NamespaceClient::new(self.root.clone());
-        let full_bytes =
-            client
-                .read_file(&reference.path)
-                .await
-                .map_err(|_| EvidenceResolutionError {
-                    code: EvidenceResolutionErrorCode::Missing,
-                    reference: reference.clone(),
-                    message: "evidence reference is not reachable in this namespace".to_string(),
-                    preview: preview.clone(),
-                    child_run: child_run.clone(),
-                })?;
+        let full_bytes = client.read_file(&reference.path).await.map_err(|_| {
+            Box::new(EvidenceResolutionError {
+                code: EvidenceResolutionErrorCode::Missing,
+                reference: reference.clone(),
+                message: "evidence reference is not reachable in this namespace".to_string(),
+                preview: preview.clone(),
+                child_run: child_run.clone(),
+            })
+        })?;
 
         if is_retention_expired_record(&full_bytes) {
-            return Err(EvidenceResolutionError {
+            return Err(Box::new(EvidenceResolutionError {
                 code: EvidenceResolutionErrorCode::RetentionExpired,
                 reference: reference.clone(),
                 message: "evidence expired under the storing file server retention policy"
                     .to_string(),
                 preview,
                 child_run,
-            });
+            }));
         }
         let range = match (reference.offset, reference.length) {
             (Some(offset), Some(length)) => usize::try_from(offset)
@@ -545,12 +543,14 @@ impl NamespaceAgentFiles {
         range
             .filter(|(start, end)| *start <= *end && *end <= full_bytes.len())
             .map(|(start, end)| full_bytes[start..end].to_vec())
-            .ok_or_else(|| EvidenceResolutionError {
-                code: EvidenceResolutionErrorCode::Missing,
-                reference: reference.clone(),
-                message: "evidence reference range is not available".to_string(),
-                preview,
-                child_run,
+            .ok_or_else(|| {
+                Box::new(EvidenceResolutionError {
+                    code: EvidenceResolutionErrorCode::Missing,
+                    reference: reference.clone(),
+                    message: "evidence reference range is not available".to_string(),
+                    preview,
+                    child_run,
+                })
             })
     }
 

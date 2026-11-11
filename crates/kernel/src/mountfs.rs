@@ -31,6 +31,9 @@ use crate::namespace::{Namespace, Resolved};
 #[cfg(test)]
 #[path = "mountfs/dispatch_tests.rs"]
 mod dispatch_tests;
+#[cfg(test)]
+#[path = "mountfs/lock_discipline_tests.rs"]
+mod lock_discipline_tests;
 mod walk_owner;
 use walk_owner::PendingWalk;
 

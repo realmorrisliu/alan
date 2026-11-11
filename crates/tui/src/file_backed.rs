@@ -631,6 +631,11 @@ async fn wait_for_stdio_answer_after_submit(
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Every established future in this loop is polled by its own arm; nothing is left
+    // queued on a shared lock while another arm's body awaits (see
+    // `mountfs::lock_discipline_tests`). `interrupt` is the one future pinned across
+    // iterations, so it must stay a pure signal wait: a caller that made it issue
+    // namespace requests could strand them here while a branch body runs.
     loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
@@ -704,11 +709,20 @@ async fn wait_for_stdio_answer_after_submit(
                         &mut snapshot,
                     );
                     tokio::pin!(refresh);
+                    // Every await in this loop must be its own select arm. A future left
+                    // queued on a shared lock while another arm's body awaits keeps the
+                    // permit it was handed, so the awaiting arm starves behind it: the
+                    // namespace read then blocks for as long as the other arm takes.
+                    let mut probe: Option<ProbeFuture<'_>> = None;
                     loop {
                         tokio::select! {
                             result = &mut refresh => break result,
                             _ = root_agent_pid_tick.tick() => {
-                                tail::require_stdio_attachment_current(shell, attachment).await?;
+                                probe = Some(Box::pin(probe_root_agent_attachment(shell, attachment)));
+                            }
+                            result = async { probe.as_mut().expect("probe future").await }, if probe.is_some() => {
+                                probe = None;
+                                result?;
                             }
                         }
                     }
@@ -719,7 +733,7 @@ async fn wait_for_stdio_answer_after_submit(
                 }
             }
             _ = root_agent_pid_tick.tick() => {
-                tail::require_stdio_attachment_current(shell, attachment).await?;
+                probe_root_agent_attachment(shell, attachment).await?;
             }
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
@@ -729,6 +743,29 @@ async fn wait_for_stdio_answer_after_submit(
                 }
             }
         }
+    }
+}
+
+/// A root-agent probe in flight, polled as its own select arm.
+type ProbeFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
+
+/// A root-agent liveness probe must never gate the answer: a stalled namespace read
+/// is retried on the next tick instead of wedging the wait.
+const ROOT_AGENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+async fn probe_root_agent_attachment(
+    shell: &alan_shell::Shell,
+    attachment: &StdioTailAttachment,
+) -> Result<()> {
+    match tokio::time::timeout(
+        ROOT_AGENT_PROBE_TIMEOUT,
+        tail::require_stdio_attachment_current(shell, attachment),
+    )
+    .await
+    {
+        Ok(result) => result,
+        // The probe is advisory; a stalled read is retried on the next tick.
+        Err(_) => Ok(()),
     }
 }
 
