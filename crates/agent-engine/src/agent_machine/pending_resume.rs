@@ -69,6 +69,14 @@ pub(crate) async fn record(machine: &mut super::AgentMachine, resume: PendingRes
     Ok(())
 }
 
+/// The request to reconnect for `tool_call_id`, when one is recorded.
+pub(crate) fn resume_for(resumes: &[PendingResume], tool_call_id: &str) -> Option<String> {
+    resumes
+        .iter()
+        .find(|pending| pending.tool_call_id == tool_call_id)
+        .map(|pending| pending.request_id.clone())
+}
+
 /// Rebuild the recorded paused children from a rollout.
 ///
 /// A record that no longer validates is a corrupt history rather than a reason
@@ -122,6 +130,17 @@ mod tests {
         assert_eq!(recovered.len(), 2);
         assert_eq!(recovered[0].request_id, "inherited_budget-call-1-retry");
         assert_eq!(recovered[1].tool_call_id, "call-2");
+    }
+
+    #[test]
+    fn resume_for_only_matches_the_recorded_tool_call() {
+        let resumes = vec![sample("call-1")];
+        assert_eq!(
+            resume_for(&resumes, "call-1").as_deref(),
+            Some("inherited_budget-call-1")
+        );
+        assert!(resume_for(&resumes, "call-2").is_none());
+        assert!(resume_for(&[], "call-1").is_none());
     }
 
     #[test]

@@ -209,6 +209,12 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    // A recorded pause means this call reconnects that child instead of
+    // launching the skill again as fresh work.
+    let resume = crate::agent_machine::pending_resume::resume_for(
+        &runtime.machine.pending_delegated_resumes,
+        &tool_call.id,
+    );
     handle_invoke_delegated_skill_with_spawn(
         runtime,
         tool_call,
@@ -216,7 +222,11 @@ where
         cancel,
         task_cancel,
         emit,
-        |runtime, spec, cancel| Box::pin(spawn_and_join_delegated_child(runtime, spec, cancel)),
+        |runtime, spec, cancel| {
+            Box::pin(spawn_and_join_delegated_child(
+                runtime, spec, cancel, resume,
+            ))
+        },
     )
     .await
 }
@@ -341,22 +351,34 @@ where
                 Ok(mut child_result) => {
                     // Remember which child request to reconnect once its
                     // ancestor extends; the child cannot observe that itself.
-                    if let Some(inherited) = child_result
-                        .pause
-                        .as_ref()
-                        .and_then(|pause| pause.inherited.clone())
-                        && let Some(pause) = child_result.pause.as_ref()
+                    if let Some(pause) = child_result.pause.as_ref()
+                        && let Some(inherited) = pause.inherited.clone()
                     {
                         crate::agent_machine::pending_resume::record(
                             &mut *runtime.machine,
                             crate::agent_machine::pending_resume::PendingResume {
                                 tool_call_id: tool_call.id.clone(),
                                 request_id: pause.request_id.clone(),
-                                ancestor_task_id: inherited.ancestor_task_id,
-                                dimension: inherited.dimension,
+                                ancestor_task_id: inherited.ancestor_task_id.clone(),
+                                dimension: inherited.dimension.clone(),
                             },
                         )
                         .await?;
+                        // Hand the stop to the parent's own budget pause so the
+                        // same ancestor gate decides when this call reconnects.
+                        return Err(crate::agent_machine::task_budget::InheritedExhaustion {
+                            ancestor_task_id: inherited.ancestor_task_id,
+                            dimension: serde_json::from_value(serde_json::Value::String(
+                                inherited.dimension,
+                            ))?,
+                        }
+                        .into());
+                    }
+                    if child_result.pause.is_none() {
+                        runtime
+                            .machine
+                            .pending_delegated_resumes
+                            .retain(|pending| pending.tool_call_id != tool_call.id);
                     }
                     if task_cancel.is_cancelled()
                         && child_result.is_cancelled()
@@ -482,12 +504,14 @@ async fn spawn_and_join_delegated_child(
     runtime: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
+    resume: Option<String>,
 ) -> Result<ChildRuntimeResult> {
     if cancel.is_cancelled() {
         return Ok(ChildRuntimeResult::cancelled_before_launch());
     }
 
-    let controller = spawn_child_runtime_cancellable(runtime, spec, cancel, None).await?;
+    let controller =
+        spawn_child_runtime_cancellable(runtime, spec, cancel, resume.as_deref()).await?;
     controller.join_until_cancelled(cancel).await
 }
 
