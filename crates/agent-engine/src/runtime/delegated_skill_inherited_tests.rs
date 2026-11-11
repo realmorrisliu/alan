@@ -122,3 +122,72 @@ async fn a_finished_reconnect_is_consumed_so_the_call_cannot_run_twice() {
         "a finished reconnect must be consumed so it cannot reconnect again"
     );
 }
+
+#[tokio::test]
+async fn a_parent_owned_allowance_stops_through_the_local_extension_gate() {
+    use crate::agent_machine::task_budget::TaskBudget;
+    use crate::runtime::delegated_child_run::{ChildRuntimePause, InheritedPause};
+    use alan_agent_protocol::YieldKind;
+    let mut state = create_test_transition_state();
+    activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+    let budget = TaskBudget::start("owner".into(), state.core_config.task_budget.clone(), None)
+        .await
+        .unwrap();
+    let owner_id = budget.snapshot().await.task_id;
+    state.machine.task_budget = Some(budget);
+    let tool_call = NormalizedToolCall {
+        id: "call_1".to_string(),
+        name: "invoke_delegated_skill".to_string(),
+        arguments: json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review the current diff and summarize risks.",
+            "host_mounts": [{"grant": "grant-project", "target": "/mnt/source", "access": "read_only"}]
+        }),
+    };
+    let mut emit = |_: Event| async {};
+    let cancel = CancellationToken::new();
+    let result = handle_invoke_delegated_skill_with_spawn(
+        &mut state,
+        &tool_call,
+        &tool_call.arguments,
+        &cancel,
+        &mut emit,
+        move |_state, _spec, _cancel| {
+            Box::pin(async move {
+                Ok(ChildRuntimeResult {
+                    status: ChildRuntimeStatus::Paused,
+                    process_path: "child-machine".to_string(),
+                    child_run_id: None,
+                    rollout_path: None,
+                    output_text: String::new(),
+                    turn_summary: None,
+                    structured_output: None,
+                    warnings: Vec::new(),
+                    error_message: None,
+                    pause: Some(ChildRuntimePause {
+                        request_id: "inherited_budget-1".to_string(),
+                        kind: YieldKind::Custom("inherited_budget".to_string()),
+                        inherited: Some(InheritedPause {
+                            ancestor_task_id: owner_id,
+                            dimension: "model_calls".to_string(),
+                        }),
+                    }),
+                    child_run: None,
+                })
+            })
+        },
+    )
+    .await;
+
+    let error = result.expect_err("an owned shortage must stop this turn");
+    assert!(
+        error.is::<crate::agent_machine::task_budget::Exhausted>(),
+        "the owning task must raise its own extendable stop: {error}"
+    );
+    assert!(
+        !error.is::<crate::agent_machine::task_budget::InheritedExhaustion>(),
+        "an owned shortage must not be reported as inherited"
+    );
+    assert_eq!(state.machine.pending_delegated_resumes.len(), 1);
+}

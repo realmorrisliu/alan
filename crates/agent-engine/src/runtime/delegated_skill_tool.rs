@@ -364,13 +364,28 @@ where
                             },
                         )
                         .await?;
-                        // Hand the stop to the parent's own budget pause so the
-                        // same ancestor gate decides when this call reconnects.
+                        let dimension =
+                            serde_json::from_value::<crate::agent_machine::task_budget::Dimension>(
+                                serde_json::Value::String(inherited.dimension),
+                            )?;
+                        // When this task owns the exhausted allowance, only its
+                        // own user extension may lift the stop: raise the local
+                        // exhaustion so the tested budget pause keeps this call
+                        // as the continuation to replay.
+                        let owns_allowance = match runtime.machine.task_budget.as_ref() {
+                            Some(budget) => {
+                                budget.snapshot().await.task_id == inherited.ancestor_task_id
+                            }
+                            None => false,
+                        };
+                        if owns_allowance {
+                            return Err(
+                                crate::agent_machine::task_budget::Exhausted { dimension }.into()
+                            );
+                        }
                         return Err(crate::agent_machine::task_budget::InheritedExhaustion {
                             ancestor_task_id: inherited.ancestor_task_id,
-                            dimension: serde_json::from_value(serde_json::Value::String(
-                                inherited.dimension,
-                            ))?,
+                            dimension,
                         }
                         .into());
                     }

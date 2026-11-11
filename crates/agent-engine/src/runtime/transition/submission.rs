@@ -79,25 +79,34 @@ where
         if state.machine.pending_yield(request_id).is_some_and(|pending|
             matches!(pending, crate::agent_machine::PendingYield::Confirmation(pending)
                 if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE)));
+    // An inherited stop is answered by its owner, not by resuming the child's
+    // own turn, so it must not run the ordinary continuation guard.
+    let inherited_resume = matches!(&submission.op, Op::Resume {request_id, ..}
+        if state.machine.pending_yield(request_id).is_some_and(|pending|
+            matches!(pending, crate::agent_machine::PendingYield::Confirmation(pending)
+                if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE)));
     let other_resume = !budget_resume
+        && !inherited_resume
         && matches!(&submission.op, Op::Resume {request_id, ..}
         if state.machine.pending_yield(request_id).is_some());
     if (computational && !matches!(submission.op, Op::Turn { .. })) || other_resume {
         crate::runtime::task_budget::begin(state).await?;
     }
     let result = handle_submission_inner(state, submission, emit, cancel, steering_broker).await;
-    let result = if computational || other_resume || budget_resume || explicit_interrupt {
-        match (
-            result,
-            state.environment.operation_cleanup.check_admission(),
-        ) {
-            (result, Ok(())) => result,
-            (Ok(()), Err(scope)) => Err(scope),
-            (Err(error), Err(scope)) => Err(scope.context(error)),
-        }
-    } else {
-        result
-    };
+    let result =
+        if computational || other_resume || budget_resume || inherited_resume || explicit_interrupt
+        {
+            match (
+                result,
+                state.environment.operation_cleanup.check_admission(),
+            ) {
+                (result, Ok(())) => result,
+                (Ok(()), Err(scope)) => Err(scope),
+                (Err(error), Err(scope)) => Err(scope.context(error)),
+            }
+        } else {
+            result
+        };
     let result = match result {
         Err(error)
             if error.is::<NamespaceEvaluationUncertainty>()

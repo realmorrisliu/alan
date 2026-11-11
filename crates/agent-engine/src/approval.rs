@@ -48,6 +48,7 @@ pub fn replays_tool_calls(checkpoint_type: &str) -> bool {
         TOOL_ESCALATION_CHECKPOINT_TYPE
             | EFFECT_REPLAY_CHECKPOINT_TYPE
             | TASK_BUDGET_CHECKPOINT_TYPE
+            | INHERITED_BUDGET_CHECKPOINT_TYPE
     )
 }
 

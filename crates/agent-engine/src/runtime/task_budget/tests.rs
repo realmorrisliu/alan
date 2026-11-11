@@ -977,7 +977,7 @@ async fn child_never_extends_an_inherited_wait_and_settles_it_instead() {
     assert!(source.machine.inherited_budget_wait.is_some());
 
     // Any child-side answer ends the wait and settles the subtree.
-    resolve_inherited(&mut source.machine, &pending)
+    resolve_owned_inherited(&mut source.machine, &pending, false)
         .await
         .unwrap();
     assert!(source.machine.inherited_budget_wait.is_none());

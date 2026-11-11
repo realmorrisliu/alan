@@ -5,7 +5,7 @@ use super::RuntimeLoopState;
 use crate::agent_machine::{
     PendingToolReplayBatch,
     task_budget::{
-        InheritedExhaustion, Snapshot,
+        InheritedExhaustion,
         waiting::{INHERITED_WAIT_EVENT, InheritedWait},
     },
 };
@@ -61,13 +61,15 @@ pub(crate) async fn preserve_inherited_wait(
 /// The child cannot grant this allowance itself, so the published decision has no
 /// local options; only the recorded ancestor may extend it. Callers translate a
 /// `true` return into a paused turn.
-/// Settle a child-side answer to an inherited stop.
+/// Answer an inherited stop from the task that owns the exhausted allowance.
 ///
-/// The allowance belongs to the recorded ancestor, so no answer taken in the
-/// child can extend it; any answer ends the wait and settles the child subtree.
-pub(crate) async fn resolve_inherited(
+/// Only the owning ancestor may extend; every other task keeps the stop. An
+/// approval extends the owner's own ledger and lets the recorded continuation
+/// replay, so preserved child work runs once rather than being dropped.
+pub(crate) async fn resolve_owned_inherited(
     machine: &mut crate::agent_machine::AgentMachine,
     pending: &PendingConfirmation,
+    approved: bool,
 ) -> Result<()> {
     ensure!(
         pending.checkpoint_type == INHERITED_BUDGET_CHECKPOINT_TYPE,
@@ -76,21 +78,37 @@ pub(crate) async fn resolve_inherited(
     let wait = machine
         .inherited_budget_wait
         .as_ref()
-        .context("inherited budget resolution lacks its recorded wait")?;
-    let anchored = serde_json::from_value::<Snapshot>(pending.details["budget"].clone())?;
-    ensure!(
-        anchored.task_id == wait.budget.task_id,
-        "inherited budget request belongs to a different task"
-    );
+        .context("inherited budget resolution lacks its recorded wait")?
+        .clone();
     let budget = machine
         .task_budget
         .as_ref()
         .context("inherited budget resolution lacks its ledger")?;
+    let actual = budget.snapshot().await;
     ensure!(
-        budget.snapshot().await.task_id == wait.budget.task_id,
+        actual.task_id == wait.budget.task_id,
         "inherited budget ledger changed after the request"
     );
-    budget.settle(true).await?;
+    ensure!(
+        actual == wait.budget,
+        "inherited budget changed after the request"
+    );
+    if approved {
+        ensure!(
+            actual.task_id == wait.ancestor_task_id,
+            "inherited task budget can only be extended by the owning ancestor"
+        );
+        if let Some(additional) = pending.details.get("additional").cloned()
+            && !additional.is_null()
+        {
+            let additional: crate::agent_machine::task_budget::Extension =
+                serde_json::from_value(additional)?;
+            budget.extend(&additional).await?;
+        }
+        budget.resume().await?;
+    } else {
+        budget.settle(true).await?;
+    }
     machine.inherited_budget_wait = None;
     Ok(())
 }

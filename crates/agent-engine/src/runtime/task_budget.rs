@@ -15,7 +15,7 @@ mod inherited;
 pub(crate) use inherited::pause_inherited;
 #[cfg(test)]
 pub(crate) use inherited::preserve_inherited_wait;
-pub(crate) use inherited::resolve_inherited;
+pub(crate) use inherited::resolve_owned_inherited;
 
 #[cfg(test)]
 mod tests;
@@ -420,11 +420,10 @@ pub(crate) async fn resolve(
     pending: &PendingConfirmation,
     approved: bool,
 ) -> Result<()> {
+    if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE {
+        return inherited::resolve_owned_inherited(machine, pending, approved).await;
+    }
     machine.budget_owner_work(pending)?;
-    anyhow::ensure!(
-        pending.checkpoint_type != crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE,
-        "inherited task budget can only be extended by the owning ancestor"
-    );
     anyhow::ensure!(
         machine
             .task_budget_wait
