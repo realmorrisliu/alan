@@ -418,6 +418,7 @@ impl AgentMachine {
             &event_records,
             recovered_budget.as_ref(),
         )?;
+        machine.pending_delegated_resumes = super::pending_resume::recover(&event_records)?;
         machine.task_budget_wait =
             super::task_budget::waiting::recover(&event_records, recovered_budget.as_ref())?;
         if let Some(work) = machine.owner_work.clone()

@@ -339,6 +339,25 @@ where
             };
             match child_result {
                 Ok(mut child_result) => {
+                    // Remember which child request to reconnect once its
+                    // ancestor extends; the child cannot observe that itself.
+                    if let Some(inherited) = child_result
+                        .pause
+                        .as_ref()
+                        .and_then(|pause| pause.inherited.clone())
+                        && let Some(pause) = child_result.pause.as_ref()
+                    {
+                        crate::agent_machine::pending_resume::record(
+                            &mut *runtime.machine,
+                            crate::agent_machine::pending_resume::PendingResume {
+                                tool_call_id: tool_call.id.clone(),
+                                request_id: pause.request_id.clone(),
+                                ancestor_task_id: inherited.ancestor_task_id,
+                                dimension: inherited.dimension,
+                            },
+                        )
+                        .await?;
+                    }
                     if task_cancel.is_cancelled()
                         && child_result.is_cancelled()
                         && check_turn_cancelled(

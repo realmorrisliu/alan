@@ -15,6 +15,7 @@ mod context_observation;
 pub(crate) mod evaluation;
 pub(crate) mod input_queue;
 pub(crate) mod owner_work;
+pub(crate) mod pending_resume;
 mod recovery;
 mod runtime_control;
 pub(crate) mod task_budget;
@@ -67,6 +68,8 @@ pub(crate) struct AgentMachine {
     pub(crate) task_budget: Option<task_budget::TaskBudget>,
     pub(crate) task_budget_wait: Option<task_budget::waiting::Wait>,
     pub(crate) inherited_budget_wait: Option<task_budget::waiting::InheritedWait>,
+    /// Delegated children paused on an ancestor-owned budget, oldest first.
+    pub(crate) pending_delegated_resumes: Vec<pending_resume::PendingResume>,
     /// Whether the current automatic compaction cycle already attempted a silent memory flush.
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
@@ -95,6 +98,7 @@ impl AgentMachine {
             task_budget: None,
             task_budget_wait: None,
             inherited_budget_wait: None,
+            pending_delegated_resumes: Vec::new(),
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         }
@@ -232,6 +236,7 @@ impl AgentMachine {
             task_budget: None,
             task_budget_wait: None,
             inherited_budget_wait: None,
+            pending_delegated_resumes: Vec::new(),
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })

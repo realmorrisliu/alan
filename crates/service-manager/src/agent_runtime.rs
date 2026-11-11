@@ -542,18 +542,16 @@ impl AgentRuntimeService {
         }
 
         let outcome = if let Some(request) = launch.request.as_ref() {
-            // Reconnecting preserved child work resumes its recorded request
-            // instead of submitting the task again.
-            let op = match &request.resume {
-                Some(request_id) => Op::Resume {
-                    request_id: request_id.clone(),
-                    content: Vec::new(),
-                },
-                None => Op::Turn {
-                    parts: vec![ContentPart::text(request.initial_task.clone())],
-                    context: None,
-                },
+            let mut op = Op::Turn {
+                parts: vec![ContentPart::text(request.initial_task.clone())],
+                context: None,
             };
+            if let Some(request_id) = request.resume.clone() {
+                op = Op::Resume {
+                    request_id,
+                    content: Vec::new(),
+                };
+            }
             controller
                 .handle
                 .submission_tx
