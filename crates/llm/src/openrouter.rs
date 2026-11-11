@@ -387,7 +387,7 @@ async fn consume_openrouter_stream(
             } => {
                 latest_response_id = id;
                 latest_finish_reason = finish_reason;
-                latest_usage = usage.and_then(usage_from_value);
+                latest_usage = usage.map(convert_usage);
                 break;
             }
             UnifiedStreamEvent::Error(error) => {
@@ -724,13 +724,6 @@ fn convert_usage(usage: ResponseUsage) -> TokenUsage {
         total_tokens: usage.total_tokens.min(i32::MAX as u32) as i32,
         reasoning_tokens: None,
     }
-}
-
-#[cfg(test)]
-fn usage_from_value(value: Value) -> Option<TokenUsage> {
-    serde_json::from_value::<ResponseUsage>(value)
-        .ok()
-        .map(convert_usage)
 }
 
 fn stream_text_chunk(text: String) -> StreamChunk {
