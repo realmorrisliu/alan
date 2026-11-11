@@ -65,6 +65,10 @@ pub enum ProcessNamespaceAccess {
 pub struct AgentExecutableRequest {
     pub spawn: SpawnSpec,
     pub initial_task: String,
+    /// Resume an already-pending request in a recovered child instead of
+    /// submitting a fresh task. Set only when reconnecting preserved child work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
 }
 
 /// Terminal state emitted by `/bin/alan-agent` through `/proc/<pid>/io/output`.
@@ -267,6 +271,33 @@ mod tests {
                 delegated: None,
             },
             initial_task: "inspect".to_string(),
+            resume: None,
+        };
+        let encoded = serde_json::to_string(&request).unwrap();
+        assert!(
+            !encoded.contains("resume"),
+            "a fresh launch must not carry a resume request: {encoded}"
+        );
+    }
+
+    #[test]
+    fn agent_executable_request_round_trips_an_explicit_resume() {
+        let request = AgentExecutableRequest {
+            spawn: SpawnSpec {
+                target: SpawnTarget::DefinitionDescriptor {
+                    descriptor: "agent-definition".to_string(),
+                },
+                launch: SpawnLaunchInputs {
+                    task: "inspect".to_string(),
+                    ..SpawnLaunchInputs::default()
+                },
+                handles: Vec::new(),
+                host_mounts: Vec::new(),
+                runtime_overrides: SpawnRuntimeOverrides::default(),
+                delegated: None,
+            },
+            initial_task: "inspect".to_string(),
+            resume: Some("inherited_budget-1".to_string()),
         };
 
         let encoded = serde_json::to_vec(&request).unwrap();

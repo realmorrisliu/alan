@@ -542,13 +542,22 @@ impl AgentRuntimeService {
         }
 
         let outcome = if let Some(request) = launch.request.as_ref() {
+            // Reconnecting preserved child work resumes its recorded request
+            // instead of submitting the task again.
+            let op = match &request.resume {
+                Some(request_id) => Op::Resume {
+                    request_id: request_id.clone(),
+                    content: Vec::new(),
+                },
+                None => Op::Turn {
+                    parts: vec![ContentPart::text(request.initial_task.clone())],
+                    context: None,
+                },
+            };
             controller
                 .handle
                 .submission_tx
-                .send(Submission::new(Op::Turn {
-                    parts: vec![ContentPart::text(request.initial_task.clone())],
-                    context: None,
-                }))
+                .send(Submission::new(op))
                 .await
                 .context("submit initial child Agent Process turn")?;
             let result = wait_for_child_terminal(&root, pid, &controller).await?;

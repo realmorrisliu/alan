@@ -557,6 +557,7 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
             delegated: None,
         },
         initial_task: "respond once".to_string(),
+        resume: None,
     };
     let exec = alan_agent_protocol::ProcessExecSpec {
         executable: "/bin/alan-agent".to_string(),

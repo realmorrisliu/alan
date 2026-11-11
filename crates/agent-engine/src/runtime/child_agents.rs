@@ -203,6 +203,7 @@ impl ChildProcessLaunch<'_> {
                         &attempt_spec,
                     ),
                     spawn: attempt_spec.clone(),
+                    resume: None,
                 };
                 Ok((plan, decision, descriptors, request))
             })();
