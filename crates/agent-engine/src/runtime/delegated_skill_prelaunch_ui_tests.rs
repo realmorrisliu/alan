@@ -50,7 +50,7 @@ async fn delegated_prelaunch_rejection_reaches_retained_ui_without_changing_cont
                 events.push(event);
                 async {}
             },
-            move |_runtime, _spec, _cancel| {
+            move |_runtime, _spec, _cancel, _resume| {
                 *spawn_count.lock().unwrap() += 1;
                 Box::pin(async {
                     anyhow::bail!(

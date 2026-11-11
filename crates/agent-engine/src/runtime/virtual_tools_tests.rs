@@ -228,6 +228,7 @@ where
         super::super::child_agents::ChildLaunchRuntime,
         SpawnSpec,
         &'a CancellationToken,
+        Option<String>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
     >,

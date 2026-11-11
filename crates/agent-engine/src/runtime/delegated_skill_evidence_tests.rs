@@ -77,7 +77,7 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        move |_state, _spec, _cancel| {
+        move |_state, _spec, _cancel, _resume| {
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,

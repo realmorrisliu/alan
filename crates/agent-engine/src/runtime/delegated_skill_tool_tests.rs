@@ -36,7 +36,7 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, spec, _cancel| {
+        |_state, spec, _cancel, _resume| {
             let captured_spec = Arc::clone(&captured_spec_for_spawn);
             Box::pin(async move {
                 *captured_spec.lock().unwrap() = Some(spec);
@@ -163,7 +163,7 @@ async fn test_delegated_capability_rejection_is_recorded_on_parent_tape() {
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        move |_state, _spec, _cancel| {
+        move |_state, _spec, _cancel, _resume| {
             Box::pin(async move { Err(anyhow::Error::new(DelegatedSpawnRejected { decision })) })
         },
     )
@@ -238,7 +238,7 @@ Use this skill when asked.
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, spec, _cancel| {
+        |_state, spec, _cancel, _resume| {
             let captured_spec = Arc::clone(&captured_spec_for_spawn);
             Box::pin(async move {
                 *captured_spec.lock().unwrap() = Some(spec);
@@ -348,7 +348,7 @@ Use this skill when asked.
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             panic!("unsupported runtimes must not spawn delegated runtimes");
             #[allow(
                 unreachable_code,
@@ -423,7 +423,7 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_records_successf
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             Box::pin(async {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
@@ -491,7 +491,7 @@ async fn test_dispatch_virtual_tool_call_records_normalized_namespace_cwd() {
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             Box::pin(async {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
@@ -565,7 +565,7 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_bounds_preview_a
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             Box::pin(async {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
@@ -656,7 +656,7 @@ async fn test_pre_cancelled_delegated_invocation_does_not_project_or_spawn_child
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_runtime, _spec, _cancel| {
+        |_runtime, _spec, _cancel, _resume| {
             Box::pin(async { panic!("pre-cancelled launch must not reach the spawn boundary") })
         },
     )
@@ -696,7 +696,7 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_honors_interrupt
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             let cancel_for_task = cancel_for_task.clone();
             Box::pin(async move {
                 cancel_for_task.cancelled().await;
@@ -765,7 +765,7 @@ async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_honors_interrupt
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             let cancel_for_task = cancel_for_task.clone();
             Box::pin(async move {
                 cancel_for_task.cancelled().await;
@@ -858,7 +858,7 @@ async fn test_dispatch_virtual_tool_call_rejects_target_mismatch() {
         &tool_call.arguments,
         &cancel,
         &mut emit,
-        |_state, _spec, _cancel| {
+        |_state, _spec, _cancel, _resume| {
             panic!("target mismatch should not attempt child launch");
             #[allow(
                 unreachable_code,

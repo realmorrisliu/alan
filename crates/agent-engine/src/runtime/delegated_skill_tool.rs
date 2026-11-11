@@ -209,12 +209,6 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    // A recorded pause means this call reconnects that child instead of
-    // launching the skill again as fresh work.
-    let resume = crate::agent_machine::pending_resume::resume_for(
-        &runtime.machine.pending_delegated_resumes,
-        &tool_call.id,
-    );
     handle_invoke_delegated_skill_with_spawn(
         runtime,
         tool_call,
@@ -222,7 +216,7 @@ where
         cancel,
         task_cancel,
         emit,
-        |runtime, spec, cancel| {
+        |runtime, spec, cancel, resume| {
             Box::pin(spawn_and_join_delegated_child(
                 runtime, spec, cancel, resume,
             ))
@@ -247,10 +241,17 @@ where
         ChildLaunchRuntime,
         SpawnSpec,
         &'a CancellationToken,
+        Option<String>,
     ) -> Pin<
         Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
     >,
 {
+    // A recorded pause means this call reconnects that child instead of
+    // launching the skill again as fresh work.
+    let resume = crate::agent_machine::pending_resume::resume_for(
+        &runtime.machine.pending_delegated_resumes,
+        &tool_call.id,
+    );
     emit(Event::ToolCallStarted {
         title: None,
         id: tool_call.id.clone(),
@@ -345,7 +346,7 @@ where
                 Ok(ChildRuntimeResult::cancelled_before_launch())
             } else {
                 let child_runtime = runtime.child_launch_runtime(&spec);
-                spawn_child(child_runtime, spec, cancel).await
+                spawn_child(child_runtime, spec, cancel, resume.clone()).await
             };
             match child_result {
                 Ok(mut child_result) => {
