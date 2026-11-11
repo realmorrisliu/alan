@@ -532,6 +532,11 @@ fn spawn_with_prepared_runtime_environment(
             return;
         }
 
+        if let Err(error) = super::task_budget::publish_inherited_wait(&mut state).await {
+            let _ = ready_tx.send(Err(format!("restore inherited budget wait: {error:#}")));
+            return;
+        }
+
         info!(
             process_path = %state.process_path(),
             agent_path = %state.agent_path(),

@@ -366,6 +366,30 @@ impl DelegatedChildRunSupervisor {
                 for warning in &result.warnings {
                     push_bounded_child_warning(&mut warnings, warning.clone());
                 }
+                // A paused child whose request is an inherited stop must keep
+                // its ancestor identity, or the parent degrades it back to the
+                // old uncontinuable pause.
+                let pause_inherited = match result.pause.as_ref() {
+                    Some(pause)
+                        if matches!(&pause.kind, YieldKind::Custom(kind)
+                            if kind == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE) =>
+                    {
+                        self.agent_files
+                            .read_request_details(&pause.request_id)
+                            .await?
+                            .map(|details| InheritedPause {
+                                ancestor_task_id: details["ancestor_task_id"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                dimension: details["dimension"]
+                                    .as_str()
+                                    .unwrap_or("unknown")
+                                    .to_string(),
+                            })
+                    }
+                    _ => None,
+                };
                 let (status, error_message, pause) = match result.status {
                     AgentExecutableStatus::Completed => (ChildRuntimeStatus::Completed, None, None),
                     AgentExecutableStatus::Paused => (
@@ -374,7 +398,7 @@ impl DelegatedChildRunSupervisor {
                         result.pause.as_ref().map(|pause| ChildRuntimePause {
                             request_id: pause.request_id.clone(),
                             kind: pause.kind.clone(),
-                            inherited: None,
+                            inherited: pause_inherited.clone(),
                         }),
                     ),
                     AgentExecutableStatus::Failed => (

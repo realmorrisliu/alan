@@ -16,6 +16,39 @@ use anyhow::{Context, Result, ensure};
 /// Request kind the delegated supervisor reads back for an inherited stop.
 pub(crate) use crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE;
 
+/// Build the pending decision this stop publishes.
+///
+/// It offers no local options: the child cannot grant an allowance its ancestor
+/// owns, so the only decisions here are "the ancestor authorized a resume" or
+/// "stop". Persisting it lets a relaunched child republish the same identity.
+fn checkpoint(
+    exhausted: &InheritedExhaustion,
+    budget: &crate::agent_machine::task_budget::Snapshot,
+) -> PendingConfirmation {
+    let dimension = serde_json::to_value(exhausted.dimension)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string());
+    PendingConfirmation {
+        checkpoint_id: format!(
+            "{INHERITED_BUDGET_CHECKPOINT_TYPE}_{}",
+            uuid::Uuid::new_v4()
+        ),
+        checkpoint_type: INHERITED_BUDGET_CHECKPOINT_TYPE.into(),
+        summary: format!(
+            "Parent task budget reached: ancestor {} exhausted {dimension}. Only that ancestor can extend it.",
+            exhausted.ancestor_task_id
+        ),
+        details: serde_json::json!({
+            "kind": INHERITED_BUDGET_CHECKPOINT_TYPE,
+            "ancestor_task_id": exhausted.ancestor_task_id,
+            "dimension": exhausted.dimension,
+            "budget": budget,
+        }),
+        options: Vec::new(),
+    }
+}
+
 pub(crate) async fn preserve_inherited_wait(
     state: &mut RuntimeLoopState,
     exhausted: &InheritedExhaustion,
@@ -36,11 +69,13 @@ pub(crate) async fn preserve_inherited_wait(
         return Ok(());
     }
     budget.settle(false).await?;
+    let snapshot = budget.snapshot().await;
     let wait = InheritedWait {
-        budget: budget.snapshot().await,
+        budget: snapshot.clone(),
         ancestor_task_id: exhausted.ancestor_task_id.clone(),
         dimension: exhausted.dimension,
         continuation,
+        checkpoint: checkpoint(exhausted, &snapshot),
     };
     wait.validate()?;
     if let Some(recorder) = state.machine.recorder() {
@@ -56,61 +91,18 @@ pub(crate) async fn preserve_inherited_wait(
     Ok(())
 }
 
-/// Pause the child on an ancestor-owned stop instead of failing it.
-///
-/// The child cannot grant this allowance itself, so the published decision has no
-/// local options; only the recorded ancestor may extend it. Callers translate a
-/// `true` return into a paused turn.
-/// Answer an inherited stop from the task that owns the exhausted allowance.
-///
-/// Only the owning ancestor may extend; every other task keeps the stop. An
-/// approval extends the owner's own ledger and lets the recorded continuation
-/// replay, so preserved child work runs once rather than being dropped.
-pub(crate) async fn resolve_owned_inherited(
-    machine: &mut crate::agent_machine::AgentMachine,
-    pending: &PendingConfirmation,
-    approved: bool,
-) -> Result<()> {
-    ensure!(
-        pending.checkpoint_type == INHERITED_BUDGET_CHECKPOINT_TYPE,
-        "inherited budget resolution requires an inherited budget request"
-    );
-    let wait = machine
-        .inherited_budget_wait
-        .as_ref()
-        .context("inherited budget resolution lacks its recorded wait")?
-        .clone();
-    let budget = machine
-        .task_budget
-        .as_ref()
-        .context("inherited budget resolution lacks its ledger")?;
-    let actual = budget.snapshot().await;
-    ensure!(
-        actual.task_id == wait.budget.task_id,
-        "inherited budget ledger changed after the request"
-    );
-    ensure!(
-        actual == wait.budget,
-        "inherited budget changed after the request"
-    );
-    if approved {
-        ensure!(
-            actual.task_id == wait.ancestor_task_id,
-            "inherited task budget can only be extended by the owning ancestor"
-        );
-        if let Some(additional) = pending.details.get("additional").cloned()
-            && !additional.is_null()
-        {
-            let additional: crate::agent_machine::task_budget::Extension =
-                serde_json::from_value(additional)?;
-            budget.extend(&additional).await?;
-        }
-        budget.resume().await?;
-    } else {
-        budget.settle(true).await?;
+/// Republish a recovered inherited stop so a relaunched child exposes the same
+/// request identity its ancestor recorded. Without this the ancestor's resume
+/// would target a request that does not exist in the new invocation.
+pub(crate) async fn publish_inherited_wait(state: &mut RuntimeLoopState) -> Result<Option<String>> {
+    let Some(wait) = state.machine.inherited_budget_wait.clone() else {
+        return Ok(None);
+    };
+    if state.machine.has_pending_interaction() {
+        return Ok(None);
     }
-    machine.inherited_budget_wait = None;
-    Ok(())
+    let id = super::register_wait(state, wait.checkpoint, wait.continuation).await?;
+    Ok(Some(id))
 }
 
 /// Lift a recorded inherited stop once its owning ancestor admits again.
@@ -141,6 +133,11 @@ pub(crate) async fn lift_inherited(state: &mut RuntimeLoopState) -> Result<bool>
     Ok(true)
 }
 
+/// Pause the child on an ancestor-owned stop instead of failing it.
+///
+/// The child cannot grant this allowance itself, so the published decision has no
+/// local options; only the recorded ancestor may extend it. Callers translate a
+/// `true` return into a paused turn.
 pub(crate) async fn pause_inherited<E, F>(
     state: &mut RuntimeLoopState,
     exhausted: &InheritedExhaustion,
@@ -158,26 +155,7 @@ where
     let Some(wait) = state.machine.inherited_budget_wait.clone() else {
         return Ok(false);
     };
-    let dimension = serde_json::to_value(wait.dimension)?.to_string();
-    let pending = PendingConfirmation {
-        checkpoint_id: format!(
-            "{INHERITED_BUDGET_CHECKPOINT_TYPE}_{}",
-            uuid::Uuid::new_v4()
-        ),
-        checkpoint_type: INHERITED_BUDGET_CHECKPOINT_TYPE.into(),
-        summary: format!(
-            "Parent task budget reached: ancestor {} exhausted {dimension}. Only that ancestor can extend it.",
-            wait.ancestor_task_id
-        ),
-        details: serde_json::json!({
-            "kind": INHERITED_BUDGET_CHECKPOINT_TYPE,
-            "ancestor_task_id": wait.ancestor_task_id,
-            "dimension": wait.dimension,
-            "budget": wait.budget,
-        }),
-        options: Vec::new(),
-    };
-    let id = super::register_wait(state, pending, wait.continuation.clone()).await?;
+    let id = super::register_wait(state, wait.checkpoint, wait.continuation.clone()).await?;
     emit(Event::Yield {
         request_id: id,
         kind: YieldKind::Custom(INHERITED_BUDGET_CHECKPOINT_TYPE.into()),
@@ -189,4 +167,35 @@ where
     })
     .await;
     Ok(true)
+}
+
+/// Answer a recorded inherited stop.
+///
+/// An approval is the ancestor's authorization to continue, not an allowance:
+/// the wait is cleared and the preserved continuation replays through the
+/// ordinary budget path exactly once. A rejection settles the child subtree.
+/// Nothing here can extend the ancestor's ledger.
+pub(crate) async fn resolve_inherited(
+    machine: &mut crate::agent_machine::AgentMachine,
+    pending: &PendingConfirmation,
+    approved: bool,
+) -> Result<()> {
+    let wait = machine
+        .inherited_budget_wait
+        .as_ref()
+        .context("inherited budget resolution lacks its recorded wait")?
+        .clone();
+    ensure!(
+        wait.checkpoint == *pending,
+        "inherited budget resolution is not the recorded wait"
+    );
+    if !approved {
+        let budget = machine
+            .task_budget
+            .as_ref()
+            .context("inherited budget resolution lacks its ledger")?;
+        budget.settle(true).await?;
+    }
+    machine.inherited_budget_wait = None;
+    Ok(())
 }

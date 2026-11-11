@@ -75,7 +75,9 @@ pub struct PendingConfirmation {
 
 /// Budget extension requires an explicit approval rather than an empty response.
 pub(crate) fn runtime_confirmation_default_choice(checkpoint_type: &str) -> &'static str {
-    if checkpoint_type == TASK_BUDGET_CHECKPOINT_TYPE {
+    if checkpoint_type == TASK_BUDGET_CHECKPOINT_TYPE
+        || checkpoint_type == INHERITED_BUDGET_CHECKPOINT_TYPE
+    {
         "reject"
     } else {
         "approve"

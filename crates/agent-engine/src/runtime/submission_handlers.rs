@@ -290,7 +290,7 @@ where
                     }
                     if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
                     {
-                        super::task_budget::resolve_owned_inherited(
+                        super::task_budget::resolve_inherited(
                             runtime.machine,
                             &pending,
                             choice_str == "approve",

@@ -15,7 +15,8 @@ mod inherited;
 pub(crate) use inherited::pause_inherited;
 #[cfg(test)]
 pub(crate) use inherited::preserve_inherited_wait;
-pub(crate) use inherited::resolve_owned_inherited;
+pub(crate) use inherited::publish_inherited_wait;
+pub(crate) use inherited::resolve_inherited;
 
 #[cfg(test)]
 mod tests;
@@ -421,7 +422,7 @@ pub(crate) async fn resolve(
     approved: bool,
 ) -> Result<()> {
     if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE {
-        return inherited::resolve_owned_inherited(machine, pending, approved).await;
+        return inherited::resolve_inherited(machine, pending, approved).await;
     }
     machine.budget_owner_work(pending)?;
     anyhow::ensure!(

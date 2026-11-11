@@ -76,6 +76,8 @@ pub(crate) struct InheritedWait {
     pub ancestor_task_id: String,
     pub dimension: super::Dimension,
     pub continuation: Option<PendingToolReplayBatch>,
+    /// Persisted so a relaunched child republishes the same request identity.
+    pub checkpoint: PendingConfirmation,
 }
 
 impl InheritedWait {
@@ -86,6 +88,11 @@ impl InheritedWait {
                 && !self.budget.foreground_complete
                 && self.budget.parent_tasks.contains(&self.ancestor_task_id),
             "inherited budget wait lacks its original ancestor or paused task"
+        );
+        ensure!(
+            self.checkpoint.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
+                && self.checkpoint.options.is_empty(),
+            "inherited budget wait lacks its owning checkpoint"
         );
         Ok(())
     }
