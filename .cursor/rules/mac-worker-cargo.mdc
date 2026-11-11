@@ -1,0 +1,46 @@
+---
+description: Cargo rules for agents on Morris's Mac worker (morris-mac-alan).
+alwaysApply: true
+---
+
+# Mac worker cargo (morris-mac-alan)
+
+These rules apply when an agent runs on Morris's Mac worker host **morris-mac-alan**.
+On Linux CI and cloud agent VMs, plain `cargo` is fine. Do not change justfile,
+scripts, or CI to enforce these rules.
+
+## 1. Wrapped cargo only
+
+Never invoke bare `cargo` without the wrapper on `PATH`. The process `PATH` may be a
+stale snapshot; bare `cargo` bypasses the wrapper.
+
+Use either form (same effect):
+
+- Call `~/.local/bin/cargo` by absolute path, or
+- Prefix the command or shell with `export PATH="$HOME/.local/bin:$PATH"` then call `cargo`.
+
+## 2. Target directory
+
+Never set `CARGO_TARGET_DIR`. Never pass `--target-dir`.
+
+Artifacts go automatically to `~/.cache/cargo-target/<repo-name>`: shared by worktrees of
+the same repo, isolated between repos.
+
+## 3. No worktree `target/`
+
+Never leave a local `target/` directory in a worktree.
+
+## 4. Cleaning
+
+To clean, use `~/.local/bin/cargo clean` (or `cargo clean` after the `PATH` export in
+rule 1). It only affects the current repo's shared dir.
+
+Never `rm -rf` any target directory. Never use that to clean another repo.
+
+## 5. Confirm artifact location
+
+```bash
+~/.local/bin/cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])'
+```
+
+Should print `~/.cache/cargo-target/<repo-name>`.
