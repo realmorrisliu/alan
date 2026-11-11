@@ -118,7 +118,7 @@ impl TaskBudget {
             );
             state
                 .active_descendants
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                     count.checked_add(1)
                 })
                 .map_err(|_| anyhow!("too many active descendants"))?;

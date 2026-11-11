@@ -808,7 +808,7 @@ async fn inherited_wait_preserves_ordered_work_without_a_child_extension_or_auto
         payload: serde_json::to_value(&original).unwrap(),
         timestamp: String::new(),
     }];
-    let mut completed = snapshot.clone();
+    let mut completed = snapshot;
     completed.phase = Phase::Completed;
     assert!(
         crate::agent_machine::task_budget::waiting::recover_inherited(&events, Some(&completed))
