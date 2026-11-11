@@ -288,6 +288,10 @@ where
                         )
                         .await?;
                     }
+                    if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
+                    {
+                        super::task_budget::resolve_inherited(runtime.machine, &pending).await?;
+                    }
                     runtime.machine.take_pending(&request_id);
                     return handle_confirmation_resolution(
                         &mut runtime,

@@ -817,10 +817,13 @@ async fn inherited_wait_preserves_ordered_work_without_a_child_extension_or_auto
     );
 }
 
-#[tokio::test]
-async fn inherited_pause_publishes_an_ancestor_owned_wait_without_offering_a_local_decision() {
+/// Child runtime state whose ancestor has already exhausted its model allowance.
+async fn inherited_exhausted_child() -> (
+    tempfile::TempDir,
+    RuntimeLoopState,
+    crate::agent_machine::task_budget::InheritedExhaustion,
+) {
     use crate::agent_machine::task_budget::{Admission, InheritedExhaustion};
-    use alan_agent_protocol::Event;
     let directory = tempfile::TempDir::new().unwrap();
     let machine = AgentMachine::new_with_recorder_in_dir("/proc/child", "test", directory.path())
         .await
@@ -851,8 +854,20 @@ async fn inherited_pause_publishes_an_ancestor_owned_wait_without_offering_a_loc
         dimension: typed.dimension,
     };
     source.machine.task_budget = Some(child);
-    let budget = source.machine.task_budget.as_ref().unwrap();
-    let before = budget.snapshot().await;
+    (directory, source, exhausted)
+}
+
+#[tokio::test]
+async fn inherited_pause_publishes_an_ancestor_owned_wait_without_offering_a_local_decision() {
+    use alan_agent_protocol::Event;
+    let (_directory, mut source, exhausted) = inherited_exhausted_child().await;
+    let before = source
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .await;
 
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Event>::new()));
     let sink = events.clone();
@@ -918,4 +933,65 @@ async fn inherited_pause_publishes_an_ancestor_owned_wait_without_offering_a_loc
             super::inherited::INHERITED_BUDGET_CHECKPOINT_TYPE.to_string()
         )
     );
+}
+
+#[tokio::test]
+async fn child_never_extends_an_inherited_wait_and_settles_it_instead() {
+    use alan_agent_protocol::Event;
+    let (_directory, mut source, exhausted) = inherited_exhausted_child().await;
+    let before = source
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .await;
+    let mut events = Vec::new();
+    let mut emit = |event: Event| {
+        events.push(event);
+        async {}
+    };
+    pause_inherited(&mut source, &exhausted, None, &mut emit)
+        .await
+        .unwrap();
+    drop(emit);
+
+    let pending = source
+        .machine
+        .pending_confirmation()
+        .expect("the inherited pause is a pending confirmation");
+    assert_eq!(
+        pending.checkpoint_type,
+        crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
+    );
+
+    // Only the owning ancestor may extend; the child cannot.
+    let error = resolve(&mut source.machine, &pending, true)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("owning ancestor"),
+        "unexpected error: {error}"
+    );
+    assert!(source.machine.inherited_budget_wait.is_some());
+
+    // Any child-side answer ends the wait and settles the subtree.
+    resolve_inherited(&mut source.machine, &pending)
+        .await
+        .unwrap();
+    assert!(source.machine.inherited_budget_wait.is_none());
+    let after = source
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .await;
+    assert_eq!(
+        (after.model_calls, after.tool_calls),
+        (before.model_calls, before.tool_calls),
+        "settling must not refund or add allowance"
+    );
+    // The inherited block is gone, so ordinary continuation is no longer refused.
+    assert!(begin(&mut source).await.is_ok());
 }

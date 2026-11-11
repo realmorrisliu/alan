@@ -5,7 +5,7 @@ use super::RuntimeLoopState;
 use crate::agent_machine::{
     PendingToolReplayBatch,
     task_budget::{
-        InheritedExhaustion,
+        InheritedExhaustion, Snapshot,
         waiting::{INHERITED_WAIT_EVENT, InheritedWait},
     },
 };
@@ -61,6 +61,40 @@ pub(crate) async fn preserve_inherited_wait(
 /// The child cannot grant this allowance itself, so the published decision has no
 /// local options; only the recorded ancestor may extend it. Callers translate a
 /// `true` return into a paused turn.
+/// Settle a child-side answer to an inherited stop.
+///
+/// The allowance belongs to the recorded ancestor, so no answer taken in the
+/// child can extend it; any answer ends the wait and settles the child subtree.
+pub(crate) async fn resolve_inherited(
+    machine: &mut crate::agent_machine::AgentMachine,
+    pending: &PendingConfirmation,
+) -> Result<()> {
+    ensure!(
+        pending.checkpoint_type == INHERITED_BUDGET_CHECKPOINT_TYPE,
+        "inherited budget resolution requires an inherited budget request"
+    );
+    let wait = machine
+        .inherited_budget_wait
+        .as_ref()
+        .context("inherited budget resolution lacks its recorded wait")?;
+    let anchored = serde_json::from_value::<Snapshot>(pending.details["budget"].clone())?;
+    ensure!(
+        anchored.task_id == wait.budget.task_id,
+        "inherited budget request belongs to a different task"
+    );
+    let budget = machine
+        .task_budget
+        .as_ref()
+        .context("inherited budget resolution lacks its ledger")?;
+    ensure!(
+        budget.snapshot().await.task_id == wait.budget.task_id,
+        "inherited budget ledger changed after the request"
+    );
+    budget.settle(true).await?;
+    machine.inherited_budget_wait = None;
+    Ok(())
+}
+
 pub(crate) async fn pause_inherited<E, F>(
     state: &mut RuntimeLoopState,
     exhausted: &InheritedExhaustion,
