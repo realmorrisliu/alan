@@ -613,3 +613,46 @@ child extension, preserves spending when the original ancestor is extended, and
 keeps unrelated persistence errors typed rather than relabeling them as extendable
 budget exhaustion. This is not a runtime subtree-resume test; the slice remains
 uncommitted pending continuation integration and broader verification.
+
+## Inherited-exhaustion continuation slices — 2026-11-11
+
+The typed-error slice above is now continued by five committed slices on
+`codex/agent-task-budget-20261014`:
+
+- `d608ca7b` pauses a child on an inherited stop and maps a paused child
+  runtime to the non-terminal `ChildRunStatus::Blocked`, so the parent no
+  longer conflates an ancestor-owned stop with `child_failed`.
+- `e55109bc` refuses extension inside the child: `resolve` rejects inherited
+  requests, and any child-side answer settles the subtree without refunding or
+  granting calls.
+- `7d4136e6` lets the child lift the stop once the recorded ancestor admits
+  again (`ancestor_admits`, read-only), replaying the recorded batch through the
+  existing budget-continuation path.
+- `192bb5ba`, `91324152` let a delegated launch carry a resume request id and
+  have Agent Runtime Service submit `Op::Resume` instead of a fresh `Op::Turn`.
+- `2ccd935e`, `1512d6ec` record which paused child to reconnect
+  (`agent_delegated_resume_v1`, durable, bounded, fails closed when the ancestor
+  identity is lost) and hand the stop to the parent's own budget pause so the
+  recorded request is what relaunches, not a new skill invocation.
+
+Source evidence only: 1562 Agent Engine tests pass, including the inherited
+pause recording the reconnect and surfacing the typed ancestor stop, recovery
+keeping the latest record per tool call, and rejection of a record without
+ancestor identity. The repository quality gate passes on each slice.
+
+What this does **not** establish:
+
+- No native acceptance run was performed. The 2026-10-26 `partial_inherited_limit`
+  outcome is unchanged and still stands until an isolated native case shows the
+  ancestor extension reconnecting the original subtree.
+- The child-side lift applies inside one runtime; across a process boundary the
+  child exits paused and cannot observe the ancestor, so the reconnect record and
+  resume launch are the only path.
+- Cross-invocation restoration fails closed when the recorded ancestor binding or
+  continuation cannot be re-established; that path has source coverage only.
+- Completed-effect non-replay is inherited from the existing replay-batch
+  semantics, not separately proven for a reconnect.
+
+Task 2.4 remains unchecked. Whole-transition time boundaries, native UI and
+task-tree qualification remain open, and no source test count substitutes for
+them.
