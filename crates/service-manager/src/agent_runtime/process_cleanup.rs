@@ -7,16 +7,28 @@ use super::{AgentRuntimeService, wait_for_process_exit};
 pub(super) struct ProcessCleanup {
     service: Weak<AgentRuntimeService>,
     pid: Pid,
+    budget: Option<alan_agent_engine::TaskBudgetBinding>,
 }
 
 impl ProcessCleanup {
     pub(super) fn new(service: Weak<AgentRuntimeService>, pid: Pid) -> Self {
-        Self { service, pid }
+        Self {
+            service,
+            pid,
+            budget: None,
+        }
+    }
+
+    pub(super) fn bind_budget(&mut self, budget: alan_agent_engine::TaskBudgetBinding) {
+        self.budget = Some(budget);
     }
 }
 
 impl Drop for ProcessCleanup {
     fn drop(&mut self) {
+        if let Some(budget) = &self.budget {
+            budget.process_exited();
+        }
         let service = self.service.clone();
         let pid = self.pid;
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {

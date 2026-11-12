@@ -106,13 +106,17 @@ pub(super) async fn reset_turn_after_cancelling_host_mounts(
         && matches!(
             work.outcome,
             crate::agent_machine::owner_work::Outcome::Waiting { .. }
+                | crate::agent_machine::owner_work::Outcome::BudgetPaused
                 | crate::agent_machine::owner_work::Outcome::Cancelled
         )
     {
         let request_id = work.owned_request.clone();
         let owner_id = work.waiting_request().request_id;
-        if work.outcome != crate::agent_machine::owner_work::Outcome::Cancelled {
+        if work.outcome != crate::agent_machine::owner_work::Outcome::Cancelled
+            || work.pending_read.is_some()
+        {
             work.outcome = crate::agent_machine::owner_work::Outcome::Cancelled;
+            machine.retire_owner_read(&mut work, "owner work stopped");
             machine.persist_owner_work(work).await?;
         }
         if let Some(request_id) = request_id {

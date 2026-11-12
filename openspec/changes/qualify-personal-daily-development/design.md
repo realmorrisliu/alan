@@ -3,8 +3,9 @@
 ## Context
 
 The original development qualification retains 21/30 first passes and 91 attempts;
-Linux recovery remains assisted and delegation is unqualified. Main ea929481
-contains the latest composer and dependency deliveries. See proposal.md for scope.
+Linux recovery remains assisted and delegation is unqualified. Interview baseline
+main `ea929481` contained the composer and dependency deliveries; later planning
+adoption is recorded in planning-delivery.md. See proposal.md for scope.
 
 ## Goals / Non-Goals
 

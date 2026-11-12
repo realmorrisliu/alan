@@ -2,6 +2,36 @@
 use super::*;
 
 #[tokio::test]
+async fn continuation_controls_preserve_the_active_callable_and_ignore_next_selection() {
+    let env = environment();
+    let active = callable(&env, "admitted-model");
+    let next = callable(&env, "next-model");
+    let binding = InputBinding {
+        callable_binding: active.identity.clone(),
+        request_controls: Default::default(),
+    };
+    *env.active_binding.write().unwrap() = Some((binding.clone(), active.clone()));
+    env.model_bindings.lock().await.confirmed = Some(next);
+    let mut queues = RuntimeSubmissionQueues::new(AgentMachine::new().input_queue());
+    queues.environment = Some(env.clone());
+    for op in [
+        Op::Resume {
+            request_id: "pending-budget-or-permission".into(),
+            content: vec![],
+        },
+        Op::CompactWithOptions { focus: None },
+        Op::Rollback { turns: 1 },
+    ] {
+        queues.activate_binding(&Submission::new(op)).await.unwrap();
+        let retained = env.active_binding.read().unwrap();
+        let (retained_binding, retained_callable) =
+            retained.as_ref().expect("control lost active binding");
+        assert_eq!(retained_binding, &binding);
+        assert_eq!(retained_callable.identity, active.identity);
+    }
+}
+
+#[tokio::test]
 async fn command_skips_capture_clears_active_and_generation_stays_closed() {
     let env = environment().with_connection_authority(Arc::new(SecretFailure));
     let a = callable(&env, "other-model");

@@ -63,10 +63,13 @@ async fn local_http_openrouter401_engine_failed_commit() {
             let client = NamespaceClient::new(environment.root_transport());
             let doc =
                 super::super::generation::LlmRequestDoc::from_generation_request(&request).unwrap();
-            super::super::generation::start_generation(
+            super::super::generation::start_generation_controlled(
                 &client,
                 "default",
                 &serde_json::to_vec(&doc).unwrap(),
+                &environment.operation_cleanup,
+                0,
+                &CancellationToken::new(),
             )
             .await
             .unwrap_err()

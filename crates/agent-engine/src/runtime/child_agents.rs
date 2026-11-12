@@ -47,9 +47,24 @@ struct ChildProcessLaunch<'a> {
     parent_descriptors: &'a BTreeMap<u32, String>,
     requested_spec: &'a SpawnSpec,
     cancel: Option<&'a CancellationToken>,
+    /// Pending request id to reconnect instead of starting a fresh task.
+    resume: Option<&'a crate::agent_machine::pending_resume::ResumeTarget>,
 }
 
 impl ChildNamespacePlan {
+    fn validate_cwd_scope(&self) -> Result<()> {
+        ensure!(
+            self.cwd == Path::new("/")
+                || self
+                    .effective_mounts
+                    .iter()
+                    .any(|mount| self.cwd.starts_with(&mount.path)),
+            "Child Agent Process cwd '{}' is outside its delegated namespace",
+            self.cwd.display()
+        );
+        Ok(())
+    }
+
     fn namespace_summary(&self) -> alan_agent_protocol::DelegatedNamespaceSummary {
         alan_agent_protocol::DelegatedNamespaceSummary {
             mounts: self
@@ -74,14 +89,16 @@ pub(crate) async fn spawn_child_runtime_cancellable(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
+    resume: Option<&crate::agent_machine::pending_resume::ResumeTarget>,
 ) -> Result<DelegatedChildRunSupervisor> {
-    spawn_child_runtime_inner(parent, spec, Some(cancel)).await
+    spawn_child_runtime_inner(parent, spec, Some(cancel), resume).await
 }
 
 async fn spawn_child_runtime_inner(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
+    resume: Option<&crate::agent_machine::pending_resume::ResumeTarget>,
 ) -> Result<DelegatedChildRunSupervisor> {
     ensure_not_cancelled(cancel)?;
     validate_child_launch_contract(&spec)?;
@@ -96,6 +113,7 @@ async fn spawn_child_runtime_inner(
         parent_descriptors: &parent_descriptors,
         requested_spec: &spec,
         cancel,
+        resume,
     }
     .spawn()
     .await?;
@@ -190,6 +208,10 @@ impl ChildProcessLaunch<'_> {
                         &attempt_spec,
                     ),
                     spawn: attempt_spec.clone(),
+                    resume: self.resume.map(|target| target.request_id.clone()),
+                    recovery_rollout: self.resume.and_then(|target| target.rollout_path.clone()),
+                    // Every reconnect the parent records is an inherited stop.
+                    inherited_resume: self.resume.is_some(),
                 };
                 Ok((plan, decision, descriptors, request))
             })();
@@ -424,15 +446,6 @@ fn build_child_namespace_plan(
         cwd.is_absolute(),
         "Child Agent Process cwd must be absolute"
     );
-    if cwd != Path::new("/") {
-        ensure!(
-            effective
-                .keys()
-                .any(|path| cwd.starts_with(Path::new(path))),
-            "Child Agent Process cwd '{}' is outside its delegated namespace",
-            cwd.display()
-        );
-    }
 
     Ok(ChildNamespacePlan {
         process_mounts: selected
@@ -544,14 +557,50 @@ mod tests {
     }
 
     fn plan(spec: &SpawnSpec) -> Result<ChildNamespacePlan> {
-        build_child_namespace_plan(
+        let plan = build_child_namespace_plan(
             spec,
             &parent_mounts(),
             "/lib/agents/root",
             &descriptors(),
             &[],
             "default",
-        )
+        )?;
+        evaluate_delegated_launch_capabilities(
+            &mut spec.clone(),
+            &plan,
+            &parent_mounts(),
+            Path::new("/mnt/source"),
+        )?;
+        Ok(plan)
+    }
+
+    #[test]
+    fn missing_project_mount_retains_capability_mismatch_before_cwd_rejection() {
+        let mut spec = spec();
+        spec.launch.cwd = Some("/mnt/source".into());
+        spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
+            requirements:
+                crate::runtime::delegation_capabilities::classify_delegated_task_requirements(
+                    "Read fixture.txt",
+                    spec.launch.cwd.as_deref(),
+                ),
+        });
+        let error = plan(&spec).unwrap_err();
+        let rejection = error
+            .downcast_ref::<crate::runtime::delegation_capabilities::DelegatedSpawnRejected>()
+            .unwrap();
+        assert_eq!(
+            rejection.decision.recovery,
+            alan_agent_protocol::DelegatedCapabilityRecovery::ParentPath
+        );
+        assert_eq!(
+            rejection.decision.unsatisfied,
+            vec![
+                alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
+                    path: Some("/mnt/source".into()),
+                }
+            ]
+        );
     }
 
     #[test]
@@ -664,6 +713,7 @@ mod tests {
             alan_agent_protocol::AgentExecutablePause {
                 request_id: "request-1".to_string(),
                 kind: alan_agent_protocol::YieldKind::Confirmation,
+                payload: None,
             },
         );
         assert!(child_reached_observable_terminal(1, &paused));

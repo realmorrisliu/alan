@@ -149,6 +149,7 @@ fn paused_handoff_preserves_pause_kind_and_partial_output_reference() {
     result.pause = Some(ChildRuntimePause {
         request_id: "confirmation-1".to_string(),
         kind: YieldKind::Confirmation,
+        inherited: None,
     });
     let reference = output_reference("/agent/1/actions/paused/output", result.output_text.len());
 
@@ -157,6 +158,34 @@ fn paused_handoff_preserves_pause_kind_and_partial_output_reference() {
     assert_eq!(delegated.error_kind.as_deref(), Some("child_paused"));
     assert!(delegated.summary.contains("confirmation"));
     assert_eq!(delegated.output_ref, Some(reference));
+}
+
+#[test]
+fn inherited_pause_handoff_names_the_owning_ancestor_instead_of_v1_failure() {
+    let mut result = child_result(ChildRuntimeStatus::Paused);
+    result.pause = Some(ChildRuntimePause {
+        request_id: "inherited_budget-1".to_string(),
+        kind: YieldKind::Custom(crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE.to_string()),
+        inherited: Some(InheritedPause {
+            rollout_path: String::new(),
+            ancestor_task_id: "ancestor-1".to_string(),
+            dimension: "model".to_string(),
+            checkpoint_id: "inherited_budget_1".to_string(),
+        }),
+    });
+
+    let delegated = result.delegated_result(None);
+
+    assert_eq!(delegated.error_kind.as_deref(), Some("child_paused"));
+    assert!(
+        delegated.summary.contains("ancestor-1") && delegated.summary.contains("model"),
+        "inherited pause must name the owning ancestor and dimension: {}",
+        delegated.summary
+    );
+    assert!(
+        !delegated.summary.contains("cannot continue in v1"),
+        "inherited pause must not claim the child is permanently failed"
+    );
 }
 
 #[test]

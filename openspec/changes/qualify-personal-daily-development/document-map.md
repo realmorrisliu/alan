@@ -37,9 +37,10 @@ before formal qualification, never adjusted retroactively to pass observed data.
 | [Installation/cache](../archive/2026-10-14-unify-alan-installation-and-cache-lifecycle/) | #1042 997ade6a, install case fix #1058 | Sync product-store, lifecycle/distribution/cache deltas; no new migration |
 | [Composer](../archive/2026-10-14-simplify-shell-composer-status/) | #1059 f2a98f4b | Sync contextual-prompt block, preserve other requirements and407-test evidence |
 
-These archive/sync edits are local documentation delivery until this branch is
-reviewed and merged. They do not rerun historical model qualification. Pre-existing
-historical archives are not edited.
+These archive/sync edits were adopted by planning PR #1060 at `a4ad5992` and
+rechecked against fetched main `9313b5a0`; see [the closure receipt](planning-delivery.md#post-merge-verification--2026-10-23).
+They do not rerun historical model qualification. Pre-existing historical archives
+are not edited.
 
 ## Existing active plans
 

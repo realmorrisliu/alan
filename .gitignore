@@ -74,3 +74,6 @@ clients/apple/ghostty-terminfo
 
 # Local Claude Code settings and session data.
 .claude/
+
+# Local pi agent goals/session state.
+.pi/

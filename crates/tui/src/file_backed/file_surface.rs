@@ -761,7 +761,7 @@ pub(super) fn request_snapshot_to_pending_yield(
 fn request_yield_kind(kind: &str) -> YieldKind {
     match kind {
         "structured_input" => YieldKind::StructuredInput,
-        "confirmation" => YieldKind::Confirmation,
+        "confirmation" | "task_budget_extension" => YieldKind::Confirmation,
         other if other.ends_with("_confirmation") => YieldKind::Confirmation,
         other => YieldKind::Custom(other.to_string()),
     }

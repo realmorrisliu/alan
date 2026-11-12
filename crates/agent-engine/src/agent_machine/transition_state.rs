@@ -61,14 +61,14 @@ pub(crate) struct PlanSnapshot {
 }
 
 /// Tool call normalized at the Machine transition boundary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct NormalizedToolCall {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) arguments: serde_json::Value,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct PendingToolReplayBatch {
     pub(crate) tool_calls: Vec<NormalizedToolCall>,
     pub(crate) resume_with_generation: bool,
@@ -539,6 +539,10 @@ impl AgentMachine {
         std::mem::take(&mut self.transition_state.deferred_runtime_actions)
     }
 
+    pub(crate) fn has_deferred_runtime_actions(&self) -> bool {
+        !self.transition_state.deferred_runtime_actions.is_empty()
+    }
+
     pub(crate) fn can_auto_mid_turn_compact(
         &self,
         estimated_prompt_tokens: usize,
@@ -679,6 +683,24 @@ impl AgentMachine {
 
     pub(crate) fn pending_yield(&self, request_id: &str) -> Option<&PendingYield> {
         self.transition_state.pending.get(request_id)
+    }
+
+    /// Registered request id of the pending decision for a checkpoint.
+    ///
+    /// A relaunched child republishes its inherited stop under a fresh request
+    /// id, so the ancestor's durable checkpoint has to find it by identity.
+    pub(crate) fn pending_id_for_checkpoint(&self, checkpoint_id: &str) -> Option<String> {
+        self.transition_state
+            .pending
+            .iter()
+            .find_map(|(id, pending)| match pending {
+                PendingYield::Confirmation(confirmation)
+                    if confirmation.checkpoint_id == checkpoint_id =>
+                {
+                    Some(id.clone())
+                }
+                _ => None,
+            })
     }
 
     pub(crate) fn pending_tool_replay_batch(

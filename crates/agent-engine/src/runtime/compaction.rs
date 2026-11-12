@@ -688,6 +688,11 @@ where
                 break text;
             }
             Err(err) => {
+                if err.is::<super::NamespaceOperationUncertainty>()
+                    || err.is::<crate::agent_machine::task_budget::Exhausted>()
+                {
+                    return Err(err);
+                }
                 if cancel.is_cancelled() {
                     return Ok(skipped_outcome(
                         request,

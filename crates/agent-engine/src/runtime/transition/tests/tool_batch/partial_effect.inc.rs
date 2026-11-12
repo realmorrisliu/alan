@@ -53,6 +53,7 @@ async fn run_blocked_effect(
         execute_allowed_tool_call(
             runtime,
             ToolExecutionRequest {
+                task_cancel: cancel,
                 tool_call: &call,
                 tool_arguments: &call.arguments,
                 tool_timeout_secs: 1,
@@ -151,6 +152,44 @@ async fn counted_partial_effect_remains_unknown(cancel_after_effect: bool) {
         crate::runtime::tool_execution::ToolExecutionOutcome::PauseTurn
     );
     assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn budget_deadline_cleans_up_real_tool_and_budget_approval_never_authorizes_unknown_effects() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut machine = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", temp.path()).await.unwrap();
+    machine.add_user_message("execute exactly once");
+    let count = Arc::new(AtomicUsize::new(0));
+    let mut tools = ToolRegistry::new();
+    tools.register(BlockedCountedEffect {count:count.clone(),started:Arc::new(tokio::sync::Notify::new())});
+    let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
+    state.core_config.task_budget.execution_seconds = std::num::NonZeroU64::new(1).unwrap();
+    crate::runtime::task_budget::begin(&mut state).await.unwrap();
+    let call = NormalizedToolCall {id:"budget-deadline".into(),name:"blocked_effect".into(),arguments:json!({})};
+    let cancel = CancellationToken::new();
+    let writer = state.agent_files().begin_tape_generation().await.unwrap();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), orchestrate_tool_batch_internal(
+        &mut ToolLoopGuard::new(None, 3), &mut state, std::slice::from_ref(&call),
+        ToolOrchestratorInputs {explicit_command:false,cancel:&cancel,steering_broker:None},
+        (None,None), &writer, &mut |_| async {},
+    )).await.expect("budget must await bounded Process cleanup").unwrap();
+    writer.finish().await.unwrap();
+    assert_eq!(outcome, ToolBatchOrchestratorOutcome::PauseTurn);
+    assert_eq!(count.load(Ordering::SeqCst),1);
+    assert!(!cancel.is_cancelled());
+    assert!(!state.machine.submission_was_cancelled());
+    let identity = build_effect_identity(&state.machine,"blocked_effect",&json!({}),EffectCategory::Process);
+    assert_eq!(state.machine.effect_by_idempotency_key(&identity.idempotency_key).unwrap().status,crate::rollout::EffectStatus::Unknown);
+    let id = state.machine.pending_request_ids().into_iter().next().unwrap();
+    let action = handle_runtime_op(&mut state, Op::Resume {
+        request_id:id, content:vec![alan_agent_protocol::ContentPart::structured(json!({"choice":"approve"}))],
+    },&mut |_| async {}).await.unwrap();
+    assert!(matches!(action, RuntimeOpAction::ReplayApprovedToolBatch {
+        approved_unknown_effect_call_id:None, approved_tool_escalation_call_id:None, ..
+    }));
+    assert_eq!(run_blocked_effect(&mut state,"retry-after-budget",&cancel).await,crate::runtime::tool_execution::ToolExecutionOutcome::PauseTurn);
+    assert_eq!(count.load(Ordering::SeqCst),1);
+    assert_ne!(state.machine.pending_confirmation().unwrap().checkpoint_type,crate::approval::TASK_BUDGET_CHECKPOINT_TYPE);
 }
 
 #[tokio::test]

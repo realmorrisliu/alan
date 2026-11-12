@@ -23,6 +23,10 @@ pub(crate) use runtime_inputs::SubmissionRuntime;
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
     NoTurn,
+    ContinueOwnerWork {
+        work_id: String,
+        approved: bool,
+    },
     RunTurn {
         turn_kind: TurnRunKind,
         user_input: Option<Vec<ContentPart>>,
@@ -257,9 +261,11 @@ where
                         .and_then(|v| v.as_str())
                         .map(ToString::to_string)
                         .or_else(|| first_resume_text(&content));
-                    let choice_str = choice
-                        .as_deref()
-                        .unwrap_or_else(|| default_confirmation_choice(&pending));
+                    let choice_str = choice.as_deref().unwrap_or_else(|| {
+                        crate::approval::runtime_confirmation_default_choice(
+                            &pending.checkpoint_type,
+                        )
+                    });
                     let modifications = result
                         .get("modifications")
                         .and_then(|v| v.as_str())
@@ -273,6 +279,26 @@ where
                             .is_some_and(|batch| !batch.resume_with_generation);
                     if !rejects_explicit_command {
                         *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                    }
+                    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE {
+                        super::task_budget::resolve(
+                            runtime.machine,
+                            &pending,
+                            choice_str == "approve",
+                        )
+                        .await?;
+                    }
+                    if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
+                    {
+                        let approved = choice_str == "approve";
+                        super::task_budget::resolve_inherited(runtime.machine, &pending, approved)
+                            .await?;
+                        if !approved {
+                            // The stop settled the child subtree; resuming the turn
+                            // here would restart work the rejection just closed.
+                            runtime.machine.take_pending(&request_id);
+                            return Ok(RuntimeOpAction::NoTurn);
+                        }
                     }
                     runtime.machine.take_pending(&request_id);
                     return handle_confirmation_resolution(
@@ -301,6 +327,89 @@ where
                     "Host Mount pending requests are resolved from service status above"
                 ),
                 None => {
+                    // A relaunched child has no pending yield for its inherited
+                    // stop; the ancestor's resume names the durable checkpoint
+                    // instead, which is the authorization to continue.
+                    let inherited = runtime
+                        .machine
+                        .inherited_budget_wait
+                        .as_ref()
+                        .filter(|wait| wait.checkpoint.checkpoint_id == request_id)
+                        .cloned();
+                    if let Some(wait) = inherited {
+                        // The allowance lives in the ancestor's own Process. When
+                        // that binding cannot be rebuilt here the reconnect must
+                        // neither consume the stop nor replay work, so it fails
+                        // closed and leaves the record for a later attempt.
+                        let admits = match runtime.machine.task_budget.as_ref() {
+                            Some(budget) => budget
+                                .ancestor_admits(&wait.ancestor_task_id, wait.dimension)
+                                .await
+                                .unwrap_or(false),
+                            None => false,
+                        };
+                        if !admits {
+                            return Err(
+                                crate::agent_machine::task_budget::InheritedResumeUnrecoverable {
+                                    checkpoint_id: wait.checkpoint.checkpoint_id,
+                                }
+                                .into(),
+                            );
+                        }
+                        // Both outcomes generate (a replay or a resumed turn), so
+                        // the transition needs the Tape lease either way.
+                        *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                        if let Some(registered) = runtime
+                            .machine
+                            .pending_id_for_checkpoint(&wait.checkpoint.checkpoint_id)
+                        {
+                            runtime.machine.take_pending(&registered);
+                        }
+                        super::task_budget::resolve_inherited(
+                            runtime.machine,
+                            &wait.checkpoint,
+                            true,
+                        )
+                        .await?;
+                        // The preserved calls were admitted before the pause, so
+                        // the ancestor's authorization replays exactly those and
+                        // nothing else.
+                        let batch = runtime
+                            .machine
+                            .take_tool_replay_batch(&wait.checkpoint.checkpoint_id);
+                        crate::agent_machine::pending_resume::record_decision(
+                            runtime.machine,
+                            &wait.checkpoint.checkpoint_id,
+                            true,
+                            batch.is_some(),
+                        )
+                        .await?;
+                        if let Some(batch) = batch {
+                            return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
+                                tool_calls: batch.tool_calls,
+                                resume_with_generation: batch.resume_with_generation,
+                                approved_unknown_effect_call_id: None,
+                                approved_tool_escalation_call_id: None,
+                            });
+                        }
+                        return Ok(RuntimeOpAction::RunTurn {
+                            turn_kind: TurnRunKind::ResumeTurn,
+                            user_input: None,
+                            activate_task: false,
+                        });
+                    }
+                    // An inherited reconnect names its kind in the checkpoint id.
+                    // When this machine cannot rebuild that stop, continuing would
+                    // replay the ancestor's authorization against missing work, so
+                    // it fails closed instead of looking like an idle turn.
+                    if inherited_resume_kind(&request_id) {
+                        return Err(
+                            crate::agent_machine::task_budget::InheritedResumeUnrecoverable {
+                                checkpoint_id: request_id.clone(),
+                            }
+                            .into(),
+                        );
+                    }
                     emit(Event::Error {
                         message: format!(
                             "Resume request_id '{}' does not match any pending yield.",
@@ -315,6 +424,13 @@ where
         }
     }
     Ok(RuntimeOpAction::NoTurn)
+}
+
+/// Whether a resume id was issued for an inherited budget stop.
+fn inherited_resume_kind(request_id: &str) -> bool {
+    request_id
+        .strip_prefix(crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE)
+        .is_some_and(|rest| rest.starts_with('_'))
 }
 
 fn resume_content_to_value(content: &[ContentPart]) -> serde_json::Value {
@@ -354,10 +470,6 @@ fn first_resume_text(content: &[ContentPart]) -> Option<String> {
         }
         _ => None,
     })
-}
-
-fn default_confirmation_choice(_pending: &crate::approval::PendingConfirmation) -> &'static str {
-    "approve"
 }
 
 fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
@@ -449,6 +561,44 @@ async fn handle_confirmation_resolution(
     let allow_tool_escalation_replay =
         pending.checkpoint_type == crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE;
 
+    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
+        && let Some(work) = runtime.machine.budget_owner_work(&pending)?
+    {
+        return Ok(RuntimeOpAction::ContinueOwnerWork {
+            work_id: work.work_id,
+            approved: choice_str == "approve",
+        });
+    }
+
+    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
+        && choice_str != "approve"
+    {
+        runtime.machine.mark_submission_cancelled();
+        if let Some(batch) = replay_tool_batch {
+            if !batch.resume_with_generation
+                && let Some(tool_call) = batch.tool_calls.first().cloned()
+            {
+                return Ok(RuntimeOpAction::FinishRejectedExplicitCommand { tool_call });
+            }
+            for call in batch.tool_calls {
+                runtime.machine.add_tool_message(
+                    &call.id,
+                    &call.name,
+                    json!({"status":"cancelled", "reason":"task budget extension declined"}),
+                );
+            }
+        }
+        runtime
+            .machine
+            .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+        super::ui_surfaces::turn_completed(&runtime.agent_files, true).await?;
+        super::ui_surfaces::warning(
+            &runtime.agent_files,
+            "Task stopped: additional budget was declined; completed effects are preserved.",
+        )
+        .await?;
+        return Ok(RuntimeOpAction::NoTurn);
+    }
     if choice_str != "approve"
         && let Some(batch) = replay_tool_batch.as_ref()
         && !batch.resume_with_generation

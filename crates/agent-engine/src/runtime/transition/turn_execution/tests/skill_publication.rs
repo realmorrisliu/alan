@@ -35,6 +35,7 @@ async fn delegated_resolution_publishes_without_outer_poll() {
         &call,
         &arguments,
         &CancellationToken::new(),
+        &CancellationToken::new(),
         false,
         &mut emit,
     )
@@ -99,6 +100,7 @@ async fn skill_presentation_failure_preserves_tool_disposition_and_lease() {
         &mut state,
         &call,
         &arguments,
+        &CancellationToken::new(),
         &CancellationToken::new(),
         false,
         &mut emit,

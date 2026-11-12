@@ -278,6 +278,7 @@ pub(crate) async fn promote_inbox_entry(
 
 #[derive(Debug, Clone)]
 pub(crate) struct TurnMemoryPromotionJob {
+    pub(crate) budget: Option<crate::agent_machine::task_budget::TaskBudget>,
     memory_dir: PathBuf,
     process_path: String,
     active_turn_user_messages: Vec<String>,
@@ -300,6 +301,7 @@ pub(crate) fn build_turn_memory_promotion_job(
     }
 
     Some(TurnMemoryPromotionJob {
+        budget: machine.task_budget.clone(),
         memory_dir,
         process_path,
         active_turn_user_messages,

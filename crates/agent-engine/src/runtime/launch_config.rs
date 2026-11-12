@@ -318,7 +318,8 @@ impl AgentProcessConfig {
     /// Derive execution configuration for a child launch. Agent Runtime Service
     /// remains responsible for descriptors, namespace, connection, and the
     /// resolved Agent Definition.
-    pub fn child_for_spawn(&self, spec: &alan_agent_protocol::SpawnSpec) -> Self {
+    pub fn child_for_spawn(&self, request: &alan_agent_protocol::AgentExecutableRequest) -> Self {
+        let spec = &request.spawn;
         let mut child = self.clone();
         if !spec.has_handle(alan_agent_protocol::SpawnHandle::Memory) {
             child.agent_config.core_config.memory.store_dir = None;
@@ -348,7 +349,9 @@ impl AgentProcessConfig {
             .cwd
             .clone()
             .unwrap_or_else(|| PathBuf::from("/"));
-        child.recovery_rollout_path = None;
+        // Only a reconnect recovers a record; the spawn arguments never choose
+        // one, so an ordinary child cannot inherit an older child's work.
+        child.recovery_rollout_path = request.recovery_rollout.as_deref().map(PathBuf::from);
         child
     }
 

@@ -90,6 +90,7 @@ pub struct RuntimeHandle {
     shutdown_tx: Option<mpsc::Sender<()>>,
     recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
     runtime_abort: Option<tokio::task::AbortHandle>,
+    operation_cleanup: super::transition::NamespaceOperationCleanup,
 }
 
 impl RuntimeHandle {
@@ -99,6 +100,7 @@ impl RuntimeHandle {
             shutdown_tx,
             recorder: Arc::new(OnceLock::new()),
             runtime_abort: None,
+            operation_cleanup: Default::default(),
         }
     }
 
@@ -134,10 +136,11 @@ impl RuntimeHandle {
                 tokio::task::yield_now().await;
             }
         }
+        let cleanup = self.operation_cleanup.finish().await;
         if let Some(recorder) = self.recorder.get().and_then(Option::as_ref) {
             recorder.close().await?;
         }
-        Ok(())
+        cleanup
     }
 
     /// Request graceful shutdown of the runtime.
@@ -173,9 +176,11 @@ impl RuntimeController {
         task_handle: JoinHandle<()>,
         ready_rx: oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>,
         recorder: Arc<OnceLock<Option<RolloutRecorder>>>,
+        operation_cleanup: super::transition::NamespaceOperationCleanup,
     ) -> Self {
         let mut handle = RuntimeHandle::new(submission_tx, Some(shutdown_tx));
         handle.recorder = recorder;
+        handle.operation_cleanup = operation_cleanup;
         handle.runtime_abort = Some(task_handle.abort_handle());
         Self {
             handle,
@@ -279,6 +284,14 @@ impl Drop for RuntimeController {
         self.ready_rx.take();
         if let Some(handle) = self.task_handle.take() {
             handle.abort();
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let handle = self.handle.clone();
+                runtime.spawn(async move {
+                    if let Err(error) = handle.finish_after_exit().await {
+                        warn!(%error, "Failed to retire dropped runtime operations");
+                    }
+                });
+            }
         }
     }
 }

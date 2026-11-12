@@ -237,6 +237,8 @@ impl DelegatedSkillResult {
 /// Parent-side record of a delegated invocation and its bounded result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DelegatedSkillInvocationRecord {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_mounts: Vec<alan_agent_protocol::SpawnHostMount>,
     pub skill_id: String,
     pub target: String,
     pub task: String,

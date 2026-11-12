@@ -9,7 +9,7 @@ alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
 alan-llm.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"

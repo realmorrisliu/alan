@@ -581,7 +581,7 @@ pub(crate) async fn create_test_state_with_machine_tools_and_provider<P: LlmProv
     .await
 }
 
-async fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
+pub(crate) async fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
     machine: AgentMachine,
     tools: ToolRegistry,
     provider: P,

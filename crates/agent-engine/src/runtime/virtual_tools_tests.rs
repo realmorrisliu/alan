@@ -206,6 +206,7 @@ where
         tool_call,
         &tool_call.arguments,
         &cancel,
+        &cancel,
         false,
         emit,
     )
@@ -227,6 +228,7 @@ where
         super::super::child_agents::ChildLaunchRuntime,
         SpawnSpec,
         &'a CancellationToken,
+        Option<crate::agent_machine::pending_resume::ResumeTarget>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
     >,
@@ -236,6 +238,7 @@ where
         runtime,
         tool_call,
         tool_arguments,
+        cancel,
         cancel,
         emit,
         spawn_child,

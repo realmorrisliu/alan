@@ -319,6 +319,10 @@ pub struct Config {
     #[serde(default)]
     pub max_tool_loops: Option<usize>,
 
+    /// Finite task-wide admission limits, retained across pause and recovery.
+    #[serde(default)]
+    pub task_budget: crate::TaskBudgetLimits,
+
     /// Consecutive identical tool-call guard.
     /// Set to 0 to disable this guard.
     #[serde(default = "default_tool_repeat_limit")]
@@ -520,6 +524,7 @@ impl Default for Config {
             llm_request_timeout_secs: default_llm_timeout_secs(),
             tool_timeout_secs: default_tool_timeout_secs(),
             max_tool_loops: None,
+            task_budget: crate::TaskBudgetLimits::default(),
             tool_repeat_limit: default_tool_repeat_limit(),
             context_window_tokens: None,
             compaction_soft_trigger_ratio: None,

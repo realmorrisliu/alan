@@ -11,10 +11,10 @@ use std::{
 };
 
 use alan_agent_engine::{
-    AGENT_DEFINITION_FD, AgentExecutablePause, AgentExecutableRequest, AgentExecutableResult,
-    AgentExecutableStatus, AgentProcessConfig, ContentPart, MEMORY_STORE_FD, Op, RuntimeController,
-    RuntimeHandle, SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState,
-    UiNoticeKind, UiNoticeSnapshot, YieldKind,
+    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus,
+    AgentProcessConfig, ContentPart, MEMORY_STORE_FD, Op, RuntimeController, RuntimeHandle,
+    SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind,
+    UiNoticeSnapshot,
     skills::SkillHostCapabilities,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
@@ -32,10 +32,15 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod pause_record;
 mod process_cleanup;
+mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
+
+use pause_record::read_child_pause;
 use process_cleanup::ProcessCleanup;
+use resume_content::resume_content;
 
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
@@ -49,6 +54,7 @@ pub(crate) struct RootAgentTemplate {
     generation_capabilities: ProviderCapabilities,
     llm_connection: String,
     input_shadow: Option<crate::InputShadowSelection>,
+    task_budget_binding: alan_agent_engine::TaskBudgetBinding,
 }
 
 impl RootAgentTemplate {
@@ -62,6 +68,7 @@ impl RootAgentTemplate {
         input_shadow: Option<crate::InputShadowSelection>,
     ) -> Self {
         Self {
+            task_budget_binding: Default::default(),
             process,
             resume_persisted_rollout,
             input_shadow,
@@ -171,6 +178,7 @@ impl AgentRuntimeService {
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
         let mut template = template.clone();
+        template.task_budget_binding = Default::default();
         root_recovery::select(
             &mut template.process,
             template.resume_persisted_rollout,
@@ -273,11 +281,12 @@ impl AgentRuntimeService {
         if invocation.exec.executable != AGENT_EXECUTABLE {
             return ProcessOutcome::exited(127, b"alan-agent: executable mismatch\n");
         }
-        let _cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
+        let mut cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
         let mut launch = match self.prepare_launch(&invocation) {
             Ok(launch) => launch,
             Err(error) => return process_error(error),
         };
+        cleanup.bind_budget(launch.template.task_budget_binding.clone());
         let result = self.run_prepared_agent(&invocation, &mut launch).await;
         if let Err(error) = &result
             && let Some(ready) = launch.ready.take()
@@ -435,6 +444,7 @@ impl AgentRuntimeService {
             format!("/agent/{}", pid.0),
             launch.template.llm_connection.clone(),
         )
+        .with_task_budget_binding(launch.template.task_budget_binding.clone())
         .with_evaluation_publisher({
             let agent = agent.clone();
             move |observation| {
@@ -537,13 +547,20 @@ impl AgentRuntimeService {
         }
 
         let outcome = if let Some(request) = launch.request.as_ref() {
+            let mut op = Op::Turn {
+                parts: vec![ContentPart::text(request.initial_task.clone())],
+                context: None,
+            };
+            if let Some(request_id) = request.resume.clone() {
+                op = Op::Resume {
+                    request_id,
+                    content: resume_content(request),
+                };
+            }
             controller
                 .handle
                 .submission_tx
-                .send(Submission::new(Op::Turn {
-                    parts: vec![ContentPart::text(request.initial_task.clone())],
-                    context: None,
-                }))
+                .send(Submission::new(op))
                 .await
                 .context("submit initial child Agent Process turn")?;
             let result = wait_for_child_terminal(&root, pid, &controller).await?;
@@ -737,7 +754,7 @@ fn child_template(
     });
     validate_package_reference_mounts(&launch_context)?;
 
-    let mut process = parent.process.child_for_spawn(spec);
+    let mut process = parent.process.child_for_spawn(request);
     process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
         launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
         &launch_context.package_references,
@@ -761,6 +778,7 @@ fn child_template(
         .filter(|name| name != "alan-agent" && name != "q")
         .collect::<Vec<_>>();
     Ok(RootAgentTemplate {
+        task_budget_binding: parent.task_budget_binding.child()?,
         process,
         resume_persisted_rollout: false,
         input_shadow: None,
@@ -925,31 +943,6 @@ async fn wait_for_child_terminal(
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-}
-
-async fn read_child_pause(
-    shell: &alan_shell::Shell,
-    pid: Pid,
-) -> Result<Option<AgentExecutablePause>> {
-    let requests_path = format!("/agent/{}/requests", pid.0);
-    for request_id in shell.ls(&requests_path).await? {
-        if matches!(request_id.as_str(), "clone" | "events") {
-            continue;
-        }
-        let request_path = format!("{requests_path}/{request_id}");
-        if shell.cat(&format!("{request_path}/status")).await? != b"pending" {
-            continue;
-        }
-        let kind = String::from_utf8(shell.cat(&format!("{request_path}/kind")).await?)
-            .context("child Agent request kind is utf8")?;
-        let kind = match kind.as_str() {
-            "confirmation" => YieldKind::Confirmation,
-            "structured_input" => YieldKind::StructuredInput,
-            other => YieldKind::Custom(other.to_string()),
-        };
-        return Ok(Some(AgentExecutablePause { request_id, kind }));
-    }
-    Ok(None)
 }
 
 async fn wait_for_process_exit(

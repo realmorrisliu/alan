@@ -9,7 +9,10 @@ use alan_agent_protocol::{
 use alan_ap::ErrorCode;
 use anyhow::{Context, Result, bail};
 
-use super::{NamespaceProcessFiles, client::NamespaceClient};
+use super::{
+    NamespaceProcessFiles,
+    client::{CloneNotOpened, NamespaceClient},
+};
 
 const MAX_NAMESPACE_SPAWN_ATTEMPTS: usize = 3;
 
@@ -149,19 +152,34 @@ impl NamespaceProcessFiles {
             .with_context(|| format!("read Process output from {output_path}"))
     }
 
-    pub async fn spawn_process<I, S>(&self, executable: &str, args: I) -> Result<String>
+    /// Spawn from the current namespace, retaining its allocated PID before commit acknowledgement.
+    pub async fn spawn_process<I, S>(
+        &self,
+        executable: &str,
+        args: I,
+        retained: &mut Option<String>,
+    ) -> Result<String>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
-        let current_pid = self.current_pid()?.to_string();
+        let current_pid = self.current_pid().context(CloneNotOpened)?.to_string();
         let mut last_stale_error = None;
         for _ in 0..MAX_NAMESPACE_SPAWN_ATTEMPTS {
-            let namespace = self.read_process_namespace(&current_pid).await?;
+            let namespace = self
+                .read_process_namespace(&current_pid)
+                .await
+                .context(CloneNotOpened)?;
             let generation = namespace.generation;
             match self
-                .spawn_process_with_manifest(executable, args.clone(), namespace, BTreeMap::new())
+                .spawn_process_with_manifest(
+                    executable,
+                    args.clone(),
+                    namespace,
+                    BTreeMap::new(),
+                    retained,
+                )
                 .await
             {
                 Ok(pid) => return Ok(pid),
@@ -170,6 +188,7 @@ impl NamespaceProcessFiles {
                         .is_stale_namespace_launch(&current_pid, generation, &error)
                         .await?
                     {
+                        *retained = None;
                         last_stale_error = Some(error);
                         continue;
                     }
@@ -200,6 +219,7 @@ impl NamespaceProcessFiles {
                 mounts,
             },
             BTreeMap::new(),
+            &mut None,
         )
         .await
     }
@@ -212,8 +232,14 @@ impl NamespaceProcessFiles {
     ) -> Result<String> {
         let request =
             serde_json::to_string(request).context("serialize /bin/alan-agent launch request")?;
-        self.spawn_process_with_manifest("/bin/alan-agent", vec![request], namespace, descriptors)
-            .await
+        self.spawn_process_with_manifest(
+            "/bin/alan-agent",
+            vec![request],
+            namespace,
+            descriptors,
+            &mut None,
+        )
+        .await
     }
 
     pub(crate) async fn is_stale_namespace_launch(
@@ -234,6 +260,7 @@ impl NamespaceProcessFiles {
         args: Vec<String>,
         namespace: ProcessNamespaceManifest,
         descriptors: BTreeMap<u32, String>,
+        retained: &mut Option<String>,
     ) -> Result<String> {
         let exec_spec = serde_json::to_vec(&ProcessExecSpec {
             executable: executable.to_string(),
@@ -241,11 +268,13 @@ impl NamespaceProcessFiles {
             namespace,
             descriptors,
         })
+        .context(CloneNotOpened)
         .context("serialize exec spec")?;
         self.client()
-            .clone_with_document("/proc/clone", &exec_spec)
+            .clone_with_document_retained("/proc/clone", &exec_spec, retained)
             .await
-            .with_context(|| format!("spawn {executable} through /proc/clone"))
+            .with_context(|| format!("spawn {executable} through /proc/clone"))?;
+        Ok(retained.clone().expect("successful spawn retained its PID"))
     }
 
     pub(super) async fn read_process_result(

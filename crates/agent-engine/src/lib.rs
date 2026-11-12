@@ -30,6 +30,7 @@ pub mod skills;
 pub mod tools;
 
 pub use agent_definition::ResolvedAgentDefinition;
+pub use agent_machine::task_budget::{TaskBudgetBinding, TaskBudgetLimits};
 pub use agent_machine::{
     ROLLBACK_NON_DURABLE_WARNING, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,

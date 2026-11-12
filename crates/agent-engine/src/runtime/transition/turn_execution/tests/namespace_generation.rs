@@ -363,6 +363,12 @@ async fn test_namespace_turn_without_mounted_model_does_not_fallback_to_provider
     .unwrap_err();
 
     assert!(result.to_string().contains("Namespace LLM request failed"));
+    assert!(!result.is::<crate::runtime::NamespaceOperationUncertainty>());
+    state
+        .environment
+        .operation_cleanup
+        .check_admission()
+        .unwrap();
     assert!(
         events.iter().any(|event| matches!(
             event,

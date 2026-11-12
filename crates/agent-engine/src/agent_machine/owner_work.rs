@@ -31,6 +31,7 @@ pub(crate) struct Evidence {
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Outcome {
     Started,
+    BudgetPaused,
     Completed { owner: String },
     Waiting { request_id: String, reason: String },
     Failed { reason: String },
@@ -59,6 +60,16 @@ pub(crate) struct Snapshot {
     pub generation_calls: u8,
     pub fallback: Option<FallbackEvidence>,
     pub owned_request: Option<String>,
+    #[serde(default)]
+    pub selected_owner: Option<String>,
+    #[serde(default)]
+    pub validated_sources: usize,
+    #[serde(default)]
+    pub pending_read: Option<super::NormalizedToolCall>,
+    #[serde(default)]
+    pub evaluator_binding: Option<crate::runtime::model_binding::CallableIdentity>,
+    #[serde(default)]
+    pub budget_resumes: u64,
     pub outcome: Outcome,
 }
 
@@ -131,6 +142,64 @@ impl Snapshot {
                 "work evidence digest changed"
             );
         }
+        let sources = self
+            .request
+            .candidates
+            .iter()
+            .flat_map(|candidate| {
+                candidate
+                    .sources
+                    .iter()
+                    .map(|source| (candidate.id.as_str(), source))
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            self.evidence.len() <= sources.len()
+                && self
+                    .evidence
+                    .iter()
+                    .zip(&sources)
+                    .all(|(e, (owner, source))| e.owner == *owner && &e.source == *source),
+            "captured evidence is not an ordered source prefix"
+        );
+        ensure!(
+            self.selected_owner.is_none() || self.evidence.len() == sources.len(),
+            "selected owner lacks the complete comparison evidence"
+        );
+        let selected = self
+            .selected_owner
+            .as_ref()
+            .map(|owner| {
+                self.request
+                    .candidates
+                    .iter()
+                    .find(|candidate| &candidate.id == owner)
+                    .context("selected owner outside captured candidates")
+            })
+            .transpose()?;
+        ensure!(
+            self.validated_sources <= selected.map_or(0, |candidate| candidate.sources.len()),
+            "work validation cursor outside selected sources"
+        );
+        if let Some(call) = &self.pending_read {
+            let source = if let Some(candidate) = selected {
+                candidate.sources.get(self.validated_sources)
+            } else {
+                self.request
+                    .candidates
+                    .iter()
+                    .flat_map(|candidate| &candidate.sources)
+                    .nth(self.evidence.len())
+            }
+            .context("pending read lacks its program position")?;
+            ensure!(
+                !call.id.is_empty()
+                    && call.name == "read_file"
+                    && call.arguments
+                        == serde_json::json!({"path":source.path,"offset":source.start_line,"limit":source.end_line-source.start_line+1}),
+                "pending read differs from its program position"
+            );
+        }
         if let Outcome::Completed { owner } = &self.outcome {
             let expected = self
                 .request
@@ -194,6 +263,13 @@ impl Snapshot {
 }
 
 fn next(previous: &Snapshot, snapshot: &Snapshot) -> Result<()> {
+    let budget_resume = previous.outcome == Outcome::BudgetPaused
+        && snapshot.outcome == Outcome::Started
+        && previous.budget_resumes.checked_add(1) == Some(snapshot.budget_resumes);
+    let fresh_validation = budget_resume
+        && previous.selected_owner.is_some()
+        && snapshot.validated_sources == 0
+        && snapshot.pending_read.is_none();
     ensure!(
         previous.work_id == snapshot.work_id
             && previous.source_rollout_id == snapshot.source_rollout_id
@@ -202,7 +278,10 @@ fn next(previous: &Snapshot, snapshot: &Snapshot) -> Result<()> {
         "work identity changed after admission"
     );
     ensure!(
-        matches!(previous.outcome, Outcome::Started | Outcome::Waiting { .. }),
+        matches!(
+            previous.outcome,
+            Outcome::Started | Outcome::BudgetPaused | Outcome::Waiting { .. }
+        ),
         "work terminal evidence conflicts"
     );
     ensure!(
@@ -211,8 +290,35 @@ fn next(previous: &Snapshot, snapshot: &Snapshot) -> Result<()> {
         "work replenished spent attempts"
     );
     ensure!(
-        previous.evidence.is_empty() || previous.evidence == snapshot.evidence,
+        snapshot.evidence.starts_with(&previous.evidence)
+            && (previous.evaluator_calls == 0 || previous.evidence == snapshot.evidence),
         "work evidence changed after capture"
+    );
+    ensure!(
+        (snapshot.validated_sources >= previous.validated_sources || fresh_validation)
+            && (previous.selected_owner.is_none()
+                || previous.selected_owner == snapshot.selected_owner)
+            && (previous.evaluator_binding.is_none()
+                || previous.evaluator_binding == snapshot.evaluator_binding),
+        "work continuation changed admitted selection or progress"
+    );
+    if previous.pending_read.is_some()
+        && !fresh_validation
+        && previous.evidence.len() == snapshot.evidence.len()
+        && previous.validated_sources == snapshot.validated_sources
+        && !matches!(
+            snapshot.outcome,
+            Outcome::Cancelled | Outcome::Failed { .. }
+        )
+    {
+        ensure!(
+            previous.pending_read == snapshot.pending_read,
+            "unfinished source read identity changed"
+        );
+    }
+    ensure!(
+        snapshot.budget_resumes == previous.budget_resumes || budget_resume,
+        "work budget resume revision changed without a paused continuation"
     );
     ensure!(
         previous.fallback.is_none() || previous.fallback == snapshot.fallback,
@@ -224,7 +330,7 @@ fn next(previous: &Snapshot, snapshot: &Snapshot) -> Result<()> {
     );
     if matches!(previous.outcome, Outcome::Waiting { .. }) {
         ensure!(
-            !matches!(snapshot.outcome, Outcome::Started),
+            !matches!(snapshot.outcome, Outcome::Started) || snapshot.selected_owner.is_some(),
             "waiting work cannot restart"
         );
         ensure!(
@@ -234,6 +340,27 @@ fn next(previous: &Snapshot, snapshot: &Snapshot) -> Result<()> {
         );
     }
     Ok(())
+}
+
+pub(crate) fn checkpoint_work(
+    pending: &crate::approval::PendingConfirmation,
+) -> Result<Option<Snapshot>> {
+    let Some(value) = pending
+        .details
+        .get("owner_work")
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(None);
+    };
+    let work: Snapshot = serde_json::from_value(value.clone())?;
+    work.validate()?;
+    ensure!(
+        pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
+            && work.outcome == Outcome::BudgetPaused
+            && pending.details["budget"]["task_id"].as_str() == Some(work.work_id.as_str()),
+        "budget checkpoint belongs to another owner program"
+    );
+    Ok(Some(work))
 }
 
 pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
@@ -254,13 +381,24 @@ pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
             acknowledged_waits.insert(ack.work_id);
             continue;
         }
-        if event.event_type != EVENT_TYPE {
+        let snapshot: Snapshot = if event.event_type == EVENT_TYPE {
+            serde_json::from_value(event.payload.clone())?
+        } else if event.event_type == super::task_budget::waiting::WAIT_EVENT {
+            let wait: super::task_budget::waiting::Wait =
+                serde_json::from_value(event.payload.clone())?;
+            wait.budget()?;
+            let Some(work) = checkpoint_work(&wait.checkpoint)? else {
+                continue;
+            };
+            work
+        } else {
             continue;
-        }
-        let snapshot: Snapshot = serde_json::from_value(event.payload.clone())?;
+        };
         snapshot.validate()?;
         ensure!(
-            snapshot.outcome != Outcome::Interrupted,
+            snapshot.outcome != Outcome::Interrupted
+                && (snapshot.outcome != Outcome::BudgetPaused
+                    || event.event_type == super::task_budget::waiting::WAIT_EVENT),
             "interrupted work is a recovery projection"
         );
         if let Some(previous) = works.get(&snapshot.work_id) {
@@ -273,7 +411,10 @@ pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
                 snapshot.outcome == Outcome::Started
                     && snapshot.evidence.is_empty()
                     && snapshot.evaluator_calls == 0
-                    && snapshot.generation_calls == 0,
+                    && snapshot.generation_calls == 0
+                    && snapshot.pending_read.is_none()
+                    && snapshot.evaluator_binding.is_none()
+                    && snapshot.budget_resumes == 0,
                 "work evidence lacks an acknowledged initial start"
             );
         }
@@ -292,6 +433,42 @@ pub(super) fn recover(events: &[EventRecord]) -> Result<Option<Snapshot>> {
 }
 
 impl super::AgentMachine {
+    pub(crate) fn budget_owner_work(
+        &self,
+        pending: &crate::approval::PendingConfirmation,
+    ) -> Result<Option<Snapshot>> {
+        let work = checkpoint_work(pending)?;
+        if let Some(work) = &work {
+            ensure!(
+                self.owner_work.as_ref() == Some(work),
+                "budget checkpoint differs from the retained owner program"
+            );
+        } else {
+            ensure!(
+                !self
+                    .owner_work
+                    .as_ref()
+                    .is_some_and(|work| work.outcome == Outcome::BudgetPaused),
+                "budget checkpoint lacks the retained owner program"
+            );
+        }
+        Ok(work)
+    }
+
+    pub(crate) fn retire_owner_read(&mut self, work: &mut Snapshot, reason: &str) {
+        if let Some(call) = work.pending_read.take()
+            && self.tool_payload_by_call_id(&call.id).is_none()
+        {
+            self.add_tool_message(
+                &call.id,
+                &call.name,
+                serde_json::json!({
+                "success":false,"status":"cancelled","reason":reason
+                }),
+            );
+        }
+    }
+
     pub(crate) async fn persist_owner_wait(&mut self, snapshot: Snapshot) -> Result<()> {
         let Outcome::Waiting { request_id, .. } = &snapshot.outcome else {
             anyhow::bail!("wait acknowledgement requires Waiting work");
@@ -316,7 +493,10 @@ impl super::AgentMachine {
     pub(crate) async fn persist_owner_work(&mut self, snapshot: Snapshot) -> Result<()> {
         snapshot.validate()?;
         ensure!(
-            snapshot.outcome != Outcome::Interrupted,
+            !matches!(
+                snapshot.outcome,
+                Outcome::Interrupted | Outcome::BudgetPaused
+            ),
             "cannot dispatch a recovered work start"
         );
         let recorder = self
@@ -358,7 +538,10 @@ impl super::AgentMachine {
         recorder
             .persist_batch(vec![RolloutItem::Event(event)])
             .await?;
-        if !matches!(snapshot.outcome, Outcome::Started | Outcome::Waiting { .. }) {
+        if !matches!(
+            snapshot.outcome,
+            Outcome::Started | Outcome::BudgetPaused | Outcome::Waiting { .. }
+        ) {
             if let Some(request_id) = &snapshot.owned_request {
                 self.take_pending(request_id);
             }

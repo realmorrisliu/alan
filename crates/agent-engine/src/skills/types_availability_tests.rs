@@ -544,6 +544,7 @@ fn test_delegated_skill_result_serializes_minimal_bounded_payload() {
 #[test]
 fn test_delegated_skill_invocation_record_captures_task_and_result() {
     let record = DelegatedSkillInvocationRecord {
+        host_mounts: Vec::new(),
         skill_id: "repo-review".to_string(),
         target: "repo-review".to_string(),
         task: "Review the current diff.".to_string(),

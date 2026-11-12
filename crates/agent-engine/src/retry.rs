@@ -61,6 +61,9 @@ impl std::error::Error for GenerationCause {}
 
 /// Check typed namespace causes before legacy LLM/provider error heuristics.
 pub fn is_retryable(error: &anyhow::Error) -> bool {
+    if error.is::<crate::runtime::NamespaceOperationUncertainty>() {
+        return false;
+    }
     if let Some(cause) = error.downcast_ref::<GenerationCause>() {
         return cause.retryable();
     }

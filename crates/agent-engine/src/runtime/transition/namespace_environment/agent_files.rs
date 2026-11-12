@@ -271,11 +271,13 @@ impl NamespaceAgentFiles {
     ) -> Result<String> {
         let kind = crate::approval::runtime_confirmation_control_kind(&pending.checkpoint_type)
             .unwrap_or("confirmation");
+        let payload = crate::approval::runtime_confirmation_yield_payload(pending);
         let options = serde_json::to_string(&serde_json::json!({
             "checkpoint_id": pending.checkpoint_id.clone(),
             "checkpoint_type": pending.checkpoint_type.clone(),
             "details": pending.details.clone(),
             "options": pending.options.clone(),
+            "default_option": payload.default_option,
         }))?;
         self.write_request(
             NamespaceRequestRecord::new(kind, pending.summary.clone()).with_options(options),
@@ -442,6 +444,16 @@ impl NamespaceAgentFiles {
     pub(crate) async fn read_request_kind(&self, id: &str) -> Result<String> {
         let path = format!("{}/requests/{id}/kind", self.agent_path);
         String::from_utf8(self.client().read_file(&path).await?).context("request kind is utf8")
+    }
+
+    /// Confirmation details recorded with a pending child request, when present.
+    pub(crate) async fn read_request_details(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let path = format!("{}/requests/{id}/options", self.agent_path);
+        let Ok(bytes) = self.client().read_file(&path).await else {
+            return Ok(None);
+        };
+        let options: serde_json::Value = serde_json::from_slice(&bytes)?;
+        Ok(options.get("details").cloned())
     }
 
     pub(crate) async fn request_events_offset(&self) -> Result<u64> {

@@ -377,4 +377,28 @@ mod tests {
         );
         assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
     }
+
+    #[test]
+    fn service_mounts_do_not_satisfy_the_inherited_project_requirement() {
+        let requirements = classify_delegated_task_requirements(
+            "Read fixture.txt via read_file.",
+            Some(Path::new("/mnt/source")),
+        );
+        let mut child = summary(&["read_file"], false);
+        child.mounts = vec!["/agent".into(), "/mnt/host-mount".into(), "/mnt/llm".into()];
+        child.writable_mounts = child.mounts.clone();
+        let decision = evaluate_delegated_namespace(
+            "Read fixture.txt via read_file.",
+            &requirements,
+            child,
+            &summary(&["read_file"], false),
+        );
+        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::ParentPath);
+        assert_eq!(
+            decision.unsatisfied,
+            vec![DelegatedCapabilityRequirement::MountRead {
+                path: Some("/mnt/source".into()),
+            }]
+        );
+    }
 }

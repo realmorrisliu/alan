@@ -1,5 +1,7 @@
 //! AgentFS projection checks on real A/B Process execution and settled pause.
 use super::*;
+#[path = "engine_budget_model_projection_tests.rs"]
+mod budget_recovery;
 
 async fn snapshot(
     shell: &alan_shell::Shell,

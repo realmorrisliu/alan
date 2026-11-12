@@ -5,7 +5,7 @@ use alan_agent_protocol::{AgentExecutableResult, AgentExecutableStatus, YieldKin
 use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 
-use super::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus};
+use super::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus, InheritedPause};
 use crate::runtime::child_runs::ChildRunRegistry;
 use crate::runtime::transition::{NamespaceAgentFiles, NamespaceProcessFiles};
 use crate::runtime::{ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest};
@@ -366,6 +366,26 @@ impl DelegatedChildRunSupervisor {
                 for warning in &result.warnings {
                     push_bounded_child_warning(&mut warnings, warning.clone());
                 }
+                // A paused child whose request is an inherited stop must keep
+                // its ancestor identity, or the parent degrades it back to the
+                // old uncontinuable pause.
+                let pause_inherited = match result.pause.as_ref() {
+                    Some(pause)
+                        if matches!(&pause.kind, YieldKind::Custom(kind)
+                            if kind == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE) =>
+                    {
+                        let details = match pause.payload.clone() {
+                            Some(details) => Some(details),
+                            None => {
+                                self.agent_files
+                                    .read_request_details(&pause.request_id)
+                                    .await?
+                            }
+                        };
+                        details.map(|details| inherited_pause_from(&details))
+                    }
+                    _ => None,
+                };
                 let (status, error_message, pause) = match result.status {
                     AgentExecutableStatus::Completed => (ChildRuntimeStatus::Completed, None, None),
                     AgentExecutableStatus::Paused => (
@@ -374,6 +394,7 @@ impl DelegatedChildRunSupervisor {
                         result.pause.as_ref().map(|pause| ChildRuntimePause {
                             request_id: pause.request_id.clone(),
                             kind: pause.kind.clone(),
+                            inherited: pause_inherited.clone(),
                         }),
                     ),
                     AgentExecutableStatus::Failed => (
@@ -415,6 +436,18 @@ impl DelegatedChildRunSupervisor {
                     "structured_input" => YieldKind::StructuredInput,
                     other => YieldKind::Custom(other.to_string()),
                 };
+                let inherited = if matches!(
+                    &kind,
+                    YieldKind::Custom(name)
+                        if name == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
+                ) {
+                    self.agent_files
+                        .read_request_details(request_id)
+                        .await?
+                        .map(|details| inherited_pause_from(&details))
+                } else {
+                    None
+                };
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     file_terminal_observation(
                         observation.output_text,
@@ -424,6 +457,7 @@ impl DelegatedChildRunSupervisor {
                         Some(ChildRuntimePause {
                             request_id: request_id.clone(),
                             kind,
+                            inherited,
                         }),
                     ),
                 ));
@@ -712,7 +746,9 @@ fn terminated_observation(
 fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunStatus {
     match status {
         ChildRuntimeStatus::Completed => ChildRunStatus::Completed,
-        ChildRuntimeStatus::Paused => ChildRunStatus::Failed,
+        // A paused child is blocked, not failed: its decision may still be
+        // resolved by whoever owns it.
+        ChildRuntimeStatus::Paused => ChildRunStatus::Blocked,
         ChildRuntimeStatus::Cancelled => ChildRunStatus::Cancelled,
         ChildRuntimeStatus::TimedOut => ChildRunStatus::TimedOut,
         ChildRuntimeStatus::Terminated => ChildRunStatus::Terminated,
@@ -813,6 +849,28 @@ fn parse_last_json_fenced_block(text: &str) -> Option<serde_json::Value> {
     }
 
     last_match.and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+}
+
+/// The inherited identity a paused child reported in its decision details.
+fn inherited_pause_from(details: &serde_json::Value) -> InheritedPause {
+    InheritedPause {
+        ancestor_task_id: details["ancestor_task_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        dimension: details["dimension"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+        checkpoint_id: details["checkpoint_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        rollout_path: details["rollout_path"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    }
 }
 
 #[cfg(test)]

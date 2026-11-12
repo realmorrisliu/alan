@@ -23,6 +23,31 @@ fn safe(binding: &InputBinding) -> UiModelBinding {
     }
 }
 impl RuntimeSubmissionQueues {
+    // Project the Machine's validated paused binding, never the selected-next model.
+    pub(super) fn observe_budget_wait_model(&mut self, state: &RuntimeLoopState) {
+        self.budget_wait_model = None;
+        let Some(wait) = &state.machine.task_budget_wait else {
+            return;
+        };
+        let Some(value) = wait.checkpoint.details.get("generation_binding") else {
+            return;
+        };
+        let Ok(binding) = serde_json::from_value::<InputBinding>(value.clone()) else {
+            return;
+        };
+        let active = state
+            .environment
+            .active_binding
+            .read()
+            .expect("active binding snapshot");
+        if active
+            .as_ref()
+            .is_some_and(|(current, _)| current == &binding)
+        {
+            self.budget_wait_model = Some(safe(&binding));
+        }
+    }
+
     // Called only around actual deferred execution, never because a callable is retained.
     pub(super) async fn deferred_model_started(&mut self) {
         self.deferred_model = self.environment.as_ref().and_then(|environment| {
@@ -115,7 +140,7 @@ impl RuntimeSubmissionQueues {
             let active = if let Some(binding) = &self.deferred_model {
                 Some(binding.clone())
             } else if queue.active_submission_ids.is_empty() {
-                None
+                self.budget_wait_model.clone()
             } else {
                 environment
                     .active_binding

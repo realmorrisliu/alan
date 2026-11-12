@@ -16,6 +16,7 @@ pub(super) fn evaluate_delegated_launch_capabilities(
     parent_cwd: &std::path::Path,
 ) -> Result<Option<DelegatedCapabilityDecision>> {
     let Some(context) = spec.delegated.as_ref() else {
+        plan.validate_cwd_scope()?;
         return Ok(None);
     };
     let decision = evaluate_delegated_namespace(
@@ -43,17 +44,18 @@ pub(super) fn evaluate_delegated_launch_capabilities(
     );
 
     match decision.recovery {
-        DelegatedCapabilityRecovery::Satisfied => Ok(Some(decision)),
+        DelegatedCapabilityRecovery::Satisfied => {}
         DelegatedCapabilityRecovery::Narrowed => {
             if let Some(narrowed_task) = decision.narrowed_task.clone() {
                 spec.launch.task = narrowed_task;
             }
-            Ok(Some(decision))
         }
         DelegatedCapabilityRecovery::ParentPath
         | DelegatedCapabilityRecovery::AskUser
         | DelegatedCapabilityRecovery::Limitation => {
-            Err(DelegatedSpawnRejected { decision }.into())
+            return Err(DelegatedSpawnRejected { decision }.into());
         }
     }
+    plan.validate_cwd_scope()?;
+    Ok(Some(decision))
 }

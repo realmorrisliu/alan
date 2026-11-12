@@ -65,6 +65,23 @@ pub enum ProcessNamespaceAccess {
 pub struct AgentExecutableRequest {
     pub spawn: SpawnSpec,
     pub initial_task: String,
+    /// Resume an already-pending request in a recovered child instead of
+    /// submitting a fresh task. Set only when reconnecting preserved child work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
+    /// Execution record the child must recover before serving the resume.
+    ///
+    /// Only an inherited-budget reconnect sets this: the Process that yielded
+    /// the request exited, so its preserved work survives only in its rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_rollout: Option<String>,
+    /// The resume is an ancestor's authorization for an inherited stop.
+    ///
+    /// Without this the resumed Process cannot tell the ancestor's authorization
+    /// from an empty answer, and an empty answer to an inherited stop is a
+    /// rejection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inherited_resume: bool,
 }
 
 /// Terminal state emitted by `/bin/alan-agent` through `/proc/<pid>/io/output`.
@@ -82,6 +99,13 @@ pub enum AgentExecutableStatus {
 pub struct AgentExecutablePause {
     pub request_id: String,
     pub kind: YieldKind,
+    /// Decision details captured while the paused Process was still alive.
+    ///
+    /// A paused Process can be removed before its consumer looks, so anything the
+    /// consumer cannot re-derive later (an inherited stop's ancestor identity)
+    /// travels here as well as in the request file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
 }
 
 /// Bounded terminal evidence for an Agent Executable invocation.
@@ -267,6 +291,37 @@ mod tests {
                 delegated: None,
             },
             initial_task: "inspect".to_string(),
+            resume: None,
+            recovery_rollout: None,
+            inherited_resume: false,
+        };
+        let encoded = serde_json::to_string(&request).unwrap();
+        assert!(
+            !encoded.contains("resume"),
+            "a fresh launch must not carry a resume request: {encoded}"
+        );
+    }
+
+    #[test]
+    fn agent_executable_request_round_trips_an_explicit_resume() {
+        let request = AgentExecutableRequest {
+            spawn: SpawnSpec {
+                target: SpawnTarget::DefinitionDescriptor {
+                    descriptor: "agent-definition".to_string(),
+                },
+                launch: SpawnLaunchInputs {
+                    task: "inspect".to_string(),
+                    ..SpawnLaunchInputs::default()
+                },
+                handles: Vec::new(),
+                host_mounts: Vec::new(),
+                runtime_overrides: SpawnRuntimeOverrides::default(),
+                delegated: None,
+            },
+            initial_task: "inspect".to_string(),
+            resume: Some("inherited_budget-1".to_string()),
+            recovery_rollout: None,
+            inherited_resume: true,
         };
 
         let encoded = serde_json::to_vec(&request).unwrap();
@@ -284,6 +339,12 @@ mod tests {
             AgentExecutablePause {
                 request_id: "request-1".to_string(),
                 kind: YieldKind::Confirmation,
+                // An inherited stop's identity must survive here: the paused
+                // Process backing is gone before its consumer looks.
+                payload: Some(serde_json::json!({
+                    "ancestor_task_id": "ancestor-1",
+                    "dimension": "model_calls",
+                })),
             },
         );
 
@@ -294,9 +355,12 @@ mod tests {
         );
         let mut process_output = b"arbitrary assistant output".to_vec();
         process_output.extend_from_slice(&result.to_process_output_record().unwrap());
+        let decoded = AgentExecutableResult::from_process_output(&process_output).unwrap();
+        assert_eq!(decoded, result);
         assert_eq!(
-            AgentExecutableResult::from_process_output(&process_output).unwrap(),
-            result
+            decoded.pause.unwrap().payload.unwrap()["ancestor_task_id"],
+            serde_json::json!("ancestor-1"),
+            "the pause record must carry the inherited identity through the process output"
         );
 
         assert!(
