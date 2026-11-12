@@ -48,7 +48,7 @@ struct ChildProcessLaunch<'a> {
     requested_spec: &'a SpawnSpec,
     cancel: Option<&'a CancellationToken>,
     /// Pending request id to reconnect instead of starting a fresh task.
-    resume: Option<&'a str>,
+    resume: Option<&'a crate::agent_machine::pending_resume::ResumeTarget>,
 }
 
 impl ChildNamespacePlan {
@@ -89,7 +89,7 @@ pub(crate) async fn spawn_child_runtime_cancellable(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
-    resume: Option<&str>,
+    resume: Option<&crate::agent_machine::pending_resume::ResumeTarget>,
 ) -> Result<DelegatedChildRunSupervisor> {
     spawn_child_runtime_inner(parent, spec, Some(cancel), resume).await
 }
@@ -98,7 +98,7 @@ async fn spawn_child_runtime_inner(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
-    resume: Option<&str>,
+    resume: Option<&crate::agent_machine::pending_resume::ResumeTarget>,
 ) -> Result<DelegatedChildRunSupervisor> {
     ensure_not_cancelled(cancel)?;
     validate_child_launch_contract(&spec)?;
@@ -208,7 +208,8 @@ impl ChildProcessLaunch<'_> {
                         &attempt_spec,
                     ),
                     spawn: attempt_spec.clone(),
-                    resume: self.resume.map(ToString::to_string),
+                    resume: self.resume.map(|target| target.request_id.clone()),
+                    recovery_rollout: self.resume.and_then(|target| target.rollout_path.clone()),
                 };
                 Ok((plan, decision, descriptors, request))
             })();

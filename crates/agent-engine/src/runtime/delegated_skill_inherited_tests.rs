@@ -40,6 +40,7 @@ async fn inherited_pause_records_the_reconnect_and_stops_the_parent_turn() {
                         request_id: "inherited_budget-1".to_string(),
                         kind: YieldKind::Custom("inherited_budget".to_string()),
                         inherited: Some(InheritedPause {
+                            rollout_path: String::new(),
                             ancestor_task_id: "ancestor-1".to_string(),
                             dimension: "model_calls".to_string(),
                             checkpoint_id: "inherited_budget_1".to_string(),
@@ -60,6 +61,7 @@ async fn inherited_pause_records_the_reconnect_and_stops_the_parent_turn() {
     assert_eq!(
         state.machine.pending_delegated_resumes,
         vec![crate::agent_machine::pending_resume::PendingResume {
+            rollout_path: String::new(),
             tool_call_id: "call_1".to_string(),
             request_id: "inherited_budget-1".to_string(),
             ancestor_task_id: "ancestor-1".to_string(),
@@ -74,6 +76,7 @@ async fn a_finished_reconnect_is_consumed_so_the_call_cannot_run_twice() {
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     state.machine.pending_delegated_resumes =
         vec![crate::agent_machine::pending_resume::PendingResume {
+            rollout_path: String::new(),
             tool_call_id: "call_1".to_string(),
             request_id: "inherited_budget-1".to_string(),
             ancestor_task_id: "ancestor-1".to_string(),
@@ -170,6 +173,7 @@ async fn a_parent_owned_allowance_stops_through_the_local_extension_gate() {
                         request_id: "inherited_budget-1".to_string(),
                         kind: YieldKind::Custom("inherited_budget".to_string()),
                         inherited: Some(InheritedPause {
+                            rollout_path: String::new(),
                             ancestor_task_id: owner_id,
                             dimension: "model_calls".to_string(),
                             checkpoint_id: "inherited_budget_1".to_string(),
@@ -243,7 +247,9 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
             &cancel,
             &mut emit,
             move |_state, _spec, _cancel, resume| {
-                seen.lock().unwrap().push(resume);
+                seen.lock()
+                    .unwrap()
+                    .push(resume.map(|target| target.request_id));
                 Box::pin(async move {
                     Ok(ChildRuntimeResult {
                         status: ChildRuntimeStatus::Paused,
@@ -259,6 +265,7 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
                             request_id: "inherited_budget-1".to_string(),
                             kind: YieldKind::Custom("inherited_budget".to_string()),
                             inherited: Some(InheritedPause {
+                                rollout_path: String::new(),
                                 ancestor_task_id: owner_id,
                                 dimension: "model_calls".to_string(),
                                 checkpoint_id: "inherited_budget_1".to_string(),
@@ -318,7 +325,9 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
             &cancel,
             &mut emit,
             move |_state, _spec, _cancel, resume| {
-                seen.lock().unwrap().push(resume);
+                seen.lock()
+                    .unwrap()
+                    .push(resume.map(|target| target.request_id));
                 Box::pin(async {
                     Ok(ChildRuntimeResult {
                         status: ChildRuntimeStatus::Completed,

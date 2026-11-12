@@ -24,6 +24,7 @@ pub(crate) use crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE;
 fn checkpoint(
     exhausted: &InheritedExhaustion,
     budget: &crate::agent_machine::task_budget::Snapshot,
+    rollout_path: Option<&std::path::Path>,
 ) -> PendingConfirmation {
     let checkpoint_id = format!(
         "{INHERITED_BUDGET_CHECKPOINT_TYPE}_{}",
@@ -46,6 +47,7 @@ fn checkpoint(
             "ancestor_task_id": exhausted.ancestor_task_id,
             "dimension": exhausted.dimension,
             "budget": budget,
+            "rollout_path": rollout_path.map(|path| path.display().to_string()).unwrap_or_default(),
         }),
         options: Vec::new(),
     }
@@ -70,6 +72,10 @@ pub(crate) async fn preserve_inherited_wait(
         );
         return Ok(());
     }
+    let rollout_path = state
+        .machine
+        .recorder()
+        .map(|recorder| recorder.path().clone());
     budget.settle(false).await?;
     let snapshot = budget.snapshot().await;
     let wait = InheritedWait {
@@ -77,7 +83,7 @@ pub(crate) async fn preserve_inherited_wait(
         ancestor_task_id: exhausted.ancestor_task_id.clone(),
         dimension: exhausted.dimension,
         continuation,
-        checkpoint: checkpoint(exhausted, &snapshot),
+        checkpoint: checkpoint(exhausted, &snapshot, rollout_path.as_deref()),
     };
     wait.validate()?;
     if let Some(recorder) = state.machine.recorder() {

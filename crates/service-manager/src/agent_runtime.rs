@@ -749,7 +749,7 @@ fn child_template(
     });
     validate_package_reference_mounts(&launch_context)?;
 
-    let mut process = parent.process.child_for_spawn(spec);
+    let mut process = parent.process.child_for_spawn(request);
     process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
         launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
         &launch_context.package_references,

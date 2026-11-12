@@ -334,11 +334,43 @@ where
                         .machine
                         .inherited_budget_wait
                         .as_ref()
-                        .map(|wait| wait.checkpoint.clone())
-                        .filter(|checkpoint| checkpoint.checkpoint_id == request_id);
-                    if let Some(checkpoint) = inherited {
-                        super::task_budget::resolve_inherited(runtime.machine, &checkpoint, true)
-                            .await?;
+                        .filter(|wait| wait.checkpoint.checkpoint_id == request_id)
+                        .cloned();
+                    if let Some(wait) = inherited {
+                        // The allowance lives in the ancestor's own Process. When
+                        // that binding cannot be rebuilt here the reconnect must
+                        // neither consume the stop nor replay work, so it fails
+                        // closed and leaves the record for a later attempt.
+                        let admits = match runtime.machine.task_budget.as_ref() {
+                            Some(budget) => budget
+                                .ancestor_admits(&wait.ancestor_task_id, wait.dimension)
+                                .await
+                                .unwrap_or(false),
+                            None => false,
+                        };
+                        if !admits {
+                            return Err(
+                                crate::agent_machine::task_budget::InheritedResumeUnrecoverable {
+                                    checkpoint_id: wait.checkpoint.checkpoint_id,
+                                }
+                                .into(),
+                            );
+                        }
+                        // The resumed turn generates, so it must own the Tape
+                        // lease before the transition asks for it.
+                        *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
+                        if let Some(registered) = runtime
+                            .machine
+                            .pending_id_for_checkpoint(&wait.checkpoint.checkpoint_id)
+                        {
+                            runtime.machine.take_pending(&registered);
+                        }
+                        super::task_budget::resolve_inherited(
+                            runtime.machine,
+                            &wait.checkpoint,
+                            true,
+                        )
+                        .await?;
                         return Ok(RuntimeOpAction::RunTurn {
                             turn_kind: TurnRunKind::ResumeTurn,
                             user_input: None,

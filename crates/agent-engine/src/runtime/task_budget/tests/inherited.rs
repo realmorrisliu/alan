@@ -178,6 +178,49 @@ async fn a_relaunched_child_republishes_the_same_inherited_request_identity() {
         Some(first),
         "the republished decision must be the recorded one"
     );
+    // The stop travels with the record a relaunch would recover, so the resumed
+    // Process is the only thing that needs it.
+    let recorded_rollout = relaunched
+        .machine
+        .inherited_budget_wait
+        .as_ref()
+        .unwrap()
+        .checkpoint
+        .details["rollout_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        std::path::PathBuf::from(&recorded_rollout),
+        source.machine.rollout_path().unwrap().clone(),
+        "the stop must name the record this child was paused in"
+    );
+
+    // The owning ancestor answers by its durable key, which no Process in this
+    // invocation ever knew. The child cannot rebuild that ancestor's allowance
+    // here, so the reconnect must fail closed instead of replaying work the
+    // authority cannot cover.
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let mut emit = |_event: alan_agent_protocol::Event| async {};
+    let outcome = crate::runtime::transition::handle_submission_with_cancel(
+        &mut relaunched,
+        alan_agent_protocol::Submission::new(alan_agent_protocol::Op::Resume {
+            request_id: durable.clone(),
+            content: Vec::new(),
+        }),
+        &mut emit,
+        &cancel,
+    )
+    .await;
+    let error = outcome.expect_err("an unrecoverable ancestor binding must not resume");
+    let unrecoverable = error
+        .downcast_ref::<crate::agent_machine::task_budget::InheritedResumeUnrecoverable>()
+        .expect("the reconnect fails with its own typed error");
+    assert_eq!(unrecoverable.checkpoint_id, durable);
+    assert!(
+        relaunched.machine.inherited_budget_wait.is_some(),
+        "a failed reconnect keeps the stop for a later attempt"
+    );
 }
 
 #[tokio::test]

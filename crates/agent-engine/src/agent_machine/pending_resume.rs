@@ -24,6 +24,21 @@ pub(crate) struct PendingResume {
     pub ancestor_task_id: String,
     /// Exhausted dimension as reported by the paused child.
     pub dimension: String,
+    /// Execution record of the paused child, when it reported one.
+    ///
+    /// A resume launch recovers this record so the new Process owns the same
+    /// Agent Machine state, including the preserved Tool batch.
+    #[serde(default)]
+    pub rollout_path: String,
+}
+
+/// Everything a resume launch needs to reconnect one paused child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResumeTarget {
+    /// The checkpoint the ancestor authorized.
+    pub request_id: String,
+    /// Execution record to recover, when the child reported one.
+    pub rollout_path: Option<String>,
 }
 
 impl PendingResume {
@@ -69,12 +84,18 @@ pub(crate) async fn record(machine: &mut super::AgentMachine, resume: PendingRes
     Ok(())
 }
 
-/// The request to reconnect for `tool_call_id`, when one is recorded.
-pub(crate) fn resume_for(resumes: &[PendingResume], tool_call_id: &str) -> Option<String> {
+/// The reconnect for `tool_call_id`, when one is recorded.
+pub(crate) fn resume_target_for(
+    resumes: &[PendingResume],
+    tool_call_id: &str,
+) -> Option<ResumeTarget> {
     resumes
         .iter()
         .find(|pending| pending.tool_call_id == tool_call_id)
-        .map(|pending| pending.request_id.clone())
+        .map(|pending| ResumeTarget {
+            request_id: pending.request_id.clone(),
+            rollout_path: (!pending.rollout_path.is_empty()).then(|| pending.rollout_path.clone()),
+        })
 }
 
 /// Rebuild the recorded paused children from a rollout.
@@ -114,6 +135,7 @@ mod tests {
             request_id: format!("inherited_budget-{tool_call_id}"),
             ancestor_task_id: "ancestor-1".into(),
             dimension: "model_calls".into(),
+            rollout_path: String::new(),
         }
     }
 
@@ -136,11 +158,13 @@ mod tests {
     fn resume_for_only_matches_the_recorded_tool_call() {
         let resumes = vec![sample("call-1")];
         assert_eq!(
-            resume_for(&resumes, "call-1").as_deref(),
+            resume_target_for(&resumes, "call-1")
+                .as_ref()
+                .map(|target| target.request_id.as_str()),
             Some("inherited_budget-call-1")
         );
-        assert!(resume_for(&resumes, "call-2").is_none());
-        assert!(resume_for(&[], "call-1").is_none());
+        assert!(resume_target_for(&resumes, "call-2").is_none());
+        assert!(resume_target_for(&[], "call-1").is_none());
     }
 
     #[test]

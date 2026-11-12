@@ -390,6 +390,10 @@ impl DelegatedChildRunSupervisor {
                                     .as_str()
                                     .unwrap_or_default()
                                     .to_string(),
+                                rollout_path: details["rollout_path"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_string(),
                             })
                     }
                     _ => None,
@@ -462,6 +466,10 @@ impl DelegatedChildRunSupervisor {
                                 .unwrap_or("unknown")
                                 .to_string(),
                             checkpoint_id: details["checkpoint_id"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string(),
+                            rollout_path: details["rollout_path"]
                                 .as_str()
                                 .unwrap_or_default()
                                 .to_string(),

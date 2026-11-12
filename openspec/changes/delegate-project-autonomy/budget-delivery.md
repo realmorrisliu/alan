@@ -655,6 +655,284 @@ What this does **not** establish:
 - No native acceptance run was performed. The 2026-10-26 `partial_inherited_limit`
   outcome is unchanged and still stands until an isolated native case shows the
   ancestor extension reconnecting the original subtree.
+- The reconnect now survives the Process boundary, but it does not always
+  succeed. The stop carries the child's own execution record
+  (`checkpoint.details["rollout_path"]`); the parent records it in the reconnect
+  record; and a resume launch passes it as `AgentExecutableRequest.recovery_rollout`
+  so the new Process recovers the same Agent Machine state, including the
+  preserved Tool batch. `a_relaunched_child_republishes_the_same_inherited_request_identity`
+  drives that path: the child pauses, the rollout is reloaded into a second
+  machine, the recovered stop names the record it was paused in, and the
+  ancestor's durable checkpoint id resolves the republished decision even though
+  the new Process allocated a different request id.
+- What still decides the outcome is the ancestor's allowance, which lives in the
+  ancestor's Process. When the resumed child cannot rebuild that binding, the
+  reconnect fails closed with `InheritedResumeUnrecoverable`: the stop is kept
+  for a later attempt, no Tape lease is taken, and no work is replayed. The same
+  test asserts that outcome, and
+  `a_reconnect_without_its_paused_work_fails_closed` covers the case where the
+  machine holds no stop at all. A reconnect that can reach its ancestor still
+  completes in-process, as `extension_replays_the_delegated_call_exactly_once_with_the_resume_request`
+  shows.
+- The child-side Tape lease bug this uncovered is fixed: a resumed turn now takes
+  the lease before the transition asks for it.
+Task 2.4 remains unchecked. The existing source-owner program has budget continuation
+coverage; this does not implement a general mixed-program scheduler. Uncertain model
+or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
+and active-crash transfer edges still need acceptance. Input-shadow budget pause/resume
+has source integration coverage; physical terminal acceptance remains pending. Descendant
+admission and cleanup accounting now have implementation under verification;
+native task-tree acceptance, inherited-stop presentation and explicit subtree recovery
+remain open. Whole-transition
+time boundaries and all cancellation/error paths still need acceptance. Native UI,
+installed-binary and task-tree qualification are pending; source test counts remain
+separate from those acceptance claims.
+
+## Remaining integration, in order
+
+- [ ] Finish start/reuse lifecycle coverage before input shadow evaluation, generation, explicit
+  command or mixed-Machine evaluation; queue-only/control input must not create a
+  fresh task allowance. Only a settled terminal task may receive a new identity.
+- [ ] Bind retries, Guardian, compaction, typed evaluation and child work to finite
+  accounting. Capture a deferred memory job's original budget; it must not consume
+  a subsequent task's allowance or continue unmetered after foreground completion.
+- [ ] Admit every Tool attempt, including virtual Tools; preserve the remaining
+  ordered batch on exhaustion. A time limit must cancel and await existing cleanup,
+  reconcile completed/unknown effects and never replay an already completed effect.
+- [ ] Persist the correlated budget wait and exact continuation before UI publication;
+  restore them through new invocation-local request IDs during explicit recovery.
+  Do not equate budget approval with the original Tool/effect approval.
+- [ ] Resolve extension before consuming the pending request. Default/negative
+  responses must not resume model generation. Persistence failure retains the wait
+  and prevents execution; duplicate/stale responses cannot add allowance twice.
+- [ ] Settle active time at every human wait, cancellation and terminal path,
+  including direct-command and deferred-work paths. Preserve any already-existing
+  permission wait rather than silently replacing its authority decision.
+- [ ] Run fake-provider/Tool integration, recovery and cancellation tests; then the
+  complete engine suite, quality gate and isolated native pause/extension flow.
+- [ ] Only after runtime verification, launch the frozen two-repository read-only
+  preflight pilot with enforced limits and retain every failed attempt. Do not mark
+  task 2.4 complete or count these pilot audits as formal real development tasks.
+
+The provisional code defaults (1800 execution seconds, 256 Tool attempts, 64 model
+requests) are not frozen daily-use qualification thresholds. The initial pilot plan
+uses 600 seconds, 30 Tool attempts and 10 model requests per task, with zero task
+retries. Its two-repository read-only preflight started on 2026-10-23 with clean
+candidate `ff1e39e0`, enforced configuration and an additional 660-second Host
+supervisor. See [actual outcomes](../qualify-personal-daily-development/pilot-results.md).
+This is bounded measurement while the named qualification gaps remain open, not
+completion of task 2.4 or formal sampling. No monetary cost is inferred from an
+admission counter.
+
+## Native active cancellation and explicit recovery — 2026-10-23 assessment
+
+Clean `ff1e39e0` has all sixteen CI checks passing. Its isolated Herdr run observed
+one admitted active task, sent one Ctrl-C, and received the matching `cancelled`
+completion. The queue paused with no active, pending or uncertain inputs; its
+completed budget retained one model call, zero Tools and 133ms. The original
+observer incorrectly required idle activity and `foreground_complete`; its false
+result is preserved separately from the contract audit. Ordinary interrupt pauses
+the queue, and ledger settlement uses the completed phase independently of the
+foreground flag. This does not measure termination of remote provider computation.
+
+A subsequent fresh invocation explicitly selected latest history with `--resume`.
+Its new rollout copied the same admission and budget records, retained spending,
+and became idle with an empty queue without another model or Tool admission. It
+exited cleanly. This verifies this cancelled foreground task, not general history
+selection, arbitrary active-crash or subtree recovery. The earlier failed private
+Connection observer and its un-interrupted completed task remain failures of that
+cancellation attempt; neither is overwritten. Native fixture model admissions total
+seven, separate from the newly started pilot and the still-zero formal sample.
+
+The run also identifies follow-up UI evidence: model text is buffered until a
+successful response before publishing chunks; Bash source-read titles are dominated
+by commands; a clean first-input queue can appear as unavailable. These are not
+claims that the corresponding UI problems are fixed.
+
+## Native descendant preflight — 2026-10-26
+
+Clean `662d14baa3be1fb075873c289688f53c6aad1058`, frozen binary SHA-256
+`d94ebc10f096987b4e929d493415e7bb17d462e5a4a05fa0cd3c1f541949f8fa`, ran
+through Herdr with isolated stores and an explicitly selected read-only project.
+The case allowed 180 execution seconds, 16 Tools and eight model admissions;
+the Host supervisor allowed 300 seconds. It asked the Root to delegate a single
+fixture read to the installed `repo-coding` / `repo-worker` target.
+
+This required case **failed**. The child started and attempted `read_file`, but
+its namespace cwd was `/` and it lacked the selected project Host execution
+adapter. The Root reported the failure and stopped. The final Root ledger retained
+four model admissions and two Tool attempts, including the child's two model
+admissions and one Tool attempt; these nested counters must not be summed again.
+The fixture remained unchanged, the queue settled, and `/quit` exited with code
+zero without supervisor expiry. This proves accounting for this failed child
+attempt, not successful task-tree, inherited-exhaustion or subtree recovery
+acceptance. The later cases were not run after this prerequisite failed.
+
+Source inspection identifies two relevant paths to repair and verify together:
+`build_delegated_spawn_spec` leaves an omitted cwd unset and supplies no Host
+mounts, although its public schema promises inherited cwd; the child planner then
+defaults to `/`. Capability evaluation treats an unspecified mount requirement as
+satisfied by any mount, including service mounts, so this child was misleadingly
+classified `satisfied`. The model also appended a negated modification constraint,
+which the lexical classifier treated as write/shell/side-effect requirements.
+A repair must preserve explicit grant ownership and narrowing; copying every
+parent mount or granting additional write access is not an acceptable workaround.
+
+Private evidence is retained under
+`~/Library/Caches/Alan/native-budget-closure/20261023/` (the directory was prepared
+on October 23; the rollout timestamps identify the actual October 26 run): frozen
+plan and binary, unchanged fixture, terminal transcript, public Process/AgentFS
+snapshot, rollout hashes, final ledgers and clean-exit receipt. No task retry was
+performed and the formal daily-use sample remains zero.
+
+The first local repair now resolves omitted delegated cwd to the parent's current
+namespace cwd before classification. A regression requires `/mnt/source` in both
+the launch and the read requirement; another verifies that `/agent`,
+`/mnt/host-mount` and `/mnt/llm` cannot satisfy that project requirement. The 59
+delegated-runtime tests and four capability-classification tests pass. This is
+only a source-level correction: explicit Host Mount selection still needs wiring
+into the delegated Tool interface and retained invocation evidence. The service's
+existing `SpawnHostMount` validation, access narrowing and revocation remain the
+authority; implicit grant discovery from cwd is forbidden by the canonical
+Host Mount contract. Successful native delegation is still unverified.
+
+The next local slice exposes bounded `host_mounts` selections in
+`invoke_delegated_skill`, forwards the existing `SpawnHostMount` values unchanged,
+and retains them in invocation/rollout arguments. No implicit projection was
+added. Native task-tree acceptance still needs rerunning with an explicitly
+selected read-only grant; the original failed run remains retained.
+
+Local validation of that slice: 61 delegated-runtime focused tests pass. The full
+Agent Engine and Service Manager test commands pass 1,734 tests with one existing
+ignored test and no failures, including Host Mount non-inheritance, remapping,
+read-only amplification rejection and revocation coverage. CI-pinned OpenSpec
+1.4.1 strict validation of this change passes (its telemetry upload failed after
+the successful validation). These source checks do not replace native successful
+child read, inherited-budget exhaustion, or cancellation/recovery acceptance.
+
+Independent specification review found that early cwd rejection hid the typed
+missing-capability decision. The final repair evaluates capability mismatch
+before the mandatory cwd coverage check; every otherwise accepted delegated or
+ordinary launch still checks cwd before spawning. The planner/evaluator regression
+retains the missing project read requirement and `ParentPath` recovery. Both
+independent review axes report no remaining findings. Final full Agent Engine and
+Service Manager validation passes 1,735 tests with one existing ignored test;
+this still does not establish native success.
+
+## Native explicit child authority and inherited limit — 2026-10-26
+
+Committed `4c809df896c9f8655c394e9839b7a6dffffd8d3f` passed the normal quality
+hook, including standalone debug installation and release archive checks. Its
+frozen native binary SHA-256 is
+`06cc4c055f6e87174812f355dafa7a93ef5f2f0c6d8acc065135ad55b06e3a61`.
+Both following cases used isolated stores, Herdr, a single read-only fixture,
+180 execution seconds, 16 Tool attempts, and a 300-second Host supervisor.
+No task retries or budget extensions were admitted.
+
+The explicit-grant case passed its narrow acceptance: a parent Tool invocation
+selected `request-1` at `/mnt/project-request-1` with read-only access; the child
+successfully read `fixture.txt`, and the parent returned its expected text. Root
+spending was four model admissions and two Tool attempts, including the child's
+two model admissions and one Tool attempt, over 25,055ms active time. The grant
+selection was retained in the parent Tool evidence. The fixture was unchanged,
+the queue settled, and `/quit` exited zero. This test supplied the verified grant
+selector in the task; it does not prove autonomous discovery or general daily-use
+success. The submission helper initially read a wrong observer filename and failed
+before sending any task; correcting the filename resulted in one actual submission.
+Evidence: `~/Library/Caches/Alan/native-budget-closure/20261026-repaired/`.
+
+The inherited-limit case used two model admissions for the whole task tree. It
+stopped at exactly two admissions and one Tool attempt (the delegation); the child
+received its first model response but did not execute the requested file read.
+Only the Root published a budget-extension wait. Empty Enter selected the default
+rejection, cancelled the input and completed the Root budget with unchanged
+spending (19,283ms). After clean exit, a new explicit `--resume` invocation retained
+the same completed task identity and counters, became idle with an empty queue,
+and admitted no additional Tool or model work. Both invocations exited zero.
+
+This is **partial acceptance, not successful resumable subtree exhaustion**:
+the child exited with code one and `child_failed`, because ancestor exhaustion
+was flattened into `Parent task budget prevents continuation` by
+`task_budget/inheritance.rs`. Its ledger remained paused, but the parent received
+a failed Tool result rather than a resumable child continuation. Preserve typed
+ancestor exhaustion without allowing a child-local extension, and verify parent
+extension/recovery of the original subtree before closing this gap. A terminal
+snapshot also transiently showed `model unknown` and an unconfirmed-input warning
+while the correlated budget wait existed; subsequent snapshots recovered the
+correct model. This presentation discrepancy still needs diagnosis.
+Evidence: `~/Library/Caches/Alan/native-budget-closure/20261026-exhausted/`.
+Neither case counts toward the formal fifty-task cohort. Task 2.4 remains open.
+
+### Inherited-exhaustion repair sequence
+
+The native failure crosses three existing owners, rather than only an error
+message. Machine admission must retain a typed ancestor task identity and exhausted
+dimension without exposing it as child-local `Exhausted`. Machine continuation must
+retain the unfinished Tool batch/model step and original ancestry before reporting
+an inherited wait. Agent Runtime Service and the delegated supervisor must preserve
+that wait instead of converting every paused child into exit code one; parent
+continuation must reconnect the original child work rather than replay the
+`invoke_delegated_skill` Tool as a new launch.
+
+A local first slice now preserves typed ancestor exhaustion at admission and time
+boundaries; non-budget errors retain their original error chain. This alone does
+not change the child failure UI or implement subtree continuation. The subsequent
+runtime slice must prove all of the following before replacing the retained native
+failure with a passing result: only the owning ancestor offers extension; declined
+or cancelled waits settle the subtree; extension retains all original spending
+and executes the child's pending Tool once; completed child effects are not replayed;
+and cross-invocation restoration fails closed unless original ancestor bindings,
+current grant authority and durable continuation can be re-established. Existing
+generic paused-child handling and explicit Root recovery are insufficient evidence.
+
+The typed-error slice passes 45 focused task-budget tests. Added ledger-level
+coverage identifies an exhausted grandparent, rejects bypass through an intermediate
+child extension, preserves spending when the original ancestor is extended, and
+keeps unrelated persistence errors typed rather than relabeling them as extendable
+budget exhaustion. This is not a runtime subtree-resume test; the slice remains
+uncommitted pending continuation integration and broader verification.
+
+## Inherited-exhaustion continuation slices — 2026-11-11
+
+The typed-error slice above is now continued by five committed slices on
+`codex/agent-task-budget-20261014`:
+
+- `d608ca7b` pauses a child on an inherited stop and maps a paused child
+  runtime to the non-terminal `ChildRunStatus::Blocked`, so the parent no
+  longer conflates an ancestor-owned stop with `child_failed`.
+- `e55109bc` refuses extension inside the child: `resolve` rejects inherited
+  requests, and any child-side answer settles the subtree without refunding or
+  granting calls.
+- `7d4136e6` lets the child lift the stop once the recorded ancestor admits
+  again (`ancestor_admits`, read-only), replaying the recorded batch through the
+  existing budget-continuation path.
+- `192bb5ba`, `91324152` let a delegated launch carry a resume request id and
+  have Agent Runtime Service submit `Op::Resume` instead of a fresh `Op::Turn`.
+- `2ccd935e`, `1512d6ec` record which paused child to reconnect
+  (`agent_delegated_resume_v1`, durable, bounded, fails closed when the ancestor
+  identity is lost) and hand the stop to the parent's own budget pause so the
+  recorded request is what relaunches, not a new skill invocation.
+
+Source evidence only: 1562 Agent Engine tests pass, including the inherited
+pause recording the reconnect and surfacing the typed ancestor stop, recovery
+keeping the latest record per tool call, and rejection of a record without
+ancestor identity. The repository quality gate passes on each slice.
+
+`eb4c709e` closes the loop with end-to-end evidence rather than per-slice
+bookkeeping. The spawn seam carries the reconnect request, so the test observes
+what each launch received: a child stops on an allowance this task owns, the
+parent pauses with that call as its continuation, the owner extends, and the call
+runs again with `inherited_budget-1` before the record is consumed. It asserts
+exactly two launches (none, then the reconnect) and that the record is gone
+afterwards, so the call cannot run a third time.
+`budget_limits_virtual_tool_batch_and_preserves_only_unexecuted_calls` covers the
+complementary rule that completed calls are never put back into a paused batch.
+
+What this does **not** establish:
+
+- No native acceptance run was performed. The 2026-10-26 `partial_inherited_limit`
+  outcome is unchanged and still stands until an isolated native case shows the
+  ancestor extension reconnecting the original subtree.
 - A **successful** cross-Process reconnect is not implemented. The paused child's
   in-flight Tool batch lives in its Process, which exits on pause, and that state
   is not restorable: the child exposes no rollout path to its parent

@@ -228,7 +228,7 @@ where
         super::super::child_agents::ChildLaunchRuntime,
         SpawnSpec,
         &'a CancellationToken,
-        Option<String>,
+        Option<crate::agent_machine::pending_resume::ResumeTarget>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
     >,

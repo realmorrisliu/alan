@@ -241,14 +241,14 @@ where
         ChildLaunchRuntime,
         SpawnSpec,
         &'a CancellationToken,
-        Option<String>,
+        Option<crate::agent_machine::pending_resume::ResumeTarget>,
     ) -> Pin<
         Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
     >,
 {
     // A recorded pause means this call reconnects that child instead of
     // launching the skill again as fresh work.
-    let resume = crate::agent_machine::pending_resume::resume_for(
+    let resume = crate::agent_machine::pending_resume::resume_target_for(
         &runtime.machine.pending_delegated_resumes,
         &tool_call.id,
     );
@@ -362,6 +362,7 @@ where
                                 request_id: pause.request_id.clone(),
                                 ancestor_task_id: inherited.ancestor_task_id.clone(),
                                 dimension: inherited.dimension.clone(),
+                                rollout_path: inherited.rollout_path.clone(),
                             },
                         )
                         .await?;
@@ -520,14 +521,14 @@ async fn spawn_and_join_delegated_child(
     runtime: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
-    resume: Option<String>,
+    resume: Option<crate::agent_machine::pending_resume::ResumeTarget>,
 ) -> Result<ChildRuntimeResult> {
     if cancel.is_cancelled() {
         return Ok(ChildRuntimeResult::cancelled_before_launch());
     }
 
     let controller =
-        spawn_child_runtime_cancellable(runtime, spec, cancel, resume.as_deref()).await?;
+        spawn_child_runtime_cancellable(runtime, spec, cancel, resume.as_ref()).await?;
     controller.join_until_cancelled(cancel).await
 }
 

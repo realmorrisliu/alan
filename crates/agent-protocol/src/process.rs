@@ -69,6 +69,12 @@ pub struct AgentExecutableRequest {
     /// submitting a fresh task. Set only when reconnecting preserved child work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<String>,
+    /// Execution record the child must recover before serving the resume.
+    ///
+    /// Only an inherited-budget reconnect sets this: the Process that yielded
+    /// the request exited, so its preserved work survives only in its rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_rollout: Option<String>,
 }
 
 /// Terminal state emitted by `/bin/alan-agent` through `/proc/<pid>/io/output`.
@@ -272,6 +278,7 @@ mod tests {
             },
             initial_task: "inspect".to_string(),
             resume: None,
+            recovery_rollout: None,
         };
         let encoded = serde_json::to_string(&request).unwrap();
         assert!(
@@ -298,6 +305,7 @@ mod tests {
             },
             initial_task: "inspect".to_string(),
             resume: Some("inherited_budget-1".to_string()),
+            recovery_rollout: None,
         };
 
         let encoded = serde_json::to_vec(&request).unwrap();

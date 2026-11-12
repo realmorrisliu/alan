@@ -44,6 +44,8 @@ pub(super) struct InheritedPause {
     pub(super) dimension: String,
     /// Durable key the ancestor must send back to authorize a resume.
     pub(super) checkpoint_id: String,
+    /// Execution record the child reported with the stop.
+    pub rollout_path: String,
 }
 
 /// Normalized lifecycle and handoff evidence for one delegated Child Run.
