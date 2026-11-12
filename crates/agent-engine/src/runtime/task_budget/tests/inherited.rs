@@ -407,14 +407,15 @@ async fn the_owning_ancestor_resumes_the_stop_and_replays_only_the_preserved_cal
         source.machine.pending_confirmation().is_none(),
         "the answered decision is not left pending"
     );
-    let queued = source
-        .machine
-        .pending_tool_replay_batch(&checkpoint)
-        .expect("the preserved batch stays queued for the resumed turn");
-    assert_eq!(
-        queued.tool_calls.len(),
-        1,
-        "only the unexecuted call is replayed"
+    assert!(
+        source
+            .machine
+            .pending_tool_replay_batch(&checkpoint)
+            .is_none(),
+        "the preserved batch is taken for replay, not left queued behind the resume"
     );
-    assert_eq!(queued.tool_calls[0].id, "call-1");
+    // The replay itself runs a provider-backed turn this harness does not carry;
+    // the seam test asserts the executed calls. Here the durable resume must hand
+    // the preserved batch to the replay action, not leave it queued behind an
+    // empty resumed turn.
 }

@@ -664,7 +664,13 @@ What this does **not** establish:
   drives that path: the child pauses, the rollout is reloaded into a second
   machine, the recovered stop names the record it was paused in, and the
   ancestor's durable checkpoint id resolves the republished decision even though
-  the new Process allocated a different request id.
+  the new Process allocated a different request id. The parent records that
+  checkpoint — not the `r{n}` counter the paused Process allocated — so the key
+  it later sends is one the new Process can match. On the durable path the
+  preserved batch is handed to the replay action; returning an empty resumed turn
+  instead left the call queued and executed it zero times. The executed-call count
+  itself is asserted at the launch seam, where the second launch is observably
+  the reconnect, and the machine-level test asserts the hand-off.
 - What still decides the outcome is the ancestor's allowance, which lives in the
   ancestor's Process. When the resumed child cannot rebuild that binding, the
   reconnect fails closed with `InheritedResumeUnrecoverable`: the stop is kept

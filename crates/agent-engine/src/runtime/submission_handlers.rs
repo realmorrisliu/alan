@@ -356,8 +356,8 @@ where
                                 .into(),
                             );
                         }
-                        // The resumed turn generates, so it must own the Tape
-                        // lease before the transition asks for it.
+                        // Both outcomes generate (a replay or a resumed turn), so
+                        // the transition needs the Tape lease either way.
                         *tape_writer = Some(runtime.agent_files.begin_tape_generation().await?);
                         if let Some(registered) = runtime
                             .machine
@@ -371,6 +371,20 @@ where
                             true,
                         )
                         .await?;
+                        // The preserved calls were admitted before the pause, so
+                        // the ancestor's authorization replays exactly those and
+                        // nothing else.
+                        if let Some(batch) = runtime
+                            .machine
+                            .take_tool_replay_batch(&wait.checkpoint.checkpoint_id)
+                        {
+                            return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
+                                tool_calls: batch.tool_calls,
+                                resume_with_generation: batch.resume_with_generation,
+                                approved_unknown_effect_call_id: None,
+                                approved_tool_escalation_call_id: None,
+                            });
+                        }
                         return Ok(RuntimeOpAction::RunTurn {
                             turn_kind: TurnRunKind::ResumeTurn,
                             user_input: None,

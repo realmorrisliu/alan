@@ -359,7 +359,10 @@ where
                             &mut *runtime.machine,
                             crate::agent_machine::pending_resume::PendingResume {
                                 tool_call_id: tool_call.id.clone(),
-                                request_id: pause.request_id.clone(),
+                                // The durable checkpoint, not the namespace id this
+                                // Process allocated: a relaunched child republishes
+                                // the stop under a fresh id.
+                                request_id: inherited.checkpoint_id.clone(),
                                 ancestor_task_id: inherited.ancestor_task_id.clone(),
                                 dimension: inherited.dimension.clone(),
                                 rollout_path: inherited.rollout_path.clone(),

@@ -63,7 +63,7 @@ async fn inherited_pause_records_the_reconnect_and_stops_the_parent_turn() {
         vec![crate::agent_machine::pending_resume::PendingResume {
             rollout_path: String::new(),
             tool_call_id: "call_1".to_string(),
-            request_id: "inherited_budget-1".to_string(),
+            request_id: "inherited_budget_1".to_string(),
             ancestor_task_id: "ancestor-1".to_string(),
             dimension: "model_calls".to_string(),
         }]
@@ -78,7 +78,7 @@ async fn a_finished_reconnect_is_consumed_so_the_call_cannot_run_twice() {
         vec![crate::agent_machine::pending_resume::PendingResume {
             rollout_path: String::new(),
             tool_call_id: "call_1".to_string(),
-            request_id: "inherited_budget-1".to_string(),
+            request_id: "inherited_budget_1".to_string(),
             ancestor_task_id: "ancestor-1".to_string(),
             dimension: "model_calls".to_string(),
         }];
@@ -196,6 +196,10 @@ async fn a_parent_owned_allowance_stops_through_the_local_extension_gate() {
         "an owned shortage must not be reported as inherited"
     );
     assert_eq!(state.machine.pending_delegated_resumes.len(), 1);
+    assert_eq!(
+        state.machine.pending_delegated_resumes[0].request_id, "inherited_budget_1",
+        "the record keeps the durable checkpoint, not the child's namespace request id"
+    );
 }
 
 /// A delegated call paused by our own allowance, then extended and replayed.
@@ -354,8 +358,8 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
 
     assert_eq!(
         *seen.lock().unwrap(),
-        vec![None, Some("inherited_budget-1".to_string())],
-        "the call runs twice: once to pause, once to resume the same child"
+        vec![None, Some("inherited_budget_1".to_string())],
+        "the call runs twice, and the reconnect names the durable checkpoint rather than the namespace request id the paused Process allocated"
     );
     assert!(
         state.machine.pending_delegated_resumes.is_empty(),
