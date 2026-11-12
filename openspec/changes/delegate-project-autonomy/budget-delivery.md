@@ -662,21 +662,20 @@ What this does **not** establish:
   `completed` at `model_calls 2/2`; and an explicit `--resume` kept the same task
   id, the same checkpoint and the same spending without launching a new child.
   Rollout hashes and the observed snapshots are in that directory's `evidence/`.
-- The **explicit extension** half is not yet confirmed natively. After the
-  credential was restored (`alan connection login chatgpt-main`), the run in
-  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` now gets as far
-  as: the ancestor approves, `model_calls` extends `2 -> 4`, the parent replays the
-  preserved delegated call exactly once (`tool_calls 1 -> 2`), the relaunched child
-  recovers its stop, and the durable branch reports
-  `agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`. The
-  replayed call then returns without a Tool message and without charging the
-  child's Tool allowance, so the fixture text is never produced. The acceptance
-  item "the ancestor's extension reconnects the paused child and its preserved Tool
-  runs exactly once" therefore remains unproven natively; what is proven is that
-  the reconnect now reaches the child and takes the preserved batch.
-- A resumed child's replay still ends in a local `Task budget exhausted: model
-  calls`, which is a separate allowance question: the child's own two-call tranche
-  is consumed by its first generation plus the resumed one.
+- The **explicit extension** half is not yet confirmed natively. With the
+  credential restored, the run in
+  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` now shows: the
+  ancestor approves, `model_calls` extends `2 -> 4`, the parent replays the
+  preserved delegated call, the relaunched child recovers its stop, the durable
+  branch reports `agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`,
+  and the replayed `read_file` finally charges the child's Tool allowance
+  (`tool_calls 0 -> 1`). What is still missing is the end of the story: the child
+  has not yet produced the fixture text, and the parent shows a second delegated
+  replay (`tool_calls 2 -> 3`), so "exactly once, end to end" is not established.
+- The reason the replay used to be skipped is fixed here: the interrupted attempt
+  cancelled its cancellation token, and the authorized replay inherited it, so
+  `orchestrate_tool_call` returned an empty turn without running the call. An
+  authorization now starts its own attempt.
 - Two defects surfaced by those runs are fixed here. Agent Runtime now captures a
   paused child's decision details while the Process is still observable and ships
   them inside the pause record, because the live AgentFS is removed at exit and
