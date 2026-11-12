@@ -236,7 +236,9 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
             "host_mounts": [{"grant": "grant-project", "target": "/mnt/source", "access": "read_only"}]
         }),
     };
-    let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
+    // (durable checkpoint, execution record) the reconnect launch received.
+    type ObservedResume = Option<(String, Option<String>)>;
+    let seen: Arc<Mutex<Vec<ObservedResume>>> = Arc::new(Mutex::new(Vec::new()));
     let cancel = CancellationToken::new();
     let mut emit = |_: Event| async {};
 
@@ -253,7 +255,7 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
             move |_state, _spec, _cancel, resume| {
                 seen.lock()
                     .unwrap()
-                    .push(resume.map(|target| target.request_id));
+                    .push(resume.map(|target| (target.request_id, target.rollout_path)));
                 Box::pin(async move {
                     Ok(ChildRuntimeResult {
                         status: ChildRuntimeStatus::Paused,
@@ -269,7 +271,7 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
                             request_id: "inherited_budget-1".to_string(),
                             kind: YieldKind::Custom("inherited_budget".to_string()),
                             inherited: Some(InheritedPause {
-                                rollout_path: String::new(),
+                                rollout_path: "child-rollout.jsonl".to_string(),
                                 ancestor_task_id: owner_id,
                                 dimension: "model_calls".to_string(),
                                 checkpoint_id: "inherited_budget_1".to_string(),
@@ -331,7 +333,7 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
             move |_state, _spec, _cancel, resume| {
                 seen.lock()
                     .unwrap()
-                    .push(resume.map(|target| target.request_id));
+                    .push(resume.map(|target| (target.request_id, target.rollout_path)));
                 Box::pin(async {
                     Ok(ChildRuntimeResult {
                         status: ChildRuntimeStatus::Completed,
@@ -358,8 +360,14 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
 
     assert_eq!(
         *seen.lock().unwrap(),
-        vec![None, Some("inherited_budget_1".to_string())],
-        "the call runs twice, and the reconnect names the durable checkpoint rather than the namespace request id the paused Process allocated"
+        vec![
+            None,
+            Some((
+                "inherited_budget_1".to_string(),
+                Some("child-rollout.jsonl".to_string())
+            ))
+        ],
+        "the call runs twice, and the reconnect carries the durable checkpoint plus the record the paused child named"
     );
     assert!(
         state.machine.pending_delegated_resumes.is_empty(),
