@@ -662,16 +662,20 @@ What this does **not** establish:
   `completed` at `model_calls 2/2`; and an explicit `--resume` kept the same task
   id, the same checkpoint and the same spending without launching a new child.
   Rollout hashes and the observed snapshots are in that directory's `evidence/`.
-- The **explicit extension** half is not yet confirmed natively. The run in
-  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` reached the
-  ancestor's approval, extended `model_calls 2 -> 4`, replayed the preserved
-  delegated call exactly once (`tool_calls 1 -> 2`) and launched the reconnect —
-  and then could not finish because the `chatgpt-main` OAuth session expired
-  mid-session (`401 invalid_jwt`; the stored refresh token answers
-  `invalid_refresh_token`). Completing it needs `alan connection login
-  chatgpt-main` and a re-run of that case. Until then the central acceptance item
-  — "the ancestor's extension reconnects the paused child and its preserved Tool
-  runs exactly once" — is proved only by the source tests below, not natively.
+- The **explicit extension** half is not yet confirmed natively. With the
+  credential restored, the run in
+  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` now shows: the
+  ancestor approves, `model_calls` extends `2 -> 4`, the parent replays the
+  preserved delegated call, the relaunched child recovers its stop, the durable
+  branch reports `agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`,
+  and the replayed `read_file` finally charges the child's Tool allowance
+  (`tool_calls 0 -> 1`). What is still missing is the end of the story: the child
+  has not yet produced the fixture text, and the parent shows a second delegated
+  replay (`tool_calls 2 -> 3`), so "exactly once, end to end" is not established.
+- The reason the replay used to be skipped is fixed here: the interrupted attempt
+  cancelled its cancellation token, and the authorized replay inherited it, so
+  `orchestrate_tool_call` returned an empty turn without running the call. An
+  authorization now starts its own attempt.
 - Two defects surfaced by those runs are fixed here. Agent Runtime now captures a
   paused child's decision details while the Process is still observable and ships
   them inside the pause record, because the live AgentFS is removed at exit and

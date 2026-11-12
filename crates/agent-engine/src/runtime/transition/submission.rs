@@ -237,6 +237,7 @@ where
                 resume_with_generation: true,
                 approved_unknown_effect_call_id,
                 approved_tool_escalation_call_id,
+                replay_after_authorization: false,
             },
             action => action,
         };
@@ -301,7 +302,17 @@ where
                 resume_with_generation,
                 approved_unknown_effect_call_id,
                 approved_tool_escalation_call_id,
+                replay_after_authorization,
             } => {
+                // The interrupted attempt cancelled the token it was running
+                // under. An explicit authorization starts a new attempt, so it
+                // must not inherit that cancellation.
+                let authorized_cancel = CancellationToken::new();
+                let cancel = if replay_after_authorization && cancel.is_cancelled() {
+                    &authorized_cancel
+                } else {
+                    cancel
+                };
                 let writer = tape_writer.as_ref().expect("replay owns the Tape lease");
                 if !resume_with_generation {
                     return explicit_command::replay_command(

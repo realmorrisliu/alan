@@ -42,6 +42,9 @@ pub(super) enum RuntimeOpAction {
         resume_with_generation: bool,
         approved_unknown_effect_call_id: Option<String>,
         approved_tool_escalation_call_id: Option<String>,
+        /// A budget authorization replayed this batch, so a cancellation token
+        /// left over from the interrupted attempt must not skip it.
+        replay_after_authorization: bool,
     },
     FinishRejectedExplicitCommand {
         tool_call: NormalizedToolCall,
@@ -390,6 +393,7 @@ where
                                 resume_with_generation: batch.resume_with_generation,
                                 approved_unknown_effect_call_id: None,
                                 approved_tool_escalation_call_id: None,
+                                replay_after_authorization: true,
                             });
                         }
                         return Ok(RuntimeOpAction::RunTurn {
@@ -615,6 +619,7 @@ async fn handle_confirmation_resolution(
         && let Some(batch) = replay_tool_batch
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
+            replay_after_authorization: false,
             approved_unknown_effect_call_id: if allow_unknown_effect_replay {
                 batch.tool_calls.first().map(|call| call.id.clone())
             } else {
