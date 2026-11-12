@@ -341,7 +341,7 @@ async fn the_owning_ancestor_resumes_the_stop_and_replays_only_the_preserved_cal
             name: "read_file".into(),
             arguments: serde_json::json!({"path": "README.md"}),
         }],
-        resume_with_generation: true,
+        resume_with_generation: false,
     };
     pause_inherited(&mut source, &exhausted, Some(preserved), &mut emit)
         .await
@@ -391,14 +391,10 @@ async fn the_owning_ancestor_resumes_the_stop_and_replays_only_the_preserved_cal
         &cancel,
     )
     .await;
-    if let Err(error) = &outcome {
-        assert!(
-            error
-                .downcast_ref::<crate::agent_machine::task_budget::InheritedResumeUnrecoverable>()
-                .is_none(),
-            "an admitted reconnect must not fail closed: {error}"
-        );
-    }
+    assert!(
+        outcome.is_ok(),
+        "an admitted reconnect must replay the preserved call: {outcome:?}"
+    );
     assert!(
         source.machine.inherited_budget_wait.is_none(),
         "the ancestor's authorization consumes the stop"
@@ -414,8 +410,31 @@ async fn the_owning_ancestor_resumes_the_stop_and_replays_only_the_preserved_cal
             .is_none(),
         "the preserved batch is taken for replay, not left queued behind the resume"
     );
-    // The replay itself runs a provider-backed turn this harness does not carry;
-    // the seam test asserts the executed calls. Here the durable resume must hand
-    // the preserved batch to the replay action, not leave it queued behind an
-    // empty resumed turn.
+    assert_eq!(
+        source
+            .machine
+            .task_budget
+            .as_ref()
+            .unwrap()
+            .snapshot()
+            .await
+            .phase,
+        crate::agent_machine::task_budget::Phase::Running,
+        "the authorization reopens the child ledger the pause settled"
+    );
+    let executed = source
+        .machine
+        .messages()
+        .iter()
+        .filter_map(|message| match message {
+            crate::tape::Message::Tool { responses } => Some(responses),
+            _ => None,
+        })
+        .flatten()
+        .filter(|response| format!("{response:?}").contains("call-1"))
+        .count();
+    assert_eq!(
+        executed, 1,
+        "the preserved call executes exactly once after the ancestor authorizes it"
+    );
 }

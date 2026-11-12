@@ -668,9 +668,13 @@ What this does **not** establish:
   checkpoint — not the `r{n}` counter the paused Process allocated — so the key
   it later sends is one the new Process can match. On the durable path the
   preserved batch is handed to the replay action; returning an empty resumed turn
-  instead left the call queued and executed it zero times. The executed-call count
-  itself is asserted at the launch seam, where the second launch is observably
-  the reconnect, and the machine-level test asserts the hand-off.
+  instead left the call queued and executed it zero times. The pause also settles
+  the child's own ledger, so approving the reconnect reopens it (`resume()`) before
+  the replay; without that the preserved call failed its own admission with
+  "task budget is not running" and ran zero times. The machine-level test now
+  asserts the outcome succeeds, the ledger is running, and exactly one Tool
+  response for the preserved call exists, while the seam test asserts the second
+  launch is observably the reconnect.
 - What still decides the outcome is the ancestor's allowance, which lives in the
   ancestor's Process. When the resumed child cannot rebuild that binding, the
   reconnect fails closed with `InheritedResumeUnrecoverable`: the stop is kept

@@ -197,11 +197,17 @@ pub(crate) async fn resolve_inherited(
         wait.checkpoint == *pending,
         "inherited budget resolution is not the recorded wait"
     );
-    if !approved {
-        let budget = machine
-            .task_budget
-            .as_ref()
-            .context("inherited budget resolution lacks its ledger")?;
+    let budget = machine
+        .task_budget
+        .as_ref()
+        .context("inherited budget resolution lacks its ledger")?;
+    if approved {
+        // The pause settled this ledger, so the preserved replay would fail its
+        // own admission with "task budget is not running". The ancestor's
+        // authorization reopens it; it grants no allowance, since the limits are
+        // untouched and consumption still charges the ancestors.
+        budget.resume().await?;
+    } else {
         budget.settle(true).await?;
     }
     machine.inherited_budget_wait = None;
