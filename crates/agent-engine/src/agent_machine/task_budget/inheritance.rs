@@ -195,8 +195,13 @@ impl TaskBudget {
             if state.snapshot.task_id != ancestor_task_id {
                 continue;
             }
+            // An ancestor that is merely paused is usually paused *because* this
+            // descendant is still running, so its phase cannot gate admission.
+            // What gates it is what it already spent: a paused ancestor with no
+            // room left still refuses, and a settled or completed one never
+            // authorizes more work.
             if state.poisoned
-                || state.snapshot.phase != Phase::Running
+                || state.snapshot.phase == Phase::Completed
                 || state.snapshot.foreground_complete
             {
                 return Ok(false);

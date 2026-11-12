@@ -498,3 +498,49 @@ async fn ancestor_non_budget_errors_keep_their_type_without_becoming_extendable(
     assert!(!error.is::<InheritedExhaustion>());
     assert!(!error.is::<Exhausted>());
 }
+
+#[tokio::test]
+async fn a_paused_ancestor_still_admits_while_a_descendant_is_running() {
+    use crate::agent_machine::task_budget::{Admission, Dimension, Phase};
+    let core = crate::config::Config::default().task_budget.clone();
+    let ancestor = TaskBudget::start("ancestor".into(), core.clone(), None)
+        .await
+        .unwrap();
+    let child = TaskBudget::start_with_parent("child".into(), core, None, Some(ancestor.clone()))
+        .await
+        .unwrap();
+    // The ancestor pauses to wait for its descendant, not because it ran out.
+    ancestor.settle(false).await.unwrap();
+    assert_eq!(ancestor.snapshot().await.phase, Phase::Paused);
+    assert!(
+        child
+            .ancestor_admits("ancestor", Dimension::ModelCalls)
+            .await
+            .unwrap(),
+        "a paused ancestor with room left must still admit its descendant"
+    );
+}
+
+#[tokio::test]
+async fn an_exhausted_ancestor_refuses_even_while_paused() {
+    use crate::agent_machine::task_budget::{Admission, Dimension};
+    let core = crate::config::Config::default().task_budget.clone();
+    let ancestor = TaskBudget::start("ancestor".into(), core.clone(), None)
+        .await
+        .unwrap();
+    let child = TaskBudget::start_with_parent("child".into(), core, None, Some(ancestor.clone()))
+        .await
+        .unwrap();
+    let limit = ancestor.snapshot().await.limits.model_calls.get();
+    for _ in 0..limit {
+        ancestor.reserve(Admission::Model).await.unwrap();
+    }
+    ancestor.settle(false).await.unwrap();
+    assert!(
+        !child
+            .ancestor_admits("ancestor", Dimension::ModelCalls)
+            .await
+            .unwrap(),
+        "spending the room out, not the pause, is what closes admission"
+    );
+}
