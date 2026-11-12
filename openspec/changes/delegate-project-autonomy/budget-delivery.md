@@ -652,40 +652,40 @@ complementary rule that completed calls are never put back into a paused batch.
 
 What this does **not** establish:
 
-- No native acceptance run was performed. The 2026-10-26 `partial_inherited_limit`
-  outcome is unchanged and still stands until an isolated native case shows the
-  ancestor extension reconnecting the original subtree.
-- The reconnect now survives the Process boundary, but it does not always
-  succeed. The stop carries the child's own execution record
-  (`checkpoint.details["rollout_path"]`); the parent records it in the reconnect
-  record; and a resume launch passes it as `AgentExecutableRequest.recovery_rollout`
-  so the new Process recovers the same Agent Machine state, including the
-  preserved Tool batch. `a_relaunched_child_republishes_the_same_inherited_request_identity`
-  drives that path: the child pauses, the rollout is reloaded into a second
-  machine, the recovered stop names the record it was paused in, and the
-  ancestor's durable checkpoint id resolves the republished decision even though
-  the new Process allocated a different request id. The parent records that
-  checkpoint — not the `r{n}` counter the paused Process allocated — so the key
-  it later sends is one the new Process can match. On the durable path the
-  preserved batch is handed to the replay action; returning an empty resumed turn
-  instead left the call queued and executed it zero times. The pause also settles
-  the child's own ledger, so approving the reconnect reopens it (`resume()`) before
-  the replay; without that the preserved call failed its own admission with
-  "task budget is not running" and ran zero times. The machine-level test now
-  asserts the outcome succeeds, the ledger is running, and exactly one Tool
-  response for the preserved call exists, while the seam test asserts the second
-  launch is observably the reconnect.
-- What still decides the outcome is the ancestor's allowance, which lives in the
-  ancestor's Process. When the resumed child cannot rebuild that binding, the
-  reconnect fails closed with `InheritedResumeUnrecoverable`: the stop is kept
-  for a later attempt, no Tape lease is taken, and no work is replayed. The same
-  test asserts that outcome, and
-  `a_reconnect_without_its_paused_work_fails_closed` covers the case where the
-  machine holds no stop at all. A reconnect that can reach its ancestor still
-  completes in-process, as `extension_replays_the_delegated_call_exactly_once_with_the_resume_request`
-  shows.
-- The child-side Tape lease bug this uncovered is fixed: a resumed turn now takes
-  the lease before the transition asks for it.
+- Native acceptance is only partly recorded. On 2026-11-12 the inherited-limit case
+  was re-run against this branch in
+  `~/Library/Caches/Alan/native-budget-closure/20261112-inherited-continuation/`:
+  the child recorded `agent_inherited_budget_wait_v1` naming the parent task and
+  stayed `paused` with its Tool unexecuted (`tool_calls 0/16`); the parent paused
+  with its own `task_budget_wait` and the delegated call as its continuation; an
+  empty answer resolved the stop as the default rejection, leaving the parent
+  `completed` at `model_calls 2/2`; and an explicit `--resume` kept the same task
+  id, the same checkpoint and the same spending without launching a new child.
+  Rollout hashes and the observed snapshots are in that directory's `evidence/`.
+- The **explicit extension** half is not yet confirmed natively. The run in
+  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` reached the
+  ancestor's approval, extended `model_calls 2 -> 4`, replayed the preserved
+  delegated call exactly once (`tool_calls 1 -> 2`) and launched the reconnect —
+  and then could not finish because the `chatgpt-main` OAuth session expired
+  mid-session (`401 invalid_jwt`; the stored refresh token answers
+  `invalid_refresh_token`). Completing it needs `alan connection login
+  chatgpt-main` and a re-run of that case. Until then the central acceptance item
+  — "the ancestor's extension reconnects the paused child and its preserved Tool
+  runs exactly once" — is proved only by the source tests below, not natively.
+- Two defects surfaced by those runs are fixed here. Agent Runtime now captures a
+  paused child's decision details while the Process is still observable and ships
+  them inside the pause record, because the live AgentFS is removed at exit and
+  the parent was otherwise reading an empty ancestor identity. And an inherited
+  reconnect now carries explicit approval content, because a resume submitted with
+  empty content is the default rejection — the ancestor's authorization was being
+  read as a refusal, so the preserved call never executed.
+- The reconnect itself is still bounded by the ancestor's allowance. When the
+  resumed child cannot rebuild that binding it fails closed with
+  `InheritedResumeUnrecoverable`: the stop is kept, no Tape lease is taken and
+  nothing is replayed. `a_reconnect_without_its_paused_work_fails_closed` covers
+  the case where the machine holds no stop at all, and
+  `extension_replays_the_delegated_call_exactly_once_with_the_resume_request`
+  covers the in-process reconnect.
 Task 2.4 remains unchecked. The existing source-owner program has budget continuation
 coverage; this does not implement a general mixed-program scheduler. Uncertain model
 or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
