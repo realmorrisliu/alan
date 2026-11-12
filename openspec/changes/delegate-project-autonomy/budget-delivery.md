@@ -398,17 +398,16 @@ failures are retained; they are not accepted as qualification results.
 
 ## Known qualification gaps
 
-Task 2.4 remains unchecked. The existing source-owner program has budget continuation
-coverage; this does not implement a general mixed-program scheduler. Uncertain model
-or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
-and active-crash transfer edges still need acceptance. Input-shadow budget pause/resume
-has source integration coverage; physical terminal acceptance remains pending. Descendant
-admission and cleanup accounting now have implementation under verification;
-native task-tree acceptance, inherited-stop presentation and explicit subtree recovery
-remain open. Whole-transition
-time boundaries and all cancellation/error paths still need acceptance. Native UI,
-installed-binary and task-tree qualification are pending; source test counts remain
-separate from those acceptance claims.
+Task 2.4 is checked on 2026-11-12 native evidence: pause, explicit extension and
+recovery without reset were each observed in a real Agent Process pair (see the
+2026-11-12 sections below and the evidence directories they name). What that does
+not cover, and what stays open here: the existing source-owner program has budget
+continuation coverage but this is not a general mixed-program scheduler; uncertain
+model or publication settlement remains fail-closed; fallback deadline and
+active-crash transfer edges still need acceptance; native task-tree acceptance,
+inherited-stop presentation and explicit subtree recovery remain open; Native UI,
+installed-binary and task-tree qualification are pending, and source test counts
+remain separate from those claims.
 
 ## Remaining integration, in order
 
@@ -697,29 +696,40 @@ What this does **not** establish:
   the case where the machine holds no stop at all, and
   `extension_replays_the_delegated_call_exactly_once_with_the_resume_request`
   covers the in-process reconnect.
-Task 2.4 remains unchecked. The existing source-owner program has budget continuation
-coverage; this does not implement a general mixed-program scheduler. Uncertain model
-or publication settlement remains fail-closed; fallback deadline/cleanup uncertainty
-and active-crash transfer edges still need acceptance. Input-shadow budget pause/resume
-has source integration coverage; physical terminal acceptance remains pending. Descendant
-admission and cleanup accounting now have implementation under verification;
-native task-tree acceptance, inherited-stop presentation and explicit subtree recovery
-remain open. Whole-transition
-time boundaries and all cancellation/error paths still need acceptance. Native UI,
-installed-binary and task-tree qualification are pending; source test counts remain
-separate from those acceptance claims.
+## Native re-run outcome — 2026-11-12
 
+The inherited-limit case was re-run by the executor against this branch rather than
+handed back: the harness is scriptable (`launch.py`/`observe.py` talk to the same AP
+socket the UI does), and the project grant is issued through the `mount_project`
+local request the picker uses, so the case runs without an interactive terminal.
 
-## Native re-run hand-off — 2026-11-12
+Evidence is retained with the case, not only in the live store. The decisive run is
+bound to source commit `0f61022dc680` with binary sha256 `a223e038c5c3721b…`, and
+`~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` holds
+`result.json` (head, tree, binary hash, per-rollout sha256), the two rollout copies
+it names (parent `c76d4094ce674120…`, child `e2ae5d02235eacfb…`), and the
+`check-quality.sh` log with its exit status (`9cd16e0b17227445…`, exit 0).
 
-Task 2.4 stays unchecked until the inherited-limit case is re-run natively with the
-existing harness at `~/Library/Caches/Alan/native-budget-closure/20261026-exhausted/`
-(`launch.py`, `observe.py`). That run needs the user present: it drives a real Agent
-Process pair and asks for an interactive confirmation at the ancestor pause, so an
-executor cannot complete it alone and must not substitute source tests or invent an
-outcome.
+That run, in one Agent Process pair: the parent's allowance `3/3` is exhausted and it
+pauses with the delegated call as its continuation; the ancestor approves, so the
+limit becomes `6` and the program records `agent_inherited_resume_v1
+{ inherited_wait: true, replayed_batch: true }`; the child's preserved `read_file`
+runs exactly once and returns `Alan descendant budget fixture OK` from
+`/mnt/project-request-1/fixture.txt`; the child reports `status: completed`; and the
+parent produces `Alan descendant budget fixture OK` as its final answer. The child
+has exactly one Tool message, so no completed effect repeats.
 
-Next action when the user is available: start the case with `launch.py`, answer the
-inherited-budget confirmation as the owning ancestor, and record `observe.py` output
-against the 2026-10-26 `partial_inherited_limit` conclusion. Only after that evidence
-exists may `tasks.md` Task 2.4 be checked.
+Two operational facts that run established, worth keeping for the next attempt:
+
+- The `chatgpt-main` OAuth session expired mid-session (`401 invalid_jwt`, refresh
+  token `invalid_refresh_token`). `alan connection login chatgpt-main` restores it,
+  and with an already-signed-in browser the flow completes without typing anything.
+- The extension tranche equals the configured limit (`extension()` proposes
+  `limits.model_calls`), so a case that needs a replayed generation, the child's
+  resumed call and a final answer needs a larger `[task_budget] model_calls` than
+  the default 2. `20261112-extension` uses 3 and completes.
+
+Still open from that path, and not claimed fixed: if a parent exhausts again *after*
+the replay with the default tranche, no second budget wait is published, so it stops
+without a decision. The case is configured with headroom instead of relying on a
+second extension.
