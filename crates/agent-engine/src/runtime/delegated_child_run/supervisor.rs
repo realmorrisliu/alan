@@ -374,27 +374,15 @@ impl DelegatedChildRunSupervisor {
                         if matches!(&pause.kind, YieldKind::Custom(kind)
                             if kind == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE) =>
                     {
-                        self.agent_files
-                            .read_request_details(&pause.request_id)
-                            .await?
-                            .map(|details| InheritedPause {
-                                ancestor_task_id: details["ancestor_task_id"]
-                                    .as_str()
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                dimension: details["dimension"]
-                                    .as_str()
-                                    .unwrap_or("unknown")
-                                    .to_string(),
-                                checkpoint_id: details["checkpoint_id"]
-                                    .as_str()
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                rollout_path: details["rollout_path"]
-                                    .as_str()
-                                    .unwrap_or_default()
-                                    .to_string(),
-                            })
+                        let details = match pause.payload.clone() {
+                            Some(details) => Some(details),
+                            None => {
+                                self.agent_files
+                                    .read_request_details(&pause.request_id)
+                                    .await?
+                            }
+                        };
+                        details.map(|details| inherited_pause_from(&details))
                     }
                     _ => None,
                 };
@@ -456,24 +444,7 @@ impl DelegatedChildRunSupervisor {
                     self.agent_files
                         .read_request_details(request_id)
                         .await?
-                        .map(|details| InheritedPause {
-                            ancestor_task_id: details["ancestor_task_id"]
-                                .as_str()
-                                .unwrap_or_default()
-                                .to_string(),
-                            dimension: details["dimension"]
-                                .as_str()
-                                .unwrap_or("unknown")
-                                .to_string(),
-                            checkpoint_id: details["checkpoint_id"]
-                                .as_str()
-                                .unwrap_or_default()
-                                .to_string(),
-                            rollout_path: details["rollout_path"]
-                                .as_str()
-                                .unwrap_or_default()
-                                .to_string(),
-                        })
+                        .map(|details| inherited_pause_from(&details))
                 } else {
                     None
                 };
@@ -903,5 +874,27 @@ mod tests {
                 .unwrap()
                 .contains("without a valid terminal result")
         );
+    }
+}
+
+/// The inherited identity a paused child reported in its decision details.
+fn inherited_pause_from(details: &serde_json::Value) -> InheritedPause {
+    InheritedPause {
+        ancestor_task_id: details["ancestor_task_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        dimension: details["dimension"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+        checkpoint_id: details["checkpoint_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        rollout_path: details["rollout_path"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
     }
 }

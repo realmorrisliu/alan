@@ -92,6 +92,13 @@ pub enum AgentExecutableStatus {
 pub struct AgentExecutablePause {
     pub request_id: String,
     pub kind: YieldKind,
+    /// Decision details captured while the paused Process was still alive.
+    ///
+    /// A paused Process can be removed before its consumer looks, so anything the
+    /// consumer cannot re-derive later (an inherited stop's ancestor identity)
+    /// travels here as well as in the request file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
 }
 
 /// Bounded terminal evidence for an Agent Executable invocation.
@@ -323,6 +330,12 @@ mod tests {
             AgentExecutablePause {
                 request_id: "request-1".to_string(),
                 kind: YieldKind::Confirmation,
+                // An inherited stop's identity must survive here: the paused
+                // Process backing is gone before its consumer looks.
+                payload: Some(serde_json::json!({
+                    "ancestor_task_id": "ancestor-1",
+                    "dimension": "model_calls",
+                })),
             },
         );
 
@@ -333,9 +346,12 @@ mod tests {
         );
         let mut process_output = b"arbitrary assistant output".to_vec();
         process_output.extend_from_slice(&result.to_process_output_record().unwrap());
+        let decoded = AgentExecutableResult::from_process_output(&process_output).unwrap();
+        assert_eq!(decoded, result);
         assert_eq!(
-            AgentExecutableResult::from_process_output(&process_output).unwrap(),
-            result
+            decoded.pause.unwrap().payload.unwrap()["ancestor_task_id"],
+            serde_json::json!("ancestor-1"),
+            "the pause record must carry the inherited identity through the process output"
         );
 
         assert!(

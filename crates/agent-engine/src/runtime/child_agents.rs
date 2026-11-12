@@ -711,6 +711,7 @@ mod tests {
             alan_agent_protocol::AgentExecutablePause {
                 request_id: "request-1".to_string(),
                 kind: alan_agent_protocol::YieldKind::Confirmation,
+                payload: None,
             },
         );
         assert!(child_reached_observable_terminal(1, &paused));

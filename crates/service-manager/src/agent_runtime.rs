@@ -960,7 +960,20 @@ async fn read_child_pause(
             "structured_input" => YieldKind::StructuredInput,
             other => YieldKind::Custom(other.to_string()),
         };
-        return Ok(Some(AgentExecutablePause { request_id, kind }));
+        // Capture the decision details now: AgentFS is the live view and is
+        // removed once this Process exits, so a consumer that reads later would
+        // otherwise lose an inherited stop's ancestor identity.
+        let payload = shell
+            .cat(&format!("{request_path}/options"))
+            .await
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|options| options.get("details").cloned());
+        return Ok(Some(AgentExecutablePause {
+            request_id,
+            kind,
+            payload,
+        }));
     }
     Ok(None)
 }
