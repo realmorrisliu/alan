@@ -935,3 +935,43 @@ async fn inherited_pause_publishes_an_ancestor_owned_wait_without_offering_a_loc
         )
     );
 }
+
+#[tokio::test]
+async fn a_turn_that_runs_out_publishes_a_budget_wait_instead_of_failing() {
+    use crate::agent_machine::task_budget::Admission;
+    let directory = tempfile::TempDir::new().unwrap();
+    let machine = AgentMachine::new_with_recorder_in_dir("/proc/reader", "test", directory.path())
+        .await
+        .unwrap();
+    let mut source = state(machine);
+    let budget = TaskBudget::start("task".into(), source.core_config.task_budget.clone(), None)
+        .await
+        .unwrap();
+    let limit = budget.snapshot().await.limits.model_calls.get();
+    for _ in 0..limit {
+        budget.reserve(Admission::Model).await.unwrap();
+    }
+    source.machine.task_budget = Some(budget);
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let mut emit = |_event: Event| async {};
+    let outcome = crate::runtime::transition::handle_submission_with_cancel(
+        &mut source,
+        alan_agent_protocol::Submission::new(alan_agent_protocol::Op::Turn {
+            parts: vec![alan_agent_protocol::ContentPart::text("read it")],
+            context: None,
+        }),
+        &mut emit,
+        &cancel,
+    )
+    .await;
+
+    assert!(
+        outcome.is_ok(),
+        "an exhausted turn must pause, not fail: {outcome:?}"
+    );
+    assert!(
+        source.machine.task_budget_wait.is_some(),
+        "the operator must get a decision instead of a silent stop"
+    );
+}

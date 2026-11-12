@@ -156,7 +156,9 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    if state.machine.has_pending_interaction() {
+    // Only a published budget decision makes this stop redundant; any other
+    // pending interaction must not turn it into a silent pause.
+    if state.machine.task_budget_wait.is_some() || state.machine.inherited_budget_wait.is_some() {
         return Ok(true);
     }
     preserve_inherited_wait(state, exhausted, continuation).await?;

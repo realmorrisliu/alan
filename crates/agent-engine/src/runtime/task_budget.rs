@@ -178,7 +178,10 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    if state.machine.has_pending_interaction() {
+    // Only an existing budget decision makes this pause redundant. Some other
+    // pending interaction must not swallow the stop, which would leave the turn
+    // paused with nothing for the operator to answer.
+    if state.machine.task_budget_wait.is_some() {
         return Ok(true);
     }
     let tool_calls = calls

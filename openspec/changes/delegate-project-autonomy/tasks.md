@@ -10,7 +10,7 @@
 - [ ] 2.1 Wire dedicated reviewer Connection and trusted-user policy selection; verify no secret duplication, immutable action/profile binding, no-tools results and main fallback.
 - [ ] 2.2 Implement aggregate fallback/deadline limits, one correlated pending request and revocation of stale decisions; test outage, malformed output, cancellation and concurrent model selection.
 - [ ] 2.3 Permit only provably independent work while a decision is pending; test dependency ordering, no repeated prompt, no duplicated effects and unchanged cancellation.
-- [x] 2.4 Add finite task time/Tool/model budgets through Machine-owned state; verify pause, explicit extension and persistence across recovery without reset.
+- [ ] 2.4 Add finite task time/Tool/model budgets through Machine-owned state; verify pause, explicit extension and persistence across recovery without reset.
 
 ## 3. Qualification and integration
 - [ ] 3.1 Freeze a bounded pilot and labeled shadow corpus; measure and freeze false-denial/latency/cost thresholds before formal evaluation, requiring zero observed high-impact unauthorized allows.

@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// A turn that runs out of its task allowance must become a decision, not a silent stop.
+fn local_exhaustion(error: &anyhow::Error) -> Option<crate::agent_machine::task_budget::Exhausted> {
+    let typed = error.downcast_ref::<crate::agent_machine::task_budget::Exhausted>()?;
+    Some(crate::agent_machine::task_budget::Exhausted {
+        dimension: typed.dimension,
+    })
+}
+
 pub(crate) async fn handle_submission_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     submission: Submission,
@@ -267,10 +275,17 @@ where
                 .await
                 {
                     Ok(outcome) => outcome,
-                    Err(err) => {
-                        state.machine.set_turn_activity(TurnActivityState::Idle);
-                        return Err(err);
-                    }
+                    Err(err) => match local_exhaustion(&err) {
+                        Some(exhausted) if state.machine.task_budget_wait.is_none() => {
+                            crate::runtime::task_budget::pause(state, &exhausted, None, emit)
+                                .await?;
+                            TurnExecutionOutcome::Paused
+                        }
+                        _ => {
+                            state.machine.set_turn_activity(TurnActivityState::Idle);
+                            return Err(err);
+                        }
+                    },
                 };
                 state.machine.set_turn_activity(
                     if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
@@ -360,10 +375,19 @@ where
                             .await
                             {
                                 Ok(outcome) => outcome,
-                                Err(err) => {
-                                    state.machine.set_turn_activity(TurnActivityState::Idle);
-                                    return Err(err);
-                                }
+                                Err(err) => match local_exhaustion(&err) {
+                                    Some(exhausted) if state.machine.task_budget_wait.is_none() => {
+                                        crate::runtime::task_budget::pause(
+                                            state, &exhausted, None, emit,
+                                        )
+                                        .await?;
+                                        TurnExecutionOutcome::Paused
+                                    }
+                                    _ => {
+                                        state.machine.set_turn_activity(TurnActivityState::Idle);
+                                        return Err(err);
+                                    }
+                                },
                             };
                             state.machine.set_turn_activity(
                                 if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
