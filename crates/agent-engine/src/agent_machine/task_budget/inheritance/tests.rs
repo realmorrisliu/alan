@@ -501,7 +501,7 @@ async fn ancestor_non_budget_errors_keep_their_type_without_becoming_extendable(
 
 #[tokio::test]
 async fn a_paused_ancestor_still_admits_while_a_descendant_is_running() {
-    use crate::agent_machine::task_budget::{Admission, Dimension, Phase};
+    use crate::agent_machine::task_budget::{Dimension, Phase};
     let core = crate::config::Config::default().task_budget.clone();
     let ancestor = TaskBudget::start("ancestor".into(), core.clone(), None)
         .await

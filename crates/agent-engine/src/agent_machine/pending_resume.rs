@@ -12,6 +12,33 @@ use crate::rollout::{EventRecord, RolloutItem};
 
 pub(crate) const PENDING_RESUME_EVENT: &str = "agent_delegated_resume_v1";
 
+/// One reconnect decision, recorded where the authorization was answered.
+pub(crate) const INHERITED_RESUME_EVENT: &str = "agent_inherited_resume_v1";
+
+/// Record what a durable reconnect found, so a silent no-op is visible in history.
+pub(crate) async fn record_decision(
+    machine: &super::AgentMachine,
+    checkpoint_id: &str,
+    inherited_wait: bool,
+    replayed_batch: bool,
+) -> Result<()> {
+    let Some(recorder) = machine.recorder() else {
+        return Ok(());
+    };
+    recorder
+        .persist_batch(vec![RolloutItem::Event(EventRecord {
+            event_type: INHERITED_RESUME_EVENT.into(),
+            payload: serde_json::json!({
+                "checkpoint_id": checkpoint_id,
+                "inherited_wait": inherited_wait,
+                "replayed_batch": replayed_batch,
+            }),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        })])
+        .await?;
+    Ok(())
+}
+
 /// One delegated tool call whose child is paused on an ancestor-owned budget.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -374,10 +374,17 @@ where
                         // The preserved calls were admitted before the pause, so
                         // the ancestor's authorization replays exactly those and
                         // nothing else.
-                        if let Some(batch) = runtime
+                        let batch = runtime
                             .machine
-                            .take_tool_replay_batch(&wait.checkpoint.checkpoint_id)
-                        {
+                            .take_tool_replay_batch(&wait.checkpoint.checkpoint_id);
+                        crate::agent_machine::pending_resume::record_decision(
+                            runtime.machine,
+                            &wait.checkpoint.checkpoint_id,
+                            true,
+                            batch.is_some(),
+                        )
+                        .await?;
+                        if let Some(batch) = batch {
                             return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
                                 tool_calls: batch.tool_calls,
                                 resume_with_generation: batch.resume_with_generation,

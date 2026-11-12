@@ -851,6 +851,28 @@ fn parse_last_json_fenced_block(text: &str) -> Option<serde_json::Value> {
     last_match.and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
 }
 
+/// The inherited identity a paused child reported in its decision details.
+fn inherited_pause_from(details: &serde_json::Value) -> InheritedPause {
+    InheritedPause {
+        ancestor_task_id: details["ancestor_task_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        dimension: details["dimension"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+        checkpoint_id: details["checkpoint_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        rollout_path: details["rollout_path"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,27 +896,5 @@ mod tests {
                 .unwrap()
                 .contains("without a valid terminal result")
         );
-    }
-}
-
-/// The inherited identity a paused child reported in its decision details.
-fn inherited_pause_from(details: &serde_json::Value) -> InheritedPause {
-    InheritedPause {
-        ancestor_task_id: details["ancestor_task_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-        dimension: details["dimension"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string(),
-        checkpoint_id: details["checkpoint_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-        rollout_path: details["rollout_path"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
     }
 }

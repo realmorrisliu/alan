@@ -75,6 +75,13 @@ pub struct AgentExecutableRequest {
     /// the request exited, so its preserved work survives only in its rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_rollout: Option<String>,
+    /// The resume is an ancestor's authorization for an inherited stop.
+    ///
+    /// Without this the resumed Process cannot tell the ancestor's authorization
+    /// from an empty answer, and an empty answer to an inherited stop is a
+    /// rejection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inherited_resume: bool,
 }
 
 /// Terminal state emitted by `/bin/alan-agent` through `/proc/<pid>/io/output`.
@@ -286,6 +293,7 @@ mod tests {
             initial_task: "inspect".to_string(),
             resume: None,
             recovery_rollout: None,
+            inherited_resume: false,
         };
         let encoded = serde_json::to_string(&request).unwrap();
         assert!(
@@ -313,6 +321,7 @@ mod tests {
             initial_task: "inspect".to_string(),
             resume: Some("inherited_budget-1".to_string()),
             recovery_rollout: None,
+            inherited_resume: true,
         };
 
         let encoded = serde_json::to_vec(&request).unwrap();

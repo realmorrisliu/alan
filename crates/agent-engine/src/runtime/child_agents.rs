@@ -210,6 +210,8 @@ impl ChildProcessLaunch<'_> {
                     spawn: attempt_spec.clone(),
                     resume: self.resume.map(|target| target.request_id.clone()),
                     recovery_rollout: self.resume.and_then(|target| target.rollout_path.clone()),
+                    // Every reconnect the parent records is an inherited stop.
+                    inherited_resume: self.resume.is_some(),
                 };
                 Ok((plan, decision, descriptors, request))
             })();
