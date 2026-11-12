@@ -300,3 +300,121 @@ async fn child_never_extends_an_inherited_wait_and_settles_it_instead() {
     // The inherited block is gone, so ordinary continuation is no longer refused.
     assert!(begin(&mut source).await.is_ok());
 }
+
+#[tokio::test]
+async fn the_owning_ancestor_resumes_the_stop_and_replays_only_the_preserved_call() {
+    use crate::agent_machine::task_budget::{Admission, Extension, InheritedExhaustion};
+    let directory = tempfile::TempDir::new().unwrap();
+    let machine = AgentMachine::new_with_recorder_in_dir("/proc/child", "test", directory.path())
+        .await
+        .unwrap();
+    let mut source = state(machine);
+    let parent = TaskBudget::start(
+        "ancestor".into(),
+        source.core_config.task_budget.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+    parent.reserve(Admission::Model).await.unwrap();
+    let child = TaskBudget::start_with_parent(
+        "child".into(),
+        source.core_config.task_budget.clone(),
+        source.machine.recorder(),
+        Some(parent.clone()),
+    )
+    .await
+    .unwrap();
+    let error = child.reserve(Admission::Model).await.unwrap_err();
+    let typed = error
+        .downcast_ref::<InheritedExhaustion>()
+        .expect("ancestor exhaustion stays typed");
+    let exhausted = InheritedExhaustion {
+        ancestor_task_id: typed.ancestor_task_id.clone(),
+        dimension: typed.dimension,
+    };
+    source.machine.task_budget = Some(child);
+    let mut emit = |_event: alan_agent_protocol::Event| async {};
+    let preserved = PendingToolReplayBatch {
+        tool_calls: vec![NormalizedToolCall {
+            id: "call-1".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": "README.md"}),
+        }],
+        resume_with_generation: true,
+    };
+    pause_inherited(&mut source, &exhausted, Some(preserved), &mut emit)
+        .await
+        .unwrap();
+    let checkpoint = source
+        .machine
+        .inherited_budget_wait
+        .as_ref()
+        .expect("the stop is recorded")
+        .checkpoint
+        .checkpoint_id
+        .clone();
+
+    // Only the recorded ancestor can reopen this stop.
+    parent
+        .extend(&Extension {
+            execution_seconds: 0,
+            tool_calls: 0,
+            model_calls: 1,
+        })
+        .await
+        .unwrap();
+    parent.resume().await.unwrap();
+
+    let admits = source
+        .machine
+        .task_budget
+        .as_ref()
+        .unwrap()
+        .ancestor_admits(&exhausted.ancestor_task_id, exhausted.dimension)
+        .await;
+    assert_eq!(
+        admits.map_err(|error| error.to_string()),
+        Ok(true),
+        "the extended ancestor must admit"
+    );
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let mut emit = |_event: alan_agent_protocol::Event| async {};
+    let outcome = crate::runtime::transition::handle_submission_with_cancel(
+        &mut source,
+        alan_agent_protocol::Submission::new(alan_agent_protocol::Op::Resume {
+            request_id: checkpoint.clone(),
+            content: Vec::new(),
+        }),
+        &mut emit,
+        &cancel,
+    )
+    .await;
+    if let Err(error) = &outcome {
+        assert!(
+            error
+                .downcast_ref::<crate::agent_machine::task_budget::InheritedResumeUnrecoverable>()
+                .is_none(),
+            "an admitted reconnect must not fail closed: {error}"
+        );
+    }
+    assert!(
+        source.machine.inherited_budget_wait.is_none(),
+        "the ancestor's authorization consumes the stop"
+    );
+    assert!(
+        source.machine.pending_confirmation().is_none(),
+        "the answered decision is not left pending"
+    );
+    let queued = source
+        .machine
+        .pending_tool_replay_batch(&checkpoint)
+        .expect("the preserved batch stays queued for the resumed turn");
+    assert_eq!(
+        queued.tool_calls.len(),
+        1,
+        "only the unexecuted call is replayed"
+    );
+    assert_eq!(queued.tool_calls[0].id, "call-1");
+}
