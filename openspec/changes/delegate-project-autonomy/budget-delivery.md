@@ -662,16 +662,23 @@ What this does **not** establish:
   `completed` at `model_calls 2/2`; and an explicit `--resume` kept the same task
   id, the same checkpoint and the same spending without launching a new child.
   Rollout hashes and the observed snapshots are in that directory's `evidence/`.
-- The **explicit extension** half is not yet confirmed natively. With the
-  credential restored, the run in
-  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` now shows: the
-  ancestor approves, `model_calls` extends `2 -> 4`, the parent replays the
-  preserved delegated call, the relaunched child recovers its stop, the durable
-  branch reports `agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`,
-  and the replayed `read_file` finally charges the child's Tool allowance
-  (`tool_calls 0 -> 1`). What is still missing is the end of the story: the child
-  has not yet produced the fixture text, and the parent shows a second delegated
-  replay (`tool_calls 2 -> 3`), so "exactly once, end to end" is not established.
+- **Explicit extension is now confirmed natively.** With the credential restored
+  and the replay fixes in place, the run in
+  `~/Library/Caches/Alan/native-budget-closure/20261112-extension/` shows, in one
+  process: the child records `agent_inherited_budget_wait_v1` naming the parent and
+  pauses with its Tool unexecuted; the parent pauses with the delegated call as its
+  continuation; the ancestor approves, `model_calls` extends `2 -> 4`; the relaunch
+  recovers the stop (`agent_inherited_resume_v1 { inherited_wait: true,
+  replayed_batch: true }`); the preserved `read_file` runs **exactly once** and
+  returns `Alan descendant budget fixture OK` from
+  `/mnt/project-request-1/fixture.txt`; and the child reports
+  `status: completed` with that summary. The parent's Tool counter moves
+  `1 -> 3` because a descendant's admissions are charged to it as well — one for
+  its own replay and one for the child's Tool — not because the call ran twice.
+  No completed effect repeats: the child has exactly one Tool message.
+- Still open in that case: after the child completes, the parent stays `paused` at
+  `model_calls 3/4` with no budget wait published, i.e. the wait-for-descendant
+  pause is not lifted by the child's completion inside the observation window.
 - The reason the replay used to be skipped is fixed here: the interrupted attempt
   cancelled its cancellation token, and the authorized replay inherited it, so
   `orchestrate_tool_call` returned an empty turn without running the call. An
