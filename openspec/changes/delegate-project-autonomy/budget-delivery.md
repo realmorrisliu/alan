@@ -655,15 +655,24 @@ What this does **not** establish:
 - No native acceptance run was performed. The 2026-10-26 `partial_inherited_limit`
   outcome is unchanged and still stands until an isolated native case shows the
   ancestor extension reconnecting the original subtree.
-- The child-side lift applies inside one runtime; across a process boundary the
-  child exits paused and cannot observe the ancestor, so the reconnect record and
-  resume launch are the only path. `3cb1a710` makes that path possible: the
-  inherited wait persists its own decision, engine startup republishes it, and a
-  test shows the republished request identity equals the one the first invocation
-  published. What is still unproven is a real second process round trip — the
-  resume is exercised through the launch seam, not by launching two processes.
-- Cross-invocation restoration fails closed when the recorded ancestor binding or
-  continuation cannot be re-established; that path has source coverage only.
+- A **successful** cross-Process reconnect is not implemented. The paused child's
+  in-flight Tool batch lives in its Process, which exits on pause, and that state
+  is not restorable: the child exposes no rollout path to its parent
+  (`child_agents.rs`), the delegated template clears `resume_persisted_rollout`,
+  and Agent Runtime unbinds the child's AgentFS on exit. The parent therefore
+  records the reconnect and launches a resume that the new Process cannot honour.
+- What `5f67ce29` and `117c1bc6` fix is the identity and the outcome of that
+  boundary, not the round trip. The reconnect is keyed by the durable
+  `checkpoint_id` rather than the per-Process namespace counter, which the
+  identity test now asserts are different; and a resume that names an
+  inherited-budget checkpoint this machine cannot rebuild fails closed with
+  `InheritedResumeUnrecoverable` instead of returning an idle turn. Coverage:
+  `a_reconnect_without_its_paused_work_fails_closed` asserts the typed error and
+  that no wait, yield or replay batch is fabricated, and
+  `a_stale_resume_of_another_kind_stays_idle` keeps unrelated stale resumes from
+  inheriting that stricter outcome.
+- The parent keeps the paused child's record when the reconnect fails closed, so
+  the preserved call remains visible rather than looking consumed.
 
 Task 2.4 remains unchecked. Whole-transition time boundaries, native UI and
 task-tree qualification remain open, and no source test count substitutes for

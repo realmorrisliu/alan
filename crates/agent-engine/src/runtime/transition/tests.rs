@@ -24,6 +24,7 @@ use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
 mod completion_budget;
+mod inherited_resume;
 mod next_turn_disposition;
 mod owner_work;
 mod shadow_evaluation;

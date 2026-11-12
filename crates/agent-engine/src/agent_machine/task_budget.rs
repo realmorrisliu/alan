@@ -161,6 +161,20 @@ pub(crate) struct InheritedExhaustion {
     pub dimension: Dimension,
 }
 
+/// An ancestor authorized a reconnect, but this Agent Machine no longer holds
+/// the paused delegated work that the checkpoint named.
+///
+/// The stop itself is durable, but the child's in-flight Tool batch lives in its
+/// Process, which exits on pause. Continuing would either replay finished side
+/// effects or silently drop the preserved call, so the reconnect fails closed.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "Inherited budget resume for checkpoint {checkpoint_id} cannot be rebuilt in this Agent Machine; the paused delegated work was not replayed"
+)]
+pub(crate) struct InheritedResumeUnrecoverable {
+    pub checkpoint_id: String,
+}
+
 #[derive(Debug)]
 struct State {
     snapshot: Snapshot,

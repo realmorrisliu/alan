@@ -345,6 +345,18 @@ where
                             activate_task: false,
                         });
                     }
+                    // An inherited reconnect names its kind in the checkpoint id.
+                    // When this machine cannot rebuild that stop, continuing would
+                    // replay the ancestor's authorization against missing work, so
+                    // it fails closed instead of looking like an idle turn.
+                    if inherited_resume_kind(&request_id) {
+                        return Err(
+                            crate::agent_machine::task_budget::InheritedResumeUnrecoverable {
+                                checkpoint_id: request_id.clone(),
+                            }
+                            .into(),
+                        );
+                    }
                     emit(Event::Error {
                         message: format!(
                             "Resume request_id '{}' does not match any pending yield.",
@@ -359,6 +371,13 @@ where
         }
     }
     Ok(RuntimeOpAction::NoTurn)
+}
+
+/// Whether a resume id was issued for an inherited budget stop.
+fn inherited_resume_kind(request_id: &str) -> bool {
+    request_id
+        .strip_prefix(crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE)
+        .is_some_and(|rest| rest.starts_with('_'))
 }
 
 fn resume_content_to_value(content: &[ContentPart]) -> serde_json::Value {
