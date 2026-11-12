@@ -290,12 +290,15 @@ where
                     }
                     if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
                     {
-                        super::task_budget::resolve_inherited(
-                            runtime.machine,
-                            &pending,
-                            choice_str == "approve",
-                        )
-                        .await?;
+                        let approved = choice_str == "approve";
+                        super::task_budget::resolve_inherited(runtime.machine, &pending, approved)
+                            .await?;
+                        if !approved {
+                            // The stop settled the child subtree; resuming the turn
+                            // here would restart work the rejection just closed.
+                            runtime.machine.take_pending(&request_id);
+                            return Ok(RuntimeOpAction::NoTurn);
+                        }
                     }
                     runtime.machine.take_pending(&request_id);
                     return handle_confirmation_resolution(
