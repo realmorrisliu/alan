@@ -703,6 +703,22 @@ handed back: the harness is scriptable (`launch.py`/`observe.py` talk to the sam
 socket the UI does), and the project grant is issued through the `mount_project`
 local request the picker uses, so the case runs without an interactive terminal.
 
+Evidence is retained with the case, not only in the live store. The decisive run is
+bound to source commit `0f61022dc680` with binary sha256 `a223e038c5c3721b…`, and
+`~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` holds
+`result.json` (head, tree, binary hash, per-rollout sha256), the two rollout copies
+it names (parent `c76d4094ce674120…`, child `e2ae5d02235eacfb…`), and the
+`check-quality.sh` log with its exit status (`9cd16e0b17227445…`, exit 0).
+
+That run, in one Agent Process pair: the parent's allowance `3/3` is exhausted and it
+pauses with the delegated call as its continuation; the ancestor approves, so the
+limit becomes `6` and the program records `agent_inherited_resume_v1
+{ inherited_wait: true, replayed_batch: true }`; the child's preserved `read_file`
+runs exactly once and returns `Alan descendant budget fixture OK` from
+`/mnt/project-request-1/fixture.txt`; the child reports `status: completed`; and the
+parent produces `Alan descendant budget fixture OK` as its final answer. The child
+has exactly one Tool message, so no completed effect repeats.
+
 Two operational facts that run established, worth keeping for the next attempt:
 
 - The `chatgpt-main` OAuth session expired mid-session (`401 invalid_jwt`, refresh
@@ -713,8 +729,7 @@ Two operational facts that run established, worth keeping for the next attempt:
   resumed call and a final answer needs a larger `[task_budget] model_calls` than
   the default 2. `20261112-extension` uses 3 and completes.
 
-What remains open from that case is arithmetic, not mechanism: with the default
-tranche the parent can exhaust again after the replay, and no second budget wait is
-published on that path, so it stops without a decision. That is recorded above as
-an open item; it is why the case is configured with headroom instead of relying on
-a second extension.
+Still open from that path, and not claimed fixed: if a parent exhausts again *after*
+the replay with the default tranche, no second budget wait is published, so it stops
+without a decision. The case is configured with headroom instead of relying on a
+second extension.
