@@ -39,7 +39,7 @@ mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
 
-use pause_answer::pause_keeps_waiting;
+use pause_answer::{ChildTerminal, decide_child_terminal};
 use pause_record::read_child_pause;
 use process_cleanup::ProcessCleanup;
 use resume_content::resume_content;
@@ -902,7 +902,7 @@ async fn wait_for_root_stop(
     }
 }
 
-async fn wait_for_child_terminal(
+pub(super) async fn wait_for_child_terminal(
     root: &InProcessTransport,
     pid: Pid,
     controller: &RuntimeController,
@@ -937,27 +937,28 @@ async fn wait_for_child_terminal(
                     .then(|| notice.message.clone())
                     .into_iter()
                     .collect();
-                if notice.kind == UiNoticeKind::Error {
+                let pause = read_child_pause(&shell, pid).await?;
+                let terminal = decide_child_terminal(
+                    activity.state == UiActivityState::Paused,
+                    pause.is_some(),
+                    notice.kind == UiNoticeKind::Error,
+                    stopped,
+                );
+                if terminal == ChildTerminal::Wait {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
+                }
+                if terminal == ChildTerminal::Failed {
                     return Ok(AgentExecutableResult::failed_with_output(
                         output_text,
                         warnings,
                         notice.message,
                     ));
                 }
-                if activity.state == UiActivityState::Paused {
-                    let Some(pause) = read_child_pause(&shell, pid).await? else {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        continue;
-                    };
-                    if pause_keeps_waiting(true, stopped) {
-                        // Pausing means waiting: the answer arrives on this
-                        // Process's own submission channel.
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        continue;
-                    }
-                    return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
-                }
-                return Ok(AgentExecutableResult::completed(output_text, warnings));
+                let Some(pause) = pause else {
+                    return Ok(AgentExecutableResult::completed(output_text, warnings));
+                };
+                return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
             }
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

@@ -30,3 +30,82 @@ mod tests {
         assert!(!pause_keeps_waiting(false, false));
     }
 }
+
+/// What the host should do with one observation of a child Process.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ChildTerminal {
+    /// Keep reading: the answer can still arrive.
+    Wait,
+    /// A pause that can no longer be answered (`stopped`: cancelled or timed out).
+    Paused,
+    Completed,
+    Failed,
+}
+
+/// The host's terminal decision, separated from the filesystem it reads.
+pub(super) fn decide_child_terminal(
+    paused: bool,
+    has_pending_request: bool,
+    notice_is_error: bool,
+    stopped: bool,
+) -> ChildTerminal {
+    if notice_is_error {
+        return ChildTerminal::Failed;
+    }
+    if !paused {
+        return ChildTerminal::Completed;
+    }
+    if !has_pending_request {
+        return ChildTerminal::Wait;
+    }
+    if pause_keeps_waiting(true, stopped) {
+        ChildTerminal::Wait
+    } else {
+        ChildTerminal::Paused
+    }
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::{ChildTerminal, decide_child_terminal};
+
+    #[test]
+    fn a_pause_that_can_still_be_answered_keeps_waiting() {
+        assert_eq!(
+            decide_child_terminal(true, true, false, false),
+            ChildTerminal::Wait
+        );
+    }
+
+    #[test]
+    fn a_stopped_run_publishes_its_pause() {
+        assert_eq!(
+            decide_child_terminal(true, true, false, true),
+            ChildTerminal::Paused
+        );
+    }
+
+    #[test]
+    fn an_answered_run_completes() {
+        assert_eq!(
+            decide_child_terminal(false, false, false, false),
+            ChildTerminal::Completed
+        );
+    }
+
+    #[test]
+    fn an_error_notice_fails_the_run() {
+        assert_eq!(
+            decide_child_terminal(false, false, true, false),
+            ChildTerminal::Failed
+        );
+    }
+
+    #[test]
+    fn a_pause_without_a_request_keeps_reading() {
+        assert_eq!(
+            decide_child_terminal(true, false, false, false),
+            ChildTerminal::Wait
+        );
+    }
+}
