@@ -32,17 +32,21 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod pause_answer;
 mod pause_record;
 mod process_cleanup;
 mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
 
+use pause_answer::pause_is_terminal;
 use pause_record::read_child_pause;
 use process_cleanup::ProcessCleanup;
 use resume_content::resume_content;
 
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
+/// How long a Process launched to answer a stop waits for that answer to land.
+const RESUME_ANSWER_GRACE_SECS: u64 = 120;
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 
 #[derive(Clone)]
@@ -563,7 +567,8 @@ impl AgentRuntimeService {
                 .send(Submission::new(op))
                 .await
                 .context("submit initial child Agent Process turn")?;
-            let result = wait_for_child_terminal(&root, pid, &controller).await?;
+            let result =
+                wait_for_child_terminal(&root, pid, &controller, request.inherited_resume).await?;
             let exit_code = match result.status {
                 AgentExecutableStatus::Completed => 0,
                 AgentExecutableStatus::Paused | AgentExecutableStatus::Failed => 1,
@@ -898,7 +903,12 @@ async fn wait_for_child_terminal(
     root: &InProcessTransport,
     pid: Pid,
     controller: &RuntimeController,
+    resuming: bool,
 ) -> Result<AgentExecutableResult> {
+    // A Process launched to answer a stop must outlive that stop's publication:
+    // the authorization arrives on this Process's own submission channel. It is
+    // still bounded, so a Process that never answers cannot wait forever.
+    let resume_deadline = std::time::Instant::now() + Duration::from_secs(RESUME_ANSWER_GRACE_SECS);
     let shell = alan_shell::Shell::new(root.clone());
     let activity_path = format!("/agent/{}/machine/ui/activity", pid.0);
     let events_path = format!("/agent/{}/machine/ui/events", pid.0);
@@ -936,6 +946,12 @@ async fn wait_for_child_terminal(
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     };
+                    if !pause_is_terminal(resuming, std::time::Instant::now() < resume_deadline) {
+                        // This Process is here to answer that stop; keep the
+                        // submission channel open until the answer is applied.
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    }
                     return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
                 }
                 return Ok(AgentExecutableResult::completed(output_text, warnings));
