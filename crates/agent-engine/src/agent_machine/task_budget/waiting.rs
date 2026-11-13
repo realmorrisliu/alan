@@ -34,7 +34,14 @@ impl Wait {
                 && !budget.foreground_complete
                 && self.checkpoint.options == ["reject", "approve"]
                 && (self.resume_only == (additional == Extension::default())),
-            "invalid durable task budget wait"
+            "invalid durable task budget wait: type={} id={} phase={:?} foreground_complete={} options={:?} resume_only={} additional={:?}",
+            self.checkpoint.checkpoint_type,
+            self.checkpoint.checkpoint_id,
+            budget.phase,
+            budget.foreground_complete,
+            self.checkpoint.options,
+            self.resume_only,
+            additional
         );
         Ok(budget)
     }
