@@ -328,5 +328,31 @@ mod host_behaviour_tests {
             result.status,
             alan_agent_engine::AgentExecutableStatus::Paused
         );
+        // A timed-out Process is not stuck: it stops when the host shuts it down.
+        controller.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_parent_exit_stops_a_yielded_child() {
+        let temp = TempDir::new().unwrap();
+        let (pid, controller, root, shell) = paused_runtime(&temp).await;
+        tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            wait_for_child_terminal(&root, pid, &controller, None),
+        )
+        .await
+        .expect_err("the yield keeps the Process waiting first");
+
+        // The parent going away is the Process-exit signal the child inherits.
+        let submissions = controller.handle.submission_tx.clone();
+        controller.shutdown().await.unwrap();
+        assert!(
+            submissions
+                .send(Submission::new(Op::Interrupt))
+                .await
+                .is_err(),
+            "a yielded child cannot outlive its parent Process"
+        );
+        let _ = shell;
     }
 }
