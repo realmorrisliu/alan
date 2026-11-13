@@ -679,6 +679,17 @@ preserved `read_file` **exactly once**, and returns `Alan descendant budget fixt
 from `/mnt/project-request-1/fixture.txt`; the child reports `completed`; and the parent
 answers with that text. No completed effect repeats and nothing loops.
 
+**Test coverage, stated exactly.** The host's terminal decision is a function with
+tests for all five transitions (keep waiting, publish the pause when stopped, complete
+when answered, fail on an error notice, and never finish a Process that is still
+running). The resume transition itself — a paused runtime receiving `Op::Resume`,
+replaying the preserved batch and writing `Completed` — has **no** millisecond test: it
+is covered by the native run. Three attempts to drive it in a unit test failed for
+harness reasons: the mock cannot reach `request_confirmation` (the default capability
+set does not expose it and the only governance profile is `Autonomous`), a child spawned
+through the shell harness loses its `process_stop` with the spawn handle, and
+`machine/ui/activity` is owned by the runtime so a test cannot write a pause into it.
+
 **The defect this closed**, in two halves: a reconnect now answers the child that
 is still waiting (its approval is written to that child's own pending request, not
 to a second Process), and a stop on this task's own allowance always asks the owner
