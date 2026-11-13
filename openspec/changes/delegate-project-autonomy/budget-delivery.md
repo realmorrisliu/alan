@@ -696,47 +696,48 @@ What this does **not** establish:
   the case where the machine holds no stop at all, and
   `extension_replays_the_delegated_call_exactly_once_with_the_resume_request`
   covers the in-process reconnect.
-## Native re-run outcome — 2026-11-12
+## Native acceptance — 2026-11-13
 
-The inherited-limit case was re-run by the executor against this branch: the harness
-is scriptable (`launch.py`/`observe.py` drive the same AP socket the UI does, and the
-project grant is issued through the `mount_project` local request the picker uses), so
-no interactive terminal is needed.
+The inherited-limit case runs end to end against this branch. The harness is
+scriptable (`launch.py`/`observe.py` drive the same AP socket the UI does, and the
+project grant is issued through the `mount_project` local request the picker uses),
+so no interactive terminal is involved.
 
-**What is green.** In the retained run under
-`~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` (head
-`cced97bb`, binary `d8d994023abc…`, per-rollout sha256 in `result.json`): the parent
-spends `2/2` and pauses with the delegated call as its continuation; the ancestor's
-approval raises the limit to `4`; a relaunched child records
+**Retained run.** Evidence in
+`~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` is bound to
+source commit `78d47d2a` with binary sha256 `ab003740230a…`; `result.json` records the
+head, tree, binary hash, per-rollout sha256, the acceptance counters and the
+`check-quality.sh` log hash (`56b3b0b494f2a8d4…`, exit 0). Three rollouts, one
+approval, one reconnect, one budget wait.
+
+**What that run shows**, in one Agent Process pair: the parent spends `2/2` and pauses
+with the delegated call as its continuation; the child records
+`agent_inherited_budget_wait_v1` naming the parent and pauses with its Tool unexecuted;
+the ancestor approves and the limit becomes `4`; the relaunch records
 `agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`, executes the
-preserved `read_file` **exactly once** and returns `Alan descendant budget fixture OK`
-from `/mnt/project-request-1/fixture.txt`, reporting `completed` with exactly one Tool
-message.
+preserved `read_file` **exactly once**, and returns `Alan descendant budget fixture OK`
+from `/mnt/project-request-1/fixture.txt`; the child reports `completed`; and the parent
+answers with that text. No completed effect repeats and nothing loops.
 
-**What is not green, and why 2.4 stays unchecked.** The parent consumes the *paused*
-child result, not the completed one: after the replay it receives
-`child_paused` for `inherited_budget`, answers "the child was paused, no file text was
-returned", and finishes at `4/4`. The resumed child that actually read the fixture is a
-different run, so the end-to-end chain (approve → replay → the same delegated call
-returns the fixture text to the parent) is still broken. Recording this honestly is why
-`tasks.md` Task 2.4 remains unchecked.
+**The defect this closed.** A child Process exited as soon as it paused, so the
+authorization the service manager had already submitted had no recipient and the parent
+discarded the result that arrived later. A Process launched to answer a stop now keeps
+its submission channel open until the answer lands, and the parent's supervisor waits on
+the stop it is answering; both are bounded by a grace period, so a Process that never
+answers still ends as paused. That removed the last of four parent-side compensations
+(the others were: misread the republished stop, waited forever, replayed twice).
 
-**Behaviour fixed on the way, all landed:** the paused child's decision details travel
-inside the pause record (Agent Runtime removes the live AgentFS at process exit, which
-left `ancestor_task_id` empty); an inherited reconnect carries explicit approval content
-instead of the empty content that means "default reject"; an authorized replay starts its
-own attempt instead of inheriting the cancelled token of the attempt that paused; an
-exhausted turn publishes a budget decision instead of stopping silently; a pending
-interaction no longer swallows a budget stop; a child stopping on its own share no longer
-spends its owner's decision (the owner is asked only when it is genuinely short); and a
-refused wait rolls the settle back, so no failure can leave a paused ledger with no
-decision. The last three removed, respectively, a silent dead-end and a repeat loop
-(37 approvals, 36 reconnects, 33 child executions) that earlier attempts produced.
+**Earlier fixes still in force**, all covered by tests: the paused child's decision
+details travel inside the pause record (Agent Runtime removes the live AgentFS at exit);
+an inherited reconnect carries explicit approval content instead of the empty content
+that means "default reject"; an authorized replay starts its own attempt; an exhausted
+turn publishes a budget decision instead of stopping silently; a pending interaction no
+longer swallows a budget stop; and a child stopping on its own share no longer spends its
+owner's decision.
 
-**Operational notes for the next attempt.** The `chatgpt-main` OAuth session expires
-mid-session (`401 invalid_jwt`, refresh `invalid_refresh_token`); `alan connection login
+**Operational notes.** The `chatgpt-main` OAuth session expires mid-session
+(`401 invalid_jwt`, refresh `invalid_refresh_token`); `alan connection login
 chatgpt-main` restores it and completes automatically when the browser is already signed
 in. The extension tranche equals the configured limit (`extension()` proposes
-`limits.model_calls`), so a case that needs a replayed generation plus the child's
-resumed call needs headroom; the retained run uses the default 2 because that is what
-makes the inherited stop happen at all.
+`limits.model_calls`), so the case uses the default 2 — that is what makes the inherited
+stop happen at all.
