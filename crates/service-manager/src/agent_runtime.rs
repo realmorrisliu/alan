@@ -955,7 +955,7 @@ pub(super) async fn wait_for_child_terminal(
                         notice.message,
                     ));
                 }
-                let Some(pause) = pause else {
+                let Some(pause) = pause.filter(|_| terminal == ChildTerminal::Paused) else {
                     return Ok(AgentExecutableResult::completed(output_text, warnings));
                 };
                 return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
