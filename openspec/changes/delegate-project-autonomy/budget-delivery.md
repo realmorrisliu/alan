@@ -665,10 +665,10 @@ so no interactive terminal is involved.
 
 **Retained run.** Evidence in
 `~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` is bound to
-source commit `f78bc1d4` with binary sha256 recorded in its `result.json`; `result.json` records the
+source commit `77ac28c8` with binary sha256 recorded in its `result.json`; `result.json` records the
 head, tree, binary hash, per-rollout sha256, the acceptance counters and the
 `check-quality.sh` log hash, exit 0. Two rollouts, one approval, one reconnect, one
-budget wait — and two consecutive runs produced the same shape.
+budget wait.
 
 **What that run shows**, in one Agent Process pair: the parent spends `2/2` and pauses
 with the delegated call as its continuation; the child records
@@ -695,7 +695,14 @@ is still waiting (its approval is written to that child's own pending request, n
 to a second Process), and a stop on this task's own allowance always asks the owner
 for another tranche. Together they removed the duplicate execution and the parent
 answering "child paused". A stop that names this task's allowance always asks the
-owner for more: what is left here is not what the child needs. A child Process exited as soon as it paused, so the
+owner for more: what is left here is not what the child needs.
+
+That last sentence **reverses** an earlier slice (`61270abe`) which kept the parent's
+own authority while it still had room and surfaced the child's stop as an ordinary tool
+result. The native run showed why that is wrong: the parent spent its last call and
+answered "child paused" while the child still needed allowance. The reversal is
+user-visible — an owner with room is now asked for another tranche instead of carrying
+on — and it is deliberate, not a regression left unstated. A child Process exited as soon as it paused, so the
 authorization the service manager had already submitted had no recipient and the parent
 discarded the result that arrived later. A Process launched to answer a stop now keeps
 its submission channel open until the answer lands, and the parent's supervisor waits on

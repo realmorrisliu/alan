@@ -44,15 +44,20 @@ pub(super) enum ChildTerminal {
 
 /// The host's terminal decision, separated from the filesystem it reads.
 pub(super) fn decide_child_terminal(
-    paused: bool,
+    activity: alan_agent_engine::UiActivityState,
     has_pending_request: bool,
     notice_is_error: bool,
     stopped: bool,
 ) -> ChildTerminal {
+    use alan_agent_engine::UiActivityState;
     if notice_is_error {
         return ChildTerminal::Failed;
     }
-    if !paused {
+    if activity == UiActivityState::Running {
+        // Work in progress is the furthest thing from an outcome.
+        return ChildTerminal::Wait;
+    }
+    if activity != UiActivityState::Paused {
         return ChildTerminal::Completed;
     }
     if !has_pending_request {
@@ -72,7 +77,12 @@ mod terminal_tests {
     #[test]
     fn a_pause_that_can_still_be_answered_keeps_waiting() {
         assert_eq!(
-            decide_child_terminal(true, true, false, false),
+            decide_child_terminal(
+                alan_agent_engine::UiActivityState::Paused,
+                true,
+                false,
+                false
+            ),
             ChildTerminal::Wait
         );
     }
@@ -80,7 +90,12 @@ mod terminal_tests {
     #[test]
     fn a_stopped_run_publishes_its_pause() {
         assert_eq!(
-            decide_child_terminal(true, true, false, true),
+            decide_child_terminal(
+                alan_agent_engine::UiActivityState::Paused,
+                true,
+                false,
+                true
+            ),
             ChildTerminal::Paused
         );
     }
@@ -88,15 +103,33 @@ mod terminal_tests {
     #[test]
     fn an_answered_run_completes() {
         assert_eq!(
-            decide_child_terminal(false, false, false, false),
+            decide_child_terminal(
+                alan_agent_engine::UiActivityState::Idle,
+                false,
+                false,
+                false
+            ),
             ChildTerminal::Completed
+        );
+    }
+
+    #[test]
+    fn a_running_process_is_not_finished() {
+        assert_eq!(
+            decide_child_terminal(
+                alan_agent_engine::UiActivityState::Running,
+                false,
+                false,
+                false
+            ),
+            ChildTerminal::Wait
         );
     }
 
     #[test]
     fn an_error_notice_fails_the_run() {
         assert_eq!(
-            decide_child_terminal(false, false, true, false),
+            decide_child_terminal(alan_agent_engine::UiActivityState::Idle, false, true, false),
             ChildTerminal::Failed
         );
     }
@@ -104,7 +137,12 @@ mod terminal_tests {
     #[test]
     fn a_pause_without_a_request_keeps_reading() {
         assert_eq!(
-            decide_child_terminal(true, false, false, false),
+            decide_child_terminal(
+                alan_agent_engine::UiActivityState::Paused,
+                false,
+                false,
+                false
+            ),
             ChildTerminal::Wait
         );
     }

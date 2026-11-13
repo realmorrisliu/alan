@@ -939,7 +939,7 @@ pub(super) async fn wait_for_child_terminal(
                     .collect();
                 let pause = read_child_pause(&shell, pid).await?;
                 let terminal = decide_child_terminal(
-                    activity.state == UiActivityState::Paused,
+                    activity.state,
                     pause.is_some(),
                     notice.kind == UiNoticeKind::Error,
                     stopped,
