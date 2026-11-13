@@ -149,7 +149,6 @@ async fn spawn_child_runtime_inner(
             agent_files,
             process_files: child_process_files,
             process_pid: child_pid,
-            resume_target: resume.map(|target| target.request_id.clone()),
         },
     ))
 }
