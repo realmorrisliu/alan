@@ -272,6 +272,21 @@ impl TaskBudget {
         })
     }
 
+    /// Whether this task still has room in `dimension`.
+    ///
+    /// A child can stop on its own share while a task that owns the allowance still
+    /// has room; that stop is the child's result, not a reason to pause the owner.
+    pub(crate) async fn has_room(&self, dimension: Dimension) -> Result<bool> {
+        let snapshot = self.snapshot().await;
+        Ok(match dimension {
+            Dimension::ModelCalls => snapshot.model_calls < snapshot.limits.model_calls.get(),
+            Dimension::ToolCalls => snapshot.tool_calls < snapshot.limits.tool_calls.get(),
+            Dimension::Time => {
+                snapshot.elapsed_millis < snapshot.limits.execution_seconds.get() * 1_000
+            }
+        })
+    }
+
     pub(crate) async fn snapshot(&self) -> Snapshot {
         self.state.lock().await.observed()
     }
