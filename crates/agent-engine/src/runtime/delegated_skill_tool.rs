@@ -355,44 +355,59 @@ where
                     if let Some(pause) = child_result.pause.as_ref()
                         && let Some(inherited) = pause.inherited.clone()
                     {
-                        crate::agent_machine::pending_resume::record(
-                            &mut *runtime.machine,
-                            crate::agent_machine::pending_resume::PendingResume {
-                                tool_call_id: tool_call.id.clone(),
-                                // The durable checkpoint, not the namespace id this
-                                // Process allocated: a relaunched child republishes
-                                // the stop under a fresh id.
-                                request_id: inherited.checkpoint_id.clone(),
-                                ancestor_task_id: inherited.ancestor_task_id.clone(),
-                                dimension: inherited.dimension.clone(),
-                                rollout_path: inherited.rollout_path.clone(),
-                            },
-                        )
-                        .await?;
                         let dimension =
                             serde_json::from_value::<crate::agent_machine::task_budget::Dimension>(
-                                serde_json::Value::String(inherited.dimension),
+                                serde_json::Value::String(inherited.dimension.clone()),
                             )?;
-                        // When this task owns the exhausted allowance, only its
-                        // own user extension may lift the stop: raise the local
-                        // exhaustion so the tested budget pause keeps this call
-                        // as the continuation to replay.
                         let owns_allowance = match runtime.machine.task_budget.as_ref() {
                             Some(budget) => {
                                 budget.snapshot().await.task_id == inherited.ancestor_task_id
                             }
                             None => false,
                         };
-                        if owns_allowance {
+                        // Owning the allowance is not the same as having spent it: a
+                        // child can stop on its own share while this task still has
+                        // room. Only a genuine local shortage earns a budget decision
+                        // and a reconnect; otherwise the stop is the child's own
+                        // result and the parent keeps its authority over the call.
+                        let local_shortage = match runtime.machine.task_budget.as_ref() {
+                            Some(budget) => !budget.has_room(dimension).await?,
+                            None => false,
+                        };
+                        if !owns_allowance {
+                            crate::agent_machine::pending_resume::record(
+                                &mut *runtime.machine,
+                                crate::agent_machine::pending_resume::PendingResume {
+                                    tool_call_id: tool_call.id.clone(),
+                                    request_id: inherited.checkpoint_id.clone(),
+                                    ancestor_task_id: inherited.ancestor_task_id.clone(),
+                                    dimension: inherited.dimension.clone(),
+                                    rollout_path: inherited.rollout_path.clone(),
+                                },
+                            )
+                            .await?;
+                            return Err(crate::agent_machine::task_budget::InheritedExhaustion {
+                                ancestor_task_id: inherited.ancestor_task_id,
+                                dimension,
+                            }
+                            .into());
+                        }
+                        if local_shortage {
+                            crate::agent_machine::pending_resume::record(
+                                &mut *runtime.machine,
+                                crate::agent_machine::pending_resume::PendingResume {
+                                    tool_call_id: tool_call.id.clone(),
+                                    request_id: inherited.checkpoint_id.clone(),
+                                    ancestor_task_id: inherited.ancestor_task_id.clone(),
+                                    dimension: inherited.dimension.clone(),
+                                    rollout_path: inherited.rollout_path.clone(),
+                                },
+                            )
+                            .await?;
                             return Err(
                                 crate::agent_machine::task_budget::Exhausted { dimension }.into()
                             );
                         }
-                        return Err(crate::agent_machine::task_budget::InheritedExhaustion {
-                            ancestor_task_id: inherited.ancestor_task_id,
-                            dimension,
-                        }
-                        .into());
                     }
                     if child_result.pause.is_none() {
                         runtime

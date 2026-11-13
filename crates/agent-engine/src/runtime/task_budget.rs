@@ -266,8 +266,15 @@ where
         continuation,
         resume_only: false,
     };
-    wait.budget()?;
-    crate::agent_machine::owner_work::checkpoint_work(&wait.checkpoint)?;
+    // A rejected wait must not leave the ledger paused with no decision to answer:
+    // settle/validate in that order and roll the pause back on any failure.
+    if let Err(error) = wait
+        .budget()
+        .and_then(|_| crate::agent_machine::owner_work::checkpoint_work(&wait.checkpoint))
+    {
+        budget.resume().await?;
+        return Err(error);
+    }
     if let Some(recorder) = state.machine.recorder() {
         recorder
             .persist_batch(vec![RolloutItem::Event(EventRecord {

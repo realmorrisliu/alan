@@ -705,36 +705,38 @@ no interactive terminal is needed.
 
 **What is green.** In the retained run under
 `~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` (head
-`19645e86`, binary `16bcb6596ca8…`, per-rollout sha256 in `result.json`): the child
-records `agent_inherited_budget_wait_v1` naming the parent and pauses with its Tool
-unexecuted; the parent pauses at `2/2` with the delegated call as its continuation; the
-ancestor's approval raises the limit to `4`; the relaunch records
-`agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`; the
-preserved `read_file` executes **exactly once** and returns
-`Alan descendant budget fixture OK` from `/mnt/project-request-1/fixture.txt`; and the
-child reports `status: completed` with that summary and exactly one Tool message.
+`cced97bb`, binary `d8d994023abc…`, per-rollout sha256 in `result.json`): the parent
+spends `2/2` and pauses with the delegated call as its continuation; the ancestor's
+approval raises the limit to `4`; a relaunched child records
+`agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`, executes the
+preserved `read_file` **exactly once** and returns `Alan descendant budget fixture OK`
+from `/mnt/project-request-1/fixture.txt`, reporting `completed` with exactly one Tool
+message.
 
-**What is not green, and why 2.4 stays unchecked.** The parent does not finish. After
-the replay its ledger reaches `model_calls 3/4` and the machine goes `paused` without
-publishing another budget decision and without an assistant message; it stays inert for
-300 s and no pending request exists to answer. So the user-visible outcome — the parent
-answering with the delegated result — is not produced, and the "explicit extension"
-acceptance is proved for the child half only. An earlier run that did end with the
-parent's `Alan descendant budget fixture OK` never exercised the inherited replay (its
-child finished before any pause), so it is not evidence for this item.
+**What is not green, and why 2.4 stays unchecked.** The parent consumes the *paused*
+child result, not the completed one: after the replay it receives
+`child_paused` for `inherited_budget`, answers "the child was paused, no file text was
+returned", and finishes at `4/4`. The resumed child that actually read the fixture is a
+different run, so the end-to-end chain (approve → replay → the same delegated call
+returns the fixture text to the parent) is still broken. Recording this honestly is why
+`tasks.md` Task 2.4 remains unchecked.
 
-**Fixes this case forced, all landed:** the paused child's decision details now travel
+**Behaviour fixed on the way, all landed:** the paused child's decision details travel
 inside the pause record (Agent Runtime removes the live AgentFS at process exit, which
-had left `ancestor_task_id` empty); an inherited reconnect carries explicit approval
-content instead of the empty content that means "default reject"; an authorized replay
-starts its own attempt instead of inheriting the cancelled token of the attempt that
-paused; an exhausted turn publishes a budget decision instead of stopping silently; and
-a pending interaction no longer swallows a budget stop.
+left `ancestor_task_id` empty); an inherited reconnect carries explicit approval content
+instead of the empty content that means "default reject"; an authorized replay starts its
+own attempt instead of inheriting the cancelled token of the attempt that paused; an
+exhausted turn publishes a budget decision instead of stopping silently; a pending
+interaction no longer swallows a budget stop; a child stopping on its own share no longer
+spends its owner's decision (the owner is asked only when it is genuinely short); and a
+refused wait rolls the settle back, so no failure can leave a paused ledger with no
+decision. The last three removed, respectively, a silent dead-end and a repeat loop
+(37 approvals, 36 reconnects, 33 child executions) that earlier attempts produced.
 
 **Operational notes for the next attempt.** The `chatgpt-main` OAuth session expires
 mid-session (`401 invalid_jwt`, refresh `invalid_refresh_token`); `alan connection login
 chatgpt-main` restores it and completes automatically when the browser is already signed
 in. The extension tranche equals the configured limit (`extension()` proposes
 `limits.model_calls`), so a case that needs a replayed generation plus the child's
-resumed call needs a larger `[task_budget] model_calls` than the default 2 — the
-retained run uses 2 because that is what makes the inherited stop happen at all.
+resumed call needs headroom; the retained run uses the default 2 because that is what
+makes the inherited stop happen at all.
