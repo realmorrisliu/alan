@@ -665,10 +665,10 @@ so no interactive terminal is involved.
 
 **Retained run.** Evidence in
 `~/Library/Caches/Alan/native-budget-closure/20261112-extension/evidence/` is bound to
-source commit `78d47d2a` with binary sha256 `ab003740230a…`; `result.json` records the
+source commit `f78bc1d4` with binary sha256 recorded in its `result.json`; `result.json` records the
 head, tree, binary hash, per-rollout sha256, the acceptance counters and the
-`check-quality.sh` log hash (`56b3b0b494f2a8d4…`, exit 0). Three rollouts, one
-approval, one reconnect, one budget wait.
+`check-quality.sh` log hash, exit 0. Two rollouts, one approval, one reconnect, one
+budget wait — and two consecutive runs produced the same shape.
 
 **What that run shows**, in one Agent Process pair: the parent spends `2/2` and pauses
 with the delegated call as its continuation; the child records
@@ -679,7 +679,12 @@ preserved `read_file` **exactly once**, and returns `Alan descendant budget fixt
 from `/mnt/project-request-1/fixture.txt`; the child reports `completed`; and the parent
 answers with that text. No completed effect repeats and nothing loops.
 
-**The defect this closed.** A child Process exited as soon as it paused, so the
+**The defect this closed**, in two halves: a reconnect now answers the child that
+is still waiting (its approval is written to that child's own pending request, not
+to a second Process), and a stop on this task's own allowance always asks the owner
+for another tranche. Together they removed the duplicate execution and the parent
+answering "child paused". A stop that names this task's allowance always asks the
+owner for more: what is left here is not what the child needs. A child Process exited as soon as it paused, so the
 authorization the service manager had already submitted had no recipient and the parent
 discarded the result that arrived later. A Process launched to answer a stop now keeps
 its submission channel open until the answer lands, and the parent's supervisor waits on
