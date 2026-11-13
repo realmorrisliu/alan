@@ -405,7 +405,7 @@ not cover, and what stays open here: the existing source-owner program has budge
 continuation coverage but this is not a general mixed-program scheduler; uncertain
 model or publication settlement remains fail-closed; fallback deadline and
 active-crash transfer edges still need acceptance; native task-tree acceptance,
-inherited-stop presentation and explicit subtree recovery remain open; Native UI,
+native task-tree acceptance and explicit subtree recovery remain open; Native UI,
 installed-binary and task-tree qualification are pending, and source test counts
 remain separate from those claims.
 
@@ -582,7 +582,7 @@ snapshot also transiently showed `model unknown` and an unconfirmed-input warnin
 while the correlated budget wait existed; subsequent snapshots recovered the
 correct model. This presentation discrepancy still needs diagnosis.
 Evidence: `~/Library/Caches/Alan/native-budget-closure/20261026-exhausted/`.
-Neither case counts toward the formal fifty-task cohort. Task 2.4 remains open.
+Neither case counts toward the formal fifty-task cohort.
 
 ### Inherited-exhaustion repair sequence
 
@@ -673,8 +673,8 @@ budget wait — and two consecutive runs produced the same shape.
 **What that run shows**, in one Agent Process pair: the parent spends `2/2` and pauses
 with the delegated call as its continuation; the child records
 `agent_inherited_budget_wait_v1` naming the parent and pauses with its Tool unexecuted;
-the ancestor approves and the limit becomes `4`; the relaunch records
-`agent_inherited_resume_v1 { inherited_wait: true, replayed_batch: true }`, executes the
+the ancestor approves and the limit becomes `4`; the reconnect writes the
+approval to that same Process's pending request, which then executes the
 preserved `read_file` **exactly once**, and returns `Alan descendant budget fixture OK`
 from `/mnt/project-request-1/fixture.txt`; the child reports `completed`; and the parent
 answers with that text. No completed effect repeats and nothing loops.
