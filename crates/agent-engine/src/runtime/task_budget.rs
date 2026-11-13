@@ -234,7 +234,25 @@ where
         .owner_work
         .as_ref()
         .filter(|work| work.outcome == crate::agent_machine::owner_work::Outcome::BudgetPaused);
-    let additional = extension(&snapshot, limits, owner)?;
+    let mut additional = extension(&snapshot, limits, owner)?;
+    if additional == Extension::default() {
+        // The stop has no allowance left for what it must do; an empty proposal
+        // could not describe it and would leave the operator nothing to answer.
+        additional = match exhausted.dimension {
+            crate::agent_machine::task_budget::Dimension::ModelCalls => Extension {
+                model_calls: limits.model_calls.get(),
+                ..Extension::default()
+            },
+            crate::agent_machine::task_budget::Dimension::ToolCalls => Extension {
+                tool_calls: limits.tool_calls.get(),
+                ..Extension::default()
+            },
+            crate::agent_machine::task_budget::Dimension::Time => Extension {
+                execution_seconds: limits.execution_seconds.get(),
+                ..Extension::default()
+            },
+        };
+    }
     let summary = confirmation_summary(
         &format!("Task budget reached: {}", exhausted.dimension),
         &snapshot,

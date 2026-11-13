@@ -102,6 +102,11 @@ async fn spawn_child_runtime_inner(
 ) -> Result<DelegatedChildRunSupervisor> {
     ensure_not_cancelled(cancel)?;
     validate_child_launch_contract(&spec)?;
+    if let Some(target) = resume
+        && let Some(supervisor) = resume_live_child(&parent, target).await?
+    {
+        return Ok(supervisor);
+    }
 
     let process_files = parent.child_launch.process_files();
     let parent_pid = process_files.current_pid()?.to_string();
@@ -144,13 +149,60 @@ async fn spawn_child_runtime_inner(
                 warnings: Vec::new(),
             },
             child_run_id,
-            child_run_registry: parent.child_run_registry,
+            child_run_registry: parent.child_run_registry.clone(),
             timeout: spec.launch.timeout_secs.map(Duration::from_secs),
             agent_files,
             process_files: child_process_files,
             process_pid: child_pid,
+            resume_target: resume.map(|target| target.request_id.clone()),
         },
     ))
+}
+
+/// Answer the stop this reconnect names, if the Process that published it is still
+/// there. A live Process is the one that owns the preserved work.
+async fn resume_live_child(
+    parent: &ChildLaunchRuntime,
+    target: &crate::agent_machine::pending_resume::ResumeTarget,
+) -> Result<Option<DelegatedChildRunSupervisor>> {
+    let Some(pid) = target.child_pid.as_deref() else {
+        return Ok(None);
+    };
+    let (agent_files, process_files) = parent.child_launch.observation_handles(pid);
+    if process_files.read_process_exit_code(pid).await?.is_some() {
+        return Ok(None);
+    }
+    let ids = agent_files.request_ids().await?;
+    let Some(request) = agent_files.pending_request_id(&ids).await? else {
+        return Ok(None);
+    };
+    let matches = agent_files
+        .read_request_details(&request)
+        .await?
+        .and_then(|details| details["checkpoint_id"].as_str().map(str::to_string))
+        .is_some_and(|checkpoint| checkpoint == target.request_id);
+    if !matches {
+        return Ok(None);
+    }
+    agent_files
+        .write_request_response(&request, br#"{"choice":"approve"}"#)
+        .await?;
+    Ok(Some(DelegatedChildRunSupervisor::new(
+        DelegatedChildRunSupervision {
+            startup: ChildProcessStartup {
+                process_path: format!("/proc/{pid}"),
+                rollout_path: None,
+                warnings: Vec::new(),
+            },
+            child_run_id: uuid::Uuid::new_v4().to_string(),
+            child_run_registry: parent.child_run_registry.clone(),
+            timeout: None,
+            agent_files,
+            process_files,
+            process_pid: pid.to_string(),
+            resume_target: Some(target.request_id.clone()),
+        },
+    )))
 }
 
 impl ChildProcessLaunch<'_> {

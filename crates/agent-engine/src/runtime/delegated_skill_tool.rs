@@ -365,15 +365,6 @@ where
                             }
                             None => false,
                         };
-                        // Owning the allowance is not the same as having spent it: a
-                        // child can stop on its own share while this task still has
-                        // room. Only a genuine local shortage earns a budget decision
-                        // and a reconnect; otherwise the stop is the child's own
-                        // result and the parent keeps its authority over the call.
-                        let local_shortage = match runtime.machine.task_budget.as_ref() {
-                            Some(budget) => !budget.has_room(dimension).await?,
-                            None => false,
-                        };
                         if !owns_allowance {
                             crate::agent_machine::pending_resume::record(
                                 &mut *runtime.machine,
@@ -383,6 +374,12 @@ where
                                     ancestor_task_id: inherited.ancestor_task_id.clone(),
                                     dimension: inherited.dimension.clone(),
                                     rollout_path: inherited.rollout_path.clone(),
+                                    child_pid: child_result
+                                        .process_path
+                                        .rsplit('/')
+                                        .next()
+                                        .unwrap_or_default()
+                                        .to_string(),
                                 },
                             )
                             .await?;
@@ -392,7 +389,7 @@ where
                             }
                             .into());
                         }
-                        if local_shortage {
+                        {
                             crate::agent_machine::pending_resume::record(
                                 &mut *runtime.machine,
                                 crate::agent_machine::pending_resume::PendingResume {
@@ -401,6 +398,12 @@ where
                                     ancestor_task_id: inherited.ancestor_task_id.clone(),
                                     dimension: inherited.dimension.clone(),
                                     rollout_path: inherited.rollout_path.clone(),
+                                    child_pid: child_result
+                                        .process_path
+                                        .rsplit('/')
+                                        .next()
+                                        .unwrap_or_default()
+                                        .to_string(),
                                 },
                             )
                             .await?;

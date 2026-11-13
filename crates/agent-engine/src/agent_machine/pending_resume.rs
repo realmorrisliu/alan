@@ -51,6 +51,9 @@ pub(crate) struct PendingResume {
     pub ancestor_task_id: String,
     /// Exhausted dimension as reported by the paused child.
     pub dimension: String,
+    /// The paused child's Process, so a reconnect can answer it where it waits.
+    #[serde(default)]
+    pub child_pid: String,
     /// Execution record of the paused child, when it reported one.
     ///
     /// A resume launch recovers this record so the new Process owns the same
@@ -64,6 +67,8 @@ pub(crate) struct PendingResume {
 pub(crate) struct ResumeTarget {
     /// The checkpoint the ancestor authorized.
     pub request_id: String,
+    /// The paused child's Process, when it is still there to answer.
+    pub child_pid: Option<String>,
     /// Execution record to recover, when the child reported one.
     pub rollout_path: Option<String>,
 }
@@ -121,6 +126,7 @@ pub(crate) fn resume_target_for(
         .find(|pending| pending.tool_call_id == tool_call_id)
         .map(|pending| ResumeTarget {
             request_id: pending.request_id.clone(),
+            child_pid: (!pending.child_pid.is_empty()).then(|| pending.child_pid.clone()),
             rollout_path: (!pending.rollout_path.is_empty()).then(|| pending.rollout_path.clone()),
         })
 }
@@ -162,6 +168,7 @@ mod tests {
             request_id: format!("inherited_budget-{tool_call_id}"),
             ancestor_task_id: "ancestor-1".into(),
             dimension: "model_calls".into(),
+            child_pid: String::new(),
             rollout_path: String::new(),
         }
     }

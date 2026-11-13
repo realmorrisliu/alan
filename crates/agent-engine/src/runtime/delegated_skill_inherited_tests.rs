@@ -61,6 +61,7 @@ async fn inherited_pause_records_the_reconnect_and_stops_the_parent_turn() {
     assert_eq!(
         state.machine.pending_delegated_resumes,
         vec![crate::agent_machine::pending_resume::PendingResume {
+            child_pid: "child-machine".to_string(),
             rollout_path: String::new(),
             tool_call_id: "call_1".to_string(),
             request_id: "inherited_budget_1".to_string(),
@@ -76,6 +77,7 @@ async fn a_finished_reconnect_is_consumed_so_the_call_cannot_run_twice() {
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     state.machine.pending_delegated_resumes =
         vec![crate::agent_machine::pending_resume::PendingResume {
+            child_pid: "child-machine".to_string(),
             rollout_path: String::new(),
             tool_call_id: "call_1".to_string(),
             request_id: "inherited_budget_1".to_string(),
@@ -381,76 +383,5 @@ async fn extension_replays_the_delegated_call_exactly_once_with_the_resume_reque
     assert!(
         state.machine.pending_delegated_resumes.is_empty(),
         "a finished reconnect is consumed so it cannot run again"
-    );
-}
-
-#[tokio::test]
-async fn an_owned_allowance_with_room_does_not_pause_the_owner() {
-    use crate::agent_machine::task_budget::TaskBudget;
-    use crate::runtime::delegated_child_run::{ChildRuntimePause, InheritedPause};
-    use alan_agent_protocol::YieldKind;
-    let mut state = create_test_transition_state();
-    activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
-    let budget = TaskBudget::start("owner".into(), state.core_config.task_budget.clone(), None)
-        .await
-        .unwrap();
-    let owner_id = budget.snapshot().await.task_id;
-    // The owner has spent nothing, so a child that stops on its own share is not
-    // evidence that the owner is out of money.
-    state.machine.task_budget = Some(budget);
-    let tool_call = NormalizedToolCall {
-        id: "call_room".to_string(),
-        name: "invoke_delegated_skill".to_string(),
-        arguments: json!({
-            "skill_id": "repo-review",
-            "target": "reviewer",
-            "task": "Review the current diff and summarize risks.",
-            "host_mounts": [{"grant": "grant-project", "target": "/mnt/source", "access": "read_only"}]
-        }),
-    };
-    let mut emit = |_: Event| async {};
-    let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill_with_spawn(
-        &mut state,
-        &tool_call,
-        &tool_call.arguments,
-        &cancel,
-        &mut emit,
-        move |_state, _spec, _cancel, _resume| {
-            Box::pin(async move {
-                Ok(ChildRuntimeResult {
-                    status: ChildRuntimeStatus::Paused,
-                    process_path: "child-machine".to_string(),
-                    child_run_id: None,
-                    rollout_path: None,
-                    output_text: String::new(),
-                    turn_summary: None,
-                    structured_output: None,
-                    warnings: Vec::new(),
-                    error_message: None,
-                    pause: Some(ChildRuntimePause {
-                        request_id: "r7".to_string(),
-                        kind: YieldKind::Custom("inherited_budget".to_string()),
-                        inherited: Some(InheritedPause {
-                            rollout_path: String::new(),
-                            ancestor_task_id: owner_id,
-                            dimension: "model_calls".to_string(),
-                            checkpoint_id: "inherited_budget_room".to_string(),
-                        }),
-                    }),
-                    child_run: None,
-                })
-            })
-        },
-    )
-    .await;
-
-    assert!(
-        matches!(result, Ok(VirtualToolOutcome::Continue { .. })),
-        "an owner with room keeps the call: {result:?}"
-    );
-    assert!(
-        state.machine.pending_delegated_resumes.is_empty(),
-        "no reconnect is recorded when the owner is not short"
     );
 }

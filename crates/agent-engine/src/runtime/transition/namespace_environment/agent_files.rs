@@ -264,7 +264,12 @@ impl NamespaceAgentFiles {
         let client = NamespaceClient::new(self.root.clone());
         write_request_record(&client, &self.agent_path, record).await
     }
-
+    pub(crate) async fn write_request_response(&self, id: &str, body: &[u8]) -> Result<()> {
+        let path = format!("{}/requests/{id}/response", self.agent_path);
+        NamespaceClient::new(self.root.clone())
+            .write_document(&path, body)
+            .await
+    }
     pub(crate) async fn write_confirmation_request(
         &self,
         pending: &crate::approval::PendingConfirmation,
@@ -284,7 +289,6 @@ impl NamespaceAgentFiles {
         )
         .await
     }
-
     pub(crate) async fn write_structured_input_request(
         &self,
         pending: &crate::approval::PendingStructuredInputRequest,
@@ -300,7 +304,6 @@ impl NamespaceAgentFiles {
         )
         .await
     }
-
     pub(crate) async fn write_rejected_command(&self, id: &str, message: &str) -> Result<()> {
         let outcome = serde_json::json!({"success":false,"error":message});
         let mut result = serde_json::json!({"call_id":id,"exit_code":1,"outcome":outcome});
@@ -563,7 +566,6 @@ impl NamespaceAgentFiles {
                 })
             })
     }
-
     pub(crate) async fn write_ui_skill_snapshot(
         &self,
         snapshot: &alan_agent_protocol::UiSkillSnapshot,
