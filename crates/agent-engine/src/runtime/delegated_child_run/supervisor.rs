@@ -15,25 +15,6 @@ const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
 const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Inputs retained after a delegated Child Run has been launched and registered.
-/// How long a reconnect waits for the stop it answers to be replaced by an outcome.
-const RESUME_ANSWER_DEADLINE: Duration = Duration::from_secs(150);
-
-/// Whether a pause is the stop this launch answers, so the run must keep waiting.
-fn waits_for_answer(
-    target: Option<&str>,
-    checkpoint_id: Option<&str>,
-    process_exited: bool,
-    deadline: Option<Instant>,
-) -> bool {
-    let (Some(target), Some(deadline)) = (target, deadline) else {
-        return false;
-    };
-    if process_exited || Instant::now() >= deadline || checkpoint_id != Some(target) {
-        return false;
-    }
-    true
-}
-
 pub(crate) struct DelegatedChildRunSupervision {
     pub(crate) startup: ChildProcessStartup,
     pub(crate) child_run_id: String,
@@ -42,8 +23,6 @@ pub(crate) struct DelegatedChildRunSupervision {
     pub(crate) agent_files: NamespaceAgentFiles,
     pub(crate) process_files: NamespaceProcessFiles,
     pub(crate) process_pid: String,
-    /// The durable stop this launch was started to answer, when it is a reconnect.
-    pub(crate) resume_target: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,8 +76,6 @@ pub(crate) struct DelegatedChildRunSupervisor {
     agent_files: NamespaceAgentFiles,
     process_files: NamespaceProcessFiles,
     process_pid: String,
-    resume_target: Option<String>,
-    resume_deadline: Option<Instant>,
 }
 
 impl DelegatedChildRunSupervisor {
@@ -111,11 +88,6 @@ impl DelegatedChildRunSupervisor {
             agent_files: input.agent_files,
             process_files: input.process_files,
             process_pid: input.process_pid,
-            resume_deadline: input
-                .resume_target
-                .as_ref()
-                .map(|_| Instant::now() + RESUME_ANSWER_DEADLINE),
-            resume_target: input.resume_target,
         }
     }
 
@@ -434,18 +406,6 @@ impl DelegatedChildRunSupervisor {
                         None,
                     ),
                 };
-                if waits_for_answer(
-                    self.resume_target.as_deref(),
-                    pause
-                        .as_ref()
-                        .and_then(|pause| pause.inherited.as_ref())
-                        .map(|inherited| inherited.checkpoint_id.as_str()),
-                    observation.process_exited,
-                    self.resume_deadline,
-                ) {
-                    tokio::time::sleep(file_poll_interval).await;
-                    continue;
-                }
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     file_terminal_observation(
                         result.output_text.clone(),
@@ -488,17 +448,6 @@ impl DelegatedChildRunSupervisor {
                 } else {
                     None
                 };
-                if waits_for_answer(
-                    self.resume_target.as_deref(),
-                    inherited
-                        .as_ref()
-                        .map(|inherited| inherited.checkpoint_id.as_str()),
-                    observation.process_exited,
-                    self.resume_deadline,
-                ) {
-                    tokio::time::sleep(file_poll_interval).await;
-                    continue;
-                }
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     file_terminal_observation(
                         observation.output_text,

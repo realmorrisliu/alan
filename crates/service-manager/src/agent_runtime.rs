@@ -39,14 +39,12 @@ mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
 
-use pause_answer::pause_is_terminal;
+use pause_answer::pause_keeps_waiting;
 use pause_record::read_child_pause;
 use process_cleanup::ProcessCleanup;
 use resume_content::resume_content;
 
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
-/// How long a Process launched to answer a stop waits for that answer to land.
-const RESUME_ANSWER_GRACE_SECS: u64 = 120;
 static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 
 #[derive(Clone)]
@@ -567,8 +565,13 @@ impl AgentRuntimeService {
                 .send(Submission::new(op))
                 .await
                 .context("submit initial child Agent Process turn")?;
-            let result =
-                wait_for_child_terminal(&root, pid, &controller, request.inherited_resume).await?;
+            let result = wait_for_child_terminal(
+                &root,
+                pid,
+                &controller,
+                request.spawn.launch.timeout_secs.map(Duration::from_secs),
+            )
+            .await?;
             let exit_code = match result.status {
                 AgentExecutableStatus::Completed => 0,
                 AgentExecutableStatus::Paused | AgentExecutableStatus::Failed => 1,
@@ -903,12 +906,11 @@ async fn wait_for_child_terminal(
     root: &InProcessTransport,
     pid: Pid,
     controller: &RuntimeController,
-    resuming: bool,
+    run_timeout: Option<Duration>,
 ) -> Result<AgentExecutableResult> {
-    // A Process launched to answer a stop must outlive that stop's publication:
-    // the authorization arrives on this Process's own submission channel. It is
-    // still bounded, so a Process that never answers cannot wait forever.
-    let resume_deadline = std::time::Instant::now() + Duration::from_secs(RESUME_ANSWER_GRACE_SECS);
+    // The run's own timeout bounds the wait; a clock is never the reason a paused
+    // Process stops being answerable.
+    let deadline = run_timeout.map(|timeout| std::time::Instant::now() + timeout);
     let shell = alan_shell::Shell::new(root.clone());
     let activity_path = format!("/agent/{}/machine/ui/activity", pid.0);
     let events_path = format!("/agent/{}/machine/ui/events", pid.0);
@@ -917,6 +919,7 @@ async fn wait_for_child_terminal(
         if controller.is_finished() {
             anyhow::bail!("child Agent Machine stopped before publishing a terminal result");
         }
+        let stopped = deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
         let events_started = shell.stat(&events_path).await.map(|stat| stat.length > 0)?;
         if events_started {
             let activity: UiActivitySnapshot =
@@ -946,9 +949,9 @@ async fn wait_for_child_terminal(
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     };
-                    if !pause_is_terminal(resuming, std::time::Instant::now() < resume_deadline) {
-                        // This Process is here to answer that stop; keep the
-                        // submission channel open until the answer is applied.
+                    if pause_keeps_waiting(true, stopped) {
+                        // Pausing means waiting: the answer arrives on this
+                        // Process's own submission channel.
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     }
