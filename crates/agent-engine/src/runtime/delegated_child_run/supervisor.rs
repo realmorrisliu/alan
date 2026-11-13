@@ -23,6 +23,8 @@ pub(crate) struct DelegatedChildRunSupervision {
     pub(crate) agent_files: NamespaceAgentFiles,
     pub(crate) process_files: NamespaceProcessFiles,
     pub(crate) process_pid: String,
+    /// The durable stop this launch was started to answer, when it is a reconnect.
+    pub(crate) resume_target: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +78,7 @@ pub(crate) struct DelegatedChildRunSupervisor {
     agent_files: NamespaceAgentFiles,
     process_files: NamespaceProcessFiles,
     process_pid: String,
+    resume_target: Option<String>,
 }
 
 impl DelegatedChildRunSupervisor {
@@ -88,7 +91,23 @@ impl DelegatedChildRunSupervisor {
             agent_files: input.agent_files,
             process_files: input.process_files,
             process_pid: input.process_pid,
+            resume_target: input.resume_target,
         }
+    }
+
+    /// A resumed Process republishes the stop it is about to answer. That pause is
+    /// not this run's outcome: the answer is already on its way, and its own run
+    /// timeout bounds the wait.
+    fn awaits_resume_answer(&self, checkpoint_id: Option<&str>, process_exited: bool) -> bool {
+        // A live Process can still apply the answer; one that exited already
+        // published its outcome, and waiting on it would never end.
+        if process_exited {
+            return false;
+        }
+        matches!(
+            (self.resume_target.as_deref(), checkpoint_id),
+            (Some(target), Some(checkpoint)) if target == checkpoint
+        )
     }
 
     async fn observe_files(&self) -> Result<ChildFileObservation> {
@@ -406,6 +425,16 @@ impl DelegatedChildRunSupervisor {
                         None,
                     ),
                 };
+                let observed = pause
+                    .as_ref()
+                    .and_then(|pause| pause.inherited.as_ref())
+                    .map(|inherited| inherited.checkpoint_id.clone());
+                let waited =
+                    self.awaits_resume_answer(observed.as_deref(), observation.process_exited);
+                if waited {
+                    tokio::time::sleep(file_poll_interval).await;
+                    continue;
+                }
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     file_terminal_observation(
                         result.output_text.clone(),
@@ -448,6 +477,15 @@ impl DelegatedChildRunSupervisor {
                 } else {
                     None
                 };
+                let observed = inherited
+                    .as_ref()
+                    .map(|inherited| inherited.checkpoint_id.clone());
+                let waited =
+                    self.awaits_resume_answer(observed.as_deref(), observation.process_exited);
+                if waited {
+                    tokio::time::sleep(file_poll_interval).await;
+                    continue;
+                }
                 return Ok(ChildRuntimeWaitOutcome::Observed(
                     file_terminal_observation(
                         observation.output_text,
