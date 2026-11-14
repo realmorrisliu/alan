@@ -333,6 +333,47 @@ mod host_behaviour_tests {
     }
 
     #[tokio::test]
+    async fn a_cancelled_request_neither_completes_nor_immortalises_the_child() {
+        let temp = TempDir::new().unwrap();
+        let (pid, controller, root, shell) = paused_runtime(&temp).await;
+        tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            wait_for_child_terminal(&root, pid, &controller, None),
+        )
+        .await
+        .expect_err("the yield keeps the Process waiting first");
+
+        // Cancelling the pending request settles that request, not the turn: the
+        // turn is ended by the host stop below.
+        let request = pending_request(&shell)
+            .await
+            .expect("the yield published a request");
+        shell
+            .write(&format!("/agent/1/requests/{request}/ctl"), b"cancel")
+            .await
+            .unwrap();
+        let after_cancel = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            wait_for_child_terminal(&root, pid, &controller, None),
+        )
+        .await;
+        assert!(
+            after_cancel.is_err(),
+            "a cancelled request must not be reported as a completed run"
+        );
+
+        let submissions = controller.handle.submission_tx.clone();
+        controller.shutdown().await.unwrap();
+        assert!(
+            submissions
+                .send(Submission::new(Op::Interrupt))
+                .await
+                .is_err(),
+            "the host stop ends the cancelled child, so it cannot be immortal"
+        );
+    }
+
+    #[tokio::test]
     async fn a_parent_exit_stops_a_yielded_child() {
         let temp = TempDir::new().unwrap();
         let (pid, controller, root, shell) = paused_runtime(&temp).await;
