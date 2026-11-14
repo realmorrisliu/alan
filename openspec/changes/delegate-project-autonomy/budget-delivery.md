@@ -684,10 +684,11 @@ Agent Process in `crates/service-manager/src/agent_runtime/pause_answer.rs`: a t
 that yields leaves the Process waiting (nothing terminal is written, and the host does
 not return while the request can still be answered); the `Op::Resume` that answers it
 is consumed and the run reports `Completed`; an unanswered yield ends the Process at its
-own run timeout as `Paused`, and a parent exit leaves no Process that still accepts
-submissions. Cancelling a paused *request* through its `ctl` surface does not end the
-turn by itself — the host's stop is what ends a yielded Process; that is the observed
-behaviour, stated rather than assumed. Driving a real yield needed the builtin
+own run timeout as `Paused`, and a parent exit leaves no Process that still accepts submissions. Cancelling a
+paused *request* through its `ctl` surface settles that request but not the turn — the
+host's stop is what ends a yielded Process — and a test asserts both halves: the
+cancelled run is never reported as completed, and the host stop leaves no Process that
+accepts submissions. Driving a real yield needed the builtin
 `request_confirmation` tool *and* a non-streaming runtime — streaming dropped the
 mock's tool call, which is why earlier attempts saw a completed turn instead of a
 pause. Those tests also exposed a defect: a request left pending after the turn finished
