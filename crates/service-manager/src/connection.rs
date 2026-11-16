@@ -167,7 +167,7 @@ struct CallableRegistry {
 
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
 pub struct ConnectionService {
-    metadata_path: PathBuf,
+    metadata_path: Option<PathBuf>,
     state: Mutex<State>,
     callables: tokio::sync::Mutex<Option<CallableRegistry>>,
     temporary_store: Option<crate::temporary_store::TemporaryStore>,
@@ -221,7 +221,7 @@ impl ConnectionService {
             .map(|profile_id| (profile_id.clone(), "unavailable".to_string()))
             .collect();
         Ok(Arc::new(Self {
-            metadata_path: bindings.metadata_path.clone(),
+            metadata_path: Some(bindings.metadata_path.clone()),
             state: Mutex::new(State {
                 connections,
                 selections: BTreeMap::new(),
@@ -236,11 +236,29 @@ impl ConnectionService {
         }))
     }
 
+    /// Create a purely in-memory Connection Service with no disk backing.
+    pub fn in_memory() -> Arc<Self> {
+        Arc::new(Self {
+            metadata_path: None,
+            state: Mutex::new(State {
+                connections: ConnectionsFile::default(),
+                selections: BTreeMap::new(),
+                requests: BTreeMap::new(),
+                responses: BTreeMap::new(),
+                response_order: VecDeque::new(),
+                native_status: BTreeMap::new(),
+                validation: BTreeMap::new(),
+            }),
+            callables: tokio::sync::Mutex::new(None),
+            temporary_store: None,
+        })
+    }
+
     pub fn ephemeral() -> Result<Arc<Self>> {
         let temporary = crate::temporary_store::TemporaryStore::new("connection")?;
         let metadata_path = temporary.path().join("connections.toml");
         Ok(Arc::new(Self {
-            metadata_path,
+            metadata_path: Some(metadata_path),
             state: Mutex::new(State {
                 connections: ConnectionsFile::default(),
                 selections: BTreeMap::new(),
@@ -303,9 +321,9 @@ impl ConnectionService {
 
     /// Refresh shared metadata and its callable projection at an operation boundary.
     pub async fn refresh(&self) -> Result<()> {
-        {
+        if let Some(metadata_path) = &self.metadata_path {
             let mut state = self.state.lock().unwrap();
-            let (connections, _) = ConnectionsFile::load_from_path(&self.metadata_path)?;
+            let (connections, _) = ConnectionsFile::load_from_path(metadata_path)?;
             if connections != state.connections {
                 state.replace_connections(connections);
             }
@@ -508,13 +526,12 @@ impl ConnectionService {
                     refresh = true;
                 }
             }
-            let save_result = if persist {
-                state
+            let save_result = match (persist, &self.metadata_path) {
+                (true, Some(metadata_path)) => state
                     .connections
-                    .save_if_unchanged(&self.metadata_path, &committed.connections)
-                    .context("persist Connection Service metadata")
-            } else {
-                Ok(())
+                    .save_if_unchanged(metadata_path, &committed.connections)
+                    .context("persist Connection Service metadata"),
+                _ => Ok(()),
             };
             let published = self.publish_saved_state(&mut committed, state, &save_result);
             (refresh && published, save_result)
@@ -536,7 +553,10 @@ impl ConnectionService {
             return true;
         }
         // A failed save may follow publication or a commit by another instance.
-        let Ok((on_disk, _)) = ConnectionsFile::load_from_path(&self.metadata_path) else {
+        let Some(metadata_path) = &self.metadata_path else {
+            return false;
+        };
+        let Ok((on_disk, _)) = ConnectionsFile::load_from_path(metadata_path) else {
             return false;
         };
         if validate_connections(&on_disk).is_err() {

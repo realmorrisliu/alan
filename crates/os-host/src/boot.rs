@@ -206,6 +206,7 @@ impl HostBootConfig {
             launch_context,
             connection_store: Some(connection_store),
             package_store: Some(system_store.packages()?),
+            in_memory_stores: false,
             llm_factory,
             host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
             tools,

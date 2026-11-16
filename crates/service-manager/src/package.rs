@@ -165,10 +165,188 @@ struct State {
 
 /// Installed-package authority bound to an explicit store or owned temporary directory.
 pub struct PackageService {
-    store: PackageStore,
+    store: PackageStoreBackend,
     _temporary_store: Option<crate::temporary_store::TemporaryStore>,
     state: Mutex<State>,
     operation: Mutex<()>,
+}
+
+type InMemoryRevisionMap = BTreeMap<(String, String), Arc<BTreeMap<String, Vec<u8>>>>;
+
+enum PackageStoreBackend {
+    Disk(PackageStore),
+    InMemory(Mutex<InMemoryRevisionMap>),
+}
+
+enum PackageLeaseContent {
+    Disk(PathBuf),
+    InMemory(Arc<BTreeMap<String, Vec<u8>>>),
+}
+
+impl PackageStoreBackend {
+    fn transaction(&self) -> Result<Option<store::PackageStoreLock>> {
+        match self {
+            Self::Disk(store) => Ok(Some(store.transaction()?)),
+            Self::InMemory(_) => Ok(None),
+        }
+    }
+
+    fn load(&self) -> Result<Option<PackageCatalog>> {
+        match self {
+            Self::Disk(store) => Ok(Some(store.load()?)),
+            Self::InMemory(_) => Ok(None),
+        }
+    }
+
+    fn persist_catalog(&self, catalog: &PackageCatalog) -> Result<()> {
+        match self {
+            Self::Disk(store) => store.persist_catalog(catalog),
+            Self::InMemory(_) => Ok(()),
+        }
+    }
+
+    fn verify_revision(&self, record: &PackageRecord) -> Result<()> {
+        match self {
+            Self::Disk(store) => store.verify_revision(record),
+            Self::InMemory(revisions) => {
+                let guard = revisions.lock().expect("in-memory revisions poisoned");
+                ensure!(
+                    guard.contains_key(&(record.id.clone(), record.revision.clone())),
+                    "in-memory package revision missing for `{}`",
+                    record.id
+                );
+                Ok(())
+            }
+        }
+    }
+
+    fn lease(&self, package_id: &str, revision: &str) -> Result<Option<store::PackageLease>> {
+        match self {
+            Self::Disk(store) => Ok(Some(store.lease(package_id, revision)?)),
+            Self::InMemory(_) => Ok(None),
+        }
+    }
+
+    fn materialize(
+        &self,
+        package_id: &str,
+        revision: &str,
+        snapshot: &PackageSnapshot,
+    ) -> Result<materializer::MaterializationManifest> {
+        match self {
+            Self::Disk(store) => {
+                PackageMaterializer::new(store.root()).materialize(package_id, revision, snapshot)
+            }
+            Self::InMemory(revisions) => {
+                let (files, manifest) = materializer::materialize_in_memory(snapshot)?;
+                revisions
+                    .lock()
+                    .expect("in-memory revisions poisoned")
+                    .insert(
+                        (package_id.to_string(), revision.to_string()),
+                        Arc::new(files),
+                    );
+                Ok(manifest)
+            }
+        }
+    }
+
+    fn lease_content(&self, package_id: &str, revision: &str) -> Result<PackageLeaseContent> {
+        match self {
+            Self::Disk(store) => Ok(PackageLeaseContent::Disk(
+                store.revision_root(package_id, revision).join("content"),
+            )),
+            Self::InMemory(revisions) => {
+                let files = revisions
+                    .lock()
+                    .expect("in-memory revisions poisoned")
+                    .get(&(package_id.to_string(), revision.to_string()))
+                    .cloned()
+                    .with_context(|| format!("in-memory package `{package_id}` missing"))?;
+                Ok(PackageLeaseContent::InMemory(files))
+            }
+        }
+    }
+
+    fn stage_package_revisions(
+        &self,
+        package_id: &str,
+    ) -> Result<Option<store::StagedPackageRevisions>> {
+        match self {
+            Self::Disk(store) => store.stage_package_revisions(package_id),
+            Self::InMemory(_) => Ok(None),
+        }
+    }
+
+    fn rollback_staged_package_revisions(
+        &self,
+        staged: Option<&store::StagedPackageRevisions>,
+        error: anyhow::Error,
+    ) -> Result<()> {
+        match self {
+            Self::Disk(store) => store.rollback_staged_package_revisions(staged, error),
+            Self::InMemory(_) => Err(error),
+        }
+    }
+
+    fn discard_staged_package_revisions(&self, staged: Option<store::StagedPackageRevisions>) {
+        if let Self::Disk(store) = self {
+            store.discard_staged_package_revisions(staged);
+        }
+    }
+
+    fn gc_unreferenced_revisions(&self, catalog: &PackageCatalog) -> Result<()> {
+        match self {
+            Self::Disk(store) => store.gc_unreferenced_revisions(catalog),
+            Self::InMemory(revisions) => {
+                let referenced: std::collections::BTreeSet<(String, String)> = catalog
+                    .packages
+                    .values()
+                    .map(|record| (record.id.clone(), record.revision.clone()))
+                    .collect();
+                revisions
+                    .lock()
+                    .expect("in-memory revisions poisoned")
+                    .retain(|key, _| referenced.contains(key));
+                Ok(())
+            }
+        }
+    }
+
+    fn gc_package_revisions(&self, package_id: &str, catalog: &PackageCatalog) -> Result<()> {
+        match self {
+            Self::Disk(store) => store.gc_package_revisions(package_id, catalog),
+            Self::InMemory(revisions) => {
+                let active = catalog
+                    .packages
+                    .get(package_id)
+                    .map(|record| record.revision.clone());
+                revisions
+                    .lock()
+                    .expect("in-memory revisions poisoned")
+                    .retain(|(id, rev), _| {
+                        id != package_id || active.as_deref() == Some(rev.as_str())
+                    });
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn root(&self) -> &Path {
+        match self {
+            Self::Disk(store) => store.root(),
+            Self::InMemory(_) => panic!("in-memory package store has no filesystem root"),
+        }
+    }
+
+    #[cfg(test)]
+    fn revision_root(&self, package_id: &str, revision: &str) -> PathBuf {
+        match self {
+            Self::Disk(store) => store.revision_root(package_id, revision),
+            Self::InMemory(_) => panic!("in-memory package store has no filesystem revision_root"),
+        }
+    }
 }
 
 /// An immutable Package Service revision reference retained by a Process context.
@@ -177,7 +355,7 @@ pub struct PackageReferenceLease {
     lease: Option<store::PackageLease>,
     token: u64,
     record: PackageRecord,
-    content_root: PathBuf,
+    content: PackageLeaseContent,
 }
 
 impl std::fmt::Debug for PackageReferenceLease {
@@ -196,41 +374,81 @@ impl PackageReferenceLease {
     }
 
     pub fn file_server(&self) -> Result<Arc<dyn FileServer>> {
-        Ok(Arc::new(HostDirFs::new(
-            &self.content_root,
-            HostDirAccess::ReadOnly,
-        )?))
+        match &self.content {
+            PackageLeaseContent::Disk(content_root) => Ok(Arc::new(HostDirFs::new(
+                content_root,
+                HostDirAccess::ReadOnly,
+            )?)),
+            PackageLeaseContent::InMemory(files) => {
+                Ok(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
+                    files
+                        .iter()
+                        .map(|(path, bytes)| (path.clone(), bytes.clone())),
+                )))
+            }
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn content_root(&self) -> &Path {
-        &self.content_root
+        match &self.content {
+            PackageLeaseContent::Disk(content_root) => content_root,
+            PackageLeaseContent::InMemory(_) => {
+                panic!("in-memory package lease has no filesystem content_root")
+            }
+        }
     }
 
     pub(crate) fn skill_descriptor(
         &self,
         relative_root: &str,
     ) -> Result<alan_agent_engine::ProcessFileTree> {
-        let root = self.content_root.join(relative_root);
-        let canonical_content = fs::canonicalize(&self.content_root)?;
-        let canonical_root = fs::canonicalize(&root)?;
-        ensure!(
-            canonical_root.starts_with(&canonical_content),
-            "package Skill descriptor escapes its immutable revision"
-        );
-        let source_leaf = canonical_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("package Skill descriptor root has no UTF-8 leaf")?;
-        let snapshot =
-            PackageSnapshot::from_directory_named(&canonical_root, source_leaf.to_string())?;
-        alan_agent_engine::ProcessFileTree::new(
-            snapshot
-                .entries
-                .into_iter()
-                .map(|entry| (entry.path, entry.bytes))
-                .collect(),
-        )
+        match &self.content {
+            PackageLeaseContent::Disk(content_root) => {
+                let root = content_root.join(relative_root);
+                let canonical_content = fs::canonicalize(content_root)?;
+                let canonical_root = fs::canonicalize(&root)?;
+                ensure!(
+                    canonical_root.starts_with(&canonical_content),
+                    "package Skill descriptor escapes its immutable revision"
+                );
+                let source_leaf = canonical_root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .context("package Skill descriptor root has no UTF-8 leaf")?;
+                let snapshot = PackageSnapshot::from_directory_named(
+                    &canonical_root,
+                    source_leaf.to_string(),
+                )?;
+                alan_agent_engine::ProcessFileTree::new(
+                    snapshot
+                        .entries
+                        .into_iter()
+                        .map(|entry| (entry.path, entry.bytes))
+                        .collect(),
+                )
+            }
+            PackageLeaseContent::InMemory(files) => {
+                let normalized = relative_root.trim_matches('/');
+                let prefix = if normalized.is_empty() {
+                    String::new()
+                } else {
+                    format!("{normalized}/")
+                };
+                let entries: BTreeMap<String, Vec<u8>> = files
+                    .iter()
+                    .filter_map(|(path, bytes)| {
+                        path.strip_prefix(&prefix)
+                            .map(|rel| (rel.to_string(), bytes.clone()))
+                    })
+                    .collect();
+                ensure!(
+                    !entries.is_empty(),
+                    "in-memory package Skill descriptor `{relative_root}` is missing"
+                );
+                alan_agent_engine::ProcessFileTree::new(entries)
+            }
+        }
     }
 }
 
@@ -261,6 +479,23 @@ impl PackageService {
         Self::open_inner(root, Some(temporary), None)
     }
 
+    /// Create a purely in-memory Package Service with no disk backing.
+    pub fn in_memory() -> Arc<Self> {
+        Arc::new(Self {
+            store: PackageStoreBackend::InMemory(Mutex::new(BTreeMap::new())),
+            _temporary_store: None,
+            state: Mutex::new(State {
+                catalog: PackageCatalog::default(),
+                results: BTreeMap::new(),
+                result_order: Vec::new(),
+                status: "ready".to_string(),
+                leases: BTreeMap::new(),
+                next_lease_id: 1,
+            }),
+            operation: Mutex::new(()),
+        })
+    }
+
     fn open_inner(
         store_root: PathBuf,
         temporary_store: Option<crate::temporary_store::TemporaryStore>,
@@ -268,7 +503,7 @@ impl PackageService {
     ) -> Result<Arc<Self>> {
         let (store, catalog) = PackageStore::open(store_root, bootstrap)?;
         Ok(Arc::new(Self {
-            store,
+            store: PackageStoreBackend::Disk(store),
             _temporary_store: temporary_store,
             state: Mutex::new(State {
                 catalog,
@@ -293,9 +528,11 @@ impl PackageService {
         Ok(self.cached_catalog())
     }
 
-    fn refresh(&self) -> Result<store::PackageStoreLock> {
+    fn refresh(&self) -> Result<Option<store::PackageStoreLock>> {
         let transaction = self.store.transaction()?;
-        self.state.lock().expect("package state poisoned").catalog = self.store.load()?;
+        if let Some(catalog) = self.store.load()? {
+            self.state.lock().expect("package state poisoned").catalog = catalog;
+        }
         Ok(transaction)
     }
 
@@ -338,8 +575,7 @@ impl PackageService {
                 "package catalog is full"
             );
         }
-        let materialization = PackageMaterializer::new(self.store.root())
-            .materialize(package_id, &revision, &snapshot)?;
+        let materialization = self.store.materialize(package_id, &revision, &snapshot)?;
         let reference_count = existing.as_ref().map_or(0, |record| record.reference_count);
         let now = chrono::Utc::now();
         self.publish_record(PackageRecord {
@@ -402,12 +638,9 @@ impl PackageService {
             .insert(token, (package_id.to_string(), record.revision.clone()));
         Ok(Arc::new(PackageReferenceLease {
             service: self.clone(),
-            lease: Some(lease),
+            lease,
             token,
-            content_root: self
-                .store
-                .revision_root(package_id, &record.revision)
-                .join("content"),
+            content: self.store.lease_content(package_id, &record.revision)?,
             record,
         }))
     }
@@ -508,11 +741,7 @@ impl PackageService {
             self.cached_catalog().packages.len() < MAX_PACKAGES,
             "package catalog is full"
         );
-        let materialization = PackageMaterializer::new(self.store.root()).materialize(
-            &package_id,
-            &revision,
-            &snapshot,
-        )?;
+        let materialization = self.store.materialize(&package_id, &revision, &snapshot)?;
         let now = chrono::Utc::now();
         let record = PackageRecord {
             id: package_id.clone(),
@@ -572,11 +801,7 @@ impl PackageService {
                 catalog: None,
             });
         }
-        let materialization = PackageMaterializer::new(self.store.root()).materialize(
-            &package_id,
-            &revision,
-            &snapshot,
-        )?;
+        let materialization = self.store.materialize(&package_id, &revision, &snapshot)?;
         let record = PackageRecord {
             revision,
             materialized_fingerprint: materialization.tree_fingerprint,

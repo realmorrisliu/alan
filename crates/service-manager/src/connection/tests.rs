@@ -824,7 +824,13 @@ async fn evaluation_profile_cannot_replace_generation_default_or_selection() {
 #[tokio::test]
 async fn temporary_store_lives_until_the_last_consumer_and_removes_lock_files() {
     let service = ConnectionService::ephemeral().unwrap();
-    let root = service.metadata_path.parent().unwrap().to_path_buf();
+    let root = service
+        .metadata_path
+        .as_deref()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
     service
         .apply(ConnectionCommand::AddProfile {
             profile_id: "main".to_string(),
@@ -832,7 +838,7 @@ async fn temporary_store_lives_until_the_last_consumer_and_removes_lock_files() 
         })
         .await
         .unwrap();
-    assert!(service.metadata_path.is_file());
+    assert!(service.metadata_path.as_deref().unwrap().is_file());
     assert!(root.join("connections.toml.lock").is_file());
     let consumer = service.file_server();
     assert!(service.close_ephemeral().is_err());
@@ -840,7 +846,13 @@ async fn temporary_store_lives_until_the_last_consumer_and_removes_lock_files() 
     drop(consumer);
     assert!(!root.exists());
     let service = ConnectionService::ephemeral().unwrap();
-    let root = service.metadata_path.parent().unwrap().to_path_buf();
+    let root = service
+        .metadata_path
+        .as_deref()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
     service.close_ephemeral().unwrap();
     assert!(!root.exists());
 }

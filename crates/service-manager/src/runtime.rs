@@ -52,6 +52,7 @@ pub struct ServiceManagerConfig {
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
     pub package_store: Option<std::path::PathBuf>,
+    pub in_memory_stores: bool,
     pub llm_factory: Arc<dyn LlmClientFactory>,
     pub host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     pub tools: ToolRegistry,
@@ -114,6 +115,7 @@ impl ServiceManagerConfig {
             launch_context,
             connection_store: None,
             package_store: None,
+            in_memory_stores: false,
             process,
             resume_root: false,
             input_shadow: None,
@@ -166,15 +168,23 @@ impl ServiceManager {
         );
         let boot_id = Uuid::new_v4();
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
-        let package_bootstrap = crate::package::PackageBootstrap::new();
-        let open = package_bootstrap.opener(config.package_store.take());
-        let package_service = tokio::task::spawn_blocking(move || {
-            let service = open()?;
-            seed_preinstalled_packages(&service)?;
-            Ok::<_, anyhow::Error>(service)
-        })
-        .await
-        .context("join Package bootstrap")??;
+        let (package_bootstrap, package_service) =
+            if config.in_memory_stores && config.package_store.is_none() {
+                let service = PackageService::in_memory();
+                seed_preinstalled_packages(&service)?;
+                (None, service)
+            } else {
+                let package_bootstrap = crate::package::PackageBootstrap::new();
+                let open = package_bootstrap.opener(config.package_store.take());
+                let service = tokio::task::spawn_blocking(move || {
+                    let service = open()?;
+                    seed_preinstalled_packages(&service)?;
+                    Ok::<_, anyhow::Error>(service)
+                })
+                .await
+                .context("join Package bootstrap")??;
+                (Some(package_bootstrap), service)
+            };
         validate_package_reference_mounts(&config.launch_context)?;
         let resolved_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
             config
@@ -204,6 +214,7 @@ impl ServiceManager {
             .clone();
         let connection_service = match config.connection_store.as_ref() {
             Some(bindings) => ConnectionService::open(bindings)?,
+            None if config.in_memory_stores => ConnectionService::in_memory(),
             None => ConnectionService::ephemeral()?,
         };
         let llm_connection = preferred_connection
@@ -288,7 +299,9 @@ impl ServiceManager {
         runtime.settle_initial_root().await?;
         verify_readiness(&root, boot_id, &state).await?;
 
-        package_bootstrap.finish();
+        if let Some(package_bootstrap) = package_bootstrap {
+            package_bootstrap.finish();
+        }
         let (supervisor_shutdown, supervisor_task) = runtime.start();
 
         Ok(Self {

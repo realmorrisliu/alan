@@ -176,7 +176,7 @@ impl EmbeddedConfig {
             namespace.mount(&path, transport, access);
         }
 
-        let (launch_context, connection_store, package_store, host_store_paths) =
+        let (launch_context, connection_store, package_store, host_store_paths, in_memory_stores) =
             match &self.storage {
                 StorageMode::Ephemeral => {
                     ensure!(
@@ -186,7 +186,9 @@ impl EmbeddedConfig {
                     if namespace.resolve("/memory").is_err() {
                         namespace.mount(
                             "/memory",
-                            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                            InProcessTransport::new(
+                                Arc::new(alan_ap::reference::MemFs::writable()),
+                            ),
                             Access::ReadWrite,
                         );
                     }
@@ -197,14 +199,18 @@ impl EmbeddedConfig {
                             Access::ReadOnly,
                         );
                     }
-                    let mut ctx = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?;
+                    let mut ctx = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
+                        .with_descriptor(
+                            alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
+                            ProcessDescriptor::new("/memory")?,
+                        );
                     if let Some(tree) = self.definition {
                         ctx = ctx.with_descriptor(
                             alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
                             ProcessDescriptor::with_file_tree("/lib/agents/root", tree)?,
                         );
                     }
-                    (ctx, None, None, None)
+                    (ctx, None, None, None, true)
                 }
                 StorageMode::Isolated {
                     system_store_root,
@@ -223,7 +229,7 @@ impl EmbeddedConfig {
                     )?;
                     let connection_store = Some(system_store.connection_bindings()?);
                     let package_store = Some(system_store.packages()?);
-                    (ctx, connection_store, package_store, host_store)
+                    (ctx, connection_store, package_store, host_store, false)
                 }
             };
 
@@ -248,6 +254,7 @@ impl EmbeddedConfig {
             launch_context,
             connection_store,
             package_store,
+            in_memory_stores,
             llm_factory,
             host_mount_adapter: self.host_mount_adapter,
             tools: self.tools,
@@ -458,6 +465,83 @@ mod tests {
         let text = wait_for_tail_contains(&mut output, "hello from embedded alan").await;
         assert!(text.contains("hello from embedded alan"), "got: {text}");
 
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ephemeral_embedded_instance_has_writable_memory_and_bound_descriptor() {
+        let provider = MockLlmProvider::new().with_response(mock_response("ok"));
+        let config = EmbeddedConfig::ephemeral(LlmSource::Client(LlmClient::new(provider)));
+        let sm_config = config.into_service_manager_config().unwrap();
+        assert!(sm_config.in_memory_stores);
+        assert!(
+            sm_config
+                .launch_context
+                .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+                .is_some()
+        );
+
+        use alan_ap::{Fid, Request};
+        let resolved = sm_config
+            .launch_context
+            .namespace
+            .resolve("/memory")
+            .expect("/memory must be mounted in ephemeral mode");
+        assert_eq!(resolved.access, Access::ReadWrite);
+        let ns_transport = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
+            sm_config.launch_context.namespace,
+        )));
+        ns_transport
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(1),
+                names: vec!["memory".to_string()],
+            })
+            .await
+            .unwrap();
+        ns_transport
+            .call(Request::Create {
+                fid: Fid(1),
+                newfid: Fid(2),
+                name: "note.txt".to_string(),
+                kind: alan_ap::FileKind::File,
+            })
+            .await
+            .unwrap();
+        ns_transport
+            .call(Request::Open {
+                fid: Fid(2),
+                mode: alan_ap::OpenMode::Write,
+            })
+            .await
+            .unwrap();
+        ns_transport
+            .call(Request::Write {
+                fid: Fid(2),
+                offset: 0,
+                data: b"ephemeral-memory".to_vec(),
+            })
+            .await
+            .unwrap();
+        ns_transport
+            .call(Request::Clunk { fid: Fid(2) })
+            .await
+            .unwrap();
+        ns_transport
+            .call(Request::Clunk { fid: Fid(1) })
+            .await
+            .unwrap();
+
+        let shell = Shell::new(ns_transport);
+        let stored = shell.cat("/memory/note.txt").await.unwrap();
+        assert_eq!(stored, b"ephemeral-memory");
+
+        let provider = MockLlmProvider::new().with_response(mock_response("ok"));
+        let app = EmbeddedAlan::boot(EmbeddedConfig::ephemeral(LlmSource::Client(
+            LlmClient::new(provider),
+        )))
+        .await
+        .unwrap();
         app.shutdown().await.unwrap();
     }
 
