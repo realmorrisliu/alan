@@ -235,7 +235,6 @@ async fn child_never_extends_an_inherited_wait_and_settles_it_instead() {
     pause_inherited(&mut source, &exhausted, None, &mut emit)
         .await
         .unwrap();
-    drop(emit);
 
     let pending = source
         .machine
