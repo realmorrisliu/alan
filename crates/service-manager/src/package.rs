@@ -206,11 +206,13 @@ impl PackageReferenceLease {
                 HostDirAccess::ReadOnly,
             )?)),
             PackageLeaseContent::InMemory(files) => {
-                Ok(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
+                let memfs = alan_ap::reference::MemFs::try_with_read_only_tree(
                     files
                         .iter()
                         .map(|(path, bytes)| (path.clone(), bytes.clone())),
-                )))
+                )
+                .map_err(|error| anyhow::anyhow!("invalid in-memory package tree: {error:?}"))?;
+                Ok(Arc::new(memfs))
             }
         }
     }

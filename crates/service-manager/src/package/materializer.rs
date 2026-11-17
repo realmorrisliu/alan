@@ -486,6 +486,21 @@ pub(super) fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
             "snapshot paths collide on a case-insensitive Package Store"
         );
     }
+    for path in &paths {
+        let mut ancestor = path.parent();
+        while let Some(dir) = ancestor {
+            if dir.as_os_str().is_empty() {
+                break;
+            }
+            if let Some(dir_str) = dir.to_str() {
+                ensure!(
+                    !store_paths.contains(&dir_str.to_lowercase()),
+                    "snapshot path collides with an ancestor file `{dir_str}`"
+                );
+            }
+            ancestor = dir.parent();
+        }
+    }
     Ok(())
 }
 

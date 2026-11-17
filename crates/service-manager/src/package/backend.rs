@@ -263,4 +263,40 @@ mod tests {
             assert!(revisions.lock().unwrap().is_empty());
         }
     }
+
+    #[test]
+    fn in_memory_install_rejects_file_ancestor_collisions() {
+        let service = PackageService::in_memory();
+        let err = service
+            .execute(PackageCommand::Install {
+                request_id: "req-collide".to_string(),
+                package_id: "collide-pack".to_string(),
+                snapshot: PackageSnapshot {
+                    source_name: "collide-pack".to_string(),
+                    entries: vec![
+                        PackageSnapshotEntry {
+                            path: "SKILL.md".to_string(),
+                            bytes: b"---\nname: collide-pack\ndescription: test\n---\nbody\n"
+                                .to_vec(),
+                            executable: false,
+                        },
+                        PackageSnapshotEntry {
+                            path: "a".to_string(),
+                            bytes: b"file".to_vec(),
+                            executable: false,
+                        },
+                        PackageSnapshotEntry {
+                            path: "a/b/c".to_string(),
+                            bytes: b"nested".to_vec(),
+                            executable: false,
+                        },
+                    ],
+                },
+            })
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("ancestor file"),
+            "unexpected error: {err}"
+        );
+    }
 }

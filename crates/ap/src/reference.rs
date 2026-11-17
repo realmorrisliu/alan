@@ -201,6 +201,13 @@ impl MemFs {
 
     /// Create a read-only directory tree from `/`-separated relative paths.
     pub fn with_read_only_tree(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
+        Self::try_with_read_only_tree(files).expect("invalid read-only tree")
+    }
+
+    /// Fallibly create a read-only directory tree from `/`-separated relative paths.
+    pub fn try_with_read_only_tree(
+        files: impl IntoIterator<Item = (String, Vec<u8>)>,
+    ) -> Result<Self, ErrorCode> {
         let mut state = State {
             nodes: vec![Node::Dir(BTreeMap::new())],
             fids: HashMap::new(),
@@ -211,15 +218,22 @@ impl MemFs {
         };
         for (path, bytes) in files {
             let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
-            assert!(!parts.is_empty(), "empty path in read-only tree");
+            if parts.is_empty() {
+                return Err(ErrorCode::BadRequest);
+            }
             let mut dir_idx = 0usize;
             for &dir_name in &parts[..parts.len() - 1] {
                 let existing = match &state.nodes[dir_idx] {
                     Node::Dir(entries) => entries.get(dir_name).copied(),
-                    _ => panic!("non-directory parent in read-only tree"),
+                    _ => return Err(ErrorCode::BadRequest),
                 };
                 dir_idx = match existing {
-                    Some(idx) => idx,
+                    Some(idx) => {
+                        if !matches!(state.nodes[idx], Node::Dir(_)) {
+                            return Err(ErrorCode::BadRequest);
+                        }
+                        idx
+                    }
                     None => {
                         let next_idx = state.push(Node::Dir(BTreeMap::new()));
                         if let Node::Dir(entries) = &mut state.nodes[dir_idx] {
@@ -230,15 +244,22 @@ impl MemFs {
                 };
             }
             let file_name = parts[parts.len() - 1].to_string();
+            let already_dir = match &state.nodes[dir_idx] {
+                Node::Dir(entries) => entries.contains_key(&file_name),
+                _ => return Err(ErrorCode::BadRequest),
+            };
+            if already_dir {
+                return Err(ErrorCode::BadRequest);
+            }
             let file_idx = state.push(Node::Bytes(bytes));
             if let Node::Dir(entries) = &mut state.nodes[dir_idx] {
                 entries.insert(file_name, file_idx);
             }
         }
         state.fids.insert(Fid::ROOT, FidState::at(0));
-        Self {
+        Ok(Self {
             state: Mutex::new(state),
-        }
+        })
     }
 }
 
