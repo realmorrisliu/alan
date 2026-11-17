@@ -2,6 +2,7 @@
 
 use super::context::{ToolContext, ToolExecutionBinding};
 use anyhow::{Context, Result};
+#[cfg(feature = "tool-schemas")]
 use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -59,6 +60,7 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
+    #[cfg(feature = "tool-schemas")]
     schema_cache: Arc<Mutex<HashMap<String, Arc<Validator>>>>,
     tool_factories: HashMap<String, Arc<ToolFactory>>,
     /// Shared by ordinary clones so runtime state and namespace tool runners
@@ -77,6 +79,7 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             config,
+            #[cfg(feature = "tool-schemas")]
             schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories: HashMap::new(),
             default_binding: Self::default_binding_cell(None),
@@ -108,14 +111,25 @@ impl ToolRegistry {
             .map(|binding| binding.namespace_cwd.clone())
     }
 
+    fn invalidate_schema_cache(&self, name: &str) {
+        #[cfg(feature = "tool-schemas")]
+        {
+            self.schema_cache
+                .lock()
+                .expect("schema cache mutex poisoned")
+                .remove(name);
+        }
+        #[cfg(not(feature = "tool-schemas"))]
+        {
+            let _ = name;
+        }
+    }
+
     /// Register a tool
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         let name = tool.name().to_string();
         debug!(%name, "Registering tool");
-        self.schema_cache
-            .lock()
-            .expect("schema cache mutex poisoned")
-            .remove(&name);
+        self.invalidate_schema_cache(&name);
         self.tools.insert(name, Arc::new(tool));
     }
 
@@ -123,10 +137,7 @@ impl ToolRegistry {
     pub fn register_boxed(&mut self, tool: Box<dyn Tool>) {
         let name = tool.name().to_string();
         debug!(%name, "Registering boxed tool");
-        self.schema_cache
-            .lock()
-            .expect("schema cache mutex poisoned")
-            .remove(&name);
+        self.invalidate_schema_cache(&name);
         self.tools.insert(name, Arc::from(tool));
     }
 
@@ -134,10 +145,7 @@ impl ToolRegistry {
     pub fn register_shared(&mut self, tool: Arc<dyn Tool>) {
         let name = tool.name().to_string();
         debug!(%name, "Registering shared tool");
-        self.schema_cache
-            .lock()
-            .expect("schema cache mutex poisoned")
-            .remove(&name);
+        self.invalidate_schema_cache(&name);
         self.tools.insert(name, tool);
     }
 
@@ -193,6 +201,7 @@ impl ToolRegistry {
                 .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
                 .collect(),
             config,
+            #[cfg(feature = "tool-schemas")]
             schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories: self.tool_factories.clone(),
             default_binding: Self::default_binding_cell(self.default_binding_snapshot()),
@@ -234,6 +243,7 @@ impl ToolRegistry {
         Self {
             tools,
             config,
+            #[cfg(feature = "tool-schemas")]
             schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories,
             default_binding: Self::default_binding_cell(self.default_binding_snapshot()),
@@ -257,6 +267,7 @@ impl ToolRegistry {
         let mut cloned = Self {
             tools: HashMap::new(),
             config,
+            #[cfg(feature = "tool-schemas")]
             schema_cache: Arc::new(Mutex::new(HashMap::new())),
             tool_factories: self
                 .tool_factories
@@ -372,6 +383,13 @@ impl ToolRegistry {
         self.execute_with_context(name, arguments, &ctx).await
     }
 
+    #[cfg(not(feature = "tool-schemas"))]
+    fn validate_tool_args(&self, tool: &dyn Tool, arguments: &Value) -> Result<()> {
+        let _ = (tool, arguments);
+        Ok(())
+    }
+
+    #[cfg(feature = "tool-schemas")]
     fn validate_tool_args(&self, tool: &dyn Tool, arguments: &Value) -> Result<()> {
         let tool_name = tool.name().to_string();
         let compiled = {
@@ -686,28 +704,31 @@ impl ToolProcessRunner {
             .first()
             .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
             .unwrap_or(Value::Null);
-        let schema = tool.parameters_schema();
-        let validator = match jsonschema::options()
-            .with_draft(Draft::Draft7)
-            .build(&schema)
+        #[cfg(feature = "tool-schemas")]
         {
-            Ok(validator) => validator,
-            Err(error) => {
+            let schema = tool.parameters_schema();
+            let validator = match jsonschema::options()
+                .with_draft(Draft::Draft7)
+                .build(&schema)
+            {
+                Ok(validator) => validator,
+                Err(error) => {
+                    return process_json_outcome(
+                        1,
+                        serde_json::json!({"success": false, "error": format!("invalid Tool schema: {error}")}),
+                    );
+                }
+            };
+            let errors = validator
+                .iter_errors(&arguments)
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>();
+            if !errors.is_empty() {
                 return process_json_outcome(
                     1,
-                    serde_json::json!({"success": false, "error": format!("invalid Tool schema: {error}")}),
+                    serde_json::json!({"success": false, "error": errors.join("; ")}),
                 );
             }
-        };
-        let errors = validator
-            .iter_errors(&arguments)
-            .map(|error| error.to_string())
-            .collect::<Vec<_>>();
-        if !errors.is_empty() {
-            return process_json_outcome(
-                1,
-                serde_json::json!({"success": false, "error": errors.join("; ")}),
-            );
         }
         let process_binding = self
             .inner

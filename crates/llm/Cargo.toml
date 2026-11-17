@@ -5,26 +5,45 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = [
+    "provider-anthropic",
+    "provider-chatgpt",
+    "provider-gemini",
+    "provider-openai",
+    "provider-openrouter",
+    "provider-typesafe",
+]
 mock = []
+http = [
+    "dep:reqwest",
+    "dep:eventsource-stream",
+    "dep:futures-core",
+    "dep:pin-utils",
+]
+provider-openai = ["http"]
+provider-anthropic = ["http"]
+provider-gemini = ["http"]
+provider-chatgpt = ["http", "dep:alan-auth"]
+provider-openrouter = ["http", "dep:openrouter-rs"]
+provider-typesafe = ["http"]
 
 [dependencies]
-alan-auth.workspace = true
+alan-auth = { workspace = true, optional = true }
 alan-agent-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-openrouter-rs = "0.25.0"
-reqwest.workspace = true
+openrouter-rs = { version = "0.25.0", optional = true }
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 # SSE streaming
-eventsource-stream.workspace = true
-futures-core.workspace = true
-pin-utils.workspace = true
+eventsource-stream = { workspace = true, optional = true }
+futures-core = { workspace = true, optional = true }
+pin-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
 axum.workspace = true

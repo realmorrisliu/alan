@@ -8,11 +8,11 @@ license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
-alan-agent-engine.workspace = true
+alan-agent-engine = { workspace = true, default-features = false }
 alan-agentfs = { path = "../agentfs" }
 alan-kernel = { path = "../kernel" }
 alan-hostfs.workspace = true
-alan-llm.workspace = true
+alan-llm = { workspace = true, default-features = false }
 alan-llmfs = { path = "../llmfs" }
 alan-routefs.workspace = true
 alan-shell = { path = "../shell" }
@@ -34,5 +34,15 @@ uuid.workspace = true
 [dev-dependencies]
 alan-agent-protocol.workspace = true
 jsonschema.workspace = true
-alan-llm = { workspace = true, features = ["mock"] }
+alan-llm = { workspace = true, default-features = false, features = [
+    "mock",
+    "provider-typesafe",
+] }
 tempfile.workspace = true
+
+[features]
+default = [
+    "alan-agent-engine/shell-syntax",
+    "alan-agent-engine/tool-schemas",
+    "alan-agent-engine/http-client",
+]

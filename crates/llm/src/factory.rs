@@ -3,11 +3,19 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::{
-    AnthropicMessagesClient, ChatgptResponsesClient, CompatibilityTier,
-    GoogleGeminiGenerateContentClient, InstructionRole, LlmProvider, OpenAiChatCompletionsClient,
-    OpenAiResponsesClient, OpenRouterClient, ProviderCapabilities, openrouter,
-};
+#[cfg(feature = "provider-anthropic")]
+use crate::AnthropicMessagesClient;
+#[cfg(feature = "provider-chatgpt")]
+use crate::ChatgptResponsesClient;
+#[cfg(feature = "provider-gemini")]
+use crate::GoogleGeminiGenerateContentClient;
+#[cfg(feature = "provider-openai")]
+use crate::OpenAiChatCompletionsClient;
+#[cfg(feature = "provider-openai")]
+use crate::OpenAiResponsesClient;
+#[cfg(feature = "provider-openrouter")]
+use crate::OpenRouterClient;
+use crate::{CompatibilityTier, InstructionRole, LlmProvider, ProviderCapabilities, openrouter};
 
 /// Configuration for creating an LLM provider
 #[derive(Debug, Clone)]
@@ -273,133 +281,210 @@ impl ProviderConfig {
     }
 }
 
+#[cfg(not(all(
+    feature = "provider-anthropic",
+    feature = "provider-chatgpt",
+    feature = "provider-gemini",
+    feature = "provider-openai",
+    feature = "provider-openrouter",
+    feature = "provider-typesafe",
+)))]
+fn provider_feature_disabled(feature: &str) -> anyhow::Error {
+    anyhow::anyhow!("LLM provider feature `{feature}` is not enabled")
+}
+
 /// Create an LLM provider from configuration
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
     match config.provider_type {
         ProviderType::TypesafeEvaluation => {
-            anyhow::ensure!(
-                config.base_url.is_none()
-                    && config.custom_headers.as_ref().is_none_or(|h| h.is_empty()),
-                "TypeSafe does not accept endpoint or header overrides"
-            );
-            Ok(Box::new(crate::TypesafeEvaluationClient::new(
-                config
-                    .api_key
-                    .ok_or_else(|| anyhow::anyhow!("TypeSafe credential unavailable"))?,
-                config.model,
-            )?))
+            #[cfg(feature = "provider-typesafe")]
+            {
+                anyhow::ensure!(
+                    config.base_url.is_none()
+                        && config.custom_headers.as_ref().is_none_or(|h| h.is_empty()),
+                    "TypeSafe does not accept endpoint or header overrides"
+                );
+                Ok(Box::new(crate::TypesafeEvaluationClient::new(
+                    config
+                        .api_key
+                        .ok_or_else(|| anyhow::anyhow!("TypeSafe credential unavailable"))?,
+                    config.model,
+                )?))
+            }
+            #[cfg(not(feature = "provider-typesafe"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-typesafe"))
+            }
         }
         ProviderType::GoogleGeminiGenerateContent => {
-            let project_id = config.project_id.ok_or_else(|| {
-                anyhow::anyhow!("Google Gemini GenerateContent provider requires project_id")
-            })?;
-            let location = config.location.unwrap_or_else(|| "us-central1".to_string());
+            #[cfg(feature = "provider-gemini")]
+            {
+                let project_id = config.project_id.ok_or_else(|| {
+                    anyhow::anyhow!("Google Gemini GenerateContent provider requires project_id")
+                })?;
+                let location = config.location.unwrap_or_else(|| "us-central1".to_string());
 
-            Ok(Box::new(GoogleGeminiGenerateContentClient::with_params(
-                &project_id,
-                &location,
-                &config.model,
-            )))
+                Ok(Box::new(GoogleGeminiGenerateContentClient::with_params(
+                    &project_id,
+                    &location,
+                    &config.model,
+                )))
+            }
+            #[cfg(not(feature = "provider-gemini"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-gemini"))
+            }
         }
         ProviderType::ChatgptResponses => {
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".to_string());
-            let client = ChatgptResponsesClient::with_params(
-                &base_url,
-                &config.model,
-                config.custom_headers.unwrap_or_default(),
-                config.expected_account_id,
-                config.chatgpt_auth_storage_path,
-            )?;
-            Ok(Box::new(client))
+            #[cfg(feature = "provider-chatgpt")]
+            {
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".to_string());
+                let client = ChatgptResponsesClient::with_params(
+                    &base_url,
+                    &config.model,
+                    config.custom_headers.unwrap_or_default(),
+                    config.expected_account_id,
+                    config.chatgpt_auth_storage_path,
+                )?;
+                Ok(Box::new(client))
+            }
+            #[cfg(not(feature = "provider-chatgpt"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-chatgpt"))
+            }
         }
         ProviderType::OpenAiResponses => {
-            let api_key = config
-                .api_key
-                .ok_or_else(|| anyhow::anyhow!("OpenAI Responses provider requires api_key"))?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            #[cfg(feature = "provider-openai")]
+            {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI Responses provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-            Ok(Box::new(OpenAiResponsesClient::with_params(
-                &api_key,
-                &base_url,
-                &config.model,
-            )))
-        }
-        ProviderType::OpenAiChatCompletions => {
-            let api_key = config.api_key.ok_or_else(|| {
-                anyhow::anyhow!("OpenAI Chat Completions provider requires api_key")
-            })?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-
-            Ok(Box::new(OpenAiChatCompletionsClient::official_with_params(
-                &api_key,
-                &base_url,
-                &config.model,
-            )))
-        }
-        ProviderType::OpenAiChatCompletionsCompatible => {
-            let api_key = config.api_key.ok_or_else(|| {
-                anyhow::anyhow!("OpenAI Chat Completions API-compatible provider requires api_key")
-            })?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-
-            Ok(Box::new(
-                OpenAiChatCompletionsClient::compatible_with_params(
+                Ok(Box::new(OpenAiResponsesClient::with_params(
                     &api_key,
                     &base_url,
                     &config.model,
-                ),
-            ))
+                )))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-openai"))
+            }
+        }
+        ProviderType::OpenAiChatCompletions => {
+            #[cfg(feature = "provider-openai")]
+            {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!("OpenAI Chat Completions provider requires api_key")
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(OpenAiChatCompletionsClient::official_with_params(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                )))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-openai"))
+            }
+        }
+        ProviderType::OpenAiChatCompletionsCompatible => {
+            #[cfg(feature = "provider-openai")]
+            {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "OpenAI Chat Completions API-compatible provider requires api_key"
+                    )
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(
+                    OpenAiChatCompletionsClient::compatible_with_params(
+                        &api_key,
+                        &base_url,
+                        &config.model,
+                    ),
+                ))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-openai"))
+            }
         }
         ProviderType::OpenRouter => {
-            let api_key = config
-                .api_key
-                .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| openrouter::OPENROUTER_BASE_URL.to_string());
-            let metadata = openrouter::OpenRouterClientMetadata {
-                http_referer: config.http_referer,
-                x_title: config.x_title,
-                app_categories: config.app_categories,
-            };
-            Ok(Box::new(OpenRouterClient::with_metadata(
-                &api_key,
-                &base_url,
-                &config.model,
-                metadata,
-            )?))
+            #[cfg(feature = "provider-openrouter")]
+            {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| openrouter::OPENROUTER_BASE_URL.to_string());
+                let metadata = openrouter::OpenRouterClientMetadata {
+                    http_referer: config.http_referer,
+                    x_title: config.x_title,
+                    app_categories: config.app_categories,
+                };
+                Ok(Box::new(OpenRouterClient::with_metadata(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                    metadata,
+                )?))
+            }
+            #[cfg(not(feature = "provider-openrouter"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-openrouter"))
+            }
         }
         ProviderType::AnthropicMessages => {
-            let api_key = config.api_key.ok_or_else(|| {
-                anyhow::anyhow!("Anthropic Messages API provider requires api_key")
-            })?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+            #[cfg(feature = "provider-anthropic")]
+            {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!("Anthropic Messages API provider requires api_key")
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.anthropic.com".to_string());
 
-            let mut client =
-                AnthropicMessagesClient::with_params(&api_key, &base_url, &config.model);
+                let mut client =
+                    AnthropicMessagesClient::with_params(&api_key, &base_url, &config.model);
 
-            // Apply custom headers if provided
-            if let Some(headers) = config.custom_headers {
-                client = client.with_headers(headers);
-            }
-            if let Some(client_name) = config.client_name {
-                client = client.with_client_name(&client_name);
-            }
-            if let Some(user_agent) = config.user_agent {
-                client = client.with_user_agent(&user_agent);
-            }
+                if let Some(headers) = config.custom_headers {
+                    client = client.with_headers(headers);
+                }
+                if let Some(client_name) = config.client_name {
+                    client = client.with_client_name(&client_name);
+                }
+                if let Some(user_agent) = config.user_agent {
+                    client = client.with_user_agent(&user_agent);
+                }
 
-            Ok(Box::new(client))
+                Ok(Box::new(client))
+            }
+            #[cfg(not(feature = "provider-anthropic"))]
+            {
+                let _ = config;
+                Err(provider_feature_disabled("provider-anthropic"))
+            }
         }
     }
 }

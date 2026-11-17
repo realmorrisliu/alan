@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::ToolCall;
 
+#[cfg(any(
+    test,
+    feature = "provider-openai",
+    feature = "provider-anthropic",
+    feature = "provider-chatgpt"
+))]
 const RETIRED_MESSAGE_OVERRIDE_KEYS: [&str; 3] = [
     "responses_input_items",
     "chat_completions_messages",
@@ -109,6 +115,12 @@ impl Message {
     }
 }
 
+#[cfg(any(
+    test,
+    feature = "provider-openai",
+    feature = "provider-anthropic",
+    feature = "provider-chatgpt"
+))]
 pub(crate) fn reject_retired_message_overrides(
     request: &crate::GenerationRequest,
 ) -> anyhow::Result<()> {

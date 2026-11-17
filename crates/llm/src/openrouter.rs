@@ -35,7 +35,7 @@ mod input_projection;
 
 use input_projection::convert_messages_for_openrouter;
 
-pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+pub use crate::openrouter_url::OPENROUTER_BASE_URL;
 
 /// alan LLM provider backed by the `openrouter-rs` SDK.
 #[derive(Clone)]

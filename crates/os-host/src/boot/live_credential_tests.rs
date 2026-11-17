@@ -1,6 +1,7 @@
 use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+#[cfg(feature = "provider-openai")]
 #[tokio::test]
 async fn captured_clients_read_rotated_secrets_and_reject_logout_on_every_request_path() {
     let temp = tempfile::tempdir().unwrap();
@@ -102,6 +103,7 @@ async fn captured_clients_read_rotated_secrets_and_reject_logout_on_every_reques
     .unwrap();
 }
 
+#[cfg(feature = "provider-typesafe")]
 fn evaluation_connections() -> ConnectionsFile {
     serde_json::from_value(serde_json::json!({"version":1,
         "profiles":{"evaluation":{"provider":"typesafe","credential_id":"eval-key",
@@ -112,6 +114,7 @@ fn evaluation_connections() -> ConnectionsFile {
     .unwrap()
 }
 
+#[cfg(feature = "provider-typesafe")]
 #[tokio::test]
 async fn evaluation_wrappers_preserve_capability_and_recheck_revoked_credentials() {
     let temp = tempfile::tempdir().unwrap();
@@ -146,6 +149,7 @@ async fn evaluation_wrappers_preserve_capability_and_recheck_revoked_credentials
     assert!(result.unwrap_err().to_string().contains("missing a secret"));
 }
 
+#[cfg(feature = "provider-typesafe")]
 #[tokio::test]
 #[ignore = "requires explicitly supplied TYPESAFE_API_KEY; live mounted Connection probe"]
 async fn live_typesafe_profile_through_mounted_connection() {
@@ -222,6 +226,7 @@ async fn live_typesafe_profile_through_mounted_connection() {
     eprintln!("Mounted TypeSafe profile probe: {event}");
 }
 
+#[cfg(feature = "provider-typesafe")]
 #[tokio::test]
 #[ignore = "requires explicitly supplied TYPESAFE_API_KEY; live Root Machine probe"]
 async fn live_typesafe_profile_through_root_machine() {

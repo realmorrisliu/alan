@@ -4,6 +4,23 @@
 //! [`alan_kernel::ProcessTable`], `/agent/root`, and optional app-scoped
 //! durable stores. It never reads global `Alan` product directories,
 //! `ALAN_CONFIG_PATH`, CLI installation metadata, or global host locks.
+//!
+//! # Dependency features
+//!
+//! Turn default features off and select one provider feature. One provider
+//! feature does not compile the other providers.
+//!
+//! ```toml
+//! alan-os-host = { default-features = false, features = ["provider-openai"] }
+//! ```
+//!
+//! ```toml
+//! alan-os-host = { default-features = false, features = ["llm-mock"] }
+//! ```
+//!
+//! Host directory mounts stay available through `alan-hostfs`. Builtin tools,
+//! shell parsing, and tool-schema checks are off unless `product` or the
+//! matching feature is on.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -445,6 +462,35 @@ mod tests {
             provider_response_status: None,
             warnings: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn explicit_command_is_not_recorded_as_a_failed_cd() {
+        let provider = MockLlmProvider::new().with_response(mock_response("unused"));
+        let app = EmbeddedAlan::boot(EmbeddedConfig::ephemeral(LlmSource::Client(
+            LlmClient::new(provider),
+        )))
+        .await
+        .unwrap();
+        let client = app.root_agent();
+        let mut stream = client.event_stream().await.unwrap();
+        let record = UserInputRecord::new(
+            InputIntent::Command,
+            InputMode::FollowUp,
+            "printf footprint-marker",
+        );
+        let submission_id = record.submission_id.clone();
+        client.submit_record(&record).await.unwrap();
+
+        let events = read_until_submission(&mut stream, &submission_id).await;
+        let EmbedEvent::TurnFinished { error, .. } = events.last().unwrap() else {
+            panic!("expected turn finish");
+        };
+        let error = error.as_deref().unwrap_or("");
+        assert!(
+            !error.contains("shell syntax parsing"),
+            "explicit command was recorded as a failed cd: {error}"
+        );
     }
 
     async fn wait_for_tail_contains(tail: &mut Tail, expected: &str) -> String {

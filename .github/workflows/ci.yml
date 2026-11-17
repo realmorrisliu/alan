@@ -112,6 +112,23 @@ jobs:
       - name: Verify explicit migration with real process consumers
         run: cargo test -p alan --test installation_migration_process_test -- --ignored --test-threads=1
 
+  embed-footprint:
+    name: Embed footprint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+
+      - name: Check embed footprint
+        run: bash scripts/check-embed-footprint.sh
+
   harness-autonomy:
     name: Harness Autonomy (Blocking)
     runs-on: ubuntu-latest

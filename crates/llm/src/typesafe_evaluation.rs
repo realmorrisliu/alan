@@ -23,16 +23,7 @@ pub struct TypesafeEvaluationClient {
 impl TypesafeEvaluationClient {
     /// Validate a pinned model identifier before saving Connection metadata.
     pub fn validate_model(model: &str) -> Result<()> {
-        let version = model.strip_prefix("jev-").unwrap_or_default();
-        ensure!(
-            model.len() <= 128
-                && version.split('.').count() == 3
-                && version
-                    .split('.')
-                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())),
-            "TypeSafe requires a pinned model version"
-        );
-        Ok(())
+        crate::evaluation::validate_typesafe_model(model)
     }
 
     /// Construct a pinned-version evaluator. Aliases require separate requalification.
