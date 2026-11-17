@@ -397,7 +397,9 @@ impl RootAgentClient {
 
     /// Open tape, UI, and request tails and decode them as [`EmbedEvent`]s.
     ///
-    /// Call this before [`Self::submit_text`] so the stream observes the whole turn.
+    /// Call this before the first [`Self::submit_text`]. The returned stream
+    /// stays valid across later turns; [`EmbedEvent::TurnFinished`] is the only
+    /// end-of-turn signal, and `TextDelta::is_final` is currently always `false`.
     pub async fn event_stream(&self) -> Result<EmbedEventStream> {
         let tape = self
             .shell

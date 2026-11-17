@@ -8,11 +8,18 @@ use serde::Deserialize;
 const READ_CHUNK: u32 = 4096;
 
 /// One record an embedder can observe for a running Agent Process.
+///
+/// [`Self::TurnFinished`] is the only end-of-turn signal. `TextDelta::is_final`
+/// is currently always `false`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmbedEvent {
     /// Assistant text for one submission, from a `machine/tape` message.
+    ///
+    /// `is_final` is currently always `false`. The turn ends at [`Self::TurnFinished`].
     TextDelta { chunk: String, is_final: bool },
-    /// One submission named by `UiEvent::InputCompleted`, in listed order.
+    /// End of one submission, from `UiEvent::InputCompleted`, in listed order.
+    ///
+    /// This is the only end-of-turn signal.
     TurnFinished {
         submission_id: String,
         status: UiInputStatus,
@@ -26,6 +33,11 @@ pub enum EmbedEvent {
 }
 
 /// Live decoder over tape, request, and UI tails.
+///
+/// One stream stays valid across turns. Open it once, before the first
+/// `submit_text`, and keep calling [`Self::next_event`] after each
+/// [`EmbedEvent::TurnFinished`]. The same stream yields the next turn's text
+/// and that submission's `TurnFinished`.
 ///
 /// Offsets stay on this stream. [`crate::embed::RootAgentClient`] remains a cheap
 /// clone of the shell and the agent path.
