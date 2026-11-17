@@ -7,7 +7,7 @@
 //! commit is a commit-time [`ErrorCode::BadRequest`] (§5.5). It is not the
 //! kernel's `/proc`/`/srv` and stores no durable state.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -23,12 +23,15 @@ type NodeId = usize;
 enum Node {
     Dir(BTreeMap<String, NodeId>),
     Bytes(Vec<u8>),
+    WritableBytes(Vec<u8>),
     /// A clone file: each `open` allocates a fresh connection directory.
     Clone {
         next: u64,
     },
     /// A commit-on-clunk document file that must hold valid JSON at commit.
     Doc,
+    /// Reclaimed slot available for reuse by future `create` calls.
+    Tombstone,
 }
 
 struct FidState {
@@ -58,20 +61,35 @@ struct State {
     /// Per-node qid versions, keyed by `NodeId`; bumped when a node's content
     /// changes (here, the root listing when a clone allocates a connection).
     versions: VersionTable,
+    writable: bool,
+    unlinked: HashSet<NodeId>,
+    free_nodes: Vec<NodeId>,
 }
 
 impl State {
     fn push(&mut self, node: Node) -> NodeId {
-        self.nodes.push(node);
-        self.nodes.len() - 1
+        if let Some(slot) = self.free_nodes.pop() {
+            self.nodes[slot] = node;
+            slot
+        } else {
+            self.nodes.push(node);
+            self.nodes.len() - 1
+        }
+    }
+
+    fn reclaim_if_unlinked(&mut self, node: NodeId) {
+        if self.unlinked.contains(&node) && !self.fids.values().any(|f| f.node == node) {
+            self.unlinked.remove(&node);
+            self.nodes[node] = Node::Tombstone;
+            self.free_nodes.push(node);
+        }
     }
 
     fn qid(&self, node: NodeId) -> Qid {
         let kind = match self.nodes[node] {
             Node::Dir(_) => FileKind::Dir,
-            Node::Bytes(_) => FileKind::File,
+            Node::Bytes(_) | Node::WritableBytes(_) | Node::Doc | Node::Tombstone => FileKind::File,
             Node::Clone { .. } => FileKind::Clone,
-            Node::Doc => FileKind::File,
         };
         Qid {
             kind,
@@ -117,6 +135,9 @@ impl MemFs {
             nodes,
             fids: HashMap::new(),
             versions: VersionTable::new(),
+            writable: false,
+            unlinked: HashSet::new(),
+            free_nodes: Vec::new(),
         };
 
         let greeting = state.push(Node::Bytes(b"hi".to_vec()));
@@ -134,6 +155,22 @@ impl MemFs {
         }
     }
 
+    /// Create an empty writable directory tree for ephemeral in-memory storage.
+    pub fn writable() -> Self {
+        let mut state = State {
+            nodes: vec![Node::Dir(BTreeMap::new())],
+            fids: HashMap::new(),
+            versions: VersionTable::new(),
+            writable: true,
+            unlinked: HashSet::new(),
+            free_nodes: Vec::new(),
+        };
+        state.fids.insert(Fid::ROOT, FidState::at(0));
+        Self {
+            state: Mutex::new(state),
+        }
+    }
+
     /// Create a root containing exactly one read-only byte file.
     pub fn with_read_only_file(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
         Self::with_read_only_files([(name.into(), bytes.into())])
@@ -145,6 +182,9 @@ impl MemFs {
             nodes: vec![Node::Dir(BTreeMap::new())],
             fids: HashMap::new(),
             versions: VersionTable::new(),
+            writable: false,
+            unlinked: HashSet::new(),
+            free_nodes: Vec::new(),
         };
         for (name, bytes) in files {
             assert!(!name.is_empty() && !name.contains('/'));
@@ -157,6 +197,69 @@ impl MemFs {
         Self {
             state: Mutex::new(state),
         }
+    }
+
+    /// Create a read-only directory tree from `/`-separated relative paths.
+    pub fn with_read_only_tree(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
+        Self::try_with_read_only_tree(files).expect("invalid read-only tree")
+    }
+
+    /// Fallibly create a read-only directory tree from `/`-separated relative paths.
+    pub fn try_with_read_only_tree(
+        files: impl IntoIterator<Item = (String, Vec<u8>)>,
+    ) -> Result<Self, ErrorCode> {
+        let mut state = State {
+            nodes: vec![Node::Dir(BTreeMap::new())],
+            fids: HashMap::new(),
+            versions: VersionTable::new(),
+            writable: false,
+            unlinked: HashSet::new(),
+            free_nodes: Vec::new(),
+        };
+        for (path, bytes) in files {
+            let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+            if parts.is_empty() {
+                return Err(ErrorCode::BadRequest);
+            }
+            let mut dir_idx = 0usize;
+            for &dir_name in &parts[..parts.len() - 1] {
+                let existing = match &state.nodes[dir_idx] {
+                    Node::Dir(entries) => entries.get(dir_name).copied(),
+                    _ => return Err(ErrorCode::BadRequest),
+                };
+                dir_idx = match existing {
+                    Some(idx) => {
+                        if !matches!(state.nodes[idx], Node::Dir(_)) {
+                            return Err(ErrorCode::BadRequest);
+                        }
+                        idx
+                    }
+                    None => {
+                        let next_idx = state.push(Node::Dir(BTreeMap::new()));
+                        if let Node::Dir(entries) = &mut state.nodes[dir_idx] {
+                            entries.insert(dir_name.to_string(), next_idx);
+                        }
+                        next_idx
+                    }
+                };
+            }
+            let file_name = parts[parts.len() - 1].to_string();
+            let already_dir = match &state.nodes[dir_idx] {
+                Node::Dir(entries) => entries.contains_key(&file_name),
+                _ => return Err(ErrorCode::BadRequest),
+            };
+            if already_dir {
+                return Err(ErrorCode::BadRequest);
+            }
+            let file_idx = state.push(Node::Bytes(bytes));
+            if let Node::Dir(entries) = &mut state.nodes[dir_idx] {
+                entries.insert(file_name, file_idx);
+            }
+        }
+        state.fids.insert(Fid::ROOT, FidState::at(0));
+        Ok(Self {
+            state: Mutex::new(state),
+        })
     }
 }
 
@@ -238,7 +341,7 @@ impl FileServer for MemFs {
             name.clone().into_bytes()
         } else {
             match &state.nodes[f.node] {
-                Node::Bytes(b) => b.clone(),
+                Node::Bytes(b) | Node::WritableBytes(b) => b.clone(),
                 Node::Dir(entries) => entries
                     .keys()
                     .cloned()
@@ -255,8 +358,25 @@ impl FileServer for MemFs {
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
-        let node = state.fid(fid)?.node;
+        let f = state.fid(fid)?;
+        let node = f.node;
+        let mode = f.mode;
         match state.nodes[node] {
+            Node::WritableBytes(_) => {
+                if !matches!(mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
+                    return Err(ErrorCode::NoAccess);
+                }
+                if matches!(mode, Some(OpenMode::Write)) {
+                    let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
+                    return write_to_buf(&mut f.write_buf, offset, data);
+                }
+                let written = match &mut state.nodes[node] {
+                    Node::WritableBytes(bytes) => write_to_buf(bytes, offset, data)?,
+                    _ => unreachable!(),
+                };
+                state.versions.bump(node as u64);
+                Ok(written)
+            }
             // Commit-on-clunk: buffer the document; it is acted on only at clunk.
             Node::Doc => {
                 let f = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
@@ -267,25 +387,7 @@ impl FileServer for MemFs {
                 if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
                     return Err(ErrorCode::NoAccess);
                 }
-                // Honor the byte offset: the aP contract addresses writes by
-                // offset, so place bytes at `offset` (out-of-order, retried, or
-                // overwriting chunks build the document the caller addressed),
-                // rather than blindly appending. Use checked arithmetic so a
-                // hostile/huge offset returns an aP error instead of panicking.
-                let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-                let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                // Bound the buffered document: a representable-but-huge offset (a
-                // sparse 1 TiB write) would otherwise resize/zero-fill gigabytes
-                // and OOM the in-process server. Cap the addressable size so it
-                // returns an aP error instead.
-                if end > MAX_DOC_BYTES {
-                    return Err(ErrorCode::BadRequest);
-                }
-                if f.write_buf.len() < end {
-                    f.write_buf.resize(end, 0);
-                }
-                f.write_buf[start..end].copy_from_slice(data);
-                Ok(data.len() as u32)
+                write_to_buf(&mut f.write_buf, offset, data)
             }
             _ => Err(ErrorCode::Unsupported),
         }
@@ -296,30 +398,85 @@ impl FileServer for MemFs {
         let f = state.fid(fid)?;
         let qid = state.qid(f.node);
         let length = match &state.nodes[f.node] {
-            Node::Bytes(b) => b.len() as u64,
+            Node::Bytes(b) | Node::WritableBytes(b) => b.len() as u64,
             _ => 0,
         };
+        let writable = matches!(state.nodes[f.node], Node::WritableBytes(_))
+            || matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite));
         Ok(Stat {
             name: String::new(),
             qid,
             length,
             executable: false,
-            writable: matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)),
+            writable,
         })
     }
 
     async fn create(
         &self,
-        _fid: Fid,
-        _newfid: Fid,
-        _name: &str,
-        _kind: FileKind,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
     ) -> Result<Qid, ErrorCode> {
-        Err(ErrorCode::Unsupported)
+        let mut state = self.state.lock().await;
+        if !state.writable {
+            return Err(ErrorCode::Unsupported);
+        }
+        if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+            return Err(ErrorCode::BadRequest);
+        }
+        if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
+            return Err(ErrorCode::BadRequest);
+        }
+        let parent_node = state.fid(fid)?.node;
+        let already_exists = match &state.nodes[parent_node] {
+            Node::Dir(entries) => entries.contains_key(name),
+            _ => return Err(ErrorCode::NotDirectory),
+        };
+        if already_exists {
+            return Err(ErrorCode::BadRequest);
+        }
+        let child_node = match kind {
+            FileKind::File => state.push(Node::WritableBytes(Vec::new())),
+            FileKind::Dir => state.push(Node::Dir(BTreeMap::new())),
+            FileKind::Stream | FileKind::Clone => return Err(ErrorCode::Unsupported),
+        };
+        if let Node::Dir(entries) = &mut state.nodes[parent_node] {
+            entries.insert(name.to_string(), child_node);
+        }
+        state.versions.bump(parent_node as u64);
+        let qid = state.qid(child_node);
+        state.fids.insert(newfid, FidState::at(child_node));
+        Ok(qid)
     }
 
-    async fn remove(&self, _fid: Fid) -> Result<(), ErrorCode> {
-        Err(ErrorCode::Unsupported)
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        let mut state = self.state.lock().await;
+        if !state.writable {
+            return Err(ErrorCode::Unsupported);
+        }
+        if fid == Fid::ROOT {
+            return Err(ErrorCode::BadRequest);
+        }
+        let target = state.fid(fid)?.node;
+        if let Node::Dir(entries) = &state.nodes[target]
+            && !entries.is_empty()
+        {
+            return Err(ErrorCode::BadRequest);
+        }
+        state.fids.remove(&fid);
+        for idx in 0..state.nodes.len() {
+            if let Node::Dir(entries) = &mut state.nodes[idx]
+                && entries.values().any(|&child| child == target)
+            {
+                entries.retain(|_, &mut child| child != target);
+                state.versions.bump(idx as u64);
+            }
+        }
+        state.unlinked.insert(target);
+        state.reclaim_if_unlinked(target);
+        Ok(())
     }
 
     async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
@@ -344,9 +501,28 @@ impl FileServer for MemFs {
         {
             serde_json::from_slice::<serde_json::Value>(&f.write_buf)
                 .map_err(|_| ErrorCode::BadRequest)?;
+        } else if matches!(f.mode, Some(OpenMode::Write))
+            && let Node::WritableBytes(bytes) = &mut state.nodes[f.node]
+        {
+            *bytes = f.write_buf;
+            state.versions.bump(f.node as u64);
         }
+        state.reclaim_if_unlinked(f.node);
         Ok(())
     }
+}
+
+fn write_to_buf(buf: &mut Vec<u8>, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
+    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+    if end > MAX_DOC_BYTES {
+        return Err(ErrorCode::BadRequest);
+    }
+    if buf.len() < end {
+        buf.resize(end, 0);
+    }
+    buf[start..end].copy_from_slice(data);
+    Ok(data.len() as u32)
 }
 
 /// Whether `node` can service an open in `mode`. Read-only nodes (bytes,
@@ -356,6 +532,8 @@ impl FileServer for MemFs {
 fn serviceable(node: &Node, mode: OpenMode) -> bool {
     match node {
         Node::Doc => matches!(mode, OpenMode::Write),
+        Node::WritableBytes(_) => true,
         Node::Bytes(_) | Node::Dir(_) | Node::Clone { .. } => matches!(mode, OpenMode::Read),
+        Node::Tombstone => false,
     }
 }

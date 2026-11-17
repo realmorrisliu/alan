@@ -20,10 +20,23 @@ use crate::{SecretStore, apply_profile_to_config};
 pub struct HostBootConfig(ServiceManagerConfig);
 
 #[derive(Clone, Debug)]
-struct ProductLlmClientFactory {
+pub(crate) struct ProductLlmClientFactory {
     credentials_dir: std::path::PathBuf,
     managed_auth: Option<std::path::PathBuf>,
     _installation_access: Option<Arc<crate::installation::InstallationAccess>>,
+}
+
+impl ProductLlmClientFactory {
+    pub(crate) fn new(
+        credentials_dir: std::path::PathBuf,
+        managed_auth: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            credentials_dir,
+            managed_auth,
+            _installation_access: None,
+        }
+    }
 }
 
 struct UnconfiguredLlmProvider;
@@ -174,45 +187,10 @@ impl HostBootConfig {
             Arc::new(crate::installation::InstallationPaths::detect()?.access()?);
         let system_store = SystemStorePaths::detect()?;
         let host_store = HostStorePaths::detect()?;
-        let memory_store_backing = system_store.memory_stores()?.join("default");
-        std::fs::create_dir_all(&memory_store_backing)
-            .context("failed to prepare Memory Store backing")?;
-        let memory_store = alan_hostfs::HostDirFs::new(
-            &memory_store_backing,
-            alan_hostfs::HostDirAccess::ReadWrite,
-        )
-        .context("failed to open Memory Store backing")?;
-        let mut namespace = Namespace::new();
-        namespace.mount(
-            "/memory",
-            InProcessTransport::new(Arc::new(memory_store)),
-            Access::ReadWrite,
-        );
-        let root_definition = system_store.agent_definitions()?.join("root");
-        std::fs::create_dir_all(&root_definition)
-            .context("failed to prepare system Root Agent Definition")?;
-        let root_definition_fs =
-            alan_hostfs::HostDirFs::new(&root_definition, alan_hostfs::HostDirAccess::ReadOnly)
-                .context("failed to open system Root Agent Definition")?;
-        let root_definition_tree = snapshot_agent_definition(&root_definition)?;
-        namespace.mount(
-            "/lib/agents/root",
-            InProcessTransport::new(Arc::new(root_definition_fs)),
-            Access::ReadOnly,
-        );
-
+        let namespace = Namespace::new();
         let mut process = AgentProcessConfig::from(Config::load_with_metadata()?);
-        let launch_context = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
-            .with_descriptor(
-                alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
-                ProcessDescriptor::with_file_tree("/lib/agents/root", root_definition_tree)?,
-            )
-            .with_descriptor(
-                alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
-                ProcessDescriptor::new("/memory")?,
-            );
-        process.store_bindings = Some(system_store.agent_runtime_bindings()?);
-        process.memory_store_backing = Some(memory_store_backing);
+        let launch_context =
+            prepare_system_store_launch(&system_store, namespace, &mut process, None)?;
         let connection_store = system_store.connection_bindings()?;
         let tools = product_tool_registry(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
@@ -228,6 +206,7 @@ impl HostBootConfig {
             launch_context,
             connection_store: Some(connection_store),
             package_store: Some(system_store.packages()?),
+            in_memory_stores: false,
             llm_factory,
             host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
             tools,
@@ -278,6 +257,66 @@ impl HostBootConfig {
     pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
         self.0
     }
+}
+
+pub(crate) fn prepare_system_store_launch(
+    system_store: &SystemStorePaths,
+    mut namespace: Namespace,
+    process: &mut AgentProcessConfig,
+    definition_override: Option<ProcessFileTree>,
+) -> Result<ProcessLaunchContext> {
+    let memory_store_backing = system_store.memory_stores()?.join("default");
+    std::fs::create_dir_all(&memory_store_backing)
+        .context("failed to prepare Memory Store backing")?;
+    let memory_store =
+        alan_hostfs::HostDirFs::new(&memory_store_backing, alan_hostfs::HostDirAccess::ReadWrite)
+            .context("failed to open Memory Store backing")?;
+    namespace.mount(
+        "/memory",
+        InProcessTransport::new(Arc::new(memory_store)),
+        Access::ReadWrite,
+    );
+
+    let root_definition_tree = match definition_override {
+        Some(tree) => {
+            if namespace.resolve("/lib/agents/root").is_err() {
+                namespace.mount(
+                    "/lib/agents/root",
+                    InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                    Access::ReadOnly,
+                );
+            }
+            tree
+        }
+        None => {
+            let root_definition = system_store.agent_definitions()?.join("root");
+            std::fs::create_dir_all(&root_definition)
+                .context("failed to prepare system Root Agent Definition")?;
+            let root_definition_fs =
+                alan_hostfs::HostDirFs::new(&root_definition, alan_hostfs::HostDirAccess::ReadOnly)
+                    .context("failed to open system Root Agent Definition")?;
+            let tree = snapshot_agent_definition(&root_definition)?;
+            namespace.mount(
+                "/lib/agents/root",
+                InProcessTransport::new(Arc::new(root_definition_fs)),
+                Access::ReadOnly,
+            );
+            tree
+        }
+    };
+
+    let launch_context = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
+        .with_descriptor(
+            alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
+            ProcessDescriptor::with_file_tree("/lib/agents/root", root_definition_tree)?,
+        )
+        .with_descriptor(
+            alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
+            ProcessDescriptor::new("/memory")?,
+        );
+    process.store_bindings = Some(system_store.agent_runtime_bindings()?);
+    process.memory_store_backing = Some(memory_store_backing);
+    Ok(launch_context)
 }
 
 fn product_tool_registry(core_config: Arc<Config>) -> ToolRegistry {

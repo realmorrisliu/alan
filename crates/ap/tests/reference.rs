@@ -551,3 +551,213 @@ async fn root_qid_version_bumps_when_a_clone_connection_appears() {
     let v1 = version_of(t.call(Request::Stat { fid: Fid::ROOT }).await);
     assert_eq!(v1, v0 + 1, "root listing changed, so its qid version bumps");
 }
+
+#[tokio::test]
+async fn writable_memfs_replaces_shorter_write_only_documents_on_clunk() {
+    let t = InProcessTransport::new(Arc::new(MemFs::writable()));
+
+    t.call(Request::Create {
+        fid: Fid::ROOT,
+        newfid: Fid(1),
+        name: "note.txt".into(),
+        kind: alan_ap::FileKind::File,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(1),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Write {
+        fid: Fid(1),
+        offset: 0,
+        data: b"abcdef".to_vec(),
+    })
+    .await
+    .unwrap();
+    t.call(Request::Clunk { fid: Fid(1) }).await.unwrap();
+
+    // Rewrite with shorter payload using OpenMode::Write; old suffix must not remain.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(2),
+        names: vec!["note.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(2),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Write {
+        fid: Fid(2),
+        offset: 0,
+        data: b"xy".to_vec(),
+    })
+    .await
+    .unwrap();
+    t.call(Request::Clunk { fid: Fid(2) }).await.unwrap();
+
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(3),
+        names: vec!["note.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(3),
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+    let resp = t
+        .call(Request::Read {
+            fid: Fid(3),
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        resp,
+        Response::Read {
+            data: b"xy".to_vec()
+        }
+    );
+    t.call(Request::Clunk { fid: Fid(3) }).await.unwrap();
+
+    // Rewrite with empty payload (no Write calls) clears the file on clunk.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(4),
+        names: vec!["note.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(4),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Clunk { fid: Fid(4) }).await.unwrap();
+
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(5),
+        names: vec!["note.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(5),
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+    let empty_resp = t
+        .call(Request::Read {
+            fid: Fid(5),
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap();
+    assert_eq!(empty_resp, Response::Read { data: Vec::new() });
+    t.call(Request::Clunk { fid: Fid(5) }).await.unwrap();
+}
+
+#[tokio::test]
+async fn writable_memfs_reclaims_removed_nodes_after_last_fid_clunks() {
+    let t = InProcessTransport::new(Arc::new(MemFs::writable()));
+
+    let created = t
+        .call(Request::Create {
+            fid: Fid::ROOT,
+            newfid: Fid(1),
+            name: "scratch.txt".into(),
+            kind: alan_ap::FileKind::File,
+        })
+        .await
+        .unwrap();
+    let first_path = match created {
+        Response::Create { qid } => qid.path,
+        other => panic!("expected Create, got {other:?}"),
+    };
+    t.call(Request::Open {
+        fid: Fid(1),
+        mode: OpenMode::Write,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Write {
+        fid: Fid(1),
+        offset: 0,
+        data: b"retained-until-clunk".to_vec(),
+    })
+    .await
+    .unwrap();
+    t.call(Request::Clunk { fid: Fid(1) }).await.unwrap();
+
+    // Open a read handle and a separate unlink handle.
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(2),
+        names: vec!["scratch.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Open {
+        fid: Fid(2),
+        mode: OpenMode::Read,
+    })
+    .await
+    .unwrap();
+    t.call(Request::Walk {
+        fid: Fid::ROOT,
+        newfid: Fid(3),
+        names: vec!["scratch.txt".into()],
+    })
+    .await
+    .unwrap();
+    t.call(Request::Remove { fid: Fid(3) }).await.unwrap();
+
+    // Live open handle still reads the unlinked file until clunked.
+    let resp = t
+        .call(Request::Read {
+            fid: Fid(2),
+            offset: 0,
+            count: 64,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        resp,
+        Response::Read {
+            data: b"retained-until-clunk".to_vec(),
+        }
+    );
+    t.call(Request::Clunk { fid: Fid(2) }).await.unwrap();
+
+    // Subsequent create reuses the reclaimed node slot.
+    let recreated = t
+        .call(Request::Create {
+            fid: Fid::ROOT,
+            newfid: Fid(4),
+            name: "next.txt".into(),
+            kind: alan_ap::FileKind::File,
+        })
+        .await
+        .unwrap();
+    let reused_path = match recreated {
+        Response::Create { qid } => qid.path,
+        other => panic!("expected Create, got {other:?}"),
+    };
+    assert_eq!(reused_path, first_path);
+    t.call(Request::Clunk { fid: Fid(4) }).await.unwrap();
+}

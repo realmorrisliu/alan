@@ -144,6 +144,128 @@ pub(super) struct PackageMaterializer<'a> {
     store_root: &'a Path,
 }
 
+pub(super) fn materialize_in_memory(
+    snapshot: &PackageSnapshot,
+) -> Result<(BTreeMap<String, Vec<u8>>, MaterializationManifest)> {
+    let mut content_files: BTreeMap<String, (Vec<u8>, bool)> = BTreeMap::new();
+    for entry in &snapshot.entries {
+        content_files.insert(
+            format!("source/{}", entry.path),
+            (entry.bytes.clone(), entry.executable),
+        );
+    }
+
+    let mut exports = Vec::new();
+    let mut skill_ids = BTreeSet::new();
+    let mut generated_files = BTreeSet::new();
+    for native_root in native_skill_roots(snapshot)? {
+        let skill_md_path = native_root.join("SKILL.md");
+        let skill_document = snapshot
+            .entries
+            .iter()
+            .find(|entry| Path::new(&entry.path) == skill_md_path)
+            .map(|entry| entry.bytes.as_slice())
+            .context("native skill root missing SKILL.md")?;
+        let skill_id = skill_id_for_native_root(snapshot, &native_root)?;
+        let declared_dependencies = parse_skill_dependencies(&skill_id, skill_document)?;
+        let dependencies = merge_dependencies(
+            declared_dependencies,
+            detect_availability_dependencies(skill_document),
+        );
+        ensure!(
+            skill_ids.insert(skill_id.clone()),
+            "duplicate Skill id `{skill_id}`"
+        );
+        for entry in &snapshot.entries {
+            let Ok(rel) = Path::new(&entry.path).strip_prefix(&native_root) else {
+                continue;
+            };
+            let rel_str = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            content_files.insert(
+                format!("skills/{skill_id}/{rel_str}"),
+                (entry.bytes.clone(), entry.executable),
+            );
+        }
+        exports.push(PackageExport {
+            skill_id: skill_id.clone(),
+            root: format!("skills/{skill_id}"),
+            dependencies,
+        });
+    }
+
+    if !snapshot
+        .entries
+        .iter()
+        .any(|entry| entry.path == "SKILL.md")
+    {
+        for entry in &snapshot.entries {
+            let path = Path::new(&entry.path);
+            if path.components().count() != 2
+                || path.parent() != Some(Path::new("skills"))
+                || path.extension().and_then(|value| value.to_str()) != Some("md")
+            {
+                continue;
+            }
+            let skill_name = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .context("command Skill name is not UTF-8")?;
+            let skill_id = name_to_id(skill_name);
+            validate_package_id(&skill_id)?;
+            ensure!(
+                skill_ids.insert(skill_id.clone()),
+                "duplicate Skill id `{skill_id}`"
+            );
+            let body =
+                std::str::from_utf8(&entry.bytes).context("command-style Skill is not UTF-8")?;
+            let dependencies = detect_availability_dependencies(&entry.bytes);
+            let document = command_skill_document(&skill_id, body, &dependencies);
+            ensure!(
+                document.len() <= MAX_SOURCE_FILE_BYTES,
+                "generated command-style Skill exceeds descriptor file size limit"
+            );
+            content_files.insert(
+                format!("skills/{skill_id}/SKILL.md"),
+                (document.into_bytes(), false),
+            );
+            generated_files.insert(format!("skills/{skill_id}/SKILL.md"));
+            exports.push(PackageExport {
+                skill_id: skill_id.clone(),
+                root: format!("skills/{skill_id}"),
+                dependencies,
+            });
+        }
+    }
+
+    exports.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+    let mut digest = Sha256::new();
+    let mut files = Vec::with_capacity(content_files.len());
+    let mut plain_files = BTreeMap::new();
+    for (relative, (bytes, executable)) in content_files {
+        digest.update((relative.len() as u64).to_be_bytes());
+        digest.update(relative.as_bytes());
+        digest.update([u8::from(executable)]);
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(&bytes);
+        files.push(MaterializedFileRecord {
+            generated: generated_files.contains(&relative),
+            path: relative.clone(),
+        });
+        plain_files.insert(relative, bytes);
+    }
+
+    let manifest = MaterializationManifest {
+        exports,
+        files,
+        tree_fingerprint: hex::encode(digest.finalize()),
+    };
+    Ok((plain_files, manifest))
+}
+
 impl<'a> PackageMaterializer<'a> {
     pub(super) fn new(store_root: &'a Path) -> Self {
         Self { store_root }
@@ -363,6 +485,21 @@ pub(super) fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
             store_paths.insert(entry.path.to_lowercase()),
             "snapshot paths collide on a case-insensitive Package Store"
         );
+    }
+    for path in &paths {
+        let mut ancestor = path.parent();
+        while let Some(dir) = ancestor {
+            if dir.as_os_str().is_empty() {
+                break;
+            }
+            if let Some(dir_str) = dir.to_str() {
+                ensure!(
+                    !store_paths.contains(&dir_str.to_lowercase()),
+                    "snapshot path collides with an ancestor file `{dir_str}`"
+                );
+            }
+            ancestor = dir.parent();
+        }
     }
     Ok(())
 }

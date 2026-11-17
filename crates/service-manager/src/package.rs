@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::flat_fs::{FlatFileService, FlatServiceFs};
 
+mod backend;
 mod bootstrap;
 pub(crate) use bootstrap::PackageBootstrap;
 mod fs_safety;
@@ -23,7 +24,10 @@ pub use inspection::validate_package_store_for_migration;
 mod materializer;
 mod store;
 
-use materializer::{PackageMaterializer, fingerprint, validate_snapshot};
+use backend::{PackageLeaseContent, PackageStoreBackend};
+#[cfg(test)]
+use materializer::PackageMaterializer;
+use materializer::{fingerprint, validate_snapshot};
 use store::PackageStore;
 
 const FILES: &[(&str, bool)] = &[
@@ -165,7 +169,7 @@ struct State {
 
 /// Installed-package authority bound to an explicit store or owned temporary directory.
 pub struct PackageService {
-    store: PackageStore,
+    store: PackageStoreBackend,
     _temporary_store: Option<crate::temporary_store::TemporaryStore>,
     state: Mutex<State>,
     operation: Mutex<()>,
@@ -177,7 +181,7 @@ pub struct PackageReferenceLease {
     lease: Option<store::PackageLease>,
     token: u64,
     record: PackageRecord,
-    content_root: PathBuf,
+    content: PackageLeaseContent,
 }
 
 impl std::fmt::Debug for PackageReferenceLease {
@@ -196,41 +200,83 @@ impl PackageReferenceLease {
     }
 
     pub fn file_server(&self) -> Result<Arc<dyn FileServer>> {
-        Ok(Arc::new(HostDirFs::new(
-            &self.content_root,
-            HostDirAccess::ReadOnly,
-        )?))
+        match &self.content {
+            PackageLeaseContent::Disk(content_root) => Ok(Arc::new(HostDirFs::new(
+                content_root,
+                HostDirAccess::ReadOnly,
+            )?)),
+            PackageLeaseContent::InMemory(files) => {
+                let memfs = alan_ap::reference::MemFs::try_with_read_only_tree(
+                    files
+                        .iter()
+                        .map(|(path, bytes)| (path.clone(), bytes.clone())),
+                )
+                .map_err(|error| anyhow::anyhow!("invalid in-memory package tree: {error:?}"))?;
+                Ok(Arc::new(memfs))
+            }
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn content_root(&self) -> &Path {
-        &self.content_root
+        match &self.content {
+            PackageLeaseContent::Disk(content_root) => content_root,
+            PackageLeaseContent::InMemory(_) => {
+                panic!("in-memory package lease has no filesystem content_root")
+            }
+        }
     }
 
     pub(crate) fn skill_descriptor(
         &self,
         relative_root: &str,
     ) -> Result<alan_agent_engine::ProcessFileTree> {
-        let root = self.content_root.join(relative_root);
-        let canonical_content = fs::canonicalize(&self.content_root)?;
-        let canonical_root = fs::canonicalize(&root)?;
-        ensure!(
-            canonical_root.starts_with(&canonical_content),
-            "package Skill descriptor escapes its immutable revision"
-        );
-        let source_leaf = canonical_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("package Skill descriptor root has no UTF-8 leaf")?;
-        let snapshot =
-            PackageSnapshot::from_directory_named(&canonical_root, source_leaf.to_string())?;
-        alan_agent_engine::ProcessFileTree::new(
-            snapshot
-                .entries
-                .into_iter()
-                .map(|entry| (entry.path, entry.bytes))
-                .collect(),
-        )
+        match &self.content {
+            PackageLeaseContent::Disk(content_root) => {
+                let root = content_root.join(relative_root);
+                let canonical_content = fs::canonicalize(content_root)?;
+                let canonical_root = fs::canonicalize(&root)?;
+                ensure!(
+                    canonical_root.starts_with(&canonical_content),
+                    "package Skill descriptor escapes its immutable revision"
+                );
+                let source_leaf = canonical_root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .context("package Skill descriptor root has no UTF-8 leaf")?;
+                let snapshot = PackageSnapshot::from_directory_named(
+                    &canonical_root,
+                    source_leaf.to_string(),
+                )?;
+                alan_agent_engine::ProcessFileTree::new(
+                    snapshot
+                        .entries
+                        .into_iter()
+                        .map(|entry| (entry.path, entry.bytes))
+                        .collect(),
+                )
+            }
+            PackageLeaseContent::InMemory(files) => {
+                let normalized = relative_root.trim_matches('/');
+                let prefix = if normalized.is_empty() {
+                    String::new()
+                } else {
+                    format!("{normalized}/")
+                };
+                let entries: BTreeMap<String, Vec<u8>> = files
+                    .iter()
+                    .filter_map(|(path, bytes)| {
+                        path.strip_prefix(&prefix)
+                            .map(|rel| (rel.to_string(), bytes.clone()))
+                    })
+                    .collect();
+                ensure!(
+                    !entries.is_empty(),
+                    "in-memory package Skill descriptor `{relative_root}` is missing"
+                );
+                alan_agent_engine::ProcessFileTree::new(entries)
+            }
+        }
     }
 }
 
@@ -261,6 +307,23 @@ impl PackageService {
         Self::open_inner(root, Some(temporary), None)
     }
 
+    /// Create a purely in-memory Package Service with no disk backing.
+    pub fn in_memory() -> Arc<Self> {
+        Arc::new(Self {
+            store: PackageStoreBackend::InMemory(Mutex::new(BTreeMap::new())),
+            _temporary_store: None,
+            state: Mutex::new(State {
+                catalog: PackageCatalog::default(),
+                results: BTreeMap::new(),
+                result_order: Vec::new(),
+                status: "ready".to_string(),
+                leases: BTreeMap::new(),
+                next_lease_id: 1,
+            }),
+            operation: Mutex::new(()),
+        })
+    }
+
     fn open_inner(
         store_root: PathBuf,
         temporary_store: Option<crate::temporary_store::TemporaryStore>,
@@ -268,7 +331,7 @@ impl PackageService {
     ) -> Result<Arc<Self>> {
         let (store, catalog) = PackageStore::open(store_root, bootstrap)?;
         Ok(Arc::new(Self {
-            store,
+            store: PackageStoreBackend::Disk(store),
             _temporary_store: temporary_store,
             state: Mutex::new(State {
                 catalog,
@@ -293,9 +356,11 @@ impl PackageService {
         Ok(self.cached_catalog())
     }
 
-    fn refresh(&self) -> Result<store::PackageStoreLock> {
+    fn refresh(&self) -> Result<Option<store::PackageStoreLock>> {
         let transaction = self.store.transaction()?;
-        self.state.lock().expect("package state poisoned").catalog = self.store.load()?;
+        if let Some(catalog) = self.store.load()? {
+            self.state.lock().expect("package state poisoned").catalog = catalog;
+        }
         Ok(transaction)
     }
 
@@ -338,8 +403,7 @@ impl PackageService {
                 "package catalog is full"
             );
         }
-        let materialization = PackageMaterializer::new(self.store.root())
-            .materialize(package_id, &revision, &snapshot)?;
+        let materialization = self.store.materialize(package_id, &revision, &snapshot)?;
         let reference_count = existing.as_ref().map_or(0, |record| record.reference_count);
         let now = chrono::Utc::now();
         self.publish_record(PackageRecord {
@@ -402,12 +466,9 @@ impl PackageService {
             .insert(token, (package_id.to_string(), record.revision.clone()));
         Ok(Arc::new(PackageReferenceLease {
             service: self.clone(),
-            lease: Some(lease),
+            lease,
             token,
-            content_root: self
-                .store
-                .revision_root(package_id, &record.revision)
-                .join("content"),
+            content: self.store.lease_content(package_id, &record.revision)?,
             record,
         }))
     }
@@ -508,11 +569,7 @@ impl PackageService {
             self.cached_catalog().packages.len() < MAX_PACKAGES,
             "package catalog is full"
         );
-        let materialization = PackageMaterializer::new(self.store.root()).materialize(
-            &package_id,
-            &revision,
-            &snapshot,
-        )?;
+        let materialization = self.store.materialize(&package_id, &revision, &snapshot)?;
         let now = chrono::Utc::now();
         let record = PackageRecord {
             id: package_id.clone(),
@@ -572,11 +629,7 @@ impl PackageService {
                 catalog: None,
             });
         }
-        let materialization = PackageMaterializer::new(self.store.root()).materialize(
-            &package_id,
-            &revision,
-            &snapshot,
-        )?;
+        let materialization = self.store.materialize(&package_id, &revision, &snapshot)?;
         let record = PackageRecord {
             revision,
             materialized_fingerprint: materialization.tree_fingerprint,
@@ -656,6 +709,9 @@ impl PackageService {
         self.state.lock().expect("package state poisoned").catalog = next;
         self.store
             .discard_staged_package_revisions(staged_revisions);
+        if !retained {
+            self.store.remove_in_memory_revisions(&package_id);
+        }
         Ok(PackageCommandResult {
             request_id,
             success: true,
@@ -706,6 +762,7 @@ impl PackageService {
         if remove_package {
             self.store
                 .discard_staged_package_revisions(staged_revisions);
+            self.store.remove_in_memory_revisions(&package_id);
         } else {
             self.store.gc_unreferenced_revisions(&catalog)?;
         }

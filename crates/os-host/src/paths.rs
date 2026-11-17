@@ -23,8 +23,14 @@ impl SystemStorePaths {
 
     pub fn from_data_dir(data_dir: &Path) -> Result<Self> {
         validate_absolute_path("platform application data directory", data_dir)?;
+        Self::from_root(&data_dir.join(PRODUCT_DIR).join(SYSTEM_STORE_DIR))
+    }
+
+    /// Build System Store paths rooted directly under an explicit app-owned directory.
+    pub fn from_root(root: &Path) -> Result<Self> {
+        validate_absolute_path("System Store root", root)?;
         Ok(Self {
-            root: data_dir.join(PRODUCT_DIR).join(SYSTEM_STORE_DIR),
+            root: root.to_path_buf(),
         })
     }
 
@@ -101,7 +107,12 @@ pub struct HostStorePaths {
 impl HostStorePaths {
     pub fn from_data_dir(data_dir: &Path) -> Result<Self> {
         validate_absolute_path("platform application data directory", data_dir)?;
-        let root = data_dir.join(PRODUCT_DIR).join(HOST_STORE_DIR);
+        Self::from_root(&data_dir.join(PRODUCT_DIR).join(HOST_STORE_DIR))
+    }
+
+    /// Build Host Store paths rooted directly under an explicit app-owned directory.
+    pub fn from_root(root: &Path) -> Result<Self> {
+        validate_absolute_path("Host Store root", root)?;
         Ok(Self {
             credentials: root.join("credentials"),
             managed_auth: root.join("auth.json"),
@@ -176,5 +187,16 @@ mod tests {
 
         assert!(!host.credentials.starts_with(&system.root));
         assert!(!host.managed_auth.starts_with(&system.root));
+    }
+
+    #[test]
+    fn from_root_uses_explicit_app_directory_without_alan_prefix() {
+        let app_root = Path::new("/Users/test/AppData/MyApp");
+        let system = SystemStorePaths::from_root(&app_root.join("system")).unwrap();
+        let host = HostStorePaths::from_root(&app_root.join("host")).unwrap();
+
+        assert_eq!(system.root, app_root.join("system"));
+        assert_eq!(host.credentials, app_root.join("host/credentials"));
+        assert_eq!(host.managed_auth, app_root.join("host/auth.json"));
     }
 }

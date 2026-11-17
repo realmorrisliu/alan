@@ -5,6 +5,7 @@
 //! to `alan-service-manager`.
 
 mod boot;
+pub mod embed;
 pub mod host_mounts;
 pub mod installation;
 mod legacy_connections;
@@ -13,6 +14,7 @@ pub mod paths;
 mod secret_store;
 
 pub use boot::HostBootConfig;
+pub use embed::{EmbeddedAlan, EmbeddedConfig, LlmSource, RootAgentClient, StorageMode};
 pub use legacy_connections::{
     ConnectionMigrationReport, LegacyConnectionPaths, migrate_legacy_connections,
 };
