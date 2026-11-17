@@ -25,6 +25,10 @@ use uuid::Uuid;
 use crate::boot::{ProductLlmClientFactory, prepare_system_store_launch};
 use crate::paths::{HostStorePaths, SystemStorePaths};
 
+#[path = "embed_events.rs"]
+mod embed_events;
+pub use embed_events::{EmbedEvent, EmbedEventStream};
+
 /// Storage isolation mode for an embedded Alan instance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageMode {
@@ -391,6 +395,20 @@ impl RootAgentClient {
             .map_err(|err| anyhow::anyhow!("write embedded request response failed: {err:?}"))
     }
 
+    /// Open tape, UI, and request tails and decode them as [`EmbedEvent`]s.
+    ///
+    /// Call this before [`Self::submit_text`] so the stream observes the whole turn.
+    pub async fn event_stream(&self) -> Result<EmbedEventStream> {
+        let tape = self
+            .shell
+            .tail(&format!("{}/machine/tape", self.agent_path))
+            .await
+            .map_err(|code| anyhow::anyhow!("tail tape: {code}"))?;
+        let ui_events = self.tail_ui_events().await?;
+        let requests = self.tail_requests().await?;
+        Ok(EmbedEventStream::from_tails(tape, requests, ui_events))
+    }
+
     /// Issue an interrupt command to `machine/ctl`.
     pub async fn interrupt(&self, submission_id: Option<&str>) -> Result<()> {
         let path = format!("{}/machine/ctl", self.agent_path);
@@ -410,6 +428,7 @@ mod tests {
     use super::*;
     use alan_agent_engine::LlmClient;
     use alan_llm::{GenerationResponse, MockLlmProvider};
+    use tokio::sync::Notify;
 
     fn mock_response(text: &str) -> GenerationResponse {
         GenerationResponse {
@@ -612,5 +631,316 @@ mod tests {
         app_a.shutdown().await.unwrap();
         assert!(app_b.shell().ls("/agent/root").await.is_ok());
         app_b.shutdown().await.unwrap();
+    }
+
+    async fn wait_for_submission(client: &RootAgentClient, submission_id: &str) {
+        let path = format!("{}/machine/ui/events", client.agent_path);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let body = client.shell.cat(&path).await.unwrap_or_default();
+            if String::from_utf8_lossy(&body).contains(submission_id) {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("timed out waiting for {submission_id} in {path}");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    fn text_before<'a>(events: impl Iterator<Item = &'a EmbedEvent>) -> String {
+        let mut text = String::new();
+        for event in events {
+            match event {
+                EmbedEvent::TextDelta { chunk, is_final } => {
+                    assert!(!is_final);
+                    text.push_str(chunk);
+                }
+                EmbedEvent::TurnFinished { .. } => break,
+                _ => {}
+            }
+        }
+        text
+    }
+
+    async fn next_embed_event(stream: &mut EmbedEventStream) -> EmbedEvent {
+        tokio::time::timeout(std::time::Duration::from_secs(5), stream.next_event())
+            .await
+            .expect("timed out waiting for embed event")
+            .expect("embed event")
+    }
+
+    async fn read_until_submission(
+        stream: &mut EmbedEventStream,
+        submission_id: &str,
+    ) -> Vec<EmbedEvent> {
+        let mut events = Vec::new();
+        loop {
+            let event = next_embed_event(stream).await;
+            let done = matches!(
+                &event,
+                EmbedEvent::TurnFinished {
+                    submission_id: id,
+                    ..
+                } if id == submission_id
+            );
+            events.push(event);
+            if done {
+                return events;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn event_stream_yields_text_then_turn_finished_for_submission() {
+        let reply = "hello from embedded alan";
+        let provider = MockLlmProvider::new().with_response(mock_response(reply));
+        let app = EmbeddedAlan::boot(EmbeddedConfig::ephemeral(LlmSource::Client(
+            LlmClient::new(provider),
+        )))
+        .await
+        .unwrap();
+        let client = app.root_agent();
+        let mut stream = client.event_stream().await.unwrap();
+        let submission_id = client.submit_text("say hi").await.unwrap();
+
+        let events = read_until_submission(&mut stream, &submission_id).await;
+        let (finished, deltas) = events.split_last().unwrap();
+        let mut text = String::new();
+        for event in deltas {
+            match event {
+                EmbedEvent::TextDelta { chunk, is_final } => {
+                    assert!(!*is_final);
+                    text.push_str(chunk);
+                }
+                other => panic!("unexpected event before turn end: {other:?}"),
+            }
+        }
+        assert_eq!(text, reply);
+        match finished {
+            EmbedEvent::TurnFinished {
+                submission_id: id,
+                status,
+                error,
+            } => {
+                assert_eq!(id, &submission_id);
+                assert_eq!(*status, alan_agent_protocol::UiInputStatus::Completed);
+                assert!(error.is_none());
+            }
+            other => panic!("expected TurnFinished, got {other:?}"),
+        }
+
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn event_stream_keeps_each_turns_text_with_its_submission() {
+        let provider =
+            MockLlmProvider::new().with_responses(vec![mock_response("ONE"), mock_response("TWO")]);
+        let app = EmbeddedAlan::boot(EmbeddedConfig::ephemeral(LlmSource::Client(
+            LlmClient::new(provider),
+        )))
+        .await
+        .unwrap();
+        let client = app.root_agent();
+        let mut stream = client.event_stream().await.unwrap();
+        let first = client.submit_text("first").await.unwrap();
+        wait_for_submission(&client, &first).await;
+        let second = client.submit_text("second").await.unwrap();
+        wait_for_submission(&client, &second).await;
+
+        let events = read_until_submission(&mut stream, &second).await;
+        let first_at = events.iter().position(|event| {
+            matches!(
+                event,
+                EmbedEvent::TurnFinished { submission_id, .. } if submission_id == &first
+            )
+        });
+        let Some(first_at) = first_at else {
+            panic!("missing TurnFinished for {first}: {events:?}");
+        };
+        let first_text = text_before(events.iter().take(first_at));
+        let second_text = text_before(events.iter().skip(first_at + 1));
+        assert_eq!(first_text, "ONE", "{events:?}");
+        assert_eq!(second_text, "TWO", "{events:?}");
+        app.shutdown().await.unwrap();
+    }
+
+    struct GatedMockProvider {
+        inner: MockLlmProvider,
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl alan_llm::LlmProvider for GatedMockProvider {
+        async fn generate(
+            &mut self,
+            request: alan_llm::GenerationRequest,
+        ) -> Result<GenerationResponse> {
+            self.inner.generate(request).await
+        }
+
+        async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+            self.inner.chat(system, user).await
+        }
+
+        async fn generate_stream(
+            &mut self,
+            request: alan_llm::GenerationRequest,
+        ) -> Result<tokio::sync::mpsc::Receiver<alan_llm::StreamChunk>> {
+            self.started.notify_one();
+            let response = self.inner.generate(request).await?;
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let release = Arc::clone(&self.release);
+            let content = response.content;
+            tokio::spawn(async move {
+                release.notified().await;
+                if !content.is_empty() {
+                    let _ = tx.send(held_chunk(Some(content), false)).await;
+                }
+                let _ = tx.send(held_chunk(None, true)).await;
+            });
+            Ok(rx)
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    fn held_chunk(text: Option<String>, is_finished: bool) -> alan_llm::StreamChunk {
+        alan_llm::StreamChunk {
+            text,
+            thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
+            usage: None,
+            provider_response_id: None,
+            provider_response_status: None,
+            sequence_number: None,
+            tool_call_delta: None,
+            is_finished,
+            finish_reason: is_finished.then(|| "stop".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn event_stream_reports_interrupted_turn() {
+        let reply = "do-not-leak-interrupt-reply";
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let provider = GatedMockProvider {
+            inner: MockLlmProvider::new().with_response(mock_response(reply)),
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        };
+        let app = EmbeddedAlan::boot(EmbeddedConfig::ephemeral(LlmSource::Client(
+            LlmClient::new(provider),
+        )))
+        .await
+        .unwrap();
+        let client = app.root_agent();
+        let mut stream = client.event_stream().await.unwrap();
+        let submission_id = client.submit_text("interrupt this turn").await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("generation did not start");
+        client.interrupt(Some(&submission_id)).await.unwrap();
+
+        let events = read_until_submission(&mut stream, &submission_id).await;
+        let finished = events.last().expect("turn event");
+        match finished {
+            EmbedEvent::TurnFinished {
+                submission_id: id,
+                status,
+                ..
+            } => {
+                assert_eq!(id, &submission_id);
+                assert_eq!(*status, alan_agent_protocol::UiInputStatus::Cancelled);
+            }
+            other => panic!("expected TurnFinished, got {other:?}"),
+        }
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                EmbedEvent::TextDelta { chunk, .. } if chunk.contains(reply)
+            )),
+            "interrupted turn leaked the mock reply: {events:?}"
+        );
+
+        release.notify_one();
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn isolated_resume_root_restores_prior_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = "resume-marker-amber";
+        let provider = MockLlmProvider::new().with_response(mock_response(marker));
+        let app = EmbeddedAlan::boot(EmbeddedConfig::isolated(
+            dir.path(),
+            LlmSource::Client(LlmClient::new(provider)),
+        ))
+        .await
+        .unwrap();
+        let client = app.root_agent();
+        let mut stream = client.event_stream().await.unwrap();
+        let submission_id = client.submit_text("remember the marker").await.unwrap();
+        let _events = read_until_submission(&mut stream, &submission_id).await;
+        app.shutdown().await.unwrap();
+
+        let resumed = MockLlmProvider::new().with_response(mock_response("resumed-reply"));
+        let app = EmbeddedAlan::boot(
+            EmbeddedConfig::isolated(
+                dir.path(),
+                LlmSource::Client(LlmClient::new(resumed.clone())),
+            )
+            .with_root_resume(true),
+        )
+        .await
+        .expect("resume boot");
+        let client = app.root_agent();
+        let mut stream = client.event_stream().await.unwrap();
+        let submission_id = client.submit_text("what did you store").await.unwrap();
+        let events = read_until_submission(&mut stream, &submission_id).await;
+        let mut text = String::new();
+        for event in &events[..events.len() - 1] {
+            match event {
+                EmbedEvent::TextDelta { chunk, is_final } => {
+                    assert!(!*is_final);
+                    text.push_str(chunk);
+                }
+                other => panic!("unexpected event before resumed turn end: {other:?}"),
+            }
+        }
+        assert_eq!(text, "resumed-reply");
+        match events.last() {
+            Some(EmbedEvent::TurnFinished {
+                submission_id: id,
+                status,
+                error,
+            }) => {
+                assert!(error.is_none());
+                assert_eq!(id, &submission_id);
+                assert_eq!(*status, alan_agent_protocol::UiInputStatus::Completed);
+            }
+            other => panic!("expected TurnFinished, got {other:?}"),
+        }
+        let saw_marker = resumed.recorded_requests().iter().any(|request| {
+            request
+                .system_prompt
+                .as_deref()
+                .is_some_and(|prompt| prompt.contains(marker))
+                || request
+                    .messages
+                    .iter()
+                    .any(|message| message.content.contains(marker))
+        });
+        assert!(
+            saw_marker,
+            "resumed generation did not include prior marker {marker}"
+        );
+        app.shutdown().await.unwrap();
     }
 }

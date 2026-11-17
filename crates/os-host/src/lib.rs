@@ -14,7 +14,10 @@ pub mod paths;
 mod secret_store;
 
 pub use boot::HostBootConfig;
-pub use embed::{EmbeddedAlan, EmbeddedConfig, LlmSource, RootAgentClient, StorageMode};
+pub use embed::{
+    EmbedEvent, EmbedEventStream, EmbeddedAlan, EmbeddedConfig, LlmSource, RootAgentClient,
+    StorageMode,
+};
 pub use legacy_connections::{
     ConnectionMigrationReport, LegacyConnectionPaths, migrate_legacy_connections,
 };

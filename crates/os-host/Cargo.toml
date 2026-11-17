@@ -13,6 +13,7 @@ path = "src/bin/alan-os-host.rs"
 [dependencies]
 alan-ap = { path = "../ap" }
 alan-agent-engine.workspace = true
+alan-agent-protocol.workspace = true
 alan-agentfs = { path = "../agentfs" }
 alan-hostfs.workspace = true
 alan-tools.workspace = true

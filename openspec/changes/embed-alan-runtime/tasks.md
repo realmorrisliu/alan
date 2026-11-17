@@ -10,7 +10,7 @@
 
 - [x] 2.1 Define `EmbeddedConfig` with `StorageMode::Isolated(PathBuf)` and `StorageMode::Ephemeral`, explicit `AgentProcessConfig`, `Arc<dyn LlmClientFactory>`, `ToolRegistry` (empty by default), and custom namespace mounts.
 - [x] 2.2 Implement `EmbeddedAlan::boot(config)` returning the handle with `root_transport() -> InProcessTransport` and `shutdown()`.
-- [x] 2.3 Implement thin `RootAgentClient` helpers over `alan_shell::Shell` (`/agent/root`): `submit`, `tail_output`, `tail_events`, `respond_request`, and `interrupt`.
+- [x] 2.3 Implement thin `RootAgentClient` helpers over `alan_shell::Shell` (`/agent/root`): `submit`, `tail_output`, `tail_ui_events`, `respond_request`, and `interrupt`.
 - [x] 2.4 Verify the embedding crate compiles without `alan-terminal-ui`, `ratatui`, or `crossterm` in its dependency tree.
 
 ## 3. Isolation & Lifecycle Verification
