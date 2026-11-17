@@ -7,7 +7,7 @@ edition.workspace = true
 [dependencies]
 alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
-alan-llm = { workspace = true, default-features = false }
+alan-llm = { path = "../llm", default-features = false }
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 serde.workspace = true

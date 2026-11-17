@@ -8,14 +8,14 @@ license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
-alan-llm = { workspace = true, default-features = false }
+alan-llm = { path = "../llm", default-features = false }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true }
 
 [dev-dependencies]
-alan-llm = { workspace = true, default-features = false, features = [
+alan-llm = { path = "../llm", default-features = false, features = [
     "mock",
     "provider-anthropic",
     "provider-openai",
