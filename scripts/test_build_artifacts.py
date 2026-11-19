@@ -18,8 +18,13 @@ import build_artifacts as artifacts
 
 class BuildArtifactTests(unittest.TestCase):
     def setUp(self):
-        environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
-                                             if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}, clear=True)
+        cleaned_env = {key: value for key, value in os.environ.items()
+                       if not key.startswith(("CARGO_", "ALAN_", "GIT_"))
+                       and key not in ("BASH_ENV", "ENV")}
+        cargo_bin = Path.home() / ".cargo" / "bin"
+        if (cargo_bin / "cargo").is_file():
+            cleaned_env["PATH"] = str(cargo_bin) + os.pathsep + cleaned_env.get("PATH", "")
+        environment = patch.dict(os.environ, cleaned_env, clear=True)
         environment.start()
         self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="alan-artifacts-test-")
