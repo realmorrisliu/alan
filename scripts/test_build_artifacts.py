@@ -485,6 +485,49 @@ class BuildArtifactTests(unittest.TestCase):
         self.assertFalse(artifacts.sidecar(output, "json").exists())
         self.assertFalse(artifacts.registry(self.owner).exists())
 
+    def test_all_worktrees_clean_retires_linked_worktree_outputs(self):
+        import contextlib
+        import io
+        import sys
+        import service_scratch
+
+        artifacts.git(self.owner, "add", "Cargo.toml", "main.rs")
+        self.task_source()
+        linked = self.root / "linked-wt"
+        subprocess.run(["git", "-C", str(self.owner), "worktree", "add", "--detach",
+                        "-q", str(linked)], check=True)
+        linked_out = linked / "target/quality-gate"
+        with artifacts.build_lease(linked, [linked_out], "quality"):
+            (linked_out / "debug").mkdir()
+            (linked_out / "debug/bin").write_text("ok")
+
+        with patch.object(artifacts, "open_paths", return_value=[]), \
+             patch.object(service_scratch, "scratch_outputs", return_value=[]):
+            status_buf = io.StringIO()
+            with patch.object(sys, "argv", ["build_artifacts.py", "--owner", str(self.owner),
+                                            "status", "--all-worktrees"]), \
+                 contextlib.redirect_stdout(status_buf):
+                self.assertEqual(artifacts.main(), 0)
+            status_data = json.loads(status_buf.getvalue())
+            self.assertTrue(any(row["path"] == str(linked_out) and row["state"] == "managed"
+                                for row in status_data["build_outputs"]))
+
+            clean_buf = io.StringIO()
+            with patch.object(sys, "argv", ["build_artifacts.py", "--owner", str(self.owner),
+                                            "clean", "--all-worktrees", "--apply"]), \
+                 contextlib.redirect_stdout(clean_buf):
+                self.assertEqual(artifacts.main(), 0)
+            clean_data = json.loads(clean_buf.getvalue())
+            self.assertIn({"path": str(linked_out), "state": "cleaned"}, clean_data["outputs"])
+        self.assertFalse(linked_out.exists())
+        self.assertTrue((linked / "main.rs").exists())
+
+    def test_in_use_matches_exact_segments_only(self):
+        root = self.root / "foo"
+        self.assertFalse(artifacts.in_use(root, [self.root / "foobar", self.root / "foobar/baz"]))
+        self.assertTrue(artifacts.in_use(root, [root]))
+        self.assertTrue(artifacts.in_use(root, [root / "bar"]))
+
 
 if __name__ == "__main__":
     unittest.main()
