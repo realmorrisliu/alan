@@ -977,6 +977,7 @@ mod boot_namespace;
 mod skill_lifecycle;
 
 mod child_budget;
+mod four_kind_projection;
 mod input_shadow;
 mod manpages;
 

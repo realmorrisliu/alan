@@ -26,6 +26,20 @@ pub(in crate::file_backed) enum FileBackedAction {
         topic: String,
         generation: u64,
     },
+    ReadHistoryCatalog {
+        generation: u64,
+    },
+    SwitchRollout {
+        rollout_id: Option<String>,
+    },
+    InspectProjectSummary,
+    EditProjectSummary {
+        text: String,
+        expected_revision: Option<u64>,
+    },
+    DeleteProjectSummary {
+        expected_revision: Option<u64>,
+    },
     Interrupt,
     Quit,
 }
@@ -45,6 +59,18 @@ pub(in crate::file_backed) enum FileBackedEvent {
         generation: u64,
         owner: String,
         content: String,
+    },
+    HistoryCatalogLoaded {
+        generation: u64,
+        result: Result<super::super::resume_picker::RolloutHistoryCatalogView, String>,
+    },
+    HistorySwitchCompleted {
+        rollout_id: Option<String>,
+        result: Result<(), String>,
+    },
+    ProjectSummaryResult {
+        action_label: Option<&'static str>,
+        result: Result<super::super::summary_view::ProjectSummaryViewDto, String>,
     },
     ActionDetails {
         path: String,

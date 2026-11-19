@@ -92,6 +92,7 @@ fn estimate_pending_turn_prompt_tokens(
 
 async fn turn_tool_definitions(
     include_runtime_delegated_tool: bool,
+    include_subagent_spawn: bool,
     tool_execution: &NamespaceToolExecution,
 ) -> anyhow::Result<(
     Vec<crate::runtime::ToolPackageManifest>,
@@ -102,7 +103,10 @@ async fn turn_tool_definitions(
         .iter()
         .map(|package| package.model_definition())
         .collect::<Vec<_>>();
-    tools.extend(virtual_tool_definitions(include_runtime_delegated_tool));
+    tools.extend(virtual_tool_definitions(
+        include_runtime_delegated_tool,
+        include_subagent_spawn,
+    ));
     Ok((tool_packages, tools))
 }
 
@@ -260,10 +264,15 @@ where
             )
             .await?;
     }
+    let tool_execution = state.tool_execution();
     let turn_recall_bundle = if state.core_config.memory.enabled {
-        crate::runtime::memory_recall::build_turn_recall_bundle(
+        let project_cwd = tool_execution
+            .default_cwd()
+            .map(|p| p.to_string_lossy().into_owned());
+        crate::runtime::memory_recall::build_turn_recall_bundle_for_project(
             state.core_config.memory.store_dir.as_deref(),
             user_input_for_skills.as_deref(),
+            project_cwd.as_deref(),
         )
     } else {
         None
@@ -273,7 +282,6 @@ where
     let generation = NamespaceTurnGeneration::load(&llm_generation).await;
     generation.ensure_callable()?;
 
-    let tool_execution = state.tool_execution();
     let initial_directory_instruction = process_directory_instruction(&tool_execution);
 
     if !should_skip_auto_compaction_for_responses_continuation(state) {
@@ -357,8 +365,14 @@ where
     let system_prompt = prompt_build.system_prompt;
 
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
-    let (tool_packages, tools) =
-        turn_tool_definitions(include_runtime_delegated_tool, &tool_execution).await?;
+    let include_subagent_tool =
+        include_runtime_delegated_tool && state.runtime_config.ad_hoc_subagent_spawn_enabled;
+    let (tool_packages, tools) = turn_tool_definitions(
+        include_runtime_delegated_tool,
+        include_subagent_tool,
+        &tool_execution,
+    )
+    .await?;
     let tool_names = tools
         .iter()
         .map(|tool| tool.name.clone())

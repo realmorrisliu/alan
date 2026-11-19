@@ -41,10 +41,13 @@ impl SwitchableFileServer {
         *self.inner.write().await = None;
     }
 
-    pub(super) async fn while_bound<T>(&self, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) async fn while_bound_async<T, F>(&self, action: impl FnOnce() -> F) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
         let inner = self.inner.read().await;
         ensure!(inner.is_some(), "Package Service is unavailable");
-        action()
+        action().await
     }
 }
 

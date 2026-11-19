@@ -80,8 +80,10 @@ struct ProcCreateDir {
     names: Vec<String>,
 }
 
+#[derive(Default)]
 struct State {
     agents: HashMap<String, AgentRegistration>,
+    history_server: Option<Arc<dyn FileServer>>,
     process_event_pids: HashSet<String>,
     io_event_pids: HashSet<String>,
     input_event_pids: HashSet<String>,
@@ -112,15 +114,7 @@ impl AgentRootFs {
             io_events: None,
             input_events: None,
             output_events: None,
-            state: Arc::new(Mutex::new(State {
-                agents: HashMap::new(),
-                process_event_pids: HashSet::new(),
-                io_event_pids: HashSet::new(),
-                input_event_pids: HashSet::new(),
-                output_event_pids: HashSet::new(),
-                root_pid: None,
-                fids: HashMap::new(),
-            })),
+            state: Arc::new(Mutex::new(State::default())),
         }
     }
 
@@ -134,15 +128,7 @@ impl AgentRootFs {
             io_events: None,
             input_events: None,
             output_events: Some(output_events),
-            state: Arc::new(Mutex::new(State {
-                agents: HashMap::new(),
-                process_event_pids: HashSet::new(),
-                io_event_pids: HashSet::new(),
-                input_event_pids: HashSet::new(),
-                output_event_pids: HashSet::new(),
-                root_pid: None,
-                fids: HashMap::new(),
-            })),
+            state: Arc::new(Mutex::new(State::default())),
         }
     }
 
@@ -157,15 +143,7 @@ impl AgentRootFs {
             io_events: None,
             input_events: Some(input_events),
             output_events: Some(output_events),
-            state: Arc::new(Mutex::new(State {
-                agents: HashMap::new(),
-                process_event_pids: HashSet::new(),
-                io_event_pids: HashSet::new(),
-                input_event_pids: HashSet::new(),
-                output_event_pids: HashSet::new(),
-                root_pid: None,
-                fids: HashMap::new(),
-            })),
+            state: Arc::new(Mutex::new(State::default())),
         }
     }
 
@@ -179,15 +157,7 @@ impl AgentRootFs {
             io_events: Some(io_events),
             input_events: None,
             output_events: None,
-            state: Arc::new(Mutex::new(State {
-                agents: HashMap::new(),
-                process_event_pids: HashSet::new(),
-                io_event_pids: HashSet::new(),
-                input_event_pids: HashSet::new(),
-                output_event_pids: HashSet::new(),
-                root_pid: None,
-                fids: HashMap::new(),
-            })),
+            state: Arc::new(Mutex::new(State::default())),
         }
     }
 
@@ -201,16 +171,13 @@ impl AgentRootFs {
             io_events: None,
             input_events: None,
             output_events: None,
-            state: Arc::new(Mutex::new(State {
-                agents: HashMap::new(),
-                process_event_pids: HashSet::new(),
-                io_event_pids: HashSet::new(),
-                input_event_pids: HashSet::new(),
-                output_event_pids: HashSet::new(),
-                root_pid: None,
-                fids: HashMap::new(),
-            })),
+            state: Arc::new(Mutex::new(State::default())),
         }
+    }
+
+    /// Expose an optional `/agent/history` subtree served by Agent Runtime Service.
+    pub async fn bind_history_server(&self, server: Arc<dyn FileServer>) {
+        self.state.lock().await.history_server = Some(server);
     }
 
     /// Register the agent-state backing tree for a committed process pid.
@@ -385,11 +352,12 @@ impl AgentRootFs {
     }
 
     async fn root_listing(&self) -> Result<Vec<String>, ErrorCode> {
-        let (registered, root_pid) = {
+        let (registered, root_pid, has_history) = {
             let state = self.state.lock().await;
             (
                 state.agents.keys().cloned().collect::<Vec<_>>(),
                 state.root_pid.clone(),
+                state.history_server.is_some(),
             )
         };
         let proc_pids = self.proc_pids().await?;
@@ -403,6 +371,9 @@ impl AgentRootFs {
             && names.iter().any(|name| name == &root_pid)
         {
             names.push("root".to_string());
+        }
+        if has_history {
+            names.push("history".to_string());
         }
         Ok(names)
     }
@@ -666,6 +637,16 @@ impl FileServer for AgentRootFs {
             Node::Root => {
                 if names.is_empty() {
                     Node::Root
+                } else if names[0] == "history"
+                    && let Some(history) = self.state.lock().await.history_server.clone()
+                {
+                    let backing_fid = Fid(NEXT_BACKING_FID.fetch_add(1, Ordering::Relaxed));
+                    history.walk(Fid::ROOT, backing_fid, &names[1..]).await?;
+                    Node::AgentFile {
+                        pid: "history".to_string(),
+                        backing: history,
+                        backing_fid,
+                    }
                 } else {
                     let (pid, backing) = self.entry_for_name(&names[0]).await?;
                     self.bind_agent_walk(newfid, pid, backing, Fid::ROOT, &names[1..])

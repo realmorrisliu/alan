@@ -122,8 +122,10 @@ impl AgentWatchers {
                     app.fence_project_control();
                 }
                 let pending_count = pending_turns.len();
-                // Tape history outlives the local pending-input lock.
-                let history_restored = if let Some((_, tape)) = &self.recovery {
+                // Tape history outlives the local pending-input lock, except during explicit rollout switch.
+                let history_restored = if app.rollout_switching {
+                    false
+                } else if let Some((_, tape)) = &self.recovery {
                     previous_input::restore_tape_history(app, tape, app.tape_consumed_offset).await
                 } else {
                     false

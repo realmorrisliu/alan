@@ -9,6 +9,7 @@ pub(crate) struct ProcessConnection {
     pub profile: String,
     pub namespace: alan_kernel::LiveNamespace,
     pub evaluator: Option<CapturedCallable>,
+    pub guardian_profile: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -65,6 +66,16 @@ impl ConnectionAuthority for ProcessConnection {
             "evaluator profile is outside Process authority"
         );
         Ok(captured.clone())
+    }
+
+    async fn capture_guardian(&self, profile: &str) -> Result<CapturedCallable> {
+        ensure!(
+            self.guardian_profile.as_deref() == Some(profile),
+            "guardian profile is outside Process authority"
+        );
+        self.service
+            .capture_model(profile, None, &self.namespace)
+            .await
     }
 
     async fn catalog(&self) -> Result<serde_json::Value> {
@@ -143,10 +154,17 @@ impl ConnectionService {
             .as_ref()
             .context("callable registry unavailable")?;
         let connections = self.metadata();
+        let packages = self.package_service();
+        let connections = provider_packages::hydrate_connections_with_package_defaults(
+            packages.as_deref(),
+            &connections,
+            profile_id,
+        );
         let profile = connections
             .profiles
             .get(profile_id)
             .context("evaluation profile unavailable")?;
+        provider_packages::validate_provider_package_for_profile(packages.as_deref(), profile)?;
         ensure!(
             registry.published_profiles.get(profile_id) == Some(profile),
             "evaluation profile is not callable"
@@ -197,11 +215,12 @@ impl ConnectionService {
         let registry = callables
             .as_ref()
             .context("callable registry unavailable")?;
-        let mut connections = self.metadata();
+        let raw_connections = self.metadata();
+        let packages = self.package_service();
         // Only an explicitly published injected callable is a fallback. Missing
         // managed metadata alone never grants callable authority.
         if registry.published_fallbacks.contains(profile_id)
-            && !connections.profiles.contains_key(profile_id)
+            && !raw_connections.profiles.contains_key(profile_id)
         {
             let config = registry.base_config.clone();
             ensure!(
@@ -223,11 +242,12 @@ impl ConnectionService {
                 config,
             });
         }
-        let original = connections
+        let original = raw_connections
             .profiles
             .get(profile_id)
             .context("Process profile unavailable")?
             .clone();
+        provider_packages::validate_provider_package_for_profile(packages.as_deref(), &original)?;
         ensure!(
             original.provider.supports_generation(),
             "evaluation-only profile cannot be captured for generation"
@@ -235,6 +255,11 @@ impl ConnectionService {
         ensure!(
             registry.published_profiles.get(profile_id) == Some(&original),
             "Process profile is not callable"
+        );
+        let mut connections = provider_packages::hydrate_connections_with_package_defaults(
+            packages.as_deref(),
+            &raw_connections,
+            profile_id,
         );
         let mut config = registry.base_config.clone();
         if let Some(catalog) = registry

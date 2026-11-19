@@ -18,10 +18,11 @@ pub(super) async fn finalize_turn_memory_best_effort(
     request: FinalizeTurnMemoryRequest,
 ) {
     if !request.surfaces_refreshed {
-        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+        super::memory_surfaces::refresh_turn_memory_surfaces_for_project_best_effort(
             runtime.machine,
             runtime.memory_dir.as_deref(),
             &runtime.process_path,
+            runtime.project_cwd.as_deref(),
             request.surfaces_context,
         )
         .await;

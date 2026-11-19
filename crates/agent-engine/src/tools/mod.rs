@@ -10,6 +10,7 @@ mod reified_namespace;
 mod sandbox;
 mod sandbox_backend;
 
+pub use alan_agent_protocol::ToolCapability;
 #[cfg(test)]
 pub(crate) use context::test_execution_binding;
 pub use context::{

@@ -689,3 +689,149 @@ fn os_confined_local_dev_commands_allow_without_guardian_while_fallback_escalate
         }
     }
 }
+
+#[test]
+fn trust_posture_bypasses_policy_and_red_lines_with_truthful_audit() {
+    let policy = crate::policy::PolicyEngine::autonomous();
+    let governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+
+    for cmd in [
+        "sudo ls",
+        "rm -rf /",
+        "git push --force origin main",
+        "git reset --hard HEAD~1",
+        "chmod 777 script.sh",
+    ] {
+        let confined = evaluate_tool_policy_with_posture(
+            &policy,
+            &governance,
+            crate::policy::TrustPosture::ConfinedTrusted,
+            &[],
+            "bash",
+            &json!({"command": cmd}),
+            alan_agent_protocol::ToolCapability::Unknown,
+            None,
+            SandboxConfinement::os_enforced(),
+        );
+        match confined {
+            ToolPolicyDecision::Allow { audit } => {
+                assert_eq!(audit.policy_source, "trust_posture");
+                assert_eq!(
+                    audit.rule_id.as_deref(),
+                    Some("trust-posture-confined_trusted")
+                );
+            }
+            other => panic!("ConfinedTrusted should allow policy check `{cmd}`, got {other:?}"),
+        }
+
+        let host_account = evaluate_tool_policy_with_posture(
+            &policy,
+            &governance,
+            crate::policy::TrustPosture::HostAccountTrusted,
+            &[],
+            "bash",
+            &json!({"command": cmd}),
+            alan_agent_protocol::ToolCapability::Unknown,
+            None,
+            SandboxConfinement::os_enforced(),
+        );
+        match host_account {
+            ToolPolicyDecision::Allow { audit } => {
+                assert_eq!(audit.policy_source, "trust_posture");
+                assert_eq!(audit.sandbox_backend, "unsandboxed-host-account");
+                assert_eq!(audit.path_mode.as_deref(), Some("unsandboxed"));
+            }
+            other => panic!("HostAccountTrusted should allow `{cmd}`, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn governed_git_push_delegation_allows_scoped_push_and_escalates_destructive_always_human() {
+    let policy = crate::policy::PolicyEngine::autonomous();
+    let governance = alan_agent_protocol::GovernanceConfig {
+        profile: alan_agent_protocol::GovernanceProfile::Autonomous,
+        policy_path: None,
+    };
+    let scopes = vec![crate::policy::GitPushDelegationScope {
+        grant_id: "repo-grant".to_string(),
+        namespace_root: std::path::PathBuf::from("/mnt/grants/repo"),
+        remote: Some("origin".to_string()),
+        branches: vec!["feat/*".to_string()],
+    }];
+    let cwd = Some(Path::new("/mnt/grants/repo"));
+
+    let ordinary = evaluate_tool_policy_with_posture(
+        &policy,
+        &governance,
+        crate::policy::TrustPosture::Governed,
+        &scopes,
+        "bash",
+        &json!({"command": "git push origin feat/m3-delegation"}),
+        alan_agent_protocol::ToolCapability::Network,
+        cwd,
+        SandboxConfinement::os_enforced(),
+    );
+    match ordinary {
+        ToolPolicyDecision::Allow { audit } => {
+            assert_eq!(audit.policy_source, "delegation_grant");
+            assert_eq!(
+                audit.rule_id.as_deref(),
+                Some("delegated-git-push:repo-grant")
+            );
+        }
+        other => panic!("expected scoped git push allow, got {other:?}"),
+    }
+
+    for destructive in [
+        "git push --force origin feat/m3-delegation",
+        "git push -f origin feat/m3-delegation",
+        "git push -uf origin feat/m3-delegation",
+        "git push --force-with-lease origin feat/m3-delegation",
+        "git push origin +feat/m3-delegation",
+        "git push origin :feat/m3-delegation",
+        "git push --delete origin feat/m3-delegation",
+        "git push -d origin feat/m3-delegation",
+        "git push --mirror origin",
+        "git push --prune origin feat/m3-delegation",
+    ] {
+        let decision = evaluate_tool_policy_with_posture(
+            &policy,
+            &governance,
+            crate::policy::TrustPosture::Governed,
+            &scopes,
+            "bash",
+            &json!({"command": destructive}),
+            alan_agent_protocol::ToolCapability::Network,
+            cwd,
+            SandboxConfinement::os_enforced(),
+        );
+        assert!(
+            matches!(
+                decision,
+                ToolPolicyDecision::Escalate {
+                    route: EscalationRoute::AlwaysHuman,
+                    ..
+                }
+            ),
+            "destructive `{destructive}` must stay AlwaysHuman, got {decision:?}"
+        );
+    }
+
+    // Wrong branch / wrong remote does NOT match standing delegation.
+    let out_of_scope = evaluate_tool_policy_with_posture(
+        &policy,
+        &governance,
+        crate::policy::TrustPosture::Governed,
+        &scopes,
+        "bash",
+        &json!({"command": "git push origin main"}),
+        alan_agent_protocol::ToolCapability::Network,
+        cwd,
+        SandboxConfinement::os_enforced(),
+    );
+    assert!(matches!(out_of_scope, ToolPolicyDecision::Escalate { .. }));
+}

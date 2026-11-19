@@ -115,6 +115,14 @@ pub(crate) fn advance_accepted_submission<'a>(
         }
         let mut emit = |_event: Event| async {};
 
+        if matches!(
+            submission.op,
+            Op::Turn { .. } | Op::Resume { .. } | Op::Input { .. }
+        ) {
+            let knowledge = state.environment.read_project_knowledge_section().await;
+            state.prompt_cache.set_project_knowledge_section(knowledge);
+        }
+
         let cancelled_before_start =
             cancel.is_cancelled() && matches!(submission.op, Op::Turn { .. } | Op::Input { .. });
         let result = if cancelled_before_start {

@@ -21,6 +21,8 @@ pub struct HostBootConfig {
     service_manager: ServiceManagerConfig,
     /// Keep this invocation's Root rollout out of `metadata/root-rollout`.
     pub ephemeral_rollout: bool,
+    saved_grants: Vec<String>,
+    saved_grant_store_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -248,6 +250,7 @@ impl HostBootConfig {
             service_manager: ServiceManagerConfig {
                 process,
                 resume_root,
+                resume_rollout_id: None,
                 ephemeral_rollout: false,
                 input_shadow: None,
                 launch_context,
@@ -259,6 +262,8 @@ impl HostBootConfig {
                 tools,
             },
             ephemeral_rollout: false,
+            saved_grants: Vec::new(),
+            saved_grant_store_path: None,
         })
     }
 
@@ -278,7 +283,53 @@ impl HostBootConfig {
         Self {
             service_manager: config,
             ephemeral_rollout: false,
+            saved_grants: Vec::new(),
+            saved_grant_store_path: None,
         }
+    }
+
+    /// Configure explicit invocation-only trust posture (`Governed`, `ConfinedTrusted`,
+    /// or `HostAccountTrusted`). Never read from repo configuration files.
+    pub fn with_trust_posture(mut self, trust_posture: alan_agent_engine::TrustPosture) -> Self {
+        self.service_manager.process.trust_posture = trust_posture;
+        self
+    }
+
+    /// Active explicit invocation trust posture.
+    pub fn trust_posture(&self) -> alan_agent_engine::TrustPosture {
+        self.service_manager.process.trust_posture
+    }
+
+    /// Configure a dedicated Connection profile for Guardian escalation reviews.
+    pub fn with_guardian_profile(mut self, profile: impl Into<String>) -> Result<Self> {
+        let profile = profile.into();
+        anyhow::ensure!(
+            !profile.trim().is_empty(),
+            "guardian profile must not be empty"
+        );
+        self.service_manager
+            .process
+            .agent_config
+            .set_guardian_profile_override(Some(profile));
+        Ok(self)
+    }
+
+    /// Explicitly restore a specific Root Agent rollout id (`--resume <id>`).
+    pub fn with_root_resume_id(mut self, rollout_id: Option<String>) -> Self {
+        self.service_manager = self.service_manager.with_resume_rollout_id(rollout_id);
+        self
+    }
+
+    /// Activate saved System Store Host Mount grant ids onto the Root Agent at boot.
+    pub fn with_saved_grants(mut self, grant_ids: Vec<String>) -> Self {
+        self.saved_grants = grant_ids;
+        self
+    }
+
+    /// Override the saved-grant store path (intended for isolated host/CLI tests).
+    pub fn with_saved_grant_store_path(mut self, path: std::path::PathBuf) -> Self {
+        self.saved_grant_store_path = Some(path);
+        self
     }
 
     /// Explicitly restore the selected Root Agent rollout for this invocation.
@@ -315,14 +366,39 @@ impl HostBootConfig {
 
     /// Boot an independent in-process instance without a listener or background launcher.
     /// The caller owns the returned manager and must shut it down before exiting.
-    pub async fn boot_foreground(mut self) -> Result<ServiceManager> {
-        self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
-        ServiceManager::boot(self.service_manager).await
+    pub async fn boot_foreground(self) -> Result<ServiceManager> {
+        self.boot_service_manager().await
     }
 
-    pub(crate) fn into_service_manager(mut self) -> ServiceManagerConfig {
+    pub(crate) async fn boot_service_manager(mut self) -> Result<ServiceManager> {
         self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
-        self.service_manager
+        let saved_grants = std::mem::take(&mut self.saved_grants);
+        let store_path = self.saved_grant_store_path.take();
+        let manager = ServiceManager::boot(self.service_manager).await?;
+        if !saved_grants.is_empty() {
+            let store = match store_path {
+                Some(path) => {
+                    crate::host_mounts::saved_grants::SavedProjectGrantStore::from_path(path)
+                }
+                None => match crate::host_mounts::saved_grants::SavedProjectGrantStore::system() {
+                    Ok(store) => store,
+                    Err(err) => {
+                        let _ = manager.shutdown().await;
+                        return Err(err);
+                    }
+                },
+            };
+            let root_pid = manager.root_pid();
+            let host_mount = manager.host_mount();
+            for grant_id in &saved_grants {
+                if let Err(err) = store.activate_grant_for_process(grant_id, &host_mount, root_pid)
+                {
+                    let _ = manager.shutdown().await;
+                    return Err(err);
+                }
+            }
+        }
+        Ok(manager)
     }
 }
 

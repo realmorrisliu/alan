@@ -18,6 +18,31 @@ use serde::Deserialize;
 /// Default reviewer policy (user-overridable).
 pub(crate) const DEFAULT_REVIEWER_POLICY: &str = include_str!("guardian_policy.md");
 
+const MAX_GUARDIAN_POLICY_BYTES: u64 = 64 * 1024;
+
+/// Load custom Guardian policy if configured and bounded, otherwise use the default policy.
+pub(crate) fn resolve_guardian_policy(policy_path: Option<&std::path::Path>) -> String {
+    let Some(path) = policy_path else {
+        return DEFAULT_REVIEWER_POLICY.to_string();
+    };
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        tracing::warn!(path = %path.display(), "guardian policy unreadable; using default");
+        return DEFAULT_REVIEWER_POLICY.to_string();
+    };
+    if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > MAX_GUARDIAN_POLICY_BYTES {
+        tracing::warn!(
+            path = %path.display(),
+            bytes = meta.len(),
+            "guardian policy rejected (symlink, non-file, or >64KiB); using default"
+        );
+        return DEFAULT_REVIEWER_POLICY.to_string();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) if !content.trim().is_empty() => content,
+        _ => DEFAULT_REVIEWER_POLICY.to_string(),
+    }
+}
+
 const REVIEWER_SYSTEM_PREAMBLE: &str = "\
 You are a security reviewer for an autonomous agent. Decide whether one proposed \
 action should run. Output STRICT JSON only: {\"decision\":\"allow\"|\"deny\",\"rationale\":\"<one sentence>\"}.\n\

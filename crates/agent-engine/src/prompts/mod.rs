@@ -7,9 +7,10 @@ mod assembler;
 mod definition;
 mod loader;
 mod memory;
+pub mod project_knowledge;
 
 pub use assembler::build_agent_system_prompt;
-pub(crate) use assembler::build_agent_system_prompt_with_sections;
+pub(crate) use assembler::build_agent_system_prompt_with_all_sections;
 pub use definition::ensure_definition_bootstrap_files_at;
 #[allow(
     unused_imports,

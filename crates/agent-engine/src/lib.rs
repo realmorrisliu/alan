@@ -46,13 +46,17 @@ pub use alan_agent_protocol::{
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
+pub use evidence::redact_secret_tokens;
 pub use file_tree::ProcessFileTree;
 pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
     ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
 };
 pub use models::{ModelCatalog, ModelCatalogProvider, ModelInfo};
-pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
+pub use policy::{
+    GitPushDelegationScope, PolicyAction, PolicyDecision, PolicyEngine, PolicyRule, TrustPosture,
+    TrustPostureError,
+};
 pub use process_launch::{
     AgentRuntimeStoreBindings, MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessPackageKind,
     ProcessPackageReference, ProcessPackageSkillReference,
@@ -64,11 +68,13 @@ pub use request_controls::{
     resolve_request_controls, resolve_runtime_request_controls, resolve_turn_request_controls,
 };
 pub use rollout::{
-    AgentMachineMeta, CheckpointRecord, EventRecord, MessageRecord, RolloutItem, RolloutRecorder,
-    ToolCallRecord, process_storage_key,
+    AgentMachineMeta, CheckpointRecord, EffectRecord, EffectStatus, EventRecord, MessageRecord,
+    RolloutItem, RolloutRecorder, ToolCallRecord, process_storage_key,
 };
 pub use runtime::{
-    AgentConfig, AgentProcessConfig, RuntimeController, RuntimeHandle,
-    spawn_with_namespace_environment,
+    AgentConfig, AgentProcessConfig, ProjectContinuitySummary, ProjectContinuitySummaryView,
+    ProjectSummaryDeleteOutcome, ProjectSummaryEdit, ProjectSummaryOrigin, RuntimeController,
+    RuntimeHandle, delete_project_summary, derive_project_key, edit_project_summary,
+    inspect_project_summary, spawn_with_namespace_environment,
 };
 pub use tools::ToolRegistry;

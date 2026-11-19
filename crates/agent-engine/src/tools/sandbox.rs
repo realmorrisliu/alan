@@ -18,6 +18,7 @@ pub(in crate::tools) mod command_process;
 pub(in crate::tools) mod command_wrappers;
 mod path_literals;
 mod path_safety;
+mod program_command;
 mod sandbox_spec;
 mod shell_syntax;
 
@@ -65,9 +66,8 @@ pub struct Sandbox {
     excluded_host_roots: Vec<PathBuf>,
     /// Forces a specific backend instead of host detection (tests only).
     backend_override: Option<super::sandbox_backend::SandboxBackendKind>,
-    /// Explicit host trust posture: drops static host-mount shape/syntax guards
-    /// while preserving protected `.git`/`.alan`/`.agents` subpath checks.
-    explicit_trust: bool,
+    /// Explicit invocation-only trust posture governing sandbox and guard enforcement.
+    trust_posture: crate::policy::TrustPosture,
 }
 
 impl Sandbox {
@@ -87,7 +87,7 @@ impl Sandbox {
             spec,
             excluded_host_roots: Vec::new(),
             backend_override: None,
-            explicit_trust: false,
+            trust_posture: crate::policy::TrustPosture::Governed,
         }
     }
 
@@ -116,23 +116,43 @@ impl Sandbox {
             spec,
             excluded_host_roots: Vec::new(),
             backend_override: Some(backend),
-            explicit_trust: false,
+            trust_posture: crate::policy::TrustPosture::Governed,
         }
     }
 
-    /// Configure explicit trust posture on this sandbox.
-    pub fn with_explicit_trust(mut self, explicit_trust: bool) -> Self {
-        self.explicit_trust = explicit_trust;
+    /// Return the underlying projected confinement spec.
+    pub fn spec(&self) -> &SandboxSpec {
+        &self.spec
+    }
+
+    /// Configure explicit invocation trust posture on this sandbox.
+    pub fn with_trust_posture(mut self, trust_posture: crate::policy::TrustPosture) -> Self {
+        self.trust_posture = trust_posture;
         self
     }
 
-    /// Return whether explicit trust is active on this sandbox.
+    /// Return the active invocation trust posture on this sandbox.
+    pub const fn trust_posture(&self) -> crate::policy::TrustPosture {
+        self.trust_posture
+    }
+
+    /// Configure explicit trust posture on this sandbox (`ConfinedTrusted` vs `Governed`).
+    pub fn with_explicit_trust(mut self, explicit_trust: bool) -> Self {
+        self.trust_posture = if explicit_trust {
+            crate::policy::TrustPosture::ConfinedTrusted
+        } else {
+            crate::policy::TrustPosture::Governed
+        };
+        self
+    }
+
+    /// Return whether explicit trust bypasses action approvals on this sandbox.
     pub fn explicit_trust(&self) -> bool {
-        self.explicit_trust
+        self.trust_posture.bypasses_action_approvals()
     }
 
     fn os_sandbox_or_explicit_trust(&self) -> bool {
-        self.active_backend().is_os_enforced() || self.explicit_trust
+        self.active_backend().is_os_enforced() || self.trust_posture.bypasses_action_approvals()
     }
 
     fn path_check_mode(&self) -> PathCheckMode {
@@ -369,6 +389,23 @@ impl Sandbox {
         capability: Option<alan_agent_protocol::ToolCapability>,
         progress: Option<command_process::OutputProgressCallback>,
     ) -> Result<ExecResult> {
+        if self.trust_posture.is_unsandboxed_host_account() {
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.arg("-p").arg("-c").arg(cmd);
+            command.current_dir(cwd);
+            command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let output =
+                command_process::output_with_progress(command, timeout, None, progress).await?;
+            return Ok(ExecResult {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                exit_code: output.status.code().unwrap_or(-1),
+            });
+        }
+
         if !self.command_cwd_is_authorized(cwd, capability) {
             return Err(anyhow!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
@@ -393,16 +430,29 @@ impl Sandbox {
             self.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
         }
 
-        // A command only reaches execution after policy/reviewer/human clearance.
-        // If it is classified as a network capability, run it with the sandbox's
-        // network restriction lifted (still filesystem-confined) so an approved
-        // network call actually runs instead of failing under a deny-all profile.
+        // In Governed mode, a command only reaches execution after policy/reviewer/human
+        // clearance, so an approved network command lifts network confinement.
+        // In ConfinedTrusted (`--trust`), per-action prompts are bypassed, so OS network
+        // confinement MUST NOT be silently widened beyond the SandboxSpec posture.
         let allow_network = self.spec.network.allows_network()
-            || matches!(
+            || (!self.trust_posture.bypasses_action_approvals()
+                && matches!(
+                    capability,
+                    Some(alan_agent_protocol::ToolCapability::Network)
+                ));
+        let backend = self.active_backend();
+        if !allow_network
+            && !backend.is_os_enforced()
+            && self.trust_posture.bypasses_action_approvals()
+            && matches!(
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
-            );
-        let backend = self.active_backend();
+            )
+        {
+            return Err(anyhow!(
+                "network access is confined under `--trust` without an OS network sandbox"
+            ));
+        }
         if !self.excluded_host_roots.is_empty()
             && !matches!(
                 backend,
@@ -423,8 +473,7 @@ impl Sandbox {
                 .await;
         }
 
-        let mut command = self.build_confined_command(cmd, allow_network, backend)?;
-        command.current_dir(cwd);
+        let mut command = self.build_confined_command(cmd, cwd, allow_network, backend)?;
         command
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -446,69 +495,19 @@ impl Sandbox {
     fn build_confined_command(
         &self,
         cmd: &str,
+        cwd: &Path,
         allow_network: bool,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Result<tokio::process::Command> {
         // Pin the system shell; -p ignores inherited shell functions/startup hooks.
         // Disable pathname expansion (-f) only on the untrusted path-guard fallback.
-        let command = match backend {
-            super::sandbox_backend::SandboxBackendKind::Seatbelt => {
-                let mut profile = super::sandbox_backend::seatbelt_profile(
-                    &self.spec.writable_roots,
-                    &self.spec.read_denylist,
-                    allow_network,
-                );
-                profile.push_str(&super::sandbox_backend::seatbelt_read_only(&self.spec));
-                profile.push_str(&super::sandbox_backend::seatbelt_host_mount_exclusions(
-                    &self.excluded_host_roots,
-                    &self.spec.readable_roots,
-                ));
-                let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
-                command
-                    .arg("-p")
-                    .arg(profile)
-                    .arg("/bin/sh")
-                    .arg("-p")
-                    .arg("-c")
-                    .arg(cmd);
-                command
-            }
-            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace => {
-                return Err(anyhow!(
-                    "linux_reified_namespace backend is detectable but no runner is installed yet"
-                ));
-            }
-            #[cfg(target_os = "linux")]
-            super::sandbox_backend::SandboxBackendKind::Landlock => {
-                use std::os::unix::process::CommandExt;
-                let writable_roots = self.spec.writable_roots.clone();
-                let read_denylist = self.spec.read_denylist.clone();
-                let mut command = std::process::Command::new("/bin/sh");
-                command.arg("-p").arg("-c").arg(cmd);
-                // SAFETY: pre_exec runs in the forked child before exec; it only
-                // applies a Landlock ruleset (no shared-state mutation).
-                unsafe {
-                    command.pre_exec(move || {
-                        super::sandbox_backend::apply_landlock(
-                            &writable_roots,
-                            &read_denylist,
-                            allow_network,
-                        )
-                    });
-                }
-                tokio::process::Command::from(command)
-            }
-            _ => {
-                let mut command = tokio::process::Command::new("/bin/sh");
-                command.arg("-p");
-                if !self.explicit_trust {
-                    command.arg("-f");
-                }
-                command.arg("-c").arg(cmd);
-                command
-            }
-        };
-        Ok(command)
+        let mut argv = vec![std::ffi::OsString::from("-p")];
+        if !backend.is_os_enforced() && !self.trust_posture.bypasses_action_approvals() {
+            argv.push(std::ffi::OsString::from("-f"));
+        }
+        argv.push(std::ffi::OsString::from("-c"));
+        argv.push(std::ffi::OsString::from(cmd));
+        self.build_confined_argv(Path::new("/bin/sh"), &argv, cwd, allow_network, backend)
     }
 
     async fn exec_reified_namespace(

@@ -1,16 +1,44 @@
 use super::*;
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "legacy helper retained for existing foreground tests"
+    )
+)]
 fn interactive_config(
     root: alan_ap::InProcessTransport,
     root_model: Option<String>,
     project_candidate: Option<PathBuf>,
     store: &alan_os_host::SystemStorePaths,
 ) -> Result<alan_tui::FileBackedRunConfig> {
+    interactive_config_with_posture(
+        root,
+        root_model,
+        project_candidate,
+        store,
+        alan_agent_engine::TrustPosture::Governed,
+    )
+}
+
+fn interactive_config_with_posture(
+    root: alan_ap::InProcessTransport,
+    root_model: Option<String>,
+    project_candidate: Option<PathBuf>,
+    store: &alan_os_host::SystemStorePaths,
+    trust_posture: alan_agent_engine::TrustPosture,
+) -> Result<alan_tui::FileBackedRunConfig> {
     let mut config = alan_tui::FileBackedRunConfig::new(root, "/agent/root");
     config.effective_model = root_model;
     config.project_candidate = project_candidate;
     config.history_path = Some(store.service("shell-ui")?.join("composer-history"));
-    config.sandbox_backend = Some(alan_agent_engine::tools::active_backend_name().to_string());
+    config.sandbox_backend = Some(if trust_posture.is_unsandboxed_host_account() {
+        "unsandboxed host-account".to_string()
+    } else {
+        alan_agent_engine::tools::active_backend_name().to_string()
+    });
+    config.trust_posture_label = trust_posture.tui_badge_label().map(str::to_string);
     Ok(config)
 }
 
@@ -42,35 +70,43 @@ pub(super) fn generated_foreground_runtime_dir(temp_root: &Path) -> Result<PathB
     Ok(runtime_dir)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Foreground CLI entrypoint passes parsed invocation options directly without bundling mutable state"
+)]
 pub(super) async fn run_bare_in_foreground_instance(
     paths: HostEndpointPaths,
     mode: BareRunMode,
     resume_root: bool,
+    resume_rollout_id: Option<String>,
     ephemeral: bool,
     cwd: Option<std::path::PathBuf>,
     shadow_evaluator: Option<String>,
+    trust_options: cli::trust::ResolvedBareTrustOptions,
 ) -> Result<i32> {
     anyhow::ensure!(
         !(ephemeral && resume_root),
         "`--ephemeral` cannot be combined with `--resume`"
     );
+    let trust_posture = trust_options.posture;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
-    let mut config =
-        HostBootConfig::product_with_root_resume(resume_root)?.with_ephemeral_rollout(ephemeral);
-    if let Some(profile) = shadow_evaluator {
-        let surface = match mode {
-            BareRunMode::Interactive { .. } => {
-                alan_agent_engine::runtime::EvaluationSurface::Interactive
-            }
-            BareRunMode::OneShot { .. } => {
-                alan_agent_engine::runtime::EvaluationSurface::Redirected
-            }
-        };
-        config = config.with_input_shadow(profile, surface);
-    }
+    let shadow_surface = match mode {
+        BareRunMode::Interactive { .. } => {
+            alan_agent_engine::runtime::EvaluationSurface::Interactive
+        }
+        BareRunMode::OneShot { .. } => alan_agent_engine::runtime::EvaluationSurface::Redirected,
+    };
+    let config = cli::trust::apply_boot_trust_options(
+        HostBootConfig::product_with_root_resume(resume_root)?,
+        trust_options,
+        resume_rollout_id,
+        ephemeral,
+        shadow_evaluator,
+        shadow_surface,
+    )?;
     let is_json_mode = matches!(&mode, BareRunMode::OneShot { json: true, .. });
     let host = match AlanOsHost::boot(config, paths.clone()).await {
         Ok(host) => host,
@@ -109,8 +145,13 @@ pub(super) async fn run_bare_in_foreground_instance(
                         candidate_cwd.as_deref(),
                         &images,
                     )?;
-                    let mut config =
-                        interactive_config(attachment.root, root_model, candidate_cwd, &store)?;
+                    let mut config = interactive_config_with_posture(
+                        attachment.root,
+                        root_model,
+                        candidate_cwd,
+                        &store,
+                        trust_posture,
+                    )?;
                     config.initial_attachments = initial_attachments;
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {

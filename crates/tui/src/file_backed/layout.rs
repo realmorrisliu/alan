@@ -90,6 +90,18 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
             header_line,
             Line::styled(hint_text, app.theme.muted_style()),
         ];
+        if app.modal.mode == ModalMode::Actions && !app.running_tools.is_empty() {
+            let active_list: Vec<String> = app
+                .running_tools
+                .iter()
+                .map(|tool| format!("{} · running", crate::history::clean_text(&tool.title)))
+                .collect();
+            rows.push(Line::styled(
+                format!("Active · {}", active_list.join(" | ")),
+                app.theme.accent_style(),
+            ));
+        }
+        let header_rows = rows.len();
         let display_rows = if app.modal.mode == ModalMode::Actions {
             filter_modal_rows(&app.modal.rows, app.modal.show_raw_json, app.theme)
         } else {
@@ -107,9 +119,13 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
             detail
                 .into_iter()
                 .skip(start)
-                .take(area.height.saturating_sub(2) as usize),
+                .take(area.height.saturating_sub(header_rows as u16) as usize),
         );
         frame.render_widget(Paragraph::new(rows), area);
+        return;
+    }
+    if app.resume_picker.active {
+        super::resume_picker::draw(frame, app);
         return;
     }
     let mut lines = history_lines(app, width);
@@ -481,7 +497,7 @@ pub(super) fn base_viewport_height(
     terminal_height: usize,
 ) -> u16 {
     // Details are stable full-screen content, never transient candidates.
-    if app.modal.active {
+    if app.modal.active || app.resume_picker.active {
         return terminal_height.max(1).min(u16::MAX as usize) as u16;
     }
     wrapped_line_count(&history_lines(app, width), width)
@@ -495,7 +511,7 @@ pub(super) fn inline_viewport_height(
     width: usize,
     terminal_height: usize,
 ) -> u16 {
-    if app.modal.active {
+    if app.modal.active || app.resume_picker.active {
         return terminal_height.max(1).min(u16::MAX as usize) as u16;
     }
     wrapped_line_count(&history_lines(app, width), width)

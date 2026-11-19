@@ -14,7 +14,9 @@ mod namespace_environment;
 pub(crate) use namespace_environment::read_action_evidence;
 pub(crate) mod owner_work;
 mod parallel_read_tools;
+mod parallel_subagents;
 mod turn_execution;
+mod virtual_dispatch;
 use turn_execution::finalize_replayed_tool_end_turn_best_effort;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
@@ -30,8 +32,8 @@ pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceOperationCleanup,
     NamespaceOperationUncertainty, NamespaceProcessFiles, NamespaceTapeWriter,
-    NamespaceToolActionEvidence, NamespaceToolExecution, NamespaceToolProcessError,
-    PendingActionPublication,
+    NamespaceToolActionEvidence, NamespaceToolAuthorization, NamespaceToolExecution,
+    NamespaceToolProcessError, PendingActionPublication,
 };
 pub use namespace_environment::{
     NamespaceActionRecord, NamespaceEvaluation, NamespaceEvaluationFailure,
@@ -77,6 +79,10 @@ use super::turn_input::TurnInputBroker;
 use super::turn_support::{
     cancel_current_task, emit_streaming_chunks, normalize_tool_calls, split_text_for_typing,
 };
+#[allow(
+    unused_imports,
+    reason = "Re-exported into transition submodules via super::VirtualToolOutcome"
+)]
 use super::virtual_tool::VirtualToolOutcome;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DeferredRuntimeActionExit {
@@ -157,6 +163,10 @@ impl RuntimeLoopState {
 
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         self.environment.tool_execution()
+    }
+
+    pub(crate) fn tool_authorization(&self) -> NamespaceToolAuthorization {
+        self.environment.tool_authorization()
     }
 }
 
@@ -260,87 +270,21 @@ pub(super) async fn dispatch_virtual_tool_call<E, F>(
     task_cancel: &CancellationToken,
     allow_approved_tool_escalation_execution: bool,
     emit: &mut E,
-) -> Result<super::virtual_tool::VirtualToolOutcome>
+) -> Result<VirtualToolOutcome>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let agent_files = state.agent_files();
-    let host_mount_requests = state.environment.host_mount_requests();
-    if task_cancel.is_cancelled()
-        && super::turn_support::check_turn_cancelled(
-            &mut state.machine,
-            &agent_files,
-            &host_mount_requests,
-            emit,
-            task_cancel,
-        )
-        .await?
-    {
-        return Ok(super::virtual_tool::VirtualToolOutcome::EndTurn);
-    }
-
-    match tool_call.name.as_str() {
-        "request_confirmation" => {
-            let runtime = agent_interaction_runtime(state);
-            super::interaction_tools::handle_request_confirmation(
-                runtime,
-                tool_call,
-                tool_arguments,
-                emit,
-            )
-            .await
-        }
-        "request_mount" => {
-            let runtime = mount_request_runtime(state);
-            super::mount_request_tool::handle_request_mount(
-                runtime,
-                tool_call,
-                tool_arguments,
-                emit,
-            )
-            .await
-        }
-        "request_user_input" => {
-            let runtime = agent_interaction_runtime(state);
-            super::interaction_tools::handle_request_user_input(
-                runtime,
-                tool_call,
-                tool_arguments,
-                emit,
-            )
-            .await
-        }
-        "update_plan" => {
-            let runtime = agent_interaction_runtime(state);
-            super::interaction_tools::handle_update_plan(runtime, tool_call, tool_arguments, emit)
-                .await
-        }
-        "invoke_delegated_skill" => {
-            let runtime = delegated_skill_runtime(state);
-            super::delegated_skill_tool::handle_invoke_delegated_skill(
-                runtime,
-                tool_call,
-                tool_arguments,
-                cancel,
-                task_cancel,
-                emit,
-            )
-            .await
-        }
-        "terminate_child_run" => {
-            let runtime = child_run_termination_runtime(state);
-            super::child_run_termination_tool::handle_terminate_child_run(
-                runtime,
-                tool_call,
-                tool_arguments,
-                allow_approved_tool_escalation_execution,
-                emit,
-            )
-            .await
-        }
-        _ => Ok(super::virtual_tool::VirtualToolOutcome::NotVirtual),
-    }
+    virtual_dispatch::dispatch_virtual_tool_call(
+        state,
+        tool_call,
+        tool_arguments,
+        cancel,
+        task_cancel,
+        allow_approved_tool_escalation_execution,
+        emit,
+    )
+    .await
 }
 
 pub(super) fn tool_resolution_runtime(
@@ -355,6 +299,7 @@ pub(super) fn tool_authorization_runtime(
 ) -> super::tool_authorization::ToolAuthorizationRuntime<'_> {
     let generation = state.namespace_generation();
     let agent_files = state.agent_files();
+    let authority = state.tool_authorization();
     let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
     super::tool_authorization::ToolAuthorizationRuntime::new(
         &mut state.machine,
@@ -364,6 +309,10 @@ pub(super) fn tool_authorization_runtime(
         agent_files,
         llm_request_timeout_secs,
     )
+    .with_trust_posture(state.runtime_config.trust_posture)
+    .with_guardian_profile(state.runtime_config.guardian_profile.as_deref())
+    .with_guardian_config(state.runtime_config.guardian.clone())
+    .with_authority(authority)
 }
 
 pub(super) fn tool_execution_runtime(
@@ -392,6 +341,10 @@ pub(super) fn turn_memory_runtime(
         .then(|| state.core_config.memory.store_dir.clone())
         .flatten();
     let process_path = state.process_path();
+    let project_cwd = state
+        .tool_execution()
+        .default_cwd()
+        .map(|cwd| cwd.to_string_lossy().into_owned());
     let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
     super::turn_memory::TurnMemoryRuntime::new(
         &mut state.machine,
@@ -399,6 +352,7 @@ pub(super) fn turn_memory_runtime(
         process_path,
         llm_request_timeout_secs,
     )
+    .with_project_cwd(project_cwd)
 }
 
 #[cfg(test)]
@@ -717,7 +671,7 @@ where
 
     let mut idx = 0;
     while idx < tool_calls.len() {
-        if let Some(outcome) = parallel_read_tools::try_run_parallel_read_only_prefix(
+        if let Some(step) = parallel_subagents::try_run_parallel_prefix(
             loop_guard,
             state,
             tool_calls,
@@ -728,9 +682,13 @@ where
         )
         .await?
         {
-            match outcome {
-                parallel_read_tools::ParallelReadBatchOutcome::Completed { count } => {
-                    idx += count;
+            match step {
+                parallel_subagents::ParallelBatchStep::Advanced {
+                    next_idx,
+                    refresh_context: batch_refresh,
+                } => {
+                    idx = next_idx;
+                    refresh_context |= batch_refresh;
                     if handle_queued_steering_inputs(
                         &mut state.machine,
                         &state.environment,
@@ -748,7 +706,7 @@ where
                     }
                     continue;
                 }
-                parallel_read_tools::ParallelReadBatchOutcome::EndTurn => {
+                parallel_subagents::ParallelBatchStep::EndTurn => {
                     return Ok(ToolBatchOrchestratorOutcome::EndTurn {
                         surfaces_refreshed: false,
                     });

@@ -865,18 +865,46 @@ fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
         return None;
     }
     let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
-    let title = metadata
-        .as_ref()
-        .and_then(|v| v.get("title"))
-        .and_then(Value::as_str)
-        .filter(|v| !v.trim().is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| action_title(snapshot));
+    let title = format_running_subagent_title(snapshot, metadata.as_ref()).unwrap_or_else(|| {
+        metadata
+            .as_ref()
+            .and_then(|v| v.get("title"))
+            .and_then(Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| action_title(snapshot))
+    });
     let tail_lines = extract_running_tool_tail(metadata.as_ref(), &snapshot.output);
     Some(RunningTool {
         id: snapshot.id.clone(),
         title,
         tail_lines,
+    })
+}
+
+fn format_running_subagent_title(
+    snapshot: &ActionSnapshot,
+    metadata: Option<&Value>,
+) -> Option<String> {
+    let role = metadata
+        .and_then(|v| v.get("subagent_role"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| snapshot.name.trim().strip_prefix("subagent:"))?;
+    let role = crate::history::clean_text(role);
+    let pid = metadata
+        .and_then(|v| v.get("child_pid"))
+        .and_then(Value::as_u64);
+    let state = metadata
+        .and_then(|v| v.get("child_state"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("running"));
+    Some(match (pid, state) {
+        (Some(pid), Some(state)) if pid > 0 => format!("{role} · pid {pid} · {state}"),
+        (Some(pid), None) if pid > 0 => format!("{role} · pid {pid}"),
+        (_, Some(state)) => format!("{role} · {state}"),
+        _ => role,
     })
 }
 

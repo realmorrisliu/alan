@@ -139,6 +139,7 @@ async fn managed_connection(
         profile: "managed".into(),
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
+        guardian_profile: None,
     };
     (service, authority)
 }
@@ -274,6 +275,7 @@ async fn implicit_account_replacement_cannot_select_or_restore_with_old_catalog_
         profile: "managed".into(),
         namespace: authority.namespace.clone(),
         evaluator: None,
+        guardian_profile: None,
     };
     let rebound = next.capture_initial().await.unwrap().unwrap();
     assert_eq!(
@@ -353,6 +355,7 @@ async fn slow_discovery_does_not_block_published_observation_or_publish_into_rep
         profile: "slow".into(),
         namespace: authority.namespace.clone(),
         evaluator: None,
+        guardian_profile: None,
     };
     let catalog = replaced.catalog().await.unwrap();
     assert_eq!(catalog["models"][0]["model"], "replacement-model");

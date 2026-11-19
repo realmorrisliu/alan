@@ -79,6 +79,10 @@ impl SystemStorePaths {
         self.service("packages")
     }
 
+    pub fn host_mount_grants(&self) -> Result<PathBuf> {
+        Ok(self.service("host-mount")?.join("grants.json"))
+    }
+
     pub fn connections_metadata(&self) -> Result<PathBuf> {
         Ok(self.service("connections")?.join("connections.toml"))
     }

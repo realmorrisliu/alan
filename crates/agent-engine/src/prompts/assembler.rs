@@ -52,6 +52,20 @@ pub(crate) fn build_agent_system_prompt_with_sections(
     definition_context: Option<&str>,
     memory_context: Option<&str>,
 ) -> String {
+    build_agent_system_prompt_with_all_sections(
+        domain_prompt,
+        definition_context,
+        memory_context,
+        None,
+    )
+}
+
+pub(crate) fn build_agent_system_prompt_with_all_sections(
+    domain_prompt: &str,
+    definition_context: Option<&str>,
+    memory_context: Option<&str>,
+    project_knowledge_context: Option<&str>,
+) -> String {
     let mut prompt = String::new();
     append_prompt_section(&mut prompt, super::RUNTIME_BASE_PROMPT);
     append_prompt_section(&mut prompt, super::SYSTEM_PROMPT);
@@ -61,6 +75,9 @@ pub(crate) fn build_agent_system_prompt_with_sections(
     }
     if let Some(memory_context) = memory_context {
         append_prompt_section(&mut prompt, memory_context);
+    }
+    if let Some(project_knowledge_context) = project_knowledge_context {
+        append_prompt_section(&mut prompt, project_knowledge_context);
     }
     prompt
 }

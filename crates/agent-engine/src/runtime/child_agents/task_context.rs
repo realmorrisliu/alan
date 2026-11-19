@@ -54,6 +54,15 @@ pub(super) fn build_child_task_text(parent: &ChildTaskContext, spec: &SpawnSpec)
 
 fn render_launch_metadata(spec: &SpawnSpec) -> Option<String> {
     let mut lines = Vec::new();
+    if let alan_agent_protocol::SpawnTarget::AdHocSubagent { role } = &spec.target {
+        lines.push(format!("role: {role}"));
+    }
+    if spec.runtime_overrides.read_only {
+        lines.push("mode: read_only (read-only tools and mounts)".to_string());
+    }
+    if let Some(model) = spec.runtime_overrides.model.as_deref() {
+        lines.push(format!("model: {model}"));
+    }
     if let Some(cwd) = spec.launch.cwd.as_ref() {
         lines.push(format!("cwd: {}", cwd.display()));
     }

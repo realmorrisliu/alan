@@ -28,6 +28,7 @@ pub use boot_unit::{
 };
 pub use connection::{
     ConnectionService, NativeConnectionAction, NativeConnectionRequest, NativeConnectionResponse,
+    provider_packages,
 };
 pub use connection_profile::{
     ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
@@ -45,11 +46,16 @@ pub use host_mount::{
 };
 pub use local_entry::LocalEntryService;
 pub use package::{
-    PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageKind,
-    PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry,
-    PackageState, validate_package_store_for_migration,
+    McpPackageExport, McpTransportSpec, PackageCatalog, PackageCommand, PackageCommandResult,
+    PackageExport, PackageExportKind, PackageKind, PackageRecord, PackageReferenceLease,
+    PackageService, PackageSnapshot, PackageSnapshotEntry, PackageState, PackageSyncEntry,
+    ProviderAuthMode, ProviderPackageExport, ToolPackageExport, validate_package_id,
+    validate_package_store_for_migration,
 };
 pub use process_launch::ProcessLaunchContext;
+pub use quartermaster::{
+    CLI_IMPORT_MOUNT_PATH, QuartermasterCommandResult, run_q_command_with_package_service,
+};
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, InputShadowSelection, LlmClientFactory, ServiceManager,
     ServiceManagerConfig,

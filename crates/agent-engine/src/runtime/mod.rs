@@ -16,6 +16,7 @@ mod guardian;
 mod interaction_tools;
 mod launch_config;
 mod loop_guard;
+pub mod mcp;
 mod memory_flush;
 mod memory_promotion;
 mod memory_recall;
@@ -27,6 +28,7 @@ pub(crate) mod queue_publication;
 mod response_guardrails;
 mod shadow_evaluation;
 mod steering_queue;
+mod subagent_tool;
 mod submission_handlers;
 mod task_budget;
 #[cfg(test)]
@@ -35,7 +37,7 @@ mod tool_authorization;
 mod tool_batch;
 mod tool_effect_lifecycle;
 mod tool_execution;
-mod tool_packages;
+pub mod tool_packages;
 mod tool_policy;
 mod tool_presentation;
 mod tool_resolution;
@@ -57,6 +59,11 @@ pub use controller::{
 };
 pub use engine::spawn_with_namespace_environment;
 pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
+pub use memory_surfaces::project_summary::{
+    ProjectContinuitySummary, ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome,
+    ProjectSummaryEdit, ProjectSummaryOrigin, delete_project_summary, derive_project_key,
+    edit_project_summary, inspect_project_summary,
+};
 pub use shadow_evaluation::EvaluationSurface;
 pub use transition::{
     NamespaceEvaluation, NamespaceEvaluationFailure, NamespaceEvaluationUncertainty,
@@ -99,6 +106,12 @@ pub struct RuntimeConfig {
     pub governance: alan_agent_protocol::GovernanceConfig,
     /// Loaded policy engine for this runtime/machine.
     pub policy_engine: crate::policy::PolicyEngine,
+    /// Explicit invocation-only trust posture (never loaded from Config or rollouts).
+    pub trust_posture: crate::policy::TrustPosture,
+    /// Optional dedicated Connection profile for Guardian escalation reviews.
+    pub guardian_profile: Option<String>,
+    /// Guardian escalation budget, custom policy path, and fallback limits.
+    pub guardian: crate::config::GuardianConfig,
     /// Request-control intent carried by runtime/machine launch.
     pub request_control_intent: crate::RequestControlIntent,
     /// Streaming strategy (`auto`/`on`/`off`).
@@ -111,6 +124,9 @@ pub struct RuntimeConfig {
     pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
     /// Memory Service backing inherited only with an explicit Memory handle.
     pub memory_store_backing: Option<std::path::PathBuf>,
+    /// Whether this runtime is allowed to expose and invoke `spawn_subagent`.
+    /// Root Agents enable this when child launch is configured; spawned children disable it.
+    pub ad_hoc_subagent_spawn_enabled: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -133,12 +149,16 @@ impl Default for RuntimeConfig {
                 .effective_compaction_hard_trigger_ratio(),
             governance: alan_agent_protocol::GovernanceConfig::default(),
             policy_engine: crate::policy::PolicyEngine::autonomous(),
+            trust_posture: crate::policy::TrustPosture::Governed,
+            guardian_profile: None,
+            guardian: crate::config::GuardianConfig::default(),
             request_control_intent: crate::RequestControlIntent::default(),
             streaming_mode: crate::config::StreamingMode::Auto,
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
             durability_required: false,
             store_bindings: None,
             memory_store_backing: None,
+            ad_hoc_subagent_spawn_enabled: true,
         }
     }
 }
@@ -160,12 +180,16 @@ impl From<&crate::config::Config> for RuntimeConfig {
             compaction_hard_trigger_ratio: config.effective_compaction_hard_trigger_ratio(),
             governance: alan_agent_protocol::GovernanceConfig::default(),
             policy_engine: crate::policy::PolicyEngine::autonomous(),
+            trust_posture: crate::policy::TrustPosture::Governed,
+            guardian_profile: config.guardian_profile.clone(),
+            guardian: config.guardian.clone(),
             request_control_intent: crate::RequestControlIntent::from_config(config),
             streaming_mode: config.streaming_mode,
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,
             durability_required: config.durability.required,
             store_bindings: None,
             memory_store_backing: None,
+            ad_hoc_subagent_spawn_enabled: true,
         }
     }
 }

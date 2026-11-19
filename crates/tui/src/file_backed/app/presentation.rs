@@ -1,6 +1,13 @@
 use super::*;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+pub(in crate::file_backed) fn is_unsandboxed_posture(label: &str) -> bool {
+    let lower = label.to_ascii_lowercase();
+    lower.contains("unsandboxed")
+        || lower.contains("host-account")
+        || lower.contains("host_account")
+}
+
 impl FileBackedApp {
     pub(in crate::file_backed) fn has_pending_response(&self) -> bool {
         self.pending_yield.is_some()
@@ -99,17 +106,18 @@ impl FileBackedApp {
             .unwrap_or_else(|| full_model.clone());
         let full_usage = self.usage.prompt_label();
         let short_usage = self.usage.short_prompt_label();
-        let sandbox_chip = self.sandbox_trust_chip();
+        let trust_chip = self.trust_posture_chip();
+        let urgent_trust = trust_chip.as_ref().is_some_and(|(_, _, urgent)| *urgent);
 
-        // Priority degradation: keep model/effort while it fits width, then shrink
-        // optional chips (sandbox -> usage details -> git -> location).
+        // Priority degradation: keep model/effort (and any urgent UNSANDBOXED
+        // trust warning) visible while fitting width; shrink optional chips first.
         let mut model = full_model;
         if UnicodeWidthStr::width(model.as_str()) + dot_width > width {
             model = short_model;
         }
         let mut usage = full_usage;
         let mut include_git = git_chip.is_some();
-        let mut include_sandbox = sandbox_chip.is_some();
+        let mut include_sandbox = trust_chip.is_some();
 
         let measure = |loc: &str, m: &str, g: bool, u: Option<&str>, s: bool| -> usize {
             let mut total = dot_width + UnicodeWidthStr::width(m);
@@ -122,19 +130,20 @@ impl FileBackedApp {
             if let Some(ut) = u {
                 total += UnicodeWidthStr::width(ut) + 3;
             }
-            if s && let Some(ref st) = sandbox_chip {
+            if s && let Some((ref st, _, _)) = trust_chip {
                 total += UnicodeWidthStr::width(st.as_str()) + 3;
             }
             total
         };
 
-        if measure(
-            &location,
-            &model,
-            include_git,
-            usage.as_deref(),
-            include_sandbox,
-        ) > width
+        if !urgent_trust
+            && measure(
+                &location,
+                &model,
+                include_git,
+                usage.as_deref(),
+                include_sandbox,
+            ) > width
         {
             include_sandbox = false;
         }
@@ -162,6 +171,17 @@ impl FileBackedApp {
         if include_git && let Some((ref gt, _)) = git_chip {
             reserved += UnicodeWidthStr::width(gt.as_str()) + 3;
         }
+        if urgent_trust
+            && include_sandbox
+            && let Some((ref st, _, _)) = trust_chip
+        {
+            let s_len = UnicodeWidthStr::width(st.as_str()) + 3;
+            if dot_width + s_len <= width {
+                reserved += s_len;
+            } else {
+                include_sandbox = false;
+            }
+        }
         let show_usage = usage.as_ref().is_some_and(|ut| {
             let u_len = UnicodeWidthStr::width(ut.as_str()) + 3;
             if reserved + u_len + 6 <= width {
@@ -174,7 +194,10 @@ impl FileBackedApp {
         if !show_usage {
             usage = None;
         }
-        if include_sandbox && let Some(ref st) = sandbox_chip {
+        if !urgent_trust
+            && include_sandbox
+            && let Some((ref st, _, _)) = trust_chip
+        {
             let s_len = UnicodeWidthStr::width(st.as_str()) + 3;
             if reserved + s_len + 6 <= width {
                 reserved += s_len;
@@ -201,17 +224,36 @@ impl FileBackedApp {
         if let Some(ut) = usage {
             spans.push(Span::styled(format!(" · {ut}"), self.theme.muted_style()));
         }
-        if include_sandbox && let Some(st) = sandbox_chip {
-            spans.push(Span::styled(format!(" · {st}"), self.theme.muted_style()));
+        if include_sandbox && let Some((st, style, _)) = trust_chip {
+            spans.push(Span::styled(" · ", self.theme.muted_style()));
+            spans.push(Span::styled(st, style));
         }
         Line::from(spans)
     }
 
-    fn sandbox_trust_chip(&self) -> Option<String> {
+    fn trust_posture_chip(&self) -> Option<(String, ratatui::style::Style, bool)> {
+        if let Some(raw) = self.trust_posture_label.as_deref() {
+            let safe = super::super::model::safe(raw);
+            if !safe.is_empty() {
+                if is_unsandboxed_posture(&safe) {
+                    let badge = if self.theme.is_dumb {
+                        format!("! {safe}")
+                    } else {
+                        safe
+                    };
+                    return Some((
+                        badge,
+                        self.theme.bold_if_capable(self.theme.block_style()),
+                        true,
+                    ));
+                }
+                return Some((safe, self.theme.run_style(), false));
+            }
+        }
         let trust = self.project.as_ref().map(|p| p.access.label());
         match (self.sandbox_backend.as_deref(), trust) {
-            (Some(sb), Some(tr)) => Some(format!("{sb}/{tr}")),
-            (Some(sb), None) => Some(sb.to_string()),
+            (Some(sb), Some(tr)) => Some((format!("{sb}/{tr}"), self.theme.muted_style(), false)),
+            (Some(sb), None) => Some((sb.to_string(), self.theme.muted_style(), false)),
             (None, _) => None,
         }
     }

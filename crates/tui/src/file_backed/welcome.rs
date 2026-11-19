@@ -46,11 +46,38 @@ pub(in crate::file_backed) fn from_app(app: &FileBackedApp) -> WelcomeBanner {
         .sandbox_backend
         .clone()
         .unwrap_or_else(|| "os-sandbox".to_string());
+    let trust_posture = app.trust_posture_label.clone();
     WelcomeBanner {
         project,
         model,
         sandbox,
+        trust_posture,
     }
+}
+
+fn posture_badge_span(
+    banner: &WelcomeBanner,
+    theme: Theme,
+    max_width: usize,
+) -> Option<Span<'static>> {
+    let raw = banner.trust_posture.as_deref()?;
+    let label = super::model::safe(raw);
+    let unsandboxed = super::app::presentation::is_unsandboxed_posture(&label);
+    let text = if unsandboxed && theme.is_dumb {
+        format!("! {label}")
+    } else {
+        label
+    };
+    let clamped = clamp_width(&text, max_width);
+    if clamped.is_empty() {
+        return None;
+    }
+    let style = if unsandboxed {
+        theme.bold_if_capable(theme.block_style())
+    } else {
+        theme.run_style()
+    };
+    Some(Span::styled(clamped, style))
 }
 
 /// Render the width-responsive scrollable welcome header (`4` lines wide, `2` lines narrow).
@@ -61,13 +88,44 @@ pub(crate) fn render_banner_lines(
 ) -> Vec<Line<'static>> {
     if width >= 64 {
         let right_budget = width.saturating_sub(21).max(1);
-        let summary = clamp_width(
-            &format!("{} · {} · {}", banner.project, banner.model, banner.sandbox),
+        let hints = clamp_width(
+            ": task · !shell · /help · /model · /resume · /man",
             right_budget,
         );
-        let hints = clamp_width(": task · !shell · /help · /model · /man", right_budget);
         let tagline = clamp_width("Everything is a file. Even an agent.", right_budget);
         let title = clamp_width("ALAN(1) · alan9", right_budget);
+        let summary_line = if let Some(badge) = posture_badge_span(banner, theme, right_budget) {
+            let badge_w = badge.content.width();
+            let prefix_budget = right_budget.saturating_sub(badge_w + 3);
+            let prefix = clamp_width(
+                &format!("{} · {}", banner.project, banner.model),
+                prefix_budget,
+            );
+            let mut spans = vec![
+                Span::styled(" =(o.o)= | ", theme.muted_style()),
+                Span::styled("/proc", theme.accent_style()),
+                Span::styled(" |", theme.muted_style()),
+                Span::raw("   "),
+            ];
+            if !prefix.is_empty() {
+                spans.push(Span::styled(prefix, Style::default()));
+                spans.push(Span::raw(" · "));
+            }
+            spans.push(badge);
+            Line::from(spans)
+        } else {
+            let summary = clamp_width(
+                &format!("{} · {} · {}", banner.project, banner.model, banner.sandbox),
+                right_budget,
+            );
+            Line::from(vec![
+                Span::styled(" =(o.o)= | ", theme.muted_style()),
+                Span::styled("/proc", theme.accent_style()),
+                Span::styled(" |", theme.muted_style()),
+                Span::raw("   "),
+                Span::styled(summary, Style::default()),
+            ])
+        };
 
         vec![
             Line::from(vec![
@@ -75,13 +133,7 @@ pub(crate) fn render_banner_lines(
                 Span::raw("   "),
                 Span::styled(title, theme.accent_bold()),
             ]),
-            Line::from(vec![
-                Span::styled(" =(o.o)= | ", theme.muted_style()),
-                Span::styled("/proc", theme.accent_style()),
-                Span::styled(" |", theme.muted_style()),
-                Span::raw("   "),
-                Span::styled(summary, Style::default()),
-            ]),
+            summary_line,
             Line::from(vec![
                 Span::styled(RABBIT_LEFT[2], theme.muted_style()),
                 Span::raw("   "),
@@ -97,18 +149,30 @@ pub(crate) fn render_banner_lines(
         let marker = if theme.is_dumb { "* " } else { "■ " };
         let lead = format!("{marker}ALAN");
         let tail_budget = width.saturating_sub(lead.width());
-        let summary = clamp_width(
-            &format!(" · {} · {}", banner.project, banner.model),
-            tail_budget,
-        );
-        let hints = clamp_width(": task · !shell · /help · /model · /man", width);
-        vec![
+        let line_top = if let Some(badge) = posture_badge_span(banner, theme, tail_budget) {
+            let badge_w = badge.content.width();
+            let prefix = clamp_width(
+                &format!(" · {}", banner.project),
+                tail_budget.saturating_sub(badge_w + 3),
+            );
+            Line::from(vec![
+                Span::styled(lead, theme.accent_bold()),
+                Span::styled(prefix, Style::default()),
+                Span::raw(" · "),
+                badge,
+            ])
+        } else {
+            let summary = clamp_width(
+                &format!(" · {} · {}", banner.project, banner.model),
+                tail_budget,
+            );
             Line::from(vec![
                 Span::styled(lead, theme.accent_bold()),
                 Span::styled(summary, Style::default()),
-            ]),
-            Line::styled(hints, theme.muted_style()),
-        ]
+            ])
+        };
+        let hints = clamp_width(": task · !shell · /help · /model · /resume · /man", width);
+        vec![line_top, Line::styled(hints, theme.muted_style())]
     }
 }
 

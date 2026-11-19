@@ -18,21 +18,48 @@ pub(super) enum RootRolloutState {
     Durable(PathBuf),
 }
 
+#[cfg(test)]
 pub(super) fn select(
     config: &mut AgentProcessConfig,
     resume_previous: bool,
+    current_rollout: &mut RootRolloutState,
+) -> Result<()> {
+    select_with_rollout_id(config, resume_previous, None, None, current_rollout)
+}
+
+pub(super) fn select_with_rollout_id(
+    config: &mut AgentProcessConfig,
+    resume_previous: bool,
+    resume_rollout_id: Option<&str>,
+    scope: Option<&super::history_discovery::HistoryProjectScope>,
     current_rollout: &mut RootRolloutState,
 ) -> Result<()> {
     if config.recovery_rollout_path.is_some() {
         return Ok(());
     }
     let Some(stores) = config.store_bindings.as_ref() else {
+        if resume_rollout_id.is_some() {
+            bail!("explicit --resume requires durable Root Agent store bindings");
+        }
         return Ok(());
     };
     let pin_instance_state = matches!(current_rollout, RootRolloutState::NotStarted);
     let path = match current_rollout {
         RootRolloutState::Durable(path) => path.clone(),
         RootRolloutState::NoDurableRollout => return Ok(()),
+        RootRolloutState::NotStarted if resume_rollout_id.is_some() => {
+            let requested = resume_rollout_id.expect("checked is_some");
+            let fallback_scope = super::history_discovery::HistoryProjectScope::from_cwd(Some(
+                &config.namespace_cwd.to_string_lossy(),
+            ));
+            let active_scope = scope.unwrap_or(&fallback_scope);
+            let (resolved_path, _) = super::history_discovery::resolve_authorized_rollout_file(
+                stores,
+                active_scope,
+                requested,
+            )?;
+            resolved_path
+        }
         RootRolloutState::NotStarted if !resume_previous => return Ok(()),
         RootRolloutState::NotStarted => {
             let name = match fs::read_to_string(stores.metadata.join(CURRENT)) {
@@ -50,11 +77,10 @@ pub(super) fn select(
         .strip_prefix(&stores.rollouts)
         .context("Root Agent recovery rollout store mismatch")?;
     validate_filename(name)?;
+    let meta = fs::symlink_metadata(&path).context("selected Root Agent rollout is unavailable")?;
     ensure!(
-        fs::metadata(&path)
-            .context("selected Root Agent rollout is unavailable")?
-            .is_file(),
-        "selected Root Agent rollout is not a file"
+        !meta.file_type().is_symlink() && meta.file_type().is_file(),
+        "selected Root Agent rollout is not a regular file"
     );
     config.recovery_rollout_path = Some(path.clone());
     if pin_instance_state {

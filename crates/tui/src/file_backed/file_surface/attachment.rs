@@ -205,11 +205,17 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     submitted_tasks: &[PendingRootAgentTurn],
 ) -> Result<(WatchTails, Vec<String>)> {
     let mut reattached = app.clone();
+    let rollout_switching = std::mem::take(&mut reattached.rollout_switching);
     let mut retained_inputs = reattached.local_inputs.clone();
     let previous_inputs = retained_inputs.clone();
     let previous_transcript = std::mem::take(&mut reattached.transcript);
     reattached.reset_for_root_process_change();
     let tails = hydrate_and_open_tails(shell, agent_path, &mut reattached).await?;
+    if rollout_switching {
+        app.rollout_switching = false;
+        *app = reattached;
+        return Ok((tails, Vec::new()));
+    }
     let mut current_transcript = std::mem::take(&mut reattached.transcript);
     let receipt_history =
         projected_receipt_history(&reattached, std::str::from_utf8(&tails.tape_history)?);

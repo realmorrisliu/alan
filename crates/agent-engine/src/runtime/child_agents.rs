@@ -128,6 +128,11 @@ async fn spawn_child_runtime_inner(
     let child_run_id = uuid::Uuid::new_v4().to_string();
     let process_path = format!("/proc/{child_pid}");
     let agent_path = format!("/agent/{child_pid}");
+    let child_role = match &spec.target {
+        SpawnTarget::AdHocSubagent { role } => Some(role.clone()),
+        SpawnTarget::PackageChildAgent { export_name, .. } => Some(export_name.clone()),
+        SpawnTarget::DefinitionDescriptor { descriptor } => Some(descriptor.clone()),
+    };
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
         parent.parent_process_path,
@@ -135,6 +140,9 @@ async fn spawn_child_runtime_inner(
         Some(agent_path),
         Some(format!("{:?}", spec.target)),
     );
+    if let Some(role) = child_role {
+        child_run_record = child_run_record.with_role(role);
+    }
     if let Some(decision) = delegation_capability_decision {
         child_run_record = child_run_record.with_delegation_capability_decision(decision);
     }
@@ -235,7 +243,7 @@ impl ChildProcessLaunch<'_> {
                 let plan = build_child_namespace_plan(
                     &attempt_spec,
                     &parent_namespace.mounts,
-                    &target_path,
+                    target_path.as_deref(),
                     self.parent_descriptors,
                     &tool_names,
                     self.parent.child_launch.connection_name(),
@@ -246,7 +254,10 @@ impl ChildProcessLaunch<'_> {
                     &parent_namespace.mounts,
                     self.parent.child_launch.namespace_cwd(),
                 )?;
-                let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path)]);
+                let mut descriptors = BTreeMap::new();
+                if let Some(target_path) = target_path {
+                    descriptors.insert(AGENT_DEFINITION_FD, target_path);
+                }
                 if attempt_spec.has_handle(SpawnHandle::Memory)
                     && let Some(path) = self
                         .parent_descriptors
@@ -376,6 +387,11 @@ async fn select_tool_names(parent: &ChildLaunchRuntime, spec: &SpawnSpec) -> Res
     let packages = parent.tool_execution.discover_packages().await?;
     let available = packages
         .iter()
+        .filter(|package| {
+            !spec.runtime_overrides.read_only
+                || (package.capability == alan_agent_protocol::ToolCapability::Read
+                    && !package.capability_is_argument_dependent)
+        })
         .map(|package| package.name.as_str())
         .collect::<BTreeSet<_>>();
     let names = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
@@ -387,8 +403,17 @@ async fn select_tool_names(parent: &ChildLaunchRuntime, spec: &SpawnSpec) -> Res
             .collect::<Vec<_>>();
         ensure!(
             missing.is_empty(),
-            "Child Agent Process launch requested unavailable tools: {}",
-            missing.join(", ")
+            if spec.runtime_overrides.read_only {
+                format!(
+                    "Read-only subagent launch requested unavailable or non-read-only tools: {}",
+                    missing.join(", ")
+                )
+            } else {
+                format!(
+                    "Child Agent Process launch requested unavailable tools: {}",
+                    missing.join(", ")
+                )
+            }
         );
         profile
             .allowed_tools
@@ -407,35 +432,42 @@ fn resolve_target_path(
     parent: &ChildLaunchRuntime,
     target: &SpawnTarget,
     descriptors: &BTreeMap<u32, String>,
-) -> Result<String> {
+) -> Result<Option<String>> {
     match target {
         SpawnTarget::DefinitionDescriptor { descriptor } => {
             ensure!(
                 descriptor == crate::AGENT_DEFINITION_DESCRIPTOR,
                 "parent Process has no `{descriptor}` descriptor"
             );
-            descriptors
-                .get(&AGENT_DEFINITION_FD)
-                .cloned()
-                .context("parent Process has no Agent Definition descriptor")
+            Ok(Some(
+                descriptors
+                    .get(&AGENT_DEFINITION_FD)
+                    .cloned()
+                    .context("parent Process has no Agent Definition descriptor")?,
+            ))
         }
-        SpawnTarget::PackageChildAgent { .. } => parent
-            .capability_view
-            .as_ref()
-            .map(crate::skills::ResolvedCapabilityView::refresh)
-            .and_then(|view| view.resolve_child_agent_export(target).cloned())
-            .with_context(|| format!("Unknown package child Agent Executable target: {target:?}"))?
-            .root_dir
-            .to_str()
-            .map(str::to_string)
-            .context("package child Agent Executable path is not utf8"),
+        SpawnTarget::PackageChildAgent { .. } => Ok(Some(
+            parent
+                .capability_view
+                .as_ref()
+                .map(crate::skills::ResolvedCapabilityView::refresh)
+                .and_then(|view| view.resolve_child_agent_export(target).cloned())
+                .with_context(|| {
+                    format!("Unknown package child Agent Executable target: {target:?}")
+                })?
+                .root_dir
+                .to_str()
+                .map(str::to_string)
+                .context("package child Agent Executable path is not utf8")?,
+        )),
+        SpawnTarget::AdHocSubagent { .. } => Ok(descriptors.get(&AGENT_DEFINITION_FD).cloned()),
     }
 }
 
 fn build_child_namespace_plan(
     spec: &SpawnSpec,
     parent_mounts: &[ProcessNamespaceMount],
-    target_path: &str,
+    target_path: Option<&str>,
     parent_descriptors: &BTreeMap<u32, String>,
     tool_names: &[String],
     llm_connection_name: &str,
@@ -453,7 +485,9 @@ fn build_child_namespace_plan(
     ] {
         retain_exact_mount(parent_mounts, &mut selected, path)?;
     }
-    retain_resolving_mount(parent_mounts, &mut selected, target_path)?;
+    if let Some(target_path) = target_path {
+        retain_resolving_mount(parent_mounts, &mut selected, target_path)?;
+    }
     for mount in parent_mounts
         .iter()
         .filter(|mount| mount.path.starts_with("/lib/pkg/"))
@@ -480,6 +514,25 @@ fn build_child_namespace_plan(
             .target
             .to_str()
             .context("Host Mount target is not utf8")?;
+        if spec.runtime_overrides.read_only && host_mount.access == SpawnMountAccess::ReadWrite {
+            bail!(
+                "Read-only subagent cannot mount '{}' read_write",
+                host_mount.target.display()
+            );
+        }
+        if let Some(parent_mount) = parent_mounts
+            .iter()
+            .filter(|mount| Path::new(target).starts_with(Path::new(&mount.path)))
+            .max_by_key(|mount| mount.path.len())
+            && parent_mount.access == ProcessNamespaceAccess::ReadOnly
+            && host_mount.access == SpawnMountAccess::ReadWrite
+        {
+            bail!(
+                "Subagent host_mount '{}' cannot widen parent read_only mount '{}'",
+                target,
+                parent_mount.path
+            );
+        }
         effective.insert(
             target.to_string(),
             match host_mount.access {
@@ -612,7 +665,7 @@ mod tests {
         let plan = build_child_namespace_plan(
             spec,
             &parent_mounts(),
-            "/lib/agents/root",
+            Some("/lib/agents/root"),
             &descriptors(),
             &[],
             "default",
@@ -773,5 +826,36 @@ mod tests {
         let failed = alan_agent_protocol::AgentExecutableResult::failed("failed");
         assert!(child_reached_observable_terminal(1, &failed));
         assert!(!child_reached_observable_terminal(0, &failed));
+    }
+
+    #[test]
+    fn subagent_plan_enforces_read_only_and_equal_or_narrower_parent_mounts() {
+        let mut mounts = parent_mounts();
+        mounts.retain(|m| m.path != "/mnt/source");
+        mounts.push(mount("/mnt/source", ProcessNamespaceAccess::ReadOnly));
+
+        let mut rw_subagent = spec();
+        rw_subagent.target = SpawnTarget::AdHocSubagent {
+            role: "verifier".to_string(),
+        };
+        rw_subagent.host_mounts.push(SpawnHostMount {
+            grant: "grant-ro".to_string(),
+            target: PathBuf::from("/mnt/source"),
+            access: SpawnMountAccess::ReadWrite,
+        });
+        assert!(
+            build_child_namespace_plan(&rw_subagent, &mounts, None, &descriptors(), &[], "default")
+                .is_err(),
+            "read_only parent mount must not widen to read_write child mount"
+        );
+
+        let mut ro_subagent = rw_subagent;
+        ro_subagent.host_mounts[0].access = SpawnMountAccess::ReadOnly;
+        ro_subagent.runtime_overrides.read_only = true;
+        ro_subagent.launch.cwd = Some(PathBuf::from("/mnt/source"));
+        let plan =
+            build_child_namespace_plan(&ro_subagent, &mounts, None, &descriptors(), &[], "default")
+                .unwrap();
+        assert!(plan.validate_cwd_scope().is_ok());
     }
 }

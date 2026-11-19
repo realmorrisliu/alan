@@ -1,5 +1,54 @@
 use super::*;
 
+/// Return unconsumed steering input to the Machine-owned ordinary queue.
+pub(super) async fn requeue_leftover_inband_submissions(
+    broker: &TurnInputBroker,
+    machine: &mut AgentMachine,
+    queued_submissions: &Arc<Mutex<MachineInputQueue>>,
+) -> usize {
+    let broker_drained = broker.drain().await;
+    let turn_drained = machine.drain_buffered_inband_submissions();
+    let count = broker_drained.len() + turn_drained.len();
+    for submission in turn_drained {
+        push_submission_ahead_of_deferred(
+            &mut queued_submissions
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
+    }
+    for submission in broker_drained {
+        push_submission_ahead_of_deferred(
+            &mut queued_submissions
+                .lock()
+                .expect("input queue poisoned")
+                .pending,
+            submission,
+        );
+    }
+    count
+}
+
+/// Ordinary inputs precede deferred housekeeping without changing FIFO order.
+pub(super) fn push_submission_ahead_of_deferred(
+    outer_queue: &mut VecDeque<QueuedRuntimeItem>,
+    submission: Submission,
+) {
+    let insertion_index = outer_queue
+        .iter()
+        .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
+        .unwrap_or(outer_queue.len());
+    outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
+}
+
+pub(super) fn should_requeue_deferred_action(
+    requeue_requested: bool,
+    exit: DeferredRuntimeActionExit,
+) -> bool {
+    requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
+}
+
 impl RuntimeSubmissionQueues {
     pub(super) fn push_outer_deferred(
         &mut self,

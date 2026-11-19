@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize, de};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod guardian;
 mod provider;
+
+pub use guardian::GuardianConfig;
 
 /// Memory configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +176,14 @@ pub struct Config {
     /// Canonical operator-facing connection profile reference.
     #[serde(default)]
     pub connection_profile: Option<String>,
+
+    /// Dedicated Connection profile used for Guardian escalation reviews.
+    #[serde(default)]
+    pub guardian_profile: Option<String>,
+
+    /// Guardian escalation budget, custom policy path, and fallback limits.
+    #[serde(default)]
+    pub guardian: GuardianConfig,
 
     // ========================================================================
     // Internal resolved provider configuration
@@ -525,6 +536,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             connection_profile: None,
+            guardian_profile: None,
+            guardian: GuardianConfig::default(),
             llm_provider: default_llm_provider(),
             magpie_api_key: None,
             magpie_base_url: default_magpie_base_url(),

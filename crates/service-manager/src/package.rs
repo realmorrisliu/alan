@@ -1,4 +1,5 @@
-//! Package Service (Quartermaster): installed package ownership and lifecycle.
+//! Package Service (Quartermaster): installed package ownership and lifecycle across
+//! `skill`, `mcp`, `tool`, and `provider` packages.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -7,11 +8,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alan_agent_engine::skills::SkillTypedDependency;
 use alan_ap::{ErrorCode, FileServer};
 use alan_hostfs::{HostDirAccess, HostDirFs};
 use anyhow::{Context, Result, bail, ensure};
-use serde::{Deserialize, Serialize};
 
 use crate::flat_fs::{FlatFileService, FlatServiceFs};
 
@@ -21,14 +20,27 @@ pub(crate) use bootstrap::PackageBootstrap;
 mod fs_safety;
 mod inspection;
 pub use inspection::validate_package_store_for_migration;
+mod manifest;
 mod materializer;
+mod materializer_exports;
 mod store;
+mod sync;
+mod types;
+
+pub use types::{
+    McpPackageExport, McpTransportSpec, PackageCatalog, PackageCommand, PackageCommandResult,
+    PackageExport, PackageExportKind, PackageKind, PackageRecord, PackageSnapshot,
+    PackageSnapshotEntry, PackageState, PackageSyncEntry, ProviderAuthMode, ProviderPackageExport,
+    ToolPackageExport, validate_package_id,
+};
 
 use backend::{PackageLeaseContent, PackageStoreBackend};
 #[cfg(test)]
 use materializer::PackageMaterializer;
 use materializer::{fingerprint, validate_snapshot};
 use store::PackageStore;
+use sync::record_from_materialization;
+pub(crate) use types::{LEGACY_SKILL_MATERIALIZER_VERSION, MATERIALIZER_VERSION};
 
 const FILES: &[(&str, bool)] = &[
     ("catalog", false),
@@ -36,127 +48,9 @@ const FILES: &[(&str, bool)] = &[
     ("ctl", true),
     ("result", false),
 ];
-const MATERIALIZER_VERSION: &str = "alan-skill-v1";
 const MAX_COMMAND_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PACKAGES: usize = 4_096;
 const MAX_RESULTS: usize = 128;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PackageKind {
-    Preinstalled,
-    Installed,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PackageState {
-    Installed,
-    Retiring,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageExport {
-    pub skill_id: String,
-    pub root: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<SkillTypedDependency>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageRecord {
-    pub id: String,
-    pub revision: String,
-    pub kind: PackageKind,
-    pub state: PackageState,
-    pub materializer_version: String,
-    pub materialized_fingerprint: String,
-    pub exports: Vec<PackageExport>,
-    pub reference_count: u64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageCatalog {
-    pub generation: u64,
-    pub packages: BTreeMap<String, PackageRecord>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageSnapshotEntry {
-    pub path: String,
-    pub bytes: Vec<u8>,
-    #[serde(default)]
-    pub executable: bool,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageSnapshot {
-    /// Source leaf used only for portable root Skill identity derivation.
-    pub source_name: String,
-    pub entries: Vec<PackageSnapshotEntry>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PackageCommand {
-    Install {
-        request_id: String,
-        package_id: String,
-        snapshot: PackageSnapshot,
-    },
-    List {
-        request_id: String,
-    },
-    Upgrade {
-        request_id: String,
-        package_id: String,
-        snapshot: PackageSnapshot,
-    },
-    Uninstall {
-        request_id: String,
-        package_id: String,
-    },
-}
-
-impl PackageCommand {
-    fn request_id(&self) -> &str {
-        match self {
-            Self::Install { request_id, .. }
-            | Self::List { request_id }
-            | Self::Upgrade { request_id, .. }
-            | Self::Uninstall { request_id, .. } => request_id,
-        }
-    }
-
-    fn action(&self) -> &'static str {
-        match self {
-            Self::Install { .. } => "install",
-            Self::List { .. } => "list",
-            Self::Upgrade { .. } => "upgrade",
-            Self::Uninstall { .. } => "uninstall",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageCommandResult {
-    pub request_id: String,
-    pub success: bool,
-    pub action: String,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub package: Option<PackageRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog: Option<PackageCatalog>,
-}
 
 struct State {
     catalog: PackageCatalog,
@@ -195,10 +89,12 @@ impl std::fmt::Debug for PackageReferenceLease {
 }
 
 impl PackageReferenceLease {
+    /// Returns the durable catalog record pinned by this immutable revision lease.
     pub fn record(&self) -> &PackageRecord {
         &self.record
     }
 
+    /// Serves this immutable package `content/` directory over a read-only FileServer.
     pub fn file_server(&self) -> Result<Arc<dyn FileServer>> {
         match &self.content {
             PackageLeaseContent::Disk(content_root) => Ok(Arc::new(HostDirFs::new(
@@ -215,6 +111,33 @@ impl PackageReferenceLease {
                 Ok(Arc::new(memfs))
             }
         }
+    }
+
+    /// Resolves a content-relative file path strictly inside this immutable disk-backed revision.
+    pub(crate) fn content_file_path(&self, relative_path: &str) -> Result<PathBuf> {
+        let content_root = match &self.content {
+            PackageLeaseContent::Disk(content_root) => content_root,
+            PackageLeaseContent::InMemory(_) => {
+                bail!("this package export requires a disk-backed Package Store revision");
+            }
+        };
+        let canonical_content = fs::canonicalize(content_root)?;
+        let candidate = canonical_content.join(relative_path);
+        let canonical_file = fs::canonicalize(&candidate).with_context(|| {
+            format!(
+                "missing materialized package file `{relative_path}` in `{}`",
+                self.record.id
+            )
+        })?;
+        ensure!(
+            canonical_file.starts_with(&canonical_content),
+            "package file `{relative_path}` escapes immutable revision"
+        );
+        ensure!(
+            canonical_file.is_file(),
+            "package file `{relative_path}` is not a regular file"
+        );
+        Ok(canonical_file)
     }
 
     #[cfg(test)]
@@ -297,17 +220,19 @@ impl std::fmt::Debug for PackageService {
 }
 
 impl PackageService {
+    /// Opens (or initializes) a durable Package Service backed by `store_root`.
     pub fn open(store_root: PathBuf) -> Result<Arc<Self>> {
         Self::open_inner(store_root, None, None)
     }
 
+    /// Creates an ephemeral disk-backed Package Service in an owned temporary store.
     pub fn ephemeral() -> Result<Arc<Self>> {
         let temporary = crate::temporary_store::TemporaryStore::new("package")?;
         let root = temporary.path().to_path_buf();
         Self::open_inner(root, Some(temporary), None)
     }
 
-    /// Create a purely in-memory Package Service with no disk backing.
+    /// Creates a purely in-memory Package Service with no disk backing.
     pub fn in_memory() -> Arc<Self> {
         Arc::new(Self {
             store: PackageStoreBackend::InMemory(Mutex::new(BTreeMap::new())),
@@ -345,15 +270,77 @@ impl PackageService {
         }))
     }
 
+    /// Returns a read-write/control FileServer serving `/mnt/package`.
     pub fn file_server(self: &Arc<Self>) -> Arc<dyn FileServer> {
         Arc::new(FlatServiceFs::new(self.clone()))
     }
 
-    /// Read the current shared catalog under its cross-process transaction lock.
+    /// Reads the current shared catalog under its cross-process transaction lock.
     pub fn catalog(&self) -> Result<PackageCatalog> {
         let _operation = self.operation.lock().expect("package operation poisoned");
         let _transaction = self.refresh()?;
         Ok(self.cached_catalog())
+    }
+
+    /// Lists all active installed extension provider packages.
+    pub fn list_provider_packages(&self) -> Result<Vec<(PackageRecord, ProviderPackageExport)>> {
+        let catalog = self.catalog()?;
+        Ok(catalog
+            .packages
+            .into_values()
+            .filter(|record| {
+                record.state == PackageState::Installed
+                    && record.export_kind == PackageExportKind::Provider
+            })
+            .filter_map(|record| {
+                let provider = record.provider_export.clone()?;
+                Some((record, provider))
+            })
+            .collect())
+    }
+
+    /// Resolves an installed extension `provider` package by `"pkg:<package-id>"` or `<provider-id>`.
+    pub fn resolve_provider_package(
+        &self,
+        selector: &str,
+    ) -> Result<(PackageRecord, ProviderPackageExport)> {
+        let trimmed = selector.trim();
+        let catalog = self.catalog()?;
+        if let Some(package_id) = trimmed.strip_prefix("pkg:") {
+            validate_package_id(package_id)?;
+            let record = catalog
+                .packages
+                .get(package_id)
+                .filter(|record| record.state == PackageState::Installed)
+                .cloned()
+                .with_context(|| format!("provider package `{package_id}` is not installed"))?;
+            let provider = record
+                .provider_export
+                .clone()
+                .with_context(|| format!("package `{package_id}` is not a provider package"))?;
+            return Ok((record, provider));
+        }
+
+        let mut matches = catalog
+            .packages
+            .into_values()
+            .filter(|record| record.state == PackageState::Installed)
+            .filter_map(|record| {
+                let provider = record.provider_export.clone()?;
+                if provider.provider_id == trimmed || provider.protocol == trimmed {
+                    Some((record, provider))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            matches.len() <= 1,
+            "multiple installed provider packages match `{trimmed}`; select one with `pkg:<package-id>`"
+        );
+        matches
+            .pop()
+            .with_context(|| format!("no installed provider package matches `{trimmed}`"))
     }
 
     fn refresh(&self) -> Result<Option<store::PackageStoreLock>> {
@@ -406,22 +393,20 @@ impl PackageService {
         let materialization = self.store.materialize(package_id, &revision, &snapshot)?;
         let reference_count = existing.as_ref().map_or(0, |record| record.reference_count);
         let now = chrono::Utc::now();
-        self.publish_record(PackageRecord {
-            id: package_id.to_string(),
+        self.publish_record(record_from_materialization(
+            package_id.to_string(),
             revision,
-            kind: PackageKind::Preinstalled,
-            state: PackageState::Installed,
-            materializer_version: MATERIALIZER_VERSION.to_string(),
-            materialized_fingerprint: materialization.tree_fingerprint,
-            exports: materialization.exports,
+            PackageKind::Preinstalled,
             reference_count,
-            created_at: existing.as_ref().map_or(now, |record| record.created_at),
-            updated_at: now,
-        })?;
+            existing.as_ref().map_or(now, |record| record.created_at),
+            now,
+            materialization,
+        ))?;
         self.gc_package_revisions_after_commit(package_id, "seed preinstalled package");
         Ok(())
     }
 
+    /// Resolves and verifies one currently active installed/preinstalled package record.
     pub fn resolve(&self, package_id: &str) -> Result<PackageRecord> {
         let _operation = self.operation.lock().expect("package operation poisoned");
         let _transaction = self.refresh()?;
@@ -437,6 +422,7 @@ impl PackageService {
         Ok(record)
     }
 
+    /// Acquires an immutable revision reference lease for `package_id`.
     pub fn acquire(self: &Arc<Self>, package_id: &str) -> Result<Arc<PackageReferenceLease>> {
         let _operation = self.operation.lock().expect("package operation poisoned");
         let _transaction = self.refresh()?;
@@ -473,7 +459,8 @@ impl PackageService {
         }))
     }
 
-    pub(crate) fn execute(&self, command: PackageCommand) -> Result<PackageCommandResult> {
+    /// Executes a validated Quartermaster command synchronously inside the operation lock.
+    pub fn execute(&self, command: PackageCommand) -> Result<PackageCommandResult> {
         let _operation = self.operation.lock().expect("package operation poisoned");
         validate_command(&command)?;
         let request_id = command.request_id().to_string();
@@ -509,6 +496,11 @@ impl PackageService {
                 request_id,
                 package_id,
             } => self.remove_package(request_id, package_id, PackageKind::Installed),
+            PackageCommand::Sync {
+                request_id,
+                packages,
+                prune,
+            } => self.sync(request_id, packages, prune),
         });
         let result = attempted.unwrap_or_else(|error| PackageCommandResult {
             request_id: request_id.clone(),
@@ -571,18 +563,15 @@ impl PackageService {
         );
         let materialization = self.store.materialize(&package_id, &revision, &snapshot)?;
         let now = chrono::Utc::now();
-        let record = PackageRecord {
-            id: package_id.clone(),
+        let record = record_from_materialization(
+            package_id.clone(),
             revision,
-            kind: PackageKind::Installed,
-            state: PackageState::Installed,
-            materializer_version: MATERIALIZER_VERSION.to_string(),
-            materialized_fingerprint: materialization.tree_fingerprint,
-            exports: materialization.exports,
-            reference_count: 0,
-            created_at: now,
-            updated_at: now,
-        };
+            PackageKind::Installed,
+            0,
+            now,
+            now,
+            materialization,
+        );
         self.publish_record(record.clone())?;
         self.gc_package_revisions_after_commit(&package_id, "install package");
         Ok(PackageCommandResult {
@@ -630,13 +619,15 @@ impl PackageService {
             });
         }
         let materialization = self.store.materialize(&package_id, &revision, &snapshot)?;
-        let record = PackageRecord {
+        let record = record_from_materialization(
+            package_id.clone(),
             revision,
-            materialized_fingerprint: materialization.tree_fingerprint,
-            exports: materialization.exports,
-            updated_at: chrono::Utc::now(),
-            ..existing
-        };
+            PackageKind::Installed,
+            existing.reference_count,
+            existing.created_at,
+            chrono::Utc::now(),
+            materialization,
+        );
         self.publish_record(record.clone())?;
         self.gc_package_revisions_after_commit(&package_id, "upgrade package");
         Ok(PackageCommandResult {
@@ -649,7 +640,7 @@ impl PackageService {
         })
     }
 
-    /// Retire an obsolete product-owned package without touching operator packages.
+    /// Retires an obsolete product-owned package without touching operator packages.
     pub(crate) fn retire_preinstalled(&self, package_id: &str) -> Result<()> {
         let _operation = self.operation.lock().expect("package operation poisoned");
         let _transaction = self.refresh()?;
@@ -836,18 +827,6 @@ impl FlatFileService for PackageService {
     }
 }
 
-pub(crate) fn validate_package_id(value: &str) -> Result<()> {
-    ensure!(!value.is_empty() && value.len() <= 64, "invalid package id");
-    ensure!(
-        value.split('-').all(|part| !part.is_empty()
-            && part
-                .chars()
-                .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())),
-        "invalid package id `{value}`"
-    );
-    Ok(())
-}
-
 fn validate_request_id(value: &str) -> Result<()> {
     ensure!(
         !value.is_empty()
@@ -878,6 +857,13 @@ fn validate_command(command: &PackageCommand) -> Result<()> {
         }
         PackageCommand::Uninstall { package_id, .. } => validate_package_id(package_id),
         PackageCommand::List { .. } => Ok(()),
+        PackageCommand::Sync { packages, .. } => {
+            for entry in packages {
+                validate_package_id(&entry.package_id)?;
+                validate_snapshot(&entry.snapshot)?;
+            }
+            Ok(())
+        }
     }
 }
 

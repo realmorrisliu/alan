@@ -14,9 +14,21 @@ struct RecallCandidate {
     score: usize,
 }
 
+#[allow(
+    dead_code,
+    reason = "Preserved compatibility entry point used by existing recall tests without project cwd"
+)]
 pub(crate) fn build_turn_recall_bundle(
     memory_dir: Option<&Path>,
     user_input: Option<&[ContentPart]>,
+) -> Option<String> {
+    build_turn_recall_bundle_for_project(memory_dir, user_input, None)
+}
+
+pub(crate) fn build_turn_recall_bundle_for_project(
+    memory_dir: Option<&Path>,
+    user_input: Option<&[ContentPart]>,
+    project_cwd: Option<&str>,
 ) -> Option<String> {
     let memory_dir = memory_dir?;
     if !memory_dir.exists() {
@@ -58,6 +70,14 @@ pub(crate) fn build_turn_recall_bundle(
     }
     if continuity_query {
         selected_paths.push(memory_dir.join("handoffs").join("LATEST.md"));
+        if let Some(summary_md) =
+            super::memory_surfaces::project_summary::active_summary_markdown_path(
+                memory_dir,
+                project_cwd,
+            )
+        {
+            selected_paths.push(summary_md);
+        }
     }
 
     let mut scored_candidates = Vec::new();
@@ -92,15 +112,21 @@ pub(crate) fn build_turn_recall_bundle(
     let should_score_topics = domain_query
         || (!identity_query && !continuity_query && !recent_query && !query_tokens.is_empty());
     if should_score_topics {
-        scored_candidates.extend(score_candidate_files(
-            collect_markdown_files(
-                &memory_dir.join("topics"),
-                &canonical_memory_root,
-                MAX_CANDIDATE_SCAN_FILES,
-            ),
-            memory_dir,
-            &query_tokens,
-        ));
+        let topics: Vec<PathBuf> = collect_markdown_files(
+            &memory_dir.join("topics"),
+            &canonical_memory_root,
+            MAX_CANDIDATE_SCAN_FILES,
+        )
+        .into_iter()
+        .filter(|path| {
+            super::memory_surfaces::project_summary::should_include_topic_markdown(
+                memory_dir,
+                path,
+                project_cwd,
+            )
+        })
+        .collect();
+        scored_candidates.extend(score_candidate_files(topics, memory_dir, &query_tokens));
     }
 
     scored_candidates.sort_by(|left, right| {

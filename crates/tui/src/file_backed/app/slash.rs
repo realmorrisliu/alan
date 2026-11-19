@@ -10,6 +10,8 @@ impl FileBackedApp {
         match name {
             "status" => self.model_status_command(),
             "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
+            "resume" => self.resume_command(command.strip_prefix("resume").unwrap_or("")),
+            "summary" => self.summary_command(command.strip_prefix("summary").unwrap_or("")),
             "new" => self.new_session_command(),
             "tape" if command.trim() == "tape" => {
                 self.modal.active = true;

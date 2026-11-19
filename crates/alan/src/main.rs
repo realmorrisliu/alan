@@ -27,9 +27,9 @@ use std::{
     version
 )]
 struct Cli {
-    /// Restore the latest selected Root Agent rollout for this invocation.
-    #[arg(long)]
-    resume: bool,
+    /// Restore the latest selected Root Agent rollout (or explicit rollout id) for this invocation.
+    #[arg(long, value_name = "ROLLOUT_ID", num_args = 0..=1, default_missing_value = "")]
+    resume: Option<String>,
     /// Do not read or overwrite the durable root rollout pointer for this invocation.
     #[arg(long)]
     ephemeral: bool,
@@ -39,6 +39,8 @@ struct Cli {
     /// Record typed input advice using this evaluator profile; never auto-run advice.
     #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
     shadow_evaluator: Option<String>,
+    #[command(flatten)]
+    trust: cli::trust::BareTrustArgs,
     /// Submit one non-interactive prompt and print the response to stdout.
     #[arg(short = 'p', long = "print", value_name = "PROMPT")]
     print: Option<String>,
@@ -81,6 +83,8 @@ enum Commands {
         /// Optional manual topic or section/name (e.g. `alan9`, `1/q`)
         topic: Option<String>,
     },
+    /// Quartermaster (`q`) package hub: install, list, upgrade, uninstall, sync
+    Q(cli::q::QArgs),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -139,6 +143,11 @@ enum HostAction {
     Mount {
         #[command(subcommand)]
         action: HostMountAction,
+    },
+    /// Save, list, or revoke standing project delegation grants in System Store
+    Grant {
+        #[command(subcommand)]
+        action: cli::host::HostGrantAction,
     },
     /// Inspect, migrate, or clean state created by retired Host-directory contracts
     LegacyState {
@@ -511,12 +520,15 @@ async fn main() -> Result<()> {
     alan_tui::terminal::install_panic_hook();
     let cli = parse_cli();
     alan_os_host::installation::validate_current_invocation()?;
+    let (resume, resume_rollout_id) =
+        cli::trust::parse_resume_arg(cli.resume.as_deref(), cli.command.is_some())?;
     let cwd_override = validate_bare_flags(
-        cli.resume,
+        resume,
         cli.ephemeral,
         cli.cwd.as_deref(),
         cli.command.is_some(),
     )?;
+    let trust_options = cli::trust::resolve_bare_trust_options(&cli.trust, cli.command.is_some())?;
     anyhow::ensure!(
         cli.shadow_evaluator.is_none() || cli.command.is_none(),
         "`--shadow-evaluator` only applies to bare `alan`"
@@ -531,13 +543,16 @@ async fn main() -> Result<()> {
     let uses_product_stores = matches!(
         &cli.command,
         None | Some(Commands::Connection { .. })
+            | Some(Commands::Q(_))
             | Some(Commands::LegacyState {
                 action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. }
             })
             | Some(Commands::Host {
-                action: HostAction::LegacyState {
-                    action: LegacyStateAction::Cleanup { .. } | LegacyStateAction::Import { .. },
-                },
+                action: HostAction::Grant { .. }
+                    | HostAction::LegacyState {
+                        action: LegacyStateAction::Cleanup { .. }
+                            | LegacyStateAction::Import { .. },
+                    },
             })
     );
     let _installation_access = uses_product_stores
@@ -591,6 +606,9 @@ async fn main() -> Result<()> {
                         println!("Revoked Host Mount grant {grant_id}.");
                     }
                 }
+            }
+            HostAction::Grant { action } => {
+                cli::host::run_host_grant_action(action).await?;
             }
             HostAction::LegacyState { action } => legacy_cli::run(action).await?,
         },
@@ -757,6 +775,9 @@ async fn main() -> Result<()> {
         Some(Commands::Man { topic }) => {
             cli::man::run(topic.as_deref())?;
         }
+        Some(Commands::Q(args)) => {
+            cli::q::run(args).await?;
+        }
         None => {
             let mode = bare_run_mode(
                 std::io::stdin().is_terminal(),
@@ -771,10 +792,12 @@ async fn main() -> Result<()> {
             let result = foreground::run_bare_in_foreground_instance(
                 paths,
                 mode,
-                cli.resume,
+                resume,
+                resume_rollout_id,
                 cli.ephemeral,
                 cwd_override,
                 cli.shadow_evaluator,
+                trust_options,
             )
             .await;
             if remove_runtime_dir
@@ -861,10 +884,56 @@ mod tests {
 
     #[test]
     fn bare_resume_is_explicit_and_cannot_be_combined_with_a_subcommand() {
-        assert!(!Cli::try_parse_from(["alan"]).unwrap().resume);
-        assert!(Cli::try_parse_from(["alan", "--resume"]).unwrap().resume);
+        assert!(Cli::try_parse_from(["alan"]).unwrap().resume.is_none());
+        assert_eq!(
+            Cli::try_parse_from(["alan", "--resume"])
+                .unwrap()
+                .resume
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            Cli::try_parse_from(["alan", "--resume", "rollout-abc"])
+                .unwrap()
+                .resume
+                .as_deref(),
+            Some("rollout-abc")
+        );
         assert!(validate_resume_scope(true, true).is_err());
         assert!(validate_resume_scope(true, false).is_ok());
+    }
+
+    #[test]
+    fn trust_posture_flags_enforce_explicit_invocation_only_hierarchy() {
+        let defaults = Cli::try_parse_from(["alan"]).unwrap();
+        let resolved_default =
+            super::cli::trust::resolve_bare_trust_options(&defaults.trust, false).unwrap();
+        assert_eq!(
+            resolved_default.posture,
+            alan_agent_engine::TrustPosture::Governed
+        );
+
+        let confined =
+            Cli::try_parse_from(["alan", "--trust", "--guardian-profile", "fast"]).unwrap();
+        let resolved_confined =
+            super::cli::trust::resolve_bare_trust_options(&confined.trust, false).unwrap();
+        assert_eq!(
+            resolved_confined.posture,
+            alan_agent_engine::TrustPosture::ConfinedTrusted
+        );
+        assert_eq!(resolved_confined.guardian_profile.as_deref(), Some("fast"));
+
+        let unsafe_only = Cli::try_parse_from(["alan", "--unsafe-host-account"]).unwrap();
+        assert!(super::cli::trust::resolve_bare_trust_options(&unsafe_only.trust, false).is_err());
+
+        let unsafe_with_trust =
+            Cli::try_parse_from(["alan", "--trust", "--unsafe-host-account"]).unwrap();
+        assert_eq!(
+            super::cli::trust::resolve_bare_trust_options(&unsafe_with_trust.trust, false)
+                .unwrap()
+                .posture,
+            alan_agent_engine::TrustPosture::HostAccountTrusted
+        );
     }
 
     #[cfg(target_os = "macos")]

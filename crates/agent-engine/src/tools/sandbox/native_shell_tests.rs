@@ -24,7 +24,7 @@ async fn outer_shell_ignores_path_replacements_and_inherited_functions() {
             ),
         ] {
             let mut command = sandbox
-                .build_confined_command(script, false, backend)
+                .build_confined_command(script, temp.path(), false, backend)
                 .unwrap();
             command
                 .env("PATH", search_path)

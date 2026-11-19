@@ -34,58 +34,13 @@ mod model_controls;
 mod model_status;
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
+use queue_controls::{
+    push_submission_ahead_of_deferred, requeue_leftover_inband_submissions,
+    should_requeue_deferred_action,
+};
 
 #[path = "engine_monitor.rs"]
 mod monitor;
-
-/// Return unconsumed steering input to the Machine-owned ordinary queue.
-async fn requeue_leftover_inband_submissions(
-    broker: &TurnInputBroker,
-    machine: &mut AgentMachine,
-    queued_submissions: &Arc<Mutex<MachineInputQueue>>,
-) -> usize {
-    let broker_drained = broker.drain().await;
-    let turn_drained = machine.drain_buffered_inband_submissions();
-    let count = broker_drained.len() + turn_drained.len();
-    for submission in turn_drained {
-        push_submission_ahead_of_deferred(
-            &mut queued_submissions
-                .lock()
-                .expect("input queue poisoned")
-                .pending,
-            submission,
-        );
-    }
-    for submission in broker_drained {
-        push_submission_ahead_of_deferred(
-            &mut queued_submissions
-                .lock()
-                .expect("input queue poisoned")
-                .pending,
-            submission,
-        );
-    }
-    count
-}
-
-/// Ordinary inputs precede deferred housekeeping without changing FIFO order.
-fn push_submission_ahead_of_deferred(
-    outer_queue: &mut VecDeque<QueuedRuntimeItem>,
-    submission: Submission,
-) {
-    let insertion_index = outer_queue
-        .iter()
-        .position(|item| matches!(item, QueuedRuntimeItem::Deferred(_)))
-        .unwrap_or(outer_queue.len());
-    outer_queue.insert(insertion_index, QueuedRuntimeItem::Submission(submission));
-}
-
-fn should_requeue_deferred_action(
-    requeue_requested: bool,
-    exit: DeferredRuntimeActionExit,
-) -> bool {
-    requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
-}
 
 async fn read_pending_namespace_resume_submission(
     state: &RuntimeLoopState,
@@ -487,7 +442,9 @@ fn spawn_with_prepared_runtime_environment(
             return;
         }
         let _ = runtime_recorder.set(machine.recorder());
-        let environment = environment.with_action_recorder(machine.recorder());
+        let environment = environment
+            .with_action_recorder(machine.recorder())
+            .with_trust_posture(runtime_config.trust_posture);
         let completed_directory_ids = match recovery_rollout_path.as_ref() {
             Some(path) => match environment.agent_files().restore_actions(path).await {
                 Ok(ids) => ids,
@@ -498,7 +455,6 @@ fn spawn_with_prepared_runtime_environment(
             },
             None => HashSet::new(),
         };
-
         let mut state = RuntimeLoopState {
             machine,
             environment,
@@ -506,6 +462,10 @@ fn spawn_with_prepared_runtime_environment(
             runtime_config,
             prompt_cache,
         };
+        let initial_knowledge = state.environment.read_project_knowledge_section().await;
+        state
+            .prompt_cache
+            .set_project_knowledge_section(initial_knowledge);
         let queue_paused = state
             .machine
             .input_queue()
@@ -531,7 +491,6 @@ fn spawn_with_prepared_runtime_environment(
             let _ = ready_tx.send(Err(format!("restore task budget wait: {error:#}")));
             return;
         }
-
         if let Err(error) = super::task_budget::publish_inherited_wait(&mut state).await {
             let _ = ready_tx.send(Err(format!("restore inherited budget wait: {error:#}")));
             return;

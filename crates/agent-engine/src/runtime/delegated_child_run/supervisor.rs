@@ -95,6 +95,14 @@ impl DelegatedChildRunSupervisor {
         }
     }
 
+    pub(crate) fn process_pid(&self) -> &str {
+        &self.process_pid
+    }
+
+    pub(crate) fn child_run_id(&self) -> &str {
+        &self.child_run_id
+    }
+
     /// A resumed Process republishes the stop it is about to answer. That pause is
     /// not this run's outcome: the answer is already on its way, and its own run
     /// timeout bounds the wait.

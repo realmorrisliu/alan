@@ -75,6 +75,7 @@ pub(crate) struct PromptAssemblyCache {
     definition_persona_dirs: Vec<PathBuf>,
     fixed_definition_persona_section: Option<String>,
     memory_store_dir: Option<PathBuf>,
+    project_knowledge_section: Option<String>,
     host_capabilities: SkillHostCapabilities,
     pub(crate) skill_publication: alan_agent_protocol::UiSkillSnapshot,
     skills_snapshot: Option<CachedSkillsRegistry>,
@@ -92,6 +93,7 @@ impl PromptAssemblyCache {
             definition_persona_dirs,
             fixed_definition_persona_section: None,
             memory_store_dir: None,
+            project_knowledge_section: None,
             host_capabilities: SkillHostCapabilities::default(),
             skill_publication: Default::default(),
             skills_snapshot: None,
@@ -127,6 +129,7 @@ impl PromptAssemblyCache {
             definition_persona_dirs,
             fixed_definition_persona_section: None,
             memory_store_dir: None,
+            project_knowledge_section: None,
             host_capabilities,
             skill_publication: Default::default(),
             skills_snapshot: None,
@@ -145,6 +148,10 @@ impl PromptAssemblyCache {
             self.memory_store_dir = memory_store_dir;
             self.memory_store_snapshot = None;
         }
+    }
+
+    pub(crate) fn set_project_knowledge_section(&mut self, section: Option<String>) {
+        self.project_knowledge_section = section;
     }
 
     #[cfg(test)]
@@ -183,10 +190,11 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_cache(user_input);
         let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_sections(
+        let system_prompt = prompts::build_agent_system_prompt_with_all_sections(
             &domain_prompt,
             context_sections.definition_persona_section.as_deref(),
             context_sections.memory_store_section.as_deref(),
+            self.project_knowledge_section.as_deref(),
         );
 
         self.metrics
@@ -221,10 +229,11 @@ impl PromptAssemblyCache {
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_active_skills_cache(active_skills, user_input);
         let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_sections(
+        let system_prompt = prompts::build_agent_system_prompt_with_all_sections(
             &domain_prompt,
             context_sections.definition_persona_section.as_deref(),
             context_sections.memory_store_section.as_deref(),
+            self.project_knowledge_section.as_deref(),
         );
 
         self.metrics

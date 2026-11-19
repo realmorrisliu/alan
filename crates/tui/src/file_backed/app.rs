@@ -28,7 +28,7 @@ mod history;
 mod model_control;
 mod notice;
 pub(in crate::file_backed) use notice::{Notice, humanize_protocol_message};
-mod presentation;
+pub(in crate::file_backed) mod presentation;
 mod project;
 mod slash;
 use project::default_commands;
@@ -41,6 +41,9 @@ pub(super) struct FileBackedApp {
     pub(super) tape_consumed_offset: usize,
     pub(super) agent_path: String,
     pub(super) model_chooser: model_control::ModelChooser,
+    pub(super) resume_picker: super::resume_picker::ResumePicker,
+    pub(super) rollout_switching: bool,
+    pub(super) last_summary_revision: Option<u64>,
     pub(super) model: super::model::ModelProjection,
     pub(super) usage: super::usage::UsageProjection,
     pub(super) effective_model: Option<String>,
@@ -72,6 +75,7 @@ pub(super) struct FileBackedApp {
     pub(super) project_host_root: Option<std::path::PathBuf>,
     pub(super) git_status: Option<super::git_status::GitStatus>,
     pub(super) sandbox_backend: Option<String>,
+    pub(super) trust_posture_label: Option<String>,
     pub(super) pending_attachments: Vec<alan_agent_protocol::ContentPart>,
     pub(super) namespace_cwd: std::path::PathBuf,
     pub(super) retained_project_mount: Option<(ProjectMountReceipt, std::path::PathBuf)>,
@@ -109,6 +113,9 @@ impl FileBackedApp {
             expected_terminal_error: None,
             agent_path,
             model_chooser: model_control::ModelChooser::default(),
+            resume_picker: super::resume_picker::ResumePicker::default(),
+            rollout_switching: false,
+            last_summary_revision: None,
             model: super::model::ModelProjection::default(),
             usage: super::usage::UsageProjection::default(),
             effective_model: None,
@@ -142,6 +149,7 @@ impl FileBackedApp {
             project_host_root: None,
             git_status: None,
             sandbox_backend: None,
+            trust_posture_label: None,
             pending_attachments: Vec::new(),
             namespace_cwd: std::path::PathBuf::from("/"),
             retained_project_mount: None,
@@ -212,6 +220,24 @@ impl FileBackedApp {
                 self.apply_man_details(generation, owner, content);
                 None
             }
+            FileBackedEvent::HistoryCatalogLoaded { generation, result } => {
+                self.resume_picker.apply_loaded(generation, result);
+                None
+            }
+            FileBackedEvent::HistorySwitchCompleted { rollout_id, result } => {
+                match result {
+                    Ok(()) => self.reset_for_rollout_switch(rollout_id.as_deref()),
+                    Err(error) => self.push_error(format!("rollout switch failed: {error}")),
+                }
+                None
+            }
+            FileBackedEvent::ProjectSummaryResult {
+                action_label,
+                result,
+            } => {
+                self.apply_summary_result(action_label, result);
+                None
+            }
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
@@ -242,7 +268,7 @@ impl FileBackedApp {
                 self.handle_key_with_pending_submission(key, has_pending_submission)
             }
             FileBackedEvent::Terminal(TerminalEvent::Paste(text)) => {
-                if self.modal.active {
+                if self.modal.active || self.resume_picker.active {
                     return None;
                 }
                 if self.project_selection.is_some() {
@@ -351,6 +377,9 @@ impl FileBackedApp {
         }
         if self.model_chooser.active {
             return self.model_key(key, has_pending_submission);
+        }
+        if self.resume_picker.active {
+            return self.resume_picker_key(key);
         }
         if self.modal_key(key, has_pending_submission) {
             return None;

@@ -8,11 +8,13 @@ use crate::theme::Theme;
 const COL_WIDTH: usize = 26;
 
 const COMMAND_ROWS: &[(&str, &str)] = &[
-    ("/new", "start a fresh session view"),
+    (
+        "/new /resume [query]",
+        "fresh view or pick retained rollout",
+    ),
     ("/model [query]", "fuzzy model and reasoning effort picker"),
-    ("/tape", "inspect Turing Tape timeline"),
-    ("/man [topic]", "read alan9 manual pages"),
-    ("/status", "inspect project, model, usage and queue"),
+    ("/tape /man [topic]", "inspect Turing Tape or alan9 manuals"),
+    ("/status /summary", "inspect status or continuity summary"),
     (
         "/project [revoke]",
         "mount or revoke a project directory (Tab rw/ro)",

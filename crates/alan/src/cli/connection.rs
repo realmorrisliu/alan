@@ -5,8 +5,8 @@ use alan_auth::{
 use alan_os_host::{HostStorePaths, SecretStore, SystemStorePaths, apply_profile_to_config};
 use alan_service_manager::{
     ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
-    default_credential_backend, first_party_provider_catalog, normalize_profile_settings,
-    sanitize_identifier, validate_profile_settings,
+    PackageService, default_credential_backend, first_party_provider_catalog,
+    normalize_profile_settings, provider_packages, sanitize_identifier, validate_profile_settings,
 };
 use alan_shell::Shell;
 use anyhow::{Context, Result};
@@ -237,6 +237,7 @@ fn ensure_credential_metadata(
     Ok(())
 }
 
+#[cfg(test)]
 fn parse_provider_id(raw: &str) -> Result<LlmProvider> {
     let provider = match raw.trim().to_ascii_lowercase().as_str() {
         "magpie" => LlmProvider::Magpie,
@@ -386,26 +387,29 @@ pub async fn run_connection_add(
     setting_pairs: &[String],
     make_default: bool,
 ) -> Result<()> {
-    let provider = parse_provider_id(provider_raw)?;
+    let packages = SystemStorePaths::detect()
+        .ok()
+        .and_then(|system| system.packages().ok())
+        .and_then(|root| PackageService::open(root).ok());
+    let (provider, installed_pkg) =
+        provider_packages::resolve_provider_selection(provider_raw, packages.as_deref())?;
     let profile_id = suggested_profile_id(provider, profile_id)?;
-    let settings = normalize_profile_settings(provider, &parse_setting_pairs(setting_pairs)?);
-    validate_profile_settings(provider, &settings)?;
+    let parsed_overrides = parse_setting_pairs(setting_pairs)?;
+    let settings = provider_packages::normalize_settings_with_provider_package(
+        provider,
+        installed_pkg.as_ref().map(|(_, export)| export),
+        &parsed_overrides,
+    )?;
+    let source = installed_pkg
+        .as_ref()
+        .map(|(pkg_id, _)| provider_packages::provider_package_source(pkg_id))
+        .unwrap_or_else(|| "managed".to_string());
     let (stores, mut connections) = load_connections().await?;
     anyhow::ensure!(
         !connections.profiles.contains_key(&profile_id),
         "Connection profile `{profile_id}` already exists"
     );
     let descriptor = ConnectionsFile::profile_descriptor(provider);
-    anyhow::ensure!(
-        descriptor.first_party,
-        "Provider `{}` is not a built-in first-party provider (offered choices: {}; install a Quartermaster (`q`) package or keep an existing profile)",
-        provider.as_str(),
-        first_party_provider_catalog()
-            .iter()
-            .map(|d| d.provider_id.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
     let credential_id = if descriptor.credential_kind == CredentialKind::AmbientCloudAuth
         || descriptor.credential_optional
     {
@@ -428,7 +432,7 @@ pub async fn run_connection_add(
             credential_id,
             created_at: now,
             updated_at: now,
-            source: "managed".to_string(),
+            source,
             settings,
         },
     );
@@ -674,6 +678,11 @@ pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
         .or_else(|| connections.default_profile.clone())
         .ok_or_else(|| anyhow::anyhow!("no profile selected"))?;
     let profile = connection_profile(&connections, &profile_id)?;
+    let packages = SystemStorePaths::detect()
+        .ok()
+        .and_then(|system| system.packages().ok())
+        .and_then(|root| PackageService::open(root).ok());
+    provider_packages::validate_provider_package_for_profile(packages.as_deref(), profile)?;
     let mut config = Config::default();
     let resolved = apply_profile_to_config(
         &connections,
@@ -930,5 +939,50 @@ mod tests {
         assert!(source.contains("host-managed-auth:"));
         assert!(!source.contains(&["ConnectionsFile::load", "_from_path"].concat()));
         assert!(!source.contains(&["connections.save", "_to_path"].concat()));
+    }
+
+    #[tokio::test]
+    async fn extension_provider_requires_installed_package_before_selection() {
+        let packages = PackageService::ephemeral().unwrap();
+        assert!(
+            provider_packages::resolve_provider_selection("anthropic_messages", Some(&packages))
+                .is_err()
+        );
+        assert!(
+            provider_packages::resolve_provider_selection(
+                "pkg:anthropic-provider",
+                Some(&packages)
+            )
+            .is_err()
+        );
+
+        let pkg_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../service-manager/packages/anthropic-provider");
+        let installed = alan_service_manager::run_q_command_with_package_service(
+            &packages,
+            Some(&pkg_dir),
+            &[
+                "install".to_string(),
+                "--name".to_string(),
+                "anthropic-provider".to_string(),
+                alan_service_manager::CLI_IMPORT_MOUNT_PATH.to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(installed.exit_code, 0);
+
+        let (provider, pkg) = provider_packages::resolve_provider_selection(
+            "pkg:anthropic-provider",
+            Some(&packages),
+        )
+        .unwrap();
+        assert_eq!(provider, LlmProvider::AnthropicMessages);
+        assert_eq!(pkg.unwrap().0, "anthropic-provider");
+
+        let (by_proto, _) =
+            provider_packages::resolve_provider_selection("anthropic_messages", Some(&packages))
+                .unwrap();
+        assert_eq!(by_proto, LlmProvider::AnthropicMessages);
     }
 }

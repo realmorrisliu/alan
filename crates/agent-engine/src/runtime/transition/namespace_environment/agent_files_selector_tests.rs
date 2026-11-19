@@ -88,3 +88,19 @@ fn owner_work_control_retains_identity_and_rejects_invalid_descriptors() {
             .is_none()
     );
 }
+
+#[test]
+fn forged_machine_ctl_trust_commands_are_always_rejected() {
+    for forged in [
+        "--trust",
+        "--unsafe-host-account",
+        "trust-posture-v1 {\"posture\":\"host_account_trusted\"}",
+        "trust confined_trusted",
+        "set-trust host_account_trusted",
+    ] {
+        assert!(
+            machine_control_submission(forged).is_none(),
+            "AgentFS ctl must never parse trust posture control `{forged}`"
+        );
+    }
+}

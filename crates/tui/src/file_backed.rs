@@ -48,6 +48,7 @@ mod queue_lineage_tests;
 mod queue_removed_hint_tests;
 #[cfg(test)]
 mod queue_root_lifetime_tests;
+mod resume_picker;
 #[cfg(test)]
 mod skill_descriptor_tests;
 #[cfg(test)]
@@ -55,6 +56,7 @@ mod skill_review_tests;
 #[cfg(test)]
 mod skill_tests;
 mod skills;
+mod summary_view;
 mod tape_view;
 mod usage;
 pub(crate) mod welcome;
@@ -158,6 +160,9 @@ pub struct FileBackedRunConfig {
     pub project_control: Option<ProjectControlHandler>,
     /// Active OS sandbox backend name displayed in the status bar when supplied.
     pub sandbox_backend: Option<String>,
+    /// Optional explicit invocation trust posture badge (for example `"confined/trusted"`
+    /// or `"UNSANDBOXED host-account"`). `None` keeps standard governed status display.
+    pub trust_posture_label: Option<String>,
     /// Optional image/content attachments queued for the first user prompt (from `--image`).
     pub initial_attachments: Vec<alan_agent_protocol::ContentPart>,
 }
@@ -176,6 +181,7 @@ impl FileBackedRunConfig {
             project_candidate: None,
             project_control: None,
             sandbox_backend: None,
+            trust_posture_label: None,
             initial_attachments: Vec::new(),
         }
     }
@@ -195,6 +201,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     if let Some(sandbox) = &config.sandbox_backend {
         app.sandbox_backend = Some(sandbox.clone());
     }
+    app.trust_posture_label = config.trust_posture_label.clone();
     if !config.initial_attachments.is_empty() {
         app.pending_attachments = config.initial_attachments.clone();
     }
@@ -346,6 +353,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             observation_io::Snapshot::Usage(_) => &usage_reads,
                         };
                         observation_io::apply(&mut app, request, revision, &owner, snapshot);
+                    }
+                    FileBackedEvent::HistorySwitchCompleted { rollout_id, result } => {
+                        match result {
+                            Ok(()) => {
+                                pending_root_agent_turns.clear();
+                                app.reset_for_rollout_switch(rollout_id.as_deref());
+                                root_agent_pid_retry.send_replace(());
+                            }
+                            Err(error) => app.push_error(format!("rollout switch failed: {error}")),
+                        }
                     }
                     FileBackedEvent::GitStatusUpdated { root, status } => {
                         if app.project_host_root.as_ref() == Some(&root) {
@@ -582,6 +599,24 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 FileBackedAction::ReadMan { topic, generation } => {
                                     man_view::spawn_read(&shell, &tx, topic, generation);
                                 }
+                                FileBackedAction::ReadHistoryCatalog { generation } => {
+                                    resume_picker::spawn_load_catalog(&shell, &tx, generation);
+                                }
+                                FileBackedAction::SwitchRollout { rollout_id } => {
+                                    resume_picker::spawn_switch_rollout(&shell, &tx, rollout_id);
+                                }
+                                FileBackedAction::InspectProjectSummary => {
+                                    summary_view::spawn_inspect(&shell, &tx);
+                                }
+                                FileBackedAction::EditProjectSummary {
+                                    text,
+                                    expected_revision,
+                                } => {
+                                    summary_view::spawn_edit(&shell, &tx, text, expected_revision);
+                                }
+                                FileBackedAction::DeleteProjectSummary { expected_revision } => {
+                                    summary_view::spawn_delete(&shell, &tx, expected_revision);
+                                }
                                 FileBackedAction::Quit => break,
                             }
                         }
@@ -786,6 +821,9 @@ mod tests;
 #[cfg(test)]
 #[path = "file_backed/ux_m2_tests.rs"]
 mod ux_m2_tests;
+#[cfg(test)]
+#[path = "file_backed/ux_m3_tests.rs"]
+mod ux_m3_tests;
 #[cfg(test)]
 #[path = "file_backed/ux_tests.rs"]
 mod ux_tests;

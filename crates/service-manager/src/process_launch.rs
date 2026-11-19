@@ -1,5 +1,6 @@
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
+use alan_agent_engine::tools::Tool;
 use alan_agent_engine::{ProcessDescriptor, ProcessPackageReference};
 use alan_kernel::{Credentials, LiveNamespace, Namespace};
 use anyhow::Result;
@@ -11,6 +12,7 @@ pub struct ProcessLaunchContext {
     pub namespace: Namespace,
     pub descriptors: BTreeMap<String, ProcessDescriptor>,
     pub package_references: Vec<ProcessPackageReference>,
+    pub packaged_tools: Vec<Arc<dyn Tool>>,
     pub credentials: Credentials,
     pub cwd: String,
     live_namespace: Option<LiveNamespace>,
@@ -24,6 +26,7 @@ impl std::fmt::Debug for ProcessLaunchContext {
             .field("namespace", &self.namespace.describe())
             .field("descriptors", &self.descriptors)
             .field("package_references", &self.package_references)
+            .field("packaged_tools_count", &self.packaged_tools.len())
             .field("credentials", &self.credentials)
             .field("cwd", &self.cwd)
             .field("live_namespace", &self.live_namespace.is_some())
@@ -42,6 +45,7 @@ impl ProcessLaunchContext {
             namespace,
             descriptors: BTreeMap::new(),
             package_references: Vec::new(),
+            packaged_tools: Vec::new(),
             credentials,
             cwd: normalize_namespace_path(&cwd.into())?,
             live_namespace: None,
@@ -71,6 +75,10 @@ impl ProcessLaunchContext {
         self.package_references.push(reference);
     }
 
+    pub fn add_packaged_tool(&mut self, tool: Arc<dyn Tool>) {
+        self.packaged_tools.push(tool);
+    }
+
     pub fn retain_authority<T>(&mut self, authority: Arc<T>)
     where
         T: Any + Send + Sync,
@@ -83,6 +91,7 @@ impl ProcessLaunchContext {
             namespace: self.namespace_snapshot(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
+            packaged_tools: self.packaged_tools.clone(),
             credentials: self.credentials.clone(),
             cwd: self.cwd.clone(),
             live_namespace: None,
@@ -102,6 +111,7 @@ impl ProcessLaunchContext {
             namespace,
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
+            packaged_tools: self.packaged_tools.clone(),
             credentials,
             cwd: self.cwd.clone(),
             live_namespace: None,
@@ -114,6 +124,7 @@ impl ProcessLaunchContext {
             namespace: namespace.snapshot(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
+            packaged_tools: self.packaged_tools.clone(),
             credentials,
             cwd: self.cwd.clone(),
             live_namespace: Some(namespace),

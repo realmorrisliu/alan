@@ -52,6 +52,7 @@ pub struct WelcomeBanner {
     pub project: String,
     pub model: String,
     pub sandbox: String,
+    pub trust_posture: Option<String>,
 }
 
 /// Permanent transcript content. Ephemeral activity (running tools, streaming

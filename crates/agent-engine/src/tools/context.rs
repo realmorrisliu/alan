@@ -76,6 +76,21 @@ pub trait ToolExecutionAuthority: std::fmt::Debug + Send + Sync {
     fn presentation_scope(&self, _pid: u64) -> Option<String> {
         None
     }
+
+    /// Monotonic live revision of the Host Mount / delegation grants governing `pid`.
+    fn authority_revision(&self, _pid: u64) -> Option<u64> {
+        None
+    }
+
+    /// Live standing `git push` publication scopes authorized for `pid`.
+    fn git_push_delegations(&self, _pid: u64) -> Vec<crate::policy::GitPushDelegationScope> {
+        Vec::new()
+    }
+
+    /// Authorized Alan namespace mount roots eligible for bounded `AGENTS.md`/`CLAUDE.md` reads.
+    fn project_knowledge_roots(&self, _pid: u64) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 impl ToolExecutionBinding {
@@ -130,6 +145,7 @@ pub struct ToolContext {
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
     namespace: Option<(u64, alan_ap::InProcessTransport)>,
     progress: Option<super::sandbox::command_process::OutputProgressCallback>,
+    trust_posture: crate::policy::TrustPosture,
 }
 
 impl ToolContext {
@@ -146,7 +162,19 @@ impl ToolContext {
             adapter: binding.adapter,
             namespace: None,
             progress: None,
+            trust_posture: crate::policy::TrustPosture::Governed,
         }
+    }
+
+    /// Attach the invocation's active trust posture to this Tool context.
+    pub fn with_trust_posture(mut self, trust_posture: crate::policy::TrustPosture) -> Self {
+        self.trust_posture = trust_posture;
+        self
+    }
+
+    /// Return the invocation trust posture governing this Tool context.
+    pub const fn trust_posture(&self) -> crate::policy::TrustPosture {
+        self.trust_posture
     }
 
     /// Bind the actual receiving Process identity and invocation namespace.
@@ -202,12 +230,18 @@ impl ToolContext {
 
     /// Create a sandbox from the Host-projected authority for this Process.
     pub fn sandbox(&self) -> Result<Sandbox> {
-        self.execution_adapter()?.sandbox()
+        Ok(self
+            .execution_adapter()?
+            .sandbox()?
+            .with_trust_posture(self.trust_posture))
     }
 
     /// Return the Host sandbox for the grant selected by the logical cwd.
     pub fn shell_sandbox(&self) -> Result<Sandbox> {
-        self.execution_adapter()?.shell_sandbox()
+        Ok(self
+            .execution_adapter()?
+            .shell_sandbox()?
+            .with_trust_posture(self.trust_posture))
     }
 
     /// Return the Host-selected native cwd without retaining it in engine state.

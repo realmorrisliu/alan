@@ -29,9 +29,51 @@ pub(super) struct DelegatedSkillRolloutRecord {
     child_run: Option<DelegatedChildRunReference>,
 }
 
+pub(super) fn build_subagent_action_metadata(
+    role_or_skill: &str,
+    child_pid: Option<&str>,
+    child_run_id: Option<&str>,
+    child_state: &str,
+    process_path: Option<&str>,
+    redactions: Option<&[crate::evidence::EvidenceRedactionMarker]>,
+) -> serde_json::Value {
+    let pid_display = child_pid.unwrap_or("...");
+    let mut doc = json!({
+        "title": format!("{role_or_skill} · pid {pid_display} · {child_state}"),
+        "subagent_role": role_or_skill,
+        "child_state": child_state,
+    });
+    if let Some(pid) = child_pid {
+        doc["child_pid"] = json!(pid);
+    }
+    if let Some(child_run_id) = child_run_id {
+        doc["child_run_id"] = json!(child_run_id);
+    }
+    if let Some(process_path) = process_path {
+        doc["child_process_path"] = json!(process_path);
+    }
+    if let Some(redactions) = redactions {
+        doc["redactions"] = json!(redactions);
+    }
+    doc
+}
+
 pub(super) async fn persist_delegated_child_evidence(
     agent_files: &NamespaceAgentFiles,
     request: &DelegatedSkillInvocationRequest,
+    result: &ChildRuntimeResult,
+) -> Option<DelegatedSkillOutputRef> {
+    persist_child_output_evidence(
+        agent_files,
+        &format!("delegate:{}", request.skill_id),
+        result,
+    )
+    .await
+}
+
+pub(super) async fn persist_child_output_evidence(
+    agent_files: &NamespaceAgentFiles,
+    action_tool: &str,
     result: &ChildRuntimeResult,
 ) -> Option<DelegatedSkillOutputRef> {
     if result.output_text.trim().is_empty() {
@@ -57,17 +99,22 @@ pub(super) async fn persist_delegated_child_evidence(
     }
     let action_id = agent_files
         .write_action(
-            NamespaceActionRecord::new(
-                format!("delegate:{}", request.skill_id),
-                result.terminal_status_label(),
-            )
-            .with_output(redacted.text)
-            .with_result(result_doc.to_string())
-            .with_approval("not_required"),
+            NamespaceActionRecord::new(action_tool, result.terminal_status_label())
+                .with_output(redacted.text)
+                .with_result(result_doc.to_string())
+                .with_approval("not_required"),
         )
         .await
         .ok()?;
-    let reference = agent_files.action_output_reference(&action_id).await?;
+    resolve_action_output_reference(agent_files, &action_id, result).await
+}
+
+pub(super) async fn resolve_action_output_reference(
+    agent_files: &NamespaceAgentFiles,
+    action_id: &str,
+    result: &ChildRuntimeResult,
+) -> Option<DelegatedSkillOutputRef> {
+    let reference = agent_files.action_output_reference(action_id).await?;
     agent_files
         .resolve_evidence_reference(&reference, None, result.child_run_value())
         .await

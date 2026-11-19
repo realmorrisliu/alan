@@ -1,0 +1,18 @@
+schema_version = 1
+kind = "provider"
+version = "0.1.0"
+description = "Installable Anthropic Messages API provider package for Alan Quartermaster (`q`)."
+
+[provider]
+id = "anthropic_messages"
+protocol = "anthropic_messages"
+display_name = "Anthropic Messages API"
+default_base_url = "https://api.anthropic.com/v1"
+default_model = "claude-sonnet-4-6"
+models = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"]
+auth_mode = "header_api_key"
+api_key_header = "x-api-key"
+adapter_descriptor = "adapter.toml"
+
+[provider.default_headers]
+anthropic-version = "2023-06-01"

@@ -272,7 +272,7 @@ impl AlanOsHost {
         remove_stale_owned_file(&paths.socket)?;
         remove_stale_owned_file(&paths.status)?;
 
-        let service_manager = ServiceManager::boot(config.into_service_manager()).await?;
+        let service_manager = config.boot_service_manager().await?;
         let listener = UnixListener::bind(&paths.socket)
             .with_context(|| format!("bind Alan OS attachment {}", paths.socket.display()))?;
         std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;

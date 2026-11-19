@@ -13,6 +13,8 @@ pub(super) fn default_commands() -> Vec<CompletionCandidate> {
         ("tape", "inspect Turing Tape timeline"),
         ("quit", "exit alan"),
         ("model", "choose model and reasoning effort"),
+        ("resume", "inspect and switch retained rollout session"),
+        ("summary", "inspect, edit, or delete project summary"),
         ("status", "inspect project, model and queue"),
         ("new", "start a fresh session view"),
     ]
@@ -52,6 +54,7 @@ impl FileBackedApp {
             && !self.project_host_pending
             && self.queue.project_safe()
             && !self.modal.active
+            && !self.resume_picker.active
             && self.activity.state != UiActivityState::Running
             && self.activity.waiting_submission_ids.is_empty()
             && self.pending_yield.is_none()

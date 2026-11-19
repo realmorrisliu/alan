@@ -18,6 +18,9 @@ pub use embed::{
     EmbedEvent, EmbedEventStream, EmbeddedAlan, EmbeddedConfig, LlmSource, RootAgentClient,
     StorageMode,
 };
+pub use host_mounts::saved_grants::{
+    SavedGitPushRule, SavedProjectGrantRecord, SavedProjectGrantStore,
+};
 pub use legacy_connections::{
     ConnectionMigrationReport, LegacyConnectionPaths, migrate_legacy_connections,
 };

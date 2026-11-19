@@ -269,6 +269,48 @@ pub(crate) struct NamespaceToolExecution {
     tool_process_context: Option<NamespaceToolProcessContext>,
 }
 
+/// Narrow handle for Tool authorization authority snapshots and dedicated Guardian capture.
+#[derive(Clone)]
+pub(crate) struct NamespaceToolAuthorization {
+    model_bindings: Arc<tokio::sync::Mutex<super::super::model_binding::ProcessBindings>>,
+    operation_cleanup: NamespaceOperationCleanup,
+    tool_process_context: Option<NamespaceToolProcessContext>,
+}
+
+impl NamespaceToolAuthorization {
+    pub(crate) fn authority_revision(&self) -> Option<u64> {
+        let context = self.tool_process_context.as_ref()?;
+        context.tool_runner.authority_revision(context.pid)
+    }
+
+    pub(crate) fn git_push_delegations(&self) -> Vec<crate::policy::GitPushDelegationScope> {
+        let Some(context) = &self.tool_process_context else {
+            return Vec::new();
+        };
+        context.tool_runner.git_push_delegations(context.pid)
+    }
+
+    pub(crate) async fn capture_guardian_generation(
+        &self,
+        profile: &str,
+    ) -> Result<NamespaceGeneration> {
+        let authority = self
+            .model_bindings
+            .lock()
+            .await
+            .authority
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("guardian Connection authority unavailable"))?;
+        let captured = authority.capture_guardian(profile).await?;
+        Ok(NamespaceGeneration {
+            root: captured.root,
+            llm_connection: captured.connection,
+            budget: None,
+            operation_cleanup: self.operation_cleanup.clone(),
+        })
+    }
+}
+
 #[derive(Clone)]
 struct NamespaceToolProcessContext {
     pub(crate) pid: u64,
@@ -417,6 +459,82 @@ impl NamespaceRuntimeEnvironment {
             agent_files: self.agent_files(),
             tool_process_context: self.tool_process_context.clone(),
         }
+    }
+
+    pub(crate) fn tool_authorization(&self) -> NamespaceToolAuthorization {
+        NamespaceToolAuthorization {
+            model_bindings: Arc::clone(&self.model_bindings),
+            operation_cleanup: self.operation_cleanup.clone(),
+            tool_process_context: self.tool_process_context.clone(),
+        }
+    }
+
+    /// Bind the invocation's explicit trust posture on the attached Tool Process runner.
+    pub(crate) fn with_trust_posture(self, trust_posture: crate::policy::TrustPosture) -> Self {
+        if let Some(context) = &self.tool_process_context {
+            context
+                .tool_runner
+                .register_process_trust_posture(context.pid, trust_posture);
+        }
+        self
+    }
+
+    /// Read bounded non-authoritative `AGENTS.md`/`CLAUDE.md` knowledge from explicitly
+    /// mounted workspace roots in this Process namespace.
+    pub(crate) async fn read_project_knowledge_section(&self) -> Option<String> {
+        let ctx = self.tool_process_context.as_ref()?;
+        let mut roots = ctx.tool_runner.project_knowledge_roots(ctx.pid);
+        if roots.is_empty() {
+            // If an authoritative HostMountService returned empty, grants are inactive/revoked.
+            if ctx.tool_runner.authority_revision(ctx.pid).is_some() {
+                return None;
+            }
+            let binding = self.tool_execution().execution_binding()?;
+            if !binding.has_adapter() {
+                return None;
+            }
+            let cwd = binding.namespace_cwd;
+            if cwd.starts_with("/mnt/") && !cwd.starts_with("/mnt/llm") {
+                roots.push(cwd);
+            }
+        }
+        if roots.is_empty() {
+            return None;
+        }
+        let client = client::NamespaceClient::new(self.root.clone());
+        let mut seen = std::collections::BTreeSet::new();
+        let mut docs = Vec::new();
+        for root in roots {
+            if !seen.insert(root.clone()) {
+                continue;
+            }
+            for filename in crate::prompts::project_knowledge::PROJECT_KNOWLEDGE_FILENAMES {
+                let ns_path = root.join(filename);
+                let ns_str = ns_path.to_string_lossy();
+                let Ok(Some(raw)) = client
+                    .try_read_file_bounded(
+                        &ns_str,
+                        crate::prompts::project_knowledge::PROJECT_KNOWLEDGE_MAX_FILE_BYTES,
+                    )
+                    .await
+                else {
+                    continue;
+                };
+                if let Some((content, truncated)) =
+                    crate::prompts::project_knowledge::bound_project_knowledge_bytes(&raw)
+                {
+                    docs.push(
+                        crate::prompts::project_knowledge::ProjectKnowledgeDocument {
+                            filename: (*filename).to_string(),
+                            namespace_path: ns_str.into_owned(),
+                            content,
+                            truncated,
+                        },
+                    );
+                }
+            }
+        }
+        crate::prompts::project_knowledge::render_project_knowledge_section(&docs)
     }
 
     /// Bind transition-local Tool execution to its already-created Process.

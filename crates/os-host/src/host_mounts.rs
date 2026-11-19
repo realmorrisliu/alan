@@ -3,6 +3,8 @@
 //! Runtime grant authority and live namespace projection belong to Host Mount
 //! Service. This adapter alone retains native backing paths.
 
+#[path = "host_mounts/saved_grants.rs"]
+pub mod saved_grants;
 #[path = "host_mounts/text_projection.rs"]
 mod text_projection;
 
@@ -328,7 +330,7 @@ pub fn approve_host_mount(
     service.approve_export(request_id, export, provenance, actor)
 }
 
-fn native_export(
+pub(super) fn native_export(
     namespace_path: &str,
     host_path: &Path,
     access: HostMountAccess,

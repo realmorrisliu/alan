@@ -12,7 +12,8 @@ use std::{
 
 use alan_agent_engine::{
     AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableStatus, AgentProcessConfig,
-    ContentPart, MEMORY_STORE_FD, Op, RuntimeHandle, SpawnHandle, SpawnTarget, Submission,
+    ContentPart, MEMORY_STORE_FD, Op, RuntimeHandle, SpawnHandle, SpawnMountAccess, SpawnTarget,
+    Submission,
     skills::SkillHostCapabilities,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
@@ -31,6 +32,8 @@ use crate::{
 };
 
 mod child_wait;
+#[path = "agent_runtime/history_discovery.rs"]
+mod history_discovery;
 mod pause_answer;
 mod pause_record;
 mod process_cleanup;
@@ -51,6 +54,7 @@ static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 pub(crate) struct RootAgentTemplate {
     process: AgentProcessConfig,
     pub(crate) resume_persisted_rollout: bool,
+    pub(crate) resume_rollout_id: Option<String>,
     /// Never read or overwrite the selected-rollout channel for this invocation.
     pub(crate) ephemeral_rollout: bool,
     launch_context: ProcessLaunchContext,
@@ -75,6 +79,7 @@ impl RootAgentTemplate {
             task_budget_binding: Default::default(),
             process,
             resume_persisted_rollout,
+            resume_rollout_id: None,
             ephemeral_rollout: false,
             input_shadow,
             launch_context,
@@ -89,6 +94,12 @@ impl RootAgentTemplate {
     /// Keep this invocation's rollout out of the `metadata/root-rollout` selector.
     pub(crate) fn with_ephemeral_rollout(mut self, ephemeral_rollout: bool) -> Self {
         self.ephemeral_rollout = ephemeral_rollout;
+        self
+    }
+
+    /// Pin an explicit persisted rollout ID to recover on Root Agent startup.
+    pub(crate) fn with_resume_rollout_id(mut self, resume_rollout_id: Option<String>) -> Self {
+        self.resume_rollout_id = resume_rollout_id;
         self
     }
 }
@@ -133,6 +144,10 @@ pub(crate) struct AgentRuntimeService {
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
     root_runtime_handles: Mutex<HashMap<u64, RuntimeHandle>>,
     current_root_rollout: Mutex<root_recovery::RootRolloutState>,
+    last_root_template: Mutex<Option<RootAgentTemplate>>,
+    active_root_pid: Mutex<Option<u64>>,
+    next_root_rollout: Mutex<Option<history_discovery::PendingRootRolloutSwitch>>,
+    history_bound: tokio::sync::OnceCell<()>,
 }
 
 struct PendingRootLaunch {
@@ -169,6 +184,10 @@ impl AgentRuntimeService {
             process_templates: Mutex::new(HashMap::new()),
             root_runtime_handles: Mutex::new(HashMap::new()),
             current_root_rollout: Mutex::new(root_recovery::RootRolloutState::NotStarted),
+            last_root_template: Mutex::new(None),
+            active_root_pid: Mutex::new(None),
+            next_root_rollout: Mutex::new(None),
+            history_bound: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -190,16 +209,10 @@ impl AgentRuntimeService {
             unit.executable == AGENT_EXECUTABLE,
             "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
         );
+        self.ensure_history_service_bound().await;
         let mut template = template.clone();
         template.task_budget_binding = Default::default();
-        root_recovery::select(
-            &mut template.process,
-            template.resume_persisted_rollout && !template.ephemeral_rollout,
-            &mut self
-                .current_root_rollout
-                .lock()
-                .expect("current Root rollout mutex poisoned"),
-        )?;
+        self.prepare_root_template_recovery(&mut template).await?;
         let source = namespace_with_package_references(
             system_namespace.snapshot(),
             &template.launch_context,
@@ -497,6 +510,10 @@ impl AgentRuntimeService {
                 profile: launch.template.llm_connection.clone(),
                 namespace: launch.namespace.clone(),
                 evaluator: evaluator.clone(),
+                guardian_profile: alan_agent_engine::runtime::effective_core_config_for_runtime(
+                    &launch.template.process,
+                )?
+                .guardian_profile,
             },
         ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
@@ -517,6 +534,10 @@ impl AgentRuntimeService {
             launch.template.generation_capabilities,
         )?;
         if launch.root {
+            *self
+                .active_root_pid
+                .lock()
+                .expect("active root pid mutex poisoned") = Some(pid.0);
             self.root_runtime_handles
                 .lock()
                 .expect("Root runtime handles mutex poisoned")
@@ -529,6 +550,26 @@ impl AgentRuntimeService {
         if launch.root {
             if !launch.template.ephemeral_rollout {
                 root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+                if let (Some(stores), Some(rollout_path)) = (
+                    launch.template.process.store_bindings.as_ref(),
+                    startup.rollout_path.as_deref().or(launch
+                        .template
+                        .process
+                        .recovery_rollout_path
+                        .as_deref()),
+                ) {
+                    let scope = self
+                        .resolve_active_project_scope(
+                            Some(pid.0),
+                            &launch.template.process.namespace_cwd,
+                        )
+                        .await;
+                    let _ = history_discovery::record_rollout_project_index(
+                        stores,
+                        rollout_path,
+                        &scope,
+                    );
+                }
             }
             let rollout = startup
                 .rollout_path
@@ -669,6 +710,10 @@ impl AgentRuntimeService {
         );
         let binding = self.host_mount.reconcile(pid.0, binding)?;
         self.tool_runner.register_process_binding(pid.0, binding);
+        if !launch_context.packaged_tools.is_empty() {
+            self.tool_runner
+                .register_process_tools(pid.0, launch_context.packaged_tools.clone())?;
+        }
         Ok(())
     }
 }
@@ -681,6 +726,14 @@ fn child_template(
     let spec = &request.spawn;
     spec.validate_agent_process_launch()?;
     ensure!(
+        !spec.runtime_overrides.read_only
+            || spec
+                .host_mounts
+                .iter()
+                .all(|mount| mount.access == SpawnMountAccess::ReadOnly),
+        "read-only child Agent Process cannot request read_write Host Mounts"
+    );
+    ensure!(
         invocation
             .exec
             .descriptors
@@ -688,18 +741,25 @@ fn child_template(
             .all(|descriptor| matches!(*descriptor, AGENT_DEFINITION_FD | MEMORY_STORE_FD)),
         "child Agent Process contains an unsupported descriptor"
     );
-    let definition_path = invocation
-        .exec
-        .descriptors
-        .get(&AGENT_DEFINITION_FD)
-        .context("child Agent Process has no Agent Definition descriptor")?;
+    let definition_path = invocation.exec.descriptors.get(&AGENT_DEFINITION_FD);
     let definition = match &spec.target {
-        SpawnTarget::DefinitionDescriptor { descriptor } => parent
-            .launch_context
-            .descriptor(descriptor)
-            .cloned()
-            .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?,
+        SpawnTarget::DefinitionDescriptor { descriptor } => {
+            let definition_path = definition_path
+                .context("child Agent Process has no Agent Definition descriptor")?;
+            let definition = parent
+                .launch_context
+                .descriptor(descriptor)
+                .cloned()
+                .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
+            ensure!(
+                definition.path == *definition_path,
+                "child Agent Definition descriptor does not match SpawnSpec target"
+            );
+            Some(definition)
+        }
         target @ SpawnTarget::PackageChildAgent { .. } => {
+            let definition_path = definition_path
+                .context("child Agent Process has no Agent Definition descriptor")?;
             let export = parent
                 .process
                 .agent_definition
@@ -713,16 +773,32 @@ fn child_template(
             let file_tree = export
                 .file_tree
                 .context("package child Agent Executable has no immutable descriptor")?;
-            alan_agent_engine::ProcessDescriptor::with_file_tree(
+            let definition = alan_agent_engine::ProcessDescriptor::with_file_tree(
                 export.root_dir.to_string_lossy(),
                 file_tree,
-            )?
+            )?;
+            ensure!(
+                definition.path == *definition_path,
+                "child Agent Definition descriptor does not match SpawnSpec target"
+            );
+            Some(definition)
         }
+        SpawnTarget::AdHocSubagent { .. } => match definition_path {
+            Some(definition_path) => {
+                let definition = parent
+                    .launch_context
+                    .descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR)
+                    .cloned()
+                    .context("parent Process has no Agent Definition descriptor")?;
+                ensure!(
+                    definition.path == *definition_path,
+                    "child Agent Definition descriptor does not match SpawnSpec target"
+                );
+                Some(definition)
+            }
+            None => None,
+        },
     };
-    ensure!(
-        definition.path == *definition_path,
-        "child Agent Definition descriptor does not match SpawnSpec target"
-    );
 
     let mut launch_context = parent.launch_context.child();
     launch_context.namespace = invocation.namespace.clone();
@@ -734,10 +810,12 @@ fn child_template(
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|| "/".to_string());
     launch_context.descriptors.clear();
-    launch_context.descriptors.insert(
-        alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR.to_string(),
-        definition,
-    );
+    if let Some(definition) = definition {
+        launch_context.descriptors.insert(
+            alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+            definition,
+        );
+    }
     let memory_path = invocation.exec.descriptors.get(&MEMORY_STORE_FD);
     let parent_memory = parent
         .launch_context
@@ -802,10 +880,15 @@ fn child_template(
         task_budget_binding: parent.task_budget_binding.child()?,
         process,
         resume_persisted_rollout: false,
+        resume_rollout_id: None,
         ephemeral_rollout: false,
         input_shadow: None,
         launch_context,
-        host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
+        host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(
+            tools,
+            !matches!(spec.target, SpawnTarget::AdHocSubagent { .. })
+                && !spec.runtime_overrides.read_only,
+        ),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
         llm_connection,
     })

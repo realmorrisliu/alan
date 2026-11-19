@@ -234,6 +234,9 @@ pub(super) async fn read_detail_with_theme(
         }
     }
     let mut header = vec![Line::from(format!("Action {id} · {path}"))];
+    if let Some(subagent_line) = format_subagent_header(&snapshot) {
+        header.push(Line::styled(subagent_line, theme.accent_style()));
+    }
     if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
         let mut detail = crate::history::action_detail_with_theme(&cell, theme);
         if readable {
@@ -248,4 +251,34 @@ pub(super) async fn read_detail_with_theme(
     }
     header.extend(rows);
     header
+}
+
+fn format_subagent_header(snapshot: &ActionSnapshot) -> Option<String> {
+    let parsed = serde_json::from_str::<serde_json::Value>(&snapshot.result).ok();
+    let role = parsed
+        .as_ref()
+        .and_then(|v| v.get("subagent_role"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| snapshot.name.trim().strip_prefix("subagent:"))?;
+    let pid = parsed
+        .as_ref()
+        .and_then(|v| v.get("child_pid"))
+        .and_then(|v| v.as_u64())
+        .filter(|pid| *pid > 0);
+    let state = parsed
+        .as_ref()
+        .and_then(|v| v.get("child_state"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let s = snapshot.status.trim();
+            if s.is_empty() { "running" } else { s }
+        });
+    let role = crate::history::clean_text(role);
+    Some(match pid {
+        Some(pid) => format!("Subagent: {role} · pid {pid} · {state}"),
+        None => format!("Subagent: {role} · {state}"),
+    })
 }

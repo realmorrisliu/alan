@@ -456,12 +456,16 @@ pub struct ToolProcessRunner {
     inner: Arc<ToolProcessRunnerInner>,
 }
 
+type ProcessToolsMap = HashMap<u64, HashMap<String, Arc<dyn Tool>>>;
+
 struct ToolProcessRunnerInner {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
     default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
     process_bindings: Mutex<HashMap<u64, ToolExecutionBinding>>,
     process_authorities: Mutex<HashMap<u64, Arc<dyn super::ToolExecutionAuthority>>>,
+    process_trust_postures: Mutex<HashMap<u64, crate::policy::TrustPosture>>,
+    process_tools: Mutex<ProcessToolsMap>,
     read_only_receipts: Mutex<BTreeMap<u64, (u64, String, String)>>,
     progress_sinks: Mutex<HashMap<u64, super::sandbox::command_process::OutputProgressCallback>>,
 }
@@ -500,6 +504,8 @@ impl ToolProcessRunner {
                 default_binding: Arc::clone(&registry.default_binding),
                 process_bindings: Mutex::new(HashMap::new()),
                 process_authorities: Mutex::new(HashMap::new()),
+                process_trust_postures: Mutex::new(HashMap::new()),
+                process_tools: Mutex::new(HashMap::new()),
                 read_only_receipts: Mutex::new(BTreeMap::new()),
                 progress_sinks: Mutex::new(HashMap::new()),
             }),
@@ -650,6 +656,19 @@ impl ToolProcessRunner {
             .insert(pid, authority);
     }
 
+    /// Record the explicit invocation trust posture governing one Agent Process.
+    pub fn register_process_trust_posture(
+        &self,
+        pid: u64,
+        trust_posture: crate::policy::TrustPosture,
+    ) {
+        self.inner
+            .process_trust_postures
+            .lock()
+            .expect("process trust posture mutex poisoned")
+            .insert(pid, trust_posture);
+    }
+
     /// Remove all Tool execution state when its owning Process exits.
     pub fn unregister_process(&self, pid: u64) {
         let inner = &self.inner;
@@ -663,6 +682,39 @@ impl ToolProcessRunner {
             .lock()
             .expect("authority mutex poisoned")
             .remove(&pid);
+        inner
+            .process_trust_postures
+            .lock()
+            .expect("process trust posture mutex poisoned")
+            .remove(&pid);
+        inner
+            .process_tools
+            .lock()
+            .expect("process tools mutex poisoned")
+            .remove(&pid);
+    }
+
+    /// Register Process-scoped packaged or projected MCP Tools for `pid`.
+    /// Built-in core Tools cannot be shadowed by Process-scoped packages.
+    pub fn register_process_tools(&self, pid: u64, tools: Vec<Arc<dyn Tool>>) -> Result<()> {
+        let mut per_process = HashMap::new();
+        for tool in tools {
+            anyhow::ensure!(
+                !self.inner.tools.contains_key(tool.name()),
+                "packaged Tool `{}` cannot shadow a built-in Alan Tool",
+                tool.name()
+            );
+            anyhow::ensure!(
+                per_process.insert(tool.name().to_string(), tool).is_none(),
+                "duplicate packaged Tool name projected for Process {pid}"
+            );
+        }
+        self.inner
+            .process_tools
+            .lock()
+            .expect("process tools mutex poisoned")
+            .insert(pid, per_process);
+        Ok(())
     }
 
     pub(crate) fn capability_for_tool(
@@ -674,6 +726,46 @@ impl ToolProcessRunner {
             .tools
             .get(name)
             .map(|tool| tool.capability(arguments))
+    }
+
+    pub(crate) fn authority_revision(&self, pid: u64) -> Option<u64> {
+        let authority = self
+            .inner
+            .process_authorities
+            .lock()
+            .ok()?
+            .get(&pid)?
+            .clone();
+        authority.authority_revision(pid)
+    }
+
+    pub(crate) fn git_push_delegations(
+        &self,
+        pid: u64,
+    ) -> Vec<crate::policy::GitPushDelegationScope> {
+        let Some(authority) = self
+            .inner
+            .process_authorities
+            .lock()
+            .ok()
+            .and_then(|authorities| authorities.get(&pid).cloned())
+        else {
+            return Vec::new();
+        };
+        authority.git_push_delegations(pid)
+    }
+
+    pub(crate) fn project_knowledge_roots(&self, pid: u64) -> Vec<PathBuf> {
+        let Some(authority) = self
+            .inner
+            .process_authorities
+            .lock()
+            .ok()
+            .and_then(|authorities| authorities.get(&pid).cloned())
+        else {
+            return Vec::new();
+        };
+        authority.project_knowledge_roots(pid)
     }
 }
 
@@ -702,7 +794,16 @@ impl ToolProcessRunner {
             .rsplit('/')
             .next()
             .unwrap_or(invocation.executable.as_str());
-        let Some(tool) = self.inner.tools.get(name) else {
+        let authority_pid = invocation.parent.unwrap_or(invocation.pid);
+        let packaged_tool = self
+            .inner
+            .process_tools
+            .lock()
+            .expect("process tools mutex poisoned")
+            .get(&authority_pid)
+            .and_then(|map| map.get(name))
+            .cloned();
+        let Some(tool) = self.inner.tools.get(name).cloned().or(packaged_tool) else {
             return ToolProcessOutcome::exited(127, b"Tool executable has no host\n");
         };
         let arguments = invocation
@@ -776,7 +877,16 @@ impl ToolProcessRunner {
             };
             self.register_process_binding(authority_pid, binding.clone());
         }
-        let mut context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
+        let trust_posture = self
+            .inner
+            .process_trust_postures
+            .lock()
+            .expect("process trust posture mutex poisoned")
+            .get(&authority_pid)
+            .copied()
+            .unwrap_or_default();
+        let mut context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config))
+            .with_trust_posture(trust_posture);
         if let Some(namespace) = namespace {
             context = context.with_namespace(authority_pid, namespace);
         }

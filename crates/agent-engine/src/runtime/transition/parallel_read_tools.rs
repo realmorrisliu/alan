@@ -21,7 +21,7 @@ use crate::runtime::{
     loop_guard::ToolLoopGuard,
     tool_batch::ToolOrchestratorInputs,
     tool_execution::{namespace_tool_payload, tool_payload_for_tape},
-    tool_policy::{SandboxConfinement, ToolPolicyDecision, evaluate_tool_policy},
+    tool_policy::{SandboxConfinement, ToolPolicyDecision, evaluate_tool_policy_with_posture},
     tool_presentation::{tool_presentation, tool_title},
     turn_support::{check_turn_cancelled, tool_result_preview},
 };
@@ -45,6 +45,7 @@ fn is_virtual_tool(name: &str) -> bool {
             | "request_user_input"
             | "update_plan"
             | "invoke_delegated_skill"
+            | "spawn_subagent"
             | "terminate_child_run"
     )
 }
@@ -127,9 +128,11 @@ where
         if capability != ToolCapability::Read {
             break;
         }
-        let decision = evaluate_tool_policy(
+        let decision = evaluate_tool_policy_with_posture(
             &state.runtime_config.policy_engine,
             &state.runtime_config.governance,
+            state.runtime_config.trust_posture,
+            &[],
             &call.name,
             &call.arguments,
             capability,

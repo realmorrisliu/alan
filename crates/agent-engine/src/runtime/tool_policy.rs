@@ -67,17 +67,7 @@ fn is_force_push(command: &str) -> bool {
     let has_git = tokens.iter().any(|t| t == "git" || t.ends_with("/git"));
     let has_push = tokens.iter().any(|t| t == "push");
     let rewrites_remote = tokens.iter().any(|t| {
-        t == "-f"
-            || t == "--force"
-            || t.starts_with("--force-with-lease")
-            // `--mirror` force-updates changed refs and deletes refs missing
-            // locally; `--delete`/`-d` removes remote refs; `--prune` removes
-            // remote refs with no local counterpart. All rewrite/remove remote
-            // history like a force-push.
-            || t == "--mirror"
-            || t == "--delete"
-            || t == "-d"
-            || t == "--prune"
+        crate::policy::is_destructive_push_flag(t)
             // A leading `+` on a push refspec (e.g. `+main:main`) forces a
             // non-fast-forward update; a leading `:` (e.g. `:main`) deletes the
             // remote ref — equivalent to --force / --delete for that ref.
@@ -237,8 +227,60 @@ pub(super) fn evaluate_tool_policy(
     current_cwd: Option<&std::path::Path>,
     confinement: SandboxConfinement,
 ) -> ToolPolicyDecision {
-    let sandbox_backend = crate::tools::active_backend_name();
-    let path_mode = crate::tools::active_backend_path_mode().to_string();
+    evaluate_tool_policy_with_posture(
+        policy_engine,
+        governance,
+        crate::policy::TrustPosture::Governed,
+        &[],
+        tool_name,
+        arguments,
+        capability,
+        current_cwd,
+        confinement,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Explicit posture-aware policy evaluation separates posture, delegation, cwd, and confinement inputs"
+)]
+pub(super) fn evaluate_tool_policy_with_posture(
+    policy_engine: &crate::policy::PolicyEngine,
+    governance: &alan_agent_protocol::GovernanceConfig,
+    trust_posture: crate::policy::TrustPosture,
+    git_push_delegations: &[crate::policy::GitPushDelegationScope],
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    capability: alan_agent_protocol::ToolCapability,
+    current_cwd: Option<&std::path::Path>,
+    confinement: SandboxConfinement,
+) -> ToolPolicyDecision {
+    let raw_sandbox_backend = crate::tools::active_backend_name();
+    let sandbox_backend = if trust_posture.is_unsandboxed_host_account() {
+        "unsandboxed-host-account"
+    } else {
+        raw_sandbox_backend
+    };
+    let path_mode = if trust_posture.is_unsandboxed_host_account() {
+        "unsandboxed".to_string()
+    } else {
+        crate::tools::active_backend_path_mode().to_string()
+    };
+
+    if trust_posture.bypasses_action_approvals() {
+        return ToolPolicyDecision::Allow {
+            audit: alan_agent_protocol::ToolDecisionAudit {
+                policy_source: "trust_posture".to_string(),
+                rule_id: Some(format!("trust-posture-{}", trust_posture.as_str())),
+                action: "allow".to_string(),
+                reason: Some(trust_posture.isolation_summary(Some(raw_sandbox_backend))),
+                capability: capability_label(capability).to_string(),
+                sandbox_backend: sandbox_backend.to_string(),
+                path_mode: Some(path_mode),
+            },
+        };
+    }
+
     // Apply static bash-shape preflight only on the non-OS-sandboxed fallback
     // (`HostMountPathGuard`). When Seatbelt/Landlock/LinuxReifiedNamespace is
     // active, confinement does not depend on static shell syntax.
@@ -342,6 +384,28 @@ pub(super) fn evaluate_tool_policy(
         rule_id = Some("human-chmod-world-writable".to_string());
         policy_reason =
             Some("broadly weakening file permissions requires human approval".to_string());
+    }
+
+    // Scoped standing publication delegation (`git push` matching delegated
+    // remote/ref on the mounted project). Force-pushes and remote deletions
+    // remain strictly outside delegation and escalate always-human.
+    if builtin_bash
+        && action == crate::policy::PolicyAction::Escalate
+        && policy_source == "builtin_autonomous"
+        && !is_force_push(command_arg)
+        && !rule_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("human-"))
+        && let Some(scope) =
+            crate::policy::match_git_push_delegation(git_push_delegations, command_arg, current_cwd)
+    {
+        action = crate::policy::PolicyAction::Allow;
+        policy_source = "delegation_grant".to_string();
+        rule_id = Some(format!("delegated-git-push:{}", scope.grant_id));
+        policy_reason = Some(format!(
+            "authorized by standing publication grant `{}`",
+            scope.grant_id
+        ));
     }
 
     // Safe degradation: when the sandbox does not FULLY confine bash — network

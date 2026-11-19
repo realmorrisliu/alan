@@ -356,6 +356,84 @@ impl NamespaceAgentFiles {
         .await
     }
 
+    /// Allocate an `actions/<id>` directory in `"running"` state without writing write-once `output`.
+    pub(crate) async fn start_running_action(
+        &self,
+        mut record: NamespaceActionRecord,
+    ) -> Result<String> {
+        record.output = None;
+        if let Some(result) = record.result.as_mut() {
+            *result = crate::evidence::redact_durable_evidence_text(result).text;
+        }
+        let client = NamespaceClient::new(self.root.clone());
+        let clone_path = format!("{}/actions/clone", self.agent_path);
+        let mut id = None;
+        client
+            .clone_via_open_retained(&clone_path, &mut id)
+            .await
+            .with_context(|| format!("create action through {clone_path}"))?;
+        let id = id.context("actions/clone did not return an action id")?;
+        let action_path = format!("{}/actions/{id}", self.agent_path);
+        for (field, value) in [
+            ("name", Some(record.name.as_str())),
+            ("result", record.result.as_deref()),
+            ("approval", record.approval.as_deref()),
+            ("process", record.process.as_deref()),
+        ] {
+            if let Some(value) = value {
+                client
+                    .write_document(&format!("{action_path}/{field}"), value.as_bytes())
+                    .await?;
+            }
+        }
+        client
+            .write_document(&format!("{action_path}/status"), record.status.as_bytes())
+            .await?;
+        Ok(id)
+    }
+
+    /// Update mutable metadata on an already-started running action without touching `output`.
+    pub(crate) async fn update_running_action(
+        &self,
+        action_id: &str,
+        result: &str,
+        process: Option<&str>,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        let action_path = format!("{}/actions/{action_id}", self.agent_path);
+        let redacted_result = crate::evidence::redact_durable_evidence_text(result).text;
+        if let Some(process) = process {
+            client
+                .write_document(&format!("{action_path}/process"), process.as_bytes())
+                .await?;
+        }
+        client
+            .write_document(&format!("{action_path}/result"), redacted_result.as_bytes())
+            .await?;
+        client
+            .write_document(&format!("{action_path}/status"), b"running")
+            .await?;
+        Ok(())
+    }
+
+    /// Finalize a pre-allocated running action with write-once `output`, rollout evidence, and terminal `status`.
+    pub(crate) async fn finish_action(
+        &self,
+        action_id: &str,
+        record: NamespaceActionRecord,
+    ) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        let mut pending = PendingActionPublication::with_retained_id(record, action_id.to_string());
+        publish_action_record(
+            &client,
+            &self.agent_path,
+            &mut pending,
+            self.action_recorder.as_ref(),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub(crate) async fn restore_actions(
         &self,
         path: &std::path::PathBuf,

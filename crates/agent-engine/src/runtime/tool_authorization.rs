@@ -17,10 +17,12 @@ use crate::{
 
 use super::{
     guardian::{
-        DEFAULT_REVIEWER_POLICY, ReviewContext, ReviewOutcome, build_review_request,
-        build_transcript, review_generation_result,
+        ReviewContext, ReviewOutcome, build_review_request, build_transcript,
+        resolve_guardian_policy, review_generation_result,
     },
-    tool_policy::{EscalationRoute, SandboxConfinement, ToolPolicyDecision, evaluate_tool_policy},
+    tool_policy::{
+        EscalationRoute, SandboxConfinement, ToolPolicyDecision, evaluate_tool_policy_with_posture,
+    },
     turn_support::tool_result_preview,
 };
 
@@ -64,10 +66,17 @@ where
         cancel,
     } = request;
     let confinement = SandboxConfinement::detect();
+    let git_push_delegations = runtime
+        .authority
+        .as_ref()
+        .map(|authority| authority.git_push_delegations())
+        .unwrap_or_default();
     let mut policy_decision = maybe_allow_approved_tool_escalation_replay(
-        evaluate_tool_policy(
+        evaluate_tool_policy_with_posture(
             runtime.policy_engine,
             runtime.governance,
+            runtime.trust_posture,
+            &git_push_delegations,
             &tool_call.name,
             tool_arguments,
             tool_capability,
@@ -117,6 +126,8 @@ where
             audit,
             route,
         } => {
+            let checkpoint_id = format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id);
+            let pre_review_authority = AuthoritySnapshot::capture(&runtime);
             details["escalation_route"] = json!(match route {
                 EscalationRoute::Reviewer => "reviewer",
                 EscalationRoute::AlwaysHuman => "always_human",
@@ -125,6 +136,12 @@ where
                 "call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
+            });
+            details["escalation_correlation"] = json!({
+                "checkpoint_id": checkpoint_id,
+                "submission_id": runtime.machine.current_submission_id(),
+                "tool_call_id": tool_call.id,
+                "host_mount_revision": pre_review_authority.host_mount_revision,
             });
             details = append_skill_permission_hints(details, runtime.machine.active_skills());
 
@@ -135,6 +152,7 @@ where
                     tool_arguments,
                     &details,
                     &audit,
+                    &pre_review_authority,
                     cancel,
                     emit,
                 )
@@ -150,8 +168,17 @@ where
                 }
             }
 
+            if let Some(existing) = runtime.machine.pending_confirmation() {
+                tracing::warn!(
+                    existing_checkpoint = %existing.checkpoint_id,
+                    requested_checkpoint = %checkpoint_id,
+                    "single pending escalation rule prevented stacking duplicate confirmation"
+                );
+                return Ok(ToolAuthorizationOutcome::PauseTurn);
+            }
+
             let pending = PendingConfirmation {
-                checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
+                checkpoint_id,
                 checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
                 summary,
                 details,
@@ -229,12 +256,39 @@ enum EscalationReviewOutcome {
     Human,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AuthoritySnapshot {
+    trust_posture: crate::policy::TrustPosture,
+    guardian_profile: Option<String>,
+    governance_json: String,
+    host_mount_revision: Option<u64>,
+}
+
+impl AuthoritySnapshot {
+    fn capture(runtime: &ToolAuthorizationRuntime<'_>) -> Self {
+        Self {
+            trust_posture: runtime.trust_posture,
+            guardian_profile: runtime.guardian_profile.map(str::to_string),
+            governance_json: serde_json::to_string(runtime.governance).unwrap_or_default(),
+            host_mount_revision: runtime
+                .authority
+                .as_ref()
+                .and_then(|authority| authority.authority_revision()),
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Guardian review correlates runtime inputs, tool call metadata, and authority snapshot"
+)]
 async fn review_escalation<E, F>(
     runtime: &mut ToolAuthorizationRuntime<'_>,
     tool_call: &NormalizedToolCall,
     tool_arguments: &Value,
     details: &Value,
     audit: &ToolDecisionAudit,
+    pre_review_authority: &AuthoritySnapshot,
     cancel: &CancellationToken,
     emit: &mut E,
 ) -> Result<EscalationReviewOutcome>
@@ -242,26 +296,90 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let policy = resolve_guardian_policy(runtime.guardian_config.policy_path.as_deref());
     let transcript = build_transcript(runtime.machine.messages());
     let review_context = ReviewContext {
-        policy: DEFAULT_REVIEWER_POLICY,
+        policy: &policy,
         transcript: &transcript,
         approval_request: details,
     };
     let request = build_review_request(&review_context);
-    let result = runtime
-        .generation
-        .generate_response_with_retry(request, runtime.llm_request_timeout_secs, cancel)
-        .await;
 
-    if result.as_ref().is_err_and(|error| {
-        error.is::<crate::agent_machine::task_budget::Exhausted>()
-            || error.is::<super::transition::NamespaceOperationUncertainty>()
-    }) {
-        return Err(result.unwrap_err());
+    let aggregate_secs = runtime
+        .guardian_config
+        .timeout_secs
+        .min(runtime.llm_request_timeout_secs)
+        .max(1);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(aggregate_secs);
+
+    let outcome = if let Some(profile) = runtime.guardian_profile {
+        let dedicated_outcome = match runtime.authority.as_ref() {
+            Some(authority) => {
+                match run_captured_guardian_review(
+                    authority,
+                    profile,
+                    request.clone(),
+                    deadline,
+                    cancel,
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(fatal) => return Err(fatal),
+                }
+            }
+            None => ReviewOutcome::Unavailable {
+                reason: "guardian Connection environment unavailable".to_string(),
+            },
+        };
+        match dedicated_outcome {
+            ReviewOutcome::Unavailable { reason } => {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    tracing::warn!(%reason, "dedicated guardian exhausted aggregate deadline; pausing for human");
+                    ReviewOutcome::Unavailable { reason }
+                } else if runtime
+                    .machine
+                    .try_consume_guardian_fallback(runtime.guardian_config.max_fallbacks_per_turn)
+                {
+                    let message = format!(
+                        "dedicated guardian `{profile}` unavailable ({reason}); falling back to primary connection"
+                    );
+                    super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await?;
+                    emit(Event::Warning { message }).await;
+                    run_generation_review_with_deadline(
+                        &runtime.generation,
+                        request,
+                        deadline,
+                        cancel,
+                    )
+                    .await?
+                } else {
+                    let message = format!(
+                        "dedicated guardian `{profile}` fallback budget exhausted; pausing for human"
+                    );
+                    super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await?;
+                    emit(Event::Warning { message }).await;
+                    ReviewOutcome::Unavailable { reason }
+                }
+            }
+            other => other,
+        }
+    } else {
+        run_generation_review_with_deadline(&runtime.generation, request, deadline, cancel).await?
+    };
+
+    if matches!(outcome, ReviewOutcome::Allow) {
+        let post_review_authority = AuthoritySnapshot::capture(runtime);
+        if &post_review_authority != pre_review_authority {
+            let message = "auto-review approval invalidated because authority or grants changed during review; pausing for you".to_string();
+            super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await?;
+            emit(Event::Warning { message }).await;
+            return Ok(EscalationReviewOutcome::Human);
+        }
     }
 
-    match review_generation_result(result) {
+    match outcome {
         ReviewOutcome::Allow => {
             runtime.machine.record_guardian_review(false);
             Ok(EscalationReviewOutcome::Authorized)
@@ -312,6 +430,78 @@ where
     }
 }
 
+async fn run_captured_guardian_review(
+    authority: &super::transition::NamespaceToolAuthorization,
+    profile: &str,
+    request: alan_llm::GenerationRequest,
+    deadline: tokio::time::Instant,
+    cancel: &CancellationToken,
+) -> Result<ReviewOutcome> {
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return Ok(ReviewOutcome::Unavailable {
+            reason: "guardian aggregate review deadline expired".to_string(),
+        });
+    }
+    let child_cancel = cancel.child_token();
+    let captured =
+        match tokio::time::timeout(remaining, authority.capture_guardian_generation(profile)).await
+        {
+            Ok(Ok(generation)) => generation,
+            Ok(Err(error)) => {
+                return Ok(ReviewOutcome::Unavailable {
+                    reason: format!("guardian profile capture failed: {error:#}"),
+                });
+            }
+            Err(_) => {
+                child_cancel.cancel();
+                return Ok(ReviewOutcome::Unavailable {
+                    reason: "guardian profile capture timed out".to_string(),
+                });
+            }
+        };
+    run_generation_review_with_deadline(&captured, request, deadline, cancel).await
+}
+
+async fn run_generation_review_with_deadline(
+    generation: &super::transition::NamespaceGeneration,
+    request: alan_llm::GenerationRequest,
+    deadline: tokio::time::Instant,
+    cancel: &CancellationToken,
+) -> Result<ReviewOutcome> {
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return Ok(ReviewOutcome::Unavailable {
+            reason: "guardian aggregate review deadline expired".to_string(),
+        });
+    }
+    let child_cancel = cancel.child_token();
+    let timeout_secs = remaining.as_secs().max(1);
+    let result = match tokio::time::timeout(
+        remaining,
+        generation.generate_response_with_retry(request, timeout_secs, &child_cancel),
+    )
+    .await
+    {
+        Ok(res) => res,
+        Err(_) => {
+            child_cancel.cancel();
+            return Ok(ReviewOutcome::Unavailable {
+                reason: "guardian review timed out within aggregate deadline".to_string(),
+            });
+        }
+    };
+
+    if result.as_ref().is_err_and(|error| {
+        error.is::<crate::agent_machine::task_budget::Exhausted>()
+            || error.is::<super::transition::NamespaceOperationUncertainty>()
+    }) {
+        return Err(result.unwrap_err());
+    }
+
+    Ok(review_generation_result(result))
+}
+
 fn record_policy_decision(
     machine: &mut crate::agent_machine::AgentMachine,
     tool_call: &NormalizedToolCall,
@@ -355,3 +545,7 @@ fn maybe_allow_approved_tool_escalation_replay(
         other => other,
     }
 }
+
+#[cfg(test)]
+#[path = "tool_authorization/tests.rs"]
+mod tests;

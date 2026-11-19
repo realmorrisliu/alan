@@ -15,6 +15,7 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod process_binding;
+pub mod provider_packages;
 
 const FILES: &[(&str, bool)] = &[
     ("metadata", false),
@@ -170,6 +171,7 @@ pub struct ConnectionService {
     metadata_path: Option<PathBuf>,
     state: Mutex<State>,
     callables: tokio::sync::Mutex<Option<CallableRegistry>>,
+    package_service: Mutex<Option<Arc<crate::PackageService>>>,
     temporary_store: Option<crate::temporary_store::TemporaryStore>,
 }
 
@@ -232,6 +234,7 @@ impl ConnectionService {
                 validation,
             }),
             callables: tokio::sync::Mutex::new(None),
+            package_service: Mutex::new(None),
             temporary_store: None,
         }))
     }
@@ -250,6 +253,7 @@ impl ConnectionService {
                 validation: BTreeMap::new(),
             }),
             callables: tokio::sync::Mutex::new(None),
+            package_service: Mutex::new(None),
             temporary_store: None,
         })
     }
@@ -269,6 +273,7 @@ impl ConnectionService {
                 validation: BTreeMap::new(),
             }),
             callables: tokio::sync::Mutex::new(None),
+            package_service: Mutex::new(None),
             temporary_store: Some(temporary),
         }))
     }
@@ -317,6 +322,21 @@ impl ConnectionService {
         drop(callables);
         self.refresh_callables().await;
         Ok(())
+    }
+
+    /// Binds Package Service so `pkg:<id>` extension `provider` profiles validate and revoke live.
+    pub fn attach_package_service(&self, packages: Arc<crate::PackageService>) {
+        *self
+            .package_service
+            .lock()
+            .expect("package service mutex poisoned") = Some(packages);
+    }
+
+    fn package_service(&self) -> Option<Arc<crate::PackageService>> {
+        self.package_service
+            .lock()
+            .expect("package service mutex poisoned")
+            .clone()
     }
 
     /// Refresh shared metadata and its callable projection at an operation boundary.
@@ -585,11 +605,19 @@ impl ConnectionService {
             )
         };
 
+        let packages = self.package_service();
         let mut validation = BTreeMap::new();
         let mut ready_profiles = BTreeMap::new();
         for (profile_id, profile) in &connections.profiles {
             let status = if pending_profiles.contains(profile_id) {
                 "pending"
+            } else if provider_packages::validate_provider_package_for_profile(
+                packages.as_deref(),
+                profile,
+            )
+            .is_err()
+            {
+                "unavailable"
             } else {
                 match native_status.get(profile_id).map(String::as_str) {
                     Some("logged_out") => "logged_out",
@@ -639,6 +667,11 @@ impl ConnectionService {
             let needs_catalog = profile.provider == alan_agent_engine::LlmProvider::Chatgpt
                 && !registry.published_catalogs.contains_key(&profile_id);
             if !already_published {
+                let hydrated = provider_packages::hydrate_connections_with_package_defaults(
+                    packages.as_deref(),
+                    &connections,
+                    &profile_id,
+                );
                 let client = match registry.bootstrap.take() {
                     Some((name, client)) if name == profile_id => client,
                     Some(bootstrap) => {
@@ -646,7 +679,7 @@ impl ConnectionService {
                         match registry.factory.create(
                             &registry.base_config,
                             Some(&profile_id),
-                            &connections,
+                            &hydrated,
                         ) {
                             Ok(client) => client,
                             Err(_) => continue,
@@ -655,7 +688,7 @@ impl ConnectionService {
                     None => match registry.factory.create(
                         &registry.base_config,
                         Some(&profile_id),
-                        &connections,
+                        &hydrated,
                     ) {
                         Ok(client) => client,
                         Err(_) => continue,
@@ -896,5 +929,7 @@ fn valid_opaque_reference(reference: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
 }
 
+#[cfg(test)]
+mod provider_package_tests;
 #[cfg(test)]
 mod tests;
