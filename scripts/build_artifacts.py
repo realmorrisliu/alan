@@ -14,6 +14,7 @@ import sys
 import time
 
 CACHE_TAG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
+_UNSET = object()
 
 
 def git(owner, *args):
@@ -246,12 +247,28 @@ def open_paths():
                             capture_output=True, text=True)
     if result.returncode or result.stderr.strip():
         raise ValueError("cannot establish process/open-file state; cleanup skipped")
-    return [Path(line[1:]).resolve() for line in result.stdout.splitlines()
-            if line.startswith("n/")]
+    raw_paths = {line[1:] for line in result.stdout.splitlines() if line.startswith("n/")}
+    return [Path(path).resolve() for path in raw_paths]
+
+
+def worktree_owners(owner):
+    owners = []
+    for line in git(owner, "worktree", "list", "--porcelain").splitlines():
+        if line.startswith("worktree "):
+            checkout = Path(line[9:])
+            if checkout.is_dir():
+                owners.append(checkout.resolve())
+    return sorted(set(owners))
 
 
 def in_use(root, paths):
-    return any(path == root or root in path.parents for path in paths)
+    root_str = os.fspath(root)
+    prefix = root_str if root_str.endswith(os.sep) else root_str + os.sep
+    for path in paths:
+        path_str = os.fspath(path)
+        if path_str == root_str or path_str.startswith(prefix):
+            return True
+    return False
 
 
 def verify_receipt(owner, root, record):
@@ -281,14 +298,15 @@ def cargo_only(root):
         raise ValueError(f"unclassified output entries in {root}: {', '.join(sorted(unknown))}")
 
 
-def inventory(owner):
+def inventory(owner, consumers=_UNSET, size_cache=None):
     records = registered_outputs(owner)
     roots = set(records) | set(output_roots(owner)) | {owner / "target/quality-gate"}
     rows = []
-    try:
-        consumers = open_paths()
-    except (ValueError, OSError):
-        consumers = None
+    if consumers is _UNSET:
+        try:
+            consumers = open_paths()
+        except (ValueError, OSError):
+            consumers = None
     for root in sorted(roots):
         row = {"path": str(root), "owner": str(owner), "state": "unknown"}
         try:
@@ -299,8 +317,14 @@ def inventory(owner):
                 identity(root)
                 row["activity"] = ("unknown" if consumers is None else
                                    "active" if in_use(root, consumers) else "idle-at-scan")
-                row["allocated_kib"] = int(subprocess.check_output(
-                    ["du", "-sk", str(root)], text=True).split()[0])
+                if size_cache is not None and root in size_cache:
+                    row["allocated_kib"] = size_cache[root]
+                else:
+                    kib = int(subprocess.check_output(
+                        ["du", "-sk", str(root)], text=True).split()[0])
+                    row["allocated_kib"] = kib
+                    if size_cache is not None:
+                        size_cache[root] = kib
                 if root in records:
                     with locked(sidecar(root, "lock"), create=False):
                         verify_receipt(owner, root, records[root][1])
@@ -415,24 +439,38 @@ def main():
     run.add_argument("--purpose", choices=["checkout", "quality", "task"], default="checkout")
     run.add_argument("--evidence-dir", type=Path, help="retained diagnostics for disposable tasks")
     run.add_argument("command", nargs=argparse.REMAINDER)
-    sub.add_parser("status", help="report output ownership and allocated sizes as JSON")
+    status = sub.add_parser("status", help="report output ownership and allocated sizes as JSON")
+    status.add_argument("--all-worktrees", action="store_true",
+                        help="include all linked worktrees of this repository")
     clean = sub.add_parser("clean", help="preview cleanup of registered idle Cargo output")
     clean.add_argument("--apply", action="store_true", help="apply the previewed cleanup policy")
+    clean.add_argument("--all-worktrees", action="store_true",
+                       help="include all linked worktrees of this repository")
     args = parser.parse_args()
     owner = owner_root(args.owner)
     if args.action == "status":
         from service_scratch import scratch_outputs
-        print(json.dumps({"build_outputs": inventory(owner), "service_scratch": scratch_outputs()}, indent=2))
+        owners = worktree_owners(owner) if args.all_worktrees else [owner]
+        try:
+            consumers = open_paths()
+        except (ValueError, OSError):
+            consumers = None
+        size_cache = {}
+        build_outputs = [row for checkout in owners
+                         for row in inventory(checkout, consumers=consumers, size_cache=size_cache)]
+        print(json.dumps({"build_outputs": build_outputs,
+                          "service_scratch": scratch_outputs(consumers=consumers)}, indent=2))
         return 0
     if args.action == "clean":
-        records = registered_outputs(owner)
+        owners = worktree_owners(owner) if args.all_worktrees else [owner]
         results = []
-        for root, (record_path, record) in records.items():
-            try:
-                state = clean_output(owner, root, record_path, record, args.apply)
-                results.append({"path": str(root), "state": state})
-            except (ValueError, OSError, subprocess.CalledProcessError) as error:
-                results.append({"path": str(root), "state": "skipped", "reason": str(error)})
+        for checkout in owners:
+            for root, (record_path, record) in registered_outputs(checkout).items():
+                try:
+                    state = clean_output(checkout, root, record_path, record, args.apply)
+                    results.append({"path": str(root), "state": state})
+                except (ValueError, OSError, subprocess.CalledProcessError) as error:
+                    results.append({"path": str(root), "state": "skipped", "reason": str(error)})
         from service_scratch import scratch_outputs
         print(json.dumps({"apply": args.apply, "outputs": results,
                           "service_scratch": scratch_outputs(args.apply),

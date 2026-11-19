@@ -19,6 +19,10 @@ fi
 quality_target_dir="${ALAN_QUALITY_TARGET_DIR:-$ROOT/target/quality-gate}"
 # Keep intermediate output within the same quality isolation boundary.
 export CARGO_BUILD_BUILD_DIR="$quality_target_dir"
+# Quality-gate builds are verification outputs (not iterative dev loops);
+# disabling incremental artifacts matches CI/task builds and keeps per-worktree
+# target/quality-gate compact while still reusing compiled crate deps.
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 # shellcheck source=scripts/cargo-cli-output.sh
 source "$ROOT/scripts/cargo-cli-output.sh"
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

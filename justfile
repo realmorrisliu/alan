@@ -87,8 +87,8 @@ uninstall:
     ./scripts/uninstall-cli.sh
 
 # Report exact build output roots and ownership without changing them
-cache-status:
-    python3 scripts/build_artifacts.py status
+cache-status *args:
+    python3 scripts/build_artifacts.py status {{args}}
 
 # Preview cleanup; use `just cache-clean --apply` to remove eligible idle output
 cache-clean *args:
