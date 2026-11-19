@@ -1,28 +1,36 @@
-const ANSI_BANNER = `\x1b[38;5;20m
-   ▄▄▄       ██▓    ▄▄▄       ███▄    █
-  ▒████▄    ▓██▒   ▒████▄     ██ ▀█   █
-  ▒██  ▀█▄  ▒██░   ▒██  ▀█▄  ▓██  ▀█ ██▒
-  ░██▄▄▄▄██ ▒██░   ░██▄▄▄▄██ ▓██▒  ▐▌██▒
-   ▓█   ▓██▒░██████▒▓█   ▓██▒▒██░   ▓██░
-\x1b[0m
-\x1b[1mALAN(1)\x1b[0m  —  Programmable personal computing environment on \x1b[38;5;20malan9\x1b[0m
-Everything is a file. Even an agent.
+const K = '\x1b[38;2;0;47;167m'; // Yves Klein Blue (#002FA7)
+const R = '\x1b[38;2;224;62;54m'; // Signal Vermilion LED (#E03E36)
+const B = '\x1b[1m';
+const D = '\x1b[2m';
+const X = '\x1b[0m';
 
-\x1b[1mSTANDARD NAMESPACE\x1b[0m
-  /proc    Process lifecycle truth
-  /agent   AgentFS views of Agent Processes (/agent/<pid>)
-  /srv     Mountable file-server handles (aP protocol)
-  /bin     Tools & Agent Executables (/bin/alan, /bin/q)
-  /lib     Immutable projected Skill packages
-  /man     Manual pages
-  /mnt     Explicitly authorized Host Mounts
+const ANSI_BANNER = `
+       ${K}╭───╮${X}        ┌──────────────┐
+      ${K}╭╯${X} ${K}◉${X} ${K}╰╮${X}       │ ${K}┌──────────┐${X} │   ${B}${K}ALAN(1)${X}
+     ╭┤(   )├╮      │ ${K}│ /agent/  │${X} │   ${B}Everything is a file.${X}
+      │  o  │       │ ${K}│   root   │${X} │   ${K}Even an agent.${X}
+      │     ╰──╮    │ ${K}└──────────┘${X} │
+     ╭╯        │    │ ${R}●${X}        ${D}═══${X} │   ${D}alan9 · aP/1 · Rust 2024${X}
+     ╰─╮     ╭─╯    └─┬──────────┬─┘   ${D}https://alanworks.app${X}
+      ${K}╭┴─────┴╮${X}  ┌────┴──────────┴─┐   ${K}╭───╮${X}
+      ${K}╰───┬───╯${X}  └─────────────────┴───${K}╯ ○ ╰╮${X}
+          ${K}│${X}       ${D}· · · · · · · · · · ·${X}${K}╰───╯${X}
 
-\x1b[1mQUICKSTART\x1b[0m
+${B}STANDARD NAMESPACE${X}
+  ${K}/proc${X}    Process lifecycle truth
+  ${K}/agent${X}   AgentFS views of Agent Processes (/agent/<pid>)
+  ${K}/srv${X}     Mountable file-server handles (aP protocol)
+  ${K}/bin${X}     Tools & Agent Executables (/bin/alan, /bin/q)
+  ${K}/lib${X}     Immutable projected Skill packages
+  ${K}/man${X}     Manual pages
+  ${K}/mnt${X}     Explicitly authorized Host Mounts
+
+${B}QUICKSTART${X}
   git clone https://github.com/realmorrisliu/alan.git
   cd alan && just install
   alan
 
-\x1b[2mhttps://alanworks.app · https://github.com/realmorrisliu/alan · Apache-2.0 · Rust 2024\x1b[0m
+${D}https://alanworks.app · https://github.com/realmorrisliu/alan · Apache-2.0${X}
 `;
 
 export default {
