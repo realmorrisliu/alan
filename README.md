@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://alanworks.app">Website</a> ·
+  <a href="https://realmorrisliu.com/thoughts/tags/alan">Essays</a> ·
   <a href="LICENSE">Apache-2.0</a> ·
   <a href="docs/standalone_cli_distribution.md">Install</a> ·
   <a href="openspec/">OpenSpec</a>

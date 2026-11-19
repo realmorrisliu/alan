@@ -515,6 +515,16 @@ function initPaletteAndKeys(): void {
     { label: ': theme paper', hint: 'Archival Paper (Light)', run: () => setTheme('paper') },
     { label: ': theme midnight', hint: 'Klein Midnight (Dark)', run: () => setTheme('midnight') },
     { label: ': theme dumb', hint: 'TERM=dumb (1978 Monochrome)', run: () => setTheme('dumb') },
+    {
+      label: ': open essays',
+      hint: 'realmorrisliu.com/thoughts/tags/alan',
+      run: () => window.open('https://realmorrisliu.com/thoughts/tags/alan', '_blank', 'noopener,noreferrer'),
+    },
+    {
+      label: ': open author',
+      hint: 'Morris Liu (realmorrisliu.com)',
+      run: () => window.open('https://realmorrisliu.com', '_blank', 'noopener,noreferrer'),
+    },
   ];
 
   let filtered = actions;
