@@ -1,4 +1,28 @@
-# Alan
+<p align="center">
+  <img src="website/public/alan-riso-mascot.jpg" alt="Alan — Risograph illustration of a rabbit at a retro terminal with Turing paper tape" width="190" />
+</p>
+
+<h1 align="center">Alan</h1>
+
+<p align="center">
+  <strong>Everything is a file. Even an agent.</strong><br />
+  A programmable personal computing environment built on <code>alan9</code>.
+</p>
+
+<p align="center">
+  <a href="https://alanworks.app">Website</a> ·
+  <a href="LICENSE">Apache-2.0</a> ·
+  <a href="docs/standalone_cli_distribution.md">Install</a> ·
+  <a href="openspec/">OpenSpec</a>
+</p>
+
+---
+
+```bash
+just install          # build & install standalone `alan` CLI (Rust 2024)
+alan                  # boot a foreground alan9 instance & open the terminal UI
+git diff | alan       # pipe stdin for a single task -> stdout
+```
 
 Alan is a programmable personal computing environment. The repository is in
 early development. Its retained implementation contains:

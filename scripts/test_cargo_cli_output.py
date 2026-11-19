@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -17,13 +18,18 @@ SCRIPTS = Path(__file__).resolve().parent
 
 class CargoCliOutputTests(unittest.TestCase):
     def setUp(self):
-        environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
-                                             if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}, clear=True)
-        environment.start()
-        self.addCleanup(environment.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="alan-build-output-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
+        cleaned_env = {key: value for key, value in os.environ.items()
+                       if not key.startswith(("CARGO_", "ALAN_", "GIT_"))
+                       and key not in ("BASH_ENV", "ENV")}
+        cargo_bin = Path.home() / ".cargo" / "bin"
+        if (cargo_bin / "cargo").is_file():
+            cleaned_env["PATH"] = str(cargo_bin) + os.pathsep + cleaned_env.get("PATH", "")
+        environment = patch.dict(os.environ, cleaned_env, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.repo = self.root / "checkout"
         (self.repo / "scripts").mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
@@ -35,13 +41,13 @@ class CargoCliOutputTests(unittest.TestCase):
             '[workspace]\n[[bin]]\nname = "alan"\npath = "main.rs"\n'
         )
         (self.repo / "main.rs").write_text("fn main() {}\n")
-        self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(("CARGO_", "ALAN_", "GIT_"))}
+        self.env = dict(cleaned_env)
         self.env["ALAN_CLI_INSTALL_DIR"] = str(self.root / "bin")
 
     def run_shell(self, script, **env):
         return subprocess.run(["bash", "-euo", "pipefail", "-c", script],
                               cwd=self.repo, env=self.env | env,
+                              preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_DFL),
                               capture_output=True, text=True)
 
     def test_cargo_config_and_explicit_output_are_resolved(self):

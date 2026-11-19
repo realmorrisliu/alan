@@ -1,0 +1,117 @@
+/* ==========================================================================
+   Alan Website — Design Tokens
+   Bell Labs 1989 × Tokyo City Pop × 2026 Editorial
+   Default: Archival Paper (light) + Yves Klein Blue (#002FA7)
+   ========================================================================== */
+
+:root {
+  color-scheme: light dark;
+
+  /* Archival Paper (default) */
+  --bg-paper: #f6f4ed;
+  --bg-vellum: #ece8dc;
+  --bg-elevated: #faf8f3;
+  --bg-terminal: #faf8f2;
+  --bg-terminal-bar: #e3eafa;
+
+  --ink: #12151c;
+  --ink-muted: #505766;
+  --ink-faint: #7b8291;
+
+  --klein: #002fa7;
+  --klein-hover: #002178;
+  --klein-ink: #f6f4ed;
+  --klein-tint: #e3eafa;
+  --klein-soft: rgba(0, 47, 167, 0.08);
+
+  --rule: #d4cfc2;
+  --rule-strong: #12151c;
+  --rule-klein: rgba(0, 47, 167, 0.35);
+
+  --status-run: #008a66;
+  --status-wait: #c26a06;
+  --status-block: #d9382e;
+
+  /* Typography */
+  --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Fluid Type Scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
+  --text-xl: clamp(1.375rem, 1.15rem + 1vw, 1.875rem);
+  --text-2xl: clamp(2rem, 1.5rem + 2.2vw, 3.25rem);
+  --text-hero: clamp(3rem, 2.1rem + 4.4vw, 5.25rem);
+
+  /* Spacing & Layout */
+  --max-w: 1200px;
+  --gutter: clamp(1.25rem, 3vw, 2.5rem);
+  --section-gap: clamp(4.5rem, 8vw, 7.5rem);
+  --radius: 2px;
+
+  /* Easing (exponential deceleration — no bounce) */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+
+  /* Reflect <meta name="color-scheme"> override in CSS */
+  &:has(> head > meta[name='color-scheme'][content='light']) {
+    color-scheme: light;
+  }
+  &:has(> head > meta[name='color-scheme'][content='dark']) {
+    color-scheme: dark;
+  }
+}
+
+/* Klein Midnight Theme */
+:root[data-theme='midnight'] {
+  --bg-paper: #070d1f;
+  --bg-vellum: #0d1733;
+  --bg-elevated: #111e42;
+  --bg-terminal: #091126;
+  --bg-terminal-bar: #132454;
+
+  --ink: #edeae0;
+  --ink-muted: #98a6c7;
+  --ink-faint: #67779e;
+
+  --klein: #5282ff;
+  --klein-hover: #7aa0ff;
+  --klein-ink: #070d1f;
+  --klein-tint: #132454;
+  --klein-soft: rgba(82, 130, 255, 0.14);
+
+  --rule: #1e3061;
+  --rule-strong: #5282ff;
+  --rule-klein: rgba(82, 130, 255, 0.45);
+
+  --status-run: #22d3a6;
+  --status-wait: #f59e0b;
+  --status-block: #f87171;
+}
+
+/* View Transitions — crisp 180ms City Pop scanline wipe */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alan — Everything is a file. Even an agent.</title>
+    <meta
+      name="description"
+      content="Alan is a programmable personal computing environment built on alan9—where agents are ordinary processes, state lives in namespaces, and your terminal is the interface."
+    />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Alan — Everything is a file. Even an agent." />
+    <meta
+      property="og:description"
+      content="A programmable personal computing environment built on alan9. Agents are ordinary processes, state lives in namespaces, and your terminal is the interface."
+    />
+    <meta property="og:image" content="./alan-riso-mascot.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Alan — Everything is a file. Even an agent." />
+    <meta
+      name="twitter:description"
+      content="Plan 9 discipline meets modern personal computing. Everything is a file—even an agent."
+    />
+    <meta name="twitter:image" content="./alan-riso-mascot.jpg" />
+    <meta name="color-scheme" content="light" />
+    <script>
+      try {
+        var t = localStorage.getItem('alan-theme');
+        if (t === 'paper' || t === 'midnight' || t === 'dumb') {
+          document.documentElement.dataset.theme = t;
+          var m = document.querySelector('meta[name="color-scheme"]');
+          if (m) m.content = t === 'midnight' ? 'dark' : 'light';
+        }
+      } catch (e) {}
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body id="top">
+    <!-- Plan 9 Acme-Inspired Top Tag Bar -->
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <div class="topbar__left">
+          <a href="#top" class="brand">
+            <span class="brand__sq" aria-hidden="true"></span>
+            ALAN(1)
+          </a>
+          <span class="proc-pill" id="proc-pill" data-state="run" aria-live="polite">
+            <span class="proc-pill__dot" aria-hidden="true"></span>
+            <span id="proc-pill-text">/proc/0001  idle</span>
+          </span>
+        </div>
+
+        <nav class="topbar__nav" aria-label="Primary">
+          <a href="#architecture">/architecture</a>
+          <a href="#namespace">/namespace</a>
+          <a href="#cli">/cli</a>
+          <a href="#manpage">/man</a>
+        </nav>
+
+        <div class="topbar__right">
+          <div class="theme-switch" role="group" aria-label="Display theme">
+            <button type="button" class="theme-link" data-theme-btn="paper" aria-pressed="true">Paper</button>
+            <button type="button" class="theme-link" data-theme-btn="midnight" aria-pressed="false">Midnight</button>
+            <button type="button" class="theme-link" data-theme-btn="dumb" aria-pressed="false">TERM=dumb</button>
+          </div>
+          <button type="button" class="kbd-trigger" id="open-palette-btn" title="Open command palette (/)">/</button>
+          <button type="button" class="kbd-trigger" id="open-keys-btn" title="Keyboard shortcuts (?)">?</button>
+          <a
+            href="https://github.com/realmorrisliu/alan"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="topbar__gh"
+          >
+            GitHub ↗
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <!-- 01. HERO — Monograph Framing + Risograph Plate + Live Rio Shell -->
+      <section class="hero">
+        <div class="container">
+          <div class="hero__eyebrow">
+            <span><strong>VOL. 01</strong> · ALAN9 PERSONAL COMPUTING ENVIRONMENT</span>
+            <span>RUST 2024 · APACHE-2.0 · EARLY DEVELOPMENT</span>
+          </div>
+
+          <div class="hero__grid">
+            <div class="hero__copy">
+              <div>
+                <h1 class="hero__title">
+                  Everything is a file.
+                  <em>Even an agent.</em>
+                </h1>
+                <p class="hero__subtitle">
+                  A programmable personal computing environment built on
+                  <button type="button" class="cmd-link" data-exec="man alan9">alan9</button>—where
+                  agents are ordinary processes in
+                  <button type="button" class="cmd-link" data-exec="ps">/proc</button> and state lives in
+                  <button type="button" class="cmd-link" data-exec="ls /agent/root">/agent</button>.
+                </p>
+
+                <div class="hero__actions">
+                  <a href="#cli" class="btn-primary">$ just install</a>
+                  <a href="#architecture" class="link-quiet">Read the architecture ↓</a>
+                </div>
+              </div>
+
+              <!-- Focal Point #1: Risograph Print Plate -->
+              <figure class="riso-plate">
+                <div class="riso-plate__frame">
+                  <span class="riso-reg riso-reg--tl" aria-hidden="true"></span>
+                  <span class="riso-reg riso-reg--tr" aria-hidden="true"></span>
+                  <span class="riso-reg riso-reg--bl" aria-hidden="true"></span>
+                  <span class="riso-reg riso-reg--br" aria-hidden="true"></span>
+                  <div class="riso-plate__viewport">
+                    <img
+                      src="./alan-riso-mascot.jpg"
+                      alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
+                      class="riso-plate__img"
+                      width="352"
+                      height="352"
+                    />
+                    <pre class="riso-plate__ascii" aria-hidden="true">  (\_/)  +-------+
+ =(o.o)= | /proc |
+  / &gt;[]  |_______|
+ (__)__) ==o===o==</pre>
+                  </div>
+                  <div class="riso-plate__stamp" aria-hidden="true">
+                    <span>PLATE 01</span>
+                    <span>KLEIN / CARBON</span>
+                  </div>
+                </div>
+                <figcaption class="riso-plate__caption">
+                  <span class="riso-plate__tag">FIG. 01 · RISOGRAPH PLATE</span><br />
+                  Plan 9 discipline meets 1980s print craft. Click any dashed
+                  <button type="button" class="cmd-link" data-exec="cat /agent/root/machine/tape">path</button>
+                  to execute it directly in the shell.
+                </figcaption>
+              </figure>
+            </div>
+
+            <!-- Focal Point #2: Live Interactive Rio Shell -->
+            <div class="rio-window" id="hero-terminal" aria-label="Interactive alan9 virtual shell">
+              <div class="rio-window__bar">
+                <span class="rio-window__title">
+                  <span class="rio-window__dot" aria-hidden="true"></span>
+                  alan-shell — /agent/root
+                </span>
+                <span class="rio-window__meta">aP/1 · Tab to complete</span>
+              </div>
+
+              <div class="rio-window__chips" aria-label="Example commands">
+                <button type="button" class="chip" data-chip-cmd="ls /agent/root">ls /agent/root</button>
+                <button type="button" class="chip" data-chip-cmd="ps">ps</button>
+                <button type="button" class="chip" data-chip-cmd="q list">q list</button>
+                <button type="button" class="chip" data-chip-cmd='echo "audit /srv" | alan'>pipe | alan</button>
+                <button type="button" class="chip" data-chip-cmd="theme dumb">TERM=dumb</button>
+              </div>
+
+              <div class="rio-window__output" id="term-output" role="log" aria-live="polite"></div>
+
+              <form class="rio-window__form" id="term-form" autocomplete="off">
+                <label for="term-input" class="sr-only">Enter an alan-shell command</label>
+                <span class="rio-window__prompt" id="term-prompt">alan9:/$</span>
+                <span class="term-cursor" aria-hidden="true"></span>
+                <input
+                  id="term-input"
+                  class="rio-window__input"
+                  type="text"
+                  placeholder="try: ls /, man alan9, or help"
+                  spellcheck="false"
+                  autocapitalize="off"
+                />
+                <button type="submit" class="rio-window__submit">↵</button>
+              </form>
+
+              <div class="rio-window__telemetry" aria-hidden="true">
+                <span><strong>aP/1</strong> mounted · 4 services · 1 root process</span>
+                <span>0 implicit host leaks</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02. ARCHITECTURE — 3 Borderless Principles + Interactive Turing Tape -->
+      <section class="section" id="architecture">
+        <div class="container">
+          <p class="section__eyebrow">01 · ARCHITECTURE</p>
+          <h2 class="section__heading">
+            Built like an <em>operating system</em>, not a chat wrapper.
+          </h2>
+
+          <div class="principles">
+            <article class="principle">
+              <h3>Ordinary processes</h3>
+              <p>
+                Agent-ness is a file-layout convention, never a second Kernel Process type.
+                <button type="button" class="cmd-link" data-exec="cat /proc/1042/status">/proc/&lt;pid&gt;</button>
+                owns lifecycle truth;
+                <button type="button" class="cmd-link" data-exec="ls /agent/root">/agent/&lt;pid&gt;</button>
+                projects its live view.
+              </p>
+            </article>
+
+            <article class="principle">
+              <h3>Explicit boundaries</h3>
+              <p>
+                Launching <code>alan</code> never exposes your host directory. Host Mounts, Skills
+                (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button>), and
+                Host Store credentials stay strictly separated.
+              </p>
+            </article>
+
+            <article class="principle">
+              <h3>Terminal-first</h3>
+              <p>
+                No Electron shell or sidebar. Run interactively inside modern terminal hosts like
+                <strong>Herdr</strong>, or pipe tasks cleanly through stdin and stdout.
+              </p>
+            </article>
+          </div>
+
+          <!-- Open Execution Strip -->
+          <div class="exec-strip">
+            <div class="exec-tabs" role="tablist" aria-label="Execution model layers">
+              <button type="button" class="exec-tab" role="tab" data-anatomy-id="executable" aria-selected="false">/bin/alan</button>
+              <span class="exec-arrow" aria-hidden="true">→</span>
+              <button type="button" class="exec-tab" role="tab" data-anatomy-id="process" aria-selected="false">/proc/1042</button>
+              <span class="exec-arrow" aria-hidden="true">→</span>
+              <button type="button" class="exec-tab" role="tab" data-anatomy-id="agentfs" aria-selected="false">/agent/root</button>
+              <span class="exec-arrow" aria-hidden="true">→</span>
+              <button type="button" class="exec-tab" role="tab" data-anatomy-id="machine" aria-selected="true">/agent/root/machine</button>
+            </div>
+
+            <div class="tape-wrap" aria-label="AI Turing Machine schematic tape">
+              <div class="tape-head-track" aria-hidden="true">
+                <div class="tape-head-pointer" id="tape-head-pointer" style="--head-idx: 3"></div>
+              </div>
+              <div class="tape-track">
+                <div class="tape-sprockets" aria-hidden="true"></div>
+                <div class="tape-cells">
+                  <button type="button" class="tape-cell" data-tape-idx="0" data-tape-node="executable">
+                    <strong>0001 · IN</strong>
+                    read descriptor
+                  </button>
+                  <button type="button" class="tape-cell" data-tape-idx="1" data-tape-node="process">
+                    <strong>0002 · EVAL</strong>
+                    typed choice
+                  </button>
+                  <button type="button" class="tape-cell" data-tape-idx="2" data-tape-node="agentfs">
+                    <strong>0003 · TOOL</strong>
+                    spawn /bin/ls
+                  </button>
+                  <button type="button" class="tape-cell tape-cell--active" data-tape-idx="3" data-tape-node="machine">
+                    <strong>0004 · CKPT</strong>
+                    durable rollout
+                  </button>
+                  <button type="button" class="tape-cell" data-tape-idx="4" data-tape-node="machine">
+                    <strong>0005 · OUT</strong>
+                    structured result
+                  </button>
+                </div>
+                <div class="tape-sprockets tape-sprockets--bottom" aria-hidden="true"></div>
+              </div>
+            </div>
+
+            <div class="exec-detail" aria-live="polite">
+              <div>
+                <p class="exec-detail__owner" id="inspector-owner"></p>
+                <button type="button" class="cmd-link" id="inspector-exec" data-exec="cat /agent/root/machine/tape">
+                  Run in alan-shell →
+                </button>
+              </div>
+              <pre class="exec-detail__code" id="inspector-code"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03. NAMESPACE & CLI — Scannable UNIX Directory Table + Terminal Modes -->
+      <section class="section" id="namespace">
+        <div class="container">
+          <p class="section__eyebrow">02 · STANDARD NAMESPACE</p>
+          <h2 class="section__heading">
+            Seven directories. <em>Zero</em> hidden globals.
+          </h2>
+
+          <table class="ns-table">
+            <tbody>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ps">/proc</button></td>
+                <td class="ns-table__desc">Process table and lifecycle truth — PID, descriptors, credentials, and exit state.</td>
+              </tr>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /agent/root">/agent</button></td>
+                <td class="ns-table__desc">AgentFS views served by the Agent Runtime Service, with <code>/agent/root</code> for the root process.</td>
+              </tr>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /srv">/srv</button></td>
+                <td class="ns-table__desc">Service Handle Registry — rendezvous tree for mountable <code>aP</code> file-server handles.</td>
+              </tr>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /bin">/bin</button></td>
+                <td class="ns-table__desc">Reusable Tools and Agent Executables, including Quartermaster at <code>/bin/q</code>.</td>
+              </tr>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /lib/pkg">/lib</button></td>
+                <td class="ns-table__desc">Immutable Skill package content projected at <code>/lib/pkg/&lt;id&gt;</code> on explicit reference.</td>
+              </tr>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="man alan">/man</button></td>
+                <td class="ns-table__desc">Manual pages for commands, file servers, and architectural conventions.</td>
+              </tr>
+              <tr>
+                <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /mnt/import">/mnt</button></td>
+                <td class="ns-table__desc">Explicitly authorized Host Mounts. Host directories never leak in implicitly.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p class="ns-footnote">
+            Quartermaster (<code>/bin/q</code>) installs Skills strictly from authorized namespace paths
+            (<code>q install --name my-skills /mnt/import/my-skills</code>) — never raw host paths or hidden URLs.
+          </p>
+
+          <!-- Terminal-First CLI -->
+          <div id="cli" style="scroll-margin-top: 64px">
+            <p class="section__eyebrow">03 · TERMINAL INTERFACE</p>
+            <div class="cli-head">
+              <div class="cli-tabs" role="tablist" aria-label="CLI execution modes">
+                <button type="button" class="cli-tab" role="tab" data-cli-tab="interactive" aria-selected="true">
+                  Interactive — alan
+                </button>
+                <button type="button" class="cli-tab" role="tab" data-cli-tab="pipe" aria-selected="false">
+                  UNIX Pipe — git diff | alan
+                </button>
+              </div>
+              <div class="install-inline">
+                <code>just install &amp;&amp; alan</code>
+                <button type="button" class="copy-btn" data-copy="just install && alan">copy</button>
+              </div>
+            </div>
+
+            <pre class="cli-screen" id="cli-screen"></pre>
+            <p class="cli-caption" id="cli-caption"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 04. MAN-PAGE FOOTER -->
+    <footer class="man-footer" id="manpage">
+      <div class="container">
+        <div class="man-bar">
+          <span>ALAN(1)</span>
+          <span>Alan General Commands Manual</span>
+          <span>ALAN(1)</span>
+        </div>
+
+        <div class="man-grid">
+          <div class="man-block">
+            <h3>NAME</h3>
+            <p>alan — programmable personal computing environment built on alan9</p>
+          </div>
+
+          <div class="man-block">
+            <h3>SEE ALSO</h3>
+            <p>
+              <button type="button" class="cmd-link" data-exec="man alan9">alan9(7)</button>,
+              <button type="button" class="cmd-link" data-exec="man agentfs">agentfs(4)</button>,
+              <button type="button" class="cmd-link" data-exec="man q">q(1)</button>,
+              <a href="https://github.com/realmorrisliu/alan" target="_blank" rel="noopener noreferrer">github.com/realmorrisliu/alan</a>
+            </p>
+          </div>
+
+          <div class="man-block">
+            <h3>KEYBOARD &amp; CLI</h3>
+            <p>
+              <kbd>/</kbd> palette · <kbd>?</kbd> keys · <kbd>j</kbd>/<kbd>k</kbd> navigate ·
+              <kbd>d</kbd> <code>TERM=dumb</code> · <code>curl</code> this host for an ANSI card
+            </p>
+          </div>
+
+          <div class="man-block">
+            <h3>LICENSE</h3>
+            <p>Apache License 2.0 · Early development</p>
+          </div>
+        </div>
+
+        <div class="man-bar man-bar--bottom">
+          <span>Rust 2024</span>
+          <span>ALAN(1)</span>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Native <dialog> — / Command Palette -->
+    <dialog id="palette-dialog" closedby="any" aria-labelledby="palette-title">
+      <div class="dialog-bar">
+        <h2 id="palette-title">ALAN-SHELL PALETTE</h2>
+        <form method="dialog" style="margin: 0">
+          <button type="submit" class="dialog-close" value="close">ESC</button>
+        </form>
+      </div>
+      <form class="palette-form" id="palette-form" autocomplete="off">
+        <label for="palette-input" class="sr-only">Filter commands or enter an alan-shell command</label>
+        <span style="color: var(--klein); font-family: var(--font-mono)">:</span>
+        <input
+          id="palette-input"
+          class="palette-input"
+          type="text"
+          placeholder="jump to section, switch theme, or run ! command…"
+          autofocus
+        />
+        <button type="submit" class="rio-window__submit">↵</button>
+      </form>
+      <ul class="palette-list" id="palette-list"></ul>
+    </dialog>
+
+    <!-- Native <dialog> — ? Keyboard Reference -->
+    <dialog id="keys-dialog" closedby="any" aria-labelledby="keys-title">
+      <div class="dialog-bar">
+        <h2 id="keys-title">KEYBOARD SHORTCUTS</h2>
+        <form method="dialog" style="margin: 0">
+          <button type="submit" class="dialog-close" value="close" autofocus>ESC</button>
+        </form>
+      </div>
+      <div class="keys-grid">
+        <kbd>/</kbd><span>Open command palette</span>
+        <kbd>?</kbd><span>Show keyboard shortcuts</span>
+        <kbd>j / k</kbd><span>Jump to next / previous section</span>
+        <kbd>d</kbd><span>Toggle <code>TERM=dumb</code> monochrome mode</span>
+        <kbd>Tab</kbd><span>Autocomplete inside <code>alan-shell</code></span>
+        <kbd>↑ / ↓</kbd><span>Browse command history inside <code>alan-shell</code></span>
+      </div>
+    </dialog>
+
+    <!-- Floating Non-Blocking Acme Mini-Shell Drawer -->
+    <aside class="acme-drawer" id="acme-drawer" data-open="false" aria-label="Mini alan-shell output" aria-live="polite">
+      <div class="acme-drawer__bar">
+        <span id="acme-drawer-cmd">alan9:/$</span>
+        <div class="acme-drawer__actions">
+          <button type="button" class="acme-drawer__btn" id="acme-drawer-jump">Full shell ↑</button>
+          <button type="button" class="acme-drawer__btn" id="acme-drawer-close" aria-label="Close mini shell">×</button>
+        </div>
+      </div>
+      <div class="acme-drawer__body" id="acme-drawer-body"></div>
+    </aside>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
