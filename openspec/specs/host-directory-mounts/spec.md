@@ -90,4 +90,4 @@ SHALL remain the sole grant registry and projection/revocation owner.
 - **WHEN** the standalone CLI approves a Host Mount on macOS
 - **THEN** the Rust platform adapter preserves explicit consent, access scope,
   confinement and revocation through Host Mount Service
-- **AND** neither terminal cwd nor Herdr pane identity grants directory access
+- **AND** neither terminal cwd nor terminal-host pane identity grants directory access

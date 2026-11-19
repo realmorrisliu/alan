@@ -1,9 +1,13 @@
 //! LLM provider adapters for alan.
 //!
 //! This crate provides a unified, trait-based interface for different LLM providers
-//! (Google Gemini GenerateContent API, OpenAI Responses API, OpenAI Chat Completions API,
-//! Anthropic Messages API, and OpenRouter's SDK-backed chat adapter)
 //! with support for both sync and streaming generation.
+//!
+//! The first-party built-in providers are exactly: Magpie (local/custom OpenAI
+//! Chat Completions-compatible router), OpenAI (Responses API and ChatGPT/Codex
+//! OAuth), Google Cloud Vertex AI (Gemini GenerateContent) and OpenRouter. The
+//! Anthropic Messages and generic Chat Completions adapters remain available as
+//! protocol adapters for Quartermaster (`q`) provider packages.
 //!
 //! # Architecture
 //!
@@ -45,6 +49,7 @@ pub mod chatgpt_responses;
 pub mod factory;
 mod failure;
 pub mod google_gemini_generate_content;
+pub mod magpie;
 mod message;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
@@ -54,11 +59,15 @@ pub mod openai_responses;
 pub mod openrouter;
 pub use failure::{safe_failure_reason, safe_finish_reason};
 mod provider;
+pub mod session_affinity;
 mod sse;
 
 pub use anthropic_messages::AnthropicMessagesClient;
 pub use chatgpt_responses::ChatgptResponsesClient;
-pub use google_gemini_generate_content::GoogleGeminiGenerateContentClient;
+pub use google_gemini_generate_content::{
+    GoogleGeminiGenerateContentClient, VertexAuth, VertexClientConfig,
+};
+pub use magpie::MagpieClient;
 pub use message::{Message, MessageContentPart, MessageRole};
 #[cfg(any(test, feature = "mock"))]
 pub use mock::MockLlmProvider;
@@ -66,8 +75,8 @@ pub use model::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole,
     ProviderCapabilities, StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
 };
-pub use openai_chat_completions::OpenAiChatCompletionsClient;
-pub use openai_responses::OpenAiResponsesClient;
+pub use openai_chat_completions::{OpenAiChatCompletionsClient, ReasoningEffortMap};
+pub use openai_responses::{OpenAiResponsesClient, OpenAiResponsesTransport};
 pub use openrouter::OpenRouterClient;
 pub use provider::{LlmProvider, ProviderModel};
 pub(crate) use sse::SseEventParser;

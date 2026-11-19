@@ -42,7 +42,9 @@ pub(crate) use input_projection::project_messages;
 fn provider_preserves_thinking(provider_type: ProviderType) -> bool {
     matches!(
         provider_type,
-        ProviderType::AnthropicMessages
+        ProviderType::Magpie
+            | ProviderType::GoogleGeminiGenerateContent
+            | ProviderType::AnthropicMessages
             | ProviderType::ChatgptResponses
             | ProviderType::OpenAiResponses
             | ProviderType::OpenAiChatCompletions
@@ -95,6 +97,7 @@ impl LlmClient {
         P: LlmProvider + 'static,
     {
         let provider_type = match provider.provider_name() {
+            "magpie" => ProviderType::Magpie,
             "google_gemini_generate_content" => ProviderType::GoogleGeminiGenerateContent,
             "chatgpt" => ProviderType::ChatgptResponses,
             "openai_responses" => ProviderType::OpenAiResponses,
@@ -247,6 +250,7 @@ pub fn build_generation_request(
         temperature,
         max_tokens,
         reasoning: alan_llm::ReasoningControls::default(),
+        session_key: None,
         extra_params: std::collections::HashMap::new(),
     }
 }
@@ -278,6 +282,7 @@ mod tests {
                 completion_tokens: 5,
                 total_tokens: 15,
                 reasoning_tokens: None,
+                ..Default::default()
             }),
             finish_reason: None,
             warnings: Vec::new(),

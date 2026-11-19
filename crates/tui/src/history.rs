@@ -6,8 +6,6 @@ pub(crate) use action_summary::{action_summary, group_summary_header, group_summ
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use std::time::Instant;
-
 use alan_agent_protocol::{
     ActionReadOnlyContext, ContentPart, DiffLine, PlanItemStatus, StructuredInputKind,
     StructuredInputQuestion, ToolResultPresentation, UiPlanSnapshot, YieldKind,
@@ -123,13 +121,6 @@ impl ToolStatus {
 pub struct RunningTool {
     pub id: String,
     pub title: String,
-}
-
-/// Thinking that is currently streaming; shown dimmed in the live region.
-#[derive(Debug, Clone)]
-pub struct ThinkingStream {
-    pub text: String,
-    pub started: Instant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

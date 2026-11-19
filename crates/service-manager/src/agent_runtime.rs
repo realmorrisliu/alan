@@ -11,10 +11,8 @@ use std::{
 };
 
 use alan_agent_engine::{
-    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus,
-    AgentProcessConfig, ContentPart, MEMORY_STORE_FD, Op, RuntimeController, RuntimeHandle,
-    SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind,
-    UiNoticeSnapshot,
+    AGENT_DEFINITION_FD, AgentExecutableRequest, AgentExecutableStatus, AgentProcessConfig,
+    ContentPart, MEMORY_STORE_FD, Op, RuntimeHandle, SpawnHandle, SpawnTarget, Submission,
     skills::SkillHostCapabilities,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
@@ -32,6 +30,7 @@ use crate::{
     runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+mod child_wait;
 mod pause_answer;
 mod pause_record;
 mod process_cleanup;
@@ -39,8 +38,9 @@ mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
 
-use pause_answer::{ChildTerminal, decide_child_terminal};
-use pause_record::read_child_pause;
+use child_wait::{
+    process_error, wait_for_child_terminal, wait_for_process_exit, wait_for_root_stop,
+};
 use process_cleanup::ProcessCleanup;
 use resume_content::resume_content;
 
@@ -51,6 +51,8 @@ static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
 pub(crate) struct RootAgentTemplate {
     process: AgentProcessConfig,
     pub(crate) resume_persisted_rollout: bool,
+    /// Never read or overwrite the selected-rollout channel for this invocation.
+    pub(crate) ephemeral_rollout: bool,
     launch_context: ProcessLaunchContext,
     host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
@@ -73,12 +75,21 @@ impl RootAgentTemplate {
             task_budget_binding: Default::default(),
             process,
             resume_persisted_rollout,
+            ephemeral_rollout: false,
             input_shadow,
             launch_context,
             host_capabilities,
             generation_capabilities,
             llm_connection,
         }
+    }
+}
+
+impl RootAgentTemplate {
+    /// Keep this invocation's rollout out of the `metadata/root-rollout` selector.
+    pub(crate) fn with_ephemeral_rollout(mut self, ephemeral_rollout: bool) -> Self {
+        self.ephemeral_rollout = ephemeral_rollout;
+        self
     }
 }
 
@@ -183,7 +194,7 @@ impl AgentRuntimeService {
         template.task_budget_binding = Default::default();
         root_recovery::select(
             &mut template.process,
-            template.resume_persisted_rollout,
+            template.resume_persisted_rollout && !template.ephemeral_rollout,
             &mut self
                 .current_root_rollout
                 .lock()
@@ -516,7 +527,9 @@ impl AgentRuntimeService {
             .await
             .context("Agent Machine failed to start")?;
         if launch.root {
-            root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+            if !launch.template.ephemeral_rollout {
+                root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
+            }
             let rollout = startup
                 .rollout_path
                 .clone()
@@ -789,6 +802,7 @@ fn child_template(
         task_budget_binding: parent.task_budget_binding.child()?,
         process,
         resume_persisted_rollout: false,
+        ephemeral_rollout: false,
         input_shadow: None,
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
@@ -884,116 +898,6 @@ async fn commit_clone(server: &impl FileServer, fid: Fid, exec: &ExecSpec) -> Re
 
 fn next_agent_fid() -> Fid {
     Fid(NEXT_AGENT_FID.fetch_add(1, Ordering::Relaxed))
-}
-
-async fn wait_for_root_stop(
-    mut stop: tokio::sync::oneshot::Receiver<()>,
-    controller: &RuntimeController,
-) -> i32 {
-    loop {
-        tokio::select! {
-            _ = &mut stop => return 0,
-            _ = tokio::time::sleep(Duration::from_millis(25)) => {
-                if controller.is_finished() {
-                    return 1;
-                }
-            }
-        }
-    }
-}
-
-pub(super) async fn wait_for_child_terminal(
-    root: &InProcessTransport,
-    pid: Pid,
-    controller: &RuntimeController,
-    run_timeout: Option<Duration>,
-) -> Result<AgentExecutableResult> {
-    // The run's own timeout bounds the wait; a clock is never the reason a paused
-    // Process stops being answerable.
-    let deadline = run_timeout.map(|timeout| std::time::Instant::now() + timeout);
-    let shell = alan_shell::Shell::new(root.clone());
-    let activity_path = format!("/agent/{}/machine/ui/activity", pid.0);
-    let events_path = format!("/agent/{}/machine/ui/events", pid.0);
-    let notice_path = format!("/agent/{}/machine/ui/notice", pid.0);
-    loop {
-        if controller.is_finished() {
-            anyhow::bail!("child Agent Machine stopped before publishing a terminal result");
-        }
-        let stopped = deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
-        let events_started = shell.stat(&events_path).await.map(|stat| stat.length > 0)?;
-        if events_started {
-            let activity: UiActivitySnapshot =
-                serde_json::from_slice(&shell.cat(&activity_path).await?)?;
-            if matches!(
-                activity.state,
-                UiActivityState::Idle | UiActivityState::Paused
-            ) {
-                let notice: UiNoticeSnapshot =
-                    serde_json::from_slice(&shell.cat(&notice_path).await?)?;
-                let output_text =
-                    String::from_utf8(shell.cat(&format!("/agent/{}/io/output", pid.0)).await?)
-                        .context("child Agent output is utf8")?;
-                let warnings = (notice.kind == UiNoticeKind::Warning)
-                    .then(|| notice.message.clone())
-                    .into_iter()
-                    .collect();
-                let pause = read_child_pause(&shell, pid).await?;
-                let terminal = decide_child_terminal(
-                    activity.state,
-                    pause.is_some(),
-                    notice.kind == UiNoticeKind::Error,
-                    stopped,
-                );
-                if terminal == ChildTerminal::Wait {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    continue;
-                }
-                if terminal == ChildTerminal::Failed {
-                    return Ok(AgentExecutableResult::failed_with_output(
-                        output_text,
-                        warnings,
-                        notice.message,
-                    ));
-                }
-                let Some(pause) = pause.filter(|_| terminal == ChildTerminal::Paused) else {
-                    return Ok(AgentExecutableResult::completed(output_text, warnings));
-                };
-                return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
-async fn wait_for_process_exit(
-    procfs: &alan_kernel::ProcFs,
-    pid: Pid,
-    timeout: Duration,
-) -> Result<()> {
-    tokio::time::timeout(timeout, async {
-        loop {
-            if procfs
-                .try_observe_process_lifecycle(pid)
-                .is_some_and(|(status, _)| status == alan_kernel::Status::Exited)
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .context("timed out waiting for Agent Process exit")?;
-    Ok(())
-}
-
-fn process_error(error: anyhow::Error) -> ProcessOutcome {
-    let result = AgentExecutableResult::failed(format!("alan-agent: {error:#}"));
-    ProcessOutcome::exited(
-        1,
-        result
-            .to_process_output_record()
-            .unwrap_or_else(|_| format!("alan-agent: {error:#}\n").into_bytes()),
-    )
 }
 
 #[cfg(test)]

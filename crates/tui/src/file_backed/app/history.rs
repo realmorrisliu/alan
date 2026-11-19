@@ -411,6 +411,11 @@ impl FileBackedApp {
         &mut self,
         snapshot: UiActivitySnapshot,
     ) {
+        if snapshot.state == UiActivityState::Idle
+            && matches!(self.thinking.state, UiThinkingState::Streaming)
+        {
+            self.thinking = UiThinkingSnapshot::idle();
+        }
         self.activity = snapshot;
     }
 

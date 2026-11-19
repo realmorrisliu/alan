@@ -140,6 +140,8 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
             "original-secret",
         ],
     );
+    let mock_addr = spawn_models_mock_server("sk-replacement");
+    let base_setting = format!("base_url=http://{mock_addr}/v1");
     alan_command(
         &home,
         &xdg_data,
@@ -150,6 +152,8 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
             "openai-main",
             "--credential",
             "replacement-secret",
+            "--setting",
+            &base_setting,
         ],
     );
     alan_command(
@@ -171,6 +175,90 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
         &["connection", "test", "openai-main"],
     );
     assert!(String::from_utf8_lossy(&tested.stdout).contains("status: success"));
+
+    // Keyless Magpie works without --credential or stored secret and succeeds against local router.
+    alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &[
+            "connection",
+            "add",
+            "magpie",
+            "--profile",
+            "magpie-local",
+            "--setting",
+            &base_setting,
+        ],
+    );
+    let magpie_tested = alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &["connection", "test", "magpie-local"],
+    );
+    assert!(String::from_utf8_lossy(&magpie_tested.stdout).contains("status: success"));
+
+    // Invalid key fails real connectivity/auth check, while piped stdin updates the secret cleanly.
+    let mut pipe_child = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env_remove("ALAN_INSTALL_CHANNEL")
+        .args(["connection", "set-secret", "openai-main"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write as _;
+        pipe_child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"sk-unauthorized\n")
+            .unwrap();
+    }
+    let pipe_out = pipe_child.wait_with_output().unwrap();
+    assert!(
+        pipe_out.status.success(),
+        "piped set-secret failed: {}",
+        String::from_utf8_lossy(&pipe_out.stderr)
+    );
+    let failed_test = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env_remove("ALAN_INSTALL_CHANNEL")
+        .args(["connection", "test", "openai-main"])
+        .output()
+        .unwrap();
+    assert!(!failed_test.status.success());
+    assert!(
+        String::from_utf8_lossy(&failed_test.stderr).contains("authentication failed"),
+        "expected HTTP auth error, got: {}",
+        String::from_utf8_lossy(&failed_test.stderr)
+    );
+
+    // Non-first-party Anthropic is excluded from `connection add` and `connection list` built-ins.
+    let anthropic_add = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env_remove("ALAN_INSTALL_CHANNEL")
+        .args(["connection", "add", "anthropic"])
+        .output()
+        .unwrap();
+    assert!(!anthropic_add.status.success());
+    let listed = alan_command(&home, &xdg_data, &runtime, &["connection", "list"]);
+    let listed_out = String::from_utf8_lossy(&listed.stdout);
+    assert!(listed_out.contains("magpie-local | provider=magpie | credential=unset"));
+    assert!(listed_out.contains("first_party_providers: magpie"));
+    assert!(!listed_out.contains("anthropic_messages"));
 
     assert!(
         !paths.root.exists(),
@@ -203,4 +291,36 @@ fn connection_cli_uses_the_connection_service_without_starting_a_host_or_root() 
             .contains("select a live Alan instance with ALAN_INSTANCE_RUNTIME_DIR")
     );
     assert!(!paths.root.exists());
+}
+
+fn spawn_models_mock_server(expected_token: &str) -> std::net::SocketAddr {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock listener");
+    let addr = listener.local_addr().expect("mock listener addr");
+    let expected = format!("authorization: bearer {expected_token}");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let req = String::from_utf8_lossy(&buf).to_ascii_lowercase();
+            let has_auth = req.lines().any(|line| line.starts_with("authorization:"));
+            let authorized = !has_auth || req.lines().any(|line| line.trim() == expected);
+            let response = if authorized {
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}"
+            } else {
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            };
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    addr
 }

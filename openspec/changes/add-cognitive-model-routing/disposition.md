@@ -27,7 +27,7 @@ See [typed-entry-delivery.md](typed-entry-delivery.md) and
 ## Historical entry decisions
 
 Discussion update (2026-09-24):
-[unify-agent-command-input](../unify-agent-command-input/disposition.md) owns
+[unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/disposition.md) owns
 unified input and deterministic command operations. Its first slice uses explicit
 prefixes. Automatic intent integration and qualification now belong to the active
 [qualify-agent-input-routing](../qualify-agent-input-routing/disposition.md) successor. Generic typed
@@ -52,3 +52,15 @@ following local lifecycle/model/UI acceptance. [entry-slice.md](entry-slice.md)
 records the exact operation, lifecycle and ownership decisions. This activates
 that bounded implementation scope; it did not activate automatic command routing,
 claim a then-implemented provider adapter or authorize canonical sync before merge.
+
+## Frozen as deferred R&D — 2026-11-19
+
+The delivered finite-choice evaluation, TypeSafe adapter and no-effect Machine
+shadow slice remain canonical. All remaining scope (general mixed transitions,
+broad `cognitive-model-routing` and any provider-specific evaluator) is frozen as
+deferred research. It is not on the M1–M5 execution order in the
+[personal daily-use roadmap](../qualify-personal-daily-development/roadmap.md), is
+not authorized for implementation, and requires explicit reactivation with a new
+planning decision. Automatic routing stays disabled. Terminal-host acceptance
+steps in the retained evidence documents are historical; Alan does not depend on a
+specific terminal host (ADR-0061).

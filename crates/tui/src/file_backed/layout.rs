@@ -184,7 +184,7 @@ fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, 
     live_region_lines_at(app, width, super::unix_time_ms())
 }
 
-fn live_region_lines_at(
+pub(super) fn live_region_lines_at(
     app: &FileBackedApp,
     width: usize,
     now_ms: u64,
@@ -200,6 +200,15 @@ fn live_region_lines_at(
     lines.push(app.context_line(width));
     if let Some(line) = attention_line_at_width(app, now_ms, width) {
         lines.push(line);
+    }
+    if matches!(app.activity.state, super::UiActivityState::Running)
+        && !app.has_pending_response()
+        && matches!(
+            app.thinking.state,
+            alan_agent_protocol::UiThinkingState::Streaming
+        )
+    {
+        lines.extend(thinking_preview_lines(app, width));
     }
     if let Some(notice) = app.composer.history_notice() {
         lines.push(Line::styled(
@@ -508,7 +517,7 @@ fn attention_line_at_width(
         "Model /status"
     } else if app.last_input_failed {
         "Failed /status"
-    } else if !app.queue.owner.is_empty() {
+    } else if !app.queue.owner.is_empty() && !app.queue.is_fresh_unknown() {
         "Queue /status"
     } else {
         "Context /status"
@@ -528,7 +537,9 @@ fn attention_line_at_width(
             Some(q) if !q.active_submission_ids.is_empty() && primary != "Run Esc stop" => {
                 "active".into()
             }
-            None if !app.queue.owner.is_empty() => "q unknown".into(),
+            None if !app.queue.owner.is_empty() && !app.queue.is_fresh_unknown() => {
+                "q unknown".into()
+            }
             _ => String::new(),
         }
     };
@@ -600,14 +611,48 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
     }
     let elapsed = activity_elapsed_second(app, now_ms);
     let frame_idx = (elapsed as usize) % SPINNER.len();
+    let verb = if matches!(
+        app.thinking.state,
+        alan_agent_protocol::UiThinkingState::Streaming
+    ) {
+        "Thinking"
+    } else {
+        "Working"
+    };
     Line::from(vec![
         Span::styled(
             format!("{} ", SPINNER[frame_idx]),
             Style::default().fg(Color::Green),
         ),
         Span::styled(
-            format!("Working · {elapsed}s · Esc interrupt"),
+            format!("{verb} · {elapsed}s · Esc interrupt"),
             Style::default(),
         ),
     ])
+}
+
+fn thinking_preview_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
+    let cleaned = crate::history::clean_text(&app.thinking.text);
+    let body_width = width.saturating_sub(2).max(1);
+    let mut wrapped_rows = Vec::new();
+    for line in cleaned.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.trim().is_empty() {
+            continue;
+        }
+        for row in textwrap::wrap(trimmed, body_width) {
+            wrapped_rows.push(row.into_owned());
+        }
+    }
+    if wrapped_rows.is_empty() {
+        return Vec::new();
+    }
+    let max_rows = if app.expand_thinking { 8 } else { 2 };
+    let start = wrapped_rows.len().saturating_sub(max_rows);
+    let style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
+    wrapped_rows
+        .into_iter()
+        .skip(start)
+        .map(|row| Line::styled(format!("  {row}"), style))
+        .collect()
 }

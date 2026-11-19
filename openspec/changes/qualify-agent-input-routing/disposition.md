@@ -27,7 +27,7 @@ are synchronized by their generic cognition owner. See
 ## Historical handoff
 
 Active successor for unfinished automatic-input routing, qualification and activation
-from [unify-agent-command-input](../unify-agent-command-input/disposition.md).
+from [unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/disposition.md).
 The user authorized this handoff as part of explicit-input delivery and archival.
 No classifier, provider adapter, measured qualification or activation is claimed.
 
@@ -37,3 +37,13 @@ This change consumes that delivered capability; it does not activate that owner'
 queued implementation or require a specific provider such as Jev. Effecting automatic
 routing stays disabled until this change's qualification and explicit activation gates pass.
 The explicit-input predecessor must merge before these dependent deltas are synced.
+
+## Frozen as deferred R&D — 2026-11-19
+
+Automatic input-routing qualification and activation are frozen as deferred
+research behind the personal daily-use roadmap (M1–M5). The v1–v4 qualification
+evidence is retained as frozen history; classification, latency, cost and
+redirected-parity gates remain unresolved and unclaimed. Automatic routing stays
+disabled, and no activation is authorized. Reactivation needs an explicit new
+planning decision and a standard-terminal (POSIX/VT) acceptance plan; Herdr is not
+an acceptance dependency (ADR-0061).

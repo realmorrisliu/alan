@@ -45,6 +45,7 @@ impl MockLlmProvider {
                     completion_tokens: 5,
                     total_tokens: 15,
                     reasoning_tokens: None,
+                    ..Default::default()
                 }),
                 finish_reason: None,
                 provider_response_id: None,

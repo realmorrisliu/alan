@@ -8,6 +8,13 @@ use std::path::{Component, PathBuf};
 
 const AUTH_STORAGE_FILE_NAME: &str = "auth.json";
 
+/// Refresh an access token this many seconds before its JWT `exp`, so a request is
+/// never dispatched with credentials that expire in flight.
+pub const ACCESS_TOKEN_REFRESH_WINDOW_SECS: i64 = 5 * 60;
+
+/// Refresh an access token without a readable expiry once it is this old.
+const OPAQUE_ACCESS_TOKEN_MAX_AGE_SECS: i64 = 8 * 24 * 60 * 60;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredChatgptAuth {
     pub tokens: ChatgptTokenData,
@@ -44,13 +51,32 @@ impl StoredChatgptAuth {
         })
     }
 
-    pub fn is_access_token_expired(&self, now: DateTime<Utc>) -> bool {
-        self.access_token_expires_at.is_some_and(|exp| exp <= now)
+    /// Effective access-token expiry from stored metadata and the JWT `exp` claim.
+    pub fn effective_access_token_expires_at(&self) -> Option<DateTime<Utc>> {
+        let jwt_exp = parse_jwt_expiration(&self.tokens.access_token)
+            .ok()
+            .flatten();
+        match (self.access_token_expires_at, jwt_exp) {
+            (Some(stored), Some(claim)) => Some(stored.min(claim)),
+            (stored, claim) => stored.or(claim),
+        }
     }
 
+    pub fn is_access_token_expired(&self, now: DateTime<Utc>) -> bool {
+        self.effective_access_token_expires_at()
+            .is_some_and(|exp| exp <= now)
+    }
+
+    /// Whether a request at `now` must refresh before dispatch: the access token is
+    /// expired or expires within [`ACCESS_TOKEN_REFRESH_WINDOW_SECS`]. An opaque token
+    /// without a JWT `exp` falls back to the age of the last refresh.
     pub fn should_refresh(&self, now: DateTime<Utc>) -> bool {
-        self.access_token_expires_at
-            .is_some_and(|exp| exp <= now + chrono::Duration::minutes(2))
+        match self.effective_access_token_expires_at() {
+            Some(exp) => exp <= now + chrono::Duration::seconds(ACCESS_TOKEN_REFRESH_WINDOW_SECS),
+            None => self.last_refresh_at.is_some_and(|refreshed| {
+                refreshed + chrono::Duration::seconds(OPAQUE_ACCESS_TOKEN_MAX_AGE_SECS) <= now
+            }),
+        }
     }
 }
 
@@ -384,5 +410,43 @@ mod tests {
         .expect("stored auth");
 
         assert_eq!(auth.access_token_expires_at, None);
+    }
+
+    #[test]
+    fn should_refresh_uses_safety_window_and_opaque_age_fallback() {
+        let now = chrono::Utc::now();
+        let id_token = ChatgptIdTokenInfo {
+            account_id: Some("acct_123".to_string()),
+            raw_jwt: build_jwt(json!({})),
+            ..Default::default()
+        };
+        let auth = |access_token: String| {
+            StoredChatgptAuth::from_tokens(ChatgptTokenData {
+                id_token: id_token.clone(),
+                access_token,
+                refresh_token: "refresh".to_string(),
+            })
+            .unwrap()
+        };
+        let window = super::ACCESS_TOKEN_REFRESH_WINDOW_SECS;
+        let exp = |offset: i64| build_jwt(json!({"exp": now.timestamp() + offset}));
+        assert!(auth(exp(-1)).should_refresh(now));
+        assert!(auth(exp(window - 10)).should_refresh(now));
+        assert!(!auth(exp(window + 60)).should_refresh(now));
+
+        let mut opaque = auth("opaque".to_string());
+        assert!(!opaque.should_refresh(now));
+        opaque.last_refresh_at = Some(now - chrono::Duration::days(9));
+        assert!(opaque.should_refresh(now));
+
+        // Even when stored expiry metadata is absent, JWT `exp` triggers refresh.
+        let mut missing_stored_exp = auth(exp(window - 10));
+        missing_stored_exp.access_token_expires_at = None;
+        assert!(missing_stored_exp.should_refresh(now));
+
+        // Stored expiry earlier than JWT `exp` also triggers refresh.
+        let mut earlier_stored_exp = auth(exp(window + 3600));
+        earlier_stored_exp.access_token_expires_at = Some(now + chrono::Duration::seconds(30));
+        assert!(earlier_stored_exp.should_refresh(now));
     }
 }

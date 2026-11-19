@@ -17,7 +17,11 @@ use crate::paths::{HostStorePaths, SystemStorePaths};
 use crate::{SecretStore, apply_profile_to_config};
 
 /// Host-supplied adapters and durable bindings needed by Service Manager.
-pub struct HostBootConfig(ServiceManagerConfig);
+pub struct HostBootConfig {
+    service_manager: ServiceManagerConfig,
+    /// Keep this invocation's Root rollout out of `metadata/root-rollout`.
+    pub ephemeral_rollout: bool,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProductLlmClientFactory {
@@ -100,42 +104,83 @@ impl LlmClientFactory for ProductLlmClientFactory {
         let Some(profile_id) = selected_profile else {
             return Ok(client);
         };
-        if connections
-            .resolve_profile(Some(profile_id))?
-            .credential_kind
-            != alan_service_manager::CredentialKind::SecretString
-        {
+        let resolved = connections.resolve_profile(Some(profile_id))?;
+        if resolved.credential_kind != alan_service_manager::CredentialKind::SecretString {
             return Ok(client);
         }
+        let credential_id = resolved.credential_id;
+        let initial_secret = match credential_id.as_deref() {
+            Some(id) => SecretStore::from_directory(&self.credentials_dir)?.load(id)?,
+            None => None,
+        };
+        let provider_name = client.provider_name();
+        let generation = client.supports_generation();
+        let evaluation = client.supports_choice_evaluation();
         Ok(LlmClient::new(LiveSecretProvider {
             factory: self.clone(),
             base_config: base_config.clone(),
             profile_id: profile_id.to_string(),
+            credential_id,
             connections: connections.clone(),
-            provider_name: client.provider_name(),
-            generation: client.supports_generation(),
-            evaluation: client.supports_choice_evaluation(),
+            provider_name,
+            generation,
+            evaluation,
+            cached: Some(CachedSecretClient {
+                secret: initial_secret,
+                client,
+            }),
         }))
     }
 }
 
-// Keep Process profile settings fixed while resolving the owning Host credential store at
-// each request boundary. In-flight requests retain their original authorization.
-// ponytail: rebuild secret-backed clients per request; add versioned reuse if setup costs matter.
+struct CachedSecretClient {
+    secret: Option<String>,
+    client: LlmClient,
+}
+
+// Keep Process profile settings fixed while checking the owning Host credential store at
+// each request boundary. Reuse the built `LlmClient` (and its underlying HTTP client/pool)
+// across requests while the resolved secret is unchanged; invalidate immediately on rotation
+// or revocation. In-flight requests retain their original authorization.
 struct LiveSecretProvider {
     factory: ProductLlmClientFactory,
     base_config: Config,
     profile_id: String,
+    credential_id: Option<String>,
     connections: ConnectionsFile,
     provider_name: &'static str,
     generation: bool,
     evaluation: bool,
+    cached: Option<CachedSecretClient>,
 }
 
 impl LiveSecretProvider {
-    fn client(&self) -> Result<LlmClient> {
-        self.factory
-            .resolve(&self.base_config, Some(&self.profile_id), &self.connections)
+    fn client_mut(&mut self) -> Result<&mut LlmClient> {
+        let current_secret = match self.credential_id.as_deref() {
+            Some(id) => SecretStore::from_directory(&self.factory.credentials_dir)?.load(id)?,
+            None => None,
+        };
+        let cache_hit = self
+            .cached
+            .as_ref()
+            .is_some_and(|cached| cached.secret == current_secret);
+        if !cache_hit {
+            self.cached = None;
+            let client = self.factory.resolve(
+                &self.base_config,
+                Some(&self.profile_id),
+                &self.connections,
+            )?;
+            self.cached = Some(CachedSecretClient {
+                secret: current_secret,
+                client,
+            });
+        }
+        Ok(&mut self
+            .cached
+            .as_mut()
+            .expect("cached LLM client initialized")
+            .client)
     }
 }
 
@@ -151,22 +196,22 @@ impl LlmProvider for LiveSecretProvider {
         &mut self,
         request: alan_llm::ChoiceEvaluationRequest,
     ) -> Result<alan_llm::ChoiceEvaluationResponse> {
-        self.client()?.evaluate_choice(request).await
+        self.client_mut()?.evaluate_choice(request).await
     }
 
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
-        self.client()?.generate(request).await
+        self.client_mut()?.generate(request).await
     }
 
     async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
-        self.client()?.chat(system, user).await
+        self.client_mut()?.chat(system, user).await
     }
 
     async fn generate_stream(
         &mut self,
         request: GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        self.client()?.generate_stream(request).await
+        self.client_mut()?.generate_stream(request).await
     }
 
     fn provider_name(&self) -> &'static str {
@@ -199,18 +244,22 @@ impl HostBootConfig {
             _installation_access: Some(installation_access),
         });
 
-        Ok(Self(ServiceManagerConfig {
-            process,
-            resume_root,
-            input_shadow: None,
-            launch_context,
-            connection_store: Some(connection_store),
-            package_store: Some(system_store.packages()?),
-            in_memory_stores: false,
-            llm_factory,
-            host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
-            tools,
-        }))
+        Ok(Self {
+            service_manager: ServiceManagerConfig {
+                process,
+                resume_root,
+                ephemeral_rollout: false,
+                input_shadow: None,
+                launch_context,
+                connection_store: Some(connection_store),
+                package_store: Some(system_store.packages()?),
+                in_memory_stores: false,
+                llm_factory,
+                host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
+                tools,
+            },
+            ephemeral_rollout: false,
+        })
     }
 
     /// Explicit test-only inputs. Product callers never select this implicitly.
@@ -226,13 +275,29 @@ impl HostBootConfig {
             tools,
         );
         config.host_mount_adapter = Arc::new(crate::host_mounts::NativeHostMountExportAdapter);
-        Self(config)
+        Self {
+            service_manager: config,
+            ephemeral_rollout: false,
+        }
     }
 
     /// Explicitly restore the selected Root Agent rollout for this invocation.
     pub fn with_root_resume(mut self) -> Self {
-        self.0.resume_root = true;
+        self.service_manager.resume_root = true;
         self
+    }
+
+    /// Keep this invocation's Root rollout out of `metadata/root-rollout`: the run neither reads
+    /// the selected rollout nor becomes the selection for earlier or later invocations.
+    pub fn with_ephemeral_rollout(mut self, ephemeral: bool) -> Self {
+        self.ephemeral_rollout = ephemeral;
+        self.service_manager.ephemeral_rollout = ephemeral;
+        self
+    }
+
+    /// Whether this invocation is excluded from the selected-rollout channel.
+    pub fn ephemeral_rollout(&self) -> bool {
+        self.ephemeral_rollout
     }
 
     /// Select an advice-only evaluator for this invocation's Root Agent input.
@@ -241,7 +306,7 @@ impl HostBootConfig {
         profile: impl Into<String>,
         surface: alan_agent_engine::runtime::EvaluationSurface,
     ) -> Self {
-        self.0.input_shadow = Some(alan_service_manager::InputShadowSelection {
+        self.service_manager.input_shadow = Some(alan_service_manager::InputShadowSelection {
             profile: profile.into(),
             surface,
         });
@@ -250,12 +315,14 @@ impl HostBootConfig {
 
     /// Boot an independent in-process instance without a listener or background launcher.
     /// The caller owns the returned manager and must shut it down before exiting.
-    pub async fn boot_foreground(self) -> Result<ServiceManager> {
-        ServiceManager::boot(self.0).await
+    pub async fn boot_foreground(mut self) -> Result<ServiceManager> {
+        self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
+        ServiceManager::boot(self.service_manager).await
     }
 
-    pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
-        self.0
+    pub(crate) fn into_service_manager(mut self) -> ServiceManagerConfig {
+        self.service_manager.ephemeral_rollout = self.ephemeral_rollout;
+        self.service_manager
     }
 }
 

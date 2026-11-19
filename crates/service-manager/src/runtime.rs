@@ -48,6 +48,9 @@ pub struct ServiceManagerConfig {
     pub process: AgentProcessConfig,
     /// Restore the previously selected Root Agent rollout for this invocation.
     pub resume_root: bool,
+    /// Never read or overwrite the `metadata/root-rollout` selector, so a throwaway run neither
+    /// resumes nor becomes the selected session of earlier or later invocations.
+    pub ephemeral_rollout: bool,
     pub input_shadow: Option<InputShadowSelection>,
     pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
@@ -118,6 +121,7 @@ impl ServiceManagerConfig {
             in_memory_stores: false,
             process,
             resume_root: false,
+            ephemeral_rollout: false,
             input_shadow: None,
             llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
                 llm_client,
@@ -125,6 +129,12 @@ impl ServiceManagerConfig {
             host_mount_adapter: Arc::new(UnavailableHostMountExportAdapter),
             tools,
         }
+    }
+
+    /// Keep this invocation's Root rollout out of the selected-rollout channel.
+    pub fn with_ephemeral_rollout(mut self, ephemeral: bool) -> Self {
+        self.ephemeral_rollout = ephemeral;
+        self
     }
 }
 
@@ -152,6 +162,10 @@ impl ServiceManager {
         ensure!(
             !config.resume_root || config.process.store_bindings.is_some(),
             "Root Agent recovery requires durable store bindings"
+        );
+        ensure!(
+            !(config.resume_root && config.ephemeral_rollout),
+            "an ephemeral Root rollout cannot also resume the selected Root rollout"
         );
         ensure!(
             config.launch_context.package_references.is_empty(),
@@ -278,6 +292,7 @@ impl ServiceManager {
             host_mount_adapter: config.host_mount_adapter.clone(),
             process: config.process,
             resume_root: config.resume_root,
+            ephemeral_rollout: config.ephemeral_rollout,
             input_shadow: config.input_shadow,
             launch_context: config.launch_context,
             tools: config.tools,
@@ -406,6 +421,7 @@ struct AssembleInputs {
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     process: AgentProcessConfig,
     resume_root: bool,
+    ephemeral_rollout: bool,
     input_shadow: Option<InputShadowSelection>,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
@@ -426,6 +442,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         host_mount_adapter,
         mut process,
         resume_root,
+        ephemeral_rollout,
         input_shadow,
         mut launch_context,
         tools,
@@ -684,7 +701,8 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         llm_connection,
         resume_root,
         input_shadow,
-    );
+    )
+    .with_ephemeral_rollout(ephemeral_rollout);
     let root = agent_runtime
         .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
         .await?;

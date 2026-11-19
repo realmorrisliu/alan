@@ -8,6 +8,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 use std::io::{IsTerminal, Stdout, Write, stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::transcript_ui::wrapped_line_count;
 
@@ -124,6 +125,72 @@ pub fn terminal_capability_error() -> &'static str {
     "bare `alan` requires an interactive terminal; use explicit management subcommands for noninteractive automation"
 }
 
+static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Restore raw mode, bracketed paste, and cursor visibility unconditionally.
+pub fn restore_terminal_modes() {
+    let _ = crossterm_terminal::disable_raw_mode();
+    let mut out = stdout();
+    let _ = execute!(out, DisableBracketedPaste, crossterm::cursor::Show);
+    let _ = out.flush();
+}
+
+/// Install a process-wide panic hook (once) that restores terminal modes before printing the panic.
+pub fn install_panic_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if TERMINAL_ACTIVE.swap(false, Ordering::SeqCst)
+                || crossterm_terminal::is_raw_mode_enabled().unwrap_or(false)
+            {
+                restore_terminal_modes();
+            }
+            previous(info);
+        }));
+    });
+}
+
+/// RAII guard that disables `ECHO` on stdin when stdin is a TTY and restores termios on drop.
+pub struct StdinEchoGuard {
+    fd: libc::c_int,
+    original: libc::termios,
+}
+
+impl StdinEchoGuard {
+    /// Disable terminal `ECHO` if stdin is a TTY; returns `Ok(None)` when stdin is piped/non-TTY.
+    pub fn disable_if_tty() -> Result<Option<Self>> {
+        let fd = libc::STDIN_FILENO;
+        // SAFETY: `isatty` is safe to invoke on any file descriptor.
+        if unsafe { libc::isatty(fd) } != 1 {
+            return Ok(None);
+        }
+        let mut original = std::mem::MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: `original` is valid aligned storage for `termios`, checked against return code.
+        if unsafe { libc::tcgetattr(fd, original.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error()).context("read terminal attributes");
+        }
+        // SAFETY: `tcgetattr` succeeded and initialized `original`.
+        let original = unsafe { original.assume_init() };
+        let mut no_echo = original;
+        no_echo.c_lflag &= !libc::ECHO;
+        // SAFETY: `no_echo` is a valid `termios` struct derived from `tcgetattr`.
+        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &no_echo) } != 0 {
+            return Err(std::io::Error::last_os_error()).context("disable terminal echo");
+        }
+        Ok(Some(Self { fd, original }))
+    }
+}
+
+impl Drop for StdinEchoGuard {
+    fn drop(&mut self) {
+        // SAFETY: `original` was obtained from `tcgetattr` on `self.fd`.
+        unsafe {
+            libc::tcsetattr(self.fd, libc::TCSANOW, &self.original);
+        }
+    }
+}
+
 pub struct TerminalSession {
     terminal: AlanTerminal,
     viewport_height: u16,
@@ -131,8 +198,10 @@ pub struct TerminalSession {
 
 impl TerminalSession {
     pub fn enter() -> Result<Self> {
-        crossterm_terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
+        install_panic_hook();
+        TERMINAL_ACTIVE.store(true, Ordering::SeqCst);
         let startup_guard = TerminalStartupGuard::new();
+        crossterm_terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
         let mut out = stdout();
         execute!(out, EnableBracketedPaste).context("failed to enable terminal input modes")?;
         let mut terminal = build_inline_terminal(out, 1)?;
@@ -292,6 +361,7 @@ impl Drop for TerminalStartupGuard {
         if !self.armed {
             return;
         }
+        TERMINAL_ACTIVE.store(false, Ordering::SeqCst);
         let mut out = stdout();
         let _ = execute!(out, DisableBracketedPaste);
         let _ = crossterm_terminal::disable_raw_mode();
@@ -300,6 +370,7 @@ impl Drop for TerminalStartupGuard {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
+        TERMINAL_ACTIVE.store(false, Ordering::SeqCst);
         let _ = crossterm_terminal::disable_raw_mode();
         let _ = restore_terminal_input_and_line(self.terminal.backend_mut());
         let _ = self.terminal.show_cursor();

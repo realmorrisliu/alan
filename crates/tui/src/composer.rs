@@ -192,6 +192,7 @@ impl Composer {
                 self.history_next();
                 ComposerKeyOutcome::Changed
             }
+            KeyCode::Char(_) if ctrl || alt => ComposerKeyOutcome::Ignored,
             KeyCode::Char(ch) => {
                 self.insert_text(&ch.to_string());
                 ComposerKeyOutcome::Changed

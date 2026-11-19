@@ -1,4 +1,6 @@
 use anyhow::{Result, bail};
+use openrouter_rs::api::chat::ContentPart;
+use serde_json::Value;
 
 use super::{OrMessage, Role, convert_tool_calls_for_openrouter};
 use crate::{Message, MessageContentPart, MessageRole};
@@ -15,12 +17,14 @@ pub(super) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<
                 tool_call_id,
                 ..
             } = message;
-            let content = project_content(content, content_parts)?;
 
             Ok(match role {
-                MessageRole::System => OrMessage::new(Role::System, content),
-                MessageRole::User => OrMessage::new(Role::User, content),
+                MessageRole::System => {
+                    OrMessage::new(Role::System, project_text(content, content_parts)?)
+                }
+                MessageRole::User => project_user_message(content, content_parts)?,
                 MessageRole::Assistant => {
+                    let content = project_text(content, content_parts)?;
                     let tool_calls = tool_calls.map(convert_tool_calls_for_openrouter);
                     match tool_calls {
                         Some(tool_calls) if !tool_calls.is_empty() => {
@@ -30,6 +34,7 @@ pub(super) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<
                     }
                 }
                 MessageRole::Tool => {
+                    let content = project_text(content, content_parts)?;
                     let tool_call_id = tool_call_id
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
@@ -40,13 +45,85 @@ pub(super) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<
                         })?;
                     OrMessage::tool_response(&tool_call_id, content)
                 }
-                MessageRole::Context => OrMessage::new(Role::System, content),
+                MessageRole::Context => {
+                    OrMessage::new(Role::System, project_text(content, content_parts)?)
+                }
             })
         })
         .collect()
 }
 
-fn project_content(fallback: String, parts: Vec<MessageContentPart>) -> Result<String> {
+/// User turns keep the plain-string wire shape unless they carry attachments, which
+/// project to OpenAI-style multimodal parts.
+fn project_user_message(fallback: String, parts: Vec<MessageContentPart>) -> Result<OrMessage> {
+    if !parts
+        .iter()
+        .any(|part| matches!(part, MessageContentPart::Attachment { .. }))
+    {
+        return Ok(OrMessage::new(Role::User, project_text(fallback, parts)?));
+    }
+
+    let mut projected = Vec::with_capacity(parts.len());
+    for part in parts {
+        match part {
+            MessageContentPart::Text { text } if text.trim().is_empty() => {}
+            MessageContentPart::Text { text } => projected.push(ContentPart::text(text)),
+            MessageContentPart::Structured { data } => {
+                projected.push(ContentPart::text(data.to_string()))
+            }
+            MessageContentPart::Attachment {
+                hash,
+                mime_type,
+                metadata,
+            } => projected.push(attachment_part(&hash, &mime_type, &metadata)?),
+        }
+    }
+    Ok(OrMessage::with_parts(Role::User, projected))
+}
+
+fn attachment_part(hash: &str, mime_type: &str, metadata: &Value) -> Result<ContentPart> {
+    let field = |key: &str| {
+        metadata
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+    };
+    if mime_type.starts_with("image/") {
+        let url = if let Some(url) = field("image_url")
+            .or_else(|| field("file_url"))
+            .or_else(|| field("url"))
+        {
+            url.to_string()
+        } else if let Some(raw) = field("file_data")
+            .or_else(|| field("data"))
+            .or_else(|| field("base64"))
+        {
+            to_data_url(mime_type, raw)
+        } else {
+            bail!(
+                "OpenRouter cannot represent attachment `{hash}` ({mime_type}); provide an image URL, data URL, or base64 `data`"
+            );
+        };
+        return Ok(match field("detail") {
+            Some(detail) => ContentPart::image_url_with_detail(url, detail),
+            None => ContentPart::image_url(url),
+        });
+    }
+
+    bail!(
+        "OpenRouter cannot represent attachment `{hash}` ({mime_type}); only image attachments are supported"
+    );
+}
+
+fn to_data_url(mime_type: &str, raw: &str) -> String {
+    if raw.starts_with("data:") {
+        raw.to_string()
+    } else {
+        format!("data:{mime_type};base64,{raw}")
+    }
+}
+
+fn project_text(fallback: String, parts: Vec<MessageContentPart>) -> Result<String> {
     if parts.is_empty() {
         return Ok(fallback);
     }
@@ -59,7 +136,7 @@ fn project_content(fallback: String, parts: Vec<MessageContentPart>) -> Result<S
             MessageContentPart::Attachment {
                 hash, mime_type, ..
             } => bail!(
-                "OpenRouter cannot represent attachment `{hash}` ({mime_type}); select a Connection with attachment support"
+                "OpenRouter accepts attachments only in user messages; cannot represent attachment `{hash}` ({mime_type}) in this role"
             ),
         }
     }
@@ -72,52 +149,5 @@ fn project_content(fallback: String, parts: Vec<MessageContentPart>) -> Result<S
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn projects_typed_text_and_structured_content() {
-        let mut message = Message::user("");
-        message.content_parts = vec![
-            MessageContentPart::Text {
-                text: "selection: ".to_string(),
-            },
-            MessageContentPart::Structured {
-                data: json!({"choice": "approve"}),
-            },
-        ];
-
-        let projected = convert_messages_for_openrouter(vec![message]).unwrap();
-        let value = serde_json::to_value(&projected[0]).unwrap();
-
-        assert_eq!(value["content"], "selection: {\"choice\":\"approve\"}");
-    }
-
-    #[test]
-    fn rejects_attachments_before_dispatch() {
-        let mut message = Message::user("");
-        message.content_parts = vec![MessageContentPart::Attachment {
-            hash: "doc_hash".to_string(),
-            mime_type: "application/pdf".to_string(),
-            metadata: json!({"file_id": "file_123"}),
-        }];
-
-        let error = convert_messages_for_openrouter(vec![message]).unwrap_err();
-
-        assert!(error.to_string().contains("cannot represent attachment"));
-    }
-
-    #[test]
-    fn falls_back_when_typed_text_projects_to_nothing() {
-        let content = project_content(
-            "fallback".to_string(),
-            vec![MessageContentPart::Text {
-                text: "   ".to_string(),
-            }],
-        )
-        .unwrap();
-
-        assert_eq!(content, "fallback");
-    }
-}
+#[path = "input_projection_tests.rs"]
+mod tests;

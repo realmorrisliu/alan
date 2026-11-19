@@ -177,7 +177,8 @@ Control semantics:
 
 - `steer` re-plans the active coding loop quickly and may skip remaining safe
   steps when needed.
-- `follow_up` queues additional coding intent for the immediate next cycle.
+- `follow_up` queues additional coding intent for the next eligible cycle; a paused ordinary queue
+  requires explicit continuation and SHALL NOT be consumed automatically.
 - `next_turn` queues future coding context without breaking the current turn's
   causality.
 
@@ -190,6 +191,11 @@ Control semantics:
 - **WHEN** a user submits `next_turn` during a coding workflow
 - **THEN** alan preserves it as future context rather than rewriting the current
   turn's causality
+
+#### Scenario: Interrupt pauses queued coding intent
+- **WHEN** an interrupt pauses ordinary queued follow-up work
+- **THEN** that work does not begin a new coding cycle until explicitly continued
+- **AND** its scheduling mode does not override the queue pause
 
 ### Requirement: Coding launches are fresh and explicit
 alan SHALL launch repo-scoped coding workers through fresh child runtimes with
@@ -495,3 +501,4 @@ continuity.
 - **WHEN** the worker Process exits or becomes unavailable before handoff
 - **THEN** the steward reconstructs status from Process and durable evidence
 - **AND** it resumes work only when those owners prove a safe continuation point
+

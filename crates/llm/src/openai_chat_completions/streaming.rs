@@ -15,11 +15,12 @@ mod completion_tests;
 
 use super::{
     OpenAiChatCompletionsChunk, OpenAiChatCompletionsChunkChoice, OpenAiChatCompletionsClient,
-    OpenAiChatCompletionsRequest, OpenAiResponsesRequest, OpenAiResponsesResponse,
-    build_chat_completions_request_for_model, convert_openai_responses_usage, convert_usage,
-    extract_reasoning_fields, extract_responses_output_reasoning_signature, is_non_empty,
-    responses_finish_reason,
+    OpenAiChatCompletionsRequest, OpenAiResponsesRequest, build_chat_completions_request_for_model,
+    convert_usage, extract_reasoning_fields,
 };
+use crate::openai_responses::stream_events::ResponsesStreamProjector;
+#[cfg(test)]
+pub(super) use crate::openai_responses::stream_events::responses_stream_text_delta;
 
 impl OpenAiChatCompletionsClient {
     /// Chat completion with streaming (SSE)
@@ -42,9 +43,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, model = %request.model, "Sending streaming chat completion request");
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .json(&request)
             .send()
             .await
@@ -79,9 +78,7 @@ impl OpenAiChatCompletionsClient {
         debug!(url = %url, model = %request.model, "Sending streaming responses request");
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.post(&url))
             .json(&request)
             .send()
             .await
@@ -117,9 +114,7 @@ impl OpenAiChatCompletionsClient {
         );
 
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .authorize(self.client.get(&url))
             .send()
             .await
             .context("Failed to retrieve OpenAI Responses API stream")?;
@@ -137,9 +132,7 @@ impl OpenAiChatCompletionsClient {
     ) -> Result<()> {
         let mut stream = response.bytes_stream();
         let mut parser = SseEventParser::new();
-        let mut latest_usage: Option<TokenUsage> = None;
-        let mut emitted_payload = false;
-        let mut saw_tool_calls = false;
+        let mut projector = ResponsesStreamProjector::new();
 
         loop {
             let chunk_result = tokio::select! {
@@ -152,332 +145,36 @@ impl OpenAiChatCompletionsClient {
             };
             let chunk = chunk_result.context("Failed to read Responses stream chunk")?;
             for data in parser.push(&chunk) {
-                if data == "[DONE]" {
-                    if emitted_payload {
-                        let _ = tx
-                            .send(StreamChunk {
-                                text: None,
-                                thinking: None,
-                                thinking_signature: None,
-                                redacted_thinking: None,
-                                usage: latest_usage,
-                                provider_response_id: None,
-                                provider_response_status: None,
-                                sequence_number: None,
-                                tool_call_delta: None,
-                                is_finished: true,
-                                finish_reason: Some(
-                                    responses_finish_reason(saw_tool_calls).to_string(),
-                                ),
-                            })
-                            .await;
+                let projected = projector.project_data(&data);
+                let terminal = projected.is_terminal();
+                for chunk in projected.chunks {
+                    if tx.send(chunk).await.is_err() {
+                        debug!("Receiver dropped, stopping Responses stream");
+                        return Ok(());
                     }
-                    return Ok(());
                 }
-
-                let Ok(event) = serde_json::from_str::<serde_json::Value>(&data) else {
-                    debug!(data, "Failed to parse Responses stream event");
-                    continue;
-                };
-
-                let Some(event_type) = event.get("type").and_then(serde_json::Value::as_str) else {
-                    continue;
-                };
-
-                match event_type {
-                    "response.output_text.delta" | "response.refusal.delta" => {
-                        if let Some(text) = responses_stream_text_delta(&event) {
-                            emitted_payload = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: Some(text.to_string()),
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    provider_response_id: None,
-                                    provider_response_status: None,
-                                    sequence_number: responses_stream_sequence_number(&event),
-                                    tool_call_delta: None,
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                debug!("Receiver dropped, stopping Responses stream");
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
-                        if let Some(thinking) = event
-                            .get("delta")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_non_empty(value))
-                        {
-                            emitted_payload = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: Some(thinking.to_string()),
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    provider_response_id: None,
-                                    provider_response_status: None,
-                                    sequence_number: responses_stream_sequence_number(&event),
-                                    tool_call_delta: None,
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                debug!("Receiver dropped, stopping Responses stream");
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.function_call_arguments.delta" => {
-                        let delta = event
-                            .get("delta")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or_default();
-                        if !delta.is_empty() {
-                            emitted_payload = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    provider_response_id: None,
-                                    provider_response_status: None,
-                                    sequence_number: responses_stream_sequence_number(&event),
-                                    tool_call_delta: Some(ToolCallDelta {
-                                        index: responses_stream_index(&event),
-                                        id: responses_stream_tool_id(event.get("item"), &event),
-                                        name: responses_stream_tool_name(event.get("item"), &event),
-                                        arguments_delta: Some(delta.to_string()),
-                                        arguments: None,
-                                    }),
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                debug!("Receiver dropped, stopping Responses stream");
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.output_item.done" => {
-                        let Some(item) = event.get("item") else {
-                            continue;
-                        };
-                        if item.get("type").and_then(serde_json::Value::as_str)
-                            != Some("function_call")
-                        {
-                            continue;
-                        }
-
-                        let arguments = item
-                            .get("arguments")
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|value| is_non_empty(value));
-                        let name = responses_stream_tool_name(Some(item), &event);
-
-                        if let (Some(arguments), Some(name)) = (arguments, name) {
-                            emitted_payload = true;
-                            saw_tool_calls = true;
-                            if tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: None,
-                                    provider_response_id: None,
-                                    provider_response_status: None,
-                                    sequence_number: responses_stream_sequence_number(&event),
-                                    tool_call_delta: Some(ToolCallDelta {
-                                        index: responses_stream_index(&event),
-                                        id: responses_stream_tool_id(Some(item), &event),
-                                        name: Some(name),
-                                        arguments_delta: None,
-                                        arguments: Some(arguments.to_string()),
-                                    }),
-                                    is_finished: false,
-                                    finish_reason: None,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                debug!("Receiver dropped, stopping Responses stream");
-                                return Ok(());
-                            }
-                        }
-                    }
-                    "response.completed" => {
-                        let mut completed_response_id: Option<String> = None;
-                        let mut completed_response_status: Option<String> = None;
-                        if let Some(response) = event.get("response").cloned() {
-                            match serde_json::from_value::<OpenAiResponsesResponse>(response) {
-                                Ok(parsed) => {
-                                    completed_response_id = parsed.id.clone();
-                                    completed_response_status = parsed.status.clone();
-                                    latest_usage = parsed.usage.map(convert_openai_responses_usage);
-                                    if !saw_tool_calls {
-                                        saw_tool_calls =
-                                            responses_output_contains_tool_call(&parsed.output);
-                                    }
-                                    if let Some(signature) =
-                                        extract_responses_output_reasoning_signature(&parsed.output)
-                                    {
-                                        let _ = tx
-                                            .send(StreamChunk {
-                                                text: None,
-                                                thinking: None,
-                                                thinking_signature: Some(signature),
-                                                redacted_thinking: None,
-                                                usage: None,
-                                                provider_response_id: None,
-                                                provider_response_status: None,
-                                                sequence_number: responses_stream_sequence_number(
-                                                    &event,
-                                                ),
-                                                tool_call_delta: None,
-                                                is_finished: false,
-                                                finish_reason: None,
-                                            })
-                                            .await;
-                                    }
-                                }
-                                Err(error) => {
-                                    debug!(?error, "Failed to parse response.completed payload");
-                                }
-                            }
-                        }
-
-                        let _ = tx
-                            .send(StreamChunk {
-                                text: None,
-                                thinking: None,
-                                thinking_signature: None,
-                                redacted_thinking: None,
-                                usage: latest_usage,
-                                provider_response_id: completed_response_id,
-                                provider_response_status: completed_response_status,
-                                sequence_number: responses_stream_sequence_number(&event),
-                                tool_call_delta: None,
-                                is_finished: true,
-                                finish_reason: Some(
-                                    responses_finish_reason(saw_tool_calls).to_string(),
-                                ),
-                            })
-                            .await;
-                        return Ok(());
-                    }
-                    "response.incomplete" | "response.cancelled" => {
-                        let (response_id, response_status) = event
-                            .get("response")
-                            .cloned()
-                            .and_then(|response| {
-                                serde_json::from_value::<OpenAiResponsesResponse>(response).ok()
-                            })
-                            .map(|response| (response.id, response.status))
-                            .unwrap_or((None, None));
-
-                        if emitted_payload {
-                            let _ = tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: latest_usage,
-                                    provider_response_id: response_id,
-                                    provider_response_status: response_status,
-                                    sequence_number: responses_stream_sequence_number(&event),
-                                    tool_call_delta: None,
-                                    is_finished: true,
-                                    finish_reason: Some("stream_error".to_string()),
-                                })
-                                .await;
-                        }
-                        return Ok(());
-                    }
-                    "response.failed" | "error" => {
-                        if emitted_payload {
-                            let _ = tx
-                                .send(StreamChunk {
-                                    text: None,
-                                    thinking: None,
-                                    thinking_signature: None,
-                                    redacted_thinking: None,
-                                    usage: latest_usage,
-                                    provider_response_id: None,
-                                    provider_response_status: None,
-                                    sequence_number: responses_stream_sequence_number(&event),
-                                    tool_call_delta: None,
-                                    is_finished: true,
-                                    finish_reason: Some("stream_error".to_string()),
-                                })
-                                .await;
-                        }
-                        return Ok(());
-                    }
-                    _ => {}
+                if terminal {
+                    return Ok(());
                 }
             }
         }
 
         for data in parser.finish() {
-            if data == "[DONE]" {
-                if emitted_payload {
-                    let _ = tx
-                        .send(StreamChunk {
-                            text: None,
-                            thinking: None,
-                            thinking_signature: None,
-                            redacted_thinking: None,
-                            usage: latest_usage,
-                            provider_response_id: None,
-                            provider_response_status: None,
-                            sequence_number: None,
-                            tool_call_delta: None,
-                            is_finished: true,
-                            finish_reason: Some(
-                                responses_finish_reason(saw_tool_calls).to_string(),
-                            ),
-                        })
-                        .await;
+            let projected = projector.project_data(&data);
+            let terminal = projected.is_terminal();
+            for chunk in projected.chunks {
+                if tx.send(chunk).await.is_err() {
+                    return Ok(());
                 }
+            }
+            if terminal {
                 return Ok(());
             }
         }
 
-        if emitted_payload {
-            let _ = tx
-                .send(StreamChunk {
-                    text: None,
-                    thinking: None,
-                    thinking_signature: None,
-                    redacted_thinking: None,
-                    usage: latest_usage,
-                    provider_response_id: None,
-                    provider_response_status: None,
-                    sequence_number: None,
-                    tool_call_delta: None,
-                    is_finished: true,
-                    finish_reason: Some(responses_finish_reason(saw_tool_calls).to_string()),
-                })
-                .await;
+        if let Some(chunk) = projector.finish() {
+            let _ = tx.send(chunk).await;
         }
-
         Ok(())
     }
 
@@ -485,12 +182,13 @@ impl OpenAiChatCompletionsClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        let chat_request = build_chat_completions_request_for_model(
+        let mut chat_request = build_chat_completions_request_for_model(
             self.model.clone(),
             self.instruction_role_name(),
             request,
             true,
         )?;
+        self.apply_reasoning_effort_map(&mut chat_request);
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel(100);
@@ -683,75 +381,6 @@ impl OpenAiChatCompletionsClient {
 
         Ok(rx)
     }
-}
-
-fn responses_stream_index(event: &serde_json::Value) -> usize {
-    event
-        .get("output_index")
-        .or_else(|| event.get("item_index"))
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_default() as usize
-}
-
-fn responses_stream_tool_id(
-    item: Option<&serde_json::Value>,
-    event: &serde_json::Value,
-) -> Option<String> {
-    item.and_then(|value| {
-        value
-            .get("call_id")
-            .or_else(|| value.get("id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    })
-    .or_else(|| {
-        event
-            .get("call_id")
-            .or_else(|| event.get("item_id"))
-            .or_else(|| event.get("id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    })
-}
-
-fn responses_stream_tool_name(
-    item: Option<&serde_json::Value>,
-    event: &serde_json::Value,
-) -> Option<String> {
-    item.and_then(|value| {
-        value
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| is_non_empty(value))
-            .map(str::to_owned)
-    })
-    .or_else(|| {
-        event
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| is_non_empty(value))
-            .map(str::to_owned)
-    })
-}
-
-fn responses_output_contains_tool_call(output: &[serde_json::Value]) -> bool {
-    output
-        .iter()
-        .any(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("function_call"))
-}
-
-fn responses_stream_sequence_number(event: &serde_json::Value) -> Option<u64> {
-    event
-        .get("sequence_number")
-        .and_then(serde_json::Value::as_u64)
-}
-
-// Streamed text can arrive as standalone spaces/newlines that preserve formatting.
-pub(super) fn responses_stream_text_delta(event: &serde_json::Value) -> Option<&str> {
-    event
-        .get("delta")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn allocate_stream_tool_index(

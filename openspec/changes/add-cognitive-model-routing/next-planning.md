@@ -19,7 +19,7 @@ v4 资格验收失败，自动路由继续关闭；通用混合编排和包能�
 
 生命周期方向更新（2026-09-27）：用户已选择每个终端会话独立运行前台 Alan、按需显式恢复。
 下文 PR #929 和 ADR-0056 相关记录是既有实现证据，不再要求继续实现全局 Root 后台附着。
-当前目标和未交付任务见 [统一输入 disposition](../unify-agent-command-input/disposition.md)。
+当前目标和未交付任务见 [统一输入 disposition](../archive/2026-11-19-unify-agent-command-input/disposition.md)。
 模型能力规划不得把关闭 Alan 后继续执行或自动恢复当作新入口的默认前提。
 
 基线：main `53b862b0`（PR #935，2026-09-24；包含 TUI 交付、可靠性修复、alan9 命名迁移及规范同步）。
@@ -27,7 +27,7 @@ v4 资格验收失败，自动路由继续关闭；通用混合编排和包能�
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
 ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧 Shell-first 指引。
 ADR-0058 后续接受同一 Machine 组合确定性命令与 Agent 推理；命令/输入语义由
-[unify-agent-command-input](../unify-agent-command-input/disposition.md) 接管；显式输入已交付，
+[unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/disposition.md) 接管；显式输入已交付，
 无前缀自动分类仍未交付。
 
 ## 已完成与当前状态
@@ -96,7 +96,7 @@ fx 体验参考见 [research-jev-and-fx.md](research-jev-and-fx.md)。
    README、AGENTS、指南和活动 OpenSpec 的解释性命名，PR #935 同步 canonical
    spec；保留 Alan 产品、`alan` CLI、crate/type/protocol/storage 标识、路径和历史决定。
 2. ADR-0058 的显式输入阶段已交付（PR #1032）：
-   [unify-agent-command-input](../unify-agent-command-input/) 的显式输入阶段：
+   [unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/) 的显式输入阶段：
    `!` 原样交给受治理宿主 shell，`:` 强制 Agent，无前缀暂走 Agent；共享 cwd、
    排队/取消、证据关联与恢复不重放复用现有 Process/Machine/Host Mount/sandbox。
    不引入第二个 executor/router，不改写命令路径文本，也不把 aP 暴露为用户协议。
@@ -110,7 +110,7 @@ fx 体验参考见 [research-jev-and-fx.md](research-jev-and-fx.md)。
 从切片 1 的真实任务中选一个低风险、可判定的候选选择或评价点，
 保留确定性与仅生成两套基线；具体选择须有调用链证据，不预建全局 router。
 ADR-0058 的显式 `!`/`:` 交付归属
-[unify-agent-command-input](../unify-agent-command-input/tasks.md)；后续消费 typed evaluation
+[unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/tasks.md)；后续消费 typed evaluation
 及 unprefixed shadow qualification 已移交活动后继
 [qualify-agent-input-routing](../qualify-agent-input-routing/tasks.md)；
 自动分类的 side-effecting route 仍须通过 false-execution 门槛并经明确启用，不能由 renderer 或候选 UI 暗中激活。

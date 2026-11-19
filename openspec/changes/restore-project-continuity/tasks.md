@@ -9,6 +9,7 @@
 - [ ] 2.1 Publish bounded evidence-linked summaries through existing Memory Store ownership; test unsupported claims, secrets, no policy mutation and no automatic cross-project propagation.
 - [ ] 2.2 Add inspect/correct/delete controls and provenance; test revision conflict, deletion recall, explicit regeneration and unchanged source rollouts.
 - [ ] 2.3 Document actual summary-versus-history semantics and verify them through terminal use, including narrow panes, copying and scrollback.
+- [ ] 2.4 Treat mounted `AGENTS.md`/`CLAUDE.md` as non-authoritative knowledge in summaries; verify their text never changes grants, posture or policy.
 
 ## 3. Integration and delivery
 - [ ] 3.1 Run real interrupted Alan and website tasks and independent no-repeat/revocation checks; preserve failures and distinguish source tests from native evidence.

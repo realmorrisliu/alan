@@ -315,7 +315,7 @@ Agent › █
 1. **真实入口与 inline 呈现已交付。** 裸 alan 的交互 TTY 附着现有 Root Agent
    renderer，重定向 stdin 走 one-shot；`!` 仍只是 Agent 输入并请求既有受治理
    bash Tool。不要实施旧建议中的 parser/executor 抽取。后续命令路由归
-   [unify-agent-command-input](../unify-agent-command-input/)，一般 Shell Process
+   [unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/)，一般 Shell Process
    IO/Local Entry 回收仍按其 owning lifecycle change 规划。inline TUI 交付记录见
    [归档 change](../archive/2026-09-24-define-alan-interaction-model/tasks.md)。
 2. **复用当前 TUI。** 保留 composer、history、completion、AgentFS watcher 与 `StreamReconciler`。把“已完成内容提交滚屏”和“可变活动区域重绘”分开；不为 fx 风格重写全部 renderer。

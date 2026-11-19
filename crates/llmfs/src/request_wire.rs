@@ -24,6 +24,9 @@ pub(super) struct WireRequestDocV2 {
     max_tokens: Option<i32>,
     #[serde(default)]
     reasoning: WireReasoningControls,
+    /// Stable per-Agent-Process cache-affinity key (never a provider body field).
+    #[serde(default)]
+    session_key: Option<String>,
     #[serde(default)]
     extra_params: serde_json::Map<String, serde_json::Value>,
 }
@@ -115,6 +118,7 @@ impl WireRequestDocV2 {
             reasoning: ReasoningControls {
                 effort: self.reasoning.effort,
             },
+            session_key: self.session_key.filter(|key| !key.trim().is_empty()),
             extra_params: self.extra_params.into_iter().collect(),
         };
         validate_rich_content(&request, capabilities)?;
@@ -290,7 +294,9 @@ mod tests {
 
         assert!(
             document
-                .into_generation_request(ProviderType::OpenRouter.capabilities())
+                .into_generation_request(
+                    ProviderType::OpenAiChatCompletionsCompatible.capabilities()
+                )
                 .is_err()
         );
     }

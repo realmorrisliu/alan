@@ -8,7 +8,7 @@ use crate::openai_chat_completions::{
     convert_openai_responses_output,
 };
 use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager};
+use alan_auth::{ChatgptAuthConfig, ChatgptAuthError, ChatgptAuthManager, new_chatgpt_session_id};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -16,7 +16,20 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, instrument};
 
+/// Header carrying the stable per-client request-session identity.
+const SESSION_ID_HEADER: &str = "session_id";
+/// Header carrying the same identity under the Codex conversation name.
+const CONVERSATION_ID_HEADER: &str = "conversation_id";
+/// Header carrying the managed account/workspace identity from the token claims.
+const ACCOUNT_ID_HEADER: &str = "chatgpt-account-id";
+/// Body field the backend uses to route requests to a warm prompt cache.
+const PROMPT_CACHE_KEY: &str = "prompt_cache_key";
+
 /// Client for the ChatGPT/Codex managed-auth Responses-compatible surface.
+///
+/// Each client instance owns one stable session id, sent as the `session_id` and
+/// `conversation_id` headers and as the body `prompt_cache_key` on every request, so
+/// consecutive turns hit the same backend KV cache.
 pub struct ChatgptResponsesClient {
     client: reqwest::Client,
     auth_manager: ChatgptAuthManager,
@@ -24,6 +37,7 @@ pub struct ChatgptResponsesClient {
     model: String,
     custom_headers: HashMap<String, String>,
     expected_account_id: Option<String>,
+    session_id: String,
 }
 
 impl ChatgptResponsesClient {
@@ -48,24 +62,42 @@ impl ChatgptResponsesClient {
             model: model.to_string(),
             custom_headers,
             expected_account_id,
+            session_id: new_chatgpt_session_id(),
         })
     }
 
-    async fn request_auth(&self, force_refresh: bool) -> Result<alan_auth::ChatgptRequestAuth> {
+    /// Pin the request-session identity, for a host that keeps one session across
+    /// client reconstruction (for example one per Agent Process).
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = session_id.into();
+        self
+    }
+
+    /// The stable request-session identity sent with every request from this client.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Credentials for one request. `rejected` names the access token a backend `401`
+    /// just rejected; it forces a refresh unless another request already rotated it.
+    async fn request_auth(&self, rejected: Option<&str>) -> Result<alan_auth::ChatgptRequestAuth> {
         // A client constructed while logged out remains unavailable until Connection
         // publication constructs a newly bound callable; it cannot borrow a later login.
         let account = self
             .expected_account_id
             .as_deref()
             .ok_or(ChatgptAuthError::NotLoggedIn)?;
-        Ok(if force_refresh {
-            self.auth_manager
-                .force_refresh_auth_for_account(Some(account))
-                .await?
-        } else {
-            self.auth_manager
-                .request_auth_for_account(Some(account))
-                .await?
+        Ok(match rejected {
+            Some(token) => {
+                self.auth_manager
+                    .refresh_rejected_auth_for_account(Some(account), token)
+                    .await?
+            }
+            None => {
+                self.auth_manager
+                    .request_auth_for_account(Some(account))
+                    .await?
+            }
         })
     }
 
@@ -74,14 +106,76 @@ impl ChatgptResponsesClient {
         mut builder: reqwest::RequestBuilder,
     ) -> reqwest::RequestBuilder {
         for (name, value) in &self.custom_headers {
-            // Managed credentials and account identity must have exactly one owner.
-            if !name.eq_ignore_ascii_case("authorization")
-                && !name.eq_ignore_ascii_case("chatgpt-account-id")
+            // Managed credentials, account and session identity have exactly one owner.
+            if ![
+                "authorization",
+                ACCOUNT_ID_HEADER,
+                SESSION_ID_HEADER,
+                CONVERSATION_ID_HEADER,
+            ]
+            .iter()
+            .any(|owned| name.eq_ignore_ascii_case(owned))
             {
                 builder = builder.header(name, value);
             }
         }
         builder
+    }
+
+    fn authorize(
+        &self,
+        builder: reqwest::RequestBuilder,
+        auth: &alan_auth::ChatgptRequestAuth,
+        session_id: &str,
+    ) -> reqwest::RequestBuilder {
+        self.apply_custom_headers(builder)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", auth.access_token),
+            )
+            .header(ACCOUNT_ID_HEADER, &auth.account_id)
+            .header(SESSION_ID_HEADER, session_id)
+            .header(CONVERSATION_ID_HEADER, session_id)
+    }
+
+    /// Send a managed request, refreshing credentials before dispatch when they are
+    /// near expiry and retrying exactly once after a `401`. The caller interprets the
+    /// final status, including a second `401`.
+    async fn send_with_auth_retry(
+        &self,
+        operation: &'static str,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        self.send_with_auth_retry_for_session(operation, &self.session_id, build)
+            .await
+    }
+
+    async fn send_with_auth_retry_for_session(
+        &self,
+        operation: &'static str,
+        session_id: &str,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        let auth = self.request_auth(None).await?;
+        let response = self
+            .authorize(build(), &auth, session_id)
+            .send()
+            .await
+            .with_context(|| format!("Failed to {operation}"))?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(response);
+        }
+
+        debug!(
+            operation,
+            "ChatGPT request returned 401; refreshing managed auth once"
+        );
+        drop(response);
+        let auth = self.request_auth(Some(&auth.access_token)).await?;
+        self.authorize(build(), &auth, session_id)
+            .send()
+            .await
+            .with_context(|| format!("Failed to {operation}"))
     }
 
     fn build_openai_responses_request(
@@ -101,6 +195,21 @@ impl ChatgptResponsesClient {
         // subset accepted by the managed endpoint.
         request.max_output_tokens = None;
         Ok(request)
+    }
+
+    /// Route the request to `session_id`'s prompt cache unless the caller chose a key.
+    fn bind_prompt_cache_key(&self, request: &mut OpenAiResponsesRequest, session_id: &str) {
+        let explicit = request
+            .extra_params
+            .get(PROMPT_CACHE_KEY)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|key| !key.is_empty());
+        if !explicit {
+            request.extra_params.insert(
+                PROMPT_CACHE_KEY.to_string(),
+                serde_json::Value::String(session_id.to_string()),
+            );
+        }
     }
 
     #[instrument(skip(self, request))]
@@ -130,8 +239,14 @@ impl ChatgptResponsesClient {
         &self,
         response_id: &str,
     ) -> Result<OpenAiResponsesResponse> {
-        let response = self.retrieve_with_auth_retry(response_id).await?;
-        response
+        let url = format!("{}/responses/{}", self.base_url, response_id);
+        let response = self
+            .send_with_auth_retry("retrieve ChatGPT Responses API response", || {
+                self.client.get(&url)
+            })
+            .await?;
+        check_chatgpt_response_status(response)
+            .await?
             .json()
             .await
             .context("Failed to parse retrieved ChatGPT Responses API response")
@@ -144,9 +259,18 @@ impl ChatgptResponsesClient {
         starting_after: Option<u64>,
         tx: tokio::sync::mpsc::Sender<StreamChunk>,
     ) -> Result<()> {
+        let mut url = format!("{}/responses/{}?stream=true", self.base_url, response_id);
+        if let Some(starting_after) = starting_after {
+            url.push_str(&format!("&starting_after={starting_after}"));
+        }
         let response = self
-            .retrieve_stream_with_auth_retry(response_id, starting_after)
+            .send_with_auth_retry("retrieve ChatGPT Responses API response", || {
+                self.client
+                    .get(&url)
+                    .header(reqwest::header::ACCEPT, "text/event-stream")
+            })
             .await?;
+        let response = check_chatgpt_response_status(response).await?;
         streaming::consume_openai_responses_stream(response, tx).await
     }
 
@@ -155,8 +279,14 @@ impl ChatgptResponsesClient {
         &self,
         response_id: &str,
     ) -> Result<OpenAiResponsesResponse> {
-        let response = self.cancel_with_auth_retry(response_id).await?;
-        response
+        let url = format!("{}/responses/{}/cancel", self.base_url, response_id);
+        let response = self
+            .send_with_auth_retry("cancel ChatGPT Responses API response", || {
+                self.client.post(&url)
+            })
+            .await?;
+        check_chatgpt_response_status(response)
+            .await?
             .json()
             .await
             .context("Failed to parse cancelled ChatGPT Responses API response")
@@ -167,91 +297,37 @@ impl ChatgptResponsesClient {
         request: OpenAiResponsesRequest,
         stream: bool,
     ) -> Result<reqwest::Response> {
-        let response = self.send_request(&request, stream, false).await?;
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return check_chatgpt_response_status(response).await;
-        }
-
-        debug!("ChatGPT Responses request returned 401; attempting managed refresh");
-        let retry = self.send_request(&request, stream, true).await?;
-        check_chatgpt_response_status(retry).await
-    }
-
-    async fn retrieve_with_auth_retry(&self, response_id: &str) -> Result<reqwest::Response> {
-        let response = self
-            .send_retrieve_request(response_id, false, None, false)
-            .await?;
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return check_chatgpt_response_status(response).await;
-        }
-
-        debug!("ChatGPT Responses retrieve returned 401; attempting managed refresh");
-        let retry = self
-            .send_retrieve_request(response_id, false, None, true)
-            .await?;
-        check_chatgpt_response_status(retry).await
-    }
-
-    async fn retrieve_stream_with_auth_retry(
-        &self,
-        response_id: &str,
-        starting_after: Option<u64>,
-    ) -> Result<reqwest::Response> {
-        let response = self
-            .send_retrieve_request(response_id, true, starting_after, false)
-            .await?;
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return check_chatgpt_response_status(response).await;
-        }
-
-        debug!("ChatGPT Responses stream retrieve returned 401; attempting managed refresh");
-        let retry = self
-            .send_retrieve_request(response_id, true, starting_after, true)
-            .await?;
-        check_chatgpt_response_status(retry).await
-    }
-
-    async fn cancel_with_auth_retry(&self, response_id: &str) -> Result<reqwest::Response> {
-        let response = self.send_cancel_request(response_id, false).await?;
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return check_chatgpt_response_status(response).await;
-        }
-
-        debug!("ChatGPT Responses cancel returned 401; attempting managed refresh");
-        let retry = self.send_cancel_request(response_id, true).await?;
-        check_chatgpt_response_status(retry).await
-    }
-
-    async fn send_request(
-        &self,
-        request: &OpenAiResponsesRequest,
-        stream: bool,
-        force_refresh: bool,
-    ) -> Result<reqwest::Response> {
-        self.validate_request(request)?;
-        let auth = self.request_auth(force_refresh).await?;
-        let mut builder = self
-            .client
-            .post(format!("{}/responses", self.base_url))
-            .header("Authorization", format!("Bearer {}", auth.access_token))
-            .header("ChatGPT-Account-ID", auth.account_id)
-            .json(request);
-        if stream {
-            builder = builder.header(reqwest::header::ACCEPT, "text/event-stream");
-        }
-
-        builder = self.apply_custom_headers(builder);
-
-        let response = builder
-            .send()
+        self.execute_with_auth_retry_for_session(request, stream, &self.session_id)
             .await
-            .context("Failed to send request to ChatGPT Responses API")?;
+    }
 
+    async fn execute_with_auth_retry_for_session(
+        &self,
+        mut request: OpenAiResponsesRequest,
+        stream: bool,
+        session_id: &str,
+    ) -> Result<reqwest::Response> {
+        self.validate_request(&request)?;
+        self.bind_prompt_cache_key(&mut request, session_id);
+        let url = format!("{}/responses", self.base_url);
+        let response = self
+            .send_with_auth_retry_for_session(
+                "send request to ChatGPT Responses API",
+                session_id,
+                || {
+                    let builder = self.client.post(&url).json(&request);
+                    if stream {
+                        builder.header(reqwest::header::ACCEPT, "text/event-stream")
+                    } else {
+                        builder
+                    }
+                },
+            )
+            .await?;
         if stream {
             debug!("Started ChatGPT streaming Responses request");
         }
-
-        Ok(response)
+        check_chatgpt_response_status(response).await
     }
 
     fn validate_request(&self, request: &OpenAiResponsesRequest) -> Result<()> {
@@ -264,63 +340,6 @@ impl ChatgptResponsesClient {
             anyhow::bail!("ChatGPT managed Responses does not support background execution");
         }
         Ok(())
-    }
-
-    async fn send_retrieve_request(
-        &self,
-        response_id: &str,
-        stream: bool,
-        starting_after: Option<u64>,
-        force_refresh: bool,
-    ) -> Result<reqwest::Response> {
-        let auth = self.request_auth(force_refresh).await?;
-
-        let mut url = format!("{}/responses/{}", self.base_url, response_id);
-        if stream {
-            url.push_str("?stream=true");
-            if let Some(starting_after) = starting_after {
-                url.push_str(&format!("&starting_after={starting_after}"));
-            }
-        }
-        let mut builder = self
-            .client
-            .get(url)
-            .header("Authorization", format!("Bearer {}", auth.access_token))
-            .header("ChatGPT-Account-ID", auth.account_id);
-        if stream {
-            builder = builder.header(reqwest::header::ACCEPT, "text/event-stream");
-        }
-
-        builder = self.apply_custom_headers(builder);
-
-        builder
-            .send()
-            .await
-            .context("Failed to retrieve ChatGPT Responses API response")
-    }
-
-    async fn send_cancel_request(
-        &self,
-        response_id: &str,
-        force_refresh: bool,
-    ) -> Result<reqwest::Response> {
-        let auth = self.request_auth(force_refresh).await?;
-
-        let mut builder = self
-            .client
-            .post(format!(
-                "{}/responses/{}/cancel",
-                self.base_url, response_id
-            ))
-            .header("Authorization", format!("Bearer {}", auth.access_token))
-            .header("ChatGPT-Account-ID", auth.account_id);
-
-        builder = self.apply_custom_headers(builder);
-
-        builder
-            .send()
-            .await
-            .context("Failed to cancel ChatGPT Responses API response")
     }
 
     async fn wait_for_background_response(
@@ -341,9 +360,15 @@ impl ChatgptResponsesClient {
     }
 
     async fn generate_via_stream(&self, request: GenerationRequest) -> Result<GenerationResponse> {
+        let session_id = crate::session_affinity::request_session_id(
+            request.session_key.as_deref(),
+            &self.session_id,
+        );
         let response_request = self.build_openai_responses_request(request, true)?;
         let background_requested = response_request.background == Some(true);
-        let response = self.execute_with_auth_retry(response_request, true).await?;
+        let response = self
+            .execute_with_auth_retry_for_session(response_request, true, &session_id)
+            .await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let stream_task =
             tokio::spawn(
@@ -412,8 +437,14 @@ impl LlmProvider for ChatgptResponsesClient {
         &mut self,
         request: GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        let session_id = crate::session_affinity::request_session_id(
+            request.session_key.as_deref(),
+            &self.session_id,
+        );
         let response_request = self.build_openai_responses_request(request, true)?;
-        let response = self.execute_with_auth_retry(response_request, true).await?;
+        let response = self
+            .execute_with_auth_retry_for_session(response_request, true, &session_id)
+            .await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {

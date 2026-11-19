@@ -57,6 +57,7 @@ mod skill_review_tests;
 #[cfg(test)]
 mod skill_tests;
 mod skills;
+mod usage;
 pub use project::{
     ProjectAccess, ProjectControl, ProjectControlFuture, ProjectControlHandler,
     ProjectControlResult, ProjectMountReceipt,
@@ -203,6 +204,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut jobs = tokio::task::JoinSet::new();
     let model_reads = observation_io::start(shell.clone(), true, tx.clone(), &mut jobs);
     let skill_reads = observation_io::start(shell.clone(), false, tx.clone(), &mut jobs);
+    let usage_reads = observation_io::start_usage(shell.clone(), tx.clone(), &mut jobs);
     let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut grant_read_pending = false;
     let mut draw_result = Ok(());
@@ -284,8 +286,23 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             app.apply_skills(&owner, None);
                         }
                     }
+                    FileBackedEvent::UsageChanged { owner } => {
+                        if owner == app.usage.owner {
+                            observation_io::request(&usage_reads, owner);
+                        }
+                    }
+                    FileBackedEvent::UsageUnavailable { owner } => {
+                        if owner == app.usage.owner {
+                            observation_io::request(&usage_reads, String::new());
+                            app.usage.apply(&owner, None);
+                        }
+                    }
                     FileBackedEvent::ObservationRead { revision, owner, snapshot } => {
-                        let request = match &snapshot { observation_io::Snapshot::Model(_) => &model_reads, observation_io::Snapshot::Skills(_) => &skill_reads };
+                        let request = match &snapshot {
+                            observation_io::Snapshot::Model(_) => &model_reads,
+                            observation_io::Snapshot::Skills(_) => &skill_reads,
+                            observation_io::Snapshot::Usage(_) => &usage_reads,
+                        };
                         observation_io::apply(&mut app, request, revision, &owner, snapshot);
                     }
                     FileBackedEvent::RequestsChanged => {
@@ -939,3 +956,6 @@ mod stdio_idle_tests;
 mod stdio_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "file_backed/ux_tests.rs"]
+mod ux_tests;

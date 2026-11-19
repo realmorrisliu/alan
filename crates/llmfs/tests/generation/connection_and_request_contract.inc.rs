@@ -588,6 +588,7 @@ impl LlmProvider for UsageProvider {
                 completion_tokens: 7,
                 total_tokens: 18,
                 reasoning_tokens: Some(5),
+                ..Default::default()
             });
             let _ = tx.send(chunk).await;
         });

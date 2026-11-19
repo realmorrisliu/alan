@@ -81,3 +81,10 @@ current behavior until the new implementation is delivered. Enable saved scope
 only from explicit user actions; invalidate stale reviewer decisions on policy or
 mode changes. Rollback ignores new saved delegation and pauses affected pending
 work rather than automatically executing it under old defaults.
+
+## OS-boundary rule (ADR-0061)
+
+Guardian reviews are reserved for actions whose effects escape or cannot be contained
+by the active confinement. Deterministically delegated and contained routine work
+needs no model review, which reduces permission noise without widening scope. The
+reviewer remains a no-tools evidence source and never a security boundary or grant.

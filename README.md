@@ -35,14 +35,15 @@ early development. Its retained implementation contains:
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed, together with the Ghostty dependency and `alan shell` desktop-control
-command. The file-native Alan Shell remains supported. Herdr is the preferred
-terminal host, without making Alan dependent on Herdr or claiming native Alan
-agent detection already exists.
-See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
+command. The file-native Alan Shell remains supported. Alan is standard-terminal-native: it
+runs in any ordinary POSIX/VT terminal (Ghostty, iTerm2, Kitty, WezTerm,
+Terminal.app, tmux, SSH) and depends on no particular terminal host.
+See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md) and
+[ADR-0061](docs/adr/0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md).
 
 Each bare `alan` invocation with `ALAN_INSTANCE_RUNTIME_DIR` unset or set to a
 directory not in use by another invocation boots and owns a foreground alan9
-instance and its Root Agent Process. Herdr sessions using separate runtime
+instance and its Root Agent Process. Terminal sessions using separate runtime
 directories have separate Roots and endpoints while product stores remain
 shared. Reusing one explicit runtime directory allows only one owner; another
 invocation fails to acquire it rather than sharing its Root. Detaching a
@@ -154,7 +155,7 @@ just standalone-distribution-test
 
 Standalone installation and release usage is documented
 [here](docs/standalone_cli_distribution.md). Desktop source has been removed;
-Herdr is the preferred external terminal host.
+any ordinary terminal hosts Alan.
 
 ## CLI
 

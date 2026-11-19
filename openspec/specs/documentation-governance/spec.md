@@ -40,12 +40,12 @@ supported delivery surface.
 
 #### Scenario: Mixed cognition direction is documented
 - **WHEN** current documentation describes deterministic, evaluation and
-  generation transitions or Herdr integration
+  generation transitions or terminal-host integration
 - **THEN** it distinguishes accepted design from implemented and verified
   support
 - **AND** it distinguishes the shipped TypeSafe finite-choice adapter and opt-in
   no-effect Machine shadow advice from unqualified automatic input routing
-- **AND** it does not present a Herdr Alan agent kind as shipped
+- **AND** it does not present a terminal-host-specific Alan agent kind as shipped
 
 ### Requirement: OpenSpec owns durable specifications
 alan SHALL use OpenSpec as the only durable source of truth for product,

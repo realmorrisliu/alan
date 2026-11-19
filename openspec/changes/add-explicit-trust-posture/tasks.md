@@ -13,5 +13,9 @@
 - [ ] 2.4 Complete quality, strict specs, relevant native tests, independent review and current-head CI; verify default behavior is unchanged before user merge.
 - [ ] 2.5 Verify merged implementation and dependent canonical synchronization before archive readiness.
 
+## 1b. OS-boundary rule
+- [ ] 1b.1 Remove static shell-text rejection and Guardian calls for effects contained by the active backend; verify uncontained effects, red lines and the no-backend boundary still escalate.
+- [ ] 1b.2 Allow reading mounted `AGENTS.md`/`CLAUDE.md` as non-authoritative knowledge; verify no authority, posture or policy change results from their content.
+
 ## Workflow follow-up
 - Archive after delivery; preserve separate cohort and explicit Host-account limitations.

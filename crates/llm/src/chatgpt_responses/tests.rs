@@ -88,6 +88,7 @@ fn test_client(base_url: &str, storage_path: PathBuf) -> ChatgptResponsesClient 
         model: "gpt-5.3-codex".to_string(),
         custom_headers: HashMap::new(),
         expected_account_id: Some("acct_123".to_string()),
+        session_id: alan_auth::new_chatgpt_session_id(),
     }
 }
 
@@ -685,6 +686,8 @@ async fn catalog_uses_bound_account_and_refreshes_only_once() {
 
 #[path = "catalog_limits_tests.rs"]
 mod catalog_limits_tests;
+
+mod session_tests;
 
 #[tokio::test]
 async fn implicit_account_binding_cannot_follow_replaced_auth_storage() {

@@ -32,7 +32,10 @@ metadata is not a lifecycle authority.
 
 ## Skills
 
-Quartermaster currently installs Skill distributions, not general executables.
+Quartermaster currently installs Skill distributions, not general executables. The
+accepted target (ADR-0061, not yet shipped) makes `q` v1 the one extension hub for
+`skill`, `mcp`, `tool` and `provider` packages; installing a package grants no
+authority.
 Installation, exposure/selection, authorization and execution are separate:
 `/lib/pkg/<id>` is a read-only content projection, not an automatic `/bin`
 registration. A distribution can contain multiple Skill directories. Future

@@ -17,9 +17,9 @@ impl FileBackedApp {
         self.namespace_cwd = std::path::PathBuf::from("/");
         self.lose_model_receipts(&self.model.owner.clone());
         self.model_chooser.active = false;
-        self.model_chooser.explicit = false;
         self.model_chooser.catalog = None;
         self.model = super::super::model::ModelProjection::default();
+        self.usage = super::super::usage::UsageProjection::default();
         self.skills = super::super::skills::SkillProjection::default();
         self.completion_sources.skills.clear();
         self.queue = super::super::queue::QueueProjection::default();

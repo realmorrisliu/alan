@@ -880,7 +880,7 @@ fn compact_header_keeps_project_access_model_and_effort_at_pane_width() {
             assert!(text.contains("fixture · read-only"), "{width}: {text}");
             assert!(text.contains("gpt-6.1-sol"), "{width}: {text}");
             assert!(!text.contains("queued 0"));
-            assert_eq!(app.attention_labels().is_empty(), known);
+            assert!(app.attention_labels().is_empty());
             if known || width >= 73 {
                 assert!(text.contains("medium"), "{width}: {text}");
             }

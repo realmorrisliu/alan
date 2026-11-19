@@ -39,9 +39,10 @@ Align model and effort where supported; otherwise mark whole-product comparison.
 Report task completion, intervention, elapsed time and available usage separately.
 Pi is supplemental. No fabricated normalized cost or relative speed threshold.
 
-Use fresh installed/native CLI launches, ordinary Herdr input, actual resize and
-scrollback interactions. A Ratatui buffer check complements but does not replace
-physical-terminal acceptance. Review model-produced code independently.
+Use fresh installed/native CLI launches, ordinary terminal input, actual resize and
+scrollback interactions in a standard POSIX/VT terminal (ADR-0061). A Ratatui buffer
+check and a real Unix PTY test with a terminal-state model complement but do not
+replace physical-terminal acceptance. Review model-produced code independently.
 
 ## Risks / Trade-offs
 

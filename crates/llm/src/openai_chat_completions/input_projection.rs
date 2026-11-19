@@ -148,7 +148,7 @@ fn chat_completions_part(
                 );
             }
             if mime_type.starts_with("image/")
-                && let Some(url) = attachment_url(&metadata)
+                && let Some(url) = image_attachment_url(&mime_type, &metadata)
             {
                 return Ok(Some(serde_json::json!({
                     "type": "image_url",
@@ -268,6 +268,26 @@ fn attachment_url(metadata: &serde_json::Value) -> Option<&str> {
         .or_else(|| metadata.get("file_url"))
         .or_else(|| metadata.get("url"))
         .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn image_attachment_url(mime_type: &str, metadata: &serde_json::Value) -> Option<String> {
+    if let Some(url) = attachment_url(metadata) {
+        return Some(url.to_string());
+    }
+    let raw = metadata
+        .get("data")
+        .or_else(|| metadata.get("base64"))
+        .or_else(|| metadata.get("file_data"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if raw.starts_with("data:") {
+        Some(raw.to_string())
+    } else {
+        Some(format!("data:{mime_type};base64,{raw}"))
+    }
 }
 
 pub(super) fn openai_chat_completions_message_value(

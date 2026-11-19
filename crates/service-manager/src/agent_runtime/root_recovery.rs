@@ -537,4 +537,66 @@ mod tests {
             );
         }
     }
+    #[tokio::test]
+    async fn ephemeral_rollout_never_reads_or_overwrites_the_selector() {
+        use alan_agent_engine::{LlmClient, RolloutRecorder, tools::ToolRegistry};
+        let temp = tempfile::tempdir().unwrap();
+        let stores = alan_agent_engine::AgentRuntimeStoreBindings {
+            rollouts: temp.path().join("rollouts"),
+            metadata: temp.path().join("metadata"),
+            checkpoints: temp.path().join("checkpoints"),
+            cache: temp.path().join("cache"),
+            tmp: temp.path().join("tmp"),
+        };
+        fs::create_dir_all(&stores.rollouts).unwrap();
+        let config = AgentProcessConfig {
+            store_bindings: Some(stores.clone()),
+            ..Default::default()
+        };
+        let selected = RolloutRecorder::new_in_dir("/proc/old", "mock", &stores.rollouts)
+            .await
+            .unwrap();
+        selected
+            .record_tape_message(&alan_agent_engine::tape::Message::user("selected session"))
+            .await
+            .unwrap();
+        publish(&config, Some(selected.path())).unwrap();
+        let before = fs::read_to_string(stores.metadata.join(CURRENT)).unwrap();
+
+        let manager_config = crate::ServiceManagerConfig::ephemeral(
+            config.clone(),
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_ephemeral_rollout(true);
+        let manager = crate::ServiceManager::boot(manager_config).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            before,
+            "an ephemeral run must not overwrite the selected rollout"
+        );
+        manager.shutdown().await.unwrap();
+
+        let mut resuming = crate::ServiceManagerConfig::ephemeral(
+            config,
+            crate::ProcessLaunchContext::root(),
+            LlmClient::new(alan_llm::MockLlmProvider::new()),
+            ToolRegistry::new(),
+        )
+        .with_ephemeral_rollout(true);
+        resuming.resume_root = true;
+        let error = match crate::ServiceManager::boot(resuming).await {
+            Ok(manager) => {
+                manager.shutdown().await.unwrap();
+                panic!("ephemeral rollout must not combine with resume");
+            }
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("ephemeral Root rollout cannot also resume"));
+        assert_eq!(
+            fs::read_to_string(stores.metadata.join(CURRENT)).unwrap(),
+            before
+        );
+    }
 }

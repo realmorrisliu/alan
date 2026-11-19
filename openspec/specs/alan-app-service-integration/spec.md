@@ -103,7 +103,7 @@ alan9 renderers, Tool Processes, and Agent Processes SHALL derive domain behavio
 from the same mounted service tree. Host-local view models, caches, and snapshots MAY optimize
 presentation but SHALL remain projections and MUST NOT become a second source of domain truth. This
 requirement does not choose how any client attaches to alan9. An external
-terminal host such as Herdr need not implement aP to host Alan's terminal renderer.
+terminal host such as a terminal emulator or tmux need not implement aP to host Alan's terminal renderer.
 
 #### Scenario: A UI invokes an app operation
 - **WHEN** a user acts through an Alan App surface

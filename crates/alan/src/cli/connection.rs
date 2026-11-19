@@ -5,8 +5,8 @@ use alan_auth::{
 use alan_os_host::{HostStorePaths, SecretStore, SystemStorePaths, apply_profile_to_config};
 use alan_service_manager::{
     ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
-    default_credential_backend, normalize_profile_settings, sanitize_identifier,
-    validate_profile_settings,
+    default_credential_backend, first_party_provider_catalog, normalize_profile_settings,
+    sanitize_identifier, validate_profile_settings,
 };
 use alan_shell::Shell;
 use anyhow::{Context, Result};
@@ -195,10 +195,18 @@ fn ensure_credential_metadata(
 ) -> Result<()> {
     let descriptor = ConnectionsFile::profile_descriptor(provider);
     anyhow::ensure!(
-        descriptor.credential_kind != CredentialKind::AmbientCloudAuth,
+        descriptor.credential_kind != CredentialKind::AmbientCloudAuth
+            || descriptor.supports_secret_entry,
         "Provider `{}` does not use an explicit credential reference",
         provider.as_str()
     );
+    let expected_kind = if descriptor.credential_kind == CredentialKind::AmbientCloudAuth
+        && descriptor.supports_secret_entry
+    {
+        CredentialKind::SecretString
+    } else {
+        descriptor.credential_kind
+    };
     if let Some(existing) = connections.credentials.get(credential_id) {
         anyhow::ensure!(
             existing.provider_family == provider,
@@ -206,11 +214,11 @@ fn ensure_credential_metadata(
             existing.provider_family.as_str()
         );
         anyhow::ensure!(
-            existing.kind == descriptor.credential_kind,
+            existing.kind == expected_kind,
             "Credential `{credential_id}` uses kind `{}` but provider `{}` requires `{}`",
             existing.kind.as_str(),
             provider.as_str(),
-            descriptor.credential_kind.as_str()
+            expected_kind.as_str()
         );
         return Ok(());
     }
@@ -220,10 +228,10 @@ fn ensure_credential_metadata(
     connections.credentials.insert(
         credential_id.to_string(),
         ConnectionCredential {
-            kind: descriptor.credential_kind,
+            kind: expected_kind,
             provider_family: provider,
             label: format!("{label} credential"),
-            backend: default_credential_backend(descriptor.credential_kind).to_string(),
+            backend: default_credential_backend(expected_kind).to_string(),
         },
     );
     Ok(())
@@ -231,6 +239,7 @@ fn ensure_credential_metadata(
 
 fn parse_provider_id(raw: &str) -> Result<LlmProvider> {
     let provider = match raw.trim().to_ascii_lowercase().as_str() {
+        "magpie" => LlmProvider::Magpie,
         "chatgpt" => LlmProvider::Chatgpt,
         "openai_responses" | "openai" => LlmProvider::OpenAiResponses,
         "openai_chat_completions" => LlmProvider::OpenAiChatCompletions,
@@ -265,6 +274,7 @@ fn suggested_profile_id(provider: LlmProvider, requested: Option<String>) -> Res
         return validated_profile_id(&requested);
     }
     Ok(match provider {
+        LlmProvider::Magpie => "magpie-main",
         LlmProvider::Chatgpt => "chatgpt-main",
         LlmProvider::OpenAiResponses => "openai-main",
         LlmProvider::OpenAiChatCompletions => "openai-chat-main",
@@ -280,8 +290,16 @@ fn suggested_profile_id(provider: LlmProvider, requested: Option<String>) -> Res
 fn prompt_secret_line(profile_id: &str) -> Result<String> {
     print!("Secret for {}: ", display_identifier(profile_id));
     io::stdout().flush()?;
+    let echo_guard = alan_tui::terminal::StdinEchoGuard::disable_if_tty()
+        .map_err(|err| anyhow::anyhow!("disable terminal echo for secret entry: {err}"))?;
     let mut value = String::new();
-    io::stdin().read_line(&mut value)?;
+    let read_res = io::stdin().read_line(&mut value);
+    let was_tty = echo_guard.is_some();
+    drop(echo_guard);
+    if was_tty {
+        println!();
+    }
+    read_res?;
     let value = value.trim().to_string();
     anyhow::ensure!(!value.is_empty(), "Secret must not be empty");
     Ok(value)
@@ -321,25 +339,31 @@ pub async fn run_connection_list() -> Result<()> {
     }
     if connections.profiles.is_empty() {
         println!("No connection profiles configured.");
-        return Ok(());
+    } else {
+        for (profile_id, profile) in &connections.profiles {
+            println!(
+                "{} | provider={} | credential={}{}",
+                display_identifier(profile_id),
+                profile.provider.as_str(),
+                if profile.credential_id.is_some() {
+                    "configured"
+                } else {
+                    "unset"
+                },
+                if connections.default_profile.as_deref() == Some(profile_id) {
+                    " | default"
+                } else {
+                    ""
+                }
+            );
+        }
     }
-    for (profile_id, profile) in &connections.profiles {
-        println!(
-            "{} | provider={} | credential={}{}",
-            display_identifier(profile_id),
-            profile.provider.as_str(),
-            if profile.credential_id.is_some() {
-                "configured"
-            } else {
-                "unset"
-            },
-            if connections.default_profile.as_deref() == Some(profile_id) {
-                " | default"
-            } else {
-                ""
-            }
-        );
-    }
+    let builtins = first_party_provider_catalog()
+        .iter()
+        .map(|d| d.provider_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("first_party_providers: {builtins}");
     Ok(())
 }
 
@@ -372,8 +396,22 @@ pub async fn run_connection_add(
         "Connection profile `{profile_id}` already exists"
     );
     let descriptor = ConnectionsFile::profile_descriptor(provider);
-    let credential_id = if descriptor.credential_kind == CredentialKind::AmbientCloudAuth {
-        None
+    anyhow::ensure!(
+        descriptor.first_party,
+        "Provider `{}` is not a built-in first-party provider (offered choices: {}; install a Quartermaster (`q`) package or keep an existing profile)",
+        provider.as_str(),
+        first_party_provider_catalog()
+            .iter()
+            .map(|d| d.provider_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let credential_id = if descriptor.credential_kind == CredentialKind::AmbientCloudAuth
+        || descriptor.credential_optional
+    {
+        credential_id
+            .map(|id| validated_profile_id(&id))
+            .transpose()?
     } else {
         let id = credential_id.unwrap_or_else(|| profile_id.clone());
         Some(validated_profile_id(&id)?)
@@ -467,20 +505,35 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
     let secret = value
         .map(Ok)
         .unwrap_or_else(|| prompt_secret_line(profile_id))?;
-    let (stores, connections) = load_connections().await?;
-    let profile = connection_profile(&connections, profile_id)?;
-    anyhow::ensure!(
-        ConnectionsFile::profile_descriptor(profile.provider).credential_kind
-            == CredentialKind::SecretString,
-        "Provider `{}` does not support secret entry",
-        profile.provider.as_str()
-    );
-    let credential_id = profile
-        .credential_id
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("Profile `{profile_id}` has no credential"))?;
+    let (stores, mut connections) = load_connections().await?;
+    let (provider, profile_label, existing_credential_id) = {
+        let profile = connection_profile(&connections, profile_id)?;
+        anyhow::ensure!(
+            ConnectionsFile::profile_descriptor(profile.provider).supports_secret_entry,
+            "Provider `{}` does not support secret entry",
+            profile.provider.as_str()
+        );
+        (
+            profile.provider,
+            profile.label.clone(),
+            profile.credential_id.clone(),
+        )
+    };
+    let credential_id = match existing_credential_id {
+        Some(id) => id,
+        None => {
+            let id = validated_profile_id(profile_id)?;
+            ensure_credential_metadata(&mut connections, &id, provider, profile_label.as_deref())?;
+            if let Some(profile) = connections.profiles.get_mut(profile_id) {
+                profile.credential_id = Some(id.clone());
+                profile.updated_at = Utc::now();
+            }
+            save_connections(&stores, &connections).await?;
+            id
+        }
+    };
     let request_id = request_native(&stores, profile_id, "secret_entry").await?;
-    secret_store(&stores)?.save(credential_id, &secret)?;
+    secret_store(&stores)?.save(&credential_id, &secret)?;
     respond_native(
         &stores,
         &request_id,
@@ -634,9 +687,172 @@ pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
         anyhow::bail!("ChatGPT profile `{profile_id}` is not logged in");
     }
     let _provider_config = config.to_provider_config()?;
+    verify_connection_connectivity(&profile_id, resolved.provider, &config).await?;
     println!("profile_id: {}", display_identifier(&profile_id));
     println!("provider: {}", profile.provider.as_str());
     println!("status: success");
+    Ok(())
+}
+
+async fn verify_connection_connectivity(
+    profile_id: &str,
+    provider: LlmProvider,
+    config: &Config,
+) -> Result<()> {
+    if matches!(
+        provider,
+        LlmProvider::TypesafeEvaluation | LlmProvider::Chatgpt
+    ) {
+        return Ok(());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|err| anyhow::anyhow!("build HTTP client for connection test: {err}"))?;
+
+    let non_empty = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+    };
+    fn require_base<'a>(profile_id: &str, raw: &'a str) -> Result<&'a str> {
+        let trimmed = raw.trim();
+        anyhow::ensure!(
+            !trimmed.is_empty(),
+            "profile `{profile_id}` is missing a base URL"
+        );
+        Ok(trimmed)
+    }
+
+    let request = match provider {
+        LlmProvider::Magpie
+        | LlmProvider::OpenAiResponses
+        | LlmProvider::OpenAiChatCompletions
+        | LlmProvider::OpenAiChatCompletionsCompatible
+        | LlmProvider::OpenRouter => {
+            let (raw_base, key) = match provider {
+                LlmProvider::Magpie => (&config.magpie_base_url, non_empty(&config.magpie_api_key)),
+                LlmProvider::OpenAiResponses => (
+                    &config.openai_responses_base_url,
+                    non_empty(&config.openai_responses_api_key),
+                ),
+                LlmProvider::OpenAiChatCompletions => (
+                    &config.openai_chat_completions_base_url,
+                    non_empty(&config.openai_chat_completions_api_key),
+                ),
+                LlmProvider::OpenAiChatCompletionsCompatible => (
+                    &config.openai_chat_completions_compatible_base_url,
+                    non_empty(&config.openai_chat_completions_compatible_api_key),
+                ),
+                LlmProvider::OpenRouter => (
+                    &config.openrouter_base_url,
+                    non_empty(&config.openrouter_api_key),
+                ),
+                _ => unreachable!(),
+            };
+            let base = require_base(profile_id, raw_base)?;
+            let url = format!("{}/models", base.trim_end_matches('/'));
+            let mut req = client.get(&url);
+            if let Some(key) = key {
+                req = req.bearer_auth(key);
+            } else if !matches!(
+                provider,
+                LlmProvider::Magpie | LlmProvider::OpenAiChatCompletionsCompatible
+            ) {
+                anyhow::bail!("profile `{profile_id}` has no API key configured");
+            }
+            if provider == LlmProvider::OpenRouter {
+                if let Some(referer) = non_empty(&config.openrouter_http_referer) {
+                    req = req.header("HTTP-Referer", referer);
+                }
+                if let Some(title) = non_empty(&config.openrouter_x_title) {
+                    req = req.header("X-Title", title);
+                }
+            }
+            req
+        }
+        LlmProvider::AnthropicMessages => {
+            let base = require_base(profile_id, &config.anthropic_messages_base_url)?;
+            let trimmed = base.trim_end_matches('/');
+            let url = if trimmed.ends_with("/v1") {
+                format!("{trimmed}/models")
+            } else {
+                format!("{trimmed}/v1/models")
+            };
+            let key = non_empty(&config.anthropic_messages_api_key).ok_or_else(|| {
+                anyhow::anyhow!("profile `{profile_id}` has no API key configured")
+            })?;
+            let mut req = client
+                .get(&url)
+                .header("x-api-key", key)
+                .header("anthropic-version", "2023-06-01");
+            if let Some(ua) = non_empty(&config.anthropic_messages_user_agent) {
+                req = req.header("User-Agent", ua);
+            }
+            req
+        }
+        LlmProvider::GoogleGeminiGenerateContent => {
+            if let Some(key) = non_empty(&config.google_gemini_generate_content_api_key) {
+                let url = "https://aiplatform.googleapis.com/v1/publishers/google/models";
+                client.get(url).header("x-goog-api-key", key)
+            } else {
+                let project_id = non_empty(&config.google_gemini_generate_content_project_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Vertex profile `{profile_id}` is missing project_id")
+                    })?;
+                let location = config.google_gemini_generate_content_location.trim();
+                let location = if location.is_empty() {
+                    "global"
+                } else {
+                    location
+                };
+                let token_out = tokio::process::Command::new("gcloud")
+                    .args(["auth", "print-access-token"])
+                    .output()
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "run `gcloud auth print-access-token` for `{profile_id}`: {err}"
+                        )
+                    })?;
+                if !token_out.status.success() {
+                    anyhow::bail!(
+                        "gcloud access token unavailable for Vertex profile `{profile_id}`"
+                    );
+                }
+                let token = String::from_utf8_lossy(&token_out.stdout)
+                    .trim()
+                    .to_string();
+                anyhow::ensure!(
+                    !token.is_empty(),
+                    "gcloud returned an empty access token for Vertex profile `{profile_id}`"
+                );
+                let host = if location == "global" {
+                    "aiplatform.googleapis.com".to_string()
+                } else {
+                    format!("{location}-aiplatform.googleapis.com")
+                };
+                let url = format!(
+                    "https://{host}/v1/projects/{project_id}/locations/{location}/publishers/google/models"
+                );
+                client.get(&url).bearer_auth(token)
+            }
+        }
+        LlmProvider::TypesafeEvaluation | LlmProvider::Chatgpt => unreachable!(),
+    };
+
+    let response = request.send().await.map_err(|err| {
+        anyhow::anyhow!("connection test failed for profile `{profile_id}`: {err}")
+    })?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        anyhow::bail!("authentication failed for profile `{profile_id}` (HTTP {status})");
+    }
+    if !status.is_success() {
+        anyhow::bail!("connection test failed for profile `{profile_id}` (HTTP {status})");
+    }
     Ok(())
 }
 
@@ -668,6 +884,11 @@ mod tests {
 
     #[test]
     fn provider_and_default_profile_ids_are_normalized() {
+        assert_eq!(parse_provider_id("magpie").unwrap(), LlmProvider::Magpie);
+        assert_eq!(
+            suggested_profile_id(LlmProvider::Magpie, None).unwrap(),
+            "magpie-main"
+        );
         assert_eq!(
             parse_provider_id("openrouter").unwrap(),
             LlmProvider::OpenRouter
@@ -676,6 +897,26 @@ mod tests {
             suggested_profile_id(LlmProvider::OpenRouter, None).unwrap(),
             "openrouter-main"
         );
+    }
+
+    #[test]
+    fn first_party_catalog_has_only_four_official_providers_and_demotes_anthropic() {
+        let builtins: Vec<LlmProvider> = first_party_provider_catalog()
+            .iter()
+            .map(|d| d.provider_id)
+            .collect();
+        assert_eq!(
+            builtins,
+            vec![
+                LlmProvider::Magpie,
+                LlmProvider::OpenAiResponses,
+                LlmProvider::Chatgpt,
+                LlmProvider::GoogleGeminiGenerateContent,
+                LlmProvider::OpenRouter,
+            ]
+        );
+        assert!(!ConnectionsFile::profile_descriptor(LlmProvider::AnthropicMessages).first_party);
+        assert!(ConnectionsFile::profile_descriptor(LlmProvider::Magpie).credential_optional);
     }
 
     #[test]

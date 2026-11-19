@@ -10,7 +10,7 @@ accepted future direction under [ADR-0060](0060-explicit-delegation-separates-ap
 Lifetime direction revised 2026-09-27: the user selected independent foreground
 Alan invocations and explicitly selected recovery. The older background lifetime
 assumptions below are superseded as target direction by
-[the active OpenSpec change](../../openspec/changes/unify-agent-command-input/disposition.md).
+[the archived OpenSpec change](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/disposition.md).
 The foreground startup slice is shipped; the active OpenSpec change tracks the
 remaining runtime work and this lifecycle specification sync.
 
@@ -29,7 +29,7 @@ users do not have to choose between disconnected command and Agent contexts.
 The later user-approved KISS revision on the same date supersedes the initial
 bounded namespace-command grammar: use a mature Host shell with internal aP access. The subsequent accepted
 refinement hides protocol operations behind task-oriented alan9 commands. Linux/FUSE exploration is deferred. See the
-[decision report](../../openspec/changes/unify-agent-command-input/decision-report.md).
+[decision report](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/decision-report.md).
 
 Prompt clarification, 2026-10-06: PR #1026 ships the contextual two-line prompt
 with `: ` for Agent input and `! ` for explicit commands, superseding the branded
@@ -115,8 +115,8 @@ Process identity and existing evidence owners. It adds no global router or secon
 Kernel Process type and does not require a universal model review of human commands.
 
 Normative deltas, design and acceptance tasks live in
-[unify-agent-command-input](../../openspec/changes/unify-agent-command-input/proposal.md).
-[The interview record](../../openspec/changes/unify-agent-command-input/design-interview.md)
+[unify-agent-command-input](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/proposal.md).
+[The interview record](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/design-interview.md)
 retains the confirmed choices. Generic typed evaluation remains with
 [add-cognitive-model-routing](../../openspec/changes/add-cognitive-model-routing/).
 Current code forwards `!` text into Agent input; the old bash specification is

@@ -190,6 +190,58 @@ impl Default for UiThinkingSnapshot {
     }
 }
 
+/// Turn and session token/cost accounting. Counters are zero until a provider reports usage.
+///
+/// The unprefixed counters cover the current logical turn (all of its generations); the
+/// `session_` counters cover the whole Agent Process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct UiUsageSnapshot {
+    pub version: u16,
+    /// Provider-reported prompt tokens this turn.
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u64>,
+    /// Provider-reported completion tokens this turn.
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    /// Prompt tokens of the most recent generation: the current context occupancy.
+    #[serde(default)]
+    pub context_tokens: u64,
+    /// Model context window in tokens; zero when unknown.
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    #[serde(default)]
+    pub session_input_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_cached_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub session_output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_reasoning_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_cost_usd: Option<f64>,
+}
+
+impl UiUsageSnapshot {
+    /// No usage reported yet.
+    pub fn empty() -> Self {
+        Self {
+            version: UI_SURFACE_VERSION,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the document is a version this crate understands.
+    pub fn is_valid(&self) -> bool {
+        self.version == UI_SURFACE_VERSION
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiNoticeKind {
@@ -281,6 +333,35 @@ mod tests {
         assert_eq!(UiPlanSnapshot::default().version, UI_SURFACE_VERSION);
         assert_eq!(UiThinkingSnapshot::default().version, UI_SURFACE_VERSION);
         assert_eq!(UiNoticeSnapshot::default().version, UI_SURFACE_VERSION);
+    }
+
+    #[test]
+    fn usage_snapshot_round_trips_and_omits_unknown_costs() {
+        let empty = UiUsageSnapshot::empty();
+        assert!(empty.is_valid());
+        let json = serde_json::to_string(&empty).unwrap();
+        assert!(!json.contains("cost_usd"));
+        assert!(!json.contains("cached_input_tokens"));
+        let usage = UiUsageSnapshot {
+            input_tokens: 12,
+            cached_input_tokens: Some(8),
+            output_tokens: 3,
+            reasoning_tokens: Some(1),
+            context_tokens: 12,
+            context_window: 128_000,
+            cost_usd: Some(0.0012),
+            session_input_tokens: 40,
+            session_output_tokens: 9,
+            ..UiUsageSnapshot::empty()
+        };
+        let parsed: UiUsageSnapshot =
+            serde_json::from_str(&serde_json::to_string(&usage).unwrap()).unwrap();
+        assert_eq!(parsed, usage);
+        // Older writers that only know the turn fields still parse.
+        let minimal: UiUsageSnapshot =
+            serde_json::from_str(r#"{"version":1,"input_tokens":5}"#).unwrap();
+        assert_eq!(minimal.input_tokens, 5);
+        assert_eq!(minimal.session_output_tokens, 0);
     }
 
     #[test]

@@ -25,6 +25,12 @@ struct Cli {
     /// Restore the latest selected Root Agent rollout for this invocation.
     #[arg(long)]
     resume: bool,
+    /// Do not read or overwrite the durable root rollout pointer for this invocation.
+    #[arg(long)]
+    ephemeral: bool,
+    /// Initial project directory candidate offered to bare `alan`.
+    #[arg(long, value_name = "PATH")]
+    cwd: Option<std::path::PathBuf>,
     /// Record typed input advice using this evaluator profile; never auto-run advice.
     #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
     shadow_evaluator: Option<String>,
@@ -396,6 +402,39 @@ fn validate_resume_scope(resume: bool, has_subcommand: bool) -> Result<()> {
     Ok(())
 }
 
+fn validate_bare_flags(
+    resume: bool,
+    ephemeral: bool,
+    cwd: Option<&std::path::Path>,
+    has_subcommand: bool,
+) -> Result<Option<std::path::PathBuf>> {
+    validate_resume_scope(resume, has_subcommand)?;
+    anyhow::ensure!(
+        !ephemeral || !has_subcommand,
+        "`--ephemeral` only applies to bare `alan`"
+    );
+    anyhow::ensure!(
+        !(ephemeral && resume),
+        "`--ephemeral` cannot be combined with `--resume`"
+    );
+    anyhow::ensure!(
+        cwd.is_none() || !has_subcommand,
+        "`--cwd` only applies to bare `alan`"
+    );
+    cwd.map(|raw| {
+        let meta = std::fs::metadata(raw)
+            .with_context(|| format!("inspect --cwd path `{}`", raw.display()))?;
+        anyhow::ensure!(
+            meta.is_dir(),
+            "`--cwd` path is not a directory: `{}`",
+            raw.display()
+        );
+        std::fs::canonicalize(raw)
+            .with_context(|| format!("canonicalize --cwd path `{}`", raw.display()))
+    })
+    .transpose()
+}
+
 fn is_retired_host_start_invocation(args: &[std::ffi::OsString]) -> bool {
     let args = args
         .iter()
@@ -420,9 +459,15 @@ fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    alan_tui::terminal::install_panic_hook();
     let cli = parse_cli();
     alan_os_host::installation::validate_current_invocation()?;
-    validate_resume_scope(cli.resume, cli.command.is_some())?;
+    let cwd_override = validate_bare_flags(
+        cli.resume,
+        cli.ephemeral,
+        cli.cwd.as_deref(),
+        cli.command.is_some(),
+    )?;
     anyhow::ensure!(
         cli.shadow_evaluator.is_none() || cli.command.is_none(),
         "`--shadow-evaluator` only applies to bare `alan`"
@@ -660,6 +705,8 @@ async fn main() -> Result<()> {
                 paths,
                 mode,
                 cli.resume,
+                cli.ephemeral,
+                cwd_override,
                 cli.shadow_evaluator,
             )
             .await;

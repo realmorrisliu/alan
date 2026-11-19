@@ -3,8 +3,8 @@
 > Lifecycle scope (ADR-0054): Alan remains the product brand. Requirements
 > describing the former native macOS App/category, bundle or dev App are
 > historical, not active maintenance obligations or part of the
-> terminal-neutral CLI/Host product. Herdr is a preferred external terminal
-> host, not an Alan rebrand.
+> terminal-neutral CLI/Host product. Alan runs in any ordinary terminal and
+> requires no particular external terminal host.
 
 ## Purpose
 Defines Alan's product-brand identity, public domain, historical macOS app
@@ -30,7 +30,7 @@ claim Plan 9 or 9P compatibility or a standalone bootable OS.
 #### Scenario: System Host and terminal host are described
 - **WHEN** documentation describes system lifetime and terminal presentation
 - **THEN** it names the system authority alan9 Host
-- **AND** it distinguishes that component from an external terminal host such as Herdr
+- **AND** it distinguishes that component from an external terminal host such as tmux or a terminal emulator
 
 #### Scenario: The system name is explained
 - **WHEN** documentation explains the name alan9

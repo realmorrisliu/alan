@@ -18,7 +18,8 @@ use super::input_projection::{
 use super::{
     OpenAiChatCompletionsFunctionDefinition, OpenAiChatCompletionsRequest,
     OpenAiChatCompletionsStreamOptions, OpenAiChatCompletionsToolDefinition,
-    OpenAiResponsesReasoning, OpenAiResponsesRequest, OpenAiResponsesToolDefinition,
+    OpenAiResponsesCompactRequest, OpenAiResponsesReasoning, OpenAiResponsesRequest,
+    OpenAiResponsesToolDefinition,
 };
 
 #[cfg(test)]
@@ -98,13 +99,21 @@ pub(crate) fn build_responses_request_for_model(
         temperature,
         max_tokens,
         reasoning,
+        session_key: _,
         mut extra_params,
     } = request;
 
     let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
     let background = take_bool_extra_param("background", &mut extra_params);
     let mut store = take_bool_extra_param("store", &mut extra_params);
-    if (matches!(background, Some(true)) || previous_response_id.is_some()) && store.is_none() {
+    if previous_response_id.is_some() {
+        if matches!(store, Some(false)) {
+            debug!(
+                "Forcing Responses store=true because previous_response_id chaining requires server storage"
+            );
+        }
+        store = Some(true);
+    } else if matches!(background, Some(true)) && store.is_none() {
         store = Some(true);
     }
 
@@ -147,6 +156,7 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         temperature: _,
         max_tokens: _,
         reasoning,
+        session_key: _,
         mut extra_params,
     } = request;
 
@@ -161,6 +171,8 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
     extra_params.remove("context_management");
     extra_params.remove("stream");
     extra_params.remove("max_completion_tokens");
+    extra_params.remove("prompt_cache_key");
+    extra_params.remove("prompt_cache_retention");
 
     Ok(OpenAiResponsesInputTokensRequest {
         model,
@@ -169,6 +181,58 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         tools: response_tools,
         tool_choice,
         reasoning,
+        extra_params,
+    })
+}
+
+pub(crate) fn build_responses_compact_request_for_model(
+    model: String,
+    request: GenerationRequest,
+) -> Result<OpenAiResponsesCompactRequest> {
+    reject_retired_message_overrides(&request)?;
+    let GenerationRequest {
+        system_prompt,
+        messages,
+        tools: _,
+        temperature: _,
+        max_tokens: _,
+        reasoning: _,
+        session_key: _,
+        mut extra_params,
+    } = request;
+
+    let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
+    let input = if messages.is_empty() {
+        None
+    } else {
+        let converted = convert_messages_for_openai_responses(messages)?;
+        let values = converted
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Some(values)
+    };
+
+    // Strip Responses fields that `/v1/responses/compact` rejects.
+    for key in [
+        "background",
+        "store",
+        "include",
+        "context_management",
+        "stream",
+        "max_completion_tokens",
+        "reasoning_effort",
+        "prompt_cache_key",
+        "prompt_cache_retention",
+    ] {
+        extra_params.remove(key);
+    }
+
+    Ok(OpenAiResponsesCompactRequest {
+        model,
+        input,
+        instructions: normalize_responses_instructions(system_prompt),
+        previous_response_id,
         extra_params,
     })
 }
@@ -187,6 +251,7 @@ pub(super) fn build_chat_completions_request_for_model(
         temperature,
         max_tokens,
         reasoning,
+        session_key: _,
         mut extra_params,
     } = request;
 

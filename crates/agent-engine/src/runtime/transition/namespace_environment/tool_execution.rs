@@ -10,6 +10,14 @@ use super::{
 };
 use crate::{evidence::redact_durable_evidence_text, runtime::ToolPackageManifest};
 
+/// A completed Tool Process ready to be published to AgentFS `actions/` in deterministic order.
+pub(crate) struct PreparedToolAction {
+    pid: String,
+    output: String,
+    exit_code: i32,
+    action_record: NamespaceActionRecord,
+}
+
 impl NamespaceToolExecution {
     fn client(&self) -> NamespaceClient {
         NamespaceClient::new(self.root.clone())
@@ -147,6 +155,28 @@ impl NamespaceToolExecution {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        let prepared = self
+            .execute_action_process(tool_name, evidence, executable, args, cancel, timeout_secs)
+            .await?;
+        self.publish_prepared_action(prepared).await
+    }
+
+    /// Spawn and wait for one Tool Process without publishing its `actions/` record yet.
+    /// Callers running read-only batches concurrently use this to overlap execution and then
+    /// commit `actions/` in deterministic batch order via [`Self::publish_prepared_action`].
+    pub(crate) async fn execute_action_process<I, S>(
+        &self,
+        tool_name: &str,
+        evidence: Option<NamespaceToolActionEvidence<'_>>,
+        executable: &str,
+        args: I,
+        cancel: &CancellationToken,
+        timeout_secs: usize,
+    ) -> Result<PreparedToolAction>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         if cancel.is_cancelled() {
             bail!("tool process cancelled before spawn");
         }
@@ -260,21 +290,33 @@ impl NamespaceToolExecution {
             );
         }
         let durable_output = redact_durable_evidence_text(&result.output);
-        let action_id = self
-            .agent_files
-            .write_action(
-                NamespaceActionRecord::new(tool_name, action_status)
-                    .with_output(durable_output.text)
-                    .with_result(result_doc.to_string())
-                    .with_approval(evidence.map_or("not_required", |evidence| evidence.approval))
-                    .with_process(format!("/proc/{pid}")),
-            )
-            .await?;
-        Ok(NamespaceToolActionOutput {
-            action_id,
+        let action_record = NamespaceActionRecord::new(tool_name, action_status)
+            .with_output(durable_output.text)
+            .with_result(result_doc.to_string())
+            .with_approval(evidence.map_or("not_required", |evidence| evidence.approval))
+            .with_process(format!("/proc/{pid}"));
+        Ok(PreparedToolAction {
             pid,
             output: result.output,
             exit_code: action_exit_code,
+            action_record,
+        })
+    }
+
+    /// Publish a completed Tool Process to AgentFS `actions/`.
+    pub(crate) async fn publish_prepared_action(
+        &self,
+        prepared: PreparedToolAction,
+    ) -> Result<NamespaceToolActionOutput> {
+        let action_id = self
+            .agent_files
+            .write_action(prepared.action_record)
+            .await?;
+        Ok(NamespaceToolActionOutput {
+            action_id,
+            pid: prepared.pid,
+            output: prepared.output,
+            exit_code: prepared.exit_code,
         })
     }
 }

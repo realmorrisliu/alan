@@ -27,10 +27,14 @@ pub struct ProviderConfig {
     pub http_referer: Option<String>, // OpenRouter HTTP-Referer metadata
     pub x_title: Option<String>,    // OpenRouter X-Title metadata
     pub app_categories: Option<Vec<String>>, // OpenRouter app category metadata
+    /// Magpie canonical-effort → router thinking-level map (`None` = discover/default).
+    pub thinking_level_map: Option<crate::ReasoningEffortMap>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderType {
+    /// First-party local/custom OpenAI Chat Completions-compatible router.
+    Magpie,
     GoogleGeminiGenerateContent,
     ChatgptResponses,
     OpenAiResponses,
@@ -42,7 +46,30 @@ pub enum ProviderType {
 }
 
 impl ProviderConfig {
-    /// Create a new provider config for the Google Gemini GenerateContent API.
+    /// Create a provider config for the first-party Magpie router.
+    ///
+    /// Defaults to [`crate::magpie::MAGPIE_DEFAULT_BASE_URL`] with no API key.
+    pub fn magpie(model: impl Into<String>) -> Self {
+        Self {
+            provider_type: ProviderType::Magpie,
+            api_key: None,
+            base_url: Some(crate::magpie::MAGPIE_DEFAULT_BASE_URL.to_string()),
+            model: model.into(),
+            expected_account_id: None,
+            chatgpt_auth_storage_path: None,
+            project_id: None,
+            location: None,
+            custom_headers: None,
+            client_name: None,
+            user_agent: None,
+            http_referer: None,
+            x_title: None,
+            app_categories: None,
+            thinking_level_map: None,
+        }
+    }
+
+    /// Create a new provider config for the Google Gemini GenerateContent API (ADC).
     pub fn google_gemini_generate_content(
         project_id: impl Into<String>,
         model: impl Into<String>,
@@ -55,13 +82,35 @@ impl ProviderConfig {
             expected_account_id: None,
             chatgpt_auth_storage_path: None,
             project_id: Some(project_id.into()),
-            location: Some("us-central1".to_string()),
+            location: Some("global".to_string()),
             custom_headers: None,
             client_name: None,
             user_agent: None,
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
+        }
+    }
+
+    /// Create a provider config for Google Cloud Vertex AI Express Mode (`x-goog-api-key`).
+    pub fn google_gemini_express(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            provider_type: ProviderType::GoogleGeminiGenerateContent,
+            api_key: Some(api_key.into()),
+            base_url: None,
+            model: model.into(),
+            expected_account_id: None,
+            chatgpt_auth_storage_path: None,
+            project_id: None,
+            location: Some("global".to_string()),
+            custom_headers: None,
+            client_name: None,
+            user_agent: None,
+            http_referer: None,
+            x_title: None,
+            app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -82,6 +131,7 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -102,6 +152,7 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -122,6 +173,7 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -142,6 +194,7 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -165,6 +218,7 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -185,6 +239,7 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
@@ -205,12 +260,26 @@ impl ProviderConfig {
             http_referer: None,
             x_title: None,
             app_categories: None,
+            thinking_level_map: None,
         }
     }
 
     /// Set custom base URL
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
+        self
+    }
+
+    /// Set an optional API key (Magpie accepts none; Vertex uses it for Express Mode).
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        let api_key = api_key.into();
+        self.api_key = (!api_key.trim().is_empty()).then_some(api_key);
+        self
+    }
+
+    /// Set the Magpie canonical-effort → router thinking-level map.
+    pub fn with_thinking_level_map(mut self, map: crate::ReasoningEffortMap) -> Self {
+        self.thinking_level_map = Some(map);
         self
     }
 
@@ -276,6 +345,17 @@ impl ProviderConfig {
 /// Create an LLM provider from configuration
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
     match config.provider_type {
+        ProviderType::Magpie => {
+            let mut client = crate::MagpieClient::new(
+                config.base_url.as_deref(),
+                config.api_key.as_deref(),
+                &config.model,
+            );
+            if let Some(map) = config.thinking_level_map {
+                client = client.with_reasoning_effort_map(map);
+            }
+            Ok(Box::new(client))
+        }
         ProviderType::TypesafeEvaluation => {
             anyhow::ensure!(
                 config.base_url.is_none()
@@ -290,16 +370,40 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             )?))
         }
         ProviderType::GoogleGeminiGenerateContent => {
-            let project_id = config.project_id.ok_or_else(|| {
-                anyhow::anyhow!("Google Gemini GenerateContent provider requires project_id")
-            })?;
-            let location = config.location.unwrap_or_else(|| "us-central1".to_string());
-
-            Ok(Box::new(GoogleGeminiGenerateContentClient::with_params(
-                &project_id,
-                &location,
-                &config.model,
-            )))
+            let location = config.location.unwrap_or_else(|| "global".to_string());
+            let auth = match config
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+            {
+                Some(api_key) => {
+                    crate::google_gemini_generate_content::VertexAuth::ApiKey(api_key.to_string())
+                }
+                None => {
+                    if config
+                        .project_id
+                        .as_deref()
+                        .map(str::trim)
+                        .is_none_or(str::is_empty)
+                    {
+                        anyhow::bail!(
+                            "Google Gemini GenerateContent provider requires project_id (or api_key for Vertex Express Mode)"
+                        );
+                    }
+                    crate::google_gemini_generate_content::VertexAuth::Adc
+                }
+            };
+            let client = GoogleGeminiGenerateContentClient::from_vertex_config(
+                crate::google_gemini_generate_content::VertexClientConfig {
+                    project_id: config.project_id,
+                    location,
+                    model: config.model,
+                    auth,
+                    base_url: config.base_url,
+                },
+            )?;
+            Ok(Box::new(client))
         }
         ProviderType::ChatgptResponses => {
             let base_url = config
@@ -407,24 +511,43 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
 impl ProviderType {
     pub fn capabilities(self) -> ProviderCapabilities {
         match self {
-            ProviderType::GoogleGeminiGenerateContent => ProviderCapabilities {
+            ProviderType::Magpie => ProviderCapabilities {
                 supports_streaming_text: true,
-                supports_streaming_tool_calls: false,
-                supports_provider_response_id: false,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
                 supports_provider_response_status: false,
-                supports_reasoning_text: false,
+                supports_reasoning_text: true,
                 supports_reasoning_signature: false,
                 supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
-                supports_multimodal_input: false,
+                supports_multimodal_input: true,
                 supports_document_input: false,
-                supports_cached_token_usage: false,
+                supports_cached_token_usage: true,
                 supports_server_managed_continuation: false,
                 supports_background_execution: false,
                 supports_retrieve_cancel: false,
                 supports_provider_compaction: false,
                 instruction_role: InstructionRole::System,
-                compatibility_tier: CompatibilityTier::TierCBestEffortCompatible,
+                compatibility_tier: CompatibilityTier::TierBFullFidelityStateless,
+            },
+            ProviderType::GoogleGeminiGenerateContent => ProviderCapabilities {
+                supports_streaming_text: true,
+                supports_streaming_tool_calls: true,
+                supports_provider_response_id: true,
+                supports_provider_response_status: false,
+                supports_reasoning_text: true,
+                supports_reasoning_signature: true,
+                supports_reasoning_effort_control: true,
+                supports_redacted_thinking: false,
+                supports_multimodal_input: true,
+                supports_document_input: true,
+                supports_cached_token_usage: true,
+                supports_server_managed_continuation: false,
+                supports_background_execution: false,
+                supports_retrieve_cancel: false,
+                supports_provider_compaction: false,
+                instruction_role: InstructionRole::System,
+                compatibility_tier: CompatibilityTier::TierBFullFidelityStateless,
             },
             ProviderType::ChatgptResponses => ProviderCapabilities {
                 supports_streaming_text: true,
@@ -511,9 +634,9 @@ impl ProviderType {
                 supports_reasoning_signature: true,
                 supports_reasoning_effort_control: true,
                 supports_redacted_thinking: false,
-                supports_multimodal_input: false,
+                supports_multimodal_input: true,
                 supports_document_input: false,
-                supports_cached_token_usage: false,
+                supports_cached_token_usage: true,
                 supports_server_managed_continuation: false,
                 supports_background_execution: false,
                 supports_retrieve_cancel: false,

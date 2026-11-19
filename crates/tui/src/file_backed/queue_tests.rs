@@ -165,7 +165,7 @@ async fn queue_fresh_unknown_allows_authorization_not_settled_claim() {
         .await
         .unwrap();
     assert!(
-        app.attention_labels()
+        !app.attention_labels()
             .join(" · ")
             .to_lowercase()
             .contains("queue unavailable")

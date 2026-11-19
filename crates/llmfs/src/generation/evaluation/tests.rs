@@ -38,6 +38,7 @@ async fn abort_before_publication_discards_returned_result_and_usage() {
                 completion_tokens: 1,
                 total_tokens: 2,
                 reasoning_tokens: None,
+                ..Default::default()
             }),
         },
     ));

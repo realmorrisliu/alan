@@ -32,6 +32,14 @@ impl QueueProjection {
         self.snapshot = snapshot;
     }
 
+    pub fn is_fresh_unknown(&self) -> bool {
+        self.revision == 0
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|q| !q.known && q.revision == 0)
+    }
+
     // Valid unknown is not known-empty. It permits only a guarded control
     // request; Runtime remains the final admission/cwd authority. Read failures
     // and malformed documents never provide this authorization boundary.
@@ -81,7 +89,7 @@ pub(super) async fn read_queue(shell: &alan_shell::Shell, owner: &str) -> Option
 pub(super) struct LocalInput {
     pub owner: String,
     pub body: String,
-    intent: alan_agent_protocol::InputIntent,
+    pub intent: alan_agent_protocol::InputIntent,
     draft_revision: u64,
     pub acknowledged: bool,
     pub cell: Option<usize>,
@@ -225,11 +233,19 @@ impl FileBackedApp {
 
     pub(super) fn show_submission_sent(&mut self, id: &str) {
         self.queue.hint = Some(id.into());
-        self.notice = Some(Notice::queue(
-            "submission sent; admission unconfirmed".into(),
-            id,
-            true,
-        ));
+        if self.queue.snapshot.is_none() {
+            self.notice = Some(Notice::queue(
+                "submission sent; admission unconfirmed".into(),
+                id,
+                true,
+            ));
+        } else if self
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.submission.is_some())
+        {
+            self.notice = None;
+        }
     }
 
     pub(super) fn refresh_local_input_hint(&mut self, id: &str, owner: &str) {
@@ -248,20 +264,32 @@ impl FileBackedApp {
             return;
         };
         let acknowledged = input.acknowledged;
-        let (state, uncertain) = match self.queue.snapshot.as_ref().filter(|q| q.known) {
+        let clear_own_notice = |app: &mut Self| {
+            if app
+                .notice
+                .as_ref()
+                .and_then(|notice| notice.submission.as_deref())
+                == Some(id)
+            {
+                app.notice = None;
+            }
+        };
+        let (notice, uncertain) = match self.queue.snapshot.as_ref().filter(|q| q.known) {
             Some(q)
                 if q.uncertain_submission_ids
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                ("uncertain · outcome unknown", true)
+                ("input outcome uncertain · /status".to_string(), true)
             }
             Some(q)
                 if q.active_submission_ids
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                ("active · admitted to queue", false)
+                clear_own_notice(self);
+                self.queue.hint = Some(id.into());
+                return;
             }
             Some(q)
                 if q.pending_submission_ids
@@ -270,7 +298,7 @@ impl FileBackedApp {
                     && q.paused =>
             {
                 (
-                    "paused · /continue resumes · /discard removes queued input",
+                    "input queued (paused) · /continue resumes · /discard removes".to_string(),
                     false,
                 )
             }
@@ -279,18 +307,25 @@ impl FileBackedApp {
                     .iter()
                     .any(|candidate| candidate == id) =>
             {
-                ("queued", false)
+                ("input queued".to_string(), false)
             }
-            _ => ("unconfirmed · outcome unknown", true),
+            _ if self.queue.is_fresh_unknown() => {
+                clear_own_notice(self);
+                self.queue.hint = Some(id.into());
+                return;
+            }
+            _ => (
+                format!(
+                    "input {} · outcome unknown",
+                    if acknowledged {
+                        "acknowledged"
+                    } else {
+                        "unconfirmed"
+                    }
+                ),
+                true,
+            ),
         };
-        let notice = format!(
-            "input {id} {} · {state}",
-            if acknowledged {
-                "acknowledged"
-            } else {
-                "unconfirmed"
-            }
-        );
         self.queue.hint = Some(id.into());
         self.notice = Some(Notice::queue(notice, id, uncertain));
     }
@@ -419,12 +454,14 @@ pub(super) async fn watch_queue(
                 let Ok(bytes) = result else {
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::SkillsUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::ModelUnavailable { owner: owner.clone() }).await;
+                    let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::UsageUnavailable { owner: owner.clone() }).await;
                     if !super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::QueueUnavailable { owner: owner.clone() }).await { break; }
                     break;
                 };
                 if bytes.is_empty() {
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::SkillsUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::ModelUnavailable { owner: owner.clone() }).await;
+                    let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::UsageUnavailable { owner: owner.clone() }).await;
                     let _ = super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::QueueUnavailable { owner: owner.clone() }).await;
                     break;
                 }
@@ -436,6 +473,10 @@ pub(super) async fn watch_queue(
                         return Ok(());
                     }
                     if line == b"ui:models\n" && !super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::ModelChanged { owner: owner.clone() }).await {
+                        let _ = tail.close().await;
+                        return Ok(());
+                    }
+                    if line == b"ui:usage\n" && !super::file_surface::send_event_or_shutdown(&tx, &mut shutdown, FileBackedEvent::UsageChanged { owner: owner.clone() }).await {
                         let _ = tail.close().await;
                         return Ok(());
                     }

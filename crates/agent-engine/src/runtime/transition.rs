@@ -13,6 +13,7 @@ pub(crate) use submission::{
 mod namespace_environment;
 pub(crate) use namespace_environment::read_action_evidence;
 pub(crate) mod owner_work;
+mod parallel_read_tools;
 mod turn_execution;
 use turn_execution::finalize_replayed_tool_end_turn_best_effort;
 
@@ -714,7 +715,48 @@ where
         approved_call_indices;
     let mut refresh_context = false;
 
-    for (idx, tool_call) in tool_calls.iter().enumerate() {
+    let mut idx = 0;
+    while idx < tool_calls.len() {
+        if let Some(outcome) = parallel_read_tools::try_run_parallel_read_only_prefix(
+            loop_guard,
+            state,
+            tool_calls,
+            idx,
+            approved_call_indices,
+            inputs,
+            emit,
+        )
+        .await?
+        {
+            match outcome {
+                parallel_read_tools::ParallelReadBatchOutcome::Completed { count } => {
+                    idx += count;
+                    if handle_queued_steering_inputs(
+                        &mut state.machine,
+                        &state.environment,
+                        writer,
+                        inputs.cancel,
+                        &tool_calls[idx..],
+                        inputs.steering_broker,
+                        emit,
+                    )
+                    .await?
+                    {
+                        return Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop {
+                            refresh_context: true,
+                        });
+                    }
+                    continue;
+                }
+                parallel_read_tools::ParallelReadBatchOutcome::EndTurn => {
+                    return Ok(ToolBatchOrchestratorOutcome::EndTurn {
+                        surfaces_refreshed: false,
+                    });
+                }
+            }
+        }
+
+        let tool_call = &tool_calls[idx];
         let allow_approved_unknown_effect_execution =
             approved_unknown_effect_call_index.is_some_and(|approved_index| approved_index == idx);
         let allow_approved_tool_escalation_execution =
@@ -782,12 +824,13 @@ where
                 refresh_context: call_refresh,
             } => {
                 refresh_context |= call_refresh;
+                idx += 1;
                 if handle_queued_steering_inputs(
                     &mut state.machine,
                     &state.environment,
                     writer,
                     inputs.cancel,
-                    &tool_calls[idx + 1..],
+                    &tool_calls[idx..],
                     inputs.steering_broker,
                     emit,
                 )

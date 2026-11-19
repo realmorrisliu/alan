@@ -61,21 +61,92 @@ impl FileBackedApp {
         {
             model = super::super::model::safe(&binding.model);
         }
+        let usage = self.usage.prompt_label();
+        let usage_width = usage
+            .as_deref()
+            .map_or(0, |text| UnicodeWidthStr::width(text) + 3);
         let model = truncate_middle(&model, width);
-        let location = truncate_middle(
-            &location,
-            width.saturating_sub(UnicodeWidthStr::width(model.as_str()) + 3),
-        );
+        let model_width = UnicodeWidthStr::width(model.as_str());
+        let show_usage = usage.is_some() && model_width + usage_width + 6 <= width;
+        let reserved = model_width + if show_usage { usage_width } else { 0 } + 3;
+        let location = truncate_middle(&location, width.saturating_sub(reserved));
         let mut spans = Vec::new();
         if !location.is_empty() {
             spans.push(Span::styled(location, Style::default().fg(Color::Cyan)));
             spans.push(Span::raw(" · "));
         }
         spans.push(Span::raw(model));
+        if show_usage && let Some(usage) = usage {
+            spans.push(Span::styled(
+                format!(" · {usage}"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
         Line::from(spans)
     }
 
+    pub(in crate::file_backed) fn interruptible_work_active(
+        &self,
+        has_pending_submission: bool,
+    ) -> bool {
+        has_pending_submission
+            || self.turn_active()
+            || self.pending_yield.is_some()
+            || self.form.is_some()
+            || self.has_pending_response()
+            || self
+                .queue
+                .snapshot
+                .as_ref()
+                .is_some_and(|queue| queue.known && !queue.active_submission_ids.is_empty())
+    }
+
+    fn active_command_only(&self) -> bool {
+        if self.has_pending_response()
+            || self
+                .model
+                .known()
+                .is_some_and(|snapshot| snapshot.active.is_some())
+        {
+            return false;
+        }
+        if let Some(queue) = self.queue.snapshot.as_ref().filter(|q| q.known)
+            && !queue.active_submission_ids.is_empty()
+        {
+            return queue.active_submission_ids.iter().all(|id| {
+                self.local_inputs
+                    .get(id)
+                    .is_some_and(|input| input.intent == InputIntent::Command)
+            });
+        }
+        if self.activity.state == UiActivityState::Running
+            && self
+                .model
+                .known()
+                .is_some_and(|snapshot| snapshot.admitted.is_empty())
+        {
+            let mut active_local = self
+                .local_inputs
+                .values()
+                .filter(|input| !input.terminal)
+                .peekable();
+            if active_local.peek().is_some() {
+                return active_local.all(|input| input.intent == InputIntent::Command);
+            }
+            if matches!(
+                self.transcript.last(),
+                Some(HistoryCell::Command(_)) | Some(HistoryCell::InputTail { command: true, .. })
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn prefers_active_model(&self) -> bool {
+        if self.active_command_only() {
+            return false;
+        }
         self.activity.state != UiActivityState::Idle
             || self.has_pending_response()
             || self
@@ -133,7 +204,7 @@ impl FileBackedApp {
             {
                 labels.push("Input active".into());
             }
-        } else if !self.queue.owner.is_empty() {
+        } else if !self.queue.owner.is_empty() && !self.queue.is_fresh_unknown() {
             labels.push("Queue unavailable · /status".into());
         }
         if self.prefers_active_model()

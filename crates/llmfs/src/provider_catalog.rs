@@ -9,6 +9,7 @@ pub(super) fn known_provider_names() -> Vec<String> {
         "anthropic_messages".to_string(),
         "chatgpt".to_string(),
         "google_gemini_generate_content".to_string(),
+        "magpie".to_string(),
         "openai_chat_completions".to_string(),
         "openai_chat_completions_compatible".to_string(),
         "openai_responses".to_string(),
@@ -25,6 +26,7 @@ pub(super) fn is_known_provider(name: &str) -> bool {
 
 fn provider_type_for_name(name: &str) -> Option<ProviderType> {
     match name {
+        "magpie" => Some(ProviderType::Magpie),
         "google_gemini_generate_content" => Some(ProviderType::GoogleGeminiGenerateContent),
         "chatgpt" => Some(ProviderType::ChatgptResponses),
         // Test providers report `mock`, but the engine-backed smoke path uses
@@ -275,18 +277,57 @@ const CHATGPT_MODELS: &[ProviderModel] = &[ProviderModel {
     supports_reasoning: true,
 }];
 
-const GEMINI_MODELS: &[ProviderModel] = &[ProviderModel {
-    slug: "gemini-2.0-flash",
-    family: "gemini-2.0",
-    context_window_tokens: 1_048_576,
-    supports_reasoning: false,
-}];
+const GEMINI_MODELS: &[ProviderModel] = &[
+    ProviderModel {
+        slug: "gemini-2.5-pro",
+        family: "gemini-2.5",
+        context_window_tokens: 1_048_576,
+        supports_reasoning: true,
+    },
+    ProviderModel {
+        slug: "gemini-2.5-flash",
+        family: "gemini-2.5",
+        context_window_tokens: 1_048_576,
+        supports_reasoning: true,
+    },
+    ProviderModel {
+        slug: "gemini-2.5-flash-lite",
+        family: "gemini-2.5",
+        context_window_tokens: 1_048_576,
+        supports_reasoning: true,
+    },
+    ProviderModel {
+        slug: "gemini-3-pro-preview",
+        family: "gemini-3",
+        context_window_tokens: 1_048_576,
+        supports_reasoning: true,
+    },
+    ProviderModel {
+        slug: "gemini-3-flash-preview",
+        family: "gemini-3",
+        context_window_tokens: 1_048_576,
+        supports_reasoning: true,
+    },
+    ProviderModel {
+        slug: "gemini-3.1-pro-preview",
+        family: "gemini-3.1",
+        context_window_tokens: 1_048_576,
+        supports_reasoning: true,
+    },
+];
 
 const ANTHROPIC_MODELS: &[ProviderModel] = &[ProviderModel {
-    slug: "claude-3-5-sonnet-latest",
-    family: "claude-3.5-sonnet",
+    slug: "claude-sonnet-4-5",
+    family: "claude-4.5",
     context_window_tokens: 200_000,
-    supports_reasoning: false,
+    supports_reasoning: true,
+}];
+
+const MAGPIE_MODELS: &[ProviderModel] = &[ProviderModel {
+    slug: "default",
+    family: "magpie",
+    context_window_tokens: 128_000,
+    supports_reasoning: true,
 }];
 
 const OPENROUTER_MODELS: &[ProviderModel] = &[ProviderModel {
@@ -298,6 +339,11 @@ const OPENROUTER_MODELS: &[ProviderModel] = &[ProviderModel {
 
 fn provider_model_catalog(provider: &str) -> Option<ProviderModelCatalog> {
     match provider {
+        "magpie" => Some(ProviderModelCatalog {
+            default_model: "default",
+            source: "bundled-magpie",
+            models: MAGPIE_MODELS,
+        }),
         "openai_responses" => Some(ProviderModelCatalog {
             default_model: "gpt-5.4",
             source: "bundled-openai-responses",
@@ -319,12 +365,12 @@ fn provider_model_catalog(provider: &str) -> Option<ProviderModelCatalog> {
             models: CHATGPT_MODELS,
         }),
         "google_gemini_generate_content" => Some(ProviderModelCatalog {
-            default_model: "gemini-2.0-flash",
+            default_model: "gemini-2.5-flash",
             source: "bundled-gemini",
             models: GEMINI_MODELS,
         }),
         "anthropic_messages" => Some(ProviderModelCatalog {
-            default_model: "claude-3-5-sonnet-latest",
+            default_model: "claude-sonnet-4-5",
             source: "bundled-anthropic",
             models: ANTHROPIC_MODELS,
         }),

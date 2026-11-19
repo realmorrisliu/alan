@@ -191,6 +191,7 @@ fn decode(
             total_tokens: total,
             cached_prompt_tokens: None,
             reasoning_tokens: None,
+            ..Default::default()
         }),
     })
 }

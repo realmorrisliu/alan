@@ -33,30 +33,7 @@ mod project;
 use project::default_commands;
 
 mod events;
-pub(super) use events::FileBackedEvent;
-
-#[derive(Debug)]
-pub(super) enum FileBackedAction {
-    Submit(alan_agent_protocol::UserInputRecord),
-    Resume {
-        request_id: String,
-        response: String,
-        retry_input: String,
-    },
-    MachineCtl {
-        command: String,
-        success_notice: String,
-    },
-    SelectModel {
-        owner: String,
-        id: String,
-        op: alan_agent_protocol::Op,
-    },
-    Project(ProjectControl),
-    RevokeCurrentProject,
-    Interrupt,
-    Quit,
-}
+pub(super) use events::{FileBackedAction, FileBackedEvent};
 
 #[derive(Clone)]
 pub(super) struct FileBackedApp {
@@ -64,6 +41,7 @@ pub(super) struct FileBackedApp {
     pub(super) agent_path: String,
     pub(super) model_chooser: model_control::ModelChooser,
     pub(super) model: super::model::ModelProjection,
+    pub(super) usage: super::usage::UsageProjection,
     pub(super) effective_model: Option<String>,
     pub(super) composer: Composer,
     pub(super) input_intent: InputIntent,
@@ -125,6 +103,7 @@ impl FileBackedApp {
             agent_path,
             model_chooser: model_control::ModelChooser::default(),
             model: super::model::ModelProjection::default(),
+            usage: super::usage::UsageProjection::default(),
             effective_model: None,
             composer: Composer::default(),
             input_intent: InputIntent::Agent,
@@ -308,6 +287,8 @@ impl FileBackedApp {
             | FileBackedEvent::ModelUnavailable { .. }
             | FileBackedEvent::SkillsChanged { .. }
             | FileBackedEvent::SkillsUnavailable { .. }
+            | FileBackedEvent::UsageChanged { .. }
+            | FileBackedEvent::UsageUnavailable { .. }
             | FileBackedEvent::RequestsChanged
             | FileBackedEvent::ActionsChanged { .. } => None,
             FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
@@ -379,7 +360,15 @@ impl FileBackedApp {
         {
             self.accept_completion();
             return self.handle_submit();
-        } else if self.completion.is_some() && self.consume_completion_key(key) {
+        } else if self.completion.is_some()
+            && ((key.code == KeyCode::Esc
+                && !self.interruptible_work_active(has_pending_submission)
+                && {
+                    self.completion = None;
+                    true
+                })
+                || (key.code != KeyCode::Esc && self.consume_completion_key(key)))
+        {
             return None;
         }
         if self.form.is_some() {
@@ -407,7 +396,9 @@ impl FileBackedApp {
             }
             KeyEvent {
                 code: KeyCode::Esc, ..
-            } => Some(FileBackedAction::Interrupt),
+            } => self
+                .interruptible_work_active(has_pending_submission)
+                .then_some(FileBackedAction::Interrupt),
             KeyEvent {
                 code: KeyCode::Char('/'),
                 modifiers,
@@ -493,14 +484,6 @@ impl FileBackedApp {
                 }
                 true
             }
-            KeyCode::Esc => {
-                if !self.project_boundary_available(false) {
-                    false
-                } else {
-                    self.completion = None;
-                    true
-                }
-            }
             KeyCode::Tab => {
                 self.accept_completion();
                 true
@@ -535,6 +518,13 @@ impl FileBackedApp {
                 None
             }
             KeyCode::Enter => self.submit_form(),
+            KeyCode::Char(_)
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                None
+            }
             KeyCode::Char(ch) => {
                 if let Some(form) = self.form.as_mut() {
                     form.insert_char(ch);
@@ -631,6 +621,11 @@ impl FileBackedApp {
 
     pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
         if self.model_submit_command() {
+            let text = self.composer.text().trim().to_owned();
+            self.composer.set_text("");
+            self.composer.remember(&text);
+            self.completion = None;
+            self.notice = None;
             return self.model_command("");
         }
         if self.response_in_flight.is_some() {

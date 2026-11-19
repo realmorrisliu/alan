@@ -12,6 +12,8 @@
 - [ ] 2.3 Permit only provably independent work while a decision is pending; test dependency ordering, no repeated prompt, no duplicated effects and unchanged cancellation.
 - [x] 2.4 Add finite task time/Tool/model budgets through Machine-owned state; verify pause, explicit extension and persistence across recovery without reset.
 
+- [ ] 2.5 Apply the OS-boundary rule: skip Guardian for effects contained by the active confinement and review only uncontained effects; verify no repeated prompts for contained work and no grant from reviewer output.
+
 ## 3. Qualification and integration
 - [ ] 3.1 Freeze a bounded pilot and labeled shadow corpus; measure and freeze false-denial/latency/cost thresholds before formal evaluation, requiring zero observed high-impact unauthorized allows.
 - [ ] 3.2 Run the formal reviewer comparison and actual macOS project delegation flow; do not activate an unqualified candidate or substitute input-routing metrics.

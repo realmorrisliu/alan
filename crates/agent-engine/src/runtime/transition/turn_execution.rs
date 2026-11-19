@@ -2,7 +2,7 @@
 
 use alan_agent_protocol::{CompactionOutcome, Event};
 use anyhow::{Context, Result};
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -16,8 +16,7 @@ use crate::runtime::tool_batch::{ToolBatchOrchestratorOutcome, ToolOrchestratorI
 use crate::runtime::turn_input::TurnInputBroker;
 use crate::runtime::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 use crate::runtime::turn_support::{
-    check_turn_cancelled, emit_streaming_chunks, emit_task_completed_success, emit_thinking_chunks,
-    normalize_tool_calls,
+    check_turn_cancelled, emit_task_completed_success, normalize_tool_calls,
 };
 use crate::runtime::virtual_tools::virtual_tool_definitions;
 
@@ -27,8 +26,12 @@ use super::{
     orchestrate_tool_batch_internal, turn_memory_runtime,
 };
 
+mod accepted_output;
+mod live_stream;
 mod namespace_generation;
+mod usage_surface;
 
+use live_stream::{LiveTurnStream, guardrail_probe};
 use namespace_generation::NamespaceTurnGeneration;
 
 const COMPACTION_TIMEOUT_SECS: u64 = 30;
@@ -220,6 +223,11 @@ where
         crate::runtime::ui_surfaces::turn_started(&state.agent_files())
             .await
             .context("write turn-start UI state")?;
+        usage_surface::begin_turn(
+            &state.agent_files(),
+            u64::from(state.runtime_config.context_window_tokens),
+        )
+        .await;
         emit(Event::TurnStarted {}).await;
     } else {
         crate::runtime::ui_surfaces::resumed(&state.agent_files())
@@ -398,6 +406,8 @@ where
     let mut tool_loop_guard =
         ToolLoopGuard::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     let mut response_guardrails = ResponseGuardrails::default();
+    // Mirrors the single regeneration `ResponseGuardrails::default()` allows per turn.
+    let mut guardrail_regenerated = false;
     let mut pending_guardrail_instruction: Option<String> = None;
     loop {
         if check_turn_cancelled(
@@ -460,7 +470,16 @@ where
             append_system_instruction(&mut request, instruction);
         }
         let request_controls = turn_request_controls.clone();
-        request = request.with_reasoning_controls(request_controls.reasoning);
+        let session_key = state
+            .machine
+            .rollout_path()
+            .and_then(|path| path.file_stem())
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| state.process_path());
+        request = request
+            .with_reasoning_controls(request_controls.reasoning)
+            .with_session_key(session_key);
 
         let request_start = Instant::now();
         let reasoning_effort_log = request_controls
@@ -485,12 +504,29 @@ where
             debug!("Streaming mode requested; generation uses request/response file semantics");
         }
         let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
-        let (response, live_text_chunks) = match generation
-            .generate(&llm_generation, request, llm_request_timeout_secs, cancel)
+        let guardrail_context = Arc::new(ResponseGuardrailContext::from_machine(
+            &state.machine,
+            &tool_execution,
+            &tool_packages,
+        ));
+        let live = LiveTurnStream::new(
+            agent_files.clone(),
+            guardrail_probe(Arc::clone(&guardrail_context), !guardrail_regenerated),
+        );
+        let response = match generation
+            .generate(
+                &llm_generation,
+                request,
+                llm_request_timeout_secs,
+                cancel,
+                &live,
+                emit,
+            )
             .await
         {
             Ok(response) => response,
             Err(error) => {
+                accepted_output::abandon(&live, emit).await;
                 if error.is::<crate::agent_machine::task_budget::Exhausted>()
                     || error.is::<super::NamespaceOperationUncertainty>()
                 {
@@ -518,6 +554,7 @@ where
                 return Err(anyhow::anyhow!(message));
             }
         };
+        live.check()?;
 
         if let Some(usage) = response.usage {
             info!(
@@ -527,6 +564,12 @@ where
                 reasoning_tokens = ?usage.reasoning_tokens,
                 "LLM usage"
             );
+            usage_surface::record(
+                &agent_files,
+                &usage,
+                u64::from(state.runtime_config.context_window_tokens),
+            )
+            .await;
         }
 
         for warning in &response.warnings {
@@ -541,19 +584,32 @@ where
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        let tool_execution = state.tool_execution();
-        let guardrail_context =
-            ResponseGuardrailContext::from_machine(&state.machine, &tool_execution, &tool_packages);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
             GuardrailDecision::Accept => {
                 pending_guardrail_instruction = None;
             }
             GuardrailDecision::Recover {
+                rule_id, reason, ..
+            } if live.text_visible() => {
+                // The text already reached `io/output`, which cannot be retracted.
+                guardrail_regenerated = true;
+                pending_guardrail_instruction = None;
+                warn!(rule_id, reason = %reason, "Response guardrail fired after output streamed");
+                let message = format!(
+                    "Guardrail ({rule_id}): {reason}. The reply had already started streaming, so it was not retried."
+                );
+                crate::runtime::ui_surfaces::warning(&state.agent_files(), message.clone())
+                    .await
+                    .context("write guardrail warning UI state")?;
+                emit(Event::Warning { message }).await;
+            }
+            GuardrailDecision::Recover {
                 rule_id,
                 reason,
                 instruction,
             } => {
+                guardrail_regenerated = true;
                 warn!(
                     rule_id,
                     reason = %reason,
@@ -561,6 +617,7 @@ where
                 );
                 let message =
                     format!("Guardrail recovered ({rule_id}): {reason}. Retrying before output.");
+                accepted_output::abandon(&live, emit).await;
                 crate::runtime::ui_surfaces::warning(&state.agent_files(), message.clone())
                     .await
                     .context("write guardrail warning UI state")?;
@@ -592,33 +649,14 @@ where
             }
         }
 
-        if let Some(ref thinking) = response.thinking
-            && !thinking.is_empty()
-        {
-            crate::runtime::ui_surfaces::thinking(&state.agent_files(), thinking)
-                .await
-                .context("write thinking UI state")?;
-            emit_thinking_chunks(emit, thinking).await;
-        }
-
-        if !response.content.is_empty() {
-            if live_text_chunks.is_empty() {
-                emit_streaming_chunks(emit, &response.content).await;
-            } else {
-                for chunk in live_text_chunks {
-                    emit(Event::TextDelta {
-                        chunk,
-                        is_final: false,
-                    })
-                    .await;
-                }
-                emit(Event::TextDelta {
-                    chunk: String::new(),
-                    is_final: true,
-                })
-                .await;
-            }
-        }
+        let streamed_live = accepted_output::publish_accepted(
+            &live,
+            &agent_files,
+            &response.content,
+            response.thinking.as_deref(),
+            emit,
+        )
+        .await?;
 
         let assistant_message_persisted = if !tool_calls.is_empty() {
             let machine_tool_calls: Vec<crate::tape::ToolRequest> = tool_calls
@@ -658,10 +696,12 @@ where
         };
 
         if assistant_message_persisted && !response.content.is_empty() {
-            agent_files
-                .write_assistant_output(&response.content)
-                .await
-                .context("write namespace assistant output")?;
+            if !streamed_live {
+                agent_files
+                    .write_assistant_output(&response.content)
+                    .await
+                    .context("write namespace assistant output")?;
+            }
             writer
                 .append_record(
                     "assistant",

@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tokio-tungstenite.workspace = true
 
 # SSE streaming
 eventsource-stream.workspace = true

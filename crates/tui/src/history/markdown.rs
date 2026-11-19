@@ -1,7 +1,9 @@
+use std::borrow::Cow;
+
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use super::{clean_text, metadata_style, wrap_plain_text};
+use super::{clean_text, metadata_style};
 
 // A projected character belongs to a source byte end and, for expanded tabs,
 // a stable sub-character slot. Geometry never participates in this identity.
@@ -93,9 +95,7 @@ pub(super) fn project(text: &str, width: usize, cut: Key) -> Vec<(Line<'static>,
         let start = source[..body_start].chars().count();
         let body = &source[body_start..];
         inline(body, &atoms[start..], style, &mut prefix);
-        let plain = prefix.iter().all(|atom| atom.style == Style::default())
-            && body == prefix.iter().map(|atom| atom.ch).collect::<String>();
-        append_rows(&mut rows, prefix, width, cut, row_end, plain);
+        append_rows(&mut rows, prefix, width, cut, row_end, true);
     }
     rows
 }
@@ -196,7 +196,7 @@ fn append_rows(
     width: usize,
     cut: Key,
     row_end: Key,
-    plain: bool,
+    word_wrap: bool,
 ) {
     let empty = atoms.is_empty();
     let atoms: Vec<_> = atoms.into_iter().filter(|atom| atom.key > cut).collect();
@@ -207,24 +207,48 @@ fn append_rows(
         return;
     }
     let text: String = atoms.iter().map(|atom| atom.ch).collect();
-    let logical = if plain {
-        wrap_plain_text(&text, width)
+    let mut boundaries = vec![0];
+    let mut boundary_end = 0;
+    for grapheme in Span::raw(text.as_str()).styled_graphemes(Style::default()) {
+        boundary_end += grapheme.symbol.len();
+        boundaries.push(boundary_end);
+    }
+    let logical: Vec<Cow<'_, str>> = if word_wrap {
+        let options =
+            textwrap::Options::new(width).word_splitter(textwrap::WordSplitter::NoHyphenation);
+        let wrapped = textwrap::wrap(&text, options);
+        if wrapped.is_empty() {
+            vec![Cow::Borrowed("")]
+        } else {
+            wrapped
+        }
     } else {
-        vec![text.clone()]
+        vec![Cow::Borrowed(text.as_str())]
     };
     let mut consumed = 0;
     let mut byte_cursor = 0;
+    let mut pushed_for_line = false;
     for part in logical {
-        let remaining = &text[byte_cursor..];
-        let skip = remaining.find(&part).unwrap_or(0);
-        consumed += remaining[..skip].chars().count();
-        byte_cursor += skip + part.len();
-        if skip > 0
+        let Cow::Borrowed(slice) = part else {
+            unreachable!("markdown word wrapping without hyphenation must borrow its source");
+        };
+        let raw_start = slice.as_ptr() as usize - text.as_ptr() as usize;
+        let start = raw_start.max(byte_cursor);
+        let raw_end = raw_start + slice.len();
+        let end = boundaries[boundaries.partition_point(|byte| *byte < raw_end)];
+        if end <= byte_cursor && raw_end != raw_start {
+            continue;
+        }
+        let skip_bytes = start - byte_cursor;
+        consumed += text[byte_cursor..start].chars().count();
+        byte_cursor = end;
+        if skip_bytes > 0
+            && pushed_for_line
             && let Some(previous) = rows.last_mut()
         {
             previous.1 = atoms[consumed - 1].key;
         }
-        let end = consumed + part.chars().count();
+        let part = &text[start..end];
         let mut spans = Vec::new();
         let mut cells = 0;
         let mut key = cut;
@@ -243,7 +267,7 @@ fn append_rows(
             cells += size;
         }
         rows.push((Line::from(spans), key));
-        consumed = end;
+        pushed_for_line = true;
     }
     if let Some(last) = rows.last_mut() {
         last.1 = row_end;

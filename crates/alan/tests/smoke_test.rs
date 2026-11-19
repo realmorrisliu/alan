@@ -94,6 +94,7 @@ fn response(content: &str) -> GenerationResponse {
             completion_tokens: 3,
             total_tokens: 8,
             reasoning_tokens: None,
+            ..Default::default()
         }),
         finish_reason: None,
         provider_response_id: None,

@@ -30,4 +30,4 @@ The canonical naming contract lives in the
 The original delta and adoption evidence are preserved in the
 [archived rename change](../../openspec/changes/archive/2026-09-25-rename-alan-os-to-alan9/).
 The interaction exploration lives in the existing
-[unified-input change](../../openspec/changes/unify-agent-command-input/design-interview.md).
+[unified-input change](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/design-interview.md).

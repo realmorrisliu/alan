@@ -1,21 +1,29 @@
 //! OpenAI Responses API client.
 //!
-//! This module provides the provider surface for the OpenAI Responses API.
+//! This module provides the provider surface for the OpenAI Responses API,
+//! including stable per-client prompt-cache affinity (`prompt_cache_key` and
+//! `prompt_cache_retention`), server-managed continuation, `/responses/compact`,
+//! and persistent WebSocket streaming with automatic fallback to HTTP SSE.
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::openai_chat_completions::{
     OpenAiChatCompletionsClient, OpenAiResponsesCompactRequest, OpenAiResponsesCompactResponse,
     OpenAiResponsesInputTokensRequest, OpenAiResponsesInputTokensResponse, OpenAiResponsesRequest,
-    OpenAiResponsesResponse, convert_openai_responses_output,
+    OpenAiResponsesResponse, build_responses_compact_request_for_model,
+    convert_openai_responses_output,
 };
+use crate::session_affinity::{new_session_id, request_session_id};
 use crate::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 
-#[cfg(test)]
-use crate::openai_chat_completions::{
-    OpenAiResponsesInputItem, OpenAiResponsesOutputTokensDetails, OpenAiResponsesUsage,
+pub(crate) mod stream_events;
+mod websocket;
+
+use websocket::{
+    DEFAULT_COOLDOWN, ResponsesWebSocket, WebSocketOutcome, is_official_openai_host, websocket_url,
 };
 
 pub use crate::openai_chat_completions::{
@@ -35,33 +43,243 @@ pub use crate::openai_chat_completions::{
     OpenAiResponsesUsage as OpenAiResponsesApiUsage,
 };
 
+const PROMPT_CACHE_KEY_PARAM: &str = "prompt_cache_key";
+const PROMPT_CACHE_RETENTION_PARAM: &str = "prompt_cache_retention";
+
+/// Streaming transport selection for [`OpenAiResponsesClient`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OpenAiResponsesTransport {
+    /// Use WebSocket for the official `api.openai.com` host (falling back to
+    /// HTTP SSE on handshake or pre-output failure) and HTTP SSE elsewhere.
+    #[default]
+    Auto,
+    /// Always stream over HTTP SSE.
+    Sse,
+    /// Prefer WebSocket regardless of host, falling back to HTTP SSE on
+    /// handshake or pre-output failure.
+    WebSocket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum PromptCacheRetention {
+    /// Default `"24h"` for `gpt-5*` and `gpt-4.1*` models; omitted otherwise.
+    #[default]
+    Auto,
+    Custom(String),
+    Disabled,
+}
+
 /// Client for the OpenAI Responses API.
 pub struct OpenAiResponsesClient {
     inner: OpenAiChatCompletionsClient,
+    prompt_cache_key: String,
+    prompt_cache_key_explicit: bool,
+    prompt_cache_retention: PromptCacheRetention,
+    transport: OpenAiResponsesTransport,
+    websocket: Arc<ResponsesWebSocket>,
 }
 
 impl OpenAiResponsesClient {
     const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+    /// Construct a client with a freshly minted, stable per-instance
+    /// `prompt_cache_key` and [`OpenAiResponsesTransport::Auto`].
     pub fn with_params(api_key: &str, base_url: &str, model: &str) -> Self {
+        let inner = OpenAiChatCompletionsClient::official_with_params(api_key, base_url, model);
+        let ws_url = websocket_url(inner.base_url());
         Self {
-            inner: OpenAiChatCompletionsClient::official_with_params(api_key, base_url, model),
+            inner,
+            prompt_cache_key: new_session_id(),
+            prompt_cache_key_explicit: false,
+            prompt_cache_retention: PromptCacheRetention::Auto,
+            transport: OpenAiResponsesTransport::Auto,
+            websocket: Arc::new(ResponsesWebSocket::new(ws_url, DEFAULT_COOLDOWN)),
         }
     }
 
-    pub async fn openai_responses(
+    /// Override the stable per-client `prompt_cache_key`.
+    ///
+    /// Caller-supplied `extra_params["prompt_cache_key"]` still takes precedence
+    /// on individual requests.
+    pub fn with_prompt_cache_key(mut self, key: impl Into<String>) -> Self {
+        let key = key.into();
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            self.prompt_cache_key = trimmed.to_string();
+            self.prompt_cache_key_explicit = true;
+        }
+        self
+    }
+
+    /// Override `prompt_cache_retention` sent on Responses requests (for
+    /// example `"24h"` or `"in_memory"`).
+    ///
+    /// Passing an empty/whitespace string disables the default retention field
+    /// even for `gpt-5*` / `gpt-4.1*` models. Caller-supplied
+    /// `extra_params["prompt_cache_retention"]` still takes precedence.
+    pub fn with_prompt_cache_retention(mut self, retention: impl Into<String>) -> Self {
+        let retention = retention.into();
+        let trimmed = retention.trim();
+        self.prompt_cache_retention = if trimmed.is_empty() {
+            PromptCacheRetention::Disabled
+        } else {
+            PromptCacheRetention::Custom(trimmed.to_string())
+        };
+        self
+    }
+
+    /// Configure the streaming transport mode (`Auto`, `Sse`, or `WebSocket`).
+    pub fn with_transport(mut self, transport: OpenAiResponsesTransport) -> Self {
+        self.transport = transport;
+        self
+    }
+
+    /// Return the client's stable default `prompt_cache_key`.
+    pub fn prompt_cache_key(&self) -> &str {
+        &self.prompt_cache_key
+    }
+
+    /// Return the configured streaming transport mode.
+    pub fn transport(&self) -> OpenAiResponsesTransport {
+        self.transport
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_ws_cooldown(mut self, cooldown: Duration) -> Self {
+        let ws_url = websocket_url(self.inner.base_url());
+        self.websocket = Arc::new(ResponsesWebSocket::new(ws_url, cooldown));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ws_connections_opened(&self) -> usize {
+        self.websocket.connections_opened()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ws_is_cooling_down(&self) -> bool {
+        self.websocket.is_cooling_down()
+    }
+
+    fn clone_shared(&self) -> Self {
+        Self {
+            inner: self.inner.clone_with_same_config(),
+            prompt_cache_key: self.prompt_cache_key.clone(),
+            prompt_cache_key_explicit: self.prompt_cache_key_explicit,
+            prompt_cache_retention: self.prompt_cache_retention.clone(),
+            transport: self.transport,
+            websocket: Arc::clone(&self.websocket),
+        }
+    }
+
+    fn resolve_prompt_cache_retention(&self, model: &str) -> Option<String> {
+        match &self.prompt_cache_retention {
+            PromptCacheRetention::Auto => default_prompt_cache_retention(model).map(str::to_string),
+            PromptCacheRetention::Custom(value) => Some(value.clone()),
+            PromptCacheRetention::Disabled => None,
+        }
+    }
+
+    fn prepare_responses_request(
+        &self,
+        request: &mut OpenAiResponsesRequest,
+        session_key: Option<&str>,
+    ) {
+        if request.model.is_empty() {
+            request.model = self.inner.model().to_string();
+        }
+        // Chaining with `previous_response_id` requires server-side storage.
+        if request.previous_response_id.is_some() {
+            request.store = Some(true);
+        }
+
+        let has_explicit_cache_key = request
+            .extra_params
+            .get(PROMPT_CACHE_KEY_PARAM)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        if !has_explicit_cache_key {
+            let key = if self.prompt_cache_key_explicit {
+                self.prompt_cache_key.clone()
+            } else {
+                request_session_id(session_key, &self.prompt_cache_key)
+            };
+            request.extra_params.insert(
+                PROMPT_CACHE_KEY_PARAM.to_string(),
+                serde_json::Value::String(key),
+            );
+        }
+
+        match request.extra_params.get(PROMPT_CACHE_RETENTION_PARAM) {
+            Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {}
+            Some(serde_json::Value::Null) | Some(serde_json::Value::String(_)) => {
+                request.extra_params.remove(PROMPT_CACHE_RETENTION_PARAM);
+            }
+            Some(_) => {}
+            None => {
+                if let Some(retention) = self.resolve_prompt_cache_retention(&request.model) {
+                    request.extra_params.insert(
+                        PROMPT_CACHE_RETENTION_PARAM.to_string(),
+                        serde_json::Value::String(retention),
+                    );
+                }
+            }
+        }
+    }
+
+    fn should_try_websocket(&self, request: &OpenAiResponsesRequest) -> bool {
+        if request.background == Some(true) {
+            return false;
+        }
+        match self.transport {
+            OpenAiResponsesTransport::Sse => false,
+            OpenAiResponsesTransport::Auto => {
+                is_official_openai_host(self.inner.base_url()) && self.websocket.available()
+            }
+            OpenAiResponsesTransport::WebSocket => self.websocket.available(),
+        }
+    }
+
+    async fn dispatch_openai_responses(
         &self,
         request: OpenAiResponsesRequest,
     ) -> Result<OpenAiResponsesResponse> {
         self.inner.openai_responses(request).await
     }
 
-    pub async fn stream_openai_responses(
+    async fn dispatch_stream_openai_responses(
         &self,
         request: OpenAiResponsesRequest,
         tx: tokio::sync::mpsc::Sender<StreamChunk>,
     ) -> Result<()> {
+        if self.should_try_websocket(&request) {
+            match self
+                .websocket
+                .stream(self.inner.api_key(), &request, &tx)
+                .await?
+            {
+                WebSocketOutcome::Done => return Ok(()),
+                WebSocketOutcome::Fallback => {}
+            }
+        }
         self.inner.stream_openai_responses(request, tx).await
+    }
+
+    pub async fn openai_responses(
+        &self,
+        mut request: OpenAiResponsesRequest,
+    ) -> Result<OpenAiResponsesResponse> {
+        self.prepare_responses_request(&mut request, None);
+        self.dispatch_openai_responses(request).await
+    }
+
+    pub async fn stream_openai_responses(
+        &self,
+        mut request: OpenAiResponsesRequest,
+        tx: tokio::sync::mpsc::Sender<StreamChunk>,
+    ) -> Result<()> {
+        self.prepare_responses_request(&mut request, None);
+        self.dispatch_stream_openai_responses(request, tx).await
     }
 
     pub async fn retrieve_openai_response(
@@ -103,12 +321,25 @@ impl OpenAiResponsesClient {
         self.inner.cancel_openai_response(response_id).await
     }
 
+    /// Build a `/v1/responses/compact` request from a provider-neutral request,
+    /// preserving `instructions`, `previous_response_id`, and `input` while
+    /// omitting parameters rejected by the compact endpoint.
+    pub fn build_openai_responses_compact_request(
+        &self,
+        request: GenerationRequest,
+    ) -> Result<OpenAiResponsesCompactRequest> {
+        build_responses_compact_request_for_model(self.inner.model().to_string(), request)
+    }
+
     fn build_openai_responses_request(
         &self,
         request: GenerationRequest,
         stream: bool,
     ) -> Result<OpenAiResponsesRequest> {
-        self.inner.build_openai_responses_request(request, stream)
+        let session_key = request.session_key.clone();
+        let mut built = self.inner.build_openai_responses_request(request, stream)?;
+        self.prepare_responses_request(&mut built, session_key.as_deref());
+        Ok(built)
     }
 
     #[cfg(test)]
@@ -138,12 +369,25 @@ impl OpenAiResponsesClient {
     }
 }
 
+/// Default `prompt_cache_retention` for OpenAI Responses models.
+///
+/// OpenAI extended prompt cache retention (`"24h"`) is supported on `gpt-5*`
+/// and `gpt-4.1*` model families; other models omit the field by default.
+pub(crate) fn default_prompt_cache_retention(model: &str) -> Option<&'static str> {
+    let lower = model.trim().to_ascii_lowercase();
+    if lower.starts_with("gpt-5") || lower.starts_with("gpt-4.1") {
+        Some("24h")
+    } else {
+        None
+    }
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiResponsesClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         let response_request = self.build_openai_responses_request(request, false)?;
         let background_requested = response_request.background == Some(true);
-        let mut response = self.openai_responses(response_request).await?;
+        let mut response = self.dispatch_openai_responses(response_request).await?;
         if background_requested {
             response = self.wait_for_background_response(response).await?;
         }
@@ -167,12 +411,12 @@ impl LlmProvider for OpenAiResponsesClient {
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
         let response_request = self.build_openai_responses_request(request, true)?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        let client = Self {
-            inner: self.inner.clone_with_same_config(),
-        };
+        let client = self.clone_shared();
         let (status_tx, status_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let outcome = client.stream_openai_responses(response_request, tx).await;
+            let outcome = client
+                .dispatch_stream_openai_responses(response_request, tx)
+                .await;
             let _ = status_tx.send(outcome.err().as_ref().map(crate::safe_failure_reason));
         });
         Ok(crate::failure::guard_stream(rx, status_rx))
@@ -184,392 +428,6 @@ impl LlmProvider for OpenAiResponsesClient {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::MessageRole;
-    use serde_json::json;
-
-    #[test]
-    fn test_openai_responses_client_with_params() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        assert_eq!(client.provider_name(), "openai_responses");
-        drop(client);
-    }
-
-    #[test]
-    fn test_convert_messages_for_openai_responses_projects_tool_history() {
-        let messages = vec![
-            crate::Message {
-                role: MessageRole::Assistant,
-                content: "Let me inspect that.".to_string(),
-                content_parts: Vec::new(),
-                thinking: None,
-                thinking_signature: Some("enc_sig".to_string()),
-                redacted_thinking: None,
-                tool_calls: Some(vec![crate::ToolCall {
-                    id: Some("call_1".to_string()),
-                    name: "lookup".to_string(),
-                    arguments: json!({"query": "alan"}),
-                }]),
-                tool_call_id: None,
-            },
-            crate::Message {
-                role: MessageRole::Tool,
-                content: "{\"ok\":true}".to_string(),
-                content_parts: Vec::new(),
-                thinking: None,
-                thinking_signature: None,
-                redacted_thinking: None,
-                tool_calls: None,
-                tool_call_id: Some("call_1".to_string()),
-            },
-        ];
-
-        let converted =
-            crate::openai_chat_completions::convert_messages_for_openai_responses(messages)
-                .unwrap();
-        assert_eq!(converted.len(), 4);
-
-        match &converted[0] {
-            OpenAiResponsesInputItem::Reasoning(reasoning) => {
-                assert_eq!(reasoning.kind, "reasoning");
-                assert_eq!(reasoning.encrypted_content, "enc_sig");
-            }
-            _ => panic!("expected reasoning item"),
-        }
-
-        match &converted[1] {
-            OpenAiResponsesInputItem::Message(message) => {
-                assert_eq!(message.role, "assistant");
-                assert_eq!(message.content, json!("Let me inspect that."));
-            }
-            _ => panic!("expected assistant message"),
-        }
-
-        match &converted[2] {
-            OpenAiResponsesInputItem::FunctionCall(tool_call) => {
-                assert_eq!(tool_call.call_id, "call_1");
-                assert_eq!(tool_call.name, "lookup");
-                assert_eq!(tool_call.arguments, "{\"query\":\"alan\"}");
-            }
-            _ => panic!("expected function call"),
-        }
-
-        match &converted[3] {
-            OpenAiResponsesInputItem::FunctionCallOutput(tool_output) => {
-                assert_eq!(tool_output.call_id, "call_1");
-                assert_eq!(tool_output.output, "{\"ok\":true}");
-            }
-            _ => panic!("expected function call output"),
-        }
-    }
-
-    #[test]
-    fn test_build_openai_responses_request_moves_system_prompt_to_instructions() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client
-            .build_openai_responses_request(
-                GenerationRequest::new()
-                    .with_system_prompt("System prompt")
-                    .with_user_message("hello")
-                    .with_extra_param("previous_response_id", json!("resp_prev"))
-                    .with_extra_param("store", json!(false))
-                    .with_extra_param("include", json!(["metadata.foo"])),
-                false,
-            )
-            .unwrap();
-
-        assert_eq!(request.instructions.as_deref(), Some("System prompt"));
-        assert_eq!(request.previous_response_id.as_deref(), Some("resp_prev"));
-        assert_eq!(request.store, Some(false));
-        assert_eq!(
-            request.include.as_deref(),
-            Some(&["metadata.foo".to_string()][..])
-        );
-        assert_eq!(request.input.len(), 1);
-        match &request.input[0] {
-            OpenAiResponsesInputItem::Message(message) => {
-                assert_eq!(message.role, "user");
-                assert_eq!(message.content, json!("hello"));
-            }
-            _ => panic!("expected user message"),
-        }
-    }
-
-    #[test]
-    fn test_build_openai_responses_request_rejects_retired_input_override() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let error = client
-            .build_openai_responses_request(
-                GenerationRequest::new()
-                    .with_user_message("hello")
-                    .with_extra_param("responses_input_items", json!([])),
-                false,
-            )
-            .expect_err("retired override should fail before dispatch");
-
-        assert!(error.to_string().contains("responses_input_items"));
-        assert!(error.to_string().contains("Message::content_parts"));
-    }
-
-    #[test]
-    fn test_build_openai_responses_request_background_defaults_store_true() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client
-            .build_openai_responses_request(
-                GenerationRequest::new()
-                    .with_user_message("hello")
-                    .with_extra_param("background", json!(true)),
-                false,
-            )
-            .unwrap();
-
-        assert_eq!(request.background, Some(true));
-        assert_eq!(request.store, Some(true));
-    }
-
-    #[test]
-    fn test_build_openai_responses_request_adds_reasoning_include_for_tool_loops() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client
-            .build_openai_responses_request(
-                GenerationRequest::new()
-                    .with_user_message("hello")
-                    .with_tool(crate::ToolDefinition {
-                        name: "lookup".to_string(),
-                        description: "Lookup a record".to_string(),
-                        parameters: json!({
-                            "type": "object",
-                            "properties": { "query": { "type": "string" } },
-                            "required": ["query"]
-                        }),
-                    }),
-                false,
-            )
-            .unwrap();
-
-        assert_eq!(
-            request.include.as_deref(),
-            Some(&["reasoning.encrypted_content".to_string()][..])
-        );
-    }
-
-    #[test]
-    fn test_build_openai_responses_request_preserves_context_management() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client
-            .build_openai_responses_request(
-                GenerationRequest::new()
-                    .with_user_message("hello")
-                    .with_context_management_compact_threshold(8192),
-                false,
-            )
-            .unwrap();
-
-        assert_eq!(
-            request.extra_params.get("context_management"),
-            Some(&json!({ "compact_threshold": 8192 }))
-        );
-    }
-
-    #[test]
-    fn test_build_openai_responses_input_tokens_request_uses_responses_shape() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client
-            .build_openai_responses_input_tokens_request(
-                GenerationRequest::new()
-                    .with_system_prompt("System prompt")
-                    .with_user_message("hello")
-                    .with_tool(crate::ToolDefinition {
-                        name: "lookup".to_string(),
-                        description: "Lookup a record".to_string(),
-                        parameters: json!({
-                            "type": "object",
-                            "properties": { "query": { "type": "string" } },
-                            "required": ["query"]
-                        }),
-                    })
-                    .with_context_management_compact_threshold(8192)
-                    .with_extra_param("store", json!(true)),
-            )
-            .unwrap();
-
-        assert_eq!(request.instructions.as_deref(), Some("System prompt"));
-        assert_eq!(request.input.len(), 1);
-        assert!(request.tools.is_some());
-        assert_eq!(request.tool_choice.as_deref(), Some("auto"));
-        let tool = &request.tools.as_ref().expect("tools")[0];
-        assert_eq!(tool.kind, "function");
-        assert_eq!(tool.name, "lookup");
-        assert_eq!(tool.description, "Lookup a record");
-        assert_eq!(
-            tool.parameters,
-            json!({
-                "type": "object",
-                "properties": { "query": { "type": "string" } },
-                "required": ["query"]
-            })
-        );
-        assert!(!request.extra_params.contains_key("store"));
-        assert!(!request.extra_params.contains_key("context_management"));
-    }
-
-    #[test]
-    fn test_build_openai_responses_request_uses_responses_native_tool_shape() {
-        let client =
-            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client
-            .build_openai_responses_request(
-                GenerationRequest::new()
-                    .with_user_message("hello")
-                    .with_tool(crate::ToolDefinition {
-                        name: "lookup".to_string(),
-                        description: "Lookup a record".to_string(),
-                        parameters: json!({
-                            "type": "object",
-                            "properties": { "query": { "type": "string" } },
-                            "required": ["query"]
-                        }),
-                    }),
-                false,
-            )
-            .unwrap();
-
-        let tool = &request.tools.as_ref().expect("tools")[0];
-        assert_eq!(tool.kind, "function");
-        assert_eq!(tool.name, "lookup");
-        assert_eq!(tool.description, "Lookup a record");
-        assert_eq!(
-            tool.parameters,
-            json!({
-                "type": "object",
-                "properties": { "query": { "type": "string" } },
-                "required": ["query"]
-            })
-        );
-    }
-
-    #[test]
-    fn test_openai_responses_input_tokens_response_deserializes_openapi_shape() {
-        let response: OpenAiResponsesInputTokensResponse = serde_json::from_value(json!({
-            "object": "response.input_tokens",
-            "input_tokens": 11
-        }))
-        .expect("deserialize input token count response");
-
-        assert_eq!(response.object.as_deref(), Some("response.input_tokens"));
-        assert_eq!(response.input_tokens, 11);
-    }
-
-    #[test]
-    fn test_openai_responses_compact_response_deserializes_openapi_shape() {
-        let payload = json!({
-            "id": "resp_001",
-            "object": "response.compaction",
-            "created_at": 1764967971i64,
-            "output": [
-                {
-                    "id": "msg_000",
-                    "type": "message",
-                    "status": "completed",
-                    "content": [{"type": "input_text", "text": "hello"}],
-                    "role": "user"
-                },
-                {
-                    "id": "cmp_001",
-                    "type": "compaction",
-                    "encrypted_content": "opaque"
-                }
-            ],
-            "usage": {
-                "input_tokens": 139,
-                "output_tokens": 438,
-                "total_tokens": 577,
-                "output_tokens_details": {"reasoning_tokens": 64}
-            }
-        });
-
-        let response: OpenAiResponsesCompactResponse = serde_json::from_value(payload).unwrap();
-        assert_eq!(response.id.as_deref(), Some("resp_001"));
-        assert_eq!(response.object.as_deref(), Some("response.compaction"));
-        assert_eq!(response.created_at, Some(1764967971));
-        assert_eq!(response.output.len(), 2);
-        assert_eq!(response.output[1]["type"], json!("compaction"));
-        assert_eq!(response.output[1]["encrypted_content"], json!("opaque"));
-        assert_eq!(response.usage.unwrap().total_tokens, 577);
-    }
-
-    #[test]
-    fn test_convert_openai_responses_output_extracts_final_tool_arguments() {
-        let response = OpenAiResponsesResponse {
-            id: Some("resp_123".to_string()),
-            status: Some("completed".to_string()),
-            background: Some(false),
-            output: vec![
-                json!({
-                    "type": "reasoning",
-                    "summary": [{"text": "Inspecting tool input"}],
-                    "encrypted_content": "enc_reasoning"
-                }),
-                json!({
-                    "type": "message",
-                    "content": [
-                        {"type": "output_text", "text": "I'll look that up."}
-                    ]
-                }),
-                json!({
-                    "type": "function_call",
-                    "call_id": "call_1",
-                    "name": "lookup",
-                    "arguments": "{\"query\":\"alan\"}"
-                }),
-            ],
-            usage: Some(OpenAiResponsesUsage {
-                input_tokens: 11,
-                input_tokens_details: Some(
-                    crate::openai_chat_completions::OpenAiResponsesInputTokensDetails {
-                        cached_tokens: Some(4),
-                    },
-                ),
-                output_tokens: 22,
-                total_tokens: 33,
-                output_tokens_details: Some(OpenAiResponsesOutputTokensDetails {
-                    reasoning_tokens: Some(7),
-                }),
-            }),
-        };
-
-        let converted = convert_openai_responses_output(response);
-        assert_eq!(converted.content, "I'll look that up.");
-        assert_eq!(converted.thinking.as_deref(), Some("Inspecting tool input"));
-        assert_eq!(
-            converted.thinking_signature.as_deref(),
-            Some("enc_reasoning")
-        );
-        assert_eq!(converted.provider_response_id.as_deref(), Some("resp_123"));
-        assert_eq!(
-            converted.provider_response_status.as_deref(),
-            Some("completed")
-        );
-        assert_eq!(converted.finish_reason.as_deref(), Some("tool_calls"));
-        assert_eq!(converted.tool_calls.len(), 1);
-        assert_eq!(converted.tool_calls[0].id.as_deref(), Some("call_1"));
-        assert_eq!(converted.tool_calls[0].name, "lookup");
-        assert_eq!(converted.tool_calls[0].arguments, json!({"query": "alan"}));
-        assert_eq!(
-            converted.usage.map(|usage| usage.reasoning_tokens),
-            Some(Some(7))
-        );
-        assert_eq!(
-            converted.usage.map(|usage| usage.cached_prompt_tokens),
-            Some(Some(4))
-        );
-    }
-}
+mod tests;
+#[cfg(test)]
+mod websocket_tests;

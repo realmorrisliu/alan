@@ -340,16 +340,16 @@ async fn boundary_cancelled_and_failed_without_tape_do_not_resurrect() {
 }
 
 #[tokio::test]
-async fn boundary_paused_receipt_has_exact_id_and_explicit_controls() {
+async fn boundary_paused_receipt_omits_raw_id_and_shows_explicit_controls() {
     let (_, mut app, pending) = fixture().await;
     queue::confirm_local_receipts(&mut app, &pending);
     let notice = app.notice.as_deref().unwrap();
     assert!(
-        notice.contains("mine")
+        !notice.contains("mine")
             && notice.contains("paused")
             && notice.contains("/continue")
             && notice.contains("/discard"),
-        "paused exact-ID receipt needs explicit controls: {notice}"
+        "paused receipt needs explicit controls without raw UUID: {notice}"
     );
 }
 
@@ -515,11 +515,26 @@ async fn remaining_typed_queue_refresh_updates_once_only_receipt_hint() {
         app.queue
             .apply(&owner, queue::read_queue(&shell, &owner).await);
         queue::confirm_local_receipts(&mut app, &pending);
-        let hint = app.notice.as_deref().unwrap();
-        assert!(
-            hint.contains("mine") && hint.contains(state) && !hint.contains("queued or active"),
-            "typed current hint must refresh to {state}: {hint}"
-        );
+        if state == "active" {
+            assert!(
+                app.notice.is_none(),
+                "active admission should not flash noisy notice: {:?}",
+                app.notice
+            );
+        } else {
+            let hint = app.notice.as_deref().unwrap();
+            let expected = if state == "unconfirmed" {
+                "outcome unknown"
+            } else {
+                state
+            };
+            assert!(
+                !hint.contains("mine")
+                    && hint.contains(expected)
+                    && !hint.contains("queued or active"),
+                "typed current hint must refresh to {state} without raw id: {hint}"
+            );
+        }
         assert_eq!(app.composer.text(), "new draft");
         assert_eq!(app.composer.draft_revision(), revision);
     }

@@ -4,9 +4,7 @@
 Defines pluggable macOS and Linux Tool sandbox enforcement, safe degradation,
 projected confinement inputs, sensitive-read controls, and reified namespace
 behavior independent of command-text heuristics.
-
 ## Requirements
-
 ### Requirement: Pluggable OS sandbox backends
 Tool execution SHALL be constrained by a selectable sandbox backend behind a common abstraction, with macOS and Linux backends and a degraded path-guard fallback.
 
@@ -137,16 +135,20 @@ enforcement.
 
 ### Requirement: Linux reified namespace backend provides full read isolation
 The Linux reified namespace backend SHALL run native subprocesses inside a
-reified filesystem view derived from host-backed alan9 mount declarations when
+reified filesystem view derived from explicitly delegated Host Mount grants when
 the host has the required namespace capabilities. In this mode, undeclared host
 paths SHALL be absent from the subprocess view by default, providing full read
 isolation through filesystem reification rather than command parsing or a
-sensitive-read denylist.
+sensitive-read denylist. Authorized local trees SHALL be available at their
+adapter-supplied native execution paths, preserving command path identity.
+Namespace aliases such as `/mnt/project` SHALL NOT be required for native access.
+Virtual aP services SHALL NOT be implicitly materialized.
 
 #### Scenario: Reified backend exposes declared host mounts at namespace paths
-- **WHEN** a Linux runtime starts a native subprocess with a declared host-backed mount `/mnt/project`
-- **THEN** the subprocess sees the mounted content at `/mnt/project`
-- **AND** the subprocess does not need to use the original host path to access that mount
+- **WHEN** a Linux command receives a delegated local grant mounted in aP at `/mnt/project`
+- **THEN** the revised native command contract exposes that local content at its authorized native execution path instead of requiring the aP alias
+- **AND** command cwd and absolute paths agree with the adapter-provided execution context
+- **AND** Alan does not rewrite script operands to `/mnt/project`
 
 #### Scenario: Undeclared host paths are absent
 - **WHEN** a command running under the reified backend attempts to read an undeclared host path such as the user's home secret directory
@@ -159,20 +161,24 @@ sensitive-read denylist.
 - **AND** only host-backed declarations contribute native bind mounts
 
 ### Requirement: Reification preserves mount access and execution substrate boundaries
-The reified Linux backend SHALL distinguish declared host mounts from execution
-substrate. Declared read-write host mounts SHALL be writable where mounted;
-declared read-only host mounts SHALL be readable but not writable; execution
-substrate needed to launch commands SHALL be mounted read-only and SHALL NOT
-grant access to user data outside declared mounts.
+The reified Linux backend SHALL distinguish delegated host mounts from execution
+substrate. It SHALL expose each authorized local tree at the Host adapter-selected
+native execution path without requiring a second namespace alias. Declared
+read-write trees SHALL be writable only within that grant; declared read-only
+trees SHALL be readable but not writable. Execution substrate needed to launch
+commands SHALL be mounted read-only and SHALL NOT grant access to user data outside
+declared mounts.
 
 #### Scenario: Read-write host mount permits mutation at the reified path
-- **WHEN** a declared host mount has read-write access
-- **THEN** a native subprocess running under the reified backend can write under the corresponding reified namespace path
+- **WHEN** a delegated host mount has read-write access
+- **THEN** a native subprocess running under the reified backend can write under
+  the adapter-selected native execution path
 - **AND** writes outside declared writable mounts are rejected
 
 #### Scenario: Read-only host mount rejects mutation at the reified path
-- **WHEN** a declared host mount has read-only access
-- **THEN** a native subprocess running under the reified backend can read under the corresponding reified namespace path
+- **WHEN** a delegated host mount has read-only access
+- **THEN** a native subprocess running under the reified backend can read under
+  the adapter-selected native execution path
 - **AND** write attempts under that path are rejected
 
 #### Scenario: Execution substrate does not expose user data
@@ -205,7 +211,9 @@ unavailable.
 #### Scenario: Backend audit names the active path
 - **WHEN** a native subprocess is evaluated or executed
 - **THEN** the decision audit identifies whether the active Linux path is `linux_reified_namespace`, `landlock`, or `host_mount_path_guard`
-- **AND** the audit distinguishes reified namespace paths from projected host paths
+- **AND** the audit records the active confinement backend and logical cwd/grant reference,
+  not the native backing path
+- **AND** changing backends does not silently change command path meaning; an incompatible launch fails explicitly
 
 ### Requirement: Native shell preflight distinguishes supported read-only manifest inputs
 With an enforcing OS backend, native shell preflight SHALL validate the manifest
@@ -494,3 +502,4 @@ for an unexercised enforcing backend.
 - **WHEN** the reproducible fixture completes dependency build/test and git diff
 - **THEN** evidence records source, binary, selected tools/version, environment, backend, commands and exact artifact effects
 - **AND** read isolation, read-only access, network denial, revocation and descendant cancellation have independently checked outcomes
+

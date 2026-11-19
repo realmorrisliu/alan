@@ -175,8 +175,7 @@ fn lifetime_active_admission_is_not_execution() {
     app.refresh_local_input_hint("q", "/agent/42");
     assert_eq!(app.activity.state, UiActivityState::Paused);
     assert_eq!(app.activity_label(), Some("waiting for input"));
-    assert!(!app.notice.as_ref().unwrap().contains("running"));
-    assert!(app.notice.as_ref().unwrap().contains("active"));
+    assert!(app.notice.is_none());
     model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     for state in [UiActivityState::Idle, UiActivityState::Paused] {
         app.activity.state = state;
@@ -201,56 +200,59 @@ fn lifetime_active_admission_is_not_execution() {
 fn lifetime_queue_admission_and_execution_remain_visible_in_narrow_headers() {
     let mut app = FileBackedApp::new("/agent/root".into());
     model_tests::install_header_model(&mut app, "gpt-6.1-sol");
+    app.queue
+        .apply("/agent/root", Some(UiQueueSnapshot::default()));
+    assert!(super::layout::attention_line(&app, 0).is_none());
     for (queue, cues) in [
-        (UiQueueSnapshot::default(), &["queue unavailable"][..]),
+        (None, &["queue unavailable", "queue /status"][..]),
         (
-            UiQueueSnapshot {
+            Some(UiQueueSnapshot {
                 known: true,
                 revision: 1,
                 uncertain_submission_ids: vec!["uncertain".into()],
                 ..Default::default()
-            },
+            }),
             &["uncertain", "unc"],
         ),
         (
-            UiQueueSnapshot {
+            Some(UiQueueSnapshot {
                 known: true,
                 revision: 1,
                 deferred: true,
                 ..Default::default()
-            },
+            }),
             &["deferred", "def"],
         ),
         (
-            UiQueueSnapshot {
+            Some(UiQueueSnapshot {
                 known: true,
                 revision: 1,
                 paused: true,
                 ..Default::default()
-            },
+            }),
             &["paused", "hold"],
         ),
         (
-            UiQueueSnapshot {
+            Some(UiQueueSnapshot {
                 known: true,
                 revision: 1,
                 active_submission_ids: vec!["active".into()],
                 ..Default::default()
-            },
+            }),
             &["active", "act"],
         ),
         (
-            UiQueueSnapshot {
+            Some(UiQueueSnapshot {
                 known: true,
                 revision: 1,
                 pending_submission_ids: vec!["pending".into()],
                 ..Default::default()
-            },
+            }),
             &["queued", "q 1", "q+"],
         ),
     ] {
-        assert!(queue.is_valid());
-        app.queue.apply("/agent/root", Some(queue));
+        assert!(queue.as_ref().is_none_or(UiQueueSnapshot::is_valid));
+        app.queue.apply("/agent/root", queue);
         for (state, failed, states) in [
             (UiActivityState::Running, false, &["working", "run"][..]),
             (UiActivityState::Idle, false, &["ready"]),

@@ -4,7 +4,6 @@ use super::*;
 pub(in crate::file_backed) struct ModelChooser {
     pub active: bool,
     pub index: usize,
-    pub explicit: bool,
     pub catalog: Option<alan_agent_protocol::UiModelCatalog>,
     pub uncertain: Option<(String, String)>,
     pub pending: Option<(String, String)>,
@@ -25,9 +24,13 @@ impl FileBackedApp {
                 )
             },
         );
+        let usage = self
+            .usage
+            .status()
+            .map_or_else(String::new, |u| format!(" · {u}"));
         self.notice = Some(
             format!(
-                "cwd: {} · {project} · {} · {}",
+                "cwd: {} · {project} · {} · {}{usage}",
                 self.namespace_cwd.display(),
                 self.model.status(),
                 self.queue.label()
@@ -69,7 +72,6 @@ impl FileBackedApp {
             return None;
         }
         self.model_chooser.catalog = Some(catalog.clone());
-        self.model_chooser.explicit = false;
         self.model_chooser.active = true;
         self.model_chooser.index = 0;
         self.completion = None;
@@ -120,12 +122,10 @@ impl FileBackedApp {
                 self.notice = None;
             }
             KeyCode::Up => {
-                self.model_chooser.explicit = true;
                 self.model_chooser.index = self.model_chooser.index.saturating_sub(1);
                 self.refresh_model_choice();
             }
             KeyCode::Down => {
-                self.model_chooser.explicit = true;
                 let count = self
                     .model
                     .known()
@@ -136,9 +136,6 @@ impl FileBackedApp {
                 self.refresh_model_choice();
             }
             KeyCode::Enter => {
-                if !self.model_chooser.explicit {
-                    return None;
-                }
                 if !self.model_control_available() {
                     self.notice = Some("model selection blocked by admitted input".into());
                     return None;
@@ -183,7 +180,6 @@ impl FileBackedApp {
                 != self.model_chooser.catalog.as_ref()
         {
             self.model_chooser.active = false;
-            self.model_chooser.explicit = false;
             self.model_chooser.catalog = None;
             self.completion = None;
             self.notice = Some(Notice::warning(

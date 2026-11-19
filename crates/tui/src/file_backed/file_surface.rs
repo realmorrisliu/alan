@@ -5,7 +5,6 @@ use alan_agent_protocol::{
     UiActivityState, UiEvent, YieldKind,
 };
 use anyhow::{Context, Result, anyhow};
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -437,17 +436,7 @@ pub(super) fn spawn_terminal_events(
             match crossterm::event::poll(std::time::Duration::from_millis(100)) {
                 Ok(true) => match crossterm::event::read() {
                     Ok(event) => {
-                        let should_quit = matches!(
-                            event,
-                            TerminalEvent::Key(KeyEvent {
-                                code: KeyCode::Char('q'),
-                                modifiers,
-                                ..
-                            }) if modifiers.contains(KeyModifiers::CONTROL)
-                        );
-                        if tx.blocking_send(FileBackedEvent::Terminal(event)).is_err()
-                            || should_quit
-                        {
+                        if tx.blocking_send(FileBackedEvent::Terminal(event)).is_err() {
                             break;
                         }
                     }

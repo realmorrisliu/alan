@@ -1,6 +1,29 @@
 //! Renderer notifications correlated to the owning Process where required.
 use super::*;
 
+#[derive(Debug)]
+pub(in crate::file_backed) enum FileBackedAction {
+    Submit(alan_agent_protocol::UserInputRecord),
+    Resume {
+        request_id: String,
+        response: String,
+        retry_input: String,
+    },
+    MachineCtl {
+        command: String,
+        success_notice: String,
+    },
+    SelectModel {
+        owner: String,
+        id: String,
+        op: alan_agent_protocol::Op,
+    },
+    Project(ProjectControl),
+    RevokeCurrentProject,
+    Interrupt,
+    Quit,
+}
+
 pub(in crate::file_backed) enum FileBackedEvent {
     PlanDetails {
         path: String,
@@ -81,6 +104,12 @@ pub(in crate::file_backed) enum FileBackedEvent {
         owner: String,
     },
     SkillsUnavailable {
+        owner: String,
+    },
+    UsageChanged {
+        owner: String,
+    },
+    UsageUnavailable {
         owner: String,
     },
     RequestsChanged,

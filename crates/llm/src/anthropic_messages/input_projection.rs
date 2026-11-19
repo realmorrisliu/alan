@@ -58,6 +58,7 @@ pub(super) fn convert_messages_for_anthropic_messages(
                                 id,
                                 name: call.name,
                                 input: call.arguments,
+                                cache_control: None,
                             });
                         }
                     }
@@ -74,6 +75,7 @@ pub(super) fn convert_messages_for_anthropic_messages(
                             tool_use_id,
                             content,
                             is_error: None,
+                            cache_control: None,
                         }]
                     } else {
                         text_block(content).into_iter().collect()
@@ -115,7 +117,10 @@ pub(super) fn content_blocks(
 ) -> anyhow::Result<Vec<ContentBlockInput>> {
     if parts.is_empty() {
         return Ok((!fallback.is_empty())
-            .then_some(ContentBlockInput::Text { text: fallback })
+            .then_some(ContentBlockInput::Text {
+                text: fallback,
+                cache_control: None,
+            })
             .into_iter()
             .collect());
     }
@@ -139,10 +144,14 @@ fn content_block(
 ) -> anyhow::Result<Option<ContentBlockInput>> {
     Ok(match part {
         MessageContentPart::Text { text } => {
-            (!text.trim().is_empty()).then_some(ContentBlockInput::Text { text })
+            (!text.trim().is_empty()).then_some(ContentBlockInput::Text {
+                text,
+                cache_control: None,
+            })
         }
         MessageContentPart::Structured { data } => Some(ContentBlockInput::Text {
             text: data.to_string(),
+            cache_control: None,
         }),
         MessageContentPart::Attachment {
             hash,
@@ -186,7 +195,10 @@ fn plain_text_content(
 }
 
 fn text_block(content: String) -> Option<ContentBlockInput> {
-    is_non_empty(&content).then_some(ContentBlockInput::Text { text: content })
+    is_non_empty(&content).then_some(ContentBlockInput::Text {
+        text: content,
+        cache_control: None,
+    })
 }
 
 fn attachment_block(
@@ -209,7 +221,10 @@ fn attachment_block(
     };
 
     Ok(if mime_type.starts_with("image/") {
-        ContentBlockInput::Image { source }
+        ContentBlockInput::Image {
+            source,
+            cache_control: None,
+        }
     } else {
         ContentBlockInput::Document {
             source,
@@ -218,6 +233,7 @@ fn attachment_block(
                 .and_then(serde_json::Value::as_str)
                 .map(ToString::to_string),
             citations: None,
+            cache_control: None,
         }
     })
 }

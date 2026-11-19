@@ -8,6 +8,9 @@ context: |
   ADR-0054 retires the desktop product; ADR-0055 accepts mixed Machine direction
   beyond the shipped finite-choice Connection and no-effect input shadow slice.
   General mixed transitions and automatic routing remain unfinished.
+  ADR-0061 sets standard-terminal-native Alan, the OS-boundary security rule,
+  Quartermaster q v1 as the extension hub and four first-party providers; the
+  M1-M5 order lives in qualify-personal-daily-development/roadmap.md.
 
 rules:
   proposal:

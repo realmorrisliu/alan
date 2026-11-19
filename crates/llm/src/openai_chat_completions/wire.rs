@@ -192,11 +192,15 @@ pub struct OpenAiResponsesInputTokensResponse {
     pub input_tokens: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct OpenAiResponsesCompactRequest {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
     #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
     pub extra_params: HashMap<String, serde_json::Value>,
 }

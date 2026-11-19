@@ -283,13 +283,12 @@ fn test_to_provider_config_anthropic_messages_missing_key() {
 #[test]
 fn test_default_functions() {
     assert_eq!(default_llm_provider(), LlmProvider::OpenAiResponses);
-    assert_eq!(
-        default_google_gemini_generate_content_location(),
-        "us-central1"
-    );
+    assert_eq!(default_magpie_base_url(), "http://127.0.0.1:3425/v1");
+    assert_eq!(default_magpie_model(), "default");
+    assert_eq!(default_google_gemini_generate_content_location(), "global");
     assert_eq!(
         default_google_gemini_generate_content_model(),
-        "gemini-2.0-flash"
+        "gemini-2.5-flash"
     );
     assert_eq!(
         default_openai_responses_base_url(),
@@ -318,10 +317,7 @@ fn test_default_functions() {
         default_anthropic_messages_base_url(),
         "https://api.anthropic.com/v1"
     );
-    assert_eq!(
-        default_anthropic_messages_model(),
-        "claude-3-5-sonnet-latest"
-    );
+    assert_eq!(default_anthropic_messages_model(), "claude-sonnet-4-5");
     assert_eq!(default_llm_timeout_secs(), 180);
     assert_eq!(default_tool_timeout_secs(), 30);
     assert_eq!(default_prompt_snapshot_max_chars(), 8000);

@@ -22,6 +22,7 @@ mod operation_cleanup;
 mod process_files;
 pub(crate) use operation_cleanup::{NamespaceOperationCleanup, NamespaceOperationUncertainty};
 mod tool_execution;
+pub(crate) use tool_execution::PreparedToolAction;
 
 use std::{
     path::PathBuf,

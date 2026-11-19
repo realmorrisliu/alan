@@ -136,6 +136,10 @@ async fn hydrate_pinned_agent(
             agent_path,
             super::super::model::read_model(shell, agent_path).await,
         );
+        app.usage.apply(
+            agent_path,
+            super::super::usage::read_usage(shell, agent_path).await,
+        );
         app.queue.apply(
             agent_path,
             super::super::queue::read_queue(shell, agent_path).await,

@@ -45,13 +45,20 @@ pub(super) async fn run_bare_in_foreground_instance(
     paths: HostEndpointPaths,
     mode: BareRunMode,
     resume_root: bool,
+    ephemeral: bool,
+    cwd: Option<std::path::PathBuf>,
     shadow_evaluator: Option<String>,
 ) -> Result<i32> {
+    anyhow::ensure!(
+        !(ephemeral && resume_root),
+        "`--ephemeral` cannot be combined with `--resume`"
+    );
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("listen for Alan foreground interrupt")?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("listen for Alan instance shutdown")?;
-    let mut config = HostBootConfig::product_with_root_resume(resume_root)?;
+    let mut config =
+        HostBootConfig::product_with_root_resume(resume_root)?.with_ephemeral_rollout(ephemeral);
     if let Some(profile) = shadow_evaluator {
         let surface = match mode {
             BareRunMode::Interactive => alan_agent_engine::runtime::EvaluationSurface::Interactive,
@@ -76,12 +83,9 @@ pub(super) async fn run_bare_in_foreground_instance(
             match mode {
                 BareRunMode::Interactive => {
                     let store = alan_os_host::SystemStorePaths::detect()?;
-                    let mut config = interactive_config(
-                        attachment.root,
-                        root_model,
-                        std::env::current_dir().ok(),
-                        &store,
-                    )?;
+                    let candidate_cwd = cwd.or_else(|| std::env::current_dir().ok());
+                    let mut config =
+                        interactive_config(attachment.root, root_model, candidate_cwd, &store)?;
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {
                         let paths = project_paths.clone();

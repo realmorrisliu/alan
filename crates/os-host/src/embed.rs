@@ -254,6 +254,7 @@ impl EmbeddedConfig {
         Ok(ServiceManagerConfig {
             process: self.process,
             resume_root: self.resume_root,
+            ephemeral_rollout: false,
             input_shadow: None,
             launch_context,
             connection_store,

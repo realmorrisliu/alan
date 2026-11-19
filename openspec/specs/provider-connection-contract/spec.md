@@ -371,7 +371,7 @@ the desktop product. The Rust macOS Host adapter and Host-owned credential
 stores remain the current platform boundary for standalone CLI/Host use;
 removed desktop App surfaces are neither the owner nor a prerequisite for
 these flows. Desktop retirement SHALL NOT strand required credential
-functionality or transfer secret authority to Herdr or a terminal renderer.
+functionality or transfer secret authority to a terminal host or terminal renderer.
 
 Adapters SHALL return only opaque credential references and bounded results
 and MUST NOT maintain a second profile/default registry.
@@ -386,7 +386,7 @@ and MUST NOT maintain a second profile/default registry.
 - **WHEN** the retired desktop App source and its credential UI are absent
 - **THEN** the standalone CLI continues to use Connection Service and
   Host-owned credential storage
-- **AND** Connection Service remains the metadata owner and Herdr gains no
+- **AND** Connection Service remains the metadata owner and no terminal host gains
   credential authority
 
 ### Requirement: Responses function Tools preserve declared parameter optionality

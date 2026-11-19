@@ -62,6 +62,7 @@ pub use ui_models::{
 pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiInputStatus, UiNoticeKind,
     UiNoticeSnapshot, UiPlanSnapshot, UiQueueSnapshot, UiThinkingSnapshot, UiThinkingState,
+    UiUsageSnapshot,
 };
 
 pub use owner_work::{OwnerCandidate, OwnerSourceRange, OwnerWorkControl, OwnerWorkRequest};

@@ -49,6 +49,9 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# WebSocket transport (OpenAI Responses); rustls reuses the workspace TLS stack.
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+
 # SSE streaming
 eventsource-stream = "0.2"
 futures-core = "0.3"

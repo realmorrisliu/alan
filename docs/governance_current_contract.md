@@ -66,6 +66,10 @@ surface those decisions without introducing a second lifecycle authority.
 [project delegation](../openspec/changes/delegate-project-autonomy/) plan explicit
 saved scopes, qualified rapid review and bounded fallback. The separate
 [trust-posture change](../openspec/changes/add-explicit-trust-posture/) plans an
-invocation-only approval bypass and distinct Host-account selection. Current
+invocation-only approval bypass and distinct Host-account selection; per
+[ADR-0061](adr/0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md)
+it proceeds ahead of the delegation qualification corpus and adopts the OS-boundary
+rule (no static shell-text bans or Guardian prompts for effects the active
+confinement contains). Current
 single-posture rules remain until those deliveries; no new flags or broader
 permissions are enabled by these documents.

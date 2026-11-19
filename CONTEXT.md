@@ -43,6 +43,15 @@ implicitly. Its mountable control surface is published at `/srv/package`.
 **Quartermaster / `q`** — The product name and `/bin/q` command for package
 management. `q` is an ordinary Process over the Package Service file surface;
 it is not a Host command plane or a second package authority.
+Accepted direction (ADR-0061, not yet shipped): `q` v1 is the one extension hub
+for `skill`, `mcp`, `tool` and `provider` package kinds. Installing a package grants
+no authority, credential or mount.
+
+**First-party provider** — One of exactly four built-in provider integrations:
+`magpie`, OpenAI Responses/Codex, Google Cloud Vertex AI and OpenRouter. Other
+protocols, including Anthropic Messages, are protocol adapters offered through `q`
+provider packages. Connection Service still owns profile metadata.
+_Avoid_: Default provider list, built-in protocol set
 
 **Service Handle Registry (`/srv`)** — The rendezvous tree where a running file
 server posts a mountable handle. Service state belongs in the service's own
@@ -244,8 +253,8 @@ is not the bare CLI entry path.
 and `/proc` files and writes to their control surfaces.
 
 **Alan for macOS** — Retired desktop product whose App, helper and shell-core/FFI
-source has been removed (ADR-0054). Herdr is the preferred
-terminal host, not a replacement owner for alan9 lifecycle or permissions.
+source has been removed (ADR-0054). Alan runs in any ordinary terminal; the
+terminal is never an owner of alan9 lifecycle or permissions.
 
 **Alan Agent** — An optional Agent Workspace app for inspecting, steering, and
 organizing Agent Processes through files.
@@ -298,8 +307,8 @@ Tool, policy, Skill, memory, compaction, and persistence loop in
 **Alan terminal UI (`alan-terminal-ui`)** — The linked Ratatui renderer and
 input loop in `crates/tui`, backed by AgentFS and `/proc` files.
 
-The former desktop shell-core/FFI implementation has been removed. External
-terminal hosts own spaces, tabs and panes; Alan owns its Process execution.
+The former desktop shell-core/FFI implementation has been removed. Ordinary
+terminals own spaces, tabs and panes; Alan owns its Process execution.
 
 ## Explicit autonomy and continuity (accepted direction)
 

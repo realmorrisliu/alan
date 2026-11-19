@@ -101,6 +101,10 @@ async fn hydrated_runtime_error_keeps_history_without_a_duplicate_footer() {
 fn queue_completion_preserves_runtime_notice_with_identical_text() {
     use alan_agent_protocol::{InputIntent, UiNoticeKind, UiNoticeSnapshot, UiQueueSnapshot};
     let mut app = FileBackedApp::new("/agent/1".into());
+    app.queue.apply("/agent/1", None);
+    app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
+    app.show_submission_sent("q");
+    let text = app.notice.as_deref().unwrap().to_owned();
     app.queue.apply(
         "/agent/1",
         Some(UiQueueSnapshot {
@@ -110,9 +114,6 @@ fn queue_completion_preserves_runtime_notice_with_identical_text() {
             ..Default::default()
         }),
     );
-    app.track_local_input("q", "/agent/1".into(), "body".into(), InputIntent::Agent);
-    app.show_submission_sent("q");
-    let text = app.notice.as_deref().unwrap().to_owned();
     app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(UiNoticeKind::Warning, &text));
     app.refresh_local_input_hint("q", "/agent/1");
     assert_eq!(app.notice.as_ref().unwrap().kind, UiNoticeKind::Warning);

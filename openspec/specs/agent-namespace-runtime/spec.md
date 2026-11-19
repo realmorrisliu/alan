@@ -5,9 +5,7 @@ Defines the namespace-native Agent Execution Engine transition-loop boundary:
 model generation, Tool execution, AgentFS state, Process spawn, and shell
 conversation all flow through mounted files rather than injected providers or
 side-channel state.
-
 ## Requirements
-
 ### Requirement: The engine's environment is its namespace
 The Agent Execution Engine SHALL store and use exactly one environment value: a
 namespace handle (an aP client over its mounted root). It SHALL NOT wrap that
@@ -35,8 +33,8 @@ what its spawner mounted.
   runtime environment remains
 
 ### Requirement: Generation is a namespace file operation
-The engine's transition function SHALL be performed as file operations on the
-mounted LLM connection: open `/mnt/llm/connections/<conn>/clone` (clone-via-open),
+When an Agent Machine operation requires generation, it SHALL use file
+operations on the mounted LLM connection: open `/mnt/llm/connections/<conn>/clone` (clone-via-open),
 write the request document to `data` (committed on clunk), and read the token
 stream from `events`. The engine SHALL NOT call an `LlmProvider` trait method to
 generate. The `events` records are the source of truth for the model's output.
@@ -112,6 +110,10 @@ The engine SHALL NOT publish live state through `EventEnvelope`,
 `RuntimeEventEnvelope`, a broadcast sender, or a generic event-to-file
 projector.
 
+Command outputs, selected route and submission outcomes SHALL also be written
+by those existing owners, with executable effects referencing their Process and
+Action evidence. No final assistant generation is required for command results.
+
 #### Scenario: The engine produces output
 - **WHEN** the engine produces assistant text, a yield, or a Tool call
 - **THEN** the owning runtime component appends `io/output`, creates a
@@ -140,6 +142,30 @@ state, pending Yield, Tool replay state, active-task state, and deferred
 transition action inside one Agent Machine owner. Those values MUST NOT be
 independently mutable through a shared runtime field bag, and Agent Machine
 internals MUST NOT be a public cross-crate integration surface.
+
+This same owner SHALL manage accepted command intent, ordinary submission
+ordering and queue pause state. Cwd changes SHALL update the existing Process
+context authority; no independent renderer or Machine copy may become a second
+source of cwd truth.
+
+The Agent Machine SHALL own renderer-visible admission and queue disposition.
+After durable admission and disposition changes, it SHALL update the existing
+AgentFS renderer snapshots and file-owned records with the corresponding
+submission identities. These observations SHALL distinguish admitted paused
+work from input delivery awaiting admission; neither a renderer-local queue
+nor a successful input-stream write is authoritative admission. Snapshot
+publication failure SHALL remain observable and SHALL NOT cause replay or
+terminal settlement of an uncertain accepted input.
+
+#### Scenario: A delivered input is acknowledged
+- **WHEN** an input reaches the Machine admission boundary
+- **THEN** the owning durable admission record succeeds before its accepted disposition is published to AgentFS
+- **AND** a client can correlate that receipt by submission identity independently from eventual completion
+
+#### Scenario: A renderer observes a paused queue after reconnect
+- **WHEN** a renderer reads the current AgentFS admission and queue snapshot
+- **THEN** it sees the Machine-owned pending identities and pause disposition without reading private Machine fields
+- **AND** missing or stale observation is reported as unknown instead of inferred from elapsed time or local pending entries
 
 #### Scenario: A submission starts a transition
 - **WHEN** the outer Process loop accepts a `Submission`
@@ -233,8 +259,8 @@ later enforcement slice is present.
 #### Scenario: Generic process control is applied
 - **WHEN** a client interrupts or cancels an Agent Process
 - **THEN** the generic lifecycle command is written to `/proc/<pid>/ctl`
-- **AND** `machine/ctl` remains reserved for agent-runtime tape/checkpoint
-  commands such as `compact` and `rollback`
+- **AND** `machine/ctl` owns Agent work interruption, queue controls and
+  tape/checkpoint commands such as `compact` and `rollback`
 - **AND** the kernel interprets no agent-runtime control semantics
 
 #### Scenario: A sub-agent is given a narrower world
@@ -244,7 +270,7 @@ later enforcement slice is present.
 - **AND** the sub-agent cannot reach the withheld capabilities by any path
 
 ### Requirement: M2 — a real conversation flows entirely through files
-The shell-to-agent conversation SHALL be expressible end-to-end as file
+For Agent-route work requiring generation, the shell-to-agent conversation SHALL be expressible end-to-end as file
 operations with no RPC and no provider injection: the shell writes a message to
 the agent's `io/input`; the agent reads it, generates by reading `/mnt/llm`, and
 writes `io/output`; the shell tails `io/output`.
@@ -261,6 +287,10 @@ Agent Execution Engine SHALL derive file reachability, cwd, Tool execution,
 Agent Definition, Skills, policy, memory handles, and durable evidence
 references from the Agent Process namespace and descriptors. It MUST NOT own a
 workspace identity, workspace root, or Host `.alan` directory.
+
+The shared interaction cwd SHALL be owned by the Agent Process, visible to all
+attachments and updated by an authorized explicit user cd in execution order.
+Per-action cwd SHALL NOT update that shared value implicitly.
 
 #### Scenario: Runtime prepares a turn
 - **WHEN** an Agent Process begins a transition
@@ -527,3 +557,112 @@ as a substitute for live Tool authority checks.
 - **WHEN** a Tool registry has a global standalone binding but the Runtime's PID has no explicit binding
 - **THEN** namespace Runtime context omits that directory instead of projecting the standalone Host root
 - **AND** the ordinary standalone Tool execution path retains its existing explicitly configured default behavior
+
+### Requirement: One Agent Machine owns command and reasoning execution
+An Agent Machine SHALL own both deterministic command and generation transitions. Native commands SHALL reuse the governed Tool Process boundary, Action evidence and Process cwd authority; no competing executor SHALL be introduced.
+
+#### Scenario: Command execution uses the existing runtime owners
+- **WHEN** an Agent Machine advances a direct command or generated Tool call
+- **THEN** An Agent Machine SHALL advance accepted work through deterministic command operations
+  or generation using its existing namespace and governance. Direct commands SHALL not require a
+  generation step. Native shell execution SHALL use the ordinary governed Tool Process launch
+  boundary and existing action evidence, shared with Agent commands. The Host adapter SHALL
+  track native descendants; each shell fork need not create a separate Alan Process. Standalone
+  user cd SHALL update the owning Process context only after authorization. No renderer,
+  classifier or second execution manager SHALL own a competing execution path.
+
+#### Scenario: Explicit command needs no model
+- **WHEN** a valid explicit command has the authority required by its execution policy
+- **THEN** it executes without intent evaluation or generation
+- **AND** unavailable models do not grant missing authorization
+
+#### Scenario: Model-callable Tool and human executable differ
+- **WHEN** a human script names a native executable without an Alan Tool manifest
+- **THEN** execution still requires ordinary Process authority and applicable policy
+- **AND** the command does not thereby become a model-callable Tool
+
+### Requirement: Agent Process owns ordered input and shared cwd
+The Agent Process SHALL own ordered ordinary input, correlated outcomes and one authorized shared cwd. Standalone explicit user cd SHALL update that cwd in order; controls, request responses and per-action cwd SHALL retain their separate semantics.
+
+#### Scenario: Ordinary input uses the shared Process context
+- **WHEN** ordinary input or a standalone directory selection is admitted
+- **THEN** Ordinary accepted submissions SHALL execute in one Agent-owned order. Controls and
+  request responses SHALL retain their separate handling. The Agent Process SHALL own one cwd
+  reference to a delegated Host Mount and normalized relative location, resolved by the Host
+  adapter into native execution cwd. Standalone explicit user `cd <directory>` SHALL accept one
+  quoted/escaped literal Host or relative directory, or a public path under an already-delegated
+  Host Mount, and update it in execution order after access checks. No-arg, `-`, expansion and
+  substitution forms SHALL fail explicitly in this initial builtin. A native shell action SHALL
+  be scoped to the one grant referenced by shared cwd; selecting a different delegated grant
+  requires a separate standalone `!cd`. Composed scripts SHALL retain native shell cd semantics
+  without changing shared cwd. Virtual aP directories SHALL NOT serve as native execution cwd.
+  Per-action Agent cwd SHALL NOT silently change it. Each submission SHALL have correlated
+  outcomes.
+
+#### Scenario: Command follows a directory change
+- **WHEN** standalone `!cd subdir` succeeds before a queued relative command
+- **THEN** that command uses the updated authorized native cwd at execution time
+
+#### Scenario: Shared cwd switches to another delegated Host Mount
+- **WHEN** standalone `!cd /mnt/fixtures` selects an already-delegated Host Mount
+- **THEN** the Process stores that grant reference and its normalized relative cwd
+- **AND** later native shell actions use only that grant's backing and sandbox scope
+- **AND** the Host backing path remains adapter-private
+
+#### Scenario: Script changes its own directory
+- **WHEN** a user submits `!cd subdir && make` or Agent work changes its action cwd
+- **THEN** the change is local to that native action
+- **AND** later submissions use the unchanged shared Process cwd
+
+#### Scenario: Standalone directory change requests expansion
+- **WHEN** standalone user cd requests `~`, `$HOME`, command substitution or no operand
+- **THEN** it reports the supported literal-directory form without changing cwd
+
+#### Scenario: Directory change fails
+- **WHEN** explicit `cd` names an unavailable or unauthorized directory
+- **THEN** it fails and the prior cwd remains authoritative
+
+#### Scenario: Agent uses a temporary action directory
+- **WHEN** an Agent action executes in a different authorized directory
+- **THEN** later human commands retain the shared cwd unless an explicit user `cd` changed it
+
+#### Scenario: Interrupt pauses queued work
+- **WHEN** current work is interrupted with ordinary submissions waiting
+- **THEN** active work is cancelled and pending work remains paused for explicit continue or discard
+- **AND** controls stay responsive and completed effects are not automatically undone
+
+### Requirement: Restart does not imply input replay or directory substitution
+A fresh invocation SHALL recover prior work only by explicit selection, with current authority validation. Reliable pending work SHALL remain paused, unknown effects SHALL NOT replay automatically, and unavailable cwd or evidence SHALL NOT be silently substituted.
+
+#### Scenario: Recovery preserves execution and authority boundaries
+- **WHEN** an invocation starts or an attachment closes
+- **THEN** Only explicitly selected recovery SHALL restore earlier work into a fresh invocation.
+  Recoverable pending work SHALL remain paused until explicit continuation; a plain new launch
+  SHALL NOT select prior work automatically. Unknown effects SHALL require reconciliation before
+  any retry. Cwd SHALL be restored only from reliable state with valid current access; otherwise
+  directory-dependent work SHALL require an explicit directory choice. Missing records SHALL be
+  reported rather than reconstructed from textual Tape or reused PIDs. Closing an auxiliary
+  attachment to a still-live instance SHALL NOT trigger recovery. Actual application exit ends
+  its owned runtime.
+
+#### Scenario: Pending input is recovered
+- **WHEN** recovery finds a reliable pending submission record
+- **THEN** it exposes that work as paused rather than dispatching it automatically
+
+#### Scenario: Directory is no longer available
+- **WHEN** restored cwd cannot be validated against current namespace access
+- **THEN** directory-dependent work waits for an explicit choice or fails without a response channel
+- **AND** the runtime does not silently execute from another directory
+
+#### Scenario: Current directory is selected while recovered work remains paused
+- **WHEN** the user explicitly selects a directory in a currently authorized Host Mount after active work has settled
+- **THEN** the Agent Runtime accepts that directory choice through its existing file-native control lane and delegates validation and binding to the existing Process cwd owner
+- **AND** it reports the actual selected namespace cwd with correlated confirmation
+- **AND** queued ordinary inputs remain paused and no Tool, model request or pending effect is dispatched
+- **AND** project authorization alone does not continue queued work or choose a directory implicitly
+
+#### Scenario: Paused directory selection is rejected
+- **WHEN** the selected directory is unavailable, its grant is revoked, or active work has not settled
+- **THEN** the control reports correlated rejection and retains the previous authoritative cwd and queued inputs
+- **AND** it does not bypass ordinary command ordering for scripts or arbitrary commands
+
