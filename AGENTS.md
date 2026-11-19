@@ -145,6 +145,26 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 Desktop App, shell-core and FFI source has been removed. Validate standalone
 CLI behavior and macOS Rust platform adapters; no Apple UI build is needed.
 
+### Mac worker cargo (morris-mac-alan)
+
+On Morris's Mac worker host **morris-mac-alan**, agents must follow the wrapped-cargo
+rules in [`.cursor/rules/mac-worker-cargo.mdc`](.cursor/rules/mac-worker-cargo.mdc).
+On Linux CI and cloud agent VMs, plain `cargo` is fine; do not change justfile, scripts,
+or CI for these rules.
+
+Summary (commands must match the rule file):
+
+1. Invoke wrapped cargo: `~/.local/bin/cargo` by absolute path, or
+   `export PATH="$HOME/.local/bin:$PATH"` then `cargo`. Never bare `cargo` without one of
+   those.
+2. Never set `CARGO_TARGET_DIR` or pass `--target-dir`. Artifacts go to
+   `~/.cache/cargo-target/<repo-name>` automatically.
+3. Never leave a local `target/` directory in a worktree.
+4. Clean with `~/.local/bin/cargo clean` (or `cargo clean` after the PATH export). Never
+   `rm -rf` target dirs or use that to clean another repo.
+5. Verify: `~/.local/bin/cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])'` should print
+   `~/.cache/cargo-target/<repo-name>`.
+
 ## Rust style
 
 - Rust edition 2024, four spaces, 100-column target.

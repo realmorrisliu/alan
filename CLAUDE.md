@@ -9,6 +9,9 @@ language). This file is the short operational summary plus the rules that are ea
 
 - **OpenSpec owns all specs and design docs.** Change proposals, design docs, task lists, and spec deltas go in `openspec/changes/<change-id>/`; merged long-lived contracts live in `openspec/specs/`. Do NOT create spec files under `docs/superpowers/specs/`, `docs/spec/`, or `plans/` — this overrides any default workflow that writes design docs elsewhere. Completed changes are archived to `openspec/changes/archive/YYYY-MM-DD-<change-id>/`.
 - **Alan for macOS is retired**: use the standalone CLI/Host path (`just install`, `just standalone-distribution-test`). Desktop source is removed; do not restore its build, UI or packaging tasks.
+- **Mac worker (`morris-mac-alan`)**: follow wrapped-cargo rules in
+  [`.cursor/rules/mac-worker-cargo.mdc`](.cursor/rules/mac-worker-cargo.mdc) (see AGENTS.md);
+  Linux CI/cloud VMs may use plain `cargo`.
 - **After Rust changes**: run `just verify` (fmt + lint + test + mock smoke).
 - New/edited Rust tests follow `openspec/specs/rust-test-placement-contract/spec.md`: choose inline unit tests, extracted white-box test files, or crate-level integration tests deliberately.
 - Branch from `main`; conventional-style commit messages recommended (for example,
