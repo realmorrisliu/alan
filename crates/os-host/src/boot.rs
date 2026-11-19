@@ -3,7 +3,8 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use alan_agent_engine::{
-    AgentProcessConfig, Config, LlmClient, ProcessDescriptor, ProcessFileTree, ToolRegistry,
+    AgentProcessConfig, Config, LlmClient, MemoryDomain, ProcessDescriptor, ProcessFileTree,
+    ToolRegistry,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
@@ -405,11 +406,29 @@ impl HostBootConfig {
 
 pub(crate) fn prepare_system_store_launch(
     system_store: &SystemStorePaths,
-    mut namespace: Namespace,
+    namespace: Namespace,
     process: &mut AgentProcessConfig,
     definition_override: Option<ProcessFileTree>,
 ) -> Result<ProcessLaunchContext> {
-    let memory_store_backing = system_store.memory_stores()?.join("default");
+    prepare_system_store_launch_for_domain(
+        system_store,
+        namespace,
+        process,
+        definition_override,
+        &MemoryDomain::Default,
+    )
+}
+
+/// Bind an explicit domain-partitioned Memory Store (`default`, `personal`, `continuity`,
+/// `app:<id>`, `project:<slug>`) into `/memory` for one System Store launch.
+pub(crate) fn prepare_system_store_launch_for_domain(
+    system_store: &SystemStorePaths,
+    mut namespace: Namespace,
+    process: &mut AgentProcessConfig,
+    definition_override: Option<ProcessFileTree>,
+    memory_domain: &MemoryDomain,
+) -> Result<ProcessLaunchContext> {
+    let memory_store_backing = system_store.memory_store_for_domain(memory_domain)?;
     std::fs::create_dir_all(&memory_store_backing)
         .context("failed to prepare Memory Store backing")?;
     let memory_store =

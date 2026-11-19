@@ -73,10 +73,13 @@ pub use rollout::{
     RolloutItem, RolloutRecorder, ToolCallRecord, process_storage_key,
 };
 pub use runtime::{
-    AgentConfig, AgentProcessConfig, HookDecision, ProjectContinuitySummary,
-    ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome, ProjectSummaryEdit,
-    ProjectSummaryOrigin, RuntimeController, RuntimeHandle, ToolPolicyHook, delete_project_summary,
+    AgentConfig, AgentProcessConfig, DomainRecallScope, HookDecision, MemoryDomain,
+    MemorySearchHit, ProjectContinuitySummary, ProjectContinuitySummaryView,
+    ProjectSummaryDeleteOutcome, ProjectSummaryEdit, ProjectSummaryOrigin, RuntimeController,
+    RuntimeHandle, ToolPolicyHook, build_turn_recall_bundle_for_domains, delete_project_summary,
     derive_project_key, edit_project_summary, inspect_project_summary,
-    spawn_with_namespace_environment, validate_response_schema,
+    list_existing_memory_domains, resolve_domain_store_dir, search_memory_domains,
+    search_memory_store, spawn_with_namespace_environment, validate_domain_slug,
+    validate_response_schema,
 };
 pub use tools::ToolRegistry;

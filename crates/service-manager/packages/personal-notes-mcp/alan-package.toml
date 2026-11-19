@@ -1,0 +1,16 @@
+schema_version = 1
+kind = "mcp"
+version = "0.1.0"
+description = "Read-only personal Markdown notes connector over explicit directory mounts."
+
+[mcp]
+id = "personal-notes"
+description = "List, search, and read Markdown notes inside an explicitly supplied NOTES_DIR."
+capability = "read"
+timeout_secs = 15
+
+[mcp.transport]
+type = "stdio"
+command = "bin/notes-mcp.py"
+args = []
+allow_network = false

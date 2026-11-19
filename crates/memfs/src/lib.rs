@@ -1,20 +1,35 @@
 //! alan-memfs — Memory Store file server backed by content-addressed knowledge.
 //!
-//! The server is intentionally small: callers see ordinary files under the
-//! mounted tree (for example `/mnt/mem/facts`). File bytes are stored as immutable
-//! knowledge blocks behind a namespace-bound checkpoint root, so memory/context
-//! reads stay file-shaped while persistence can deduplicate, verify, and garbage
-//! collect by reachability.
+//! Callers see ordinary files under the mounted tree (for example
+//! `/mnt/mem/facts`) alongside a read-only `recall/<query>` (alias
+//! `search/<query>`) query surface powered by `alan-knowledge`'s pure-Rust
+//! BM25 + CJK + English recall engine. File bytes are stored as immutable
+//! knowledge blocks behind namespace-bound checkpoint roots, tracking per-file
+//! checkpoint history for versioned rollbacks.
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, VersionTable};
+use alan_knowledge::recall::{IndexedDoc, Ranker, SearchHit, format_hits_json};
 use alan_knowledge::{BoundRoot, ContentHash, KnowledgeError, KnowledgeStore, RootAccess};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
+const MAX_CHECKPOINT_HISTORY: usize = 64;
+const DEFAULT_SURFACE_SEARCH_LIMIT: usize = 16;
+const RECALL_HELP: &str = "# memfs recall/search — read-only BM25 + CJK query surface\n\
+Walk `recall/<query>` or `search/<query>` and open ReadOnly to retrieve ranked JSON hits.\n";
+
+/// One recorded content-addressed checkpoint revision for a [`MemFs`] file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryCheckpointRevision {
+    /// Monotonic revision number assigned on commit or restore.
+    pub revision: u64,
+    /// Content-addressed checkpoint root hash for this revision.
+    pub root: ContentHash,
+}
 
 /// A memory/context file server backed by content-addressed checkpoint roots.
 pub struct MemFs {
@@ -24,14 +39,17 @@ pub struct MemFs {
 struct State {
     store: KnowledgeStore,
     files: BTreeMap<String, MemoryFile>,
+    history: HashMap<String, Vec<MemoryCheckpointRevision>>,
     versions: VersionTable,
     fids: HashMap<Fid, MemFid>,
     next_file_generation: u64,
+    next_revision_seq: u64,
 }
 
 struct MemoryFile {
     root: BoundRoot,
     generation: u64,
+    recency: u64,
 }
 
 struct MemFid {
@@ -46,6 +64,8 @@ struct MemFid {
 enum Node {
     Root,
     File(String),
+    RecallDir(&'static str),
+    RecallQuery { dir: &'static str, query: String },
 }
 
 impl Default for MemFs {
@@ -61,9 +81,11 @@ impl MemFs {
             state: Mutex::new(State {
                 store: KnowledgeStore::new(),
                 files: BTreeMap::new(),
+                history: HashMap::new(),
                 versions: VersionTable::new(),
                 fids: HashMap::new(),
                 next_file_generation: 1,
+                next_revision_seq: 1,
             }),
         }
     }
@@ -73,6 +95,18 @@ impl MemFs {
         let state = self.state.lock().await;
         let file = state.files.get(name).ok_or(ErrorCode::NotFound)?;
         Ok(file.root.root_hash().clone())
+    }
+
+    /// Return the recorded checkpoint revision history for a named file (oldest to newest).
+    pub async fn checkpoint_history(
+        &self,
+        name: &str,
+    ) -> Result<Vec<MemoryCheckpointRevision>, ErrorCode> {
+        let state = self.state.lock().await;
+        if !state.files.contains_key(name) {
+            return Err(ErrorCode::NotFound);
+        }
+        Ok(state.history.get(name).cloned().unwrap_or_default())
     }
 
     /// Bind an existing checkpoint root back into this memory tree.
@@ -94,6 +128,67 @@ impl MemFs {
         let generation = state.next_generation();
         state.bind_file_root(name, root, generation)?;
         Ok(())
+    }
+
+    /// Revert a named file to an explicit historical checkpoint root.
+    pub async fn revert_to_checkpoint(
+        &self,
+        name: &str,
+        target_root: &ContentHash,
+    ) -> Result<ContentHash, ErrorCode> {
+        let mut state = self.state.lock().await;
+        if !state.files.contains_key(name) {
+            return Err(ErrorCode::NotFound);
+        }
+        let in_history = state
+            .history
+            .get(name)
+            .is_some_and(|revs| revs.iter().any(|rev| &rev.root == target_root));
+        if !in_history && !state.store.contains_node(target_root) {
+            return Err(ErrorCode::NotFound);
+        }
+        state
+            .store
+            .verify_root_hash(target_root)
+            .map_err(map_knowledge_error)?;
+        let generation = state.next_generation();
+        state.bind_file_root(name.to_string(), target_root.clone(), generation)?;
+        Ok(target_root.clone())
+    }
+
+    /// Revert a named file to its immediately preceding distinct checkpoint root.
+    pub async fn revert_previous(&self, name: &str) -> Result<ContentHash, ErrorCode> {
+        let mut state = self.state.lock().await;
+        let current_root = state
+            .files
+            .get(name)
+            .ok_or(ErrorCode::NotFound)?
+            .root
+            .root_hash()
+            .clone();
+        let target_root = state
+            .history
+            .get(name)
+            .and_then(|revs| {
+                revs.iter()
+                    .rev()
+                    .find(|rev| rev.root != current_root)
+                    .map(|rev| rev.root.clone())
+            })
+            .ok_or(ErrorCode::NotFound)?;
+        state
+            .store
+            .verify_root_hash(&target_root)
+            .map_err(map_knowledge_error)?;
+        let generation = state.next_generation();
+        state.bind_file_root(name.to_string(), target_root.clone(), generation)?;
+        Ok(target_root)
+    }
+
+    /// Search live UTF-8 memory files using `alan-knowledge`'s BM25 + CJK ranker.
+    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, ErrorCode> {
+        let state = self.state.lock().await;
+        state.search_files(query, limit)
     }
 
     /// Verify and materialize a named file through its namespace-bound root.
@@ -130,10 +225,41 @@ impl State {
             .map_err(map_knowledge_error)
     }
 
+    fn search_files(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, ErrorCode> {
+        let mut docs = Vec::with_capacity(self.files.len());
+        for (name, file) in &self.files {
+            let bytes = self
+                .store
+                .read_bound_root(&file.root)
+                .map_err(map_knowledge_error)?;
+            if let Ok(text) = String::from_utf8(bytes) {
+                docs.push(
+                    IndexedDoc::new(name.clone(), format!("{name}\n{text}"))
+                        .with_content_hash(file.root.root_hash().clone())
+                        .with_recency(file.recency),
+                );
+            }
+        }
+        let ranker = Ranker::new(docs);
+        Ok(ranker.search(query, limit))
+    }
+
+    fn render_query_json(&self, query: &str) -> Result<Vec<u8>, ErrorCode> {
+        let hits = self.search_files(query, DEFAULT_SURFACE_SEARCH_LIMIT)?;
+        let json = format_hits_json(&hits).map_err(|_| ErrorCode::Io)?;
+        Ok(format!("{json}\n").into_bytes())
+    }
+
     fn next_generation(&mut self) -> u64 {
         let generation = self.next_file_generation;
         self.next_file_generation = self.next_file_generation.wrapping_add(1);
         generation
+    }
+
+    fn next_revision(&mut self) -> u64 {
+        let revision = self.next_revision_seq;
+        self.next_revision_seq = self.next_revision_seq.wrapping_add(1);
+        revision
     }
 
     fn put_file(&mut self, name: String, bytes: &[u8]) -> Result<u64, ErrorCode> {
@@ -179,18 +305,53 @@ impl State {
     ) -> Result<(), ErrorCode> {
         let binding = self
             .store
-            .bind_root(root_name(&name), root, RootAccess::ReadWrite)
+            .bind_root(root_name(&name), root.clone(), RootAccess::ReadWrite)
             .map_err(map_knowledge_error)?;
+        let _ = self.store.pin_root(&root);
+        let revision = self.next_revision();
+        let history = self.history.entry(name.clone()).or_default();
+        if history.last().is_none_or(|last| last.root != root) {
+            history.push(MemoryCheckpointRevision { revision, root });
+            while history.len() > MAX_CHECKPOINT_HISTORY {
+                let removed = history.remove(0);
+                let still_referenced = history.iter().any(|rev| rev.root == removed.root);
+                if !still_referenced {
+                    self.store.unpin_root(&removed.root);
+                }
+            }
+        }
         self.files.insert(
             name.clone(),
             MemoryFile {
                 root: binding,
                 generation,
+                recency: revision,
             },
         );
         self.versions.bump(node_identity(&Node::Root).1);
         self.versions.bump(node_identity(&Node::File(name)).1);
         Ok(())
+    }
+
+    fn step_node(&self, node: &Node, segment: &str) -> Result<Node, ErrorCode> {
+        match node {
+            Node::Root => match segment {
+                "recall" => Ok(Node::RecallDir("recall")),
+                "search" => Ok(Node::RecallDir("search")),
+                _ if self.files.contains_key(segment) => Ok(Node::File(segment.to_string())),
+                _ => Err(ErrorCode::NotFound),
+            },
+            Node::RecallDir(dir) => {
+                if segment.is_empty() || segment.contains('\n') {
+                    return Err(ErrorCode::BadRequest);
+                }
+                Ok(Node::RecallQuery {
+                    dir,
+                    query: segment.to_string(),
+                })
+            }
+            Node::File(_) | Node::RecallQuery { .. } => Err(ErrorCode::NotDirectory),
+        }
     }
 }
 
@@ -201,18 +362,13 @@ impl FileServer for MemFs {
         if newfid == Fid::ROOT || state.fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
-        let node = match state.node_of(fid)? {
-            Node::Root if names.is_empty() => Node::Root,
-            Node::Root if names.len() == 1 && state.files.contains_key(&names[0]) => {
-                Node::File(names[0].clone())
-            }
-            Node::Root if names.len() == 1 => return Err(ErrorCode::NotFound),
-            Node::Root => return Err(ErrorCode::NotDirectory),
-            Node::File(_) => return Err(ErrorCode::NotDirectory),
-        };
+        let mut node = state.node_of(fid)?;
+        for name in names {
+            node = state.step_node(&node, name)?;
+        }
         let file_generation = match &node {
-            Node::Root => None,
             Node::File(name) => Some(state.files.get(name).ok_or(ErrorCode::NotFound)?.generation),
+            Node::Root | Node::RecallDir(_) | Node::RecallQuery { .. } => None,
         };
         let qid = state.qid(&node);
         state.fids.insert(
@@ -234,7 +390,7 @@ impl FileServer for MemFs {
         if fid != Fid::ROOT && state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
             return Err(ErrorCode::BadRequest);
         }
-        if matches!(node, Node::Root) && matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
+        if !is_writable_node(&node) && matches!(mode, OpenMode::Write | OpenMode::ReadWrite) {
             return Err(ErrorCode::NoAccess);
         }
         if let Node::File(name) = &node
@@ -245,7 +401,7 @@ impl FileServer for MemFs {
         let read_write_base = if matches!(mode, OpenMode::ReadWrite) {
             match &node {
                 Node::File(name) => Some(state.materialize(name)?),
-                Node::Root => None,
+                Node::Root | Node::RecallDir(_) | Node::RecallQuery { .. } => None,
             }
         } else {
             None
@@ -277,6 +433,8 @@ impl FileServer for MemFs {
                 .join("\n")
                 .into_bytes(),
             Node::File(name) => state.materialize(&name)?,
+            Node::RecallDir(_) => RECALL_HELP.as_bytes().to_vec(),
+            Node::RecallQuery { query, .. } => state.render_query_json(&query)?,
         };
         Ok(slice(bytes, offset, count))
     }
@@ -315,13 +473,15 @@ impl FileServer for MemFs {
                 .join("\n")
                 .len() as u64,
             Node::File(name) => state.materialize(name)?.len() as u64,
+            Node::RecallDir(_) => RECALL_HELP.len() as u64,
+            Node::RecallQuery { query, .. } => state.render_query_json(query)?.len() as u64,
         };
         Ok(Stat {
             name: String::new(),
             qid: state.qid(&node),
             length,
             executable: false,
-            writable: matches!(node, Node::File(_)),
+            writable: is_writable_node(&node),
         })
     }
 
@@ -368,6 +528,11 @@ impl FileServer for MemFs {
             return Err(ErrorCode::Unsupported);
         };
         state.files.remove(&name).ok_or(ErrorCode::NotFound)?;
+        if let Some(revisions) = state.history.remove(&name) {
+            for rev in revisions {
+                state.store.unpin_root(&rev.root);
+            }
+        }
         state
             .store
             .unbind_root(&root_name(&name))
@@ -394,8 +559,15 @@ impl FileServer for MemFs {
     }
 }
 
+fn is_writable_node(node: &Node) -> bool {
+    matches!(node, Node::File(_))
+}
+
 fn valid_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\n')
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\n')
+        && !matches!(name, "recall" | "search")
 }
 
 fn root_name(name: &str) -> String {
@@ -406,6 +578,8 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
     let (kind, key) = match node {
         Node::Root => (FileKind::Dir, "/".to_string()),
         Node::File(name) => (FileKind::File, name.clone()),
+        Node::RecallDir(dir) => (FileKind::Dir, format!("/{dir}")),
+        Node::RecallQuery { dir, query } => (FileKind::File, format!("/{dir}/{query}")),
     };
     let mut h = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut h);

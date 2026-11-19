@@ -1,11 +1,14 @@
 pub mod about;
 pub mod attachments;
 pub mod connection;
+pub mod dispatch;
 pub mod host;
 pub mod man;
+pub mod memory;
 pub mod q;
 pub mod skill_authoring;
 pub mod skill_eval;
 pub mod skills;
 pub mod skills_list;
 pub mod trust;
+pub mod workflow;

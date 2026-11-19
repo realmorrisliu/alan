@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use alan_agent_engine::AgentRuntimeStoreBindings;
+use alan_agent_engine::{AgentRuntimeStoreBindings, MemoryDomain, resolve_domain_store_dir};
 use alan_service_manager::ConnectionStoreBindings;
 use anyhow::{Context, Result, ensure};
 
@@ -69,6 +69,11 @@ impl SystemStorePaths {
 
     pub fn memory_stores(&self) -> Result<PathBuf> {
         Ok(self.service("memory")?.join("stores"))
+    }
+
+    /// Resolve a domain-partitioned Memory Store directory under `services/memory/stores/`.
+    pub fn memory_store_for_domain(&self, domain: &MemoryDomain) -> Result<PathBuf> {
+        resolve_domain_store_dir(&self.memory_stores()?, domain)
     }
 
     pub fn agent_definitions(&self) -> Result<PathBuf> {
@@ -202,5 +207,35 @@ mod tests {
         assert_eq!(system.root, app_root.join("system"));
         assert_eq!(host.credentials, app_root.join("host/credentials"));
         assert_eq!(host.managed_auth, app_root.join("host/auth.json"));
+    }
+
+    #[test]
+    fn memory_store_for_domain_partitions_stores_cleanly() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let store = SystemStorePaths::from_root(&temp.path().join("System Store")).unwrap();
+        assert_eq!(
+            store
+                .memory_store_for_domain(&MemoryDomain::Personal)
+                .unwrap(),
+            store.memory_stores().unwrap().join("personal")
+        );
+        assert_eq!(
+            store
+                .memory_store_for_domain(&MemoryDomain::Continuity)
+                .unwrap(),
+            store.memory_stores().unwrap().join("continuity")
+        );
+        assert_eq!(
+            store
+                .memory_store_for_domain(&MemoryDomain::App("slowpage".to_string()))
+                .unwrap(),
+            store.memory_stores().unwrap().join("app/slowpage")
+        );
+        assert_eq!(
+            store
+                .memory_store_for_domain(&MemoryDomain::Project("alan".to_string()))
+                .unwrap(),
+            store.memory_stores().unwrap().join("project/alan")
+        );
     }
 }

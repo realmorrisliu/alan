@@ -17,6 +17,7 @@ mod interaction_tools;
 mod launch_config;
 mod loop_guard;
 pub mod mcp;
+mod memory_domains;
 mod memory_flush;
 mod memory_promotion;
 mod memory_recall;
@@ -63,6 +64,14 @@ pub use controller::{
 };
 pub use engine::spawn_with_namespace_environment;
 pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
+pub use memory_domains::{
+    DomainRecallScope, MemoryDomain, list_existing_memory_domains, resolve_domain_store_dir,
+    validate_domain_slug,
+};
+pub use memory_recall::{
+    MemorySearchHit, build_turn_recall_bundle_for_domains, search_memory_domains,
+    search_memory_store,
+};
 pub use memory_surfaces::project_summary::{
     ProjectContinuitySummary, ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome,
     ProjectSummaryEdit, ProjectSummaryOrigin, delete_project_summary, derive_project_key,

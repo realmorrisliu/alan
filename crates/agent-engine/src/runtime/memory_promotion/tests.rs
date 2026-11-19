@@ -811,6 +811,50 @@ fn promoted_observation_from_line_uses_last_promoted_from_suffix() {
     );
 }
 
+#[tokio::test]
+async fn stage_and_promote_scrub_secret_tokens_on_write() {
+    let temp = TempDir::new().unwrap();
+    let memory_dir = temp.path().join("memory-store");
+    ensure_memory_store_layout_at(&memory_dir).unwrap();
+    let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+    let inbox_path = stage_inbox_entry(
+        &memory_dir,
+        InboxEntryDraft {
+            kind: "domain_fact",
+            target: MEMORY_STORE_FILENAME.to_string(),
+            confidence: "high",
+            observation: "Service uses sk-ant-secret1234567890 and Bearer top_secret_bearer"
+                .to_string(),
+            evidence: vec!["Token ghp_secret1234567890abcdef observed".to_string()],
+            promotion_rationale: "Key AIzaSyDummyKeyValue123456789 must be redacted".to_string(),
+            source_processes: vec!["sess-secret".to_string()],
+        },
+        now,
+    )
+    .await
+    .unwrap();
+
+    let staged = tokio::fs::read_to_string(&inbox_path).await.unwrap();
+    assert!(!staged.contains("sk-ant-secret1234567890"), "{staged}");
+    assert!(!staged.contains("top_secret_bearer"), "{staged}");
+    assert!(!staged.contains("ghp_secret1234567890abcdef"), "{staged}");
+    assert!(!staged.contains("AIzaSyDummyKeyValue123456789"), "{staged}");
+    assert!(staged.contains("[REDACTED"), "{staged}");
+
+    let outcome = promote_inbox_entry(&memory_dir, &inbox_path, now, &CancellationToken::new())
+        .await
+        .unwrap();
+    let promoted = tokio::fs::read_to_string(outcome.target_path)
+        .await
+        .unwrap();
+    assert!(!promoted.contains("sk-ant-secret1234567890"), "{promoted}");
+    assert!(!promoted.contains("top_secret_bearer"), "{promoted}");
+    assert!(promoted.contains("[REDACTED"), "{promoted}");
+}
+
 fn mock_generation_response(content: String) -> GenerationResponse {
     GenerationResponse {
         content,

@@ -16,7 +16,7 @@ ${BRAILLE_MASCOT}
     ${K}/agent${X}   AgentFS views of Agent Processes (/agent/<pid>)
     ${K}/srv${X}     Mountable file-server handles (aP protocol)
     ${K}/bin${X}     Tools & Agent Executables (/bin/alan, /bin/q)
-    ${K}/lib${X}     Immutable projected Skill packages
+    ${K}/lib${X}     Immutable Quartermaster packages (skill, mcp, tool, provider)
     ${K}/man${X}     Manual pages
     ${K}/mnt${X}     Explicitly authorized Host Mounts
 

@@ -27,11 +27,21 @@ const INITIAL_TAPE = [
   '0005  [out]        "4 file-server services mounted under /srv."',
 ].join('\n');
 
+interface QuartermasterPackage {
+  id: string;
+  kind: 'skill' | 'mcp' | 'tool' | 'provider';
+}
+
 export class Alan9Shell {
   private root: FsNode;
   private cwd = '/';
   private tapeSeq = 5;
-  private installedSkills = ['code-review', 'openspec-check'];
+  private installedPackages: QuartermasterPackage[] = [
+    { id: 'code-review', kind: 'skill' },
+    { id: 'openspec-check', kind: 'skill' },
+    { id: 'personal-notes-mcp', kind: 'mcp' },
+    { id: 'anthropic-provider', kind: 'provider' },
+  ];
   private history: string[] = [];
   private historyIdx = -1;
   private listeners: Array<() => void> = [];
@@ -154,12 +164,23 @@ export class Alan9Shell {
             },
             package: {
               type: 'file',
-              content: 'service: Package Service\nclient: /bin/q (Quartermaster)\nprotocol: aP/1',
+              content:
+                'service: Package Service\nclient: /bin/q (Quartermaster)\nkinds: skill, mcp, tool, provider\nauthority: zero installation-time authority (explicit ref required)\nprotocol: aP/1',
             },
             connections: {
               type: 'file',
-              content:
-                'service: Connection Service\ndefault_profile: chatgpt-main\nsecrets: isolated in Host Store',
+              content: [
+                'service: Connection Service',
+                'default_profile: chatgpt-main',
+                'first_party_providers:',
+                '  - magpie',
+                '  - openai_responses / chatgpt (OpenAI Responses / Codex)',
+                '  - vertex_gemini (Google Cloud Vertex AI)',
+                '  - openrouter (OpenRouter)',
+                'extension_providers:',
+                '  - anthropic (anthropic_messages via Quartermaster `q` provider package)',
+                'secrets: isolated in Host Store',
+              ].join('\n'),
             },
             memory: {
               type: 'file',
@@ -191,6 +212,14 @@ export class Alan9Shell {
                   type: 'file',
                   content: 'skill: openspec-check (immutable projection, explicit descriptor)',
                 },
+                'personal-notes-mcp': {
+                  type: 'file',
+                  content: 'mcp: personal-notes-mcp (stdio MCP connector, zero install-time authority)',
+                },
+                'anthropic-provider': {
+                  type: 'file',
+                  content: 'provider: anthropic-provider (anthropic_messages via Quartermaster q)',
+                },
               },
             },
           },
@@ -204,12 +233,17 @@ export class Alan9Shell {
                 alan: {
                   type: 'file',
                   content:
-                    'ALAN(1)                  Alan Manual                  ALAN(1)\n\nNAME\n  alan - programmable personal computing environment\n\nSYNOPSIS\n  alan                      start foreground instance & TUI\n  cat task | alan           submit one task, write answer to stdout\n  alan connection list      inspect connection profiles\n\nDESCRIPTION\n  Each bare `alan` invocation owns one foreground alan9 instance\n  and attaches its terminal renderer to /agent/root.',
+                    'ALAN(1)                  Alan Manual                  ALAN(1)\n\nNAME\n  alan - programmable personal computing environment\n\nSYNOPSIS\n  alan                      start foreground instance & TUI\n  cat task | alan           submit one task, write answer to stdout\n  alan -p --ephemeral --json "<task>"\n  alan workflow <init|list|run|render-schedule|logs>\n  alan connection list      inspect connection profiles\n  alan q <list|install|upgrade|uninstall|sync>\n\nDESCRIPTION\n  Each bare `alan` invocation owns one foreground alan9 instance\n  and targets standard POSIX/VT terminals (Ghostty, iTerm2, Kitty,\n  WezTerm, Terminal.app, tmux, SSH) attached to /agent/root.\n  First-party providers: magpie, OpenAI Responses/Codex, Google\n  Cloud Vertex AI, OpenRouter. Anthropic installs via `q` provider.',
                 },
                 q: {
                   type: 'file',
                   content:
-                    'Q(1)                    Quartermaster                   Q(1)\n\nNAME\n  q - manage Skill packages over alan9 namespace paths\n\nSYNOPSIS\n  q list\n  q install --name <id> /mnt/import/<dir>\n  q uninstall <id>\n\nNOTES\n  q never receives raw Host paths or fetches remote URLs.',
+                    'Q(1)                    Quartermaster                   Q(1)\n\nNAME\n  q - manage skill, mcp, tool, and provider packages over alan9 paths\n\nSYNOPSIS\n  q list\n  q install --name <id> /mnt/import/<dir>\n  q upgrade <id> /mnt/import/<dir>\n  q uninstall <id>\n  q sync [--name <id> /mnt/import/<dir>]\n\nPACKAGE KINDS\n  skill      knowledge manuals and workflows\n  mcp        Model Context Protocol server connectors\n  tool       reusable /bin executable tools\n  provider   external provider adapters (e.g. anthropic-provider)\n\nNOTES\n  Installation grants zero ambient authority. q never reads raw Host\n  paths or performs implicit remote URL fetches.',
+                },
+                connection: {
+                  type: 'file',
+                  content:
+                    'CONNECTION(1)           Connection Service           CONNECTION(1)\n\nFIRST-PARTY PROVIDERS\n  magpie                local/self-hosted gateway\n  openai_responses      OpenAI Responses API\n  chatgpt               ChatGPT / Codex OAuth session\n  vertex_gemini         Google Cloud Vertex AI\n  openrouter            OpenRouter model catalog\n\nEXTENSION PROVIDERS\n  Anthropic (`anthropic_messages`) installs as a Quartermaster `q`\n  provider package (`alan q install .../anthropic-provider`).\n  Secrets stay strictly isolated in Host Store.',
                 },
               },
             },
@@ -229,7 +263,7 @@ export class Alan9Shell {
                 alan9: {
                   type: 'file',
                   content:
-                    'ALAN9(7)                Architecture                 ALAN9(7)\n\nSTANDARD NAMESPACE\n  /proc   Process lifecycle truth\n  /agent  AgentFS views of Agent Processes\n  /srv    Mountable file-server handles\n  /bin    Tools & Agent Executables\n  /lib    Immutable projected Skill packages\n  /man    Manual pages\n  /mnt    Explicitly authorized Host Mounts',
+                    'ALAN9(7)                Architecture                 ALAN9(7)\n\nSTANDARD NAMESPACE\n  /proc   Process lifecycle truth\n  /agent  AgentFS views of Agent Processes\n  /srv    Mountable file-server handles\n  /bin    Tools & Agent Executables\n  /lib    Immutable Quartermaster packages (skill, mcp, tool, provider)\n  /man    Manual pages\n  /mnt    Explicitly authorized Host Mounts',
                 },
               },
             },
@@ -244,6 +278,11 @@ export class Alan9Shell {
                 'my-skills': {
                   type: 'file',
                   content: 'authorized Host Mount ready for `q install --name my-skills /mnt/import/my-skills`',
+                },
+                'personal-notes-mcp': {
+                  type: 'file',
+                  content:
+                    'authorized Host Mount ready for `q install --name personal-notes-mcp /mnt/import/personal-notes-mcp`',
                 },
               },
             },
@@ -280,12 +319,14 @@ export class Alan9Shell {
       'cat /agent/root/machine/tape',
       'cat /proc/1042/status',
       'cat /srv/package',
+      'cat /srv/connections',
       'ps',
       'q list',
-      'q install --name my-skills /mnt/import/my-skills',
+      'q install --name personal-notes-mcp /mnt/import/personal-notes-mcp',
       'man alan9',
       'man agentfs',
       'man q',
+      'man connection',
       'theme paper',
       'theme midnight',
       'theme dumb',
@@ -384,11 +425,11 @@ export class Alan9Shell {
             '  cat <path>                       read a virtual file (try: cat /agent/root/machine/tape)',
             '  cd <path> | pwd                  change or print working namespace path',
             '  ps                               inspect /proc process table',
-            '  q list                           list installed Skill packages via Quartermaster',
-            '  q install --name <id> <path>     install Skill from an authorized /mnt path',
+            '  q list                           list Quartermaster packages (skill, mcp, tool, provider)',
+            '  q install --name <id> <path>     install package from /mnt/... (zero install-time authority)',
             '  echo "task" > /agent/root/in     write directly to Root Agent Process input file',
             '  echo "task" | alan               run one task over stdin -> stdout',
-            '  man <alan|alan9|agentfs|q>       read UNIX-style manual pages',
+            '  man <alan|alan9|agentfs|q|connection>  read UNIX-style manual pages',
             '  theme <paper|midnight|dumb>      switch site theme (try: theme dumb)',
             '  clear                            clear terminal scrollback',
           ].join('\n'),
@@ -466,35 +507,45 @@ export class Alan9Shell {
         if (!sub || sub === 'list') {
           return {
             text: [
-              'Quartermaster (/bin/q -> /srv/package):',
-              ...this.installedSkills.map((s) => `  - ${s}   (projected at /lib/pkg/${s} on explicit ref)`),
+              'Quartermaster (/bin/q -> /srv/package) — zero install-time authority:',
+              ...this.installedPackages.map(
+                (p) => `  - ${p.id.padEnd(20)} kind=${p.kind.padEnd(9)} (projected on explicit ref)`,
+              ),
             ].join('\n'),
             procState: 'q list',
           };
         }
         if (sub === 'install') {
           const nameIdx = args.indexOf('--name');
-          const pkgName = nameIdx >= 0 ? args[nameIdx + 1] : 'my-skills';
           const srcPath = args[args.length - 1] ?? '';
+          const leafName = srcPath.split('/').filter(Boolean).pop() ?? 'my-package';
+          const pkgName = nameIdx >= 0 ? (args[nameIdx + 1] ?? leafName) : leafName;
           if (!srcPath.startsWith('/mnt/')) {
             return {
               text: 'q: refused. Quartermaster only reads authorized alan9 namespace paths (e.g. /mnt/import/...), never raw Host paths or remote URLs.',
               tone: 'err',
             };
           }
-          if (!this.installedSkills.includes(pkgName)) {
-            this.installedSkills.push(pkgName);
+          const inferredKind: QuartermasterPackage['kind'] = pkgName.includes('mcp')
+            ? 'mcp'
+            : pkgName.includes('provider')
+              ? 'provider'
+              : pkgName.includes('tool')
+                ? 'tool'
+                : 'skill';
+          if (!this.installedPackages.some((p) => p.id === pkgName)) {
+            this.installedPackages.push({ id: pkgName, kind: inferredKind });
             const libPkg = this.getNode('/lib/pkg');
             if (libPkg?.children) {
               libPkg.children[pkgName] = {
                 type: 'file',
-                content: `skill: ${pkgName} (installed from ${srcPath})`,
+                content: `${inferredKind}: ${pkgName} (installed from ${srcPath})`,
               };
             }
             this.notify();
           }
           return {
-            text: `q: catalog updated with "${pkgName}" from ${srcPath}.\nVisible at /lib/pkg/${pkgName} only when a Process carries an explicit package ref.`,
+            text: `q: catalog updated with "${pkgName}" (kind=${inferredKind}) from ${srcPath}.\nZero installation-time authority granted; projected only when a Process carries an explicit ref.`,
             tone: 'ok',
             procState: `q install ${pkgName}`,
           };
@@ -507,12 +558,16 @@ export class Alan9Shell {
         const map: Record<string, string> = {
           alan: '/man/1/alan',
           q: '/man/1/q',
+          connection: '/man/1/connection',
           agentfs: '/man/4/agentfs',
           alan9: '/man/7/alan9',
         };
         const path = map[page];
         if (!path) {
-          return { text: `man: no entry for "${page}". Try: man alan, man alan9, man agentfs, man q`, tone: 'err' };
+          return {
+            text: `man: no entry for "${page}". Try: man alan, man alan9, man agentfs, man q, man connection`,
+            tone: 'err',
+          };
         }
         const node = this.getNode(path);
         return { text: node?.content ?? '', procState: `man ${page}` };

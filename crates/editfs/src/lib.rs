@@ -1,10 +1,11 @@
 //! alan-editfs — headless editable-buffer interaction as an aP file server.
 //!
-//! The server exposes one editable buffer with `body`, `tag`, `addr`, `ctl`, and
-//! `event` files. It proves the Ring 4 editable-buffer contract without native UI
-//! or real shell execution: text edits are committed on clunk, address ranges are
-//! revision-bound, snapshot-bearing `ctl exec` is policy-gated, and all activity is
-//! observable through a retained blocking-read event stream.
+//! Ring 4 aP file server retained in the workspace: exposes one editable buffer
+//! with `body`, `tag`, `addr`, `ctl`, and `event` files. It proves the Ring 4
+//! editable-buffer contract without native UI or real shell execution: text
+//! edits are committed on clunk, address ranges are revision-bound,
+//! snapshot-bearing `ctl exec` is policy-gated, and all activity is observable
+//! through a retained blocking-read event stream.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};

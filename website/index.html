@@ -214,17 +214,19 @@
             <article class="principle">
               <h3>Explicit boundaries</h3>
               <p>
-                Launching <code>alan</code> never exposes your host directory. Host Mounts, Skills
-                (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button>), and
-                Host Store credentials stay strictly separated.
+                Launching <code>alan</code> never exposes your host directory. Host Mounts, Quartermaster
+                packages (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button> —
+                <code>skill</code>, <code>mcp</code>, <code>tool</code>, <code>provider</code> with zero
+                install-time authority), and Host Store credentials stay strictly separated.
               </p>
             </article>
 
             <article class="principle">
               <h3>Terminal-first</h3>
               <p>
-                No Electron shell or sidebar. Run interactively inside modern terminal hosts like
-                <strong>Herdr</strong>, or pipe tasks cleanly through stdin and stdout.
+                No Electron shell or sidebar. Run interactively inside any standard POSIX/VT terminal
+                (Ghostty, iTerm2, Kitty, WezTerm, Terminal.app, tmux, SSH), or pipe tasks cleanly
+                through stdin and stdout.
               </p>
             </article>
           </div>
@@ -314,7 +316,7 @@
               </tr>
               <tr>
                 <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="ls /lib/pkg">/lib</button></td>
-                <td class="ns-table__desc">Immutable Skill package content projected at <code>/lib/pkg/&lt;id&gt;</code> on explicit reference.</td>
+                <td class="ns-table__desc">Immutable Quartermaster packages (<code>skill</code>, <code>mcp</code>, <code>tool</code>, <code>provider</code>) projected at <code>/lib/pkg/&lt;id&gt;</code> on explicit reference.</td>
               </tr>
               <tr>
                 <td class="ns-table__path"><button type="button" class="cmd-link" data-exec="man alan">/man</button></td>
@@ -328,8 +330,10 @@
           </table>
 
           <p class="ns-footnote">
-            Quartermaster (<code>/bin/q</code>) installs Skills strictly from authorized namespace paths
-            (<code>q install --name my-skills /mnt/import/my-skills</code>) — never raw host paths or hidden URLs.
+            Quartermaster (<code>/bin/q</code>) installs <code>skill</code>, <code>mcp</code>,
+            <code>tool</code>, and <code>provider</code> packages strictly from authorized namespace
+            paths (<code>q install --name personal-notes-mcp /mnt/import/personal-notes-mcp</code>) with
+            zero installation-time authority — never raw host paths or hidden URLs.
           </p>
 
           <!-- Terminal-First CLI -->
@@ -378,6 +382,7 @@
               <button type="button" class="cmd-link" data-exec="man alan9">alan9(7)</button>,
               <button type="button" class="cmd-link" data-exec="man agentfs">agentfs(4)</button>,
               <button type="button" class="cmd-link" data-exec="man q">q(1)</button>,
+              <button type="button" class="cmd-link" data-exec="man connection">connection(1)</button>,
               <a href="https://github.com/realmorrisliu/alan" target="_blank" rel="noopener noreferrer">github.com/realmorrisliu/alan</a>
             </p>
           </div>

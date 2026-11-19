@@ -6,6 +6,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::warn;
 
 use crate::agent_machine::AgentMachine;
+use crate::redact_secret_tokens;
 use crate::tape::Message;
 
 pub mod project_summary;
@@ -146,10 +147,10 @@ fn render_memory_surfaces(
     );
 
     RenderedMemorySurfaces {
-        working_memory,
-        handoff,
-        episodic_record,
-        daily_entry,
+        working_memory: redact_secret_tokens(&working_memory),
+        handoff: redact_secret_tokens(&handoff),
+        episodic_record: redact_secret_tokens(&episodic_record),
+        daily_entry: redact_secret_tokens(&daily_entry),
     }
 }
 

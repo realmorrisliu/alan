@@ -416,15 +416,15 @@ const CLI_VIEWS = {
   pipe: {
     screen: `$ git diff HEAD~1 | alan
 
-The diff introduces explicit descriptor checks before projecting
-installed Skill packages into /lib/pkg/<package-id>.
+The diff enforces zero installation-time authority before projecting
+Quartermaster packages (skill, mcp, tool, provider) into /lib/pkg/<id>.
 
-No raw Host paths cross the Quartermaster boundary.
+No raw Host paths cross the /bin/q boundary.
 
 $ echo $?
 0`,
     caption:
-      'Redirected stdin submits one task to the same instance, streams the final answer to stdout, sends diagnostics to stderr, and returns the real exit status.',
+      'Redirected stdin (or `alan -p --ephemeral --json`) submits one bounded task, streams the answer or NDJSON events to stdout, and returns the real exit status.',
   },
 } as const;
 
@@ -510,8 +510,10 @@ function initPaletteAndKeys(): void {
     { label: ': goto /cli', hint: 'Interactive & Pipe modes', run: () => document.getElementById('cli')?.scrollIntoView() },
     { label: '! ls /agent/root', hint: 'Inspect AgentFS', run: () => runShellCommand('ls /agent/root', true) },
     { label: '! cat /agent/root/machine/tape', hint: 'Read Turing Tape', run: () => runShellCommand('cat /agent/root/machine/tape', true) },
-    { label: '! q list', hint: 'Quartermaster packages', run: () => runShellCommand('q list', true) },
+    { label: '! q list', hint: 'Quartermaster (skill, mcp, tool, provider)', run: () => runShellCommand('q list', true) },
+    { label: '! cat /srv/connections', hint: 'First-party & q providers', run: () => runShellCommand('cat /srv/connections', true) },
     { label: '! man alan9', hint: 'Read ALAN9(7)', run: () => runShellCommand('man alan9', true) },
+    { label: '! man q', hint: 'Read Q(1)', run: () => runShellCommand('man q', true) },
     { label: ': theme paper', hint: 'Archival Paper (Light)', run: () => setTheme('paper') },
     { label: ': theme midnight', hint: 'Klein Midnight (Dark)', run: () => setTheme('midnight') },
     { label: ': theme dumb', hint: 'TERM=dumb (1978 Monochrome)', run: () => setTheme('dumb') },
