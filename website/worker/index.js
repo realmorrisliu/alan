@@ -33,17 +33,29 @@ export default {
   async fetch(request, env) {
     const ua = (request.headers.get('user-agent') || '').toLowerCase();
     const url = new URL(request.url);
-    if (
-      (url.pathname === '/' || url.pathname === '') &&
-      (ua.includes('curl') || ua.includes('wget') || ua.includes('httpie'))
-    ) {
+    if (url.hostname === 'www.alanworks.app') {
+      return Response.redirect(`https://alanworks.app${url.pathname}${url.search}`, 301);
+    }
+    const isRoot = url.pathname === '/' || url.pathname === '';
+    if (isRoot && (ua.includes('curl') || ua.includes('wget') || ua.includes('httpie'))) {
       return new Response(ANSI_BANNER, {
         headers: {
           'content-type': 'text/plain; charset=utf-8',
           'cache-control': 'public, max-age=300',
+          vary: 'User-Agent',
         },
       });
     }
-    return env.ASSETS.fetch(request);
+    const res = await env.ASSETS.fetch(request);
+    if (isRoot) {
+      const headers = new Headers(res.headers);
+      headers.set('vary', 'User-Agent');
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      });
+    }
+    return res;
   },
 };
