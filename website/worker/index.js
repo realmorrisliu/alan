@@ -26,6 +26,7 @@ ${BRAILLE_MASCOT}
     alan
 
   ${D}https://alanworks.app · https://github.com/realmorrisliu/alan · Apache-2.0${X}
+  ${D}by Morris Liu (https://realmorrisliu.com) · https://realmorrisliu.com/thoughts/tags/alan${X}
 `;
 
 export default {

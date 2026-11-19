@@ -204,7 +204,7 @@ export class Alan9Shell {
                 alan: {
                   type: 'file',
                   content:
-                    'ALAN(1)                  Alan Manual                  ALAN(1)\n\nNAME\n  alan - programmable personal computing environment\n\nSYNOPSIS\n  alan                      start foreground instance & TUI\n  cat task | alan           submit one task, write answer to stdout\n  alan connection list      inspect connection profiles\n\nDESCRIPTION\n  Each bare `alan` invocation owns one foreground alan9 instance\n  and attaches its terminal renderer to /agent/root.',
+                    'ALAN(1)                  Alan Manual                  ALAN(1)\n\nNAME\n  alan - programmable personal computing environment\n\nSYNOPSIS\n  alan                      start foreground instance & TUI\n  cat task | alan           submit one task, write answer to stdout\n  alan connection list      inspect connection profiles\n\nDESCRIPTION\n  Each bare `alan` invocation owns one foreground alan9 instance\n  and attaches its terminal renderer to /agent/root.\n\nAUTHOR\n  Morris Liu <https://realmorrisliu.com>\n\nSEE ALSO\n  alan9(7), agentfs(4), q(1)\n  Essays: https://realmorrisliu.com/thoughts/tags/alan\n  Source: https://github.com/realmorrisliu/alan',
                 },
                 q: {
                   type: 'file',
@@ -229,7 +229,7 @@ export class Alan9Shell {
                 alan9: {
                   type: 'file',
                   content:
-                    'ALAN9(7)                Architecture                 ALAN9(7)\n\nSTANDARD NAMESPACE\n  /proc   Process lifecycle truth\n  /agent  AgentFS views of Agent Processes\n  /srv    Mountable file-server handles\n  /bin    Tools & Agent Executables\n  /lib    Immutable projected Skill packages\n  /man    Manual pages\n  /mnt    Explicitly authorized Host Mounts',
+                    'ALAN9(7)                Architecture                 ALAN9(7)\n\nSTANDARD NAMESPACE\n  /proc   Process lifecycle truth\n  /agent  AgentFS views of Agent Processes\n  /srv    Mountable file-server handles\n  /bin    Tools & Agent Executables\n  /lib    Immutable projected Skill packages\n  /man    Manual pages\n  /mnt    Explicitly authorized Host Mounts\n\nSEE ALSO\n  alan(1), agentfs(4), q(1)\n  Essays: https://realmorrisliu.com/thoughts/tags/alan\n  Author: https://realmorrisliu.com',
                 },
               },
             },
