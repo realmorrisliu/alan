@@ -456,6 +456,12 @@ pre {
 .riso-reg--bl { bottom: -5px; left: -5px; }
 .riso-reg--br { bottom: -5px; right: -5px; }
 
+.riso-plate__picture {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .riso-plate__img {
   width: 100%;
   height: 100%;

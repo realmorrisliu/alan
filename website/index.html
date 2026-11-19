@@ -6,12 +6,14 @@
     <title>Alan — Everything is a file. Even an agent.</title>
     <meta
       name="description"
-      content="Alan is a programmable personal computing environment built on alan9—where agents are ordinary processes, state lives in namespaces, and your terminal is the interface."
+      content="Alan is a programmable personal computing environment on alan9—agents are ordinary processes, state lives in namespaces, and the terminal is the interface."
     />
     <meta name="author" content="Morris Liu" />
     <link rel="canonical" href="https://alanworks.app/" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Alan" />
+    <meta property="og:locale" content="en_US" />
     <meta property="og:url" content="https://alanworks.app/" />
     <meta property="og:title" content="Alan — Everything is a file. Even an agent." />
     <meta
@@ -19,6 +21,9 @@
       content="A programmable personal computing environment built on alan9. Agents are ordinary processes, state lives in namespaces, and your terminal is the interface."
     />
     <meta property="og:image" content="https://alanworks.app/alan-riso-mascot.jpg" />
+    <meta property="og:image:width" content="1024" />
+    <meta property="og:image:height" content="1024" />
+    <meta property="og:image:alt" content="Alan — Risograph illustration of a rabbit at a retro terminal with Turing paper tape" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Alan — Everything is a file. Even an agent." />
     <meta
@@ -27,6 +32,7 @@
     />
     <meta name="twitter:image" content="https://alanworks.app/alan-riso-mascot.jpg" />
     <meta name="twitter:creator" content="@realmorrisliu" />
+    <meta name="theme-color" content="#f6f4ed" />
     <meta name="color-scheme" content="light" />
     <script type="application/ld+json">
       {
@@ -196,13 +202,18 @@
                   <span class="riso-reg riso-reg--bl" aria-hidden="true"></span>
                   <span class="riso-reg riso-reg--br" aria-hidden="true"></span>
                   <div class="riso-plate__viewport">
-                    <img
-                      src="./alan-riso-mascot.jpg"
-                      alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
-                      class="riso-plate__img"
-                      width="352"
-                      height="352"
-                    />
+                    <picture class="riso-plate__picture">
+                      <source srcset="./alan-riso-mascot.webp" type="image/webp" />
+                      <img
+                        src="./alan-riso-mascot.jpg"
+                        alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
+                        class="riso-plate__img"
+                        width="352"
+                        height="352"
+                        fetchpriority="high"
+                        decoding="async"
+                      />
+                    </picture>
                     <pre class="riso-plate__ascii" aria-hidden="true">  (\_/)  +-------+
  =(o.o)= | /proc |
   / &gt;[]  |_______|
@@ -350,12 +361,16 @@
 
             <div class="exec-detail" aria-live="polite">
               <div>
-                <p class="exec-detail__owner" id="inspector-owner"></p>
+                <p class="exec-detail__owner" id="inspector-owner">ADR-0055: Tape + Transition function (deterministic code, typed evaluation, or generation) + Machine state + Side effects through descriptors. Rollout and checkpoint files own durable evidence.</p>
                 <button type="button" class="cmd-link" id="inspector-exec" data-exec="cat /agent/root/machine/tape">
                   Run in alan-shell →
                 </button>
               </div>
-              <pre class="exec-detail__code" id="inspector-code"></pre>
+              <pre class="exec-detail__code" id="inspector-code">0001  [in]         "inspect /srv and summarize active services"
+0002  [transition] eval -&gt; deterministic_read(/srv)
+0003  [tool]       ls /srv -&gt; agent-runtime connections memory package
+0004  [checkpoint] ckpt_0004  (persisted to System Store)
+0005  [out]        "4 file-server services mounted under /srv."</pre>
             </div>
           </div>
         </div>
@@ -425,8 +440,20 @@
               </div>
             </div>
 
-            <pre class="cli-screen" id="cli-screen"></pre>
-            <p class="cli-caption" id="cli-caption"></p>
+            <pre class="cli-screen" id="cli-screen">$ alan
+
+  project: /mnt/alan   model: chatgpt-main   state: idle
+: summarize recent changes in crates/kernel
+
+  ● tool  read_file crates/kernel/src/mountfs/mod.rs   [Ctrl+O details]
+
+  Mount table enforces lock discipline across async select! arms.
+  Namespace bindings remain process-local under /proc/&lt;pid&gt;/ns.
+
+  project: /mnt/alan   model: chatgpt-main   state: idle
+! cargo test -p alan-kernel --quiet
+  ok. 42 passed; 0 failed (0.18s)</pre>
+            <p class="cli-caption" id="cli-caption">Bare <code>alan</code> boots one foreground alan9 instance and attaches the file-backed terminal renderer to <code>/agent/root</code>, with progressive disclosure on <code>Ctrl+O</code>.</p>
           </div>
         </div>
       </section>
