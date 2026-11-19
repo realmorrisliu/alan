@@ -63,6 +63,7 @@ where
         allow_approved_tool_escalation_execution,
         cancel,
     } = request;
+    let confinement = SandboxConfinement::detect();
     let mut policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
             runtime.policy_engine,
@@ -71,12 +72,40 @@ where
             tool_arguments,
             tool_capability,
             current_tool_cwd,
-            SandboxConfinement::detect(),
+            confinement,
         ),
         allow_approved_tool_escalation_execution,
     );
-    if explicit_command && let ToolPolicyDecision::Escalate { route, .. } = &mut policy_decision {
-        *route = EscalationRoute::AlwaysHuman;
+    if explicit_command
+        && let ToolPolicyDecision::Escalate { route, audit, .. } = &mut policy_decision
+    {
+        if confinement.os_enforced
+            && audit.rule_id.as_deref() == Some("review-unknown")
+            && tool_capability != ToolCapability::Network
+        {
+            let mut allowed_audit = audit.clone();
+            allowed_audit.action = "allow".to_string();
+            allowed_audit.policy_source = "explicit_command".to_string();
+            policy_decision = ToolPolicyDecision::Allow {
+                audit: allowed_audit,
+            };
+        } else {
+            *route = EscalationRoute::AlwaysHuman;
+        }
+    }
+    if let ToolPolicyDecision::Escalate { audit, .. } = &policy_decision {
+        let cap_label = super::tool_policy::capability_label(tool_capability);
+        if runtime
+            .machine
+            .is_tool_allowed_for_session(&tool_call.name, cap_label, tool_arguments)
+        {
+            let mut allowed_audit = audit.clone();
+            allowed_audit.action = "allow".to_string();
+            allowed_audit.policy_source = "session_allowlist".to_string();
+            policy_decision = ToolPolicyDecision::Allow {
+                audit: allowed_audit,
+            };
+        }
     }
     record_policy_decision(runtime.machine, tool_call, &policy_decision);
 
@@ -126,7 +155,11 @@ where
                 checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
                 summary,
                 details,
-                options: vec!["approve".to_string(), "reject".to_string()],
+                options: vec![
+                    "approve".to_string(),
+                    "allow_session".to_string(),
+                    "reject".to_string(),
+                ],
             };
             let request_id = runtime
                 .agent_files

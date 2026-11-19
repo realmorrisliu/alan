@@ -10,6 +10,7 @@
 
 mod bash_classifier;
 mod execution_adapter;
+mod exploration_gitignore;
 mod exploration_tools;
 mod file_tools;
 #[cfg(test)]
@@ -81,14 +82,27 @@ impl Tool for BashTool {
         let command = args["command"].as_str().unwrap_or("").to_string();
         let capability = classify_bash_command(&command);
         let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
+        let progress = ctx.progress_callback();
 
         Box::pin(async move {
+            let adapter_for_progress = adapter.clone();
+            let projected_progress = progress.map(|cb| {
+                let wrapped: alan_agent_engine::tools::OutputProgressCallback = std::sync::Arc::new(
+                    move |stdout_tail: &str, stderr_tail: &str, truncated: bool| {
+                        let out = adapter_for_progress.project_text(stdout_tail);
+                        let err = adapter_for_progress.project_text(stderr_tail);
+                        cb(&out, &err, truncated);
+                    },
+                );
+                wrapped
+            });
             let result = sandbox
-                .exec_with_timeout_and_capability(
+                .exec_with_timeout_capability_and_progress(
                     &command,
                     &cwd,
                     Some(std::time::Duration::from_secs(timeout_secs)),
                     Some(capability),
+                    projected_progress,
                 )
                 .await?;
 

@@ -6,13 +6,17 @@ use alan_agent_protocol::{
     ContentPart, InputMode, Op, Submission, UiActivitySnapshot, UiEvent, UiNoticeSnapshot,
     UiPlanSnapshot, UiThinkingSnapshot, UserInputRecord,
 };
-use alan_ap::OpenMode;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
+#[cfg(test)]
+pub(super) use super::tape_files::tape_record_bytes;
+#[cfg(test)]
+use super::tape_files::write_tape_records;
 use super::{
     NamespaceActionRecord, NamespaceAgentFiles, NamespaceRequestRecord,
-    client::{InputFrame, NamespaceClient, NamespaceFidGuard},
+    client::{InputFrame, NamespaceClient},
+    tape_files::{NamespaceTapeWriter, read_current_tape_checkpoint, write_agent_output},
 };
 use crate::evidence::{
     EvidenceResolutionError, EvidenceResolutionErrorCode, NamespaceEvidenceReference,
@@ -38,8 +42,11 @@ impl PendingActionPublication {
         }
         Self::from_durable_record(record)
     }
-
-    // Durable evidence is already redacted; recovery preserves its exact bytes.
+    pub(crate) fn with_retained_id(record: NamespaceActionRecord, id: String) -> Self {
+        let mut pending = Self::new(record);
+        pending.id = Some(id);
+        pending
+    }
     fn from_durable_record(record: NamespaceActionRecord) -> Self {
         Self {
             record,
@@ -83,11 +90,14 @@ impl NamespaceAgentFiles {
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
         let message = self.read_next_input_payload().await?;
         if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
+            let text_part = (!record.body.trim().is_empty() || record.parts.is_empty())
+                .then(|| ContentPart::text(record.body));
+            let parts = text_part.into_iter().chain(record.parts).collect();
             return Ok(Submission {
                 id: record.submission_id,
                 intent: record.intent,
                 op: Op::Input {
-                    parts: vec![ContentPart::text(record.body)],
+                    parts,
                     mode: record.mode,
                 },
             });
@@ -252,7 +262,9 @@ impl NamespaceAgentFiles {
 
     pub async fn begin_tape_generation(&self) -> Result<NamespaceTapeWriter> {
         let client = NamespaceClient::new(self.root.clone());
-        NamespaceTapeWriter::open(client, &self.agent_path).await
+        let agent_path = &self.agent_path;
+        let tape_path = format!("{agent_path}/machine/tape");
+        NamespaceTapeWriter::open(client, &tape_path).await
     }
 
     pub async fn current_tape_checkpoint(&self) -> Result<String> {
@@ -635,138 +647,6 @@ impl NamespaceAgentFiles {
         let client = NamespaceClient::new(self.root.clone());
         append_json_line(&client, &ui_events_path(&self.agent_path), event).await
     }
-}
-
-/// Canonical v1 record appended to `machine/tape`.
-///
-/// This is deliberately small and self-contained so ADR-0027 D1 can later hash
-/// each record without depending on file offsets or mutable tape state.
-#[derive(Serialize)]
-struct TapeRecordV1<'a> {
-    version: u16,
-    kind: &'static str,
-    role: &'a str,
-    content: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input_intent: Option<alan_agent_protocol::InputIntent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    submission_id: Option<&'a str>,
-    #[serde(skip_serializing_if = "<[String]>::is_empty")]
-    related_submission_ids: &'a [String],
-}
-
-/// A held GENERATING lease for `machine/tape`.
-pub struct NamespaceTapeWriter {
-    client: NamespaceClient,
-    guard: NamespaceFidGuard,
-}
-
-impl NamespaceTapeWriter {
-    async fn open(client: NamespaceClient, agent_path: &str) -> Result<Self> {
-        let tape_path = format!("{agent_path}/machine/tape");
-        let fid = client.walk_to(&tape_path).await?;
-        let guard = client
-            .open_guarded_fid(fid, OpenMode::Write)
-            .await
-            .with_context(|| format!("open tape writer for {tape_path}"))?;
-        Ok(Self { client, guard })
-    }
-
-    pub async fn append_record(
-        &self,
-        role: &str,
-        content: &str,
-        submission_id: Option<&str>,
-        related_submission_ids: &[String],
-    ) -> Result<()> {
-        let bytes = tape_record_bytes(role, content, submission_id, related_submission_ids, None)?;
-        self.client
-            .write_at(self.guard.fid(), 0, &bytes)
-            .await
-            .context("append tape record")?;
-        Ok(())
-    }
-
-    /// Append an admitted input with its explicit route, preserving the literal body.
-    pub async fn append_input_record(
-        &self,
-        content: &str,
-        submission_id: &str,
-        intent: alan_agent_protocol::InputIntent,
-    ) -> Result<()> {
-        let bytes = tape_record_bytes("user", content, Some(submission_id), &[], Some(intent))?;
-        self.client
-            .write_at(self.guard.fid(), 0, &bytes)
-            .await
-            .context("append input tape record")?;
-        Ok(())
-    }
-
-    pub async fn finish(self) -> Result<()> {
-        self.guard.close().await
-    }
-}
-
-pub(super) async fn write_agent_output(
-    client: &NamespaceClient,
-    agent_path: &str,
-    response: &str,
-) -> Result<()> {
-    let output_path = format!("{agent_path}/io/output");
-    client
-        .write_document(&output_path, response.as_bytes())
-        .await
-        .with_context(|| format!("write assistant output to {output_path}"))
-}
-
-#[cfg(test)]
-pub(super) async fn write_tape_records<'a>(
-    client: &NamespaceClient,
-    agent_path: &str,
-    records: impl IntoIterator<Item = (&'a str, &'a str)>,
-    submission_id: Option<&str>,
-) -> Result<()> {
-    let writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
-    for (role, content) in records {
-        writer
-            .append_record(role, content, submission_id, &[])
-            .await?;
-    }
-    writer.finish().await
-}
-
-async fn read_current_tape_checkpoint(
-    client: &NamespaceClient,
-    agent_path: &str,
-) -> Result<String> {
-    let checkpoint_path = format!("{agent_path}/machine/checkpoints/current");
-    let bytes = client
-        .read_file(&checkpoint_path)
-        .await
-        .with_context(|| format!("read current tape checkpoint from {checkpoint_path}"))?;
-    let checkpoint = String::from_utf8(bytes).context("current tape checkpoint is not utf8")?;
-    Ok(checkpoint.trim().to_string())
-}
-
-pub(super) fn tape_record_bytes(
-    role: &str,
-    content: &str,
-    submission_id: Option<&str>,
-    related_submission_ids: &[String],
-    input_intent: Option<alan_agent_protocol::InputIntent>,
-) -> Result<Vec<u8>> {
-    let record = TapeRecordV1 {
-        version: 1,
-        kind: "message",
-        role,
-        content,
-        input_intent,
-        submission_id,
-        related_submission_ids,
-    };
-    let mut bytes = serde_json::to_vec(&record).context("serialize tape record")?;
-    bytes.push(b'\n');
-    Ok(bytes)
 }
 
 fn validate_agent_file_id(id: &str, label: &str) -> Result<()> {

@@ -9,9 +9,12 @@ pub(super) fn default_commands() -> Vec<CompletionCandidate> {
         ("discard", "discard paused input"),
         ("clear", "clear the transcript"),
         ("help", "show key bindings"),
+        ("man", "read alan9 manual pages"),
+        ("tape", "inspect Turing Tape timeline"),
         ("quit", "exit alan"),
-        ("model", "choose selected-next from Process catalog"),
+        ("model", "choose model and reasoning effort"),
         ("status", "inspect project, model and queue"),
+        ("new", "start a fresh session view"),
     ]
     .into_iter()
     .map(|(value, detail)| CompletionCandidate::new(value, Some(detail.to_string())))
@@ -106,7 +109,7 @@ impl FileBackedApp {
         if let Some(pending) = self.pending_project_control.as_mut() {
             pending.fenced = true;
         }
-        self.fail_project_control("Root changed; old owner evidence fenced".into());
+        self.fail_project_control("Session restarted during project switch".into());
     }
 
     pub(in crate::file_backed) fn retained_project_grant(&self) -> Option<String> {
@@ -133,6 +136,8 @@ impl FileBackedApp {
             .is_some_and(|p| Some(&p.grant_id) == grant.as_ref())
         {
             self.project = None;
+            self.project_host_root = None;
+            self.git_status = None;
             self.set_file_candidates(Vec::new());
         }
         self.retained_project_mount = None;
@@ -212,6 +217,7 @@ impl FileBackedApp {
             && let Some((receipt, root)) = self.retained_project_mount.take()
         {
             self.set_file_candidates(crate::build_file_index(&root, crate::FILE_INDEX_LIMIT));
+            self.project_host_root = Some(root);
             self.project = Some(receipt);
         }
         if pending.revoke.is_some() {

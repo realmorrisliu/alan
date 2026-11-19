@@ -463,6 +463,7 @@ struct ToolProcessRunnerInner {
     process_bindings: Mutex<HashMap<u64, ToolExecutionBinding>>,
     process_authorities: Mutex<HashMap<u64, Arc<dyn super::ToolExecutionAuthority>>>,
     read_only_receipts: Mutex<BTreeMap<u64, (u64, String, String)>>,
+    progress_sinks: Mutex<HashMap<u64, super::sandbox::command_process::OutputProgressCallback>>,
 }
 
 /// Kernel-neutral inputs for one Tool executable invocation.
@@ -500,8 +501,31 @@ impl ToolProcessRunner {
                 process_bindings: Mutex::new(HashMap::new()),
                 process_authorities: Mutex::new(HashMap::new()),
                 read_only_receipts: Mutex::new(BTreeMap::new()),
+                progress_sinks: Mutex::new(HashMap::new()),
             }),
         }
+    }
+
+    /// Register an incremental command output sink for the active Tool Process owner.
+    pub(crate) fn set_progress_sink(
+        &self,
+        pid: u64,
+        sink: super::sandbox::command_process::OutputProgressCallback,
+    ) {
+        self.inner
+            .progress_sinks
+            .lock()
+            .expect("progress sink mutex poisoned")
+            .insert(pid, sink);
+    }
+
+    /// Remove any incremental command output sink registered for `pid`.
+    pub(crate) fn clear_progress_sink(&self, pid: u64) {
+        self.inner
+            .progress_sinks
+            .lock()
+            .expect("progress sink mutex poisoned")
+            .remove(&pid);
     }
 
     /// Bind host-resolved Tool execution authority to one assembled Process.
@@ -755,6 +779,17 @@ impl ToolProcessRunner {
         let mut context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         if let Some(namespace) = namespace {
             context = context.with_namespace(authority_pid, namespace);
+        }
+        if name == "bash"
+            && let Some(sink) = self
+                .inner
+                .progress_sinks
+                .lock()
+                .expect("progress sink mutex poisoned")
+                .get(&authority_pid)
+                .cloned()
+        {
+            context = context.with_progress(sink);
         }
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {
             self.inner.config.tool_timeout_secs

@@ -3,6 +3,12 @@ use super::command_interpreters::{
     validate_awk_arguments,
 };
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
+#[cfg(any(target_os = "linux", all(test, unix)))]
+use super::path_literals::path_like_subtokens;
+#[cfg(any(target_os = "linux", all(test, unix)))]
+use super::shell_syntax::{
+    normalize_shell_line_continuations, shell_commands, shell_tokens_with_spans,
+};
 use anyhow::{Result, anyhow};
 use std::path::Path;
 
@@ -13,11 +19,46 @@ pub(super) fn validate_nested_command_evaluators(
     validate_nested_command_evaluators_inner(commands, backend_name, false)
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "Retained for wrapper evaluator unit tests exercising the historical protected evaluator rule"
+)]
 pub(super) fn validate_protected_command_evaluators(
     commands: &[Vec<String>],
     backend_name: &str,
 ) -> Result<()> {
     validate_nested_command_evaluators_inner(commands, backend_name, true)
+}
+
+/// Extract an inline script from shell wrappers (`sh`, `bash`, `zsh`, `dash`,
+/// `ksh`, `eval`, even under `env`/`command`/`timeout`/`-l`) without
+/// rejecting shell wrapper syntax or startup options.
+pub(super) fn lenient_shell_wrapper_inline_script(words: &[String]) -> Option<String> {
+    let view = nested_evaluator_view(words)?;
+    if view.command == "eval" {
+        let joined = view.args.join(" ");
+        return (!joined.trim().is_empty()).then_some(joined);
+    }
+    if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        return None;
+    }
+    let mut options = view.args.iter().enumerate();
+    while let Some((index, word)) = options.next() {
+        if word == "--" || !word.starts_with('-') {
+            break;
+        }
+        if !word.starts_with("--") && word.chars().skip(1).any(|ch| matches!(ch, 'o' | 'O')) {
+            if word == "-o" || word == "-O" {
+                options.next();
+            }
+            continue;
+        }
+        if !word.starts_with("--") && word.contains('c') {
+            return view.args.get(index + 1).cloned();
+        }
+    }
+    None
 }
 
 fn validate_nested_command_evaluators_inner(
@@ -414,7 +455,7 @@ pub(in crate::tools) fn writes_cargo_configuration(
     directories: &[std::path::PathBuf],
 ) -> Result<bool> {
     let configured = |word: &str| {
-        super::path_like_subtokens(word).iter().any(|word| {
+        path_like_subtokens(word).iter().any(|word| {
             directories.iter().any(|cwd| {
                 let candidate = super::lexically_normalize_path(&cwd.join(word));
                 files
@@ -423,7 +464,7 @@ pub(in crate::tools) fn writes_cargo_configuration(
             })
         })
     };
-    for pair in super::shell_tokens_with_spans(script)?.windows(2) {
+    for pair in shell_tokens_with_spans(script)?.windows(2) {
         let operator = &pair[0];
         if matches!(operator.decoded.as_str(), ">" | ">>" | ">|" | "<>")
             && script[operator.raw_start..operator.raw_end] == operator.decoded
@@ -432,7 +473,7 @@ pub(in crate::tools) fn writes_cargo_configuration(
             return Ok(true);
         }
     }
-    Ok(super::shell_commands(script)?.iter().any(|words| {
+    Ok(shell_commands(script)?.iter().any(|words| {
         command_and_args(words).is_some_and(|(name, args)| {
             let mutation = matches!(
                 name,
@@ -902,7 +943,7 @@ fn has_inline_exec_argv0(arg: &str) -> bool {
 pub(in crate::tools) fn inspect_shell_lookup(command: &str) -> Result<(bool, Vec<Vec<String>>)> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
-    let normalized = super::normalize_shell_line_continuations(command);
+    let normalized = normalize_shell_line_continuations(command);
     let tree = parser
         .parse(&normalized, None)
         .ok_or_else(|| anyhow!("shell syntax parsing failed"))?;

@@ -26,18 +26,35 @@ impl UsageProjection {
     }
 
     pub fn prompt_label(&self) -> Option<String> {
+        self.prompt_parts(true)
+    }
+
+    pub fn short_prompt_label(&self) -> Option<String> {
+        self.prompt_parts(false)
+    }
+
+    fn prompt_parts(&self, include_details: bool) -> Option<String> {
         let u = self.active_snapshot()?;
         let mut parts = Vec::new();
         if u.context_window > 0 && u.input_tokens > 0 {
             let pct = ((u.input_tokens as f64 / u.context_window as f64) * 100.0)
                 .round()
                 .clamp(0.0, 999.0) as u64;
-            parts.push(format!("{pct}% ctx"));
+            if include_details {
+                parts.push(format!(
+                    "ctx {pct}% ({}/{})",
+                    format_compact_tokens(u.input_tokens),
+                    format_compact_tokens(u.context_window)
+                ));
+            } else {
+                parts.push(format!("ctx {pct}%"));
+            }
         } else {
             let total = u.session_input_tokens + u.session_output_tokens;
             parts.push(format!("{} tok", format_compact_tokens(total)));
         }
-        if let Some(cost) = u.session_cost_usd.or(u.cost_usd)
+        if include_details
+            && let Some(cost) = u.session_cost_usd.or(u.cost_usd)
             && cost > 0.0
         {
             parts.push(format!("${cost:.4}"));

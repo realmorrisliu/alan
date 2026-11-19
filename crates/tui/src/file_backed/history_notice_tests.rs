@@ -128,12 +128,13 @@ fn notice_severity_survives_hydration_and_layout_without_role_labels() {
     let mut app = FileBackedApp::new("/agent/1".into());
     app.composer.set_text("draft 中文😀");
     let cursor = app.composer.cursor();
+    let theme = crate::theme::Theme::default();
     for (kind, prefix, color) in [
-        (UiNoticeKind::Error, "Error · ", Color::Red),
-        (UiNoticeKind::Warning, "Warning · ", Color::Yellow),
-        (UiNoticeKind::Compaction, "· ", Color::DarkGray),
-        (UiNoticeKind::Rollback, "· ", Color::DarkGray),
-        (UiNoticeKind::MemoryFlush, "· ", Color::DarkGray),
+        (UiNoticeKind::Error, "Error · ", theme.status_block),
+        (UiNoticeKind::Warning, "Warning · ", theme.status_wait),
+        (UiNoticeKind::Compaction, "· ", theme.muted),
+        (UiNoticeKind::Rollback, "· ", theme.muted),
+        (UiNoticeKind::MemoryFlush, "· ", theme.muted),
     ] {
         app.apply_ui_notice_snapshot(UiNoticeSnapshot::new(kind, "server> ready; a > b"));
         for width in [48, 80, 120] {
@@ -260,7 +261,10 @@ fn paused_status_model_override_owns_narrow_color() {
     let mut app = FileBackedApp::new("/agent/root".into());
     crate::file_backed::model_tests::install_header_model(&mut app, "gpt-6.1-sol");
     app.model_chooser.pending = Some(("/agent/1".into(), "B".into()));
-    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Cyan));
+    assert_eq!(
+        attention_line(&app, 0).unwrap().style.fg,
+        Some(crate::theme::Theme::default().accent)
+    );
     for uncertain in [false, true] {
         if uncertain {
             app.model_chooser.uncertain = Some(("/agent/1".into(), "B".into()));
@@ -280,7 +284,10 @@ fn paused_status_model_override_owns_narrow_color() {
             }));
         }
     }
-    assert_eq!(attention_line(&app, 0).unwrap().style.fg, Some(Color::Red));
+    assert_eq!(
+        attention_line(&app, 0).unwrap().style.fg,
+        Some(crate::theme::Theme::default().status_block)
+    );
 }
 
 #[test]

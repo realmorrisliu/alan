@@ -341,7 +341,7 @@ fn usage_snapshot_renders_in_context_line_and_status() {
         }),
     );
     let header = app.context_line(100).to_string();
-    assert!(header.contains("10% ctx"), "{header}");
+    assert!(header.contains("ctx 10% (12.8k/128.0k)"), "{header}");
     assert!(header.contains("$0.0125"), "{header}");
     app.handle_command("/status");
     let status = app.notice.as_deref().unwrap();

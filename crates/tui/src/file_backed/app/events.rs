@@ -20,6 +20,12 @@ pub(in crate::file_backed) enum FileBackedAction {
     },
     Project(ProjectControl),
     RevokeCurrentProject,
+    OpenExternalEditor,
+    ReadTape,
+    ReadMan {
+        topic: String,
+        generation: u64,
+    },
     Interrupt,
     Quit,
 }
@@ -29,6 +35,16 @@ pub(in crate::file_backed) enum FileBackedEvent {
         path: String,
         generation: u64,
         entries: Vec<super::super::plan_detail_io::PlanEntry>,
+    },
+    TapeDetails {
+        path: String,
+        generation: u64,
+        rows: Vec<Line<'static>>,
+    },
+    ManDetails {
+        generation: u64,
+        owner: String,
+        content: String,
     },
     ActionDetails {
         path: String,
@@ -79,6 +95,14 @@ pub(in crate::file_backed) enum FileBackedEvent {
         success_notice: String,
         error_prefix: String,
         result: Result<(), String>,
+    },
+    GitStatusUpdated {
+        root: std::path::PathBuf,
+        status: Option<super::super::git_status::GitStatus>,
+    },
+    FileIndexUpdated {
+        root: std::path::PathBuf,
+        candidates: Vec<crate::completion::CompletionCandidate>,
     },
     RootAgentPidRefresh(Result<Option<u64>, String>),
     QueueChanged {

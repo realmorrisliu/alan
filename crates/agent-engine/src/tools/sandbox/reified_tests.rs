@@ -68,26 +68,35 @@ async fn test_reified_backend_carries_current_path_and_rejects_unknown_entries()
 }
 
 #[tokio::test]
-async fn test_reified_backend_keeps_shape_parser_for_opaque_writers() {
-    // Linux reified namespace still bind-mounts the writable host_mount as a whole,
-    // so protected subpath integrity depends on the full parser until those
-    // subpaths are carved out of the namespace.
+async fn test_reified_backend_relaxes_static_shape_parser_while_keeping_protected_subpaths() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
         crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
     );
-    let result = sandbox
+    sandbox
+        .validate_command_paths(
+            "python -c 'print(1)'",
+            temp.path(),
+            sandbox.path_check_mode(),
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .unwrap();
+    let protected = sandbox
         .exec_with_timeout_and_capability(
-            "python -c 'open(\".git/config\",\"w\").write(\"x\")'",
+            "bash -lc 'echo x > .git/config'",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
         )
         .await;
     assert!(
-        result.is_err(),
-        "opaque writer not rejected under Linux reified namespace"
+        protected.is_err(),
+        "protected subpath write not blocked under Linux reified namespace"
+    );
+    assert!(
+        !protected.unwrap_err().to_string().contains("seatbelt"),
+        "error should cite active backend"
     );
 }
 
@@ -217,7 +226,7 @@ fn test_reified_backend_preserves_native_paths_and_script_body() {
     )
     .unwrap();
 
-    assert_eq!(&plan.argv[..4], &["/bin/sh", "-p", "-f", "-c"]);
+    assert_eq!(&plan.argv[..3], &["/bin/sh", "-p", "-c"]);
     assert_eq!(plan.argv.last(), Some(&script));
     assert_eq!(plan.cwd, temp.path());
     assert_eq!(plan.declared_host_mounts[0].namespace_path, plan.cwd);

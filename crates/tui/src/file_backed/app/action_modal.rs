@@ -1,17 +1,49 @@
 use super::*;
 
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::file_backed) enum ModalMode {
+    #[default]
+    Actions,
+    Plans,
+    Tape,
+    Man,
+}
+
 #[derive(Default, Clone)]
 pub(in crate::file_backed) struct ActionModal {
     pub generation: u64,
     pub active: bool,
     pub actions: Vec<super::super::action_detail_io::ActionEntry>,
-    pub plan_mode: bool,
+    pub mode: ModalMode,
     pub plans: Vec<super::super::plan_detail_io::PlanEntry>,
     pub selected: usize,
     pub scroll: usize,
     pub rows: Vec<Line<'static>>,
     pub pending: bool,
     pub owner_path: String,
+    pub show_raw_json: bool,
+}
+
+impl ActionModal {
+    #[allow(
+        dead_code,
+        reason = "convenience predicate retained for plan-mode checks and tests"
+    )]
+    pub(in crate::file_backed) fn plan_mode(&self) -> bool {
+        self.mode == ModalMode::Plans
+    }
+
+    pub(in crate::file_backed) fn reset_for_mode(&mut self, mode: ModalMode, pending: bool) {
+        self.generation += 1;
+        self.mode = mode;
+        self.selected = 0;
+        self.scroll = 0;
+        self.rows.clear();
+        self.actions.clear();
+        self.plans.clear();
+        self.show_raw_json = false;
+        self.pending = pending;
+    }
 }
 
 impl FileBackedApp {
@@ -25,14 +57,8 @@ impl FileBackedApp {
                 return true;
             }
             self.modal.active = !self.modal.active;
-            self.modal.generation += 1;
-            self.modal.actions.clear();
-            self.modal.plan_mode = false;
-            self.modal.plans.clear();
-            self.modal.rows.clear();
-            self.modal.selected = 0;
-            self.modal.scroll = 0;
-            self.modal.pending = self.modal.active;
+            self.modal
+                .reset_for_mode(ModalMode::Actions, self.modal.active);
             self.modal.owner_path = self.agent_path.clone();
             return true;
         }
@@ -47,28 +73,52 @@ impl FileBackedApp {
             self.modal.generation += 1;
             return false;
         }
-        let item_count = if self.modal.plan_mode {
-            self.modal.plans.len()
-        } else {
-            self.modal.actions.len()
+        let item_count = match self.modal.mode {
+            ModalMode::Plans => self.modal.plans.len(),
+            ModalMode::Actions => self.modal.actions.len(),
+            ModalMode::Tape | ModalMode::Man => 0,
         };
         match key.code {
             KeyCode::Char('p') if key.modifiers == KeyModifiers::NONE => {
-                self.modal.plan_mode = !self.modal.plan_mode;
-                self.modal.generation += 1;
-                self.modal.selected = 0;
+                let next = if self.modal.mode == ModalMode::Plans {
+                    ModalMode::Actions
+                } else {
+                    ModalMode::Plans
+                };
+                self.modal.reset_for_mode(next, true);
+                self.modal.owner_path = self.agent_path.clone();
+            }
+            KeyCode::Char('t') if key.modifiers == KeyModifiers::NONE => {
+                let next = if self.modal.mode == ModalMode::Tape {
+                    ModalMode::Actions
+                } else {
+                    ModalMode::Tape
+                };
+                self.modal.reset_for_mode(next, true);
+                self.modal.owner_path = self.agent_path.clone();
+                if next == ModalMode::Tape {
+                    self.modal.rows = super::super::tape_view::build_tape_lines_from_app(self);
+                }
+            }
+            KeyCode::Char('a')
+                if key.modifiers == KeyModifiers::NONE && self.modal.mode != ModalMode::Actions =>
+            {
+                self.modal.reset_for_mode(ModalMode::Actions, true);
+                self.modal.owner_path = self.agent_path.clone();
+            }
+            KeyCode::Char('d') if key.modifiers == KeyModifiers::NONE => {
+                self.modal.show_raw_json = !self.modal.show_raw_json;
                 self.modal.scroll = 0;
-                self.modal.rows.clear();
-                self.modal.actions.clear();
-                self.modal.plans.clear();
-                self.modal.pending = true;
             }
             KeyCode::Esc => {
                 self.modal.active = false;
                 self.modal.generation += 1;
             }
-            KeyCode::Up | KeyCode::Left | KeyCode::Down | KeyCode::Right if item_count > 0 => {
-                let index = if matches!(key.code, KeyCode::Up | KeyCode::Left) {
+            KeyCode::Left | KeyCode::Right | KeyCode::Char('[') | KeyCode::Char(']')
+                if item_count > 0 =>
+            {
+                let prev = matches!(key.code, KeyCode::Left | KeyCode::Char('['));
+                let index = if prev {
                     self.modal.selected.saturating_sub(1)
                 } else {
                     (self.modal.selected + 1).min(item_count - 1)
@@ -78,13 +128,25 @@ impl FileBackedApp {
                     self.modal.generation += 1;
                     self.modal.rows.clear();
                     self.modal.scroll = 0;
-                    self.modal.pending = !self.modal.plan_mode;
-                    if self.modal.plan_mode {
+                    self.modal.pending = self.modal.mode == ModalMode::Actions;
+                    if self.modal.mode == ModalMode::Plans {
                         self.modal.rows = super::super::plan_detail_io::rows(
                             &self.modal.plans[self.modal.selected],
                         );
                     }
                 }
+            }
+            KeyCode::Up => {
+                self.modal.scroll = self.modal.scroll.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                self.modal.scroll = self.modal.scroll.saturating_add(1);
+            }
+            KeyCode::Char('k') if key.modifiers == KeyModifiers::NONE => {
+                self.modal.scroll = self.modal.scroll.saturating_sub(1);
+            }
+            KeyCode::Char('j') if key.modifiers == KeyModifiers::NONE => {
+                self.modal.scroll = self.modal.scroll.saturating_add(1);
             }
             KeyCode::Char(' ') if key.modifiers == KeyModifiers::NONE => {
                 self.modal.scroll = self.modal.scroll.saturating_add(10);

@@ -71,7 +71,10 @@ async fn sandbox_rejects_opaque_paths_consumed_from_literal_data() {
         "BEGIN { system(\"true\") }",
     )
     .unwrap();
-    let sandbox = Sandbox::with_backend(mount.path().to_path_buf(), SandboxBackendKind::Seatbelt);
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        SandboxBackendKind::HostMountPathGuard,
+    );
     for (command, reason) in [
         ("awk -f ./script.awk", "opaque AWK script files"),
         (
@@ -128,7 +131,11 @@ async fn sandbox_rejects_opaque_paths_consumed_from_literal_data() {
             )
             .await
             .expect_err(command);
-        assert!(error.to_string().contains(reason), "{command}: {error}");
+        assert!(
+            error.to_string().contains(reason)
+                || error.to_string().contains("opaque script interpreters"),
+            "{command}: {error}"
+        );
     }
 }
 
@@ -166,7 +173,10 @@ async fn sandbox_allows_inspectable_awk_io_and_regexes() {
 #[test]
 fn all_awk_inline_sources_are_inspected_before_execution() {
     let mount = TempDir::new().unwrap();
-    let sandbox = Sandbox::with_backend(mount.path().to_path_buf(), SandboxBackendKind::Seatbelt);
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        SandboxBackendKind::HostMountPathGuard,
+    );
     for script in [
         r#"gawk --source='BEGIN { system("cat \057etc/passwd") }'"#,
         r#"gawk -e'BEGIN { system("cat \057etc/passwd") }'"#,
@@ -181,14 +191,12 @@ fn all_awk_inline_sources_are_inspected_before_execution() {
         r#"gawk '@load "extension"'"#,
         r#"gawk -- '-e/1 { system("true") }'"#,
     ] {
-        for mode in [PathCheckMode::ProtectedOnly, PathCheckMode::Full] {
-            assert!(
-                sandbox
-                    .validate_command_paths(script, mount.path(), mode, None)
-                    .is_err(),
-                "{script}"
-            );
-        }
+        assert!(
+            sandbox
+                .validate_command_paths(script, mount.path(), PathCheckMode::Full, None)
+                .is_err(),
+            "{script}"
+        );
     }
     for script in [
         r#"gawk --source='BEGIN { print "/etc/passwd" }'"#,

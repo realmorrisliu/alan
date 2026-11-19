@@ -36,14 +36,13 @@ impl FileBackedApp {
                 None => unknown.into(),
             }));
         }
+        self.last_input_failed = false;
+        self.auto_continue_on_empty_cancel = false;
         self.tape_consumed_offset = 0;
         self.action_cells.clear();
         self.modal.active = false;
-        self.modal.generation += 1;
-        self.modal.rows.clear();
-        self.modal.actions.clear();
-        self.modal.plans.clear();
-        self.modal.plan_mode = false;
+        self.modal
+            .reset_for_mode(action_modal::ModalMode::Actions, false);
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
         self.plan_revision = 0;

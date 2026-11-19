@@ -233,7 +233,7 @@ async fn action_file_metadata_and_huge_output_use_compact_rows_with_shared_hint(
             })
             .collect::<String>();
         assert!(
-            header.starts_with("Select project · model unknown"),
+            header.contains("Select project · model unknown"),
             "{header}"
         );
         let hint = (0..width as u16)

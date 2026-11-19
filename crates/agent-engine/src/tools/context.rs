@@ -129,6 +129,7 @@ pub struct ToolContext {
     pub config: Arc<Config>,
     adapter: Option<Arc<dyn ToolExecutionAdapter>>,
     namespace: Option<(u64, alan_ap::InProcessTransport)>,
+    progress: Option<super::sandbox::command_process::OutputProgressCallback>,
 }
 
 impl ToolContext {
@@ -144,6 +145,7 @@ impl ToolContext {
             config,
             adapter: binding.adapter,
             namespace: None,
+            progress: None,
         }
     }
 
@@ -151,6 +153,22 @@ impl ToolContext {
     pub fn with_namespace(mut self, owner: u64, namespace: alan_ap::InProcessTransport) -> Self {
         self.namespace = Some((owner, namespace));
         self
+    }
+
+    /// Attach an incremental command output progress callback for this Tool run.
+    pub fn with_progress(
+        mut self,
+        progress: super::sandbox::command_process::OutputProgressCallback,
+    ) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
+    /// Return the incremental command output callback, if attached.
+    pub fn progress_callback(
+        &self,
+    ) -> Option<super::sandbox::command_process::OutputProgressCallback> {
+        self.progress.clone()
     }
 
     /// Route AgentFS evidence reads without granting native Host authority.

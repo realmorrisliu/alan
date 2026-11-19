@@ -18,6 +18,7 @@ pub(crate) mod owner_work;
 pub(crate) mod pending_resume;
 mod recovery;
 mod runtime_control;
+mod session_allowlist;
 pub(crate) mod task_budget;
 mod transition_state;
 

@@ -36,6 +36,38 @@ where
     .await;
 
     if let Some(mut pending) = parse_confirmation_request(&tool_call.id, tool_arguments) {
+        if runtime.machine.is_tool_allowed_for_session(
+            "request_confirmation",
+            &pending.checkpoint_type,
+            &serde_json::Value::Null,
+        ) {
+            let approved_payload = json!({
+                "checkpoint_id": pending.checkpoint_id,
+                "checkpoint_type": pending.checkpoint_type,
+                "choice": "allow_session"
+            });
+            emit(Event::ToolCallCompleted {
+                presentation: None,
+                id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                success: Some(true),
+                result_preview: tool_result_preview(&approved_payload),
+                audit: None,
+            })
+            .await;
+            runtime.machine.record_tool_call(
+                &tool_call.name,
+                tool_arguments.clone(),
+                approved_payload.clone(),
+                true,
+            );
+            runtime
+                .machine
+                .add_tool_message(&tool_call.id, &tool_call.name, approved_payload);
+            return Ok(VirtualToolOutcome::Continue {
+                refresh_context: false,
+            });
+        }
         pending.details =
             append_skill_permission_hints(pending.details, runtime.machine.active_skills());
         let request_id = runtime
@@ -75,7 +107,7 @@ where
                 default_option: pending
                     .options
                     .iter()
-                    .find(|option| option.as_str() == "approve")
+                    .find(|option| matches!(option.as_str(), "approve" | "allow_session"))
                     .cloned()
                     .or_else(|| pending.options.first().cloned()),
                 options: pending.options.clone(),
@@ -326,6 +358,7 @@ pub(super) fn parse_confirmation_request(
         .unwrap_or_else(|| {
             vec![
                 "approve".to_string(),
+                "allow_session".to_string(),
                 "modify".to_string(),
                 "reject".to_string(),
             ]

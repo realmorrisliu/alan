@@ -978,5 +978,6 @@ mod skill_lifecycle;
 
 mod child_budget;
 mod input_shadow;
+mod manpages;
 
 mod root_abort;

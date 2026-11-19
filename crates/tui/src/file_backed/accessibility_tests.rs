@@ -119,11 +119,17 @@ fn accessibility_ordinary_code_keeps_literal_projection_and_source_slot_cutoffs(
     assert_eq!(before[1].to_string(), "prose");
     assert_eq!(before.last().unwrap().to_string(), "prose");
     let code = &before[3..before.len() - 2];
-    let literal = code.iter().map(ToString::to_string).collect::<String>();
+    let literal = code
+        .iter()
+        .map(|line| {
+            let text = line.to_string();
+            text.strip_prefix("▎ ").unwrap_or(&text).to_string()
+        })
+        .collect::<String>();
     assert_eq!(literal, "    界🙂 **literal** `tick`    tail");
     assert!(
         code.iter()
-            .flat_map(|line| &line.spans)
+            .flat_map(|line| line.spans.iter().skip(1))
             .all(|span| span.style == ratatui::style::Style::default()),
         "fenced body must retain terminal-default contrast without wholesale underline"
     );
@@ -133,10 +139,10 @@ fn accessibility_ordinary_code_keeps_literal_projection_and_source_slot_cutoffs(
             .iter()
             .all(|span| !span.style.add_modifier.contains(Modifier::UNDERLINED))
     );
+    let theme = crate::theme::Theme::default();
     for boundary in [&before[2], &before[before.len() - 2]] {
         assert!(boundary.spans.iter().all(|span| {
-            (span.style.fg.is_none() && span.style.add_modifier == Modifier::DIM)
-                || span.style.fg == Some(Color::Cyan)
+            span.style.fg == Some(theme.rule) || span.style.fg == Some(theme.accent)
         }));
     }
     assert!(cell.trim_rendered_prefix(opts, 4));

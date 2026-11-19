@@ -51,14 +51,12 @@ async fn full_diff_detail_keeps_late_hunk_style() {
     let result = serde_json::json!({"presentation":{"form":"diff","path":"src/file","hunks":[{"header":"@@ original @@","lines":lines}]}}).to_string();
     let (shell, path, id) = action_fixture("literal original", &result).await;
     let rows = action_detail_io::read_detail(&shell, &path, &id).await;
+    let run_color = crate::theme::Theme::default().status_run;
     assert!(
         rows.iter()
             .any(|row| row.to_string().contains("late line 64")
-                && (row.style.fg == Some(ratatui::style::Color::Green)
-                    || row
-                        .spans
-                        .iter()
-                        .any(|s| s.style.fg == Some(ratatui::style::Color::Green)))),
+                && (row.style.fg == Some(run_color)
+                    || row.spans.iter().any(|s| s.style.fg == Some(run_color)))),
         "{rows:?}"
     );
 }

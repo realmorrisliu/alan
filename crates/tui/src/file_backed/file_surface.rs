@@ -14,8 +14,9 @@ use super::app::{FileBackedApp, FileBackedEvent};
 use super::tail::tail_with_history;
 mod action_projection;
 mod attachment;
-pub(super) use action_projection::action_snapshot_to_history_cell;
-use action_projection::action_title;
+pub(in crate::file_backed) use action_projection::{
+    ActionSnapshot, RequestSnapshot, TapeRecordV1, action_snapshot_to_history_cell, action_title,
+};
 
 pub(super) use attachment::{hydrate_and_open_tails, reattach_to_current_agent};
 
@@ -425,12 +426,23 @@ async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<al
     Ok(tail_with_history(shell, path).await?.0)
 }
 
+#[cfg(test)]
 pub(super) fn spawn_terminal_events(
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
 ) -> tokio::task::JoinHandle<()> {
+    spawn_terminal_events_with_stop(
+        tx,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+}
+
+pub(super) fn spawn_terminal_events_with_stop(
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         loop {
-            if tx.is_closed() {
+            if tx.is_closed() || stop.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
             match crossterm::event::poll(std::time::Duration::from_millis(100)) {
@@ -846,11 +858,68 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
     }
 }
 
+const LIVE_TOOL_TAIL_LINES: usize = 4;
+
 fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
-    action_status_is_running(&snapshot.status).then(|| RunningTool {
+    if !action_status_is_running(&snapshot.status) {
+        return None;
+    }
+    let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
+    let title = metadata
+        .as_ref()
+        .and_then(|v| v.get("title"))
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| action_title(snapshot));
+    let tail_lines = extract_running_tool_tail(metadata.as_ref(), &snapshot.output);
+    Some(RunningTool {
         id: snapshot.id.clone(),
-        title: action_title(snapshot),
+        title,
+        tail_lines,
     })
+}
+
+fn extract_running_tool_tail(metadata: Option<&Value>, output: &str) -> Vec<String> {
+    let raw = metadata
+        .and_then(|v| v.get("presentation"))
+        .and_then(|v| serde_json::from_value::<ToolResultPresentation>(v.clone()).ok())
+        .and_then(|pres| match pres {
+            ToolResultPresentation::Command { stdout, stderr, .. } => {
+                let mut combined = String::new();
+                if !stdout.is_empty() {
+                    combined.push_str(&stdout);
+                }
+                if !stderr.is_empty() {
+                    if !combined.is_empty() && !combined.ends_with('\n') {
+                        combined.push('\n');
+                    }
+                    combined.push_str(&stderr);
+                }
+                (!combined.is_empty()).then_some(combined)
+            }
+            ToolResultPresentation::PlainText { body } if !body.is_empty() => Some(body),
+            _ => None,
+        })
+        .or_else(|| {
+            metadata
+                .and_then(|v| v.get("result_preview"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| (!output.trim().is_empty()).then(|| output.to_string()));
+
+    let Some(raw) = raw else {
+        return Vec::new();
+    };
+    let non_empty: Vec<String> = raw
+        .lines()
+        .map(crate::history::clean_text)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let start = non_empty.len().saturating_sub(LIVE_TOOL_TAIL_LINES);
+    non_empty[start..].to_vec()
 }
 
 pub(super) fn action_ids_from_events(pending: &mut Vec<u8>) -> Vec<String> {
@@ -865,7 +934,8 @@ pub(super) fn action_ids_from_events(pending: &mut Vec<u8>) -> Vec<String> {
         let action_id = if &record[..separator] == b"created" {
             &record[separator + 1..]
         } else {
-            if &record[separator + 1..] != b"status" {
+            let event_kind = &record[separator + 1..];
+            if event_kind != b"status" && event_kind != b"result" {
                 continue;
             }
             &record[..separator]
@@ -888,60 +958,4 @@ pub(super) fn action_ids_from_events(pending: &mut Vec<u8>) -> Vec<String> {
 
 fn action_status_is_running(status: &str) -> bool {
     matches!(status.trim(), "running" | "pending")
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct RequestSnapshot {
-    pub(super) id: String,
-    pub(super) kind: String,
-    pub(super) prompt: String,
-    pub(super) options: String,
-    pub(super) status: String,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ActionSnapshot {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) status: String,
-    pub(super) output: String,
-    pub(super) result: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct TapeRecordV1 {
-    #[serde(skip)]
-    pub(super) end_offset: usize,
-    #[allow(
-        dead_code,
-        reason = "version is part of the persisted tape schema even though deserialization validates it elsewhere"
-    )]
-    pub(super) version: u16,
-    pub(super) kind: String,
-    pub(super) role: String,
-    pub(super) content: String,
-    #[serde(default)]
-    pub(super) input_intent: Option<alan_agent_protocol::InputIntent>,
-    #[serde(default)]
-    pub(super) submission_id: Option<String>,
-    #[serde(default)]
-    pub(super) related_submission_ids: Vec<String>,
-}
-
-impl TapeRecordV1 {
-    pub(super) fn into_user_cell(self) -> HistoryCell {
-        if self.input_intent == Some(alan_agent_protocol::InputIntent::Command) {
-            HistoryCell::Command(self.content)
-        } else {
-            HistoryCell::User(self.content)
-        }
-    }
-
-    pub(super) fn belongs_to(&self, submission_id: &str) -> bool {
-        self.submission_id.as_deref() == Some(submission_id)
-            || self
-                .related_submission_ids
-                .iter()
-                .any(|id| id == submission_id)
-    }
 }

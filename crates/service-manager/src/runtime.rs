@@ -742,13 +742,20 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
 }
 
 fn mount_standard_namespace_roots(namespace: &mut Namespace) {
-    for path in ["/bin", "/lib", "/man", "/mnt"] {
+    for path in ["/bin", "/lib", "/mnt"] {
         namespace.mount(
             path,
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
             Access::ReadOnly,
         );
     }
+    namespace.mount(
+        "/man",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_tree(
+            crate::manpages::tree_entries(),
+        ))),
+        Access::ReadOnly,
+    );
 }
 
 fn mount_boot_units(namespace: &mut Namespace) {

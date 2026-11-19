@@ -432,7 +432,7 @@ async fn native_commands_and_project_tools_share_cwd_and_file_identity() {
     wait_input(&shell, &read).await;
     assert_eq!(
         command_result(&shell, "read-native").await["output"]["content"],
-        "native"
+        "1| native"
     );
     assert_eq!(
         command_result(&shell, "search-native").await["output"]["total"],

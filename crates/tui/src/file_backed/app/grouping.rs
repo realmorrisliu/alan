@@ -48,14 +48,16 @@ impl FileBackedApp {
         while index < self.transcript.len() {
             let end = self.group_end(index);
             if end - index > 1 {
-                rows[index].push(crate::history::group_summary_header(
+                rows[index].push(crate::history::group_summary_header_with_theme(
                     end - index,
                     opts.width,
+                    opts.theme,
                 ));
                 for (member, output) in rows.iter_mut().enumerate().take(end).skip(index) {
-                    output.push(crate::history::group_summary_member(
+                    output.push(crate::history::group_summary_member_with_theme(
                         &self.transcript[member],
                         opts.width,
+                        opts.theme,
                     ));
                 }
             } else {
@@ -69,9 +71,13 @@ impl FileBackedApp {
                     }
                     HistoryCell::Tool {
                         action: Some(_), ..
-                    } => crate::history::action_summary(&self.transcript[index], opts.width),
+                    } => crate::history::action_summary_with_theme(
+                        &self.transcript[index],
+                        opts.width,
+                        opts.theme,
+                    ),
                     cell if self.action_cells.values().any(|i| *i == index) => {
-                        crate::history::action_summary(cell, opts.width)
+                        crate::history::action_summary_with_theme(cell, opts.width, opts.theme)
                     }
                     cell => cell.render_styled_lines(opts),
                 };

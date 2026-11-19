@@ -151,7 +151,7 @@ async fn paused_native_command_cannot_reuse_revoked_cwd_authority() {
     assert_eq!(command_result(&shell, "write-other").await["exit_code"], 0);
     assert_eq!(
         command_result(&shell, "read-ro").await["output"]["content"],
-        "approved read"
+        "1| approved read"
     );
     for id in ["write-ro", "read-escape", "write-escape"] {
         let failed = command_result(&shell, id).await;
@@ -183,14 +183,14 @@ async fn paused_native_command_cannot_reuse_revoked_cwd_authority() {
             command(&shell, "printf native > note").await["exit_code"],
             0
         );
-        "native"
+        "1| native"
     } else {
         assert_ne!(native_read["exit_code"], 0, "{native_read}");
         assert_eq!(
             native_read["output"]["error"],
             "This backend cannot isolate inactive Host Mount reads"
         );
-        "shared"
+        "1| shared"
     };
     let mut read = response();
     read.tool_calls.push(ToolCall {

@@ -1,5 +1,9 @@
+pub mod about;
+pub mod attachments;
 pub mod connection;
 pub mod host;
+pub mod man;
 pub mod skill_authoring;
 pub mod skill_eval;
 pub mod skills;
+pub mod skills_list;

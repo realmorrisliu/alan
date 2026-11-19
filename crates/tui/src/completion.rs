@@ -112,13 +112,78 @@ pub fn detect(text: &str, cursor: usize, sources: &CompletionSources) -> Option<
 }
 
 fn filter(pool: &[CompletionCandidate], query: &str) -> Vec<CompletionCandidate> {
-    let needle = query.to_ascii_lowercase();
-    pool.iter()
-        .filter(|candidate| {
-            needle.is_empty() || candidate.value.to_ascii_lowercase().contains(&needle)
+    if query.is_empty() {
+        return pool.to_vec();
+    }
+    let mut scored: Vec<(i32, usize, &CompletionCandidate)> = pool
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, candidate)| {
+            fuzzy_score(&candidate.value, query).map(|score| (score, idx, candidate))
         })
-        .cloned()
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    scored
+        .into_iter()
+        .map(|(_, _, candidate)| candidate.clone())
         .collect()
+}
+
+/// Score a completion candidate against a fuzzy query (higher is more relevant).
+/// Tiers keep original pool order when multiple candidates fall into the same prefix tier.
+pub(crate) fn fuzzy_score(candidate: &str, query: &str) -> Option<i32> {
+    if query.is_empty() {
+        return Some(0);
+    }
+    let cand_lower = candidate.to_ascii_lowercase();
+    let needle_lower = query.to_ascii_lowercase();
+    if cand_lower == needle_lower {
+        return Some(10_000);
+    }
+    if cand_lower.starts_with(&needle_lower) {
+        return Some(5_000);
+    }
+    if let Some(pos) = cand_lower.find(&needle_lower) {
+        let at_boundary = pos == 0
+            || matches!(
+                cand_lower.as_bytes()[pos - 1],
+                b'/' | b'_' | b'-' | b'.' | b' '
+            );
+        let base = if at_boundary { 3_500 } else { 2_500 };
+        return Some(base - pos as i32 * 4 - cand_lower.len() as i32);
+    }
+
+    // Subsequence fuzzy match scoring boundary starts and consecutive runs.
+    let mut score = 1_000i32;
+    let mut qi = needle_lower.chars().peekable();
+    let mut prev_matched = false;
+    let mut prev_char: Option<char> = None;
+    for (idx, ch) in cand_lower.chars().enumerate() {
+        let Some(&target) = qi.peek() else {
+            break;
+        };
+        if ch == target {
+            qi.next();
+            let boundary = idx == 0 || matches!(prev_char, Some('/' | '_' | '-' | '.' | ' '));
+            score += if prev_matched {
+                25
+            } else if boundary {
+                20
+            } else {
+                5
+            };
+            prev_matched = true;
+        } else {
+            prev_matched = false;
+            score -= 1;
+        }
+        prev_char = Some(ch);
+    }
+    if qi.peek().is_some() {
+        None
+    } else {
+        Some(score - cand_lower.len() as i32)
+    }
 }
 
 /// Apply a chosen candidate, returning the new text and cursor position.
@@ -198,5 +263,27 @@ mod tests {
         let state = detect(text, 6, &sources()).unwrap();
         let (new_text, _) = apply(text, &state, "src/main.rs");
         assert_eq!(new_text, "a @src/main.rs  end");
+    }
+
+    #[test]
+    fn fuzzy_matching_ranks_exact_prefix_and_boundary_matches_highest() {
+        let pool = CompletionSources {
+            commands: vec![],
+            skills: vec![],
+            files: vec![
+                CompletionCandidate::new("docs/notes.md", None),
+                CompletionCandidate::new("crates/tui/tests/pty_e2e_m2.rs", None),
+                CompletionCandidate::new("pty_e2e.rs", None),
+                CompletionCandidate::new("src/main.rs", None),
+            ],
+        };
+        let state = detect("@ptye2e", 7, &pool).expect("fuzzy match");
+        assert_eq!(state.matches[0].value, "pty_e2e.rs");
+        assert!(
+            state
+                .matches
+                .iter()
+                .any(|c| c.value == "crates/tui/tests/pty_e2e_m2.rs")
+        );
     }
 }

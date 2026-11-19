@@ -14,6 +14,7 @@ mod control_fs;
 mod flat_fs;
 mod host_mount;
 mod local_entry;
+pub mod manpages;
 mod package;
 mod process_launch;
 mod process_runner;

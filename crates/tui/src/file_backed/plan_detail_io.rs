@@ -277,7 +277,7 @@ impl FileBackedApp {
         entries: Vec<PlanEntry>,
     ) {
         if self.modal.active
-            && self.modal.plan_mode
+            && self.modal.mode == super::app::action_modal::ModalMode::Plans
             && self.modal.owner_path == path
             && self.modal.generation == generation
         {

@@ -187,12 +187,12 @@ fn mode_grants_world_write(token: &str) -> bool {
 /// degradation and the syntactic preflight.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SandboxConfinement {
+    /// Whether an OS-enforced sandbox backend (`Seatbelt`, `Landlock`, or
+    /// `LinuxReifiedNamespace`) is active; skips static shape preflight bans.
+    pub os_enforced: bool,
     /// The backend is a complete bash boundary (Host Mount file view + network kernel-
-    /// enforced — Seatbelt), so wrappers may run and escalated bash is reviewer-
-    /// eligible rather than routed to a human. This does NOT mean `.git`/`.alan`/
-    /// `.agents` are kernel-protected (they cannot be without breaking git) —
-    /// protected-subpath tampering is blocked by the path-guard parser, and
-    /// protected writes by approved code are caught by the reviewer policy.
+    /// enforced — Seatbelt), so escalated bash is reviewer-eligible rather than
+    /// routed to a human.
     pub permits_autonomous_bash: bool,
     /// The OS backend confines network effects (else bash must go to a human).
     pub network: bool,
@@ -201,8 +201,10 @@ pub(super) struct SandboxConfinement {
 impl SandboxConfinement {
     /// Resolve from the active backend.
     pub fn detect() -> Self {
+        let backend = crate::tools::detect_backend();
         Self {
-            permits_autonomous_bash: crate::tools::detect_backend().permits_autonomous_bash(),
+            os_enforced: backend.is_os_enforced(),
+            permits_autonomous_bash: backend.permits_autonomous_bash(),
             network: crate::tools::confines_network(),
         }
     }
@@ -210,6 +212,7 @@ impl SandboxConfinement {
     #[cfg(test)]
     pub fn os_enforced() -> Self {
         Self {
+            os_enforced: true,
             permits_autonomous_bash: true,
             network: true,
         }
@@ -218,6 +221,7 @@ impl SandboxConfinement {
     #[cfg(test)]
     pub fn none() -> Self {
         Self {
+            os_enforced: false,
             permits_autonomous_bash: false,
             network: false,
         }
@@ -235,12 +239,10 @@ pub(super) fn evaluate_tool_policy(
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::active_backend_name();
     let path_mode = crate::tools::active_backend_path_mode().to_string();
-    // The bash-shape preflight is the Host-Mount path-guard parser standing in for
-    // confinement. With a kernel-enforced OS sandbox active, confinement is
-    // independent of command syntax, so this syntactic deny must not block
-    // commands the sandbox would safely contain (e.g. `python -c ...`,
-    // `bash -lc ...`). Apply it only on the path-guard fallback.
-    if !confinement.permits_autonomous_bash
+    // Apply static bash-shape preflight only on the non-OS-sandboxed fallback
+    // (`HostMountPathGuard`). When Seatbelt/Landlock/LinuxReifiedNamespace is
+    // active, confinement does not depend on static shell syntax.
+    if !confinement.os_enforced
         && let Some(reason) = bash_shape_preflight_reason(tool_name, arguments)
     {
         return ToolPolicyDecision::Forbidden {
@@ -356,7 +358,12 @@ pub(super) fn evaluate_tool_policy(
     // it is a recognized command whose path operands the parser already confined
     // to non-protected Host Mount paths. (`human-` ids never reach the reviewer.)
     let fully_confined = confinement.network && confinement.permits_autonomous_bash;
-    if should_degrade_bash(action, tool_name, &policy_source, fully_confined) {
+    if (!confinement.os_enforced
+        && builtin_bash
+        && capability != alan_agent_protocol::ToolCapability::Read
+        && action == crate::policy::PolicyAction::Allow)
+        || should_degrade_bash(action, tool_name, &policy_source, fully_confined)
+    {
         action = crate::policy::PolicyAction::Escalate;
         rule_id = Some("human-bash-unconfined".to_string());
         policy_reason = Some(

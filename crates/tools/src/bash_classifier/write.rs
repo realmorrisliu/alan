@@ -83,10 +83,15 @@ fn is_local_verification_command(tokens: &[&str]) -> bool {
         return true;
     }
 
-    if (head == "cargo" && matches!(pair, "test" | "check" | "clippy"))
-        || (head == "go" && pair == "test")
-        || (matches!(head, "npm" | "pnpm" | "yarn" | "bun") && pair == "test")
-        || (matches!(head, "make" | "just") && matches!(pair, "test" | "check"))
+    if (cargo_subcommand(tokens).is_some_and(|subcommand| {
+        matches!(
+            subcommand,
+            "test" | "check" | "clippy" | "build" | "fmt" | "run" | "doc"
+        )
+    })) || (head == "go" && pair == "test")
+        || package_manager_local_script(tokens)
+        || (head == "make" && matches!(pair, "test" | "check"))
+        || (head == "just" && !is_tool_query_command(tokens))
     {
         return true;
     }
@@ -97,6 +102,57 @@ fn is_local_verification_command(tokens: &[&str]) -> bool {
 
     local_verification_subject(tokens)
         .is_some_and(|(command, args)| is_local_verification_entrypoint(command, args))
+}
+
+fn cargo_subcommand<'a>(tokens: &'a [&'a str]) -> Option<&'a str> {
+    if command_basename(tokens.first().copied()?) != "cargo" {
+        return None;
+    }
+    let mut index = 1;
+    while let Some(token) = tokens.get(index).copied() {
+        if token.starts_with('+') {
+            index += 1;
+            continue;
+        }
+        if matches!(token, "-C" | "--manifest-path" | "-p" | "--package") {
+            index += 2;
+            continue;
+        }
+        if token.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some(token);
+    }
+    None
+}
+
+fn package_manager_local_script(tokens: &[&str]) -> bool {
+    let head = command_basename(tokens[0]);
+    if !matches!(head, "npm" | "pnpm" | "yarn" | "bun") {
+        return false;
+    }
+    let mut index = 1;
+    while let Some(token) = tokens.get(index).copied() {
+        if matches!(token, "-C" | "--dir" | "--filter" | "--prefix" | "--cwd") {
+            index += 2;
+            continue;
+        }
+        if token.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        if matches!(token, "test" | "check" | "build" | "lint" | "dev") {
+            return true;
+        }
+        if token == "run" {
+            return tokens.get(index + 1).copied().is_some_and(|script| {
+                matches!(script, "test" | "check" | "build" | "lint" | "dev")
+            });
+        }
+        return false;
+    }
+    false
 }
 
 fn python_module_command<'a>(tokens: &'a [&'a str]) -> Option<&'a str> {

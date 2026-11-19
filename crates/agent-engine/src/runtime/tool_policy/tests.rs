@@ -216,8 +216,9 @@ fn code_runner_routes_to_human_under_landlock() {
             // Code runners classify as Unknown (→ review-unknown → Escalate).
             alan_agent_protocol::ToolCapability::Unknown,
             None,
-            // Landlock: network confined, protected subpaths NOT confined.
+            // Landlock: OS-enforced fs, network confined, protected subpaths NOT carved out.
             SandboxConfinement {
+                os_enforced: true,
                 permits_autonomous_bash: false,
                 network: true,
             },
@@ -239,6 +240,7 @@ fn code_runner_routes_to_human_under_landlock() {
         alan_agent_protocol::ToolCapability::Write,
         None,
         SandboxConfinement {
+            os_enforced: true,
             permits_autonomous_bash: false,
             network: true,
         },
@@ -263,6 +265,7 @@ fn opaque_bash_routes_to_human_without_network_confinement() {
         alan_agent_protocol::ToolCapability::Unknown,
         None,
         SandboxConfinement {
+            os_enforced: true,
             permits_autonomous_bash: true,
             network: false,
         },
@@ -616,5 +619,73 @@ default_action: allow
             assert_eq!(audit.rule_id.as_deref(), Some("review-deploy"));
         }
         other => panic!("expected escalation, got {:?}", other),
+    }
+}
+
+#[test]
+fn os_confined_local_dev_commands_allow_without_guardian_while_fallback_escalates() {
+    let policy = crate::policy::PolicyEngine::autonomous();
+    let governance = alan_agent_protocol::GovernanceConfig::default();
+    let landlock = SandboxConfinement {
+        os_enforced: true,
+        permits_autonomous_bash: false,
+        network: true,
+    };
+
+    for (cmd, cap) in [
+        ("cargo build", alan_agent_protocol::ToolCapability::Write),
+        (
+            "cargo fmt --check",
+            alan_agent_protocol::ToolCapability::Write,
+        ),
+        (
+            "cargo doc --no-deps",
+            alan_agent_protocol::ToolCapability::Write,
+        ),
+        ("pnpm check", alan_agent_protocol::ToolCapability::Write),
+        ("just quality", alan_agent_protocol::ToolCapability::Write),
+        ("git status", alan_agent_protocol::ToolCapability::Read),
+        (
+            "git commit -m 'm2'",
+            alan_agent_protocol::ToolCapability::Write,
+        ),
+    ] {
+        for confinement in [SandboxConfinement::os_enforced(), landlock] {
+            let decision = evaluate_tool_policy(
+                &policy,
+                &governance,
+                "bash",
+                &json!({"command": cmd}),
+                cap,
+                None,
+                confinement,
+            );
+            assert!(
+                matches!(decision, ToolPolicyDecision::Allow { .. }),
+                "{cmd} should allow without guardian under {confinement:?}, got {decision:?}"
+            );
+        }
+
+        if cap == alan_agent_protocol::ToolCapability::Write {
+            let fallback = evaluate_tool_policy(
+                &policy,
+                &governance,
+                "bash",
+                &json!({"command": cmd}),
+                cap,
+                None,
+                SandboxConfinement::none(),
+            );
+            assert!(
+                matches!(
+                    fallback,
+                    ToolPolicyDecision::Escalate {
+                        route: EscalationRoute::AlwaysHuman,
+                        ..
+                    }
+                ),
+                "{cmd} should require human approval without OS sandbox, got {fallback:?}"
+            );
+        }
     }
 }

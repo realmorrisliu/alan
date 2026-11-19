@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::AgentMachine;
+use super::session_allowlist::SessionToolAllowlist;
 use crate::approval::{PendingConfirmation, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
@@ -116,6 +117,8 @@ pub(super) struct MachineTransitionState {
     /// window of recent review outcomes (true = denied) in the active turn.
     guardian_consecutive_denials: u32,
     guardian_recent_reviews: VecDeque<bool>,
+    /// Strictly Process-local session allow-list populated by `"allow_session"`.
+    session_tool_allowlist: SessionToolAllowlist,
 }
 
 /// Guardian rejection circuit-breaker thresholds (Codex parity).
@@ -717,6 +720,28 @@ impl AgentMachine {
         let item = self.transition_state.pending.remove(request_id)?;
         remove_key(&mut self.transition_state.pending_order, request_id);
         Some(item)
+    }
+
+    pub(crate) fn is_tool_allowed_for_session(
+        &self,
+        tool_name: &str,
+        capability: &str,
+        arguments: &serde_json::Value,
+    ) -> bool {
+        self.transition_state
+            .session_tool_allowlist
+            .is_allowed(tool_name, capability, arguments)
+    }
+
+    pub(crate) fn allow_tool_for_session(
+        &mut self,
+        tool_name: &str,
+        capability: &str,
+        arguments: &serde_json::Value,
+    ) {
+        self.transition_state
+            .session_tool_allowlist
+            .allow(tool_name, capability, arguments);
     }
 }
 

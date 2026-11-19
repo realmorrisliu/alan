@@ -6,6 +6,10 @@ use alan_agent_protocol::InputIntent;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use unicode_width::UnicodeWidthStr;
+
+const MAX_UNDO_HISTORY: usize = 256;
+
 /// A recalled body and its explicitly recorded submission intent.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +42,9 @@ pub struct Composer {
     history_path: Option<PathBuf>,
     draft_revision: u64,
     history_unavailable: bool,
+    preferred_col: Option<usize>,
+    history_browsing: bool,
+    undo_stack: Vec<(String, usize)>,
 }
 
 impl Composer {
@@ -89,18 +96,38 @@ impl Composer {
         self.draft_revision += 1;
         self.buffer = text.into();
         self.cursor = self.buffer.len();
+        self.preferred_col = None;
         self.reset_recall();
     }
 
     pub fn set_text_with_cursor(&mut self, text: impl Into<String>, cursor: usize) {
         self.buffer = text.into();
         self.cursor = cursor.min(self.buffer.len());
+        self.preferred_col = None;
+        self.reset_recall();
+    }
+
+    /// Replace the buffer from an external editor while keeping the prior state undoable.
+    pub fn apply_external_edit(&mut self, text: impl Into<String>) {
+        let next = text.into();
+        if next == self.buffer {
+            return;
+        }
+        self.push_undo();
+        self.buffer = next;
+        self.cursor = self.buffer.len();
+        self.preferred_col = None;
         self.reset_recall();
     }
 
     pub fn insert_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.push_undo();
         self.buffer.insert_str(self.cursor, text);
         self.cursor += text.len();
+        self.preferred_col = None;
         self.reset_recall();
     }
 
@@ -110,6 +137,8 @@ impl Composer {
         }
         let text = std::mem::take(&mut self.buffer);
         self.cursor = 0;
+        self.preferred_col = None;
+        self.undo_stack.clear();
         self.reset_recall();
         Some(text)
     }
@@ -148,24 +177,79 @@ impl Composer {
     pub fn handle_key(&mut self, event: KeyEvent) -> ComposerKeyOutcome {
         let ctrl = event.modifiers.contains(KeyModifiers::CONTROL);
         let alt = event.modifiers.contains(KeyModifiers::ALT);
+        if !matches!(event.code, KeyCode::Up | KeyCode::Down) {
+            self.preferred_col = None;
+            self.history_browsing = false;
+        }
         match event.code {
             KeyCode::Char('c') if ctrl => ComposerKeyOutcome::Interrupt,
-            KeyCode::Char('a') if ctrl => {
-                self.cursor = 0;
+            KeyCode::Char('a') if ctrl && !alt => {
+                self.cursor = self.line_start(self.cursor);
                 ComposerKeyOutcome::Changed
             }
-            KeyCode::Char('e') if ctrl => {
-                self.cursor = self.buffer.len();
+            KeyCode::Char('e') if ctrl && !alt => {
+                self.cursor = self.line_end(self.cursor);
                 ComposerKeyOutcome::Changed
             }
-            KeyCode::Char('u') if ctrl => {
-                self.buffer.drain(..self.cursor);
-                self.cursor = 0;
-                self.reset_recall();
-                ComposerKeyOutcome::Changed
+            KeyCode::Char('u') if ctrl && !alt => {
+                let start = self.line_start(self.cursor);
+                if start < self.cursor {
+                    self.push_undo();
+                    self.buffer.drain(start..self.cursor);
+                    self.cursor = start;
+                    self.reset_recall();
+                    ComposerKeyOutcome::Changed
+                } else {
+                    ComposerKeyOutcome::Ignored
+                }
             }
-            KeyCode::Char('w') if ctrl => {
+            KeyCode::Char('k') if ctrl && !alt => {
+                let end = self.line_end(self.cursor);
+                if self.cursor < end {
+                    self.push_undo();
+                    self.buffer.drain(self.cursor..end);
+                    self.reset_recall();
+                    ComposerKeyOutcome::Changed
+                } else if self.cursor < self.buffer.len()
+                    && self.buffer[self.cursor..].starts_with('\n')
+                {
+                    self.push_undo();
+                    self.buffer.remove(self.cursor);
+                    self.reset_recall();
+                    ComposerKeyOutcome::Changed
+                } else {
+                    ComposerKeyOutcome::Ignored
+                }
+            }
+            KeyCode::Char('w') if ctrl && !alt => {
                 self.delete_word_back();
+                ComposerKeyOutcome::Changed
+            }
+            KeyCode::Char('_') | KeyCode::Char('/') if ctrl && !alt => {
+                if self.undo() {
+                    ComposerKeyOutcome::Changed
+                } else {
+                    ComposerKeyOutcome::Ignored
+                }
+            }
+            KeyCode::Char('j') if ctrl && !alt => {
+                self.insert_text("\n");
+                ComposerKeyOutcome::Changed
+            }
+            KeyCode::Backspace if alt => {
+                if self.cursor > 0 {
+                    self.delete_word_back();
+                    ComposerKeyOutcome::Changed
+                } else {
+                    ComposerKeyOutcome::Ignored
+                }
+            }
+            KeyCode::Char('b') if alt && !ctrl => {
+                self.cursor = self.word_start_before(self.cursor);
+                ComposerKeyOutcome::Changed
+            }
+            KeyCode::Char('f') if alt && !ctrl => {
+                self.cursor = self.word_end_after(self.cursor);
                 ComposerKeyOutcome::Changed
             }
             KeyCode::Left if alt => {
@@ -185,11 +269,17 @@ impl Composer {
                 ComposerKeyOutcome::Changed
             }
             KeyCode::Up => {
-                self.history_prev();
+                if self.history_browsing || !self.move_up() {
+                    self.preferred_col = None;
+                    self.history_prev();
+                }
                 ComposerKeyOutcome::Changed
             }
             KeyCode::Down => {
-                self.history_next();
+                if self.history_browsing || !self.move_down() {
+                    self.preferred_col = None;
+                    self.history_next();
+                }
                 ComposerKeyOutcome::Changed
             }
             KeyCode::Char(_) if ctrl || alt => ComposerKeyOutcome::Ignored,
@@ -199,9 +289,21 @@ impl Composer {
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
+                    self.push_undo();
                     let prev = self.prev_boundary(self.cursor);
                     self.buffer.drain(prev..self.cursor);
                     self.cursor = prev;
+                    self.reset_recall();
+                    ComposerKeyOutcome::Changed
+                } else {
+                    ComposerKeyOutcome::Ignored
+                }
+            }
+            KeyCode::Delete => {
+                if self.cursor < self.buffer.len() {
+                    self.push_undo();
+                    let next = self.next_boundary(self.cursor);
+                    self.buffer.drain(self.cursor..next);
                     self.reset_recall();
                     ComposerKeyOutcome::Changed
                 } else {
@@ -224,9 +326,16 @@ impl Composer {
                     ComposerKeyOutcome::Ignored
                 }
             }
-            KeyCode::Enter if event.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.buffer.insert(self.cursor, '\n');
-                self.cursor += 1;
+            KeyCode::Enter if event.modifiers.contains(KeyModifiers::SHIFT) || alt => {
+                self.insert_text("\n");
+                ComposerKeyOutcome::Changed
+            }
+            KeyCode::Enter
+                if !ctrl && self.cursor > 0 && self.buffer[..self.cursor].ends_with('\\') =>
+            {
+                self.push_undo();
+                self.buffer
+                    .replace_range(self.cursor - 1..self.cursor, "\n");
                 self.reset_recall();
                 ComposerKeyOutcome::Changed
             }
@@ -239,6 +348,7 @@ impl Composer {
         self.draft_revision += 1;
         self.history_index = None;
         self.stash = None;
+        self.history_browsing = false;
     }
 
     fn history_prev(&mut self) {
@@ -255,6 +365,7 @@ impl Composer {
             Some(index) => index - 1,
         };
         self.history_index = Some(next_index);
+        self.history_browsing = true;
         self.buffer = self.history[next_index].body.clone();
         self.cursor = self.buffer.len();
     }
@@ -266,19 +377,82 @@ impl Composer {
         };
         if index + 1 < self.history.len() {
             self.history_index = Some(index + 1);
+            self.history_browsing = true;
             self.buffer = self.history[index + 1].body.clone();
         } else {
             self.history_index = None;
+            self.history_browsing = false;
             self.buffer = self.stash.take().unwrap_or_default();
         }
         self.cursor = self.buffer.len();
     }
 
+    fn push_undo(&mut self) {
+        if self.undo_stack.len() >= MAX_UNDO_HISTORY {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push((self.buffer.clone(), self.cursor));
+    }
+
+    fn undo(&mut self) -> bool {
+        let Some((buffer, cursor)) = self.undo_stack.pop() else {
+            return false;
+        };
+        self.buffer = buffer;
+        self.cursor = cursor.min(self.buffer.len());
+        self.preferred_col = None;
+        self.reset_recall();
+        true
+    }
+
+    fn line_start(&self, pos: usize) -> usize {
+        self.buffer[..pos].rfind('\n').map_or(0, |index| index + 1)
+    }
+
+    fn line_end(&self, pos: usize) -> usize {
+        self.buffer[pos..]
+            .find('\n')
+            .map_or(self.buffer.len(), |offset| pos + offset)
+    }
+
+    fn move_up(&mut self) -> bool {
+        let cur_start = self.line_start(self.cursor);
+        if cur_start == 0 {
+            return false;
+        }
+        let target_col = *self
+            .preferred_col
+            .get_or_insert_with(|| self.buffer[cur_start..self.cursor].width());
+        let prev_end = cur_start - 1;
+        let prev_start = self.line_start(prev_end);
+        let offset = byte_index_for_display_col(&self.buffer[prev_start..prev_end], target_col);
+        self.cursor = prev_start + offset;
+        true
+    }
+
+    fn move_down(&mut self) -> bool {
+        let cur_end = self.line_end(self.cursor);
+        if cur_end >= self.buffer.len() {
+            return false;
+        }
+        let cur_start = self.line_start(self.cursor);
+        let target_col = *self
+            .preferred_col
+            .get_or_insert_with(|| self.buffer[cur_start..self.cursor].width());
+        let next_start = cur_end + 1;
+        let next_end = self.line_end(next_start);
+        let offset = byte_index_for_display_col(&self.buffer[next_start..next_end], target_col);
+        self.cursor = next_start + offset;
+        true
+    }
+
     fn delete_word_back(&mut self) {
         let start = self.word_start_before(self.cursor);
         if start < self.cursor {
+            self.push_undo();
             self.buffer.drain(start..self.cursor);
             self.cursor = start;
+            self.preferred_col = None;
             self.reset_recall();
         }
     }
@@ -333,6 +507,18 @@ impl Composer {
         }
         pos
     }
+}
+
+fn byte_index_for_display_col(line: &str, target_col: usize) -> usize {
+    let mut width = 0usize;
+    for (idx, ch) in line.char_indices() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > target_col {
+            return idx;
+        }
+        width += ch_width;
+    }
+    line.len()
 }
 
 fn history_records_path(path: &std::path::Path, version: u8) -> PathBuf {
@@ -513,6 +699,10 @@ mod process_tests;
 #[cfg(test)]
 #[path = "composer_history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "composer_m2_tests.rs"]
+mod m2_tests;
 
 #[cfg(test)]
 #[path = "composer_tests.rs"]

@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
     use ratatui::style::{Color, Modifier};
+    let theme = crate::theme::Theme::default();
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(
@@ -38,10 +39,10 @@ fn semantic_markdown_production_buffer_removes_markers_and_preserves_roles() {
                 .contains(Modifier::ITALIC)
         );
         assert_eq!(buffer.cell((0, 3)).unwrap().symbol(), "•");
-        assert_eq!(buffer.cell((4, 5)).unwrap().symbol(), "l");
-        assert_eq!(buffer.cell((0, 8)).unwrap().symbol(), "+");
-        assert_eq!(buffer.cell((0, 8)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((0, 9)).unwrap().fg, Color::Red);
+        assert_eq!(buffer.cell((6, 5)).unwrap().symbol(), "l");
+        assert_eq!(buffer.cell((2, 8)).unwrap().symbol(), "+");
+        assert_eq!(buffer.cell((2, 8)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((2, 9)).unwrap().fg, theme.status_block);
         for row in [11, 12, 13] {
             assert_eq!(
                 buffer.cell((0, row)).unwrap().fg,
@@ -57,6 +58,7 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
     use crate::history::ToolStatus;
     use alan_agent_protocol::{DiffHunk, DiffLine, ToolResultPresentation};
     use ratatui::style::Color;
+    let theme = crate::theme::Theme::default();
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Tool {
@@ -98,12 +100,12 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((2, 3)).unwrap().symbol(), "-");
-        assert_eq!(buffer.cell((2, 3)).unwrap().fg, Color::Red);
-        assert_eq!(buffer.cell((7, 4)).unwrap().symbol(), "新");
-        assert_eq!(buffer.cell((7, 4)).unwrap().fg, Color::Green);
-        assert_eq!(buffer.cell((7, 5)).unwrap().symbol(), "!");
-        assert_eq!(buffer.cell((7, 5)).unwrap().fg, Color::Reset);
+        assert_eq!(buffer.cell((4, 3)).unwrap().symbol(), "-");
+        assert_eq!(buffer.cell((4, 3)).unwrap().fg, theme.status_block);
+        assert_eq!(buffer.cell((9, 4)).unwrap().symbol(), "新");
+        assert_eq!(buffer.cell((9, 4)).unwrap().fg, theme.status_run);
+        assert_eq!(buffer.cell((9, 5)).unwrap().symbol(), "!");
+        assert_eq!(buffer.cell((9, 5)).unwrap().fg, Color::Reset);
         assert!(
             retained
                 .iter()
@@ -114,7 +116,8 @@ fn typed_diff_and_partial_scrollback_keep_styles_and_literal_indentation() {
 
 #[test]
 fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() {
-    use ratatui::style::{Color, Modifier};
+    use ratatui::style::Modifier;
+    let theme = crate::theme::Theme::default();
     for width in [40, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         app.transcript.push(HistoryCell::Assistant(
@@ -130,10 +133,10 @@ fn partial_markdown_drain_keeps_fence_context_during_stream_append_and_resize() 
             let mut terminal = Terminal::new(TestBackend::new(resized, 12)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer.cell((0, 0)).unwrap().fg, Color::Green);
-            assert_eq!(buffer.cell((0, 1)).unwrap().fg, Color::Red);
-            assert_eq!(buffer.cell((5, 2)).unwrap().symbol(), "界");
-            assert_eq!(buffer.cell((5, 2)).unwrap().fg, Color::Green);
+            assert_eq!(buffer.cell((2, 0)).unwrap().fg, theme.status_run);
+            assert_eq!(buffer.cell((2, 1)).unwrap().fg, theme.status_block);
+            assert_eq!(buffer.cell((7, 2)).unwrap().symbol(), "界");
+            assert_eq!(buffer.cell((7, 2)).unwrap().fg, theme.status_run);
             assert!(
                 buffer
                     .cell((0, 4))
@@ -375,7 +378,7 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
     assert_eq!(line(2), "/workspace/alan");
     assert_eq!(line(3), "");
     assert_eq!(line(4), "─".repeat(80));
-    assert!(line(5).starts_with("Select project · model unknown"));
+    assert!(line(5).contains("Select project · model unknown"));
     assert_eq!(line(6), ":");
     assert_eq!(
         backend.cursor_position(),
@@ -395,7 +398,7 @@ fn prompt_shows_the_process_selected_next_model() {
         .trim_end()
         .to_string();
 
-    assert!(line.starts_with("Select project · gpt-6-luna / high"));
+    assert!(line.contains("Select project · gpt-6-luna / high"));
 }
 
 #[test]
@@ -497,7 +500,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
                     if selecting {
                         assert!(attention.contains("Selecting project"));
                     }
-                    if width >= model.len() {
+                    if width >= model.len() + 2 {
                         assert!(text.contains(model), "{width}: {text}");
                     }
                 }

@@ -1,13 +1,15 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use crate::completion::CompletionKind;
+use crate::theme::DotState;
 use crate::transcript_ui::wrapped_line_count;
 
+use super::app::action_modal::ModalMode;
 use super::{FileBackedApp, MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES, SPINNER};
 
 #[cfg(test)]
@@ -19,59 +21,87 @@ pub(super) fn draw_at(frame: &mut Frame<'_>, app: &FileBackedApp, now_ms: u64) {
     let area = frame.area();
     let width = area.width as usize;
     if app.modal.active {
-        let count = if app.modal.plan_mode {
-            app.modal.plans.len()
-        } else {
-            app.modal.actions.len()
-        };
-        let kind = if app.modal.plan_mode {
-            "Plan"
-        } else {
-            "Action"
-        };
-        let switch = if width >= 48 {
-            if app.modal.plan_mode {
-                " · p Actions"
-            } else {
-                " · p Plans"
-            }
-        } else {
-            ""
-        };
-        let owner = if app.modal.plan_mode {
-            app.modal
-                .plans
-                .get(app.modal.selected)
-                .map(|entry| entry.owner.as_str())
-        } else {
-            app.modal
-                .actions
-                .get(app.modal.selected)
-                .map(|entry| entry.owner.as_str())
-        }
-        .unwrap_or(&app.modal.owner_path);
-        let mut rows = vec![
-            Line::from(format!(
-                "{}/{count} · {kind} · {owner}",
-                if count == 0 {
+        let header_line = match app.modal.mode {
+            ModalMode::Actions => {
+                let count = app.modal.actions.len();
+                let owner = app
+                    .modal
+                    .actions
+                    .get(app.modal.selected)
+                    .map(|entry| entry.owner.as_str())
+                    .unwrap_or(&app.modal.owner_path);
+                let idx = if count == 0 {
                     0
                 } else {
                     app.modal.selected + 1
-                },
-            )),
-            Line::styled(
-                if width >= 32 {
-                    format!("↔ select · Space/b page · Esc{switch}")
+                };
+                Line::styled(
+                    format!("{idx}/{count} · Action · {owner}"),
+                    app.theme.accent_bold(),
+                )
+            }
+            ModalMode::Plans => {
+                let count = app.modal.plans.len();
+                let owner = app
+                    .modal
+                    .plans
+                    .get(app.modal.selected)
+                    .map(|entry| entry.owner.as_str())
+                    .unwrap_or(&app.modal.owner_path);
+                let idx = if count == 0 {
+                    0
                 } else {
-                    "↔ · Space/b · Esc".into()
-                },
-                Style::default().fg(Color::DarkGray),
+                    app.modal.selected + 1
+                };
+                Line::styled(
+                    format!("{idx}/{count} · Plan · {owner}"),
+                    app.theme.accent_bold(),
+                )
+            }
+            ModalMode::Tape => Line::styled(
+                format!("Turing Tape · {}", app.modal.owner_path),
+                app.theme.accent_bold(),
             ),
+            ModalMode::Man => Line::styled(
+                format!("Manual · {}", app.modal.owner_path),
+                app.theme.accent_bold(),
+            ),
+        };
+        let switch = match (app.modal.mode, width >= 56, width >= 48) {
+            (ModalMode::Actions, true, _) => " · p Plans · t Tape",
+            (ModalMode::Actions, false, true) => " · p Plans",
+            (ModalMode::Plans, true, _) => " · p Actions · t Tape",
+            (ModalMode::Plans, false, true) => " · p Actions",
+            (ModalMode::Tape, _, true) => " · t Actions · p Plans",
+            (ModalMode::Man, true, _) => " · a Actions · p Plans · t Tape",
+            (ModalMode::Man, false, true) => " · a Actions",
+            _ => "",
+        };
+        let hint_text = if width >= 56 {
+            format!("↑↓/jk · ↔ select · d · Space/b page · Esc{switch}")
+        } else if width >= 48 {
+            format!("↑↓/↔ · d · Space/b page · Esc{switch}")
+        } else if width >= 32 {
+            "↑↓/↔ · d · Space/b page · Esc".into()
+        } else {
+            "↑↓ · ↔ · d · Esc".into()
+        };
+        let mut rows = vec![
+            header_line,
+            Line::styled(hint_text, app.theme.muted_style()),
         ];
-        let detail = crate::history::wrap_styled_lines(app.modal.rows.clone(), width);
+        let display_rows = if app.modal.mode == ModalMode::Actions {
+            filter_modal_rows(&app.modal.rows, app.modal.show_raw_json, app.theme)
+        } else {
+            app.modal.rows.clone()
+        };
+        let detail = crate::history::wrap_styled_lines(display_rows, width);
         let start = app.modal.scroll.min(detail.len().saturating_sub(1));
         if detail.is_empty() {
-            rows.push(Line::from("Loading retained details…"));
+            rows.push(Line::styled(
+                "Loading retained details…",
+                app.theme.muted_style(),
+            ));
         }
         rows.extend(
             detail
@@ -180,6 +210,60 @@ fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
 #[path = "history_notice_tests.rs"]
 mod history_notice_tests;
 
+fn filter_modal_rows(
+    rows: &[Line<'static>],
+    show_raw_json: bool,
+    theme: crate::theme::Theme,
+) -> Vec<Line<'static>> {
+    if show_raw_json {
+        return rows.to_vec();
+    }
+    let mut filtered = Vec::with_capacity(rows.len());
+    let mut skipping_raw_bytes = false;
+    let mut skipping_result_metadata = false;
+    let mut emitted_collapsed_hint = false;
+
+    for row in rows {
+        let text = row.to_string();
+        if text == "Result metadata" {
+            skipping_raw_bytes = false;
+            skipping_result_metadata = true;
+            if !emitted_collapsed_hint {
+                filtered.push(Line::styled(
+                    "  [raw JSON/bytes collapsed · press d to expand]",
+                    theme.muted_style(),
+                ));
+                emitted_collapsed_hint = true;
+            }
+            continue;
+        }
+        if text == "Original raw bytes" {
+            skipping_raw_bytes = true;
+            if !emitted_collapsed_hint {
+                filtered.push(Line::styled(
+                    "  [raw JSON/bytes collapsed · press d to expand]",
+                    theme.muted_style(),
+                ));
+                emitted_collapsed_hint = true;
+            }
+            continue;
+        }
+        if matches!(
+            text.as_str(),
+            "Name" | "Status" | "Original output" | "Recovered reference (retained original)"
+        ) {
+            skipping_raw_bytes = false;
+            skipping_result_metadata = false;
+            emitted_collapsed_hint = false;
+        }
+        if skipping_raw_bytes || skipping_result_metadata {
+            continue;
+        }
+        filtered.push(row.clone());
+    }
+    filtered
+}
+
 fn live_region_lines(app: &FileBackedApp, width: usize) -> (Vec<Line<'static>>, Option<usize>) {
     live_region_lines_at(app, width, super::unix_time_ms())
 }
@@ -193,9 +277,10 @@ pub(super) fn live_region_lines_at(
     // Keep the live composer visually separate from retained output. These
     // rows share the ordinary viewport budget, including cursor placement.
     lines.push(Line::default());
+    let rule_char = if app.theme.is_dumb { "-" } else { "─" };
     lines.push(Line::styled(
-        "─".repeat(width),
-        Style::default().fg(Color::DarkGray),
+        rule_char.repeat(width),
+        app.theme.rule_style(),
     ));
     lines.push(app.context_line(width));
     if let Some(line) = attention_line_at_width(app, now_ms, width) {
@@ -211,37 +296,53 @@ pub(super) fn live_region_lines_at(
         lines.extend(thinking_preview_lines(app, width));
     }
     if let Some(notice) = app.composer.history_notice() {
+        let (dot, _) = app.theme.status_dot(DotState::Wait);
         lines.push(Line::styled(
-            format!("· {notice}"),
-            Style::default().fg(Color::Yellow),
+            format!("{dot} {notice}"),
+            app.theme.wait_style(),
         ));
     }
     if let Some(notice) = &app.notice {
-        let (prefix, color) = match notice.kind {
-            alan_agent_protocol::UiNoticeKind::Error => ("Error · ", Color::Red),
-            alan_agent_protocol::UiNoticeKind::Warning => ("Warning · ", Color::Yellow),
-            _ => ("· ", Color::DarkGray),
-        };
-        lines.push(Line::styled(
-            format!("{prefix}{notice}"),
-            Style::default().fg(color),
-        ));
+        if let Some(help_lines) = super::help::try_render_help_lines(notice, app.theme) {
+            lines.extend(help_lines);
+        } else {
+            let (prefix, style) = match notice.kind {
+                alan_agent_protocol::UiNoticeKind::Error => ("Error · ", app.theme.block_style()),
+                alan_agent_protocol::UiNoticeKind::Warning => {
+                    ("Warning · ", app.theme.wait_style())
+                }
+                _ => ("· ", app.theme.muted_style()),
+            };
+            let mut iter = notice.split('\n');
+            if let Some(first) = iter.next() {
+                lines.push(Line::styled(format!("{prefix}{first}"), style));
+            }
+            for continuation in iter {
+                lines.push(Line::styled(format!("  {continuation}"), style));
+            }
+        }
     }
     for tool in &app.running_tools {
-        lines.push(Line::styled(
-            format!("{} · running", tool.title),
-            Style::default().fg(Color::Cyan),
-        ));
+        let (dot, dot_style) = app.theme.status_dot(DotState::Run);
+        lines.push(Line::from(vec![
+            Span::styled(format!("{dot} "), dot_style),
+            Span::styled(tool.title.clone(), app.theme.accent_style()),
+            Span::styled(" · running", app.theme.muted_style()),
+        ]));
+        for tail in &tool.tail_lines {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}", app.theme.gutter()), app.theme.rule_style()),
+                Span::styled(tail.clone(), app.theme.muted_style()),
+            ]));
+        }
     }
 
     if let Some(form) = &app.form {
         for (text, focused) in form.render_lines() {
             let style = if focused {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
+                app.theme.accent_bold()
             } else if text.trim_start().starts_with('!') {
-                Style::default().fg(Color::Red)
+                app.theme.block_style()
             } else {
                 Style::default()
             };
@@ -253,36 +354,58 @@ pub(super) fn live_region_lines_at(
         lines.extend(app.composer_lines());
         if let Some(state) = &app.completion {
             let start = state.selected.saturating_sub(MAX_COMPLETION_ROWS - 1);
-            for (idx, candidate) in state
+            let visible: Vec<(usize, &crate::completion::CompletionCandidate)> = state
                 .matches
                 .iter()
                 .enumerate()
                 .skip(start)
                 .take(MAX_COMPLETION_ROWS)
-            {
-                let trigger = if app.model_chooser.active {
-                    ""
-                } else {
-                    match state.kind {
-                        CompletionKind::Command => "/",
-                        CompletionKind::Skill => "$",
-                        CompletionKind::File => "@",
-                    }
-                };
-                let mut label = format!("{trigger}{}", candidate.label);
-                if let Some(detail) = &candidate.detail {
-                    label.push_str(&format!("  - {detail}"));
+                .collect();
+            let trigger = if app.model_chooser.active {
+                ""
+            } else {
+                match state.kind {
+                    CompletionKind::Command => "/",
+                    CompletionKind::Skill => "$",
+                    CompletionKind::File => "@",
                 }
-                let style = if idx == state.selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
+            };
+            let has_details = visible.iter().any(|(_, c)| c.detail.is_some());
+            let max_left = width.saturating_sub(14).clamp(10, 32);
+            let left_col_width = if has_details {
+                visible
+                    .iter()
+                    .map(|(_, c)| {
+                        unicode_width::UnicodeWidthStr::width(trigger)
+                            + unicode_width::UnicodeWidthStr::width(c.label.as_str())
+                    })
+                    .max()
+                    .unwrap_or(0)
+                    .min(max_left)
+            } else {
+                0
+            };
+            for (idx, candidate) in visible {
+                let selected = idx == state.selected;
+                let (prefix_style, left_style, detail_style) =
+                    app.theme.completion_row_styles(selected);
+                let prefix = if selected {
+                    if app.theme.is_dumb { "> " } else { "▶ " }
                 } else {
-                    Style::default().fg(Color::Cyan)
+                    "  "
                 };
-                let prefix = if idx == state.selected { "▶ " } else { "  " };
-                lines.push(Line::styled(format!("{prefix}{label}"), style));
+                let left_raw = format!("{trigger}{}", candidate.label);
+                let mut spans = vec![Span::styled(prefix, prefix_style)];
+                if let Some(detail) = &candidate.detail {
+                    let left_w = unicode_width::UnicodeWidthStr::width(left_raw.as_str());
+                    let pad = left_col_width.saturating_sub(left_w) + 2;
+                    spans.push(Span::styled(left_raw, left_style));
+                    spans.push(Span::styled(" ".repeat(pad), prefix_style));
+                    spans.push(Span::styled(detail.clone(), detail_style));
+                } else {
+                    spans.push(Span::styled(left_raw, left_style));
+                }
+                lines.push(Line::from(spans));
             }
         }
         if app.completion.is_none()
@@ -291,10 +414,12 @@ pub(super) fn live_region_lines_at(
             && (!app.projected_actions.is_empty() || !app.plan_owners.is_empty())
         {
             // Reuse the stable row below the composer; completion keeps priority.
-            lines.push(Line::styled(
-                "Ctrl+O details (p: plans)",
-                Style::default().fg(Color::DarkGray),
-            ));
+            let hint = if width >= 40 {
+                "Ctrl+O details (p: plans, t: tape)"
+            } else {
+                "Ctrl+O details (p: plans)"
+            };
+            lines.push(Line::styled(hint, app.theme.muted_style()));
         }
         (lines, Some(prompt_start))
     }
@@ -559,7 +684,7 @@ fn attention_line_at_width(
     Some(Line::styled(
         text,
         if app.model_chooser.uncertain.is_some() {
-            Style::default().fg(Color::Red)
+            app.theme.block_style()
         } else {
             line.style
         },
@@ -571,27 +696,29 @@ pub(super) fn attention_line(app: &FileBackedApp, now_ms: u64) -> Option<Line<'s
     if app.activity_label().is_some() {
         let mut line = activity_line(app, now_ms);
         if !labels.is_empty() {
+            let suffix_style = if app.model_chooser.uncertain.is_some() {
+                app.theme.block_style()
+            } else {
+                app.theme.wait_style()
+            };
             line.spans.push(Span::styled(
                 format!(" · {}", labels.join(" · ")),
-                Style::default().fg(if app.model_chooser.uncertain.is_some() {
-                    Color::Red
-                } else {
-                    Color::Yellow
-                }),
+                suffix_style,
             ));
         }
         Some(line)
     } else if labels.is_empty() {
         None
     } else {
-        let color = if app.last_input_failed || app.model_chooser.uncertain.is_some() {
-            Color::Red
+        let (dot_state, style) = if app.last_input_failed || app.model_chooser.uncertain.is_some() {
+            (DotState::Block, app.theme.block_style())
         } else if app.model_chooser.pending.is_some() || app.project_selection.is_some() {
-            Color::Cyan
+            (DotState::Wait, app.theme.accent_style())
         } else {
-            Color::Yellow
+            (DotState::Wait, app.theme.wait_style())
         };
-        Some(Line::styled(labels.join(" · "), Style::default().fg(color)))
+        let (dot, _) = app.theme.status_dot(dot_state);
+        Some(Line::styled(format!("{dot} {}", labels.join(" · ")), style))
     }
 }
 
@@ -607,7 +734,8 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
         } else {
             app.activity_label().unwrap_or("waiting for input")
         };
-        return Line::styled(format!("· {cue}"), Style::default().fg(Color::Yellow));
+        let (dot, style) = app.theme.status_dot(DotState::Wait);
+        return Line::styled(format!("{dot} {cue}"), style);
     }
     let elapsed = activity_elapsed_second(app, now_ms);
     let frame_idx = (elapsed as usize) % SPINNER.len();
@@ -620,10 +748,7 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
         "Working"
     };
     Line::from(vec![
-        Span::styled(
-            format!("{} ", SPINNER[frame_idx]),
-            Style::default().fg(Color::Green),
-        ),
+        Span::styled(format!("{} ", SPINNER[frame_idx]), app.theme.run_style()),
         Span::styled(
             format!("{verb} · {elapsed}s · Esc interrupt"),
             Style::default(),
@@ -633,7 +758,7 @@ fn activity_line(app: &FileBackedApp, now_ms: u64) -> Line<'static> {
 
 fn thinking_preview_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
     let cleaned = crate::history::clean_text(&app.thinking.text);
-    let body_width = width.saturating_sub(2).max(1);
+    let body_width = width.saturating_sub(4).max(1);
     let mut wrapped_rows = Vec::new();
     for line in cleaned.lines() {
         let trimmed = line.trim_end();
@@ -649,10 +774,18 @@ fn thinking_preview_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static
     }
     let max_rows = if app.expand_thinking { 8 } else { 2 };
     let start = wrapped_rows.len().saturating_sub(max_rows);
-    let style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
+    let gutter = format!("  {}", app.theme.gutter());
+    let text_style = app
+        .theme
+        .italic_if_capable(app.theme.dim_if_capable(app.theme.muted_style()));
     wrapped_rows
         .into_iter()
         .skip(start)
-        .map(|row| Line::styled(format!("  {row}"), style))
+        .map(|row| {
+            Line::from(vec![
+                Span::styled(gutter.clone(), app.theme.rule_style()),
+                Span::styled(row, text_style),
+            ])
+        })
         .collect()
 }

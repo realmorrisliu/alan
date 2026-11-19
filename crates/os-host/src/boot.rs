@@ -389,7 +389,7 @@ pub(crate) fn prepare_system_store_launch(
 fn product_tool_registry(core_config: Arc<Config>) -> ToolRegistry {
     let mut tools = ToolRegistry::with_config(core_config);
     alan_tools::register_builtin_tool_catalog(&mut tools);
-    for tool in alan_tools::create_core_tools() {
+    for tool in alan_tools::create_all_tools() {
         tools.register_boxed(tool);
     }
     tools
@@ -473,7 +473,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
-    fn product_root_agent_has_only_the_existing_core_tool_set() {
+    fn product_root_agent_has_all_seven_builtin_tools() {
         let tools = product_tool_registry(Arc::new(Config::default()));
         let names = tools
             .list_tools()
@@ -481,18 +481,22 @@ mod tests {
             .map(str::to_string)
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(
-            names,
-            ["bash", "edit_file", "read_file", "write_file"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        );
-        for tool in ["bash", "edit_file", "read_file", "write_file"] {
+        let expected: BTreeSet<String> = [
+            "bash",
+            "edit_file",
+            "glob",
+            "grep",
+            "list_dir",
+            "read_file",
+            "write_file",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        assert_eq!(names, expected);
+        for tool in &expected {
             assert!(tools.has_tool_factory(tool), "missing Tool factory: {tool}");
-        }
-        for tool in ["glob", "grep", "list_dir"] {
-            assert!(!tools.has(tool), "unexpected exploration Tool: {tool}");
+            assert!(tools.has(tool), "missing registered Tool: {tool}");
         }
     }
 

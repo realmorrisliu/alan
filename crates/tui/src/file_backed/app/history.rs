@@ -76,7 +76,11 @@ impl FileBackedApp {
             {
                 HistoryCell::Styled(rows.clone()).render_styled_lines(opts)
             } else if is_action {
-                crate::history::action_summary(&self.transcript[index], opts.width)
+                crate::history::action_summary_with_theme(
+                    &self.transcript[index],
+                    opts.width,
+                    opts.theme,
+                )
             } else {
                 self.transcript[index].render_styled_lines(opts)
             };
@@ -371,7 +375,9 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn push_error(&mut self, message: String) {
-        self.transcript.push(HistoryCell::Error(message));
+        self.transcript.push(HistoryCell::Error(
+            super::notice::humanize_protocol_message(&message),
+        ));
     }
 
     pub(in crate::file_backed) fn apply_ui_event(&mut self, event: UiEvent) {

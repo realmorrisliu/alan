@@ -1,7 +1,12 @@
 use alan_agent_engine::tools::{Tool, ToolContext, ToolResult};
+use alan_agent_protocol::{ContentPart, DiffHunk, DiffLine, ToolResultPresentation};
 use anyhow::anyhow;
 use serde_json::{Value, json};
 use std::path::Path;
+
+const MAX_INLINE_IMAGE_BYTES: usize = 512 * 1024;
+const EDIT_DIFF_CONTEXT_LINES: usize = 2;
+const EDIT_DIFF_MAX_LINES: usize = 400;
 
 /// read_file - Read a file's contents
 #[derive(Default)]
@@ -103,12 +108,36 @@ impl Tool for ReadFileTool {
         Box::pin(async move {
             if is_image(&path) {
                 let content = sandbox.read(&path).await?;
-                return Ok(json!({
+                let mime_type = detect_mime(&path);
+                let size_bytes = content.len();
+                let mut result = json!({
                     "type": "image",
                     "path": visible_path,
-                    "size_bytes": content.len(),
-                    "mime_type": detect_mime(&path)
-                }));
+                    "size_bytes": size_bytes,
+                    "mime_type": mime_type
+                });
+                if is_multimodal_image(&path) {
+                    if size_bytes <= MAX_INLINE_IMAGE_BYTES {
+                        let hash = content_hash_hex(&content);
+                        let encoded = encode_base64(&content);
+                        let attachment = ContentPart::Attachment {
+                            hash,
+                            mime_type: mime_type.to_string(),
+                            metadata: json!({
+                                "path": visible_path,
+                                "size_bytes": size_bytes,
+                                "data": encoded
+                            }),
+                        };
+                        result["content_parts"] = serde_json::to_value(vec![attachment])?;
+                    } else {
+                        result["attachment_omitted_reason"] = json!(format!(
+                            "image exceeds {} byte inline attachment limit",
+                            MAX_INLINE_IMAGE_BYTES
+                        ));
+                    }
+                }
+                return Ok(result);
             }
 
             let content = sandbox.read_string(&path).await?;
@@ -117,8 +146,12 @@ impl Tool for ReadFileTool {
             let start = offset.saturating_sub(1);
             let end = (start + limit).min(lines.len());
 
-            let selected: Vec<&str> = if start < lines.len() {
-                lines[start..end].to_vec()
+            let formatted: Vec<String> = if start < lines.len() {
+                lines[start..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, line)| format!("{}| {}", start + idx + 1, line))
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -126,11 +159,11 @@ impl Tool for ReadFileTool {
             Ok(json!({
                 "type": "text",
                 "path": visible_path,
-                "content": selected.join("\n"),
+                "content": formatted.join("\n"),
                 "total_lines": lines.len(),
                 "start_line": start + 1,
                 "end_line": end,
-                "truncated": lines.len() > limit
+                "truncated": end < lines.len()
             }))
         })
     }
@@ -233,11 +266,16 @@ impl Tool for EditFileTool {
                 },
                 "old_string": {
                     "type": "string",
-                    "description": "Text to search for (exact match)"
+                    "description": "Text to search for (must be unique unless replace_all is true)"
                 },
                 "new_string": {
                     "type": "string",
                     "description": "Text to replace with"
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace all occurrences of old_string instead of requiring a single unique match",
+                    "default": false
                 }
             }
         })
@@ -255,24 +293,44 @@ impl Tool for EditFileTool {
         let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
         let old_string = args["old_string"].as_str().unwrap_or("").to_string();
         let new_string = args["new_string"].as_str().unwrap_or("").to_string();
+        let replace_all = args["replace_all"].as_bool().unwrap_or(false);
 
         Box::pin(async move {
+            if old_string.is_empty() {
+                return Err(anyhow!("old_string must not be empty"));
+            }
             let content = sandbox.read_string(&path).await?;
+            let match_count = content.matches(&old_string).count();
 
-            if !content.contains(&old_string) {
+            if match_count == 0 {
                 return Err(anyhow!(
                     "Search text not found in file: '{}...'",
                     old_string.chars().take(50).collect::<String>()
                 ));
             }
+            if match_count > 1 && !replace_all {
+                return Err(anyhow!(
+                    "Search text matches {match_count} occurrences in '{visible_path}'; provide more surrounding context so old_string is unique, or pass `replace_all: true` to replace all occurrences"
+                ));
+            }
 
-            let new_content = content.replacen(&old_string, &new_string, 1);
+            let hunks = build_edit_diff_hunks(&content, &old_string, &new_string, replace_all);
+            let presentation = ToolResultPresentation::Diff {
+                path: visible_path.clone(),
+                hunks,
+            };
+            let new_content = if replace_all {
+                content.replace(&old_string, &new_string)
+            } else {
+                content.replacen(&old_string, &new_string, 1)
+            };
             sandbox.write(&path, new_content.as_bytes()).await?;
 
             Ok(json!({
                 "success": true,
                 "path": visible_path,
-                "replacements": 1
+                "replacements": match_count,
+                "presentation": serde_json::to_value(&presentation)?
             }))
         })
     }
@@ -294,8 +352,25 @@ pub(super) fn is_image(path: &Path) -> bool {
     }
 }
 
+fn is_multimodal_image(path: &Path) -> bool {
+    if let Some(ext) = path.extension() {
+        let ext = ext.to_string_lossy().to_lowercase();
+        matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+        )
+    } else {
+        false
+    }
+}
+
 pub(super) fn detect_mime(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
@@ -304,6 +379,150 @@ pub(super) fn detect_mime(path: &Path) -> &'static str {
         Some("bmp") => "image/bmp",
         _ => "application/octet-stream",
     }
+}
+
+fn content_hash_hex(bytes: &[u8]) -> String {
+    let mut hash: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+    for &byte in bytes {
+        hash ^= u128::from(byte);
+        hash = hash.wrapping_mul(0x0000_0000_0100_0000_0000_0000_0000_013b);
+    }
+    format!("{hash:032x}")
+}
+
+fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+        let triple = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[((triple >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(triple & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn build_edit_diff_hunks(
+    content: &str,
+    old_string: &str,
+    new_string: &str,
+    replace_all: bool,
+) -> Vec<DiffHunk> {
+    let old_lines: Vec<&str> = content.split('\n').collect();
+    let old_span_lines: Vec<&str> = old_string.split('\n').collect();
+    let new_span_lines: Vec<&str> = new_string.split('\n').collect();
+
+    let mut match_starts = Vec::new();
+    for (byte_idx, _) in content.match_indices(old_string) {
+        match_starts.push(byte_idx);
+        if !replace_all {
+            break;
+        }
+    }
+
+    let mut hunks = Vec::new();
+    let mut total_emitted = 0usize;
+    let mut line_delta: isize = 0;
+
+    for byte_start in match_starts {
+        if total_emitted >= EDIT_DIFF_MAX_LINES {
+            break;
+        }
+        let byte_end = byte_start + old_string.len();
+        let start_line_idx = content[..byte_start]
+            .bytes()
+            .filter(|&b| b == b'\n')
+            .count();
+        let end_line_idx = content[..byte_end].bytes().filter(|&b| b == b'\n').count();
+        let affected_old_end = end_line_idx + 1;
+        let ctx_before_start = start_line_idx.saturating_sub(EDIT_DIFF_CONTEXT_LINES);
+        let ctx_after_end = (affected_old_end + EDIT_DIFF_CONTEXT_LINES).min(old_lines.len());
+
+        let old_count = ctx_after_end - ctx_before_start;
+        let new_span_count = new_span_lines.len();
+        let old_span_count = affected_old_end - start_line_idx;
+        let new_count = old_count + new_span_count - old_span_count;
+        let new_start_line = (ctx_before_start as isize + line_delta + 1).max(1) as usize;
+        line_delta += new_span_count as isize - old_span_count as isize;
+
+        let mut hunk_lines = Vec::new();
+        for &line in &old_lines[ctx_before_start..start_line_idx] {
+            hunk_lines.push(DiffLine::Context {
+                text: line.to_string(),
+            });
+        }
+        // Build exact pre/post text of the spanned lines so partial-line edits
+        // render cleanly as full-line removals/additions.
+        let prefix = line_prefix_before_offset(content, byte_start);
+        let suffix = line_suffix_after_offset(content, byte_end);
+        for (idx, line) in old_span_lines.iter().enumerate() {
+            let mut full = String::new();
+            if idx == 0 {
+                full.push_str(prefix);
+            }
+            full.push_str(line);
+            if idx + 1 == old_span_lines.len() {
+                full.push_str(suffix);
+            }
+            hunk_lines.push(DiffLine::Removed { text: full });
+        }
+        for (idx, line) in new_span_lines.iter().enumerate() {
+            let mut full = String::new();
+            if idx == 0 {
+                full.push_str(prefix);
+            }
+            full.push_str(line);
+            if idx + 1 == new_span_lines.len() {
+                full.push_str(suffix);
+            }
+            hunk_lines.push(DiffLine::Added { text: full });
+        }
+        for &line in &old_lines[affected_old_end..ctx_after_end] {
+            hunk_lines.push(DiffLine::Context {
+                text: line.to_string(),
+            });
+        }
+        let remaining = EDIT_DIFF_MAX_LINES.saturating_sub(total_emitted);
+        if hunk_lines.len() > remaining {
+            hunk_lines.truncate(remaining);
+        }
+        total_emitted += hunk_lines.len();
+        hunks.push(DiffHunk {
+            header: Some(format!(
+                "@@ -{},{} +{},{} @@",
+                ctx_before_start + 1,
+                old_count,
+                new_start_line,
+                new_count
+            )),
+            lines: hunk_lines,
+        });
+    }
+    hunks
+}
+
+fn line_prefix_before_offset(content: &str, offset: usize) -> &str {
+    let start = content[..offset].rfind('\n').map_or(0, |idx| idx + 1);
+    &content[start..offset]
+}
+
+fn line_suffix_after_offset(content: &str, offset: usize) -> &str {
+    let end = content[offset..]
+        .find('\n')
+        .map_or(content.len(), |rel| offset + rel);
+    &content[offset..end]
 }
 
 #[cfg(test)]

@@ -1,17 +1,24 @@
 mod action_summary;
+mod highlight;
 mod literal;
 mod markdown;
-pub(crate) use action_summary::{action_summary, group_summary_header, group_summary_member};
+mod table;
+mod yield_validation;
+#[cfg(test)]
+pub(crate) use action_summary::action_summary;
+pub(crate) use action_summary::{
+    action_summary_with_theme, group_summary_header_with_theme, group_summary_member_with_theme,
+};
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use alan_agent_protocol::{
-    ActionReadOnlyContext, ContentPart, DiffLine, PlanItemStatus, StructuredInputKind,
-    StructuredInputQuestion, ToolResultPresentation, UiPlanSnapshot, YieldKind,
+    ActionReadOnlyContext, DiffLine, PlanItemStatus, StructuredInputQuestion,
+    ToolResultPresentation, UiPlanSnapshot, YieldKind,
 };
-use serde_json::{Map, Value};
 
+use crate::theme::{DotState, Theme};
 use crate::transcript_ui::{
     INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX,
 };
@@ -21,6 +28,7 @@ use crate::transcript_ui::{
 pub struct RenderOpts {
     pub width: usize,
     pub expand_thinking: bool,
+    pub theme: Theme,
 }
 
 impl RenderOpts {
@@ -28,8 +36,22 @@ impl RenderOpts {
         Self {
             width,
             expand_thinking,
+            theme: Theme::default(),
         }
     }
+
+    pub fn with_theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+}
+
+/// Compact metadata rendered as the initial scrollable empty-session welcome header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WelcomeBanner {
+    pub project: String,
+    pub model: String,
+    pub sandbox: String,
 }
 
 /// Permanent transcript content. Ephemeral activity (running tools, streaming
@@ -77,6 +99,8 @@ pub enum HistoryCell {
     PendingYield(PendingYieldCell),
     /// A fatal (non-recoverable) error.
     Error(String),
+    /// Scrollable empty-session welcome header.
+    Welcome(WelcomeBanner),
 }
 
 /// Presentation state belonging to one retained AgentFS Action, not an execution record.
@@ -107,12 +131,21 @@ impl ToolStatus {
         }
     }
 
-    fn style(self) -> Style {
-        Style::default().fg(match self {
-            Self::Complete => Color::DarkGray,
-            Self::Failed => Color::Red,
-            Self::Rejected | Self::Cancelled => Color::Yellow,
-        })
+    fn dot(self, theme: Theme) -> (&'static str, Style) {
+        let state = match self {
+            Self::Complete => DotState::Run,
+            Self::Failed => DotState::Block,
+            Self::Rejected | Self::Cancelled => DotState::Wait,
+        };
+        theme.status_dot(state)
+    }
+
+    fn style(self, theme: Theme) -> Style {
+        match self {
+            Self::Complete => theme.muted_style(),
+            Self::Failed => theme.block_style(),
+            Self::Rejected | Self::Cancelled => theme.wait_style(),
+        }
     }
 }
 
@@ -121,6 +154,7 @@ impl ToolStatus {
 pub struct RunningTool {
     pub id: String,
     pub title: String,
+    pub tail_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,7 +221,7 @@ impl HistoryCell {
     pub fn render_lines(&self, opts: RenderOpts) -> Vec<String> {
         if matches!(
             self,
-            Self::Assistant(_) | Self::Styled(_) | Self::AssistantTail { .. }
+            Self::Assistant(_) | Self::Styled(_) | Self::AssistantTail { .. } | Self::Welcome(_)
         ) {
             return self
                 .render_styled_lines(opts)
@@ -240,7 +274,12 @@ impl HistoryCell {
                 snapshot.items.len()
             );
             return vec![
-                action_summary::summary_row(&summary, width, metadata_style()).to_string(),
+                action_summary::summary_row(
+                    &format!("{}{summary}", opts.theme.gutter()),
+                    width,
+                    metadata_style(opts.theme),
+                )
+                .to_string(),
             ];
         }
 
@@ -250,13 +289,21 @@ impl HistoryCell {
         } = self
         {
             if !opts.expand_thinking {
-                let summary = format!("thinking · {duration_secs}s (ctrl+r to expand)");
+                let summary = format!("· thinking · {duration_secs}s (ctrl+r to expand)");
                 return textwrap::wrap(&summary, width)
                     .into_iter()
                     .map(Into::into)
                     .collect();
             }
-            return wrap_plain_text(text, width);
+            let gutter = opts.theme.gutter();
+            let mut rows = vec![format!("{gutter}thinking · {duration_secs}s")];
+            let body_width = width.saturating_sub(gutter.len()).max(8);
+            rows.extend(
+                wrap_plain_text(text, body_width)
+                    .into_iter()
+                    .map(|line| format!("{gutter}{line}")),
+            );
+            return rows;
         }
 
         let body = match self {
@@ -265,7 +312,8 @@ impl HistoryCell {
             | Self::AssistantTail { .. }
             | Self::InputTail { .. }
             | Self::Plan { .. }
-            | Self::Thinking { .. } => {
+            | Self::Thinking { .. }
+            | Self::Welcome(_) => {
                 unreachable!("handled above")
             }
             Self::User(_) | Self::Command(_) => unreachable!("literal inputs handled above"),
@@ -299,15 +347,21 @@ impl HistoryCell {
     /// Project typed transcript roles and Markdown directly into Ratatui spans.
     pub fn render_styled_lines(&self, opts: RenderOpts) -> Vec<Line<'static>> {
         let width = opts.width.max(16);
+        let theme = opts.theme;
         match self {
-            Self::Assistant(text) => markdown::project(text, width, (0, 0))
+            Self::Welcome(banner) => {
+                crate::file_backed::welcome::render_banner_lines(banner, opts.width, theme)
+            }
+            Self::Assistant(text) => markdown::project(text, width, (0, 0), theme)
                 .into_iter()
                 .map(|(line, _)| line)
                 .collect(),
-            Self::AssistantTail { text, committed } => markdown::project(text, width, *committed)
-                .into_iter()
-                .map(|(line, _)| line)
-                .collect(),
+            Self::AssistantTail { text, committed } => {
+                markdown::project(text, width, *committed, theme)
+                    .into_iter()
+                    .map(|(line, _)| line)
+                    .collect()
+            }
             Self::Styled(lines) => wrap_styled_lines(lines.clone(), width),
             Self::Tool {
                 title,
@@ -315,31 +369,94 @@ impl HistoryCell {
                 presentation: Some(presentation @ ToolResultPresentation::Diff { .. }),
                 ..
             } => {
-                let mut lines = vec![Line::styled(
-                    format!("{} · {}", clean_text(title), status.label()),
-                    status.style().add_modifier(Modifier::BOLD),
-                )];
+                let (dot, dot_style) = status.dot(theme);
+                let mut lines = vec![Line::from(vec![
+                    Span::styled(format!("{dot} "), dot_style),
+                    Span::styled(
+                        format!("{} · {}", clean_text(title), status.label()),
+                        theme.bold_if_capable(status.style(theme)),
+                    ),
+                ])];
                 lines.extend(
-                    presentation_rows(presentation)
+                    presentation_rows_with_theme(presentation, false, theme)
                         .into_iter()
-                        .map(|(text, style)| {
-                            Line::styled(format!("  {}", clean_text(&text)), style)
+                        .map(|(gstyle, text, style)| {
+                            Line::from(vec![
+                                Span::raw("  "),
+                                Span::styled(theme.gutter(), gstyle),
+                                Span::styled(clean_text(&text), style),
+                            ])
                         }),
                 );
                 wrap_styled_lines(lines, width)
             }
+            Self::Plan {
+                snapshot, revision, ..
+            } => {
+                let completed = snapshot
+                    .items
+                    .iter()
+                    .filter(|item| item.status == PlanItemStatus::Completed)
+                    .count();
+                let current = snapshot
+                    .items
+                    .iter()
+                    .find(|item| item.status == PlanItemStatus::InProgress);
+                let step = current.map_or(String::new(), |item| {
+                    format!(" · {}", action_summary::bounded(&item.content, 256))
+                });
+                let summary = format!(
+                    "Plan {revision} · {completed}/{} completed{step}",
+                    snapshot.items.len()
+                );
+                let gutter_style =
+                    if !snapshot.items.is_empty() && completed == snapshot.items.len() {
+                        theme.run_style()
+                    } else {
+                        theme.accent_style()
+                    };
+                wrap_styled_lines(
+                    [Line::from(vec![
+                        Span::styled(theme.gutter(), gutter_style),
+                        Span::styled(clean_text(&summary), metadata_style(theme)),
+                    ])],
+                    width,
+                )
+            }
+            Self::Thinking {
+                text,
+                duration_secs,
+            } => {
+                let body_style = theme.italic_if_capable(metadata_style(theme));
+                if !opts.expand_thinking {
+                    let summary = format!("· thinking · {duration_secs}s (ctrl+r to expand)");
+                    return wrap_plain_text(&summary, width)
+                        .into_iter()
+                        .map(|row| Line::styled(clean_text(&row), body_style))
+                        .collect();
+                }
+                let gutter = theme.gutter();
+                let body_width = width.saturating_sub(gutter.len()).max(8);
+                let mut rows = vec![Line::from(vec![
+                    Span::styled(gutter, theme.muted_style()),
+                    Span::styled(format!("thinking · {duration_secs}s"), body_style),
+                ])];
+                for part in wrap_plain_text(&clean_text(text), body_width) {
+                    rows.push(Line::from(vec![
+                        Span::styled(gutter, theme.rule_style()),
+                        Span::styled(part, body_style),
+                    ]));
+                }
+                rows
+            }
+            Self::PendingYield(pending) => render_pending_yield_styled_lines(pending, width, theme),
             _ => {
                 let style = match self {
-                    Self::User(_)
-                    | Self::Command(_)
-                    | Self::InputTail { .. }
-                    | Self::PendingYield(_) => Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                    Self::Tool { status, .. } => status.style(),
-                    Self::Plan { .. } => metadata_style(),
-                    Self::Thinking { .. } => metadata_style().add_modifier(Modifier::ITALIC),
-                    Self::Error(_) => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    Self::User(_) | Self::Command(_) | Self::InputTail { .. } => {
+                        theme.accent_bold()
+                    }
+                    Self::Tool { status, .. } => status.style(theme),
+                    Self::Error(_) => theme.bold_if_capable(theme.block_style()),
                     _ => Style::default(),
                 };
                 self.render_lines(opts)
@@ -379,7 +496,7 @@ impl HistoryCell {
                 Self::AssistantTail { committed, .. } => *committed,
                 _ => (0, 0),
             };
-            let rows = markdown::project(text, opts.width.max(16), cut);
+            let rows = markdown::project(text, opts.width.max(16), cut, opts.theme);
             let committed = rows
                 .iter()
                 .take(lines_to_trim)
@@ -401,8 +518,12 @@ impl HistoryCell {
     }
 }
 
-fn metadata_style() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
+fn metadata_style(theme: Theme) -> Style {
+    if theme.is_dumb {
+        Style::default()
+    } else {
+        theme.muted_style().add_modifier(Modifier::DIM)
+    }
 }
 
 // Strip terminal controls and expand tabs before Ratatui filters control graphemes.
@@ -445,13 +566,35 @@ pub(crate) fn wrap_styled_lines(
 }
 
 impl PendingYieldCell {
+    fn default_choice_ref(&self) -> Option<&str> {
+        self.default_option
+            .as_deref()
+            .or_else(|| self.options.first().map(String::as_str))
+    }
+
+    fn format_option_hint(&self, index: usize, option: &str) -> String {
+        let is_default = self.default_choice_ref() == Some(option);
+        if is_default {
+            format!("[{}] {option} (default)", index + 1)
+        } else {
+            format!("[{}] {option}", index + 1)
+        }
+    }
+
     fn render_body(&self) -> String {
         let mut body = self.title.clone();
         if let Some(prompt) = &self.prompt {
             body.push_str(&format!(" - {prompt}"));
         }
         if !self.options.is_empty() {
-            body.push_str(&format!(" - choices: {}", self.options.join(", ")));
+            let formatted = self
+                .options
+                .iter()
+                .enumerate()
+                .map(|(idx, opt)| self.format_option_hint(idx, opt))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            body.push_str(&format!("\n  {formatted}"));
         }
         if let Some(capability) = &self.capability {
             body.push_str(&format!("\n  capability: {capability}"));
@@ -468,7 +611,7 @@ impl PendingYieldCell {
             body.push_str(&format!(
                 "\n  {} [{}]: {}",
                 question.id,
-                structured_kind_label(question.kind),
+                yield_validation::structured_kind_label(question.kind),
                 question.prompt
             ));
             if !question.options.is_empty() {
@@ -485,44 +628,158 @@ impl PendingYieldCell {
     }
 }
 
+fn render_pending_yield_styled_lines(
+    pending: &PendingYieldCell,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let wait_gutter = theme.wait_style();
+    let gutter = theme.gutter();
+    let mut lines = vec![Line::from(vec![
+        Span::styled(gutter, wait_gutter),
+        Span::styled(
+            "Waiting for input · ",
+            theme.bold_if_capable(theme.wait_style()),
+        ),
+        Span::styled(clean_text(&pending.title), theme.accent_bold()),
+    ])];
+    if let Some(prompt) = &pending.prompt {
+        for segment in prompt.split('\n') {
+            lines.push(Line::from(vec![
+                Span::styled(gutter, wait_gutter),
+                Span::raw(clean_text(segment)),
+            ]));
+        }
+    }
+    if let Some(capability) = &pending.capability {
+        lines.push(Line::from(vec![
+            Span::styled(gutter, wait_gutter),
+            Span::styled(
+                format!("capability: {}", clean_text(capability)),
+                metadata_style(theme),
+            ),
+        ]));
+    }
+    if let Some(reason) = &pending.reason {
+        lines.push(Line::from(vec![
+            Span::styled(gutter, wait_gutter),
+            Span::styled(format!("why: {}", clean_text(reason)), theme.wait_style()),
+        ]));
+    }
+    if let Some(presentation) = &pending.presentation {
+        for (row_gutter_style, text, style) in
+            presentation_rows_with_theme(presentation, false, theme)
+        {
+            let bar_style = if row_gutter_style == Style::default() && !theme.is_dumb {
+                wait_gutter
+            } else {
+                row_gutter_style
+            };
+            lines.push(Line::from(vec![
+                Span::styled(gutter, bar_style),
+                Span::styled(clean_text(&text), style),
+            ]));
+        }
+    }
+    if !pending.options.is_empty() {
+        let mut spans = vec![Span::styled(gutter, wait_gutter)];
+        let default_opt = pending.default_choice_ref();
+        for (idx, option) in pending.options.iter().enumerate() {
+            if idx > 0 {
+                spans.push(Span::styled(" · ", metadata_style(theme)));
+            }
+            spans.push(Span::styled(format!("[{}] ", idx + 1), theme.accent_bold()));
+            let label_style = match option.as_str() {
+                "approve" => theme.bold_if_capable(theme.run_style()),
+                "allow_session" => theme.accent_bold(),
+                "reject" => theme.block_style(),
+                _ => Style::default(),
+            };
+            spans.push(Span::styled(clean_text(option), label_style));
+            if default_opt == Some(option.as_str()) {
+                spans.push(Span::styled(" (default)", metadata_style(theme)));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    for question in &pending.questions {
+        lines.push(Line::from(vec![
+            Span::styled(gutter, wait_gutter),
+            Span::styled(clean_text(&question.id), theme.accent_bold()),
+            Span::styled(
+                format!(
+                    " [{}]: ",
+                    yield_validation::structured_kind_label(question.kind)
+                ),
+                metadata_style(theme),
+            ),
+            Span::raw(clean_text(&question.prompt)),
+        ]));
+        if !question.options.is_empty() {
+            let labels = question
+                .options
+                .iter()
+                .map(|option| format!("{}={}", option.value, option.label))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(Line::from(vec![
+                Span::styled(gutter, wait_gutter),
+                Span::styled(
+                    format!("  options: {}", clean_text(&labels)),
+                    metadata_style(theme),
+                ),
+            ]));
+        }
+    }
+    wrap_styled_lines(lines, width)
+}
+
 /// Maximum lines shown for a tool presentation before collapsing.
 const PRESENTATION_MAX_LINES: usize = 40;
 
 /// Render a presentation primitive into transcript lines (one renderer per form).
 fn presentation_lines(presentation: &ToolResultPresentation) -> Vec<String> {
-    presentation_rows(presentation)
+    presentation_rows_with_theme(presentation, false, Theme::default())
         .into_iter()
-        .map(|(text, _)| text)
+        .map(|(_, text, _)| text)
         .collect()
 }
 
-fn presentation_rows(presentation: &ToolResultPresentation) -> Vec<(String, Style)> {
-    presentation_rows_mode(presentation, false)
-}
-
-fn presentation_rows_mode(
+fn presentation_rows_with_theme(
     presentation: &ToolResultPresentation,
     detail: bool,
-) -> Vec<(String, Style)> {
+    theme: Theme,
+) -> Vec<(Style, String, Style)> {
     if let ToolResultPresentation::Diff { path, hunks } = presentation {
-        let mut rows = vec![(path.clone(), metadata_style())];
+        let mut rows = vec![(theme.rule_style(), path.clone(), metadata_style(theme))];
         for hunk in hunks {
             if let Some(header) = &hunk.header {
-                rows.push((header.clone(), metadata_style()));
+                rows.push((theme.rule_style(), header.clone(), metadata_style(theme)));
             }
             for line in &hunk.lines {
-                let (marker, text, color) = match line {
-                    DiffLine::Added { text } => ("+", text, Color::Green),
-                    DiffLine::Removed { text } => ("-", text, Color::Red),
-                    DiffLine::Context { text } => (" ", text, Color::Reset),
+                let (marker, text, gstyle, style) = match line {
+                    DiffLine::Added { text } => {
+                        ("+", text, theme.diff_add_style(), theme.diff_add_style())
+                    }
+                    DiffLine::Removed { text } => (
+                        "-",
+                        text,
+                        theme.diff_remove_style(),
+                        theme.diff_remove_style(),
+                    ),
+                    DiffLine::Context { text } => (" ", text, theme.rule_style(), Style::default()),
                 };
-                rows.push((format!("{marker}{text}"), Style::default().fg(color)));
+                rows.push((gstyle, format!("{marker}{text}"), style));
             }
         }
         if !detail && rows.len() > PRESENTATION_MAX_LINES {
             let hidden = rows.len() - PRESENTATION_MAX_LINES;
             rows.truncate(PRESENTATION_MAX_LINES);
-            rows.push((format!("… +{hidden} more lines"), metadata_style()));
+            rows.push((
+                theme.rule_style(),
+                format!("… +{hidden} more lines"),
+                metadata_style(theme),
+            ));
         }
         return rows;
     }
@@ -571,31 +828,36 @@ fn presentation_rows_mode(
     }
     lines
         .into_iter()
-        .map(|text| (text, Style::default()))
+        .map(|text| (theme.rule_style(), text, Style::default()))
         .collect()
 }
 
-pub(crate) fn action_detail(cell: &HistoryCell) -> Vec<Line<'static>> {
+pub(crate) fn action_detail_with_theme(cell: &HistoryCell, theme: Theme) -> Vec<Line<'static>> {
     if let HistoryCell::Tool {
         title,
         presentation: Some(presentation),
         ..
     } = cell
     {
-        let mut rows = vec![Line::styled(
-            clean_text(title),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )];
+        let mut rows = vec![Line::styled(clean_text(title), theme.accent_bold())];
+        let is_diff = matches!(presentation, ToolResultPresentation::Diff { .. });
         rows.extend(
-            presentation_rows_mode(presentation, true)
+            presentation_rows_with_theme(presentation, true, theme)
                 .into_iter()
-                .map(|(text, style)| Line::styled(clean_text(&text), style)),
+                .map(|(gstyle, text, style)| {
+                    if is_diff {
+                        Line::from(vec![
+                            Span::styled(theme.gutter(), gstyle),
+                            Span::styled(clean_text(&text), style),
+                        ])
+                    } else {
+                        Line::styled(clean_text(&text), style)
+                    }
+                }),
         );
         rows
     } else {
-        cell.render_styled_lines(RenderOpts::new(16384, false))
+        cell.render_styled_lines(RenderOpts::new(16384, false).with_theme(theme))
     }
 }
 
@@ -610,236 +872,4 @@ fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
             }
         })
         .collect()
-}
-
-impl PendingYieldCell {
-    pub fn resume_content(&self, input: &str) -> Result<Vec<ContentPart>, String> {
-        match self.kind {
-            YieldKind::Confirmation => {
-                let choice = normalize_confirmation_choice(
-                    input,
-                    &self.options,
-                    self.default_option.as_deref(),
-                )?;
-                Ok(vec![ContentPart::structured(serde_json::json!({
-                    "choice": choice
-                }))])
-            }
-            YieldKind::StructuredInput => {
-                if self.questions.is_empty() {
-                    return Ok(vec![ContentPart::text(input.to_string())]);
-                }
-                let answers = self.validate_structured_answers(input)?;
-                Ok(vec![ContentPart::structured(Value::Object(answers))])
-            }
-            YieldKind::Custom(_) => Ok(vec![ContentPart::text(input.to_string())]),
-        }
-    }
-
-    fn validate_structured_answers(&self, input: &str) -> Result<Map<String, Value>, String> {
-        if self.questions.len() == 1 {
-            let question = &self.questions[0];
-            let trimmed = input.trim();
-            // A blank optional single question with no default submits an empty
-            // answer map (mirrors the multi-field form omitting blank optional
-            // fields), so the user isn't forced to invent a typed value.
-            if trimmed.is_empty()
-                && !question.required
-                && question.default_value.is_none()
-                && question.default_values.is_empty()
-            {
-                return Ok(Map::new());
-            }
-            let value = validate_question_answer(question, trimmed)?;
-            return Ok(Map::from_iter([(question.id.clone(), value)]));
-        }
-
-        let raw: Map<String, Value> = serde_json::from_str(input)
-            .map_err(|_| "reply with a JSON object keyed by field id")?;
-        let mut answers = Map::new();
-        for question in &self.questions {
-            let Some(value) = raw.get(&question.id) else {
-                if question.required {
-                    return Err(format!("{} is required", question.id));
-                }
-                continue;
-            };
-            answers.insert(
-                question.id.clone(),
-                validate_question_value(question, value.clone())?,
-            );
-        }
-        Ok(answers)
-    }
-}
-
-fn normalize_confirmation_choice(
-    input: &str,
-    options: &[String],
-    default_option: Option<&str>,
-) -> Result<String, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        // Blank Enter uses the runtime's default_option (which may not be the
-        // first option), falling back to the first option, then "approve".
-        return Ok(default_option
-            .map(str::to_string)
-            .or_else(|| options.first().cloned())
-            .unwrap_or_else(|| "approve".to_string()));
-    }
-    if options.is_empty() {
-        return Ok(trimmed.to_string());
-    }
-    options
-        .iter()
-        .find(|option| option.eq_ignore_ascii_case(trimmed))
-        .cloned()
-        .ok_or_else(|| format!("choose one of: {}", options.join(", ")))
-}
-
-fn validate_question_answer(
-    question: &StructuredInputQuestion,
-    input: &str,
-) -> Result<Value, String> {
-    if input.is_empty() {
-        if let Some(default) = &question.default_value {
-            return validate_question_answer(question, default);
-        }
-        // Multi-select defaults are normalized into `default_values`; honor them
-        // on blank input so a defaulted single multi-select submits its default.
-        if !question.default_values.is_empty() {
-            return validate_question_answer(question, &question.default_values.join(","));
-        }
-        if question.required {
-            return Err(format!("{} is required", question.id));
-        }
-    }
-
-    match question.kind {
-        StructuredInputKind::Text => Ok(Value::String(input.to_string())),
-        StructuredInputKind::Boolean => parse_bool_answer(input)
-            .map(Value::Bool)
-            .ok_or_else(|| format!("{} must be true/false", question.id)),
-        StructuredInputKind::Number => {
-            let value = input
-                .parse::<f64>()
-                .map_err(|_| format!("{} must be a number", question.id))?;
-            serde_json::Number::from_f64(value)
-                .map(Value::Number)
-                .ok_or_else(|| format!("{} must be finite", question.id))
-        }
-        StructuredInputKind::Integer => input
-            .parse::<i64>()
-            .map(|value| Value::Number(value.into()))
-            .map_err(|_| format!("{} must be an integer", question.id)),
-        StructuredInputKind::SingleSelect => match_option(question, input)
-            .map(Value::String)
-            .ok_or_else(|| option_error(question)),
-        StructuredInputKind::MultiSelect => {
-            let values = input
-                .split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(|part| match_option(question, part).ok_or_else(|| option_error(question)))
-                .collect::<Result<Vec<_>, _>>()?;
-            validate_selection_count(question, values.len())?;
-            Ok(Value::Array(
-                values.into_iter().map(Value::String).collect(),
-            ))
-        }
-    }
-}
-
-fn validate_question_value(
-    question: &StructuredInputQuestion,
-    value: Value,
-) -> Result<Value, String> {
-    match (question.kind, value) {
-        (StructuredInputKind::Text, Value::String(text)) => {
-            validate_question_answer(question, &text)
-        }
-        (StructuredInputKind::Boolean, Value::Bool(value)) => Ok(Value::Bool(value)),
-        (StructuredInputKind::Number, Value::Number(value)) => Ok(Value::Number(value)),
-        (StructuredInputKind::Integer, Value::Number(value)) if value.as_i64().is_some() => {
-            Ok(Value::Number(value))
-        }
-        (StructuredInputKind::SingleSelect, Value::String(text)) => {
-            validate_question_answer(question, &text)
-        }
-        (StructuredInputKind::MultiSelect, Value::Array(values)) => {
-            let selected = values
-                .into_iter()
-                .map(|value| {
-                    value
-                        .as_str()
-                        .and_then(|text| match_option(question, text))
-                        .ok_or_else(|| option_error(question))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            validate_selection_count(question, selected.len())?;
-            Ok(Value::Array(
-                selected.into_iter().map(Value::String).collect(),
-            ))
-        }
-        (_, value) => validate_question_answer(question, value.as_str().unwrap_or_default()),
-    }
-}
-
-fn parse_bool_answer(input: &str) -> Option<bool> {
-    match input.trim().to_ascii_lowercase().as_str() {
-        "true" | "yes" | "y" | "1" => Some(true),
-        "false" | "no" | "n" | "0" => Some(false),
-        _ => None,
-    }
-}
-
-fn match_option(question: &StructuredInputQuestion, input: &str) -> Option<String> {
-    question
-        .options
-        .iter()
-        .find(|option| {
-            option.value.eq_ignore_ascii_case(input) || option.label.eq_ignore_ascii_case(input)
-        })
-        .map(|option| option.value.clone())
-}
-
-fn option_error(question: &StructuredInputQuestion) -> String {
-    let values = question
-        .options
-        .iter()
-        .map(|option| option.value.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{} must be one of: {values}", question.id)
-}
-
-fn validate_selection_count(
-    question: &StructuredInputQuestion,
-    count: usize,
-) -> Result<(), String> {
-    if let Some(min) = question.min_selected
-        && count < min as usize
-    {
-        return Err(format!("{} needs at least {min} selection(s)", question.id));
-    }
-    if let Some(max) = question.max_selected
-        && count > max as usize
-    {
-        return Err(format!("{} allows at most {max} selection(s)", question.id));
-    }
-    if question.required && count == 0 {
-        return Err(format!("{} is required", question.id));
-    }
-    Ok(())
-}
-
-fn structured_kind_label(kind: StructuredInputKind) -> &'static str {
-    match kind {
-        StructuredInputKind::Text => "text",
-        StructuredInputKind::Boolean => "boolean",
-        StructuredInputKind::Number => "number",
-        StructuredInputKind::Integer => "integer",
-        StructuredInputKind::SingleSelect => "single select",
-        StructuredInputKind::MultiSelect => "multi select",
-    }
 }

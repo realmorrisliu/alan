@@ -6,8 +6,10 @@
 //! spawned through `/proc/clone`, and state is written back to `/agent/<pid>`.
 
 mod agent_files;
+pub(crate) use agent_files::PendingActionPublication;
 pub(crate) use agent_files::valid_project_directory;
-pub(crate) use agent_files::{NamespaceTapeWriter, PendingActionPublication};
+mod tape_files;
+pub(crate) use tape_files::NamespaceTapeWriter;
 mod child_launch;
 mod client;
 mod evaluation;
@@ -91,6 +93,7 @@ impl NamespaceToolObservationFailure {
 pub(crate) struct NamespaceToolProcessError {
     pub(crate) pid: String,
     pub(crate) category: NamespaceToolObservationFailure,
+    pub(crate) action_id: Option<String>,
 }
 
 /// Correlation and human-approval evidence for one Tool Action.
@@ -225,6 +228,12 @@ pub(crate) struct NamespaceAgentFiles {
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
     action_recorder: Option<crate::rollout::RolloutRecorder>,
+}
+
+impl NamespaceAgentFiles {
+    pub(super) fn agent_path(&self) -> &str {
+        &self.agent_path
+    }
 }
 
 /// Narrow handle for lifecycle and stream files owned by the Process table.

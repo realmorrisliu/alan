@@ -27,7 +27,9 @@ pub use reified_namespace::{
     default_execution_substrate,
 };
 pub(crate) use sandbox::parse_standalone_cd;
-pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxHostMount, SandboxSpec};
+pub use sandbox::{
+    ExecResult, NetworkPosture, OutputProgressCallback, Sandbox, SandboxHostMount, SandboxSpec,
+};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,
     LinuxReifiedNamespaceBackendReadiness, SandboxBackendKind, active_backend_name,

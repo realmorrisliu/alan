@@ -1,14 +1,16 @@
 use alan_tui::history::{HistoryCell, RenderOpts};
+use alan_tui::theme::Theme;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Paragraph, Widget},
 };
 
 #[test]
 fn fenced_styles_keep_literal_body_inline_distinction_and_secondary_boundaries() {
+    let theme = Theme::default();
     for width in [40, 60, 73, 80, 120] {
         for language in ["rust", "unknown_language"] {
             for closing in ["", "\n```"] {
@@ -24,32 +26,45 @@ fn fenced_styles_keep_literal_body_inline_distinction_and_secondary_boundaries()
                         .iter()
                         .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED))
                 );
-                assert_eq!(rows[2].to_string(), format!("╭─ {language}"));
+                assert_eq!(rows[2].to_string(), format!("▎ {language}"));
                 assert_eq!(
                     rows[2]
                         .spans
                         .iter()
-                        .filter(|s| s.style.fg == Some(Color::Cyan))
+                        .filter(|s| s.style.fg == Some(theme.accent))
                         .map(|s| s.content.as_ref())
                         .collect::<String>(),
                     language
                 );
                 assert!(rows[2].spans.iter().any(|s| {
-                    s.content.contains('╭') && s.style.add_modifier == Modifier::DIM
+                    s.content.contains('▎') && s.style.add_modifier == Modifier::DIM
                 }));
                 let end = rows.len() - usize::from(!closing.is_empty());
                 let body = &rows[3..end];
                 assert_eq!(
-                    body.iter().map(ToString::to_string).collect::<String>(),
+                    body.iter()
+                        .map(|r| {
+                            let s = r.to_string();
+                            s.strip_prefix("▎ ").unwrap_or(&s).to_string()
+                        })
+                        .collect::<String>(),
                     "    界e\u{301} 👩\u{200d}💻 **literal** `tick`"
                 );
-                assert!(
-                    body.iter()
-                        .flat_map(|r| &r.spans)
-                        .all(|s| s.style == Style::default())
-                );
+                if language == "unknown_language" {
+                    assert!(
+                        body.iter()
+                            .flat_map(|r| r.spans.iter().skip(1))
+                            .all(|s| s.style == Style::default())
+                    );
+                } else {
+                    assert!(
+                        body.iter()
+                            .flat_map(|r| &r.spans)
+                            .all(|s| !s.style.add_modifier.contains(Modifier::UNDERLINED))
+                    );
+                }
                 if !closing.is_empty() {
-                    assert_eq!(rows.last().unwrap().to_string(), "╰──");
+                    assert_eq!(rows.last().unwrap().to_string(), "▎");
                     assert!(
                         rows.last()
                             .unwrap()
@@ -63,33 +78,40 @@ fn fenced_styles_keep_literal_body_inline_distinction_and_secondary_boundaries()
         }
         let rows = HistoryCell::Assistant("```diff\n+\t**new**\n-\t`old`\n context\n```".into())
             .render_styled_lines(RenderOpts::new(width, false));
-        assert_eq!(rows[2].to_string(), "+    **new**");
-        assert_eq!(rows[3].to_string(), "-    `old`");
+        assert_eq!(rows[2].to_string(), "▎ +    **new**");
+        assert_eq!(rows[3].to_string(), "▎ -    `old`");
         assert!(
             rows[2]
                 .spans
                 .iter()
-                .all(|s| s.style.fg == Some(Color::Green) && s.style.add_modifier.is_empty())
+                .all(|s| s.style.fg == Some(theme.status_run) && s.style.add_modifier.is_empty())
         );
         assert!(
             rows[3]
                 .spans
                 .iter()
-                .all(|s| s.style.fg == Some(Color::Red) && s.style.add_modifier.is_empty())
+                .all(|s| s.style.fg == Some(theme.status_block) && s.style.add_modifier.is_empty())
         );
-        assert!(rows[4].spans.iter().all(|s| s.style == Style::default()));
+        assert!(
+            rows[4]
+                .spans
+                .iter()
+                .skip(1)
+                .all(|s| s.style == Style::default())
+        );
     }
 }
 
 #[test]
 fn fenced_default_body_and_dim_boundaries_reach_native_ansi_at_73_by_22() {
+    let theme = Theme::default();
     let rows = HistoryCell::Assistant("```rust\n    let 界 = \"**literal**\";\n```".into())
         .render_styled_lines(RenderOpts::new(73, false));
     let mut buffer = Buffer::empty(Rect::new(0, 0, 73, 22));
     Paragraph::new(rows).render(buffer.area, &mut buffer);
     assert_eq!(buffer.cell((0, 1)).unwrap().modifier, Modifier::DIM);
-    assert_eq!(buffer.cell((4, 2)).unwrap().fg, Color::Reset);
-    assert!(buffer.cell((4, 2)).unwrap().modifier.is_empty());
+    assert_eq!(buffer.cell((6, 2)).unwrap().fg, theme.syntax_keyword);
+    assert!(buffer.cell((6, 2)).unwrap().modifier.is_empty());
     assert_eq!(buffer.cell((0, 3)).unwrap().modifier, Modifier::DIM);
     let mut ansi = Vec::new();
     CrosstermBackend::new(&mut ansi)

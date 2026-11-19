@@ -274,7 +274,7 @@ where
                         .and_then(|v| v.as_str())
                         .map(String::from);
 
-                    let rejects_explicit_command = choice_str != "approve"
+                    let rejects_explicit_command = !is_approved_confirmation_choice(choice_str)
                         && replays_tool_calls(&pending.checkpoint_type)
                         && runtime
                             .machine
@@ -287,13 +287,13 @@ where
                         super::task_budget::resolve(
                             runtime.machine,
                             &pending,
-                            choice_str == "approve",
+                            is_approved_confirmation_choice(choice_str),
                         )
                         .await?;
                     }
                     if pending.checkpoint_type == crate::approval::INHERITED_BUDGET_CHECKPOINT_TYPE
                     {
-                        let approved = choice_str == "approve";
+                        let approved = is_approved_confirmation_choice(choice_str);
                         super::task_budget::resolve_inherited(runtime.machine, &pending, approved)
                             .await?;
                         if !approved {
@@ -476,9 +476,14 @@ fn first_resume_text(content: &[ContentPart]) -> Option<String> {
     })
 }
 
+fn is_approved_confirmation_choice(choice_str: &str) -> bool {
+    matches!(choice_str, "approve" | "allow_session")
+}
+
 fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
     match choice_str {
         "approve" => "approved",
+        "allow_session" => "allow_session",
         "reject" => "rejected",
         _ => choice_str,
     }
@@ -560,6 +565,29 @@ async fn handle_confirmation_resolution(
             .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
     }
 
+    if choice_str == "allow_session" {
+        if let Some(tool_call) = parse_replay_tool_call_from_confirmation_details(&pending.details)
+        {
+            let capability = pending
+                .details
+                .get("capability")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            runtime.machine.allow_tool_for_session(
+                &tool_call.name,
+                capability,
+                &tool_call.arguments,
+            );
+        } else {
+            runtime.machine.allow_tool_for_session(
+                "request_confirmation",
+                &pending.checkpoint_type,
+                &serde_json::Value::Null,
+            );
+        }
+    }
+
+    let approved = is_approved_confirmation_choice(choice_str);
     let allow_unknown_effect_replay = is_effect_replay_confirmation(&pending.checkpoint_type)
         && is_unknown_effect_confirmation(&pending);
     let allow_tool_escalation_replay =
@@ -570,13 +598,11 @@ async fn handle_confirmation_resolution(
     {
         return Ok(RuntimeOpAction::ContinueOwnerWork {
             work_id: work.work_id,
-            approved: choice_str == "approve",
+            approved,
         });
     }
 
-    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE
-        && choice_str != "approve"
-    {
+    if pending.checkpoint_type == crate::approval::TASK_BUDGET_CHECKPOINT_TYPE && !approved {
         runtime.machine.mark_submission_cancelled();
         if let Some(batch) = replay_tool_batch {
             if !batch.resume_with_generation
@@ -603,7 +629,7 @@ async fn handle_confirmation_resolution(
         .await?;
         return Ok(RuntimeOpAction::NoTurn);
     }
-    if choice_str != "approve"
+    if !approved
         && let Some(batch) = replay_tool_batch.as_ref()
         && !batch.resume_with_generation
     {
@@ -615,7 +641,7 @@ async fn handle_confirmation_resolution(
         return Ok(RuntimeOpAction::FinishRejectedExplicitCommand { tool_call });
     }
     if replays_tool_calls(&pending.checkpoint_type)
-        && choice_str == "approve"
+        && approved
         && let Some(batch) = replay_tool_batch
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
@@ -635,7 +661,7 @@ async fn handle_confirmation_resolution(
         });
     }
     if replays_tool_calls(&pending.checkpoint_type)
-        && choice_str == "approve"
+        && approved
         && let Some(tool_call) = parse_replay_tool_call_from_confirmation_details(&pending.details)
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolCall {

@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use crossterm::cursor::{MoveTo, MoveToNextLine};
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::backend::CrosstermBackend;
@@ -26,51 +29,47 @@ pub(crate) struct TerminalStylePolicy {
 }
 
 impl TerminalStylePolicy {
+    #[cfg(test)]
     pub(crate) fn from_capabilities(no_color: bool, term: &str, colors: u16) -> Self {
+        Self::from_env_capabilities(no_color, term, None, colors)
+    }
+
+    pub(crate) fn from_env_capabilities(
+        no_color: bool,
+        term: &str,
+        colorterm: Option<&str>,
+        colors: u16,
+    ) -> Self {
+        let no_capability = no_color || matches!(term, "dumb" | "vt100" | "vt102" | "vt220");
+        let effective_colors = if no_capability {
+            0
+        } else if crate::theme::colorterm_is_truecolor(colorterm) && colors > 0 {
+            u16::MAX
+        } else {
+            colors
+        };
         Self {
-            colors: if no_color || matches!(term, "dumb" | "vt100" | "vt102" | "vt220") {
-                0
-            } else {
-                colors
-            },
-            attributes: term != "dumb",
+            colors: effective_colors,
+            attributes: !no_color && term != "dumb",
         }
     }
 
     fn installed() -> Self {
-        Self::from_capabilities(
+        let colorterm = std::env::var("COLORTERM").ok();
+        Self::from_env_capabilities(
             std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()),
             &std::env::var("TERM").unwrap_or_default(),
+            colorterm.as_deref(),
             crossterm::style::available_color_count(),
         )
     }
 
     pub(crate) fn apply(self, buffer: &mut ratatui::buffer::Buffer) {
-        use ratatui::style::{Color, Modifier};
-        let supported = |color| match color {
-            Color::Reset => true,
-            Color::Rgb(..) => self.colors == u16::MAX,
-            Color::Indexed(index) => u16::from(index) < self.colors,
-            Color::DarkGray
-            | Color::LightRed
-            | Color::LightGreen
-            | Color::LightYellow
-            | Color::LightBlue
-            | Color::LightMagenta
-            | Color::LightCyan
-            | Color::White => self.colors >= 16,
-            _ => self.colors >= 8,
-        };
+        use ratatui::style::Modifier;
         for cell in &mut buffer.content {
-            if !supported(cell.fg) {
-                cell.fg = Color::Reset;
-            }
-            if !supported(cell.bg) {
-                cell.bg = Color::Reset;
-            }
-            if !supported(cell.underline_color) {
-                cell.underline_color = Color::Reset;
-            }
+            cell.fg = downgrade_color(cell.fg, self.colors);
+            cell.bg = downgrade_color(cell.bg, self.colors);
+            cell.underline_color = downgrade_color(cell.underline_color, self.colors);
             if !self.attributes {
                 cell.modifier = Modifier::empty();
             } else if self.colors < 16 {
@@ -78,6 +77,125 @@ impl TerminalStylePolicy {
                 cell.modifier &= Modifier::BOLD | Modifier::UNDERLINED | Modifier::REVERSED;
             }
         }
+    }
+}
+
+fn downgrade_color(color: ratatui::style::Color, colors: u16) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    match color {
+        Color::Reset => Color::Reset,
+        _ if colors == 0 => Color::Reset,
+        Color::Rgb(r, g, b) => {
+            if colors == u16::MAX {
+                Color::Rgb(r, g, b)
+            } else if colors >= 256 {
+                rgb_to_xterm256(r, g, b)
+            } else {
+                rgb_to_ansi(r, g, b, colors >= 16)
+            }
+        }
+        Color::Indexed(index) => {
+            if u16::from(index) < colors {
+                Color::Indexed(index)
+            } else {
+                Color::Reset
+            }
+        }
+        Color::DarkGray
+        | Color::LightRed
+        | Color::LightGreen
+        | Color::LightYellow
+        | Color::LightBlue
+        | Color::LightMagenta
+        | Color::LightCyan
+        | Color::White => {
+            if colors >= 16 {
+                color
+            } else {
+                Color::Reset
+            }
+        }
+        _ => {
+            if colors >= 8 {
+                color
+            } else {
+                Color::Reset
+            }
+        }
+    }
+}
+
+fn rgb_to_xterm256(r: u8, g: u8, b: u8) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    match (r, g, b) {
+        (82, 130, 255) => return Color::Indexed(69),
+        (0, 47, 167) => return Color::Indexed(26),
+        (34, 211, 166) => return Color::Indexed(43),
+        (0, 138, 102) => return Color::Indexed(35),
+        (245, 158, 11) => return Color::Indexed(214),
+        (194, 106, 6) => return Color::Indexed(172),
+        (248, 113, 113) => return Color::Indexed(203),
+        (217, 56, 46) => return Color::Indexed(167),
+        _ => {}
+    }
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    if max.saturating_sub(min) <= 14 {
+        if max < 8 {
+            return Color::Indexed(16);
+        }
+        if min > 243 {
+            return Color::Indexed(231);
+        }
+        let avg = ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8;
+        let gray_idx = ((u16::from(avg.saturating_sub(8)) * 23) / 230).min(23) as u8;
+        return Color::Indexed(232 + gray_idx);
+    }
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let nearest = |channel: u8| -> u8 {
+        LEVELS
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, level)| channel.abs_diff(**level))
+            .map_or(0, |(idx, _)| idx as u8)
+    };
+    Color::Indexed(16 + 36 * nearest(r) + 6 * nearest(g) + nearest(b))
+}
+
+fn rgb_to_ansi(r: u8, g: u8, b: u8, has_16: bool) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    if max <= 55 || min >= 230 {
+        return Color::Reset;
+    }
+    if max.saturating_sub(min) <= 36 {
+        return if has_16 && max <= 150 {
+            Color::DarkGray
+        } else {
+            Color::Reset
+        };
+    }
+    if b > r.saturating_add(40) && b >= g {
+        if has_16 && r >= 60 {
+            Color::LightBlue
+        } else {
+            Color::Blue
+        }
+    } else if g > r.saturating_add(25) && g >= b {
+        Color::Green
+    } else if g > r.saturating_add(30) && b > r.saturating_add(30) {
+        Color::Cyan
+    } else if r > g.saturating_add(40) && r > b.saturating_add(40) && g.saturating_sub(b) <= 35 {
+        Color::Red
+    } else if r > b.saturating_add(40) && g > b.saturating_add(40) && g >= 90 && r >= g {
+        Color::Yellow
+    } else if r > g.saturating_add(40) && r > b.saturating_add(40) {
+        Color::Red
+    } else if r > g.saturating_add(30) && b > g.saturating_add(30) {
+        Color::Magenta
+    } else {
+        Color::Reset
     }
 }
 
@@ -126,11 +244,99 @@ pub fn terminal_capability_error() -> &'static str {
 }
 
 static TERMINAL_ACTIVE: AtomicBool = AtomicBool::new(false);
+static KITTY_KEYBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
+static OSC_TITLE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Restore raw mode, bracketed paste, and cursor visibility unconditionally.
+fn should_enable_kitty_keyboard(term: &str, is_tty: bool) -> bool {
+    is_tty && term != "dumb"
+}
+
+fn push_kitty_keyboard_flags<W: Write>(writer: &mut W) -> std::io::Result<()> {
+    execute!(
+        writer,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )
+}
+
+fn pop_kitty_keyboard_flags<W: Write>(writer: &mut W) -> std::io::Result<()> {
+    execute!(writer, PopKeyboardEnhancementFlags)
+}
+
+/// Sanitize a terminal window title fragment so control sequences cannot escape OSC framing.
+pub(crate) fn sanitize_osc_title(title: &str) -> String {
+    let mut cleaned = String::with_capacity(title.len().min(128));
+    let mut last_space = false;
+    for ch in title.chars() {
+        if cleaned.chars().count() >= 128 {
+            break;
+        }
+        if ch.is_control() {
+            if !last_space && !cleaned.is_empty() {
+                cleaned.push(' ');
+                last_space = true;
+            }
+            continue;
+        }
+        last_space = ch == ' ';
+        cleaned.push(ch);
+    }
+    cleaned.trim().to_string()
+}
+
+/// Format an `alan · <project> · <state>` window title string.
+pub(crate) fn format_osc_title(project: Option<&str>, state: &str) -> String {
+    let clean_state = sanitize_osc_title(state);
+    match project.map(sanitize_osc_title).filter(|s| !s.is_empty()) {
+        Some(project) if !clean_state.is_empty() => format!("alan · {project} · {clean_state}"),
+        Some(project) => format!("alan · {project}"),
+        None if !clean_state.is_empty() => format!("alan · {clean_state}"),
+        None => "alan".to_string(),
+    }
+}
+
+fn write_osc_title_to<W: Write>(writer: &mut W, title: &str) -> std::io::Result<()> {
+    let clean = sanitize_osc_title(title);
+    write!(writer, "\x1b]0;{clean}\x07")?;
+    writer.flush()
+}
+
+/// Update the standard OSC 0 window/icon title when attached to an active non-dumb TTY.
+pub(crate) fn set_terminal_title(title: &str) {
+    let term = std::env::var("TERM").unwrap_or_default();
+    if !TERMINAL_ACTIVE.load(Ordering::SeqCst) || !is_interactive_terminal() || term == "dumb" {
+        return;
+    }
+    let mut out = stdout();
+    if write_osc_title_to(&mut out, title).is_ok() {
+        OSC_TITLE_ACTIVE.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Ring the terminal BEL (`\x07`) when attached to an active non-dumb TTY unless `ALAN_NO_BELL` is set.
+pub(crate) fn ring_terminal_bell() {
+    let term = std::env::var("TERM").unwrap_or_default();
+    if !TERMINAL_ACTIVE.load(Ordering::SeqCst)
+        || !is_interactive_terminal()
+        || term == "dumb"
+        || std::env::var_os("ALAN_NO_BELL").is_some_and(|value| !value.is_empty())
+    {
+        return;
+    }
+    let mut out = stdout();
+    let _ = out.write_all(b"\x07");
+    let _ = out.flush();
+}
+
+/// Restore raw mode, bracketed paste, Kitty keyboard enhancement, title, and cursor visibility.
 pub fn restore_terminal_modes() {
     let _ = crossterm_terminal::disable_raw_mode();
     let mut out = stdout();
+    if KITTY_KEYBOARD_ACTIVE.swap(false, Ordering::SeqCst) {
+        let _ = pop_kitty_keyboard_flags(&mut out);
+    }
+    if OSC_TITLE_ACTIVE.swap(false, Ordering::SeqCst) {
+        let _ = write_osc_title_to(&mut out, "");
+    }
     let _ = execute!(out, DisableBracketedPaste, crossterm::cursor::Show);
     let _ = out.flush();
 }
@@ -204,6 +410,12 @@ impl TerminalSession {
         crossterm_terminal::enable_raw_mode().context("failed to enable raw terminal mode")?;
         let mut out = stdout();
         execute!(out, EnableBracketedPaste).context("failed to enable terminal input modes")?;
+        let term = std::env::var("TERM").unwrap_or_default();
+        if should_enable_kitty_keyboard(&term, is_interactive_terminal())
+            && push_kitty_keyboard_flags(&mut out).is_ok()
+        {
+            KITTY_KEYBOARD_ACTIVE.store(true, Ordering::SeqCst);
+        }
         let mut terminal = build_inline_terminal(out, 1)?;
         terminal.clear().context("failed to clear terminal")?;
         startup_guard.disarm();
@@ -363,6 +575,12 @@ impl Drop for TerminalStartupGuard {
         }
         TERMINAL_ACTIVE.store(false, Ordering::SeqCst);
         let mut out = stdout();
+        if KITTY_KEYBOARD_ACTIVE.swap(false, Ordering::SeqCst) {
+            let _ = pop_kitty_keyboard_flags(&mut out);
+        }
+        if OSC_TITLE_ACTIVE.swap(false, Ordering::SeqCst) {
+            let _ = write_osc_title_to(&mut out, "");
+        }
         let _ = execute!(out, DisableBracketedPaste);
         let _ = crossterm_terminal::disable_raw_mode();
     }
@@ -372,6 +590,12 @@ impl Drop for TerminalSession {
     fn drop(&mut self) {
         TERMINAL_ACTIVE.store(false, Ordering::SeqCst);
         let _ = crossterm_terminal::disable_raw_mode();
+        if KITTY_KEYBOARD_ACTIVE.swap(false, Ordering::SeqCst) {
+            let _ = pop_kitty_keyboard_flags(self.terminal.backend_mut());
+        }
+        if OSC_TITLE_ACTIVE.swap(false, Ordering::SeqCst) {
+            let _ = write_osc_title_to(self.terminal.backend_mut(), "");
+        }
         let _ = restore_terminal_input_and_line(self.terminal.backend_mut());
         let _ = self.terminal.show_cursor();
     }
@@ -482,5 +706,31 @@ mod tests {
         restore_terminal_input_and_line(&mut output).unwrap();
 
         assert_eq!(output, b"\x1b[?2004l\x1b[1E");
+    }
+
+    #[test]
+    fn kitty_keyboard_flags_push_and_pop_standard_escape_sequences() {
+        assert!(!should_enable_kitty_keyboard("dumb", true));
+        assert!(!should_enable_kitty_keyboard("xterm-256color", false));
+        assert!(should_enable_kitty_keyboard("xterm-256color", true));
+
+        let mut pushed = Vec::new();
+        push_kitty_keyboard_flags(&mut pushed).unwrap();
+        assert_eq!(pushed, b"\x1b[>1u");
+
+        let mut popped = Vec::new();
+        pop_kitty_keyboard_flags(&mut popped).unwrap();
+        assert_eq!(popped, b"\x1b[<1u");
+    }
+
+    #[test]
+    fn osc_title_strips_control_sequences_and_formats_cleanly() {
+        assert_eq!(
+            format_osc_title(Some("my\x1b]0;bad\x07repo"), "running\ntools"),
+            "alan · my ]0;bad repo · running tools"
+        );
+        let mut out = Vec::new();
+        write_osc_title_to(&mut out, "alan · repo · ready").unwrap();
+        assert_eq!(out, b"\x1b]0;alan \xc2\xb7 repo \xc2\xb7 ready\x07");
     }
 }

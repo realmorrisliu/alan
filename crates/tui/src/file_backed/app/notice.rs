@@ -18,7 +18,7 @@ impl Notice {
             kind: snapshot.kind,
             submission: None,
             runtime_owned: true,
-            message: snapshot.message,
+            message: humanize_protocol_message(&snapshot.message),
         })
     }
 
@@ -79,4 +79,31 @@ impl std::fmt::Display for Notice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)
     }
+}
+
+/// Rewrite low-level protocol/provider errors into clear, actionable guidance.
+pub(in crate::file_backed) fn humanize_protocol_message(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("stream_error:authentication")
+        || (lower.contains("stream_error") && lower.contains("auth"))
+        || lower.contains("invalid_api_key")
+        || lower.contains("unauthorized (401)")
+    {
+        return "Authentication failed for the active connection. Run `alan connection login <profile>` or `alan connection set-secret <profile>` (see `alan connection list`).".to_string();
+    }
+    if lower.contains("no connection service profile selected")
+        || lower.contains("no confirmed callable binding")
+        || lower.contains("missing connection authority")
+        || lower.contains("connection catalog unavailable")
+    {
+        return "No active model connection is configured. Run `alan connection add openai_responses --profile main --default` (or `chatgpt`), then `alan connection login main` or `alan connection set-secret main`.".to_string();
+    }
+    if lower.contains("stream_error:rate_limit") {
+        return "Provider rate limit reached. Wait a moment and retry, or switch models with `/model`.".to_string();
+    }
+    if let Some(rest) = trimmed.strip_prefix("stream_error:") {
+        return format!("Provider stream error: {}", rest.trim());
+    }
+    trimmed.to_string()
 }

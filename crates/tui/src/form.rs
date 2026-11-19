@@ -8,6 +8,8 @@ use serde_json::{Map, Value};
 pub struct FormField {
     pub question: StructuredInputQuestion,
     pub value: String,
+    pub cursor: usize,
+    pub option_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +33,18 @@ impl FormState {
                 } else {
                     question.default_value.clone().unwrap_or_default()
                 };
-                FormField { question, value }
+                let cursor = value.len();
+                let option_index = question
+                    .options
+                    .iter()
+                    .position(|opt| opt.value == value)
+                    .unwrap_or(0);
+                FormField {
+                    question,
+                    value,
+                    cursor,
+                    option_index,
+                }
             })
             .collect();
         Self {
@@ -46,6 +59,10 @@ impl FormState {
         self.fields.get(self.focus)
     }
 
+    pub fn focused_is_select(&self) -> bool {
+        self.focused().is_some_and(is_select_field)
+    }
+
     pub fn next_field(&mut self) {
         if !self.fields.is_empty() {
             self.focus = (self.focus + 1) % self.fields.len();
@@ -58,17 +75,148 @@ impl FormState {
         }
     }
 
+    pub fn next_option(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus)
+            && !field.question.options.is_empty()
+        {
+            field.option_index = (field.option_index + 1) % field.question.options.len();
+        }
+    }
+
+    pub fn prev_option(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus)
+            && !field.question.options.is_empty()
+        {
+            let len = field.question.options.len();
+            field.option_index = (field.option_index + len - 1) % len;
+        }
+    }
+
+    pub fn toggle_selected_option(&mut self) -> bool {
+        let Some(field) = self.fields.get_mut(self.focus) else {
+            return false;
+        };
+        if !is_select_field(field) {
+            return false;
+        }
+        let Some(opt) = field.question.options.get(field.option_index) else {
+            return false;
+        };
+        let chosen = opt.value.clone();
+        match field.question.kind {
+            StructuredInputKind::SingleSelect => {
+                field.value = chosen;
+            }
+            StructuredInputKind::MultiSelect => {
+                let mut selected: Vec<String> = field
+                    .value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                if let Some(pos) = selected.iter().position(|v| v == &chosen) {
+                    selected.remove(pos);
+                } else {
+                    selected.push(chosen);
+                }
+                field.value = selected.join(",");
+            }
+            _ => return false,
+        }
+        field.cursor = field.value.len();
+        self.error = None;
+        true
+    }
+
+    pub fn select_current_option_if_single_empty(&mut self) {
+        let Some(field) = self.fields.get_mut(self.focus) else {
+            return;
+        };
+        if field.question.kind == StructuredInputKind::SingleSelect
+            && field.value.trim().is_empty()
+            && let Some(opt) = field.question.options.get(field.option_index)
+        {
+            field.value = opt.value.clone();
+            field.cursor = field.value.len();
+            self.error = None;
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus)
+            && field.cursor > 0
+        {
+            field.cursor = field.value[..field.cursor.min(field.value.len())]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus)
+            && field.cursor < field.value.len()
+        {
+            let next = field.value[field.cursor..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(0);
+            field.cursor = (field.cursor + next).min(field.value.len());
+        }
+    }
+
+    pub fn move_home(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus) {
+            field.cursor = 0;
+        }
+    }
+
+    pub fn move_end(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus) {
+            field.cursor = field.value.len();
+        }
+    }
+
     pub fn insert_char(&mut self, ch: char) {
         if let Some(field) = self.fields.get_mut(self.focus) {
-            field.value.push(ch);
+            let pos = field.cursor.min(field.value.len());
+            field.value.insert(pos, ch);
+            field.cursor = pos + ch.len_utf8();
             self.error = None;
         }
     }
 
     pub fn backspace(&mut self) {
         if let Some(field) = self.fields.get_mut(self.focus) {
-            field.value.pop();
-            self.error = None;
+            let pos = field.cursor.min(field.value.len());
+            if pos > 0 {
+                let prev = field.value[..pos]
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                field.value.drain(prev..pos);
+                field.cursor = prev;
+                self.error = None;
+            }
+        }
+    }
+
+    pub fn delete_forward(&mut self) {
+        if let Some(field) = self.fields.get_mut(self.focus) {
+            let pos = field.cursor.min(field.value.len());
+            if pos < field.value.len() {
+                let len = field.value[pos..]
+                    .chars()
+                    .next()
+                    .map(char::len_utf8)
+                    .unwrap_or(0);
+                field.value.drain(pos..pos + len);
+                self.error = None;
+            }
         }
     }
 
@@ -99,34 +247,65 @@ impl FormState {
 
     /// One display line per field, the focused field marked.
     pub fn render_lines(&self) -> Vec<(String, bool)> {
-        let mut lines: Vec<(String, bool)> = self
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(idx, field)| {
-                let mut line = field_input_line(field, idx == self.focus);
-                if !field.question.options.is_empty() {
-                    let opts = field
-                        .question
-                        .options
+        let mut lines = Vec::new();
+        for (idx, field) in self.fields.iter().enumerate() {
+            let focused = idx == self.focus;
+            let mut line = field_input_line(field, focused);
+            if !field.question.options.is_empty() && !focused {
+                let opts = field
+                    .question
+                    .options
+                    .iter()
+                    .map(|option| option.value.as_str())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                line.push_str(&format!("  ({opts})"));
+            }
+            lines.push((line, focused));
+            if focused && is_select_field(field) {
+                let selected: Vec<&str> = field
+                    .value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                for (opt_idx, option) in field.question.options.iter().enumerate() {
+                    let cursor = if opt_idx == field.option_index {
+                        "▸"
+                    } else {
+                        " "
+                    };
+                    let mark = if selected
                         .iter()
-                        .map(|option| option.value.as_str())
-                        .collect::<Vec<_>>()
-                        .join("/");
-                    line.push_str(&format!("  ({opts})"));
+                        .any(|v| v.eq_ignore_ascii_case(&option.value))
+                    {
+                        "✓"
+                    } else {
+                        " "
+                    };
+                    lines.push((
+                        format!("    {cursor} [{mark}] {} — {}", option.value, option.label),
+                        opt_idx == field.option_index,
+                    ));
                 }
-                (line, idx == self.focus)
-            })
-            .collect();
+            }
+        }
         if let Some(error) = &self.error {
             lines.push((format!("  ! {error}"), false));
         }
         lines.push((
-            "  tab/↑↓ move · type to edit · enter submit".to_string(),
+            "  tab fields · ←→ cursor · ↑↓/space select · enter submit".to_string(),
             false,
         ));
         lines
     }
+}
+
+fn is_select_field(field: &FormField) -> bool {
+    matches!(
+        field.question.kind,
+        StructuredInputKind::SingleSelect | StructuredInputKind::MultiSelect
+    ) && !field.question.options.is_empty()
 }
 
 fn field_input_line(field: &FormField, focused: bool) -> String {
@@ -226,5 +405,42 @@ mod tests {
         form.insert_char('x');
         let json: Value = serde_json::from_str(&form.answers_json()).unwrap();
         assert_eq!(json["name"], "x");
+    }
+
+    #[test]
+    fn cursor_navigation_and_select_toggles_work() {
+        let mut form = FormState::new(
+            "r1".into(),
+            vec![
+                question("name", "text"),
+                question("env", "single_select"),
+                question("tags", "multi_select"),
+            ],
+        );
+        form.insert_char('a');
+        form.insert_char('c');
+        form.move_cursor_left();
+        form.insert_char('b');
+        assert_eq!(form.fields[0].value, "abc");
+        form.move_home();
+        form.delete_forward();
+        assert_eq!(form.fields[0].value, "bc");
+        form.move_end();
+        form.backspace();
+        assert_eq!(form.fields[0].value, "b");
+
+        form.next_field();
+        assert!(form.focused_is_select());
+        form.next_option();
+        form.toggle_selected_option();
+        assert_eq!(form.fields[1].value, "b");
+
+        form.next_field();
+        form.toggle_selected_option();
+        form.next_option();
+        form.toggle_selected_option();
+        assert_eq!(form.fields[2].value, "a,b");
+        form.toggle_selected_option();
+        assert_eq!(form.fields[2].value, "a");
     }
 }

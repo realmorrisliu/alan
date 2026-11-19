@@ -5,8 +5,7 @@ use alan_agent_protocol::{
     InputIntent, UiActivitySnapshot, UiActivityState, UiEvent, UiInputStatus, UiNoticeKind,
     UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot, UiThinkingState, YieldKind,
 };
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::style::{Color, Style};
+use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::text::{Line, Span};
 
 use crate::completion::{self, CompletionCandidate, CompletionSources, CompletionState};
@@ -21,15 +20,17 @@ use crate::transcript_ui::{
 use super::file_surface::{ActionSnapshot, TapeRecordV1, response_text_from_content};
 use super::{ProjectAccess, ProjectControl, ProjectMountReceipt, project_dispatch};
 
-mod action_modal;
+pub(in crate::file_backed) mod action_modal;
 mod attachment;
+mod form_control;
 mod grouping;
 mod history;
 mod model_control;
 mod notice;
-pub(in crate::file_backed) use notice::Notice;
+pub(in crate::file_backed) use notice::{Notice, humanize_protocol_message};
 mod presentation;
 mod project;
+mod slash;
 use project::default_commands;
 
 mod events;
@@ -68,6 +69,10 @@ pub(super) struct FileBackedApp {
     pub(super) project_candidate: Option<std::path::PathBuf>,
     pub(super) project_selection: Option<ProjectAccess>,
     pub(super) project: Option<ProjectMountReceipt>,
+    pub(super) project_host_root: Option<std::path::PathBuf>,
+    pub(super) git_status: Option<super::git_status::GitStatus>,
+    pub(super) sandbox_backend: Option<String>,
+    pub(super) pending_attachments: Vec<alan_agent_protocol::ContentPart>,
     pub(super) namespace_cwd: std::path::PathBuf,
     pub(super) retained_project_mount: Option<(ProjectMountReceipt, std::path::PathBuf)>,
     pub(super) pending_project_control: Option<project::PendingProjectControl>,
@@ -77,7 +82,9 @@ pub(super) struct FileBackedApp {
     pub(super) uncertain_project_mount: Option<(String, ProjectControl)>,
     ready_project_revoke: Option<String>,
     pub(super) last_input_failed: bool,
+    pub(super) auto_continue_on_empty_cancel: bool,
     pub(super) expand_thinking: bool,
+    pub(super) theme: crate::theme::Theme,
     pub(super) notice: Option<Notice>,
     pub(super) expected_terminal_error: Option<String>,
     pub(super) should_quit: bool,
@@ -132,6 +139,10 @@ impl FileBackedApp {
             project_candidate: None,
             project_selection: None,
             project: None,
+            project_host_root: None,
+            git_status: None,
+            sandbox_backend: None,
+            pending_attachments: Vec::new(),
             namespace_cwd: std::path::PathBuf::from("/"),
             retained_project_mount: None,
             pending_project_control: None,
@@ -141,7 +152,9 @@ impl FileBackedApp {
             uncertain_project_mount: None,
             ready_project_revoke: None,
             last_input_failed: false,
+            auto_continue_on_empty_cancel: false,
             expand_thinking: false,
+            theme: crate::theme::Theme::default(),
             should_quit: false,
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
@@ -176,6 +189,29 @@ impl FileBackedApp {
                 self.apply_plan_details(path, generation, entries);
                 None
             }
+            FileBackedEvent::TapeDetails {
+                path,
+                generation,
+                rows,
+            } => {
+                if self.modal.active
+                    && self.modal.mode == action_modal::ModalMode::Tape
+                    && path == self.modal.owner_path
+                    && generation == self.modal.generation
+                {
+                    self.modal.rows = rows;
+                    self.modal.scroll = 0;
+                }
+                None
+            }
+            FileBackedEvent::ManDetails {
+                generation,
+                owner,
+                content,
+            } => {
+                self.apply_man_details(generation, owner, content);
+                None
+            }
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
@@ -184,7 +220,7 @@ impl FileBackedApp {
                 rows,
             } => {
                 if self.modal.active
-                    && !self.modal.plan_mode
+                    && self.modal.mode == action_modal::ModalMode::Actions
                     && path == self.modal.owner_path
                     && generation == self.modal.generation
                 {
@@ -289,6 +325,8 @@ impl FileBackedApp {
             | FileBackedEvent::SkillsUnavailable { .. }
             | FileBackedEvent::UsageChanged { .. }
             | FileBackedEvent::UsageUnavailable { .. }
+            | FileBackedEvent::GitStatusUpdated { .. }
+            | FileBackedEvent::FileIndexUpdated { .. }
             | FileBackedEvent::RequestsChanged
             | FileBackedEvent::ActionsChanged { .. } => None,
             FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
@@ -308,6 +346,9 @@ impl FileBackedApp {
         key: KeyEvent,
         has_pending_submission: bool,
     ) -> Option<FileBackedAction> {
+        if key.kind == KeyEventKind::Release {
+            return None;
+        }
         if self.model_chooser.active {
             return self.model_key(key, has_pending_submission);
         }
@@ -338,6 +379,11 @@ impl FileBackedApp {
                 }
                 return None;
             }
+            self.auto_continue_on_empty_cancel = self
+                .queue
+                .snapshot
+                .as_ref()
+                .is_none_or(|q| q.pending_submission_ids.is_empty());
             return Some(FileBackedAction::Interrupt);
         }
         if self.project_selection.is_some() {
@@ -395,10 +441,39 @@ impl FileBackedApp {
                 None
             }
             KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers,
+                ..
+            } if !pending_input
+                && modifiers.contains(KeyModifiers::CONTROL)
+                && !modifiers.contains(KeyModifiers::ALT) =>
+            {
+                Some(FileBackedAction::OpenExternalEditor)
+            }
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers,
+                ..
+            } if !pending_input
+                && modifiers.contains(KeyModifiers::CONTROL)
+                && !modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.submit_with_mode(alan_agent_protocol::InputMode::Steer)
+            }
+            KeyEvent {
                 code: KeyCode::Esc, ..
-            } => self
-                .interruptible_work_active(has_pending_submission)
-                .then_some(FileBackedAction::Interrupt),
+            } => {
+                if self.interruptible_work_active(has_pending_submission) {
+                    self.auto_continue_on_empty_cancel = self
+                        .queue
+                        .snapshot
+                        .as_ref()
+                        .is_none_or(|q| q.pending_submission_ids.is_empty());
+                    Some(FileBackedAction::Interrupt)
+                } else {
+                    None
+                }
+            }
             KeyEvent {
                 code: KeyCode::Char('/'),
                 modifiers,
@@ -459,14 +534,17 @@ impl FileBackedApp {
     }
 
     fn recall_input(&mut self, key: KeyEvent) {
-        if !self.composer.is_recalling() {
+        let was_recalling = self.composer.is_recalling();
+        if !was_recalling {
             self.history_draft_intent = Some(self.input_intent);
         }
         self.composer.handle_key(key);
         if let Some(intent) = self.composer.recalled_intent() {
             self.input_intent = intent;
-        } else if let Some(intent) = self.history_draft_intent.take() {
+        } else if was_recalling && let Some(intent) = self.history_draft_intent.take() {
             self.input_intent = intent;
+        } else if !was_recalling {
+            self.history_draft_intent = None;
         }
     }
 
@@ -493,45 +571,6 @@ impl FileBackedApp {
                 true
             }
             _ => false,
-        }
-    }
-
-    pub(super) fn handle_form_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
-        match key.code {
-            KeyCode::Esc => Some(FileBackedAction::Interrupt),
-            KeyCode::Tab | KeyCode::Down => {
-                if let Some(form) = self.form.as_mut() {
-                    form.next_field();
-                }
-                None
-            }
-            KeyCode::BackTab | KeyCode::Up => {
-                if let Some(form) = self.form.as_mut() {
-                    form.prev_field();
-                }
-                None
-            }
-            KeyCode::Backspace => {
-                if let Some(form) = self.form.as_mut() {
-                    form.backspace();
-                }
-                None
-            }
-            KeyCode::Enter => self.submit_form(),
-            KeyCode::Char(_)
-                if key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                None
-            }
-            KeyCode::Char(ch) => {
-                if let Some(form) = self.form.as_mut() {
-                    form.insert_char(ch);
-                }
-                None
-            }
-            _ => None,
         }
     }
 
@@ -589,37 +628,14 @@ impl FileBackedApp {
         }
     }
 
-    pub(super) fn confirmation_keypress(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
-        if self.response_in_flight.is_some() {
-            return None;
-        }
-        if !key.modifiers.is_empty() && key.modifiers != KeyModifiers::SHIFT {
-            return None;
-        }
-        let pending = self.pending_yield.as_ref()?;
-        if !matches!(pending.kind, YieldKind::Confirmation) || !self.composer.text().is_empty() {
-            return None;
-        }
-        let KeyCode::Char(ch) = key.code else {
-            return None;
-        };
-        let index = ch.to_digit(10).filter(|digit| *digit >= 1)? as usize - 1;
-        let option = pending.options.get(index)?.clone();
-        let pending = pending.clone();
-        match pending.resume_content(&option) {
-            Ok(content) => Some(FileBackedAction::Resume {
-                request_id: pending.request_id,
-                response: response_text_from_content(content),
-                retry_input: option,
-            }),
-            Err(message) => {
-                self.notice = Some(Notice::warning(message));
-                None
-            }
-        }
+    pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
+        self.submit_with_mode(alan_agent_protocol::InputMode::FollowUp)
     }
 
-    pub(super) fn handle_submit(&mut self) -> Option<FileBackedAction> {
+    pub(super) fn submit_with_mode(
+        &mut self,
+        mode: alan_agent_protocol::InputMode,
+    ) -> Option<FileBackedAction> {
         if self.model_submit_command() {
             let text = self.composer.text().trim().to_owned();
             self.composer.set_text("");
@@ -675,15 +691,24 @@ impl FileBackedApp {
         self.notice = None;
         self.completion = None;
         if self.input_intent == InputIntent::Agent && text.trim().starts_with('/') {
+            if mode == alan_agent_protocol::InputMode::Steer {
+                self.notice = Some("Slash commands cannot be sent as live steer messages.".into());
+                return None;
+            }
             self.composer.set_text("");
             self.composer.remember(&text);
             return self.handle_command(text.trim());
         }
-        let record = alan_agent_protocol::UserInputRecord::new(
-            self.input_intent,
-            alan_agent_protocol::InputMode::FollowUp,
-            text,
-        );
+        let mut parts = self.pending_attachments.clone();
+        if self.input_intent != InputIntent::Command {
+            parts.extend(super::attachment_io::extract_at_image_attachments(
+                &text,
+                self.project_host_root.as_deref(),
+            ));
+        }
+        let record = alan_agent_protocol::UserInputRecord::new(self.input_intent, mode, text)
+            .with_parts(parts);
+        self.auto_continue_on_empty_cancel = false;
         Some(FileBackedAction::Submit(record))
     }
 
@@ -734,7 +759,30 @@ impl FileBackedApp {
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;
         self.last_input_failed = false;
+        self.pending_attachments.clear();
         // Submission may be queued behind another client. Tape owns turn boundaries.
+    }
+
+    pub(super) fn take_ready_auto_continue_on_empty_cancel(&mut self) -> bool {
+        if !self.auto_continue_on_empty_cancel
+            || self.has_pending_response()
+            || !self.running_tools.is_empty()
+        {
+            return false;
+        }
+        let Some(q) = self.queue.snapshot.as_ref().filter(|q| q.known) else {
+            return false;
+        };
+        if q.paused
+            && q.pending_submission_ids.is_empty()
+            && q.active_submission_ids.is_empty()
+            && !q.deferred
+            && q.uncertain_submission_ids.is_empty()
+        {
+            self.auto_continue_on_empty_cancel = false;
+            return true;
+        }
+        false
     }
 
     #[cfg(test)]
@@ -744,107 +792,6 @@ impl FileBackedApp {
         }
         let text = self.composer.text().trim();
         !text.is_empty() && (self.input_intent != InputIntent::Agent || !text.starts_with('/'))
-    }
-
-    pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {
-        let command = text.strip_prefix('/')?;
-        let name = command.split_whitespace().next().unwrap_or("");
-        match name {
-            "status" => self.model_status_command(),
-            "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
-            "project" if command.trim() == "project" => {
-                if let Some((_, retained)) = self.uncertain_project_mount.as_ref() {
-                    if self.project_recovery_boundary_available(false) {
-                        return Some(FileBackedAction::Project(retained.clone()));
-                    }
-                    self.notice = Some(Notice::warning(
-                        "project outcome unknown; wait, then /project retries the same selection",
-                    ));
-                    return None;
-                }
-                if !self.project_boundary_available(false) {
-                    self.notice =
-                        Some("wait for the current Agent turn before selecting a project".into());
-                } else if self.project.is_some() {
-                    self.notice = Some("revoke the active project before selecting another".into());
-                } else {
-                    self.project_selection = Some(ProjectAccess::ReadOnly);
-                    self.input_intent = InputIntent::Command;
-                    self.composer.set_text(
-                        self.project_candidate
-                            .as_ref()
-                            .map(|path| path.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                    );
-                    self.notice = Some(
-                        format!(
-                            "project path · {} · Enter approve · Tab toggle · Esc cancel",
-                            ProjectAccess::ReadOnly.label()
-                        )
-                        .into(),
-                    );
-                }
-                None
-            }
-            "project" if command.trim() == "project revoke" => {
-                if !self.project_recovery_boundary_available(false) {
-                    self.notice =
-                        Some("wait for the current Agent turn before revoking a project".into());
-                    None
-                } else if self.project_cleanup.is_some() && self.pending_project_control.is_none() {
-                    self.project_cleanup_attempted = false;
-                    self.notice = Some("explicit candidate cleanup retry requested".into());
-                    None
-                } else if let Some(grant_id) = self.retained_project_grant() {
-                    Some(FileBackedAction::Project(ProjectControl::Revoke {
-                        grant_id,
-                    }))
-                } else {
-                    Some(FileBackedAction::RevokeCurrentProject)
-                }
-            }
-            "project" => {
-                self.notice = Some("usage: /project or /project revoke".into());
-                None
-            }
-            "quit" => {
-                self.should_quit = true;
-                Some(FileBackedAction::Quit)
-            }
-            "compact" => Some(FileBackedAction::MachineCtl {
-                command: "compact".to_string(),
-                success_notice: "compact requested".to_string(),
-            }),
-            "rollback" => Some(FileBackedAction::MachineCtl {
-                command: "rollback".to_string(),
-                success_notice: "rollback requested".to_string(),
-            }),
-            "continue" | "discard" if command.trim() == name => {
-                Some(FileBackedAction::MachineCtl {
-                    command: format!("queue-v1 {name}"),
-                    success_notice: format!("queue {name} requested"),
-                })
-            }
-            "clear" => {
-                self.clear_local_receipts();
-                self.transcript.clear();
-                self.action_cells.clear();
-                self.pending_remote_turn_start = None;
-                self.scrollback_front_is_partial = false;
-                None
-            }
-            "help" => {
-                self.notice = Some(
-                    "`: ` sends an Agent message · `!` runs a shell command · /project opens the picker (read-only by default; Tab toggles read-write; Enter mounts; Esc cancels) · /project revoke · /compact /rollback /continue /discard /clear /quit · Enter runs slash commands; Tab accepts completion · ctrl+r thinking · Ctrl+O retained details; p toggles Actions/plans; arrows select; PgUp/PgDn scroll; Esc returns to draft · ctrl+c clears an idle draft or interrupts active work"
-                        .into(),
-                );
-                None
-            }
-            _ => {
-                self.notice = Some(Notice::warning(format!("unknown command: /{name}")));
-                None
-            }
-        }
     }
 
     pub(super) fn set_pending_yield(&mut self, pending: PendingYieldCell) {
@@ -969,8 +916,15 @@ impl FileBackedApp {
     pub(super) fn merge_reconnected_idle_history(&mut self, current: Vec<HistoryCell>) {
         super::history_merge::merge_idle_history(self, current);
     }
+    pub(super) fn maybe_insert_welcome_header(&mut self) {
+        if self.transcript.is_empty() && !super::welcome::is_disabled() {
+            self.transcript
+                .push(HistoryCell::Welcome(super::welcome::from_app(self)));
+        }
+    }
+
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
-        RenderOpts::new(width, self.expand_thinking)
+        RenderOpts::new(width, self.expand_thinking).with_theme(self.theme)
     }
 }
 
