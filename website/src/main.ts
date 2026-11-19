@@ -222,10 +222,16 @@ function initTerminal(): void {
       form.requestSubmit();
       return;
     }
-    if (event.key === 'Tab') {
-      event.preventDefault();
+    if (event.key === 'Tab' && !event.shiftKey) {
       const completed = shell.complete(input.value);
-      if (completed) input.value = completed;
+      if (completed) {
+        event.preventDefault();
+        input.value = completed;
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      input.blur();
       return;
     }
     if (event.key === 'ArrowUp') {
