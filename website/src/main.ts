@@ -91,12 +91,15 @@ function showMiniDrawer(command: string, text: string, tone: OutputTone): void {
   cmdEl.textContent = `${shell.getPrompt()} ${command}`;
   bodyEl.className = `acme-drawer__body${tone !== 'default' ? ` term-out--${tone}` : ''}`;
   bodyEl.textContent = text || '(ok)';
+  drawer.inert = false;
   drawer.dataset.open = 'true';
 }
 
 function closeMiniDrawer(): void {
   const drawer = document.getElementById('acme-drawer');
-  if (drawer) drawer.dataset.open = 'false';
+  if (!drawer) return;
+  drawer.dataset.open = 'false';
+  drawer.inert = true;
 }
 
 function isHeroTerminalInView(): boolean {

@@ -14,12 +14,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: website-pages
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -46,23 +40,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck and build
+      - name: Typecheck and build Cloudflare Worker + assets
         run: pnpm build
 
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: website/dist
-
-  deploy:
-    if: github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Verify Cloudflare Build Output
+        run: |
+          test -f .cloudflare/output/v1/config.json
+          test -f .cloudflare/output/v1/workers/default/assets/index.html
+          test -f .cloudflare/output/v1/workers/default/bundle/index.js

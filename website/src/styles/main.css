@@ -1216,14 +1216,17 @@ dialog::backdrop {
   box-shadow: 5px 5px 0 var(--klein-soft);
   transform: translateY(12px);
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: transform 180ms var(--ease-out), opacity 160ms var(--ease-out);
+  transition: transform 180ms var(--ease-out), opacity 160ms var(--ease-out), visibility 0s linear 180ms;
 }
 
 .acme-drawer[data-open='true'] {
   transform: translateY(0);
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
+  transition: transform 180ms var(--ease-out), opacity 160ms var(--ease-out), visibility 0s;
 }
 
 .acme-drawer__bar {
