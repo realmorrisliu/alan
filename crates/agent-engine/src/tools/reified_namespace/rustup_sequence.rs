@@ -1,8 +1,10 @@
 //! Admission of native sequences whose inspected Rust lookup inputs remain unchanged.
 use super::*;
 use crate::tools::sandbox::command_and_args;
+#[cfg(feature = "shell-syntax")]
+use crate::tools::sandbox::command_wrappers::is_env_assignment;
 use crate::tools::sandbox::command_wrappers::{
-    command_wrapper_executables, is_env_assignment, shell_wrapper_inline_script,
+    command_wrapper_executables, shell_wrapper_inline_script,
 };
 
 const SEPARATE: &str = "Inspected Rust commands need separate requests after other programs or Rust execution; use literal cd/set, then run each build/test/application separately";
@@ -12,6 +14,7 @@ fn rust_command(words: &[String]) -> Option<(&str, &[String])> {
     PROXIES.contains(&name).then_some((name, args))
 }
 
+#[cfg(feature = "shell-syntax")]
 fn query(name: &str, args: &[String]) -> bool {
     if name == "cargo" {
         return crate::tools::sandbox::command_options::cargo_global_query(args);
@@ -112,6 +115,7 @@ pub(super) fn proxy_links_stay_in_directory(source: &Path) -> bool {
     links == identity.nlink()
 }
 
+#[cfg(feature = "shell-syntax")]
 fn query_provider(
     executable: &str,
     path: &str,
@@ -179,6 +183,7 @@ pub(super) fn inspect(
     inspect_script(&script, path, input, proxies)
 }
 
+#[cfg(feature = "shell-syntax")]
 fn inspect_script(
     script: &str,
     path: &str,
@@ -317,6 +322,17 @@ fn inspect_script(
         }
     }
     Ok(providers)
+}
+
+#[cfg(not(feature = "shell-syntax"))]
+fn inspect_script(
+    script: &str,
+    path: &str,
+    input: &ReifiedNamespacePlanInput,
+    proxies: &[ReifiedExecutionSubstrateMount],
+) -> Result<Vec<ReifiedRustCommandProvider>, String> {
+    let _ = (script, path, input, proxies);
+    Err("shell syntax parsing requires the shell-syntax feature".to_string())
 }
 
 #[cfg(test)]

@@ -2,9 +2,22 @@
 
 use std::collections::HashSet;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 
 use crate::TokenUsage;
+
+pub(crate) fn validate_typesafe_model(model: &str) -> Result<()> {
+    let version = model.strip_prefix("jev-").unwrap_or_default();
+    ensure!(
+        model.len() <= 128
+            && version.split('.').count() == 3
+            && version
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())),
+        "TypeSafe requires a pinned model version"
+    );
+    Ok(())
+}
 
 /// An evaluator returned invalid response evidence, distinct from provider unavailability.
 #[derive(Debug)]

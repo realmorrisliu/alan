@@ -685,6 +685,7 @@ pub(in crate::tools) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>
     Ok(commands)
 }
 
+#[cfg(feature = "shell-syntax")]
 pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
     // Parse syntax only: this never invokes a shell or evaluates substitutions.
     let mut parser = tree_sitter::Parser::new();
@@ -773,6 +774,12 @@ pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
         ));
     }
     Ok(Some(PathBuf::from(directory)))
+}
+
+#[cfg(not(feature = "shell-syntax"))]
+pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
+    let _ = command;
+    Ok(None)
 }
 
 #[cfg(test)]

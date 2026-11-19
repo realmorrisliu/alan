@@ -320,12 +320,19 @@ pub(crate) fn prepare_system_store_launch(
 }
 
 fn product_tool_registry(core_config: Arc<Config>) -> ToolRegistry {
-    let mut tools = ToolRegistry::with_config(core_config);
-    alan_tools::register_builtin_tool_catalog(&mut tools);
-    for tool in alan_tools::create_core_tools() {
-        tools.register_boxed(tool);
+    #[cfg(feature = "tools")]
+    {
+        let mut tools = ToolRegistry::with_config(core_config);
+        alan_tools::register_builtin_tool_catalog(&mut tools);
+        for tool in alan_tools::create_core_tools() {
+            tools.register_boxed(tool);
+        }
+        tools
     }
-    tools
+    #[cfg(not(feature = "tools"))]
+    {
+        ToolRegistry::with_config(core_config)
+    }
 }
 
 fn snapshot_agent_definition(root: &Path) -> Result<ProcessFileTree> {
@@ -403,8 +410,10 @@ mod tests {
     }
 
     use super::*;
+    #[cfg(feature = "tools")]
     use std::collections::BTreeSet;
 
+    #[cfg(feature = "tools")]
     #[test]
     fn product_root_agent_has_only_the_existing_core_tool_set() {
         let tools = product_tool_registry(Arc::new(Config::default()));
@@ -450,6 +459,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "provider-openai", feature = "provider-typesafe")))]
 #[path = "boot/live_credential_tests.rs"]
 mod live_credential_tests;

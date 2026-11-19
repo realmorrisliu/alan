@@ -7,19 +7,19 @@ edition.workspace = true
 [dependencies]
 alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
-alan-llm.workspace = true
+alan-llm = { path = "../llm", default-features = false }
 tokio.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 toml = "1.1"
-jsonschema.workspace = true
+jsonschema = { workspace = true, optional = true }
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, optional = true }
 futures.workspace = true
 urlencoding.workspace = true
 chrono.workspace = true
@@ -38,8 +38,8 @@ rand.workspace = true
 eventsource-stream.workspace = true
 futures-core.workspace = true
 pin-utils.workspace = true
-tree-sitter = "0.27"
-tree-sitter-bash = "0.25.1"
+tree-sitter = { version = "0.27", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
@@ -60,5 +60,8 @@ alan-shell = { path = "../shell" }
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-default = []
+default = ["shell-syntax", "tool-schemas", "http-client"]
 mock = ["alan-llm/mock"]
+shell-syntax = ["dep:tree-sitter", "dep:tree-sitter-bash"]
+tool-schemas = ["dep:jsonschema"]
+http-client = ["dep:reqwest"]

@@ -1,5 +1,8 @@
+#[cfg(any(test, feature = "http"))]
 use crate::StreamChunk;
+#[cfg(feature = "provider-chatgpt")]
 use alan_auth::{ChatgptAuthError, ChatgptAuthErrorKind};
+#[cfg(any(test, feature = "http"))]
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug)]
@@ -20,6 +23,7 @@ pub fn safe_failure_reason(error: &anyhow::Error) -> &'static str {
         if source.is::<serde_json::Error>() {
             return "stream_error:parse";
         }
+        #[cfg(feature = "provider-chatgpt")]
         if let Some(auth) = source.downcast_ref::<ChatgptAuthError>() {
             match auth.kind() {
                 Some(
@@ -31,6 +35,7 @@ pub fn safe_failure_reason(error: &anyhow::Error) -> &'static str {
                 None => {}
             }
         }
+        #[cfg(feature = "http")]
         if let Some(http) = source.downcast_ref::<reqwest::Error>() {
             if http.is_timeout() {
                 return "stream_error:timeout";
@@ -91,6 +96,7 @@ pub fn safe_finish_reason(reason: &str) -> &'static str {
     }
 }
 
+#[cfg(any(test, feature = "http"))]
 pub(crate) fn failure_chunk(reason: &'static str) -> StreamChunk {
     StreamChunk {
         text: None,
@@ -109,6 +115,7 @@ pub(crate) fn failure_chunk(reason: &'static str) -> StreamChunk {
 
 // One owner forwards payload and emits the sole terminal. Receiver drop cancels
 // delivery; an already-observed normal terminal wins over later transport close.
+#[cfg(any(test, feature = "http"))]
 pub(crate) fn guard_stream(
     mut input: mpsc::Receiver<StreamChunk>,
     status: oneshot::Receiver<Option<&'static str>>,

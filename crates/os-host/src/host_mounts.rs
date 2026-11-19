@@ -981,7 +981,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, target_os = "linux", feature = "tools"))]
 #[path = "host_mounts/native_development_tests.rs"]
 mod native_development_tests;
 

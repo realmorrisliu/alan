@@ -9,19 +9,42 @@ license.workspace = true
 [[bin]]
 name = "alan-os-host"
 path = "src/bin/alan-os-host.rs"
+required-features = ["product"]
+
+[features]
+default = ["product"]
+product = ["tools", "shell-syntax", "tool-schemas", "providers"]
+tools = ["dep:alan-tools"]
+shell-syntax = ["alan-agent-engine/shell-syntax"]
+tool-schemas = ["alan-agent-engine/tool-schemas"]
+providers = [
+    "provider-openai",
+    "provider-anthropic",
+    "provider-gemini",
+    "provider-chatgpt",
+    "provider-openrouter",
+    "provider-typesafe",
+]
+provider-openai = ["alan-llm/provider-openai"]
+provider-anthropic = ["alan-llm/provider-anthropic"]
+provider-gemini = ["alan-llm/provider-gemini"]
+provider-chatgpt = ["alan-llm/provider-chatgpt"]
+provider-openrouter = ["alan-llm/provider-openrouter"]
+provider-typesafe = ["alan-llm/provider-typesafe"]
+llm-mock = ["alan-llm/mock"]
 
 [dependencies]
 alan-ap = { path = "../ap" }
-alan-agent-engine.workspace = true
+alan-agent-engine = { path = "../agent-engine", default-features = false }
 alan-agent-protocol.workspace = true
 alan-agentfs = { path = "../agentfs" }
 alan-hostfs.workspace = true
-alan-tools.workspace = true
+alan-tools = { workspace = true, optional = true }
 alan-kernel = { path = "../kernel" }
-alan-llm.workspace = true
+alan-llm = { path = "../llm", default-features = false }
 alan-llmfs = { path = "../llmfs" }
 alan-routefs.workspace = true
-alan-service-manager.workspace = true
+alan-service-manager = { path = "../service-manager", default-features = false }
 alan-shell = { path = "../shell" }
 anyhow.workspace = true
 async-trait.workspace = true
@@ -37,5 +60,5 @@ toml = "1.1"
 uuid.workspace = true
 
 [dev-dependencies]
-alan-llm = { workspace = true, features = ["mock"] }
+alan-llm = { path = "../llm", default-features = false, features = ["mock"] }
 tokio-util.workspace = true
