@@ -26,6 +26,7 @@ impl NamespaceChildLaunch {
                 agent_path: agent_path.clone(),
                 input_offset: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 control_offset: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                submission_response_schemas: Default::default(),
                 action_recorder: None,
             },
             super::NamespaceProcessFiles {

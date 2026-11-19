@@ -13,6 +13,7 @@ use crate::{
         PendingConfirmation, TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
         append_skill_permission_hints, runtime_confirmation_yield_payload,
     },
+    runtime::HookDecision,
 };
 
 use super::{
@@ -116,6 +117,56 @@ where
             };
         }
     }
+    if let Some(hook) = runtime.tool_policy_hook.as_ref() {
+        let decision = hook.evaluate(&tool_call.name, tool_arguments, tool_capability);
+        let base_audit = match &policy_decision {
+            ToolPolicyDecision::Allow { audit }
+            | ToolPolicyDecision::Escalate { audit, .. }
+            | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
+        };
+        match decision {
+            HookDecision::Continue => {}
+            HookDecision::Deny(reason) => {
+                let mut audit = base_audit;
+                audit.action = "deny".to_string();
+                audit.policy_source = "tool_policy_hook".to_string();
+                audit.rule_id = Some("tool-policy-hook-deny".to_string());
+                audit.reason = Some(reason.clone());
+                policy_decision = ToolPolicyDecision::Forbidden { reason, audit };
+            }
+            HookDecision::Allow
+                if !matches!(policy_decision, ToolPolicyDecision::Forbidden { .. }) =>
+            {
+                let mut audit = base_audit;
+                audit.action = "allow".to_string();
+                audit.policy_source = "tool_policy_hook".to_string();
+                audit.rule_id = Some("tool-policy-hook-allow".to_string());
+                audit.reason = None;
+                policy_decision = ToolPolicyDecision::Allow { audit };
+            }
+            HookDecision::Allow => {}
+            HookDecision::Escalate(reason)
+                if !allow_approved_tool_escalation_execution
+                    && !matches!(policy_decision, ToolPolicyDecision::Forbidden { .. }) =>
+            {
+                let mut audit = base_audit;
+                audit.action = "escalate".to_string();
+                audit.policy_source = "tool_policy_hook".to_string();
+                audit.rule_id = Some("tool-policy-hook-escalate".to_string());
+                audit.reason = Some(reason.clone());
+                policy_decision = ToolPolicyDecision::Escalate {
+                    summary: reason.clone(),
+                    details: json!({
+                        "reason": reason,
+                        "tool_name": tool_call.name,
+                    }),
+                    audit,
+                    route: EscalationRoute::AlwaysHuman,
+                };
+            }
+            HookDecision::Escalate(_) => {}
+        }
+    }
     record_policy_decision(runtime.machine, tool_call, &policy_decision);
 
     match policy_decision {
@@ -128,6 +179,12 @@ where
         } => {
             let checkpoint_id = format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id);
             let pre_review_authority = AuthoritySnapshot::capture(&runtime);
+            if !details
+                .as_object()
+                .is_some_and(|object| object.contains_key("capability"))
+            {
+                details["capability"] = json!(audit.capability);
+            }
             details["escalation_route"] = json!(match route {
                 EscalationRoute::Reviewer => "reviewer",
                 EscalationRoute::AlwaysHuman => "always_human",

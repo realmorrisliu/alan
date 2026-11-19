@@ -40,6 +40,7 @@ mod process_cleanup;
 mod resume_content;
 #[path = "agent_runtime/root_recovery.rs"]
 mod root_recovery;
+pub(crate) mod sessions;
 
 use child_wait::{
     process_error, wait_for_child_terminal, wait_for_process_exit, wait_for_root_stop,
@@ -141,6 +142,7 @@ pub(crate) struct AgentRuntimeService {
     connection: Arc<ConnectionService>,
     tool_runner: ToolProcessRunner,
     pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
+    session_stops: Mutex<sessions::SessionStopMap>,
     process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
     root_runtime_handles: Mutex<HashMap<u64, RuntimeHandle>>,
     current_root_rollout: Mutex<root_recovery::RootRolloutState>,
@@ -155,6 +157,8 @@ struct PendingRootLaunch {
     namespace: LiveNamespace,
     ready: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
     stop: tokio::sync::oneshot::Receiver<()>,
+    is_primary_root: bool,
+    parent_for_host_mounts: Option<Pid>,
 }
 
 struct AgentLaunch {
@@ -163,7 +167,8 @@ struct AgentLaunch {
     request: Option<AgentExecutableRequest>,
     ready: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
-    root: bool,
+    is_primary_root: bool,
+    parent_for_host_mounts: Option<Pid>,
 }
 
 impl AgentRuntimeService {
@@ -181,6 +186,7 @@ impl AgentRuntimeService {
             connection,
             tool_runner,
             pending_roots: Mutex::new(HashMap::new()),
+            session_stops: Mutex::new(HashMap::new()),
             process_templates: Mutex::new(HashMap::new()),
             root_runtime_handles: Mutex::new(HashMap::new()),
             current_root_rollout: Mutex::new(root_recovery::RootRolloutState::NotStarted),
@@ -247,6 +253,8 @@ impl AgentRuntimeService {
                     namespace: live_namespace.clone(),
                     ready: ready_tx,
                     stop: stop_rx,
+                    is_primary_root: true,
+                    parent_for_host_mounts: None,
                 },
             );
         let descriptors = unit
@@ -339,7 +347,8 @@ impl AgentRuntimeService {
                 request: None,
                 ready: Some(pending.ready),
                 stop: Some(pending.stop),
-                root: true,
+                is_primary_root: pending.is_primary_root,
+                parent_for_host_mounts: pending.parent_for_host_mounts,
             });
         }
         ensure!(
@@ -365,7 +374,8 @@ impl AgentRuntimeService {
             request: Some(request),
             ready: None,
             stop: None,
-            root: false,
+            is_primary_root: false,
+            parent_for_host_mounts: Some(parent_pid),
         })
     }
 
@@ -385,24 +395,21 @@ impl AgentRuntimeService {
             )),
             Access::ReadWrite,
         );
-        if launch.root {
-            self.host_mount
-                .register_process(pid, launch.namespace.clone());
-        } else {
-            let parent = invocation
-                .parent
-                .context("child Agent Process has no parent")?;
+        if let Some(parent) = launch.parent_for_host_mounts {
+            let requested_mounts = launch
+                .request
+                .as_ref()
+                .map(|request| request.spawn.host_mounts.as_slice())
+                .unwrap_or(&[]);
             self.host_mount.register_child_process(
                 parent,
                 pid,
                 launch.namespace.clone(),
-                &launch
-                    .request
-                    .as_ref()
-                    .expect("child request exists")
-                    .spawn
-                    .host_mounts,
+                requested_mounts,
             )?;
+        } else {
+            self.host_mount
+                .register_process(pid, launch.namespace.clone());
         }
         validate_process_cwd(&launch.namespace, &launch.template.launch_context.cwd)?;
         self.tool_runner
@@ -421,7 +428,7 @@ impl AgentRuntimeService {
         self.agent_root
             .bind_process(pid.0.to_string(), agent.clone())
             .await;
-        if launch.root {
+        if launch.is_primary_root {
             self.agent_root.set_root_process(pid.0.to_string()).await;
         }
 
@@ -533,11 +540,13 @@ impl AgentRuntimeService {
             launch.template.host_capabilities.clone(),
             launch.template.generation_capabilities,
         )?;
-        if launch.root {
+        if launch.is_primary_root {
             *self
                 .active_root_pid
                 .lock()
                 .expect("active root pid mutex poisoned") = Some(pid.0);
+        }
+        if launch.request.is_none() {
             self.root_runtime_handles
                 .lock()
                 .expect("Root runtime handles mutex poisoned")
@@ -547,7 +556,7 @@ impl AgentRuntimeService {
             .wait_until_ready()
             .await
             .context("Agent Machine failed to start")?;
-        if launch.root {
+        if launch.is_primary_root {
             if !launch.template.ephemeral_rollout {
                 root_recovery::publish(&launch.template.process, startup.rollout_path.as_deref())?;
                 if let (Some(stores), Some(rollout_path)) = (
@@ -688,6 +697,10 @@ impl AgentRuntimeService {
             .lock()
             .expect("pending roots mutex poisoned")
             .remove(&pid.0);
+        self.session_stops
+            .lock()
+            .expect("session stops mutex poisoned")
+            .remove(&pid.0);
         self.agent_root.unbind_process(&pid.0.to_string()).await;
         self.host_mount.unregister_process(pid);
         self.connection.release_process(pid.0);
@@ -701,9 +714,7 @@ impl AgentRuntimeService {
         launch_context: &ProcessLaunchContext,
         scratch_dir: Option<PathBuf>,
     ) -> Result<()> {
-        let Some(scratch_dir) = scratch_dir else {
-            return Ok(());
-        };
+        let scratch_dir = scratch_dir.unwrap_or_default();
         let binding = alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
             Path::new(&launch_context.cwd).to_path_buf(),
             scratch_dir,
@@ -925,32 +936,7 @@ fn project_boot_unit_namespace(
     base: &alan_kernel::Namespace,
     unit: &BootUnit,
 ) -> Result<alan_kernel::Namespace> {
-    let namespace = base
-        .project_mounts(unit.mounts.iter().map(|mount| {
-            (
-                mount.path.as_str(),
-                mount.source.as_str(),
-                match mount.access {
-                    crate::MountAccess::Read => Access::ReadOnly,
-                    crate::MountAccess::Write => Access::ReadWrite,
-                },
-            )
-        }))
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "Boot Unit `{}` requests an unavailable mount projection",
-                unit.name
-            )
-        })?;
-    for descriptor in &unit.descriptors {
-        ensure!(
-            namespace.resolve(&descriptor.path).is_ok(),
-            "Boot Unit `{}` descriptor {} is outside its namespace",
-            unit.name,
-            descriptor.number
-        );
-    }
-    Ok(namespace)
+    crate::runtime::embed_mounts::project_boot_unit_with_caller_mnt(base, unit)
 }
 
 fn validate_process_cwd(namespace: &LiveNamespace, cwd: &str) -> Result<()> {

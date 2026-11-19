@@ -18,6 +18,7 @@ mod parallel_subagents;
 mod turn_execution;
 mod virtual_dispatch;
 use turn_execution::finalize_replayed_tool_end_turn_best_effort;
+pub use turn_execution::validate_response_schema;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
 #[cfg(test)]
@@ -313,6 +314,7 @@ pub(super) fn tool_authorization_runtime(
     .with_guardian_profile(state.runtime_config.guardian_profile.as_deref())
     .with_guardian_config(state.runtime_config.guardian.clone())
     .with_authority(authority)
+    .with_tool_policy_hook(state.runtime_config.tool_policy_hook.clone())
 }
 
 pub(super) fn tool_execution_runtime(

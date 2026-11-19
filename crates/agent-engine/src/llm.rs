@@ -145,6 +145,42 @@ impl LlmClient {
         Self::from_config(provider_config)
     }
 
+    /// Create an [`LlmClient`] from a [`alan_llm::SharedLlmProvider`].
+    pub fn from_shared_provider(provider: alan_llm::SharedLlmProvider) -> Self {
+        Self::new(provider)
+    }
+
+    /// Convert this client into a cloneable handle that creates fresh reusable [`LlmClient`]s
+    /// backed by the same shared provider without exhausting a single-use instance.
+    pub fn into_reusable(self) -> ReusableLlmClient {
+        ReusableLlmClient {
+            provider: alan_llm::SharedLlmProvider::from_boxed(self.provider),
+            provider_type: self.provider_type,
+            preserve_thinking: self.preserve_thinking,
+        }
+    }
+}
+
+/// Cloneable handle that mints fresh [`LlmClient`] instances backed by one shared [`LlmProvider`].
+#[derive(Clone, Debug)]
+pub struct ReusableLlmClient {
+    provider: alan_llm::SharedLlmProvider,
+    provider_type: ProviderType,
+    preserve_thinking: bool,
+}
+
+impl ReusableLlmClient {
+    /// Mint a fresh [`LlmClient`] sharing the underlying [`alan_llm::SharedLlmProvider`].
+    pub fn client(&self) -> LlmClient {
+        LlmClient {
+            provider: Box::new(self.provider.clone()),
+            provider_type: self.provider_type,
+            preserve_thinking: self.preserve_thinking,
+        }
+    }
+}
+
+impl LlmClient {
     /// Generate a response using the underlying provider.
     pub async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
         self.provider.generate(request).await
@@ -251,6 +287,7 @@ pub fn build_generation_request(
         max_tokens,
         reasoning: alan_llm::ReasoningControls::default(),
         session_key: None,
+        response_schema: None,
         extra_params: std::collections::HashMap::new(),
     }
 }

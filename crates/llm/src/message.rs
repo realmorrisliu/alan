@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::ToolCall;
 
+#[allow(
+    dead_code,
+    reason = "used by enabled provider wire adapters and unit tests"
+)]
 const RETIRED_MESSAGE_OVERRIDE_KEYS: [&str; 3] = [
     "responses_input_items",
     "chat_completions_messages",
@@ -109,6 +113,10 @@ impl Message {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "called by enabled provider wire adapters and unit tests"
+)]
 pub(crate) fn reject_retired_message_overrides(
     request: &crate::GenerationRequest,
 ) -> anyhow::Result<()> {

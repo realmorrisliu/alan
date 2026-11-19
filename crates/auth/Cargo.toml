@@ -3,6 +3,7 @@ name = "alan-auth"
 description = "Managed auth flows and local auth state for alan"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 anyhow.workspace = true

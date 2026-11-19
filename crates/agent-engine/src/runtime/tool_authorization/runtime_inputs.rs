@@ -17,6 +17,7 @@ pub(crate) struct ToolAuthorizationRuntime<'a> {
     pub(super) guardian_profile: Option<&'a str>,
     pub(super) guardian_config: GuardianConfig,
     pub(super) authority: Option<NamespaceToolAuthorization>,
+    pub(super) tool_policy_hook: Option<std::sync::Arc<dyn crate::runtime::ToolPolicyHook>>,
 }
 
 impl<'a> ToolAuthorizationRuntime<'a> {
@@ -39,6 +40,7 @@ impl<'a> ToolAuthorizationRuntime<'a> {
             guardian_profile: None,
             guardian_config: GuardianConfig::default(),
             authority: None,
+            tool_policy_hook: None,
         }
     }
 
@@ -59,6 +61,14 @@ impl<'a> ToolAuthorizationRuntime<'a> {
 
     pub(crate) fn with_authority(mut self, authority: NamespaceToolAuthorization) -> Self {
         self.authority = Some(authority);
+        self
+    }
+
+    pub(crate) fn with_tool_policy_hook(
+        mut self,
+        hook: Option<std::sync::Arc<dyn crate::runtime::ToolPolicyHook>>,
+    ) -> Self {
+        self.tool_policy_hook = hook;
         self
     }
 }

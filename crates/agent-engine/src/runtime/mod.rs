@@ -38,10 +38,14 @@ mod tool_batch;
 mod tool_effect_lifecycle;
 mod tool_execution;
 pub mod tool_packages;
+pub use tool_packages::ToolPackageManifest;
 mod tool_policy;
+mod tool_policy_hook;
+pub use tool_policy_hook::{HookDecision, ToolPolicyHook};
 mod tool_presentation;
 mod tool_resolution;
 mod transition;
+pub use transition::validate_response_schema;
 pub(crate) use transition::{NamespaceOperationUncertainty, read_action_evidence};
 mod turn_input;
 mod turn_memory;
@@ -73,10 +77,9 @@ pub use transition::{
 
 // Re-export the memory-promotion job for internal runtime modules.
 pub(crate) use memory_promotion::TurnMemoryPromotionJob;
-pub use tool_packages::ToolPackageManifest;
 
 /// Configuration for the agent runtime
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RuntimeConfig {
     /// Maximum number of tool loops per turn (0 = unlimited)
     pub max_tool_loops: usize,
@@ -127,6 +130,26 @@ pub struct RuntimeConfig {
     /// Whether this runtime is allowed to expose and invoke `spawn_subagent`.
     /// Root Agents enable this when child launch is configured; spawned children disable it.
     pub ad_hoc_subagent_spawn_enabled: bool,
+    /// Prompt composition mode (`Append` default or `Replace` custom prompt).
+    pub system_prompt_mode: crate::SystemPromptMode,
+    /// Optional default JSON Schema constraining assistant output.
+    pub response_schema: Option<serde_json::Value>,
+    /// Optional host-supplied synchronous Tool policy hook.
+    pub tool_policy_hook: Option<std::sync::Arc<dyn ToolPolicyHook>>,
+}
+
+impl std::fmt::Debug for RuntimeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeConfig")
+            .field("max_tool_loops", &self.max_tool_loops)
+            .field("tool_repeat_limit", &self.tool_repeat_limit)
+            .field("context_window_tokens", &self.context_window_tokens)
+            .field("trust_posture", &self.trust_posture)
+            .field("system_prompt_mode", &self.system_prompt_mode)
+            .field("has_response_schema", &self.response_schema.is_some())
+            .field("has_tool_policy_hook", &self.tool_policy_hook.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -159,6 +182,9 @@ impl Default for RuntimeConfig {
             store_bindings: None,
             memory_store_backing: None,
             ad_hoc_subagent_spawn_enabled: true,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -190,6 +216,9 @@ impl From<&crate::config::Config> for RuntimeConfig {
             store_bindings: None,
             memory_store_backing: None,
             ad_hoc_subagent_spawn_enabled: true,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }

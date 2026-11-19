@@ -96,25 +96,4 @@ fn context_window(value: &Value) -> Option<u32> {
     })
 }
 
-/// Parse a `thinkingLevelMap` object: canonical effort name → router level.
-///
-/// String values map onto that wire level; `null`/`false` means "omit the
-/// reasoning field" for that effort. Unknown effort names are ignored so a
-/// router may advertise extra levels without breaking Alan.
-pub fn parse_reasoning_effort_map(value: &Value) -> Option<ReasoningEffortMap> {
-    let object = value.as_object()?;
-    let map: ReasoningEffortMap = object
-        .iter()
-        .filter_map(|(key, value)| {
-            let effort: ReasoningEffort =
-                serde_json::from_value(Value::String(key.trim().to_ascii_lowercase())).ok()?;
-            let wire = match value {
-                Value::String(level) if !level.trim().is_empty() => Some(level.trim().to_string()),
-                Value::Null | Value::Bool(false) => None,
-                _ => return None,
-            };
-            Some((effort.as_str().to_string(), wire))
-        })
-        .collect();
-    (!map.is_empty()).then_some(map)
-}
+pub(crate) use crate::provider_meta::parse_reasoning_effort_map;

@@ -108,6 +108,7 @@ mod tests {
             ]),
             stream: None,
             thinking: None,
+            output_config: None,
         };
 
         apply_prompt_cache(&mut request);
@@ -174,6 +175,7 @@ mod tests {
             tools: None,
             stream: None,
             thinking: None,
+            output_config: None,
         };
 
         apply_prompt_cache(&mut request);

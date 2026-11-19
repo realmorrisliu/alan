@@ -21,6 +21,8 @@ pub struct OpenAiChatCompletionsRequest {
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<OpenAiChatCompletionsStreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<serde_json::Value>,
     #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
     pub extra_params: HashMap<String, serde_json::Value>,
 }
@@ -111,6 +113,8 @@ pub struct OpenAiResponsesRequest {
     pub reasoning: Option<OpenAiResponsesReasoning>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<serde_json::Value>,
     #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
     pub extra_params: HashMap<String, serde_json::Value>,
 }

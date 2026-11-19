@@ -807,5 +807,6 @@ fn only_seatbelt_permits_autonomous_bash() {
 #[path = "sandbox/os_boundary_tests.rs"]
 mod os_boundary_tests;
 
+#[cfg(feature = "tree-sitter-sandbox")]
 #[path = "sandbox/standalone_cd_tests.rs"]
 mod standalone_cd_tests;

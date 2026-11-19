@@ -100,6 +100,7 @@ pub(crate) fn build_responses_request_for_model(
         max_tokens,
         reasoning,
         session_key: _,
+        response_schema,
         mut extra_params,
     } = request;
 
@@ -139,6 +140,16 @@ pub(crate) fn build_responses_request_for_model(
         max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
         reasoning,
         stream: Some(stream),
+        text: response_schema.map(|schema| {
+            serde_json::json!({
+                "format": {
+                    "type": "json_schema",
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                }
+            })
+        }),
         extra_params,
     })
 }
@@ -157,6 +168,7 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         max_tokens: _,
         reasoning,
         session_key: _,
+        response_schema: _,
         mut extra_params,
     } = request;
 
@@ -198,6 +210,7 @@ pub(crate) fn build_responses_compact_request_for_model(
         max_tokens: _,
         reasoning: _,
         session_key: _,
+        response_schema: _,
         mut extra_params,
     } = request;
 
@@ -252,6 +265,7 @@ pub(super) fn build_chat_completions_request_for_model(
         max_tokens,
         reasoning,
         session_key: _,
+        response_schema,
         mut extra_params,
     } = request;
 
@@ -288,6 +302,16 @@ pub(super) fn build_chat_completions_request_for_model(
         stream: Some(stream),
         stream_options: stream.then_some(OpenAiChatCompletionsStreamOptions {
             include_usage: true,
+        }),
+        response_format: response_schema.map(|schema| {
+            serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": true,
+                    "schema": schema,
+                }
+            })
         }),
         extra_params,
     })

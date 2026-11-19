@@ -44,29 +44,59 @@
 
 pub use alan_agent_protocol::{ReasoningControls, ReasoningEffort};
 
+#[cfg(feature = "provider-anthropic-adapter")]
 pub mod anthropic_messages;
+#[cfg(feature = "provider-openai")]
 pub mod chatgpt_responses;
 pub mod factory;
 mod failure;
+#[cfg(feature = "provider-vertex")]
 pub mod google_gemini_generate_content;
+#[cfg(feature = "provider-magpie")]
 pub mod magpie;
+/// Lightweight Magpie configuration defaults when the Magpie client is disabled.
+#[cfg(not(feature = "provider-magpie"))]
+pub mod magpie {
+    pub use crate::provider_meta::{MAGPIE_DEFAULT_BASE_URL, parse_reasoning_effort_map};
+}
 mod message;
 #[cfg(any(test, feature = "mock"))]
 pub mod mock;
 mod model;
+#[cfg(any(feature = "provider-openai", feature = "provider-magpie"))]
 pub mod openai_chat_completions;
+#[cfg(feature = "provider-openai")]
 pub mod openai_responses;
+#[cfg(feature = "provider-openrouter")]
 pub mod openrouter;
+/// Lightweight OpenRouter configuration defaults when the OpenRouter client is disabled.
+#[cfg(not(feature = "provider-openrouter"))]
+pub mod openrouter {
+    pub use crate::provider_meta::OPENROUTER_BASE_URL;
+}
 pub use failure::{safe_failure_reason, safe_finish_reason};
 mod provider;
+mod provider_meta;
+#[cfg(any(feature = "provider-magpie", feature = "provider-openai"))]
 pub mod session_affinity;
+#[cfg(any(
+    feature = "provider-magpie",
+    feature = "provider-openai",
+    feature = "provider-vertex",
+    feature = "provider-openrouter",
+    feature = "provider-anthropic-adapter"
+))]
 mod sse;
 
+#[cfg(feature = "provider-anthropic-adapter")]
 pub use anthropic_messages::AnthropicMessagesClient;
+#[cfg(feature = "provider-openai")]
 pub use chatgpt_responses::ChatgptResponsesClient;
+#[cfg(feature = "provider-vertex")]
 pub use google_gemini_generate_content::{
     GoogleGeminiGenerateContentClient, VertexAuth, VertexClientConfig,
 };
+#[cfg(feature = "provider-magpie")]
 pub use magpie::MagpieClient;
 pub use message::{Message, MessageContentPart, MessageRole};
 #[cfg(any(test, feature = "mock"))]
@@ -75,10 +105,21 @@ pub use model::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole,
     ProviderCapabilities, StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
 };
-pub use openai_chat_completions::{OpenAiChatCompletionsClient, ReasoningEffortMap};
+#[cfg(any(feature = "provider-openai", feature = "provider-magpie"))]
+pub use openai_chat_completions::OpenAiChatCompletionsClient;
+#[cfg(feature = "provider-openai")]
 pub use openai_responses::{OpenAiResponsesClient, OpenAiResponsesTransport};
+#[cfg(feature = "provider-openrouter")]
 pub use openrouter::OpenRouterClient;
-pub use provider::{LlmProvider, ProviderModel};
+pub use provider::{LlmProvider, ProviderModel, SharedLlmProvider};
+pub use provider_meta::ReasoningEffortMap;
+#[cfg(any(
+    feature = "provider-magpie",
+    feature = "provider-openai",
+    feature = "provider-vertex",
+    feature = "provider-openrouter",
+    feature = "provider-anthropic-adapter"
+))]
 pub(crate) use sse::SseEventParser;
 
 #[cfg(test)]

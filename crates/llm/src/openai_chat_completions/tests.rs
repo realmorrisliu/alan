@@ -122,6 +122,7 @@ fn test_chat_completion_request_serialization() {
         reasoning_effort: None,
         stream: Some(false),
         stream_options: None,
+        response_format: None,
         extra_params: HashMap::new(),
     };
 
@@ -159,6 +160,7 @@ fn test_chat_completion_request_with_tools() {
         reasoning_effort: None,
         stream: None,
         stream_options: None,
+        response_format: None,
         extra_params: HashMap::new(),
     };
 

@@ -240,6 +240,11 @@ impl GoogleGeminiGenerateContentClient {
                 top_p: None,
                 top_k: None,
                 thinking_config,
+                response_mime_type: request
+                    .response_schema
+                    .as_ref()
+                    .map(|_| "application/json".to_string()),
+                response_schema: request.response_schema,
             }),
         })
     }

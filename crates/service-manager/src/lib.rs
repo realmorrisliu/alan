@@ -58,5 +58,5 @@ pub use quartermaster::{
 };
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, InputShadowSelection, LlmClientFactory, ServiceManager,
-    ServiceManagerConfig,
+    ServiceManagerConfig, SessionHandle, SessionLaunchOptions,
 };

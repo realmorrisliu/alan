@@ -133,6 +133,9 @@ where
             merged_parts.extend(parts);
 
             runtime.reset_turn_after_cancelling_host_mounts().await?;
+            runtime
+                .machine
+                .set_active_turn_response_schema(context.and_then(|c| c.response_schema));
             runtime.machine.set_active_turn_request_control_intent(
                 crate::RequestControlIntent::reasoning_effort(reasoning_effort),
             );

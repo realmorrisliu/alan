@@ -128,7 +128,7 @@ where
         if capability != ToolCapability::Read {
             break;
         }
-        let decision = evaluate_tool_policy_with_posture(
+        let mut decision = evaluate_tool_policy_with_posture(
             &state.runtime_config.policy_engine,
             &state.runtime_config.governance,
             state.runtime_config.trust_posture,
@@ -139,6 +139,24 @@ where
             current_cwd.as_deref(),
             confinement,
         );
+        if let Some(hook) = state.runtime_config.tool_policy_hook.as_ref() {
+            match hook.evaluate(&call.name, &call.arguments, capability) {
+                crate::HookDecision::Continue => {}
+                crate::HookDecision::Allow
+                    if !matches!(decision, ToolPolicyDecision::Forbidden { .. }) =>
+                {
+                    if let ToolPolicyDecision::Escalate { mut audit, .. } = decision {
+                        audit.action = "allow".to_string();
+                        audit.policy_source = "tool_policy_hook".to_string();
+                        audit.rule_id = Some("tool-policy-hook-allow".to_string());
+                        audit.reason = None;
+                        decision = ToolPolicyDecision::Allow { audit };
+                    }
+                }
+                crate::HookDecision::Allow => {}
+                crate::HookDecision::Deny(_) | crate::HookDecision::Escalate(_) => break,
+            }
+        }
         match decision {
             ToolPolicyDecision::Allow { audit } => eligible.push(AdmittedReadCall {
                 tool_call: call.clone(),

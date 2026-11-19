@@ -165,6 +165,7 @@
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_agent_protocol::TurnContext {
                 reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::High),
+                ..alan_agent_protocol::TurnContext::default()
             }),
         };
 

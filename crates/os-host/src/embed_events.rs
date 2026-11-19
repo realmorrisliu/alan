@@ -1,73 +1,807 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use alan_agent_protocol::{UiEvent, UiInputStatus};
-use alan_shell::Tail;
+use alan_agent_protocol::{
+    UiActivityState, UiEvent, UiInputStatus, UiQueueSnapshot, UiThinkingState, UiUsageSnapshot,
+};
+use alan_shell::{Shell, Tail};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-const READ_CHUNK: u32 = 4096;
-
-/// One record an embedder can observe for a running Agent Process.
+/// Structured runtime events streamed from an Agent Process namespace tree.
 ///
-/// [`Self::TurnFinished`] is the only end-of-turn signal. `TextDelta::is_final`
-/// is currently always `false`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Streams opened via [`crate::embed::RootAgentClient::event_stream`] tail:
+/// - `io/output` for live incremental [`Self::TextDelta`] chunks (`is_final: false`),
+/// - `actions/events` & `actions/<id>/*` for [`Self::ToolStarted`], [`Self::ToolProgress`],
+///   and [`Self::ToolFinished`],
+/// - `requests/events` & `requests/<id>/*` for rich [`Self::PendingRequest`] metadata, and
+/// - `machine/ui/events`, `machine/ui/queue`, `machine/ui/usage`, and `machine/tape` for
+///   [`Self::ThinkingDelta`], [`Self::Usage`], [`Self::Error`], and [`Self::TurnFinished`].
+///
+/// Completion order per submission: once generation completes and any trailing bytes/events
+/// have flushed, the stream emits a final [`Self::TextDelta`] with `is_final: true` (and empty
+/// `chunk`), optionally followed by [`Self::Usage`], and concludes with [`Self::TurnFinished`].
+#[derive(Debug, Clone, PartialEq)]
 pub enum EmbedEvent {
-    /// Assistant text for one submission, from a `machine/tape` message.
-    ///
-    /// `is_final` is currently always `false`. The turn ends at [`Self::TurnFinished`].
-    TextDelta { chunk: String, is_final: bool },
+    /// Assistant output text chunk (`is_final: false`), followed by a terminal `is_final: true`
+    /// marker once the turn completes.
+    TextDelta {
+        submission_id: Option<String>,
+        chunk: String,
+        is_final: bool,
+    },
+    /// Incremental assistant reasoning chunk (`is_final: false`), followed by a terminal
+    /// `is_final: true` marker when the reasoning block completes or goes idle.
+    ThinkingDelta {
+        submission_id: Option<String>,
+        chunk: String,
+        is_final: bool,
+    },
+    /// A tool execution action started under `actions/<id>`.
+    ToolStarted {
+        call_id: String,
+        name: String,
+        title: String,
+    },
+    /// Live preview progress update for a running streaming tool action.
+    ToolProgress { call_id: String, preview: String },
+    /// Terminal state for a tool action (`completed`, `failed`, `rejected`, etc.).
+    ToolFinished {
+        call_id: String,
+        name: String,
+        status: String,
+        preview: Option<String>,
+    },
+    /// A pending yield request under `requests/<request_id>` with decoded metadata.
+    PendingRequest {
+        request_id: String,
+        kind: String,
+        title: Option<String>,
+        prompt: String,
+        options: Vec<String>,
+        default_option: Option<String>,
+        questions: Option<Vec<serde_json::Value>>,
+        capability: Option<String>,
+        reason: Option<String>,
+        presentation: Option<serde_json::Value>,
+    },
+    /// Usage snapshot captured at turn completion from `machine/ui/usage`.
+    Usage {
+        submission_id: Option<String>,
+        usage: UiUsageSnapshot,
+    },
+    /// A `UiEvent::Error` notification.
+    Error { message: String, recoverable: bool },
     /// End of one submission, from `UiEvent::InputCompleted`, in listed order.
-    ///
-    /// This is the only end-of-turn signal.
     TurnFinished {
         submission_id: String,
         status: UiInputStatus,
         /// Error string from that `InputCompleted`, when the engine set one.
         error: Option<String>,
     },
-    /// A newly allocated yield, from a `created:{id}` request line.
-    PendingRequest { request_id: String },
-    /// A `UiEvent::Error` record.
-    Error { message: String, recoverable: bool },
 }
 
-/// Live decoder over tape, request, and UI tails.
+#[derive(Debug, Default)]
+struct ActionTrack {
+    call_id: String,
+    name: String,
+    title: String,
+    started_emitted: bool,
+    last_preview: Option<String>,
+    finished_emitted: bool,
+}
+
+#[derive(Debug)]
+struct TapeAssistantTurn {
+    submission_id: Option<String>,
+    bytes_len: usize,
+}
+
+/// Live decoder over `io/output`, `actions/events`, `requests/events`, `machine/ui/events`, and `machine/tape`.
 ///
 /// One stream stays valid across turns. Open it once, before the first
 /// `submit_text`, and keep calling [`Self::next_event`] after each
-/// [`EmbedEvent::TurnFinished`]. The same stream yields the next turn's text
-/// and that submission's `TurnFinished`.
-///
-/// Offsets stay on this stream. [`crate::embed::RootAgentClient`] remains a cheap
-/// clone of the shell and the agent path.
+/// [`EmbedEvent::TurnFinished`].
 pub struct EmbedEventStream {
-    tape: Tail,
+    shell: Shell,
+    agent_path: String,
+    output: Tail,
+    actions: Tail,
     requests: Tail,
     ui_events: Tail,
-    tape_buf: Vec<u8>,
+    tape: Tail,
+    output_utf8_carry: Vec<u8>,
+    pending_output_bytes: Vec<u8>,
+    action_buf: Vec<u8>,
     request_buf: Vec<u8>,
     ui_buf: Vec<u8>,
-    immediate: VecDeque<EmbedEvent>,
-    texts: VecDeque<QueuedText>,
-    finishes: VecDeque<QueuedFinish>,
-    open: Option<OpenTurn>,
+    tape_buf: Vec<u8>,
+    queued: VecDeque<EmbedEvent>,
+    tape_assistant_turns: VecDeque<TapeAssistantTurn>,
+    current_submission_id: Option<String>,
+    emitted_output_bytes_in_turn: usize,
+    active_thinking: String,
+    thinking_open: bool,
+    actions_state: HashMap<String, ActionTrack>,
+    open_requests: VecDeque<String>,
+    emitted_requests: HashSet<String>,
 }
 
-struct QueuedText {
-    submission_id: Option<String>,
-    chunk: String,
-    emitted: bool,
+impl EmbedEventStream {
+    pub(super) async fn open(shell: Shell, agent_path: String) -> Result<Self> {
+        let output = shell
+            .tail(&format!("{agent_path}/io/output"))
+            .await
+            .map_err(|code| anyhow::anyhow!("tail io/output: {code}"))?;
+        let actions = shell
+            .tail(&format!("{agent_path}/actions/events"))
+            .await
+            .map_err(|code| anyhow::anyhow!("tail actions/events: {code}"))?;
+        let requests = shell
+            .tail(&format!("{agent_path}/requests/events"))
+            .await
+            .map_err(|code| anyhow::anyhow!("tail requests/events: {code}"))?;
+        let ui_events = shell
+            .tail(&format!("{agent_path}/machine/ui/events"))
+            .await
+            .map_err(|code| anyhow::anyhow!("tail machine/ui/events: {code}"))?;
+        let tape = shell
+            .tail(&format!("{agent_path}/machine/tape"))
+            .await
+            .map_err(|code| anyhow::anyhow!("tail machine/tape: {code}"))?;
+        Ok(Self {
+            shell,
+            agent_path,
+            output,
+            actions,
+            requests,
+            ui_events,
+            tape,
+            output_utf8_carry: Vec::new(),
+            pending_output_bytes: Vec::new(),
+            action_buf: Vec::new(),
+            request_buf: Vec::new(),
+            ui_buf: Vec::new(),
+            tape_buf: Vec::new(),
+            queued: VecDeque::new(),
+            tape_assistant_turns: VecDeque::new(),
+            current_submission_id: None,
+            emitted_output_bytes_in_turn: 0,
+            active_thinking: String::new(),
+            thinking_open: false,
+            actions_state: HashMap::new(),
+            open_requests: VecDeque::new(),
+            emitted_requests: HashSet::new(),
+        })
+    }
+
+    /// Read the next [`EmbedEvent`] in causal order.
+    pub async fn next_event(&mut self) -> Result<EmbedEvent> {
+        loop {
+            if let Some(event) = self.queued.pop_front() {
+                return Ok(event);
+            }
+            self.process_buffered().await?;
+            if let Some(event) = self.queued.pop_front() {
+                return Ok(event);
+            }
+            tokio::select! {
+                chunk = self.output.read(4096) => {
+                    let bytes = chunk.map_err(|code| anyhow::anyhow!("read embedded io/output: {code}"))?;
+                    if !bytes.is_empty() {
+                        self.push_output_chunk(&bytes);
+                    } else if self.streams_drained().await? {
+                        bail!("embedded event stream closed");
+                    }
+                }
+                chunk = self.actions.read(4096) => {
+                    let bytes = chunk.map_err(|code| anyhow::anyhow!("read embedded actions/events: {code}"))?;
+                    self.action_buf.extend(bytes);
+                }
+                chunk = self.requests.read(4096) => {
+                    let bytes = chunk.map_err(|code| anyhow::anyhow!("read embedded requests/events: {code}"))?;
+                    self.request_buf.extend(bytes);
+                }
+                chunk = self.ui_events.read(4096) => {
+                    let bytes = chunk.map_err(|code| anyhow::anyhow!("read embedded ui/events: {code}"))?;
+                    self.ui_buf.extend(bytes);
+                }
+                chunk = self.tape.read(4096) => {
+                    let bytes = chunk.map_err(|code| anyhow::anyhow!("read embedded tape: {code}"))?;
+                    self.tape_buf.extend(bytes);
+                }
+            }
+        }
+    }
+
+    async fn streams_drained(&mut self) -> Result<bool> {
+        let ui = self
+            .ui_events
+            .read(1)
+            .await
+            .map_err(|code| anyhow::anyhow!("read embedded ui/events: {code}"))?;
+        if !ui.is_empty() {
+            self.ui_buf.extend(ui);
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn push_output_chunk(&mut self, bytes: &[u8]) {
+        self.output_utf8_carry.extend_from_slice(bytes);
+        let valid_len = match std::str::from_utf8(&self.output_utf8_carry) {
+            Ok(_) => self.output_utf8_carry.len(),
+            Err(err) => err.valid_up_to(),
+        };
+        if valid_len > 0 {
+            self.pending_output_bytes
+                .extend_from_slice(&self.output_utf8_carry[..valid_len]);
+            self.output_utf8_carry.drain(..valid_len);
+        }
+    }
+
+    async fn drain_ready_tail(
+        shell: &Shell,
+        path: &str,
+        tail: &mut Tail,
+    ) -> Result<Option<Vec<u8>>> {
+        let Ok(stat) = shell.stat(path).await else {
+            return Ok(None);
+        };
+        let mut collected = Vec::new();
+        while tail.offset() < stat.length {
+            let remaining = (stat.length - tail.offset()).min(65536) as u32;
+            let bytes = tail
+                .read(remaining)
+                .await
+                .map_err(|code| anyhow::anyhow!("drain embedded {path}: {code}"))?;
+            if bytes.is_empty() {
+                break;
+            }
+            collected.extend_from_slice(&bytes);
+        }
+        Ok((!collected.is_empty()).then_some(collected))
+    }
+
+    async fn drain_non_ui_sources(&mut self) -> Result<()> {
+        if let Some(bytes) = Self::drain_ready_tail(
+            &self.shell,
+            &format!("{}/machine/tape", self.agent_path),
+            &mut self.tape,
+        )
+        .await?
+        {
+            self.tape_buf.extend(bytes);
+        }
+        self.ingest_tape_lines()?;
+
+        if let Some(bytes) = Self::drain_ready_tail(
+            &self.shell,
+            &format!("{}/actions/events", self.agent_path),
+            &mut self.actions,
+        )
+        .await?
+        {
+            self.action_buf.extend(bytes);
+        }
+        self.ingest_action_lines().await?;
+
+        if let Some(bytes) = Self::drain_ready_tail(
+            &self.shell,
+            &format!("{}/requests/events", self.agent_path),
+            &mut self.requests,
+        )
+        .await?
+        {
+            self.request_buf.extend(bytes);
+        }
+        self.ingest_request_lines().await?;
+
+        if let Some(bytes) = Self::drain_ready_tail(
+            &self.shell,
+            &format!("{}/io/output", self.agent_path),
+            &mut self.output,
+        )
+        .await?
+        {
+            self.push_output_chunk(&bytes);
+        }
+        Ok(())
+    }
+
+    async fn drain_all_ready(&mut self) -> Result<()> {
+        if let Some(bytes) = Self::drain_ready_tail(
+            &self.shell,
+            &format!("{}/machine/ui/events", self.agent_path),
+            &mut self.ui_events,
+        )
+        .await?
+        {
+            self.ui_buf.extend(bytes);
+        }
+        self.drain_non_ui_sources().await
+    }
+
+    async fn process_buffered(&mut self) -> Result<()> {
+        self.drain_all_ready().await?;
+        self.ingest_tape_lines()?;
+        self.ingest_action_lines().await?;
+        self.ingest_request_lines().await?;
+
+        // Process non-terminal UI events (Activity/Thinking/Error) before flushing live output
+        // so thinking deltas and submission attribution lead assistant text in causal order.
+        while ui_buf_next_is_non_terminal(&self.ui_buf) {
+            if let Some(line) = next_line(&mut self.ui_buf) {
+                self.process_ui_line(&line).await?;
+            }
+        }
+
+        if !ui_buf_has_input_completed(&self.ui_buf) {
+            self.emit_live_output_bytes().await;
+        }
+
+        while let Some(line) = next_line(&mut self.ui_buf) {
+            let completed = self.process_ui_line(&line).await?;
+            if completed {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_ui_line(&mut self, line: &[u8]) -> Result<bool> {
+        if line.is_empty() {
+            return Ok(false);
+        }
+        let event: UiEvent =
+            serde_json::from_slice(line).context("embedded ui/events record is not a UiEvent")?;
+        match event {
+            UiEvent::Activity { snapshot } => match snapshot.state {
+                UiActivityState::Running => {
+                    self.refresh_current_submission_id().await;
+                }
+                UiActivityState::Paused => {
+                    self.drain_non_ui_sources().await?;
+                    self.flush_open_requests().await;
+                }
+                UiActivityState::Idle => {}
+            },
+            UiEvent::Thinking { snapshot } => {
+                if self.current_submission_id.is_none() {
+                    self.refresh_current_submission_id().await;
+                }
+                self.handle_thinking_snapshot(snapshot.state, snapshot.text);
+            }
+            UiEvent::Error {
+                message,
+                recoverable,
+            } => {
+                self.queued.push_back(EmbedEvent::Error {
+                    message,
+                    recoverable,
+                });
+            }
+            UiEvent::InputCompleted {
+                submission_ids,
+                status,
+                error,
+            } => {
+                self.drain_non_ui_sources().await?;
+                let more_finishes = ui_buf_has_input_completed(&self.ui_buf);
+                for submission_id in submission_ids {
+                    self.finish_submission(submission_id, status, error.clone(), more_finishes)
+                        .await;
+                }
+                return Ok(true);
+            }
+            UiEvent::Plan { .. } | UiEvent::Notice { .. } => {}
+        }
+        Ok(false)
+    }
+
+    fn ingest_tape_lines(&mut self) -> Result<()> {
+        while let Some(line) = next_line(&mut self.tape_buf) {
+            if line.is_empty() {
+                continue;
+            }
+            let msg: TapeMessage =
+                serde_json::from_slice(&line).context("embedded tape record is not a message")?;
+            if msg.role == "assistant" && !msg.content.is_empty() {
+                self.tape_assistant_turns.push_back(TapeAssistantTurn {
+                    submission_id: msg.submission_id,
+                    bytes_len: msg.content.len(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn emit_live_output_bytes(&mut self) {
+        if self.pending_output_bytes.is_empty() {
+            return;
+        }
+        if self.current_submission_id.is_none() {
+            self.refresh_current_submission_id().await;
+        }
+        let chunk = take_valid_utf8_prefix(&mut self.pending_output_bytes, usize::MAX);
+        if !chunk.is_empty() {
+            self.emitted_output_bytes_in_turn += chunk.len();
+            self.queued.push_back(EmbedEvent::TextDelta {
+                submission_id: self.current_submission_id.clone(),
+                chunk,
+                is_final: false,
+            });
+        }
+    }
+
+    async fn finish_submission(
+        &mut self,
+        submission_id: String,
+        status: UiInputStatus,
+        error: Option<String>,
+        more_finishes_pending: bool,
+    ) {
+        let expected_for_submission = self.take_tape_bytes_for_submission(&submission_id);
+        let emit_limit = match expected_for_submission {
+            Some(total_len) => total_len.saturating_sub(self.emitted_output_bytes_in_turn),
+            None => {
+                if matches!(status, UiInputStatus::Cancelled | UiInputStatus::Failed)
+                    || more_finishes_pending
+                {
+                    0
+                } else {
+                    usize::MAX
+                }
+            }
+        };
+        if emit_limit > 0 && !self.pending_output_bytes.is_empty() {
+            let chunk = take_valid_utf8_prefix(&mut self.pending_output_bytes, emit_limit);
+            if !chunk.is_empty() {
+                self.emitted_output_bytes_in_turn += chunk.len();
+                self.queued.push_back(EmbedEvent::TextDelta {
+                    submission_id: Some(submission_id.clone()),
+                    chunk,
+                    is_final: false,
+                });
+            }
+        }
+
+        if self.thinking_open {
+            self.queued.push_back(EmbedEvent::ThinkingDelta {
+                submission_id: Some(submission_id.clone()),
+                chunk: String::new(),
+                is_final: true,
+            });
+            self.active_thinking.clear();
+            self.thinking_open = false;
+        }
+
+        self.queued.push_back(EmbedEvent::TextDelta {
+            submission_id: Some(submission_id.clone()),
+            chunk: String::new(),
+            is_final: true,
+        });
+
+        if let Some(usage) = self.read_usage_snapshot().await {
+            self.queued.push_back(EmbedEvent::Usage {
+                submission_id: Some(submission_id.clone()),
+                usage,
+            });
+        }
+
+        self.queued.push_back(EmbedEvent::TurnFinished {
+            submission_id,
+            status,
+            error,
+        });
+        self.emitted_output_bytes_in_turn = 0;
+        self.current_submission_id = None;
+        self.refresh_current_submission_id().await;
+    }
+
+    fn take_tape_bytes_for_submission(&mut self, submission_id: &str) -> Option<usize> {
+        let mut total = 0usize;
+        let mut matched = false;
+        let mut idx = 0;
+        while idx < self.tape_assistant_turns.len() {
+            let matches_submission = match &self.tape_assistant_turns[idx].submission_id {
+                Some(id) => id == submission_id,
+                None => idx == 0 && !matched,
+            };
+            if matches_submission {
+                let entry = self.tape_assistant_turns.remove(idx).expect("valid index");
+                total += entry.bytes_len;
+                matched = true;
+            } else {
+                idx += 1;
+            }
+        }
+        matched.then_some(total)
+    }
+
+    fn handle_thinking_snapshot(&mut self, state: UiThinkingState, text: String) {
+        let delta = thinking_delta(&self.active_thinking, &text);
+        match state {
+            UiThinkingState::Streaming => {
+                if !delta.is_empty() {
+                    self.queued.push_back(EmbedEvent::ThinkingDelta {
+                        submission_id: self.current_submission_id.clone(),
+                        chunk: delta,
+                        is_final: false,
+                    });
+                }
+                self.active_thinking = text;
+                self.thinking_open = true;
+            }
+            UiThinkingState::Complete => {
+                if !delta.is_empty() {
+                    self.queued.push_back(EmbedEvent::ThinkingDelta {
+                        submission_id: self.current_submission_id.clone(),
+                        chunk: delta,
+                        is_final: false,
+                    });
+                }
+                if self.thinking_open || !text.is_empty() {
+                    self.queued.push_back(EmbedEvent::ThinkingDelta {
+                        submission_id: self.current_submission_id.clone(),
+                        chunk: String::new(),
+                        is_final: true,
+                    });
+                }
+                self.active_thinking.clear();
+                self.thinking_open = false;
+            }
+            UiThinkingState::Idle => {
+                if self.thinking_open {
+                    self.queued.push_back(EmbedEvent::ThinkingDelta {
+                        submission_id: self.current_submission_id.clone(),
+                        chunk: String::new(),
+                        is_final: true,
+                    });
+                }
+                self.active_thinking.clear();
+                self.thinking_open = false;
+            }
+        }
+    }
+
+    async fn refresh_current_submission_id(&mut self) {
+        let path = format!("{}/machine/ui/queue", self.agent_path);
+        let Ok(bytes) = self.shell.cat(&path).await else {
+            return;
+        };
+        if let Ok(queue) = serde_json::from_slice::<UiQueueSnapshot>(&bytes)
+            && let Some(active) = queue.active_submission_ids.first()
+        {
+            self.current_submission_id = Some(active.clone());
+        }
+    }
+
+    async fn read_usage_snapshot(&self) -> Option<UiUsageSnapshot> {
+        let path = format!("{}/machine/ui/usage", self.agent_path);
+        let bytes = self.shell.cat(&path).await.ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        serde_json::from_slice::<UiUsageSnapshot>(&bytes).ok()
+    }
+
+    async fn ingest_action_lines(&mut self) -> Result<()> {
+        while let Some(line) = next_line(&mut self.action_buf) {
+            if line.is_empty() {
+                continue;
+            }
+            let line = std::str::from_utf8(&line)
+                .context("embedded actions/events record is not valid UTF-8")?;
+            if let Some(action_id) = line.strip_prefix("created:") {
+                self.actions_state.entry(action_id.to_string()).or_default();
+                continue;
+            }
+            let Some((action_id, field)) = line.split_once(':') else {
+                continue;
+            };
+            if matches!(field, "result" | "status" | "name") {
+                self.handle_action_update(action_id, field).await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_action_update(&mut self, action_id: &str, field: &str) {
+        let name = self
+            .read_action_string(action_id, "name")
+            .await
+            .unwrap_or_default();
+        let status = self
+            .read_action_string(action_id, "status")
+            .await
+            .unwrap_or_default();
+        let result_json = self.read_action_json(action_id, "result").await;
+
+        let call_id = result_json
+            .as_ref()
+            .and_then(|v| v.get("call_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let title = result_json
+            .as_ref()
+            .and_then(|v| v.get("title"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let preview = result_json
+            .as_ref()
+            .and_then(|v| v.get("result_preview"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+
+        let track = self.actions_state.entry(action_id.to_string()).or_default();
+        if track.name.is_empty() && !name.is_empty() {
+            track.name = name;
+        }
+        if let Some(call_id) = call_id {
+            track.call_id = call_id;
+        } else if track.call_id.is_empty() {
+            track.call_id = action_id.to_string();
+        }
+        if let Some(title) = title {
+            track.title = title;
+        } else if track.title.is_empty() {
+            track.title = track.name.clone();
+        }
+
+        let is_terminal = !status.is_empty() && status != "running";
+        if !track.started_emitted && (field == "result" || is_terminal || status == "running") {
+            track.started_emitted = true;
+            if let Some(preview_val) = &preview
+                && !preview_val.is_empty()
+                && status == "running"
+            {
+                track.last_preview = Some(preview_val.clone());
+            }
+            self.queued.push_back(EmbedEvent::ToolStarted {
+                call_id: track.call_id.clone(),
+                name: track.name.clone(),
+                title: track.title.clone(),
+            });
+            if status == "running"
+                && let Some(preview_val) = track.last_preview.clone()
+            {
+                self.queued.push_back(EmbedEvent::ToolProgress {
+                    call_id: track.call_id.clone(),
+                    preview: preview_val,
+                });
+            }
+        } else if track.started_emitted
+            && !track.finished_emitted
+            && field == "result"
+            && !is_terminal
+            && let Some(preview_val) = &preview
+            && !preview_val.is_empty()
+            && track.last_preview.as_deref() != Some(preview_val.as_str())
+        {
+            track.last_preview = Some(preview_val.clone());
+            self.queued.push_back(EmbedEvent::ToolProgress {
+                call_id: track.call_id.clone(),
+                preview: preview_val.clone(),
+            });
+        }
+
+        if is_terminal && !track.finished_emitted {
+            track.finished_emitted = true;
+            self.queued.push_back(EmbedEvent::ToolFinished {
+                call_id: track.call_id.clone(),
+                name: track.name.clone(),
+                status,
+                preview,
+            });
+        }
+    }
+
+    async fn read_action_string(&self, action_id: &str, field: &str) -> Option<String> {
+        let path = format!("{}/actions/{action_id}/{field}", self.agent_path);
+        let bytes = self.shell.cat(&path).await.ok()?;
+        let text = String::from_utf8(bytes).ok()?;
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    async fn read_action_json(&self, action_id: &str, field: &str) -> Option<serde_json::Value> {
+        let path = format!("{}/actions/{action_id}/{field}", self.agent_path);
+        let bytes = self.shell.cat(&path).await.ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    async fn ingest_request_lines(&mut self) -> Result<()> {
+        while let Some(line) = next_line(&mut self.request_buf) {
+            if line.is_empty() {
+                continue;
+            }
+            let line =
+                std::str::from_utf8(&line).context("embedded request event is not valid UTF-8")?;
+            if let Some(request_id) = line.strip_prefix("created:") {
+                if !self.emitted_requests.contains(request_id)
+                    && !self.open_requests.iter().any(|id| id == request_id)
+                {
+                    self.open_requests.push_back(request_id.to_string());
+                }
+                continue;
+            }
+            let Some((request_id, field)) = line.split_once(':') else {
+                continue;
+            };
+            if field == "options" && !self.emitted_requests.contains(request_id) {
+                self.emit_request(request_id).await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn flush_open_requests(&mut self) {
+        let pending = std::mem::take(&mut self.open_requests);
+        for request_id in pending {
+            if !self.emitted_requests.contains(&request_id) {
+                self.emit_request(&request_id).await;
+            }
+        }
+    }
+
+    async fn emit_request(&mut self, request_id: &str) {
+        if !self.emitted_requests.insert(request_id.to_string()) {
+            return;
+        }
+        self.open_requests.retain(|id| id != request_id);
+        let base = format!("{}/requests/{request_id}", self.agent_path);
+        let kind = self
+            .shell
+            .cat(&format!("{base}/kind"))
+            .await
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let prompt = self
+            .shell
+            .cat(&format!("{base}/prompt"))
+            .await
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let options_doc = self
+            .shell
+            .cat(&format!("{base}/options"))
+            .await
+            .ok()
+            .filter(|b| !b.is_empty())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+
+        let parsed = parse_request_options(options_doc.as_ref());
+
+        self.queued.push_back(EmbedEvent::PendingRequest {
+            request_id: request_id.to_string(),
+            kind,
+            title: parsed.title,
+            prompt,
+            options: parsed.options,
+            default_option: parsed.default_option,
+            questions: parsed.questions,
+            capability: parsed.capability,
+            reason: parsed.reason,
+            presentation: parsed.presentation,
+        });
+    }
 }
 
-struct QueuedFinish {
-    submission_id: String,
-    status: UiInputStatus,
-    error: Option<String>,
-}
-
-struct OpenTurn {
-    submission_id: Option<String>,
+#[derive(Default)]
+struct ParsedRequestOptions {
+    title: Option<String>,
+    options: Vec<String>,
+    default_option: Option<String>,
+    questions: Option<Vec<serde_json::Value>>,
+    capability: Option<String>,
+    reason: Option<String>,
+    presentation: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -79,245 +813,139 @@ struct TapeMessage {
     submission_id: Option<String>,
 }
 
-impl EmbedEventStream {
-    pub(super) fn from_tails(tape: Tail, requests: Tail, ui_events: Tail) -> Self {
-        Self {
-            tape,
-            requests,
-            ui_events,
-            tape_buf: Vec::new(),
-            request_buf: Vec::new(),
-            ui_buf: Vec::new(),
-            immediate: VecDeque::new(),
-            texts: VecDeque::new(),
-            finishes: VecDeque::new(),
-            open: None,
-        }
-    }
-
-    /// Block until the next mapped event.
-    ///
-    /// Skipped UI and request lines are consumed here. An empty tail read is a
-    /// closed stream and returns an error. Assistant text for a later submission
-    /// stays queued until the open submission's [`EmbedEvent::TurnFinished`].
-    pub async fn next_event(&mut self) -> Result<EmbedEvent> {
-        loop {
-            self.ingest()?;
-            if let Some(event) = self.immediate.pop_front() {
-                return Ok(event);
-            }
-            if let Some(event) = self.take_text() {
-                return Ok(event);
-            }
-            if self.needs_unread_tape() {
-                if self.tape_caught_up().await? {
-                    if let Some(event) = self.take_finish() {
-                        return Ok(event);
-                    }
-                } else {
-                    push_chunk(&mut self.tape_buf, self.tape.read(READ_CHUNK).await, "tape")?;
-                    continue;
-                }
-            } else if let Some(event) = self.take_finish() {
-                return Ok(event);
-            }
-
-            let wait_for_tape = !self.tape_caught_up().await?;
-            tokio::select! {
-                biased;
-                chunk = self.tape.read(READ_CHUNK), if wait_for_tape => {
-                    push_chunk(&mut self.tape_buf, chunk, "tape")?;
-                }
-                chunk = self.requests.read(READ_CHUNK) => {
-                    push_chunk(&mut self.request_buf, chunk, "requests")?;
-                }
-                chunk = self.ui_events.read(READ_CHUNK) => {
-                    push_chunk(&mut self.ui_buf, chunk, "ui events")?;
-                }
-            }
-        }
-    }
-
-    fn ingest(&mut self) -> Result<()> {
-        while let Some(line) = next_line(&mut self.tape_buf) {
-            if let Some(text) = map_tape_line(&line)? {
-                self.texts.push_back(text);
-            }
-        }
-        while let Some(line) = next_line(&mut self.request_buf) {
-            if let Some(event) = map_request_line(&line)? {
-                self.immediate.push_back(event);
-            }
-        }
-        while let Some(line) = next_line(&mut self.ui_buf) {
-            for event in map_ui_line(&line)? {
-                match event {
-                    EmbedEvent::TurnFinished {
-                        submission_id,
-                        status,
-                        error,
-                    } => self.finishes.push_back(QueuedFinish {
-                        submission_id,
-                        status,
-                        error,
-                    }),
-                    other => self.immediate.push_back(other),
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn take_text(&mut self) -> Option<EmbedEvent> {
-        let index = if self.open.is_none() {
-            self.texts.iter().position(|text| !text.emitted)?
-        } else {
-            self.texts
+fn parse_request_options(doc: Option<&serde_json::Value>) -> ParsedRequestOptions {
+    let Some(doc) = doc else {
+        return ParsedRequestOptions::default();
+    };
+    let details = doc.get("details");
+    let title = doc
+        .get("title")
+        .or_else(|| details.and_then(|d| d.get("title")))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let options = doc
+        .get("options")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
                 .iter()
-                .position(|text| !text.emitted && self.belongs_to_open(text))?
-        };
-        if self.open.is_none() {
-            self.open = Some(OpenTurn {
-                submission_id: self.texts[index].submission_id.clone(),
-            });
-        }
-        self.texts[index].emitted = true;
-        Some(EmbedEvent::TextDelta {
-            chunk: self.texts[index].chunk.clone(),
-            is_final: false,
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
         })
-    }
-
-    fn belongs_to_open(&self, text: &QueuedText) -> bool {
-        let Some(open) = &self.open else {
-            return false;
-        };
-        text.submission_id.is_none() || text.submission_id == open.submission_id
-    }
-
-    fn take_finish(&mut self) -> Option<EmbedEvent> {
-        let waiting = self.finishes.front().is_some_and(|finish| {
-            self.texts.iter().any(|text| {
-                !text.emitted && text.submission_id.as_ref() == Some(&finish.submission_id)
-            })
-        });
-        if waiting {
-            return None;
-        }
-        let finish = self.finishes.pop_front()?;
-        if self.open.as_ref().is_some_and(|open| {
-            open.submission_id.is_none()
-                || open.submission_id.as_ref() == Some(&finish.submission_id)
-        }) {
-            self.open = None;
-        }
-        Some(EmbedEvent::TurnFinished {
-            submission_id: finish.submission_id,
-            status: finish.status,
-            error: finish.error,
+        .unwrap_or_default();
+    let default_option = doc
+        .get("default_option")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let questions = doc
+        .get("questions")
+        .and_then(serde_json::Value::as_array)
+        .cloned();
+    let capability = doc
+        .get("capability")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            details
+                .and_then(|d| d.get("capability"))
+                .and_then(serde_json::Value::as_str)
         })
-    }
+        .map(str::to_string);
+    let reason = doc
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            details
+                .and_then(|d| d.get("reason"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::to_string);
+    let presentation = doc
+        .get("presentation")
+        .cloned()
+        .or_else(|| details.and_then(|d| d.get("presentation")).cloned());
 
-    fn needs_unread_tape(&self) -> bool {
-        let Some(finish) = self.finishes.front() else {
-            return false;
-        };
-        if finish.status != UiInputStatus::Completed {
-            return false;
+    ParsedRequestOptions {
+        title,
+        options,
+        default_option,
+        questions,
+        capability,
+        reason,
+        presentation,
+    }
+}
+
+fn thinking_delta(previous: &str, current: &str) -> String {
+    if let Some(suffix) = current.strip_prefix(previous) {
+        return suffix.to_string();
+    }
+    if previous.is_empty() {
+        return current.to_string();
+    }
+    // Streaming snapshots keep a trailing 2 KiB window; align overlap when the head shifts.
+    for (idx, _) in current.char_indices() {
+        let prefix = &current[..idx];
+        if !prefix.is_empty() && previous.ends_with(prefix) {
+            return current[idx..].to_string();
         }
-        !self
-            .texts
-            .iter()
-            .any(|text| text.submission_id.as_ref() == Some(&finish.submission_id))
     }
-
-    async fn tape_caught_up(&self) -> Result<bool> {
-        if !self.tape_buf.is_empty() {
-            return Ok(false);
-        }
-        let snap = self.tape.snapshot().await.context("stat embedded tape")?;
-        Ok(snap.len() as u64 <= self.tape.offset())
+    if previous.ends_with(current) {
+        return String::new();
     }
+    current.to_string()
 }
 
-fn push_chunk(
-    buf: &mut Vec<u8>,
-    chunk: std::result::Result<Vec<u8>, alan_ap::ErrorCode>,
-    stream: &str,
-) -> Result<()> {
-    let chunk = chunk.with_context(|| format!("read embedded {stream}"))?;
-    if chunk.is_empty() {
-        bail!("embedded {stream} stream closed");
+fn take_valid_utf8_prefix(buf: &mut Vec<u8>, max_bytes: usize) -> String {
+    let cap = buf.len().min(max_bytes);
+    if cap == 0 {
+        return String::new();
     }
-    buf.extend(chunk);
-    Ok(())
+    let slice = &buf[..cap];
+    let take_len = match std::str::from_utf8(slice) {
+        Ok(_) => cap,
+        Err(err) => err.valid_up_to(),
+    };
+    if take_len == 0 {
+        return String::new();
+    }
+    let out = String::from_utf8(buf[..take_len].to_vec()).expect("validated utf8 prefix");
+    buf.drain(..take_len);
+    out
 }
 
-fn map_tape_line(line: &[u8]) -> Result<Option<QueuedText>> {
-    if line.is_empty() {
-        return Ok(None);
-    }
-    let message: TapeMessage =
-        serde_json::from_slice(line).context("embedded tape record is not a message")?;
-    if message.role != "assistant" || message.content.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(QueuedText {
-        submission_id: message.submission_id,
-        chunk: message.content,
-        emitted: false,
-    }))
-}
-
-fn map_request_line(line: &[u8]) -> Result<Option<EmbedEvent>> {
-    if line.is_empty() {
-        return Ok(None);
-    }
-    let line = std::str::from_utf8(line).context("embedded request event is not valid UTF-8")?;
-    Ok(line
-        .strip_prefix("created:")
-        .map(|request_id| EmbedEvent::PendingRequest {
-            request_id: request_id.to_string(),
-        }))
-}
-
-fn map_ui_line(line: &[u8]) -> Result<Vec<EmbedEvent>> {
-    if line.is_empty() {
-        return Ok(Vec::new());
-    }
-    let event: UiEvent =
-        serde_json::from_slice(line).context("embedded ui event is not a UiEvent")?;
-    Ok(match event {
-        UiEvent::Activity { .. }
-        | UiEvent::Plan { .. }
-        | UiEvent::Thinking { .. }
-        | UiEvent::Notice { .. } => Vec::new(),
-        UiEvent::Error {
-            message,
-            recoverable,
-        } => vec![EmbedEvent::Error {
-            message,
-            recoverable,
-        }],
-        UiEvent::InputCompleted {
-            submission_ids,
-            status,
-            error,
-        } => submission_ids
-            .into_iter()
-            .map(|submission_id| EmbedEvent::TurnFinished {
-                submission_id,
-                status,
-                error: error.clone(),
-            })
-            .collect(),
+fn ui_buf_has_input_completed(buf: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(buf);
+    text.lines().any(|line| {
+        !line.is_empty()
+            && matches!(
+                serde_json::from_str::<UiEvent>(line),
+                Ok(UiEvent::InputCompleted { .. })
+            )
     })
 }
 
+fn ui_buf_next_is_non_terminal(buf: &[u8]) -> bool {
+    let Some(pos) = buf.iter().position(|byte| *byte == b'\n') else {
+        return false;
+    };
+    let line = std::str::from_utf8(&buf[..pos]).unwrap_or("");
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    !matches!(
+        serde_json::from_str::<UiEvent>(trimmed),
+        Ok(UiEvent::InputCompleted { .. })
+    )
+}
+
 fn next_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let end = buf.iter().position(|byte| *byte == b'\n')?;
-    let mut line: Vec<u8> = buf.drain(..=end).collect();
-    line.pop();
+    let pos = buf.iter().position(|byte| *byte == b'\n')?;
+    let mut line: Vec<u8> = buf.drain(..=pos).collect();
+    if line.last() == Some(&b'\n') {
+        line.pop();
+    }
     if line.last() == Some(&b'\r') {
         line.pop();
     }

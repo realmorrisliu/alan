@@ -260,6 +260,7 @@ impl HostBootConfig {
                 llm_factory,
                 host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
                 tools,
+                include_builtin_skills: true,
             },
             ephemeral_rollout: false,
             saved_grants: Vec::new(),

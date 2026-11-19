@@ -88,6 +88,8 @@ pub struct GenerationRequest {
     /// provider cache affinity such as OpenAI `prompt_cache_key` or Magpie
     /// session-affinity headers. Never forwarded verbatim as a body field.
     pub session_key: Option<String>,
+    /// Optional JSON Schema constraining the final assistant output.
+    pub response_schema: Option<serde_json::Value>,
     /// Provider-specific extra parameters
     pub extra_params: HashMap<String, serde_json::Value>,
 }
@@ -163,8 +165,15 @@ impl GenerationRequest {
             max_tokens: None,
             reasoning: ReasoningControls::default(),
             session_key: None,
+            response_schema: None,
             extra_params: HashMap::new(),
         }
+    }
+
+    /// Constrain the final assistant response with a JSON Schema object.
+    pub fn with_response_schema(mut self, schema: serde_json::Value) -> Self {
+        self.response_schema = Some(schema);
+        self
     }
 
     /// Set the system prompt

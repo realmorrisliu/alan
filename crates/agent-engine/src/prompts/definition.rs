@@ -193,7 +193,17 @@ fn definition_file_from_tree(tree: &crate::ProcessFileTree, name: &'static str) 
 }
 
 fn render_definition_persona_files(files: Vec<DefinitionFile>, descriptor_dir: &str) -> String {
-    if files.is_empty() || files.iter().all(|file| file.missing) {
+    let present_files: Vec<(DefinitionFile, String)> = files
+        .into_iter()
+        .filter(|file| !file.missing)
+        .filter_map(|file| {
+            let content = file.content.clone().unwrap_or_default();
+            let trimmed =
+                trim_definition_content(&content, file.name, DEFINITION_PERSONA_MAX_CHARS);
+            (!trimmed.is_empty()).then_some((file, trimmed))
+        })
+        .collect();
+    if present_files.is_empty() {
         return String::new();
     }
     let mut prompt = String::new();
@@ -208,24 +218,14 @@ fn render_definition_persona_files(files: Vec<DefinitionFile>, descriptor_dir: &
         "Only persist user-confirmed stable information. Do not store guesses, inferred traits, or transient machine focus in `USER.md`.\n",
     );
 
-    for file in files {
+    for (file, trimmed) in present_files {
         prompt.push_str(&format!("\n### {}\n", file.name));
-        if file.missing {
-            prompt.push_str("[MISSING FROM AGENT DEFINITION DESCRIPTOR]\n");
-            continue;
-        }
         prompt.push_str(&format!(
             "Descriptor path: {descriptor_dir}/{}\n",
             file.name
         ));
-        let content = file.content.unwrap_or_default();
-        let trimmed = trim_definition_content(&content, file.name, DEFINITION_PERSONA_MAX_CHARS);
-        if trimmed.is_empty() {
-            prompt.push_str("[EMPTY]\n");
-        } else {
-            prompt.push_str(trimmed.as_str());
-            prompt.push('\n');
-        }
+        prompt.push_str(trimmed.as_str());
+        prompt.push('\n');
     }
 
     prompt

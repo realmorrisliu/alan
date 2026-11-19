@@ -186,6 +186,12 @@ pub struct GenerationConfig {
     /// Gemini thinking configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_config: Option<ThinkingConfig>,
+    /// Output MIME type (for example `application/json`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_mime_type: Option<String>,
+    /// JSON Schema constraining structured generation output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 /// Gemini thinking controls.

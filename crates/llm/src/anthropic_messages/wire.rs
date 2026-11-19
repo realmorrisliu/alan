@@ -60,6 +60,8 @@ pub struct AnthropicMessagesRequest {
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ThinkingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]

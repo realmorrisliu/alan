@@ -71,12 +71,16 @@ pub struct OpenAiChatCompletionsClient {
 }
 
 /// Canonical reasoning-effort name to provider wire value; `None` omits the field.
-pub type ReasoningEffortMap = std::collections::BTreeMap<String, Option<String>>;
+pub use crate::ReasoningEffortMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OpenAiChatCompletionsApiFlavor {
     Official,
     Compatible,
+    #[cfg_attr(
+        not(feature = "provider-magpie"),
+        allow(dead_code, reason = "constructed only when provider-magpie is enabled")
+    )]
     Magpie,
 }
 
@@ -112,12 +116,14 @@ impl OpenAiChatCompletionsClient {
     }
 
     /// Attach stable headers sent on every Chat Completions request.
+    #[cfg(feature = "provider-magpie")]
     pub(crate) fn with_extra_headers(mut self, headers: Vec<(String, String)>) -> Self {
         self.extra_headers = headers;
         self
     }
 
     /// Remap canonical reasoning effort names onto provider-specific wire values.
+    #[cfg(feature = "provider-magpie")]
     pub(crate) fn with_reasoning_effort_map(mut self, map: Option<ReasoningEffortMap>) -> Self {
         self.reasoning_effort_map = map.map(std::sync::Arc::new);
         self
@@ -150,6 +156,7 @@ impl OpenAiChatCompletionsClient {
         }
     }
 
+    #[cfg(feature = "provider-magpie")]
     pub(crate) fn http(&self) -> &reqwest::Client {
         &self.client
     }
@@ -235,6 +242,7 @@ impl OpenAiChatCompletionsClient {
         Ok(result)
     }
 
+    #[cfg(feature = "provider-openai")]
     #[instrument(skip(self, request))]
     pub async fn openai_responses(
         &self,
@@ -267,6 +275,7 @@ impl OpenAiChatCompletionsClient {
             .context("Failed to parse OpenAI Responses API response")
     }
 
+    #[cfg(feature = "provider-openai")]
     #[instrument(skip(self))]
     pub async fn retrieve_openai_response(
         &self,

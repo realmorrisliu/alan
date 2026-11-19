@@ -183,6 +183,11 @@ impl ToolContext {
         self
     }
 
+    /// Return the `aP` transport for the invoking Process's namespace, if attached.
+    pub fn namespace(&self) -> Option<&alan_ap::InProcessTransport> {
+        self.namespace.as_ref().map(|(_, transport)| transport)
+    }
+
     /// Attach an incremental command output progress callback for this Tool run.
     pub fn with_progress(
         mut self,

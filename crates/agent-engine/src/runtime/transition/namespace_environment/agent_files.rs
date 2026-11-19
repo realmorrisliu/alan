@@ -90,6 +90,12 @@ impl NamespaceAgentFiles {
     pub async fn read_next_input_submission(&self, mode: InputMode) -> Result<Submission> {
         let message = self.read_next_input_payload().await?;
         if let Some(record) = UserInputRecord::decode_payload(message.as_bytes())? {
+            if let Some(schema) = record.response_schema {
+                self.submission_response_schemas
+                    .lock()
+                    .expect("submission response schema mutex poisoned")
+                    .insert(record.submission_id.clone(), schema);
+            }
             let text_part = (!record.body.trim().is_empty() || record.parts.is_empty())
                 .then(|| ContentPart::text(record.body));
             let parts = text_part.into_iter().chain(record.parts).collect();

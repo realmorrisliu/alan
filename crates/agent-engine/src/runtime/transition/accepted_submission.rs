@@ -57,6 +57,23 @@ pub(crate) fn advance_accepted_submission<'a>(
         // Publish identity synchronously, before the Process can select a control
         // ahead of the returned future's first poll. Transition ownership stays here.
         state.machine.accept_submission(submission.id.clone());
+        match &submission.op {
+            Op::Turn { context, .. } => {
+                state.machine.set_active_turn_response_schema(
+                    context.as_ref().and_then(|c| c.response_schema.clone()),
+                );
+            }
+            Op::Input {
+                mode: InputMode::FollowUp,
+                ..
+            } => {
+                let schema = state
+                    .environment
+                    .take_submission_response_schema(&submission.id);
+                state.machine.set_active_turn_response_schema(schema);
+            }
+            _ => {}
+        }
         if matches!(submission.op, Op::CompactWithOptions { .. }) {
             // Manual compaction has a Tape identity but no cancellation contract.
             state
@@ -175,6 +192,7 @@ pub(crate) fn advance_accepted_submission<'a>(
             state
                 .machine
                 .set_turn_activity(crate::agent_machine::TurnActivityState::Idle);
+            state.machine.clear_active_turn_response_schema();
         }
         state
             .environment

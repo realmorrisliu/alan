@@ -3,10 +3,18 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
+#[cfg(feature = "provider-anthropic-adapter")]
+use crate::AnthropicMessagesClient;
+#[cfg(feature = "provider-vertex")]
+use crate::GoogleGeminiGenerateContentClient;
+#[cfg(feature = "provider-openai")]
+use crate::OpenAiChatCompletionsClient;
+#[cfg(feature = "provider-openrouter")]
+use crate::OpenRouterClient;
+#[cfg(feature = "provider-openai")]
+use crate::{ChatgptResponsesClient, OpenAiResponsesClient};
 use crate::{
-    AnthropicMessagesClient, ChatgptResponsesClient, CompatibilityTier,
-    GoogleGeminiGenerateContentClient, InstructionRole, LlmProvider, OpenAiChatCompletionsClient,
-    OpenAiResponsesClient, OpenRouterClient, ProviderCapabilities, openrouter,
+    CompatibilityTier, InstructionRole, LlmProvider, ProviderCapabilities, magpie, openrouter,
 };
 
 /// Configuration for creating an LLM provider
@@ -53,7 +61,7 @@ impl ProviderConfig {
         Self {
             provider_type: ProviderType::Magpie,
             api_key: None,
-            base_url: Some(crate::magpie::MAGPIE_DEFAULT_BASE_URL.to_string()),
+            base_url: Some(magpie::MAGPIE_DEFAULT_BASE_URL.to_string()),
             model: model.into(),
             expected_account_id: None,
             chatgpt_auth_storage_path: None,
@@ -346,15 +354,25 @@ impl ProviderConfig {
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
     match config.provider_type {
         ProviderType::Magpie => {
-            let mut client = crate::MagpieClient::new(
-                config.base_url.as_deref(),
-                config.api_key.as_deref(),
-                &config.model,
-            );
-            if let Some(map) = config.thinking_level_map {
-                client = client.with_reasoning_effort_map(map);
+            #[cfg(feature = "provider-magpie")]
+            {
+                let mut client = crate::MagpieClient::new(
+                    config.base_url.as_deref(),
+                    config.api_key.as_deref(),
+                    &config.model,
+                );
+                if let Some(map) = config.thinking_level_map {
+                    client = client.with_reasoning_effort_map(map);
+                }
+                Ok(Box::new(client))
             }
-            Ok(Box::new(client))
+            #[cfg(not(feature = "provider-magpie"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "Magpie provider requires enabling feature `provider-magpie` on `alan-llm`"
+                )
+            }
         }
         ProviderType::TypesafeEvaluation => {
             anyhow::ensure!(
@@ -370,140 +388,212 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             )?))
         }
         ProviderType::GoogleGeminiGenerateContent => {
-            let location = config.location.unwrap_or_else(|| "global".to_string());
-            let auth = match config
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|key| !key.is_empty())
+            #[cfg(feature = "provider-vertex")]
             {
-                Some(api_key) => {
-                    crate::google_gemini_generate_content::VertexAuth::ApiKey(api_key.to_string())
-                }
-                None => {
-                    if config
-                        .project_id
-                        .as_deref()
-                        .map(str::trim)
-                        .is_none_or(str::is_empty)
-                    {
-                        anyhow::bail!(
-                            "Google Gemini GenerateContent provider requires project_id (or api_key for Vertex Express Mode)"
-                        );
+                let location = config.location.unwrap_or_else(|| "global".to_string());
+                let auth = match config
+                    .api_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                {
+                    Some(api_key) => crate::google_gemini_generate_content::VertexAuth::ApiKey(
+                        api_key.to_string(),
+                    ),
+                    None => {
+                        if config
+                            .project_id
+                            .as_deref()
+                            .map(str::trim)
+                            .is_none_or(str::is_empty)
+                        {
+                            anyhow::bail!(
+                                "Google Gemini GenerateContent provider requires project_id (or api_key for Vertex Express Mode)"
+                            );
+                        }
+                        crate::google_gemini_generate_content::VertexAuth::Adc
                     }
-                    crate::google_gemini_generate_content::VertexAuth::Adc
-                }
-            };
-            let client = GoogleGeminiGenerateContentClient::from_vertex_config(
-                crate::google_gemini_generate_content::VertexClientConfig {
-                    project_id: config.project_id,
-                    location,
-                    model: config.model,
-                    auth,
-                    base_url: config.base_url,
-                },
-            )?;
-            Ok(Box::new(client))
+                };
+                let client = GoogleGeminiGenerateContentClient::from_vertex_config(
+                    crate::google_gemini_generate_content::VertexClientConfig {
+                        project_id: config.project_id,
+                        location,
+                        model: config.model,
+                        auth,
+                        base_url: config.base_url,
+                    },
+                )?;
+                Ok(Box::new(client))
+            }
+            #[cfg(not(feature = "provider-vertex"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "Vertex Gemini provider requires enabling feature `provider-vertex` on `alan-llm`"
+                )
+            }
         }
         ProviderType::ChatgptResponses => {
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".to_string());
-            let client = ChatgptResponsesClient::with_params(
-                &base_url,
-                &config.model,
-                config.custom_headers.unwrap_or_default(),
-                config.expected_account_id,
-                config.chatgpt_auth_storage_path,
-            )?;
-            Ok(Box::new(client))
+            #[cfg(feature = "provider-openai")]
+            {
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".to_string());
+                let client = ChatgptResponsesClient::with_params(
+                    &base_url,
+                    &config.model,
+                    config.custom_headers.unwrap_or_default(),
+                    config.expected_account_id,
+                    config.chatgpt_auth_storage_path,
+                )?;
+                Ok(Box::new(client))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "ChatGPT Responses provider requires enabling feature `provider-openai` on `alan-llm`"
+                )
+            }
         }
         ProviderType::OpenAiResponses => {
-            let api_key = config
-                .api_key
-                .ok_or_else(|| anyhow::anyhow!("OpenAI Responses provider requires api_key"))?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            #[cfg(feature = "provider-openai")]
+            {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI Responses provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-            Ok(Box::new(OpenAiResponsesClient::with_params(
-                &api_key,
-                &base_url,
-                &config.model,
-            )))
-        }
-        ProviderType::OpenAiChatCompletions => {
-            let api_key = config.api_key.ok_or_else(|| {
-                anyhow::anyhow!("OpenAI Chat Completions provider requires api_key")
-            })?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-
-            Ok(Box::new(OpenAiChatCompletionsClient::official_with_params(
-                &api_key,
-                &base_url,
-                &config.model,
-            )))
-        }
-        ProviderType::OpenAiChatCompletionsCompatible => {
-            let api_key = config.api_key.ok_or_else(|| {
-                anyhow::anyhow!("OpenAI Chat Completions API-compatible provider requires api_key")
-            })?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-
-            Ok(Box::new(
-                OpenAiChatCompletionsClient::compatible_with_params(
+                Ok(Box::new(OpenAiResponsesClient::with_params(
                     &api_key,
                     &base_url,
                     &config.model,
-                ),
-            ))
+                )))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "OpenAI Responses provider requires enabling feature `provider-openai` on `alan-llm`"
+                )
+            }
+        }
+        ProviderType::OpenAiChatCompletions => {
+            #[cfg(feature = "provider-openai")]
+            {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!("OpenAI Chat Completions provider requires api_key")
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(OpenAiChatCompletionsClient::official_with_params(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                )))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "OpenAI Chat Completions provider requires enabling feature `provider-openai` on `alan-llm`"
+                )
+            }
+        }
+        ProviderType::OpenAiChatCompletionsCompatible => {
+            #[cfg(feature = "provider-openai")]
+            {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "OpenAI Chat Completions API-compatible provider requires api_key"
+                    )
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+                Ok(Box::new(
+                    OpenAiChatCompletionsClient::compatible_with_params(
+                        &api_key,
+                        &base_url,
+                        &config.model,
+                    ),
+                ))
+            }
+            #[cfg(not(feature = "provider-openai"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "OpenAI Chat Completions compatible provider requires enabling feature `provider-openai` on `alan-llm`"
+                )
+            }
         }
         ProviderType::OpenRouter => {
-            let api_key = config
-                .api_key
-                .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| openrouter::OPENROUTER_BASE_URL.to_string());
-            let metadata = openrouter::OpenRouterClientMetadata {
-                http_referer: config.http_referer,
-                x_title: config.x_title,
-                app_categories: config.app_categories,
-            };
-            Ok(Box::new(OpenRouterClient::with_metadata(
-                &api_key,
-                &base_url,
-                &config.model,
-                metadata,
-            )?))
+            #[cfg(feature = "provider-openrouter")]
+            {
+                let api_key = config
+                    .api_key
+                    .ok_or_else(|| anyhow::anyhow!("OpenRouter provider requires api_key"))?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| openrouter::OPENROUTER_BASE_URL.to_string());
+                let metadata = openrouter::OpenRouterClientMetadata {
+                    http_referer: config.http_referer,
+                    x_title: config.x_title,
+                    app_categories: config.app_categories,
+                };
+                Ok(Box::new(OpenRouterClient::with_metadata(
+                    &api_key,
+                    &base_url,
+                    &config.model,
+                    metadata,
+                )?))
+            }
+            #[cfg(not(feature = "provider-openrouter"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "OpenRouter provider requires enabling feature `provider-openrouter` on `alan-llm`"
+                )
+            }
         }
         ProviderType::AnthropicMessages => {
-            let api_key = config.api_key.ok_or_else(|| {
-                anyhow::anyhow!("Anthropic Messages API provider requires api_key")
-            })?;
-            let base_url = config
-                .base_url
-                .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+            #[cfg(feature = "provider-anthropic-adapter")]
+            {
+                let api_key = config.api_key.ok_or_else(|| {
+                    anyhow::anyhow!("Anthropic Messages API provider requires api_key")
+                })?;
+                let base_url = config
+                    .base_url
+                    .unwrap_or_else(|| "https://api.anthropic.com".to_string());
 
-            let mut client =
-                AnthropicMessagesClient::with_params(&api_key, &base_url, &config.model);
+                let mut client =
+                    AnthropicMessagesClient::with_params(&api_key, &base_url, &config.model);
 
-            // Apply custom headers if provided
-            if let Some(headers) = config.custom_headers {
-                client = client.with_headers(headers);
-            }
-            if let Some(client_name) = config.client_name {
-                client = client.with_client_name(&client_name);
-            }
-            if let Some(user_agent) = config.user_agent {
-                client = client.with_user_agent(&user_agent);
-            }
+                // Apply custom headers if provided
+                if let Some(headers) = config.custom_headers {
+                    client = client.with_headers(headers);
+                }
+                if let Some(client_name) = config.client_name {
+                    client = client.with_client_name(&client_name);
+                }
+                if let Some(user_agent) = config.user_agent {
+                    client = client.with_user_agent(&user_agent);
+                }
 
-            Ok(Box::new(client))
+                Ok(Box::new(client))
+            }
+            #[cfg(not(feature = "provider-anthropic-adapter"))]
+            {
+                let _ = config;
+                anyhow::bail!(
+                    "Anthropic Messages provider requires enabling feature `provider-anthropic-adapter` on `alan-llm`"
+                )
+            }
         }
     }
 }

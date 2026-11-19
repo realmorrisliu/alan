@@ -13,9 +13,13 @@ use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid};
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
 
+pub(crate) mod embed_mounts;
 mod packages;
+pub(crate) mod sessions;
 mod supervisor;
 mod trust;
+
+pub use sessions::{SessionHandle, SessionLaunchOptions};
 
 #[cfg(test)]
 use packages::project_package_reference_async;
@@ -67,6 +71,8 @@ pub struct ServiceManagerConfig {
     pub llm_factory: Arc<dyn LlmClientFactory>,
     pub host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     pub tools: ToolRegistry,
+    /// Whether to project Alan's built-in skills onto Agent Processes.
+    pub include_builtin_skills: bool,
 }
 
 pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
@@ -79,20 +85,16 @@ pub trait LlmClientFactory: std::fmt::Debug + Send + Sync {
 }
 
 #[derive(Debug)]
-struct OneShotLlmClientFactory(std::sync::Mutex<Option<LlmClient>>);
+struct ReusableLlmClientFactory(alan_agent_engine::ReusableLlmClient);
 
-impl LlmClientFactory for OneShotLlmClientFactory {
+impl LlmClientFactory for ReusableLlmClientFactory {
     fn create(
         &self,
         _base_config: &alan_agent_engine::Config,
         _selected_profile: Option<&str>,
         _connections: &ConnectionsFile,
     ) -> Result<LlmClient> {
-        self.0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("LLM factory lock poisoned"))?
-            .take()
-            .context("ephemeral LLM client was already consumed")
+        Ok(self.0.client())
     }
 }
 
@@ -132,12 +134,17 @@ impl ServiceManagerConfig {
             resume_rollout_id: None,
             ephemeral_rollout: false,
             input_shadow: None,
-            llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
-                llm_client,
-            )))),
+            llm_factory: Arc::new(ReusableLlmClientFactory(llm_client.into_reusable())),
             host_mount_adapter: Arc::new(UnavailableHostMountExportAdapter),
             tools,
+            include_builtin_skills: true,
         }
+    }
+
+    /// Control whether Alan's preinstalled built-in skills are projected onto Agent Processes.
+    pub fn with_include_builtin_skills(mut self, include: bool) -> Self {
+        self.include_builtin_skills = include;
+        self
     }
 
     /// Keep this invocation's Root rollout out of the selected-rollout channel.
@@ -177,8 +184,9 @@ pub struct ServiceManager {
     package_handle: Arc<SwitchableFileServer>,
     #[cfg(test)]
     root_namespace: InProcessTransport,
-    supervisor_shutdown: tokio::sync::oneshot::Sender<()>,
-    supervisor_task: tokio::task::JoinHandle<Result<()>>,
+    supervisor_cmd: tokio::sync::mpsc::UnboundedSender<supervisor::SupervisorCommand>,
+    supervisor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    supervisor_task: Option<tokio::task::JoinHandle<Result<()>>>,
 }
 
 impl ServiceManager {
@@ -197,7 +205,9 @@ impl ServiceManager {
                 .all(|(path, _)| !overlaps_package_namespace(path)),
             "namespace mounts overlapping /lib/pkg are not accepted"
         );
+        let _ = embed_mounts::caller_mnt_mounts(&config.launch_context.namespace)?;
         let boot_id = Uuid::new_v4();
+        let include_builtin_skills = config.include_builtin_skills;
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
         let (package_bootstrap, package_service) =
             if config.in_memory_stores && config.package_store.is_none() {
@@ -314,6 +324,7 @@ impl ServiceManager {
             input_shadow: config.input_shadow,
             launch_context: config.launch_context,
             tools: config.tools,
+            include_builtin_skills,
             host_capabilities,
             generation_capabilities,
         })
@@ -335,7 +346,7 @@ impl ServiceManager {
         if let Some(package_bootstrap) = package_bootstrap {
             package_bootstrap.finish();
         }
-        let (supervisor_shutdown, supervisor_task) = runtime.start();
+        let (supervisor_shutdown, supervisor_cmd, supervisor_task) = runtime.start();
 
         Ok(Self {
             boot_id,
@@ -351,8 +362,9 @@ impl ServiceManager {
             package_handle,
             #[cfg(test)]
             root_namespace: root,
-            supervisor_shutdown,
-            supervisor_task,
+            supervisor_cmd,
+            supervisor_shutdown: Some(supervisor_shutdown),
+            supervisor_task: Some(supervisor_task),
         })
     }
 
@@ -418,14 +430,28 @@ impl ServiceManager {
         Ok(())
     }
 
-    pub async fn shutdown(self) -> Result<()> {
+    /// Best-effort synchronous signal requesting background supervisor shutdown without blocking.
+    pub fn signal_shutdown(&mut self) {
+        if let Some(shutdown) = self.supervisor_shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+
+    pub async fn shutdown(mut self) -> Result<()> {
         self.state.lock().await.mark_stopping();
-        let _ = self.supervisor_shutdown.send(());
-        self.supervisor_task
-            .await
-            .context("Service Manager supervisor task failed")??;
+        self.signal_shutdown();
+        if let Some(task) = self.supervisor_task.take() {
+            task.await
+                .context("Service Manager supervisor task failed")??;
+        }
         self.procfs.record_exit(self.manager_pid, 0).await;
         Ok(())
+    }
+}
+
+impl Drop for ServiceManager {
+    fn drop(&mut self) {
+        self.signal_shutdown();
     }
 }
 
@@ -446,6 +472,7 @@ struct AssembleInputs {
     input_shadow: Option<InputShadowSelection>,
     launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
+    include_builtin_skills: bool,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
     generation_capabilities: alan_llm::ProviderCapabilities,
 }
@@ -468,6 +495,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         input_shadow,
         mut launch_context,
         tools,
+        include_builtin_skills,
         host_capabilities,
         generation_capabilities,
     } = inputs;
@@ -511,6 +539,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         tools.process_runner(),
     );
 
+    let caller_mnt_mounts = embed_mounts::caller_mnt_mounts(&launch_context.namespace)?;
     let mut namespace = launch_context.namespace.child();
     mount_standard_namespace_roots(&mut namespace);
     mount_boot_units(&mut namespace);
@@ -585,13 +614,18 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
                 if unit.name == "local-entry" {
                     mount_service_handles(&system_namespace, &srvfs).await?;
                 }
+                let extra_mounts: &[_] = if unit.name == "local-entry" {
+                    &caller_mnt_mounts
+                } else {
+                    &[]
+                };
                 let (pid, unit_namespace) = spawn_unit_process(
                     &procfs,
                     manager_pid,
                     &system_namespace,
                     Credentials::system(),
                     unit,
-                    &[],
+                    extra_mounts,
                 )
                 .await?;
                 state
@@ -697,9 +731,11 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     );
     launch_context = root_template_context;
     let reference_service = package_service.clone();
-    launch_context = tokio::task::spawn_blocking(move || {
-        for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
-            project_package_reference(&reference_service, &mut launch_context, package_id)?;
+    let launch_context = tokio::task::spawn_blocking(move || {
+        if include_builtin_skills {
+            for package_id in alan_agent_engine::skills::preinstalled_skill_package_ids() {
+                project_package_reference(&reference_service, &mut launch_context, package_id)?;
+            }
         }
         Ok::<_, anyhow::Error>(launch_context)
     })

@@ -44,6 +44,9 @@ pub struct UserInputRecord {
     /// Optional additional structured or attachment parts (such as images).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<ContentPart>,
+    /// Optional per-turn JSON Schema constraining the assistant output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 const MAGIC: &[u8] = b"alan-input-v1\n";
@@ -58,12 +61,19 @@ impl UserInputRecord {
             mode,
             body: body.into(),
             parts: Vec::new(),
+            response_schema: None,
         }
     }
 
     /// Attach additional content parts (such as `ContentPart::Attachment` images).
     pub fn with_parts(mut self, parts: Vec<ContentPart>) -> Self {
         self.parts = parts;
+        self
+    }
+
+    /// Constrain this turn's assistant output to match the supplied JSON Schema.
+    pub fn with_response_schema(mut self, schema: serde_json::Value) -> Self {
+        self.response_schema = Some(schema);
         self
     }
 

@@ -343,6 +343,8 @@ pub(super) struct LlmRequestDoc<'a> {
     reasoning: alan_llm::ReasoningControls,
     #[serde(skip_serializing_if = "Option::is_none")]
     session_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_schema: Option<&'a serde_json::Value>,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     extra_params: &'a std::collections::HashMap<String, serde_json::Value>,
 }
@@ -363,6 +365,7 @@ impl<'a> LlmRequestDoc<'a> {
             max_tokens: request.max_tokens,
             reasoning: request.reasoning,
             session_key: request.session_key.as_deref(),
+            response_schema: request.response_schema.as_ref(),
             extra_params: &request.extra_params,
         })
     }

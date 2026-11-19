@@ -75,6 +75,8 @@ pub(crate) struct AgentMachine {
     auto_memory_flush_attempted_in_cycle: bool,
     /// Responses API continuation state, used when chaining via `previous_response_id`.
     responses_continuation: Option<ResponsesContinuationState>,
+    /// Active turn's per-submission `response_schema`, when supplied.
+    active_turn_response_schema: Option<serde_json::Value>,
 }
 
 pub use crate::tape::{Message, MessageRole};
@@ -102,6 +104,7 @@ impl AgentMachine {
             pending_delegated_resumes: Vec::new(),
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
+            active_turn_response_schema: None,
         }
     }
 
@@ -240,6 +243,7 @@ impl AgentMachine {
             pending_delegated_resumes: Vec::new(),
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
+            active_turn_response_schema: None,
         })
     }
 
@@ -830,6 +834,21 @@ impl AgentMachine {
     /// Stable discriminator for this Agent Process's generated memory records.
     pub(crate) fn memory_record_id(&self) -> &str {
         &self.memory_record_id
+    }
+
+    /// Set the active turn's `response_schema` override.
+    pub(crate) fn set_active_turn_response_schema(&mut self, schema: Option<serde_json::Value>) {
+        self.active_turn_response_schema = schema;
+    }
+
+    /// Active turn's `response_schema` override, if any.
+    pub(crate) fn active_turn_response_schema(&self) -> Option<&serde_json::Value> {
+        self.active_turn_response_schema.as_ref()
+    }
+
+    /// Clear any active turn `response_schema` override.
+    pub(crate) fn clear_active_turn_response_schema(&mut self) {
+        self.active_turn_response_schema = None;
     }
 }
 

@@ -3,6 +3,7 @@ name = "alan"
 description = "Alan command-line Host client and file-native Shell"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "alan"
@@ -16,7 +17,7 @@ path = "src/main.rs"
 alan-auth.workspace = true
 alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
-alan-agent-engine.workspace = true
+alan-agent-engine = { workspace = true, features = ["tree-sitter-sandbox"] }
 alan-kernel = { path = "../kernel" }
 alan-os-host.workspace = true
 alan-service-manager.workspace = true

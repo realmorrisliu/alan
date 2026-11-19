@@ -358,6 +358,7 @@ fn spawn_with_prepared_runtime_environment(
             host_capabilities,
         );
     prompt_cache.set_fixed_definition_persona_section(resolved_agent_definition.persona_context);
+    prompt_cache.set_system_prompt_mode(runtime_config.system_prompt_mode.clone());
     prompt_cache.set_memory_store_dir(
         core_config
             .memory

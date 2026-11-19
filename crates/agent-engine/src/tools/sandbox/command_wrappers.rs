@@ -939,7 +939,10 @@ fn has_inline_exec_argv0(arg: &str) -> bool {
     arg.starts_with("-a") && arg.len() > 2
 }
 
-#[cfg(any(target_os = "linux", all(test, unix)))]
+#[cfg(all(
+    feature = "tree-sitter-sandbox",
+    any(target_os = "linux", all(test, unix))
+))]
 pub(in crate::tools) fn inspect_shell_lookup(command: &str) -> Result<(bool, Vec<Vec<String>>)> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_bash::LANGUAGE.into())?;
@@ -966,4 +969,12 @@ pub(in crate::tools) fn inspect_shell_lookup(command: &str) -> Result<(bool, Vec
         pending.extend(node.named_children(&mut node.walk()));
     }
     Ok((changed, commands))
+}
+
+#[cfg(all(
+    not(feature = "tree-sitter-sandbox"),
+    any(target_os = "linux", all(test, unix))
+))]
+pub(in crate::tools) fn inspect_shell_lookup(_command: &str) -> Result<(bool, Vec<Vec<String>>)> {
+    Ok((true, Vec::new()))
 }

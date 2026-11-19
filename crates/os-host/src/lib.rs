@@ -15,8 +15,9 @@ mod secret_store;
 
 pub use boot::HostBootConfig;
 pub use embed::{
-    EmbedEvent, EmbedEventStream, EmbeddedAlan, EmbeddedConfig, LlmSource, RootAgentClient,
-    StorageMode,
+    AgentSessionHandle, EmbedEvent, EmbedEventStream, EmbeddedAlan, EmbeddedConfig, HookDecision,
+    HostMountAccess, HostMountGrantRecord, LlmSource, RootAgentClient, SessionOptions,
+    SharedLlmProvider, StorageMode, SystemPromptMode, ToolPolicyHook,
 };
 pub use host_mounts::saved_grants::{
     SavedGitPushRule, SavedProjectGrantRecord, SavedProjectGrantStore,

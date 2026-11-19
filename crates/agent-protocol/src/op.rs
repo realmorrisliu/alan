@@ -149,6 +149,9 @@ pub struct TurnContext {
     /// Optional one-turn reasoning effort override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Optional per-turn JSON Schema constraining assistant output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<serde_json::Value>,
 }
 
 /// A submission wrapping an operation with an ID
@@ -342,6 +345,7 @@ mod tests {
             parts: vec![ContentPart::text("Hello agent")],
             context: Some(TurnContext {
                 reasoning_effort: Some(ReasoningEffort::High),
+                ..TurnContext::default()
             }),
         };
 

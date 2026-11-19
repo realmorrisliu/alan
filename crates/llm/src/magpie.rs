@@ -23,14 +23,12 @@ use crate::openai_chat_completions::{
 use crate::{GenerationRequest, GenerationResponse, LlmProvider, ProviderModel, StreamChunk};
 
 mod catalog;
-pub use catalog::parse_reasoning_effort_map;
+pub use crate::provider_meta::{MAGPIE_DEFAULT_BASE_URL, parse_reasoning_effort_map};
 use catalog::{MagpieModel, parse_models_response};
 
 #[cfg(test)]
 mod tests;
 
-/// Default Magpie router endpoint.
-pub const MAGPIE_DEFAULT_BASE_URL: &str = "http://127.0.0.1:3425/v1";
 /// Header carrying the stable session-affinity key used for upstream routing.
 pub const MAGPIE_SESSION_AFFINITY_HEADER: &str = "x-session-affinity";
 /// Conventional session header mirrored for routers that key on it instead.

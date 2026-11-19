@@ -228,6 +228,7 @@ fn test_generate_content_request_serialization() {
                 thinking_level: Some("low".to_string()),
                 thinking_budget: None,
             }),
+            ..Default::default()
         }),
     };
 

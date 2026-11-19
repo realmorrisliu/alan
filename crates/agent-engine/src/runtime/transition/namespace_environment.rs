@@ -196,6 +196,8 @@ pub struct NamespaceRuntimeEnvironment {
     tool_process_context: Option<NamespaceToolProcessContext>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
+    submission_response_schemas:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     action_recorder: Option<crate::rollout::RolloutRecorder>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
     pub(crate) model_bindings:
@@ -227,6 +229,8 @@ pub(crate) struct NamespaceAgentFiles {
     agent_path: String,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
+    submission_response_schemas:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     action_recorder: Option<crate::rollout::RolloutRecorder>,
 }
 
@@ -359,6 +363,9 @@ impl NamespaceRuntimeEnvironment {
             tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
+            submission_response_schemas: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
             action_recorder: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
         }
@@ -420,12 +427,23 @@ impl NamespaceRuntimeEnvironment {
         self
     }
 
+    pub(crate) fn take_submission_response_schema(
+        &self,
+        submission_id: &str,
+    ) -> Option<serde_json::Value> {
+        self.submission_response_schemas
+            .lock()
+            .expect("submission response schema mutex poisoned")
+            .remove(submission_id)
+    }
+
     pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
         NamespaceAgentFiles {
             root: self.root.clone(),
             agent_path: self.agent_path.clone(),
             input_offset: Arc::clone(&self.input_offset),
             control_offset: Arc::clone(&self.control_offset),
+            submission_response_schemas: Arc::clone(&self.submission_response_schemas),
             action_recorder: self.action_recorder.clone(),
         }
     }

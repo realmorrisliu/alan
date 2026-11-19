@@ -1,13 +1,13 @@
 //! Generation and Tool-loop execution owned by the accepted-submission transition.
 
-use alan_agent_protocol::{CompactionOutcome, Event};
+use alan_agent_protocol::Event;
 use anyhow::{Context, Result};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::llm::build_generation_request;
-use crate::runtime::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
+use crate::runtime::compaction::CompactionRequest;
 use crate::runtime::loop_guard::ToolLoopGuard;
 use crate::runtime::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
@@ -28,18 +28,21 @@ use super::{
 
 mod accepted_output;
 mod live_stream;
+mod mid_turn_compaction;
 mod namespace_generation;
+mod response_schema;
 mod usage_surface;
 
+#[cfg(test)]
+pub(super) use alan_agent_protocol::CompactionOutcome;
+pub use response_schema::validate_response_schema;
+
 use live_stream::{LiveTurnStream, guardrail_probe};
+use mid_turn_compaction::{
+    COMPACTION_TIMEOUT_SECS, maybe_compact_context_with_turn_timeout,
+    maybe_compact_mid_turn_if_needed, should_skip_auto_compaction_for_responses_continuation,
+};
 use namespace_generation::NamespaceTurnGeneration;
-
-const COMPACTION_TIMEOUT_SECS: u64 = 30;
-
-struct TimedCompactionResult {
-    result: Result<CompactionOutcome>,
-    timed_out: bool,
-}
 
 fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instruction: &str) {
     if let Some(system_prompt) = &mut request.system_prompt {
@@ -123,50 +126,6 @@ fn generation_error_message(error: &anyhow::Error) -> String {
         return format!("Namespace LLM request failed: {cause}");
     }
     format!("Namespace LLM request failed: {error}")
-}
-
-fn should_skip_auto_compaction_for_responses_continuation(_state: &mut RuntimeLoopState) -> bool {
-    false
-}
-
-async fn maybe_compact_context_with_turn_timeout<E, F>(
-    state: &mut RuntimeLoopState,
-    emit: &mut E,
-    request: &CompactionRequest,
-    parent_cancel: &CancellationToken,
-    timeout: std::time::Duration,
-) -> TimedCompactionResult
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    let compaction_cancel = CancellationToken::new();
-    let timeout = tokio::time::sleep(timeout);
-    tokio::pin!(timeout);
-    let runtime = compaction_runtime(state);
-    let compaction = maybe_compact_context_with_cancel(runtime, emit, request, &compaction_cancel);
-    tokio::pin!(compaction);
-
-    tokio::select! {
-        result = &mut compaction => TimedCompactionResult {
-            result,
-            timed_out: false,
-        },
-        _ = parent_cancel.cancelled() => {
-            compaction_cancel.cancel();
-            TimedCompactionResult {
-                result: compaction.await,
-                timed_out: false,
-            }
-        }
-        _ = &mut timeout => {
-            compaction_cancel.cancel();
-            TimedCompactionResult {
-                result: compaction.await,
-                timed_out: true,
-            }
-        }
-    }
 }
 
 fn build_domain_prompt_with_skills(
@@ -422,6 +381,7 @@ where
     let mut response_guardrails = ResponseGuardrails::default();
     // Mirrors the single regeneration `ResponseGuardrails::default()` allows per turn.
     let mut guardrail_regenerated = false;
+    let mut schema_retried = false;
     let mut pending_guardrail_instruction: Option<String> = None;
     loop {
         if check_turn_cancelled(
@@ -467,6 +427,11 @@ where
             })
             .collect();
 
+        let active_response_schema = state
+            .machine
+            .active_turn_response_schema()
+            .cloned()
+            .or_else(|| state.runtime_config.response_schema.clone());
         let mut request = build_generation_request(
             Some(system_prompt.clone()),
             llm_messages,
@@ -474,6 +439,7 @@ where
             Some(state.runtime_config.temperature),
             Some(state.runtime_config.max_tokens as i32),
         );
+        request.response_schema = active_response_schema.clone();
         if let Some(instruction) = directory_instruction.as_deref() {
             append_system_instruction(&mut request, instruction);
         }
@@ -661,6 +627,20 @@ where
                 }
                 continue;
             }
+        }
+
+        if response_schema::enforce_or_recover(
+            active_response_schema.as_ref(),
+            !tool_calls.is_empty(),
+            &response.content,
+            &live,
+            &mut pending_guardrail_instruction,
+            &mut schema_retried,
+            emit,
+        )
+        .await?
+        {
+            continue;
         }
 
         let streamed_live = accepted_output::publish_accepted(
@@ -876,64 +856,6 @@ where
         emit_task_completed_success(emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
-}
-
-async fn maybe_compact_mid_turn_if_needed<E, F>(
-    state: &mut RuntimeLoopState,
-    emit: &mut E,
-    cancel: &CancellationToken,
-    additional_prompt_tokens: usize,
-) -> Result<()>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    if should_skip_auto_compaction_for_responses_continuation(state) {
-        return Ok(());
-    }
-
-    let estimated_prompt_tokens = state
-        .machine
-        .estimated_prompt_tokens()
-        .saturating_add(additional_prompt_tokens);
-    let context_window_tokens = state.runtime_config.context_window_tokens as usize;
-    if !state
-        .machine
-        .can_auto_mid_turn_compact(estimated_prompt_tokens, context_window_tokens)
-    {
-        return Ok(());
-    }
-
-    let compaction_request = CompactionRequest::automatic_mid_turn()
-        .with_additional_prompt_tokens(additional_prompt_tokens);
-    let compaction = maybe_compact_context_with_turn_timeout(
-        state,
-        emit,
-        &compaction_request,
-        cancel,
-        tokio::time::Duration::from_secs(COMPACTION_TIMEOUT_SECS),
-    )
-    .await;
-    match compaction.result {
-        Ok(CompactionOutcome::Applied(outcome)) => {
-            state
-                .machine
-                .record_auto_mid_turn_compaction(outcome.output_prompt_tokens);
-        }
-        Ok(CompactionOutcome::Skipped(_)) => {}
-        Ok(CompactionOutcome::Failed(_)) => {}
-        Err(e) if compaction.timed_out => {
-            debug!(error = %e, "Mid-turn context compaction stopped after timeout cancellation");
-        }
-        Err(e) => {
-            warn!(error = %e, "Mid-turn context compaction failed");
-        }
-    }
-    if compaction.timed_out {
-        warn!("Mid-turn context compaction timeout - continuing without compaction");
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

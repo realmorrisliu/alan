@@ -31,7 +31,7 @@ use streaming::consume_openrouter_raw_stream;
 use streaming::{consume_openrouter_stream, consume_router_bytes, tool_delta_from_value};
 use usage::{convert_usage, request_usage_accounting};
 
-pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+pub use crate::provider_meta::OPENROUTER_BASE_URL;
 
 /// alan LLM provider backed by the `openrouter-rs` SDK.
 #[derive(Clone)]
@@ -200,6 +200,7 @@ pub(crate) fn build_openrouter_chat_request(
         max_tokens,
         reasoning,
         session_key: _,
+        response_schema: _,
         mut extra_params,
     } = request;
 
@@ -236,6 +237,7 @@ pub(crate) fn build_openrouter_chat_request(
 }
 
 fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest) -> Result<Value> {
+    let response_schema = request.response_schema.clone();
     let mut alan_messages = Vec::new();
     if let Some(system_prompt) = request
         .system_prompt
@@ -249,6 +251,16 @@ fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest
     let chat_request = build_openrouter_chat_request(model, request)?;
     let mut payload = serde_json::to_value(chat_request)
         .context("failed to encode OpenRouter chat completion request")?;
+    if let Some(schema) = response_schema {
+        payload["response_format"] = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "response",
+                "strict": true,
+                "schema": schema,
+            }
+        });
+    }
     preserve_openrouter_reasoning_fields(&mut payload, &alan_messages)?;
     request_usage_accounting(&mut payload, false);
     Ok(payload)

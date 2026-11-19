@@ -168,6 +168,7 @@ fn test_previous_response_id_forces_store_true_even_when_false_requested() {
         max_output_tokens: None,
         reasoning: None,
         stream: Some(false),
+        text: None,
         extra_params: HashMap::new(),
     };
     client.prepare_responses_request(&mut direct, None);

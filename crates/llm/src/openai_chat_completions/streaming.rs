@@ -13,13 +13,16 @@ use chat_bytes::consume_chat_bytes;
 #[cfg(test)]
 mod completion_tests;
 
+#[cfg(feature = "provider-openai")]
+use super::OpenAiResponsesRequest;
 use super::{
     OpenAiChatCompletionsChunk, OpenAiChatCompletionsChunkChoice, OpenAiChatCompletionsClient,
-    OpenAiChatCompletionsRequest, OpenAiResponsesRequest, build_chat_completions_request_for_model,
-    convert_usage, extract_reasoning_fields,
+    OpenAiChatCompletionsRequest, build_chat_completions_request_for_model, convert_usage,
+    extract_reasoning_fields,
 };
+#[cfg(feature = "provider-openai")]
 use crate::openai_responses::stream_events::ResponsesStreamProjector;
-#[cfg(test)]
+#[cfg(all(test, feature = "provider-openai"))]
 pub(super) use crate::openai_responses::stream_events::responses_stream_text_delta;
 
 impl OpenAiChatCompletionsClient {
@@ -62,6 +65,7 @@ impl OpenAiChatCompletionsClient {
         .await
     }
 
+    #[cfg(feature = "provider-openai")]
     #[instrument(skip(self, request, tx))]
     pub async fn stream_openai_responses(
         &self,
@@ -90,6 +94,7 @@ impl OpenAiChatCompletionsClient {
             .await
     }
 
+    #[cfg(feature = "provider-openai")]
     #[instrument(skip(self, tx))]
     pub async fn retrieve_openai_response_stream(
         &self,
@@ -125,6 +130,7 @@ impl OpenAiChatCompletionsClient {
             .await
     }
 
+    #[cfg(feature = "provider-openai")]
     async fn consume_openai_responses_stream_response(
         &self,
         response: reqwest::Response,

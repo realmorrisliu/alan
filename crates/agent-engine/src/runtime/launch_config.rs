@@ -237,7 +237,7 @@ fn merge_runtime_config_from_core_overlay(
 }
 
 /// Host inputs for starting one Agent Process runtime.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentProcessConfig {
     /// Agent execution configuration.
     pub agent_config: AgentConfig,
@@ -257,6 +257,25 @@ pub struct AgentProcessConfig {
     pub recovery_rollout_path: Option<PathBuf>,
     /// Explicit invocation-only trust posture (never loaded from configs or rollouts).
     pub trust_posture: crate::policy::TrustPosture,
+    /// Prompt composition mode (`Append` default or `Replace` custom prompt).
+    pub system_prompt_mode: crate::SystemPromptMode,
+    /// Optional default JSON Schema constraining assistant output.
+    pub response_schema: Option<serde_json::Value>,
+    /// Optional host-supplied synchronous Tool policy hook.
+    pub tool_policy_hook: Option<std::sync::Arc<dyn super::ToolPolicyHook>>,
+}
+
+impl std::fmt::Debug for AgentProcessConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentProcessConfig")
+            .field("core_config_source", &self.core_config_source)
+            .field("namespace_cwd", &self.namespace_cwd)
+            .field("trust_posture", &self.trust_posture)
+            .field("system_prompt_mode", &self.system_prompt_mode)
+            .field("has_response_schema", &self.response_schema.is_some())
+            .field("has_tool_policy_hook", &self.tool_policy_hook.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for AgentProcessConfig {
@@ -277,6 +296,9 @@ impl Default for AgentProcessConfig {
             memory_store_backing: None,
             recovery_rollout_path: None,
             trust_posture: crate::policy::TrustPosture::Governed,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -299,6 +321,9 @@ impl From<crate::config::Config> for AgentProcessConfig {
             memory_store_backing: None,
             recovery_rollout_path: None,
             trust_posture: crate::policy::TrustPosture::Governed,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -321,6 +346,9 @@ impl From<crate::LoadedConfig> for AgentProcessConfig {
             memory_store_backing: None,
             recovery_rollout_path: None,
             trust_posture: crate::policy::TrustPosture::Governed,
+            system_prompt_mode: crate::SystemPromptMode::Append,
+            response_schema: None,
+            tool_policy_hook: None,
         }
     }
 }
@@ -397,6 +425,9 @@ impl AgentProcessConfig {
         runtime_config.store_bindings = self.store_bindings.clone();
         runtime_config.memory_store_backing = self.memory_store_backing.clone();
         runtime_config.trust_posture = self.trust_posture;
+        runtime_config.system_prompt_mode = self.system_prompt_mode.clone();
+        runtime_config.response_schema = self.response_schema.clone();
+        runtime_config.tool_policy_hook = self.tool_policy_hook.clone();
 
         Ok(ResolvedRuntimeLaunchConfig {
             agent_definition,

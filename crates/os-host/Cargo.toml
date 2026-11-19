@@ -10,6 +10,22 @@ license.workspace = true
 name = "alan-os-host"
 path = "src/bin/alan-os-host.rs"
 
+[features]
+default = ["all-providers", "tree-sitter-sandbox"]
+all-providers = [
+    "provider-magpie",
+    "provider-openai",
+    "provider-vertex",
+    "provider-openrouter",
+    "provider-anthropic-adapter",
+]
+provider-magpie = ["alan-llm/provider-magpie"]
+provider-openai = ["alan-llm/provider-openai"]
+provider-vertex = ["alan-llm/provider-vertex"]
+provider-openrouter = ["alan-llm/provider-openrouter"]
+provider-anthropic-adapter = ["alan-llm/provider-anthropic-adapter"]
+tree-sitter-sandbox = ["alan-agent-engine/tree-sitter-sandbox"]
+
 [dependencies]
 alan-ap = { path = "../ap" }
 alan-agent-engine.workspace = true
@@ -37,5 +53,6 @@ toml = "1.1"
 uuid.workspace = true
 
 [dev-dependencies]
-alan-llm = { workspace = true, features = ["mock"] }
+alan-llm = { workspace = true, features = ["mock", "all-providers"] }
+alan-agent-engine = { workspace = true, features = ["tree-sitter-sandbox"] }
 tokio-util.workspace = true

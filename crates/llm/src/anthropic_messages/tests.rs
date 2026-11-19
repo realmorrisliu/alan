@@ -52,6 +52,7 @@ fn test_message_request_serialization() {
         tools: None,
         stream: None,
         thinking: None,
+        output_config: None,
     };
 
     let json = serde_json::to_string(&request).unwrap();

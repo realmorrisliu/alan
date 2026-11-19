@@ -239,6 +239,7 @@ impl AnthropicMessagesClient {
             tools: None,
             stream: None,
             thinking: None,
+            output_config: None,
         };
         apply_prompt_cache(&mut request);
 
@@ -268,6 +269,7 @@ impl AnthropicMessagesClient {
             max_tokens,
             reasoning,
             session_key: _,
+            response_schema,
             mut extra_params,
         } = request;
 
@@ -294,6 +296,14 @@ impl AnthropicMessagesClient {
             tools,
             stream: Some(stream),
             thinking,
+            output_config: response_schema.map(|schema| {
+                serde_json::json!({
+                    "format": {
+                        "type": "json_schema",
+                        "schema": schema,
+                    }
+                })
+            }),
         };
         apply_prompt_cache(&mut anthropic_request);
 

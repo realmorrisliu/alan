@@ -60,15 +60,48 @@ pub(crate) fn build_agent_system_prompt_with_sections(
     )
 }
 
+/// How an embedded or customized Agent Process handles Alan's built-in system prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SystemPromptMode {
+    /// Prepend Alan's built-in runtime/system boilerplate before caller/domain sections.
+    #[default]
+    Append,
+    /// Replace Alan's built-in runtime/system boilerplate with the supplied prompt.
+    Replace { prompt: String },
+}
+
 pub(crate) fn build_agent_system_prompt_with_all_sections(
     domain_prompt: &str,
     definition_context: Option<&str>,
     memory_context: Option<&str>,
     project_knowledge_context: Option<&str>,
 ) -> String {
+    build_agent_system_prompt_with_mode(
+        &SystemPromptMode::Append,
+        domain_prompt,
+        definition_context,
+        memory_context,
+        project_knowledge_context,
+    )
+}
+
+pub(crate) fn build_agent_system_prompt_with_mode(
+    mode: &SystemPromptMode,
+    domain_prompt: &str,
+    definition_context: Option<&str>,
+    memory_context: Option<&str>,
+    project_knowledge_context: Option<&str>,
+) -> String {
     let mut prompt = String::new();
-    append_prompt_section(&mut prompt, super::RUNTIME_BASE_PROMPT);
-    append_prompt_section(&mut prompt, super::SYSTEM_PROMPT);
+    match mode {
+        SystemPromptMode::Append => {
+            append_prompt_section(&mut prompt, super::RUNTIME_BASE_PROMPT);
+            append_prompt_section(&mut prompt, super::SYSTEM_PROMPT);
+        }
+        SystemPromptMode::Replace { prompt: custom } => {
+            append_prompt_section(&mut prompt, custom);
+        }
+    }
     append_prompt_section(&mut prompt, domain_prompt);
     if let Some(definition_context) = definition_context {
         append_prompt_section(&mut prompt, definition_context);

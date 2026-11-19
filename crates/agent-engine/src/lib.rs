@@ -43,6 +43,7 @@ pub use alan_agent_protocol::{
     SpawnHandle, SpawnHostMount, SpawnMountAccess, SpawnTarget, Submission, UiActivitySnapshot,
     UiActivityState, UiNoticeKind, UiNoticeSnapshot, UserInputRecord, YieldKind,
 };
+pub use alan_llm::SharedLlmProvider;
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
@@ -50,7 +51,7 @@ pub use evidence::redact_secret_tokens;
 pub use file_tree::ProcessFileTree;
 pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
-    ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
+    ProviderCapabilities, ReusableLlmClient, TokenUsage, ToolCall, ToolDefinition,
 };
 pub use models::{ModelCatalog, ModelCatalogProvider, ModelInfo};
 pub use policy::{
@@ -61,7 +62,7 @@ pub use process_launch::{
     AgentRuntimeStoreBindings, MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessPackageKind,
     ProcessPackageReference, ProcessPackageSkillReference,
 };
-pub use prompts::PromptLoader;
+pub use prompts::{PromptLoader, SystemPromptMode};
 pub use request_controls::{
     RequestControlDiagnostic, RequestControlIntent, RequestControlResolutionInput,
     RequestControlSource, ResolvedRequestControls, provider_capabilities_for_config,
@@ -72,9 +73,10 @@ pub use rollout::{
     RolloutItem, RolloutRecorder, ToolCallRecord, process_storage_key,
 };
 pub use runtime::{
-    AgentConfig, AgentProcessConfig, ProjectContinuitySummary, ProjectContinuitySummaryView,
-    ProjectSummaryDeleteOutcome, ProjectSummaryEdit, ProjectSummaryOrigin, RuntimeController,
-    RuntimeHandle, delete_project_summary, derive_project_key, edit_project_summary,
-    inspect_project_summary, spawn_with_namespace_environment,
+    AgentConfig, AgentProcessConfig, HookDecision, ProjectContinuitySummary,
+    ProjectContinuitySummaryView, ProjectSummaryDeleteOutcome, ProjectSummaryEdit,
+    ProjectSummaryOrigin, RuntimeController, RuntimeHandle, ToolPolicyHook, delete_project_summary,
+    derive_project_key, edit_project_summary, inspect_project_summary,
+    spawn_with_namespace_environment, validate_response_schema,
 };
 pub use tools::ToolRegistry;

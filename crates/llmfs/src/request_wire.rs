@@ -28,6 +28,8 @@ pub(super) struct WireRequestDocV2 {
     #[serde(default)]
     session_key: Option<String>,
     #[serde(default)]
+    response_schema: Option<serde_json::Value>,
+    #[serde(default)]
     extra_params: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -119,6 +121,7 @@ impl WireRequestDocV2 {
                 effort: self.reasoning.effort,
             },
             session_key: self.session_key.filter(|key| !key.trim().is_empty()),
+            response_schema: self.response_schema,
             extra_params: self.extra_params.into_iter().collect(),
         };
         validate_rich_content(&request, capabilities)?;
