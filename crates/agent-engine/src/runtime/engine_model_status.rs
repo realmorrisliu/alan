@@ -115,6 +115,7 @@ impl RuntimeSubmissionQueues {
                             .as_ref()
                             .and_then(|info| info.default_reasoning_effort),
                     }],
+                    ..Default::default()
                 }
             }),
         };

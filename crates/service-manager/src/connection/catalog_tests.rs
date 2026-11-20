@@ -140,6 +140,8 @@ async fn managed_connection(
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
     };
     (service, authority)
 }
@@ -276,6 +278,8 @@ async fn implicit_account_replacement_cannot_select_or_restore_with_old_catalog_
         namespace: authority.namespace.clone(),
         evaluator: None,
         guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
     };
     let rebound = next.capture_initial().await.unwrap().unwrap();
     assert_eq!(
@@ -356,6 +360,8 @@ async fn slow_discovery_does_not_block_published_observation_or_publish_into_rep
         namespace: authority.namespace.clone(),
         evaluator: None,
         guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
     };
     let catalog = replaced.catalog().await.unwrap();
     assert_eq!(catalog["models"][0]["model"], "replacement-model");
@@ -414,6 +420,8 @@ async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publis
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
             evaluator: None,
             guardian_profile: None,
+            allow_profile_switch: false,
+            selected_profile: std::sync::Mutex::new(None),
         };
         let cat = authority.catalog().await.unwrap();
         let slugs: Vec<&str> = cat["models"]
@@ -486,6 +494,8 @@ async fn magpie_and_openrouter_live_catalogs_and_static_provider_catalogs_publis
             namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
             evaluator: None,
             guardian_profile: None,
+            allow_profile_switch: false,
+            selected_profile: std::sync::Mutex::new(None),
         };
         let cat = authority.catalog().await.unwrap();
         let slugs: Vec<&str> = cat["models"]
@@ -526,6 +536,8 @@ async fn reload_connections_redirects_unconfigured_default_after_live_login() {
         namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
         evaluator: None,
         guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
     };
     assert!(authority.capture_initial().await.unwrap().is_none());
 
@@ -559,4 +571,203 @@ async fn reload_connections_redirects_unconfigured_default_after_live_login() {
     assert_eq!(captured.config.effective_model(), "moonshotai/kimi-k2.6");
     let cat = authority.catalog().await.unwrap();
     assert_eq!(cat["models"][0]["model"], "moonshotai/kimi-k2.6");
+}
+
+#[derive(Debug)]
+struct MultiProviderCatalogFactory;
+
+impl LlmClientFactory for MultiProviderCatalogFactory {
+    fn create(
+        &self,
+        _base: &Config,
+        selected: Option<&str>,
+        connections: &ConnectionsFile,
+    ) -> Result<LlmClient> {
+        let Some(profile_id) = selected else {
+            return Ok(LlmClient::new(MockLlmProvider::new()));
+        };
+        let provider = connections.profiles[profile_id].provider;
+        let (models, account, name) = match provider {
+            ProviderId::Chatgpt => (
+                Some(vec![model("gpt-5.3-codex"), model("gpt-5.4")]),
+                Some("acct-1".to_string()),
+                "chatgpt",
+            ),
+            ProviderId::Magpie => (
+                Some(vec![ProviderModel {
+                    slug: "auto/deepseek-v4.1-flash".to_string(),
+                    context_window_tokens: 1_048_576,
+                    supported_reasoning_efforts: vec![
+                        ReasoningEffort::Low,
+                        ReasoningEffort::High,
+                        ReasoningEffort::Max,
+                    ],
+                    default_reasoning_effort: Some(ReasoningEffort::High),
+                }]),
+                None,
+                "magpie",
+            ),
+            _ => (None, None, "mock"),
+        };
+        Ok(LlmClient::new(NamedCatalogClient {
+            name,
+            account,
+            models,
+            mock: MockLlmProvider::new(),
+        }))
+    }
+}
+
+struct NamedCatalogClient {
+    name: &'static str,
+    account: Option<String>,
+    models: Option<Vec<ProviderModel>>,
+    mock: MockLlmProvider,
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for NamedCatalogClient {
+    fn account_identity(&self) -> Option<&str> {
+        self.account.as_deref()
+    }
+    async fn model_catalog(&self) -> Result<Option<Vec<ProviderModel>>> {
+        Ok(self.models.clone())
+    }
+    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
+        self.mock.generate(request).await
+    }
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+        self.mock.chat(system, user).await
+    }
+    async fn generate_stream(
+        &mut self,
+        request: GenerationRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        self.mock.generate_stream(request).await
+    }
+    fn provider_name(&self) -> &'static str {
+        self.name
+    }
+}
+
+#[tokio::test]
+async fn root_profile_switch_redirects_after_live_login_publishes_all_profiles_and_restores_across_profiles()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let conn_path = dir.path().join("connections.toml");
+    let mut initial = ConnectionsFile::default();
+    let kind = ConnectionsFile::profile_descriptor(ProviderId::Chatgpt).credential_kind;
+    initial.credentials.insert(
+        "chatgpt-main".into(),
+        crate::connection_profile::ConnectionCredential {
+            kind,
+            provider_family: ProviderId::Chatgpt,
+            label: "ChatGPT".into(),
+            backend: crate::connection_profile::default_credential_backend(kind).into(),
+        },
+    );
+    let mut chatgpt = profile();
+    chatgpt.provider = ProviderId::Chatgpt;
+    chatgpt.credential_id = Some("chatgpt-main".into());
+    chatgpt.settings = crate::connection_profile::normalize_profile_settings(
+        ProviderId::Chatgpt,
+        &BTreeMap::from([("model".into(), "gpt-5.3-codex".into())]),
+    );
+    initial.profiles.insert("chatgpt-main".into(), chatgpt);
+    initial.default_profile = Some("chatgpt-main".into());
+    initial.save_to_path(&conn_path).unwrap();
+
+    let service = ConnectionService::open(&ConnectionStoreBindings {
+        metadata_path: conn_path.clone(),
+    })
+    .unwrap();
+    service
+        .attach_callable_registry(
+            Arc::new(alan_llmfs::LlmFs::new()),
+            Arc::new(MultiProviderCatalogFactory),
+            Config::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let root = ProcessConnection {
+        service: service.clone(),
+        profile: "chatgpt-main".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+        allow_profile_switch: true,
+        selected_profile: std::sync::Mutex::new(None),
+    };
+    let child = ProcessConnection {
+        service: service.clone(),
+        profile: "chatgpt-main".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+        allow_profile_switch: false,
+        selected_profile: std::sync::Mutex::new(None),
+    };
+
+    let initial_captured = root.capture_initial().await.unwrap().unwrap();
+    assert_eq!(initial_captured.identity.profile, "chatgpt-main");
+
+    let mut magpie = profile();
+    magpie.provider = ProviderId::Magpie;
+    magpie.credential_id = None;
+    magpie.settings = crate::connection_profile::normalize_profile_settings(
+        ProviderId::Magpie,
+        &BTreeMap::from([
+            ("base_url".into(), "http://127.0.0.1:3425/v1".into()),
+            ("model".into(), "auto/deepseek-v4.1-flash".into()),
+        ]),
+    );
+    initial.profiles.insert("magpie-main".into(), magpie);
+    initial.default_profile = Some("magpie-main".into());
+    initial.save_to_path(&conn_path).unwrap();
+    service.reload_connections().await.unwrap();
+
+    assert!(
+        child
+            .capture(Some("magpie-main::auto/deepseek-v4.1-flash"))
+            .await
+            .is_err()
+    );
+
+    let magpie_captured = root
+        .capture(Some("magpie-main::auto/deepseek-v4.1-flash"))
+        .await
+        .unwrap();
+    assert_eq!(magpie_captured.identity.profile, "magpie-main");
+    assert_eq!(magpie_captured.identity.model, "auto/deepseek-v4.1-flash");
+    assert_eq!(
+        magpie_captured.config.effective_context_window_tokens(),
+        1_048_576
+    );
+
+    let cat = root.catalog().await.unwrap();
+    assert_eq!(cat["profile"], "magpie-main");
+    let profile_ids: Vec<&str> = cat["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["profile"].as_str())
+        .collect();
+    assert_eq!(profile_ids, vec!["magpie-main", "chatgpt-main"]);
+
+    let back_to_gpt = root.capture(Some("chatgpt-main::gpt-5.4")).await.unwrap();
+    assert_eq!(back_to_gpt.identity.profile, "chatgpt-main");
+    assert_eq!(back_to_gpt.identity.model, "gpt-5.4");
+    assert_eq!(
+        root.restore(&magpie_captured.identity)
+            .await
+            .unwrap()
+            .identity,
+        magpie_captured.identity
+    );
+
+    ConnectionsFile::default().save_to_path(&conn_path).unwrap();
+    service.reload_connections().await.unwrap();
+    assert!(root.capture_initial().await.unwrap().is_none());
 }

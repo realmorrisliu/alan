@@ -62,6 +62,7 @@ fn ready_app() -> FileBackedApp {
                         default_reasoning_effort: Some(ReasoningEffort::Medium),
                     },
                 ],
+                ..Default::default()
             }),
             ..Default::default()
         }),

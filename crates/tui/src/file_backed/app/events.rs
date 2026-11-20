@@ -50,6 +50,10 @@ pub(in crate::file_backed) enum FileBackedAction {
             Option<tokio::sync::mpsc::UnboundedReceiver<super::super::login::LoginProgress>>,
     },
     CancelLogin,
+    SettingsControl {
+        generation: u64,
+        control: super::super::settings::SettingsControl,
+    },
     Suspend,
     Interrupt,
     Quit,
@@ -94,6 +98,10 @@ pub(in crate::file_backed) enum FileBackedEvent {
     LoginStepCompleted {
         generation: u64,
         result: Result<super::super::login::LoginResult, String>,
+    },
+    SettingsCompleted {
+        generation: u64,
+        result: Result<super::super::settings::SettingsResult, String>,
     },
     ActionDetails {
         path: String,

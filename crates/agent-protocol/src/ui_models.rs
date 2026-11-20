@@ -4,9 +4,19 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct UiProfileModelCatalog {
+    pub profile: String,
+    pub provider: String,
+    pub models: Vec<UiModelChoice>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct UiModelCatalog {
     pub profile: String,
     pub models: Vec<UiModelChoice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<UiProfileModelCatalog>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

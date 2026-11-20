@@ -419,3 +419,88 @@ async fn live_typesafe_profile_through_root_machine() {
     assert_eq!(default_profile.as_deref(), Some("main"));
     eprintln!("Root Machine TypeSafe probe: {observation}");
 }
+
+#[tokio::test]
+async fn live_secret_provider_forwards_model_catalog_for_magpie() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = SecretStore::from_directory(temp.path()).unwrap();
+    store.save("magpie-key", "magpie-secret").unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(socket);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).await.unwrap();
+        assert!(request_line.starts_with("GET /v1/models "));
+        let mut headers = String::new();
+        loop {
+            let mut line = String::new();
+            assert_ne!(reader.read_line(&mut line).await.unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+            headers.push_str(&line);
+        }
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("authorization: bearer magpie-secret\r\n")
+        );
+        let body = r#"{"data":[{"id":"auto/deepseek-v4.1-flash","context_window":1048576,"reasoning_levels":["low","high","max"]}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        reader
+            .get_mut()
+            .write_all(response.as_bytes())
+            .await
+            .unwrap();
+    });
+
+    let connections: ConnectionsFile = serde_json::from_value(serde_json::json!({
+        "version": 1,
+        "profiles": {
+            "magpie-main": {
+                "provider": "magpie",
+                "credential_id": "magpie-key",
+                "settings": {
+                    "base_url": format!("http://{address}/v1"),
+                    "model": "default"
+                }
+            }
+        },
+        "credentials": {
+            "magpie-key": {
+                "kind": "secret_string",
+                "provider_family": "magpie",
+                "label": "Magpie test key",
+                "backend": "host_credential_store"
+            }
+        }
+    }))
+    .unwrap();
+    let factory = ProductLlmClientFactory {
+        credentials_dir: temp.path().to_path_buf(),
+        managed_auth: None,
+        _installation_access: None,
+    };
+    let captured = factory
+        .create(&Config::default(), Some("magpie-main"), &connections)
+        .unwrap();
+
+    let catalog = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let catalog = captured.model_catalog().await.unwrap();
+        server.await.unwrap();
+        catalog
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].slug, "auto/deepseek-v4.1-flash");
+    assert_eq!(catalog[0].context_window_tokens, 1_048_576);
+}

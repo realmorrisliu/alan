@@ -163,6 +163,7 @@ pub(super) async fn run_bare_in_foreground_instance(
                     } else {
                         None
                     };
+                    let is_unconfigured = root_model.is_none();
                     let mut config = interactive_config_with_posture(
                         attachment.root,
                         root_model,
@@ -175,6 +176,40 @@ pub(super) async fn run_bare_in_foreground_instance(
                     config.update_notice =
                         cli::update::prepare_passive_tui_update_notice(&store, ephemeral);
                     config.login_control = Some(login::build_login_control_handler(paths.clone()));
+                    config.auto_setup_on_unconfigured =
+                        is_unconfigured && std::env::var_os("ALAN_NO_SETUP").is_none();
+                    let settings_paths = paths.clone();
+                    config.settings_control = Some(Arc::new(move |command| {
+                        let paths = settings_paths.clone();
+                        Box::pin(async move {
+                            match command {
+                                alan_tui::SettingsControl::Reset { scope } => {
+                                    let host_scope = match scope {
+                                        alan_tui::SettingsResetScope::Settings => {
+                                            alan_os_host::ResetScope::Settings
+                                        }
+                                        alan_tui::SettingsResetScope::All => {
+                                            alan_os_host::ResetScope::All
+                                        }
+                                    };
+                                    let system = alan_os_host::SystemStorePaths::detect()?;
+                                    let host = alan_os_host::HostStorePaths::detect()?;
+                                    let report = alan_os_host::reset_alan_stores(
+                                        &system,
+                                        &host,
+                                        host_scope,
+                                    )?;
+                                    alan_os_host::HostCommandPlane::new(paths)
+                                        .reload_connections()
+                                        .await?;
+                                    Ok(alan_tui::SettingsResult::ResetCompleted {
+                                        scope,
+                                        removed_count: report.removed_paths.len(),
+                                    })
+                                }
+                            }
+                        })
+                    }));
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {
                         let paths = project_paths.clone();

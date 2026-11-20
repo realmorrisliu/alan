@@ -48,6 +48,7 @@ fn ready_model_app() -> FileBackedApp {
                     default_reasoning_effort: None,
                 },
             ],
+            ..Default::default()
         }),
         ..Default::default()
     };

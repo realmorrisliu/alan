@@ -66,7 +66,12 @@ impl ModelProjection {
         );
         text.push_str(match &s.catalog {
             None => " · catalog: unknown or unavailable",
-            Some(catalog) if catalog.models.is_empty() => " · catalog: empty",
+            Some(catalog)
+                if catalog.models.is_empty()
+                    && catalog.profiles.iter().all(|p| p.models.is_empty()) =>
+            {
+                " · catalog: empty"
+            }
             Some(_) => " · catalog: available",
         });
         if s.admitted.is_empty() {

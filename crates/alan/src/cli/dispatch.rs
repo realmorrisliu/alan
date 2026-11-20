@@ -6,8 +6,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::{
-    about, connection, host, login, man, memory, q, skill_authoring, skills, skills_list, trust,
-    update, workflow,
+    about, connection, host, login, man, memory, q, reset, skill_authoring, skills, skills_list,
+    trust, update, workflow,
 };
 
 /// Top-level `alan` command-line interface.
@@ -100,6 +100,8 @@ pub enum Commands {
     Workflow(workflow::WorkflowArgs),
     /// Check for or install standalone `alan` CLI updates
     Update(update::UpdateArgs),
+    /// Reset Alan connections, settings, or factory state
+    Reset(reset::ResetArgs),
 }
 
 /// Execution mode selected for bare `alan` (without subcommands).
@@ -529,6 +531,7 @@ pub fn uses_product_stores(command: Option<&Commands>) -> bool {
         command,
         None | Some(Commands::Connection { .. })
             | Some(Commands::Login { .. })
+            | Some(Commands::Reset(_))
             | Some(Commands::Q(_))
             | Some(Commands::Memory(_))
             | Some(Commands::Workflow(_))
@@ -569,6 +572,7 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
         Commands::Memory(args) => memory::run(args).await?,
         Commands::Workflow(args) => workflow::run(args).await?,
         Commands::Update(args) => update::run(args).await?,
+        Commands::Reset(args) => reset::run(args)?,
     }
     Ok(None)
 }

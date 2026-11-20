@@ -46,6 +46,8 @@ pub(super) struct FileBackedApp {
     pub(super) fork_picker: super::fork_picker::ForkPicker,
     pub(super) login: super::login::LoginFlowState,
     pub(super) login_available: bool,
+    pub(super) settings: super::settings_flow::SettingsFlowState,
+    pub(super) settings_available: bool,
     pub(super) pending_login_submission: Option<super::login::LoginSubmission>,
     pub(super) connection_configured: Option<bool>,
     pub(super) turn_prompts: Vec<(String, bool)>,
@@ -125,6 +127,8 @@ impl FileBackedApp {
             fork_picker: super::fork_picker::ForkPicker::default(),
             login: super::login::LoginFlowState::default(),
             login_available: false,
+            settings: super::settings_flow::SettingsFlowState::default(),
+            settings_available: false,
             pending_login_submission: None,
             connection_configured: None,
             turn_prompts: Vec::new(),
@@ -268,6 +272,10 @@ impl FileBackedApp {
                 self.apply_login_step_result(generation, result);
                 None
             }
+            FileBackedEvent::SettingsCompleted { generation, result } => {
+                let (_, next_action) = self.apply_settings_result(generation, result);
+                next_action
+            }
             FileBackedEvent::ActionDetails {
                 path,
                 generation,
@@ -306,6 +314,7 @@ impl FileBackedApp {
                     || self.resume_picker.active
                     || self.fork_picker.active
                     || self.login.is_active()
+                    || self.settings.is_active()
                 {
                     return None;
                 }
@@ -345,7 +354,14 @@ impl FileBackedApp {
                 result,
             } => {
                 match result {
-                    Ok(()) => self.notice = Some(success_notice.into()),
+                    Ok(()) => {
+                        if !success_notice.is_empty()
+                            && !self.login.is_active()
+                            && !self.settings.is_active()
+                        {
+                            self.notice = Some(success_notice.into());
+                        }
+                    }
                     Err(error) => self.push_error(format!("{error_prefix}: {error}")),
                 }
                 None
@@ -424,6 +440,9 @@ impl FileBackedApp {
         }
         if self.login.is_active() {
             return self.login_key(key);
+        }
+        if self.settings.is_active() {
+            return self.settings_key(key);
         }
         if self.modal_key(key, has_pending_submission) {
             return None;

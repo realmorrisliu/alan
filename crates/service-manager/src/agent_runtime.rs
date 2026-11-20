@@ -62,6 +62,7 @@ pub(crate) struct RootAgentTemplate {
     host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
     llm_connection: String,
+    pub(crate) allow_profile_switch: bool,
     input_shadow: Option<crate::InputShadowSelection>,
     task_budget_binding: alan_agent_engine::TaskBudgetBinding,
 }
@@ -87,11 +88,18 @@ impl RootAgentTemplate {
             host_capabilities,
             generation_capabilities,
             llm_connection,
+            allow_profile_switch: false,
         }
     }
 }
 
 impl RootAgentTemplate {
+    /// Allow this Root Agent Process to switch between ready Connection profiles.
+    pub(crate) fn with_allow_profile_switch(mut self, allow: bool) -> Self {
+        self.allow_profile_switch = allow;
+        self
+    }
+
     /// Keep this invocation's rollout out of the `metadata/root-rollout` selector.
     pub(crate) fn with_ephemeral_rollout(mut self, ephemeral_rollout: bool) -> Self {
         self.ephemeral_rollout = ephemeral_rollout;
@@ -521,6 +529,9 @@ impl AgentRuntimeService {
                     &launch.template.process,
                 )?
                 .guardian_profile,
+                allow_profile_switch: launch.is_primary_root
+                    && launch.template.allow_profile_switch,
+                selected_profile: std::sync::Mutex::new(None),
             },
         ))
         .with_namespace_cwd(&launch.template.launch_context.cwd)
@@ -902,6 +913,7 @@ fn child_template(
         ),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
         llm_connection,
+        allow_profile_switch: false,
     })
 }
 

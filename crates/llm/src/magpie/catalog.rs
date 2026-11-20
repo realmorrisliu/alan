@@ -24,21 +24,25 @@ pub(super) struct MagpieModel {
     pub slug: String,
     pub context_window_tokens: u32,
     pub reasoning_effort_map: Option<ReasoningEffortMap>,
+    pub supported_reasoning_efforts: Vec<ReasoningEffort>,
     pub default_reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl MagpieModel {
     pub(super) fn into_provider_model(self) -> ProviderModel {
-        let supported_reasoning_efforts = self
+        let mut supported_reasoning_efforts = self
             .reasoning_effort_map
             .as_ref()
             .map(|map| {
                 ReasoningEffort::VALUES
                     .into_iter()
                     .filter(|effort| map.get(effort.as_str()).is_some_and(Option::is_some))
-                    .collect()
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        if supported_reasoning_efforts.is_empty() {
+            supported_reasoning_efforts = self.supported_reasoning_efforts;
+        }
         ProviderModel {
             slug: self.slug,
             context_window_tokens: self.context_window_tokens,
@@ -74,16 +78,48 @@ fn parse_model(entry: &Value) -> Option<MagpieModel> {
         .get("thinkingLevelMap")
         .or_else(|| entry.get("thinking_level_map"))
         .and_then(parse_reasoning_effort_map);
+    let supported_reasoning_efforts = parse_reasoning_effort_list(entry);
     let default_reasoning_effort = entry
         .get("defaultThinkingLevel")
         .or_else(|| entry.get("default_reasoning_effort"))
+        .or_else(|| entry.get("default_reasoning_level"))
         .and_then(|value| serde_json::from_value(value.clone()).ok());
     Some(MagpieModel {
         slug,
         context_window_tokens,
         reasoning_effort_map,
+        supported_reasoning_efforts,
         default_reasoning_effort,
     })
+}
+
+fn parse_reasoning_effort_list(entry: &Value) -> Vec<ReasoningEffort> {
+    let mut efforts = Vec::new();
+    for key in ["reasoning_levels", "supported_reasoning_levels"] {
+        let Some(items) = entry.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            let raw = match item {
+                Value::String(s) => Some(s.as_str()),
+                Value::Object(map) => map
+                    .get("effort")
+                    .or_else(|| map.get("level"))
+                    .and_then(Value::as_str),
+                _ => None,
+            };
+            let Some(raw) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+                continue;
+            };
+            if let Ok(effort) =
+                serde_json::from_value::<ReasoningEffort>(Value::String(raw.to_ascii_lowercase()))
+                && !efforts.contains(&effort)
+            {
+                efforts.push(effort);
+            }
+        }
+    }
+    efforts
 }
 
 fn context_window(value: &Value) -> Option<u32> {

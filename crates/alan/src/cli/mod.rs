@@ -1,12 +1,14 @@
 pub mod about;
 pub mod attachments;
 pub mod connection;
+pub(crate) mod connection_setup;
 pub mod dispatch;
 pub mod host;
 pub mod login;
 pub mod man;
 pub mod memory;
 pub mod q;
+pub mod reset;
 pub mod skill_authoring;
 pub mod skill_eval;
 pub mod skills;

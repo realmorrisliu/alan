@@ -33,10 +33,12 @@ const ENV_CLOUDSDK_CONFIG: &str = "CLOUDSDK_CONFIG";
 const GCLOUD_ADC_FILE: &str = "application_default_credentials.json";
 const GOOGLE_OAUTH_USER_CONFIG_FILE: &str = "google_oauth.json";
 
+mod gcloud;
 mod projects;
 #[cfg(test)]
 mod tests;
 
+pub use gcloud::{gcloud_default_project, gcloud_is_available, run_gcloud_adc_login_streaming};
 pub use projects::{GcpProject, list_active_gcp_projects, list_active_gcp_projects_at};
 
 /// Errors raised by Google OAuth, ADC, `gcloud`, and project discovery.

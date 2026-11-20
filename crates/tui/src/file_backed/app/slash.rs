@@ -9,6 +9,7 @@ impl FileBackedApp {
         let name = command.split_whitespace().next().unwrap_or("");
         match name {
             "login" => self.login_command(command.strip_prefix("login").unwrap_or("")),
+            "settings" => self.settings_command(command.strip_prefix("settings").unwrap_or("")),
             "status" => self.model_status_command(),
             "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
             "resume" => self.resume_command(command.strip_prefix("resume").unwrap_or("")),

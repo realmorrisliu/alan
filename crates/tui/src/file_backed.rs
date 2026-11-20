@@ -57,6 +57,12 @@ mod queue_removed_hint_tests;
 #[cfg(test)]
 mod queue_root_lifetime_tests;
 mod resume_picker;
+mod settings;
+mod settings_flow;
+pub use settings::{
+    SettingsControl, SettingsControlFuture, SettingsControlHandler, SettingsResetScope,
+    SettingsResult,
+};
 #[cfg(test)]
 mod skill_descriptor_tests;
 #[cfg(test)]
@@ -175,6 +181,10 @@ pub struct FileBackedRunConfig {
     pub initial_attachments: Vec<alan_agent_protocol::ContentPart>,
     /// Host-local interactive login/connection handler for `/login`.
     pub login_control: Option<LoginControlHandler>,
+    /// Host-local `/settings` reset handler supplied by the CLI to the TUI.
+    pub settings_control: Option<SettingsControlHandler>,
+    /// Automatically enter First-Run Setup Wizard on launch when unconfigured.
+    pub auto_setup_on_unconfigured: bool,
     /// Pre-mounted project receipt + canonical Host root hydrated on frame 1.
     pub initial_project_mount: Option<(ProjectMountReceipt, PathBuf)>,
     /// Explicit Host report of whether any callable model connection is configured at boot.
@@ -200,6 +210,8 @@ impl FileBackedRunConfig {
             trust_posture_label: None,
             initial_attachments: Vec::new(),
             login_control: None,
+            settings_control: None,
+            auto_setup_on_unconfigured: false,
             initial_project_mount: None,
             connection_configured: None,
             update_notice: None,
@@ -223,6 +235,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
     app.trust_posture_label = config.trust_posture_label.clone();
     app.login_available = config.login_control.is_some();
+    app.settings_available = config.settings_control.is_some();
     app.connection_configured = config.connection_configured;
     app.update_notice = config.update_notice.clone();
     if !config.initial_attachments.is_empty() {
@@ -286,6 +299,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut grant_read_pending = false;
     let mut active_login_task: Option<(u64, tokio::task::AbortHandle)> = None;
+    let mut active_settings_task: Option<(u64, tokio::task::AbortHandle)> = None;
+    settings::maybe_start_first_run_setup(&config, &mut app, &tx, &mut active_login_task);
     let mut draw_result = Ok(());
     loop {
         tokio::select! {
@@ -403,7 +418,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         {
                             active_login_task = None;
                         }
-                        if let Some((_, connected_model)) =
+                        if let Some((connected_profile, connected_model)) =
                             app.apply_login_step_result(generation, result)
                         {
                             let owner = watchers
@@ -413,10 +428,29 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             login::spawn_post_login_model_sync(
                                 config.root_transport.clone(),
                                 owner,
+                                connected_profile,
                                 connected_model,
                                 model_reads.clone(),
                             );
                         }
+                    }
+                    FileBackedEvent::SettingsCompleted { generation, result } => {
+                        let owner = watchers
+                            .root_agent_pid
+                            .and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid))
+                            .unwrap_or_else(|| app.model.owner.clone());
+                        settings::handle_settings_completed(
+                            &config,
+                            &mut app,
+                            &tx,
+                            owner,
+                            generation,
+                            result,
+                            &mut active_settings_task,
+                            &mut active_login_task,
+                            &mut pending_root_agent_turns,
+                            &model_reads,
+                        );
                     }
                     FileBackedEvent::GitStatusUpdated { root, status } => {
                         if app.project_host_root.as_ref() == Some(&root) {
@@ -708,6 +742,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         prev.abort();
                                     }
                                 }
+                                FileBackedAction::SettingsControl { generation, control } => {
+                                    settings::dispatch_settings_action(
+                                        &config,
+                                        &mut app,
+                                        &tx,
+                                        generation,
+                                        control,
+                                        &mut active_settings_task,
+                                    );
+                                }
                                 FileBackedAction::Suspend => {
                                     reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
                                     let _ = terminal_reader.await;
@@ -829,6 +873,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
 
     if let Some((_, prev)) = active_login_task.take() {
+        prev.abort();
+    }
+    if let Some((_, prev)) = active_settings_task.take() {
         prev.abort();
     }
     jobs.abort_all();

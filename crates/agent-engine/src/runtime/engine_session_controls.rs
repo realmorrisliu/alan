@@ -92,6 +92,27 @@ impl RuntimeSubmissionQueues {
             warn!(error = %format!("{err:#}"), "Failed to cancel pending requests before session reset");
         }
 
+        if let Some(environment) = &self.environment {
+            let cleared = {
+                let mut bindings = environment.model_bindings.lock().await;
+                if let Some(authority) = &bindings.authority
+                    && matches!(authority.capture_initial().await, Ok(None))
+                {
+                    bindings.confirmed = None;
+                    bindings.captured.clear();
+                    true
+                } else {
+                    false
+                }
+            };
+            if cleared {
+                self.outer_queue
+                    .lock()
+                    .expect("input queue poisoned")
+                    .confirmed_binding = None;
+            }
+        }
+
         let effective_model = self
             .outer_queue
             .lock()
@@ -148,6 +169,7 @@ impl RuntimeSubmissionQueues {
         if let Err(err) = ui_surfaces::warning(&files, "Started a fresh session.").await {
             warn!(error = %err, "Failed to emit fresh session notice");
         }
+        self.observe_models().await;
     }
 
     async fn reset_queue_after_session_reset(
