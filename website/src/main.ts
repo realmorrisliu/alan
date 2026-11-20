@@ -21,6 +21,35 @@ function readStoredTheme(): ThemeMode {
   return 'paper';
 }
 
+function syncTopbarCurtain(): void {
+  const topbar = document.getElementById('topbar');
+  const hero = document.getElementById('hero');
+  if (!topbar) return;
+
+  if (document.documentElement.dataset.theme === 'dumb' || !hero) {
+    topbar.inert = false;
+    return;
+  }
+
+  topbar.inert = hero.getBoundingClientRect().bottom > 44;
+}
+
+function initTopbarCurtainState(): void {
+  const hero = document.getElementById('hero');
+  syncTopbarCurtain();
+  if (!hero) return;
+
+  window.addEventListener('scroll', syncTopbarCurtain, { passive: true });
+  window.addEventListener('resize', syncTopbarCurtain, { passive: true });
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(
+      () => syncTopbarCurtain(),
+      { rootMargin: '-44px 0px 0px 0px', threshold: 0 },
+    );
+    observer.observe(hero);
+  }
+}
+
 function applyThemeDom(mode: ThemeMode): void {
   const root = document.documentElement;
   root.dataset.theme = mode;
@@ -28,6 +57,12 @@ function applyThemeDom(mode: ThemeMode): void {
   const meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
   if (meta) {
     meta.content = mode === 'midnight' ? 'dark' : 'light';
+  }
+
+  const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (themeColorMeta) {
+    themeColorMeta.content =
+      mode === 'midnight' ? '#07143d' : mode === 'dumb' ? '#ffffff' : '#002fa7';
   }
 
   document.querySelectorAll<HTMLButtonElement>('[data-theme-btn]').forEach((btn) => {
@@ -39,6 +74,8 @@ function applyThemeDom(mode: ThemeMode): void {
   } else {
     setProcStatus(mode === 'midnight' ? 'midnight' : activeSectionLabel, 'run');
   }
+
+  syncTopbarCurtain();
 }
 
 /* ---------- Live /proc/0001 Status Pill ---------- */
@@ -349,14 +386,15 @@ function initAnatomy(): void {
 /* ---------- Scrollspy & Live /proc/0001 Reading State ---------- */
 function initScrollspy(): void {
   const navLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('.topbar__nav a'));
-  const targets = ['top', 'architecture', 'namespace', 'cli', 'manpage']
+  const targets = ['hero', 'shell', 'architecture', 'namespace', 'cli', 'manpage']
     .map((id) => document.getElementById(id))
     .filter((el): el is HTMLElement => el !== null);
 
   if (!('IntersectionObserver' in window) || targets.length === 0) return;
 
   const labelMap: Record<string, string> = {
-    top: 'idle',
+    hero: 'idle',
+    shell: 'reading /shell',
     architecture: 'reading /architecture',
     namespace: 'reading /namespace',
     cli: 'reading /cli',
@@ -535,6 +573,7 @@ function initPaletteAndKeys(): void {
   const paletteList = document.getElementById('palette-list');
 
   const actions: PaletteAction[] = [
+    { label: ': goto /shell', hint: 'Interactive alan-shell', run: () => document.getElementById('shell')?.scrollIntoView() },
     { label: ': goto /architecture', hint: 'Principles & Turing tape', run: () => document.getElementById('architecture')?.scrollIntoView() },
     { label: ': goto /namespace', hint: 'Standard Namespace & q', run: () => document.getElementById('namespace')?.scrollIntoView() },
     { label: ': goto /cli', hint: 'Interactive, Pipe & Install/Auth modes', run: () => document.getElementById('cli')?.scrollIntoView() },
@@ -654,7 +693,7 @@ function initPaletteAndKeys(): void {
   document.getElementById('open-palette-btn')?.addEventListener('click', openPalette);
   document.getElementById('open-keys-btn')?.addEventListener('click', () => keysDialog?.showModal());
 
-  const sections = ['top', 'architecture', 'namespace', 'cli', 'manpage'];
+  const sections = ['top', 'shell', 'architecture', 'namespace', 'cli', 'manpage'];
   let sectionIdx = 0;
 
   window.addEventListener('keydown', (event) => {
@@ -692,15 +731,32 @@ function initCopyButtons(): void {
     btn.addEventListener('click', async () => {
       const text = btn.dataset.copy;
       if (!text) return;
+      const statusEl = btn.querySelector<HTMLElement>('.hero__install-status');
       try {
         await navigator.clipboard.writeText(text);
-        const orig = btn.textContent;
-        btn.textContent = 'copied';
-        window.setTimeout(() => {
-          btn.textContent = orig;
-        }, 1500);
+        if (statusEl) {
+          btn.dataset.copied = 'true';
+          statusEl.textContent = 'copied';
+          window.setTimeout(() => {
+            delete btn.dataset.copied;
+            statusEl.textContent = '';
+          }, 1500);
+        } else {
+          const orig = btn.textContent;
+          btn.textContent = 'copied';
+          window.setTimeout(() => {
+            btn.textContent = orig;
+          }, 1500);
+        }
       } catch {
-        btn.textContent = 'select text';
+        if (statusEl) {
+          statusEl.textContent = 'select';
+          window.setTimeout(() => {
+            statusEl.textContent = '';
+          }, 1500);
+        } else {
+          btn.textContent = 'select text';
+        }
       }
     });
   });
@@ -709,6 +765,7 @@ function initCopyButtons(): void {
 /* ---------- Boot ---------- */
 document.addEventListener('DOMContentLoaded', () => {
   applyThemeDom(readStoredTheme());
+  initTopbarCurtainState();
 
   document.querySelectorAll<HTMLButtonElement>('[data-theme-btn]').forEach((btn) => {
     btn.addEventListener('click', () => {
