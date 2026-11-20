@@ -20,8 +20,12 @@ impl ConnectionAuthority for ProcessConnection {
         let registry = callables
             .as_ref()
             .context("callable registry unavailable")?;
-        let available = registry.published_profiles.contains_key(&self.profile)
-            || registry.published_fallbacks.contains(&self.profile);
+        let connections = self.service.metadata();
+        let target_id = resolve_target_profile(&self.profile, &connections, registry);
+        let available = target_id.as_ref().is_some_and(|id| {
+            registry.published_profiles.contains_key(id)
+                || registry.published_fallbacks.contains(id)
+        });
         drop(callables);
         if !available {
             // Existing unavailable-provider boot mode grants no capture/restore authority.
@@ -31,14 +35,16 @@ impl ConnectionAuthority for ProcessConnection {
     }
 
     async fn capture(&self, model: Option<&str>) -> Result<CapturedCallable> {
+        let target_id = self.service.resolve_process_profile(&self.profile).await;
         self.service
-            .capture_model(&self.profile, model, &self.namespace)
+            .capture_model(&target_id, model, &self.namespace)
             .await
     }
 
     async fn restore(&self, identity: &CallableIdentity) -> Result<CapturedCallable> {
+        let target_id = self.service.resolve_process_profile(&self.profile).await;
         ensure!(
-            identity.profile == self.profile,
+            identity.profile == self.profile || identity.profile == target_id,
             "restore profile is outside Process authority"
         );
         // Exact recovery of the profile's original callable is not a new model
@@ -87,27 +93,35 @@ impl ConnectionAuthority for ProcessConnection {
             .as_ref()
             .context("callable registry unavailable")?;
         let connections = self.service.metadata();
-        let injected = registry.published_fallbacks.contains(&self.profile)
-            && !connections.profiles.contains_key(&self.profile);
+        let target_id = resolve_target_profile(&self.profile, &connections, registry)
+            .unwrap_or_else(|| self.profile.clone());
+        let injected = registry.published_fallbacks.contains(&target_id)
+            && !connections.profiles.contains_key(&target_id);
         let mut config = registry.base_config.clone();
-        if let Some(catalog) = registry
+        let published_catalog = registry
             .published_catalogs
-            .get(&self.profile)
+            .get(&target_id)
             .and_then(|publication| publication.get())
-            .and_then(Option::as_ref)
-        {
+            .and_then(Option::as_ref);
+        if let Some(catalog) = published_catalog.and_then(|cat| cat.engine_catalog.as_ref()) {
             config.set_model_catalog(catalog.clone());
         }
         if !injected {
             let profile = connections
                 .profiles
-                .get(&self.profile)
+                .get(&target_id)
                 .context("Process profile unavailable")?;
             ensure!(
-                registry.published_profiles.get(&self.profile) == Some(profile),
+                registry.published_profiles.get(&target_id) == Some(profile),
                 "Process profile is not callable"
             );
-            connections.apply_profile_metadata_to_config(Some(&self.profile), &mut config)?;
+            let packages = self.service.package_service();
+            let hydrated = provider_packages::hydrate_connections_with_package_defaults(
+                packages.as_deref(),
+                &connections,
+                &target_id,
+            );
+            hydrated.apply_profile_metadata_to_config(Some(&target_id), &mut config)?;
         }
         if injected {
             let info = config.effective_model_info();
@@ -117,26 +131,8 @@ impl ConnectionAuthority for ProcessConnection {
                 "default_reasoning_effort":info.as_ref().and_then(|info| info.default_reasoning_effort)
             }]}));
         }
-        let provider = if config.llm_provider == alan_agent_engine::LlmProvider::Chatgpt {
-            alan_agent_engine::ModelCatalogProvider::Chatgpt
-        } else {
-            config
-                .effective_model_info()
-                .context("model catalog unavailable")?
-                .provider
-        };
-        let catalog = config.resolved_model_catalog();
-        let entries: Vec<_> = catalog
-            .supported_model_slugs(provider)
-            .into_iter()
-            .filter_map(|slug| {
-                catalog.find_model_info(provider, slug).map(|entry| serde_json::json!({
-                "model":entry.slug, "supported_reasoning_efforts":entry.supported_reasoning_efforts,
-                "default_reasoning_effort":entry.default_reasoning_effort
-            }))
-            })
-            .collect();
-        ensure!(!entries.is_empty(), "model catalog unavailable");
+        let entries =
+            crate::connection::catalog::catalog_entries_for_config(&config, published_catalog)?;
         Ok(serde_json::json!({"profile":self.profile,"models":entries}))
     }
 }
@@ -190,12 +186,24 @@ impl ConnectionService {
         })
     }
 
+    async fn resolve_process_profile(&self, requested_profile: &str) -> String {
+        let callables = self.callables.lock().await;
+        let Some(registry) = callables.as_ref() else {
+            return requested_profile.to_string();
+        };
+        let connections = self.metadata();
+        resolve_target_profile(requested_profile, &connections, registry)
+            .unwrap_or_else(|| requested_profile.to_string())
+    }
+
     async fn capture_model(
         &self,
         profile_id: &str,
         model: Option<&str>,
         process_namespace: &alan_kernel::LiveNamespace,
     ) -> Result<CapturedCallable> {
+        let profile_id = self.resolve_process_profile(profile_id).await;
+        let profile_id = profile_id.as_str();
         if model.is_some() {
             let mut callables = self.callables.lock().await;
             if let Some(registry) = callables.as_mut()
@@ -262,12 +270,12 @@ impl ConnectionService {
             profile_id,
         );
         let mut config = registry.base_config.clone();
-        if let Some(catalog) = registry
+        let published_catalog = registry
             .published_catalogs
             .get(profile_id)
             .and_then(|publication| publication.get())
-            .and_then(Option::as_ref)
-        {
+            .and_then(Option::as_ref);
+        if let Some(catalog) = published_catalog.and_then(|cat| cat.engine_catalog.as_ref()) {
             config.set_model_catalog(catalog.clone());
         }
         connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
@@ -281,7 +289,7 @@ impl ConnectionService {
                 .insert("model".into(), model.into());
             connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
             ensure!(
-                config.effective_model_info().is_some(),
+                crate::connection::catalog::is_model_authorized(&config, model, published_catalog,),
                 "model is unavailable in Connection catalog"
             );
         }
@@ -334,6 +342,26 @@ impl ConnectionService {
             config,
         })
     }
+}
+
+fn resolve_target_profile(
+    requested_profile: &str,
+    connections: &ConnectionsFile,
+    registry: &CallableRegistry,
+) -> Option<String> {
+    if registry.live_default_redirect
+        && requested_profile == "default"
+        && let Some(default_profile) = &connections.default_profile
+        && connections.profiles.contains_key(default_profile)
+    {
+        return Some(default_profile.clone());
+    }
+    if connections.profiles.contains_key(requested_profile)
+        || registry.published_fallbacks.contains(requested_profile)
+    {
+        return Some(requested_profile.to_string());
+    }
+    None
 }
 
 fn captured_namespace(

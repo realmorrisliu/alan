@@ -1,0 +1,197 @@
+//! Submission, resume response, and queue-continue helpers for `FileBackedApp`.
+
+use super::*;
+
+impl FileBackedApp {
+    pub(in crate::file_backed) fn submit_form(&mut self) -> Option<FileBackedAction> {
+        if self.pending_project_control.is_some() {
+            self.notice =
+                Some("project cwd selection is pending; wait for terminal Action evidence".into());
+            return None;
+        }
+        if self.response_in_flight.is_some() {
+            self.notice = Some("request response is still being sent".into());
+            return None;
+        }
+        let pending = self.pending_yield.clone()?;
+        let form = self.form.as_mut()?;
+        let retry_input = form.answers_json();
+        match pending.resume_content(&retry_input) {
+            Ok(content) => Some(FileBackedAction::Resume {
+                request_id: pending.request_id,
+                response: response_text_from_content(content),
+                retry_input,
+            }),
+            Err(message) => {
+                form.error = Some(message);
+                None
+            }
+        }
+    }
+
+    pub(in crate::file_backed) fn handle_submit(&mut self) -> Option<FileBackedAction> {
+        self.submit_with_mode(alan_agent_protocol::InputMode::FollowUp)
+    }
+
+    pub(in crate::file_backed) fn submit_with_mode(
+        &mut self,
+        mode: alan_agent_protocol::InputMode,
+    ) -> Option<FileBackedAction> {
+        if self.model_submit_command() {
+            let text = self.composer.text().trim().to_owned();
+            self.composer.set_text("");
+            self.composer.remember(&text);
+            self.completion = None;
+            self.notice = None;
+            return self.model_command("");
+        }
+        if self.response_in_flight.is_some() {
+            self.notice = Some("request response is still being sent".into());
+            return None;
+        }
+        if self.project_selection.is_some() {
+            let path = self.composer.text().trim();
+            if path.is_empty() {
+                self.notice = Some("enter a project directory path".into());
+                return None;
+            }
+            return Some(FileBackedAction::Project(ProjectControl::Mount {
+                operation_id: project_dispatch::project_operation_id(),
+                host_path: std::path::PathBuf::from(path),
+                access: self.project_selection.unwrap_or(ProjectAccess::ReadWrite),
+            }));
+        }
+        if let Some(pending) = self.pending_yield.clone() {
+            let text = self.composer.text().trim().to_string();
+            self.completion = None;
+            match pending.resume_content(&text) {
+                Ok(content) => {
+                    self.composer.set_text("");
+                    self.input_intent = InputIntent::Agent;
+                    self.history_draft_intent = None;
+                    return Some(FileBackedAction::Resume {
+                        request_id: pending.request_id,
+                        response: response_text_from_content(content),
+                        retry_input: text,
+                    });
+                }
+                Err(message) => {
+                    self.notice = Some(Notice::warning(message));
+                    return None;
+                }
+            }
+        }
+
+        let text = self.composer.text().to_owned();
+        if text.trim().is_empty() {
+            if self.input_intent != InputIntent::Agent {
+                self.notice = Some("Enter content after the input prefix.".into());
+            }
+            return None;
+        }
+        self.notice = None;
+        self.completion = None;
+        if self.input_intent == InputIntent::Agent && text.trim().starts_with('/') {
+            if mode == alan_agent_protocol::InputMode::Steer {
+                self.notice = Some("Slash commands cannot be sent as live steer messages.".into());
+                return None;
+            }
+            self.composer.set_text("");
+            self.composer.remember(&text);
+            return self.handle_command(text.trim());
+        }
+        let mut parts = self.pending_attachments.clone();
+        if self.input_intent != InputIntent::Command {
+            parts.extend(super::super::attachment_io::extract_at_image_attachments(
+                &text,
+                self.project_host_root.as_deref(),
+            ));
+        }
+        let record = alan_agent_protocol::UserInputRecord::new(self.input_intent, mode, text)
+            .with_parts(parts);
+        self.auto_continue_on_empty_cancel = false;
+        Some(FileBackedAction::Submit(record))
+    }
+
+    pub(in crate::file_backed) fn begin_resume_write(&mut self, request_id: String) {
+        self.response_in_flight = Some(request_id);
+        self.notice = Some("sending response…".into());
+    }
+
+    pub(super) fn finish_resume_write(
+        &mut self,
+        request_id: &str,
+        retry_input: &str,
+        result: Result<(), String>,
+    ) {
+        if self.response_in_flight.as_deref() != Some(request_id) {
+            return;
+        }
+        self.response_in_flight = None;
+        match result {
+            Ok(()) => {
+                if self
+                    .pending_yield
+                    .as_ref()
+                    .is_some_and(|pending| pending.request_id == request_id)
+                {
+                    self.clear_pending_yield();
+                }
+                self.notice = Some("response sent".into());
+            }
+            Err(error) => {
+                self.notice = Some(Notice::error(format!("resume failed: {error}")));
+                if self
+                    .pending_yield
+                    .as_ref()
+                    .is_some_and(|pending| pending.request_id == request_id)
+                    && self.form.is_none()
+                {
+                    self.composer.set_text(retry_input);
+                }
+            }
+        }
+    }
+
+    pub(in crate::file_backed) fn accept_input(&mut self) {
+        let body = self.composer.text().to_owned();
+        self.composer.remember_input(&body, self.input_intent);
+        self.composer.set_text("");
+        self.input_intent = InputIntent::Agent;
+        self.history_draft_intent = None;
+        self.last_input_failed = false;
+        self.pending_attachments.clear();
+        // Submission may be queued behind another client. Tape owns turn boundaries.
+    }
+
+    pub(in crate::file_backed) fn take_ready_auto_continue_on_empty_cancel(&mut self) -> bool {
+        if !self.auto_continue_on_empty_cancel
+            || self.has_pending_response()
+            || !self.running_tools.is_empty()
+        {
+            return false;
+        }
+        let Some(q) = self.queue.snapshot.as_ref().filter(|q| q.known) else {
+            return false;
+        };
+        if q.paused
+            && q.pending_submission_ids.is_empty()
+            && q.active_submission_ids.is_empty()
+            && !q.deferred
+            && q.uncertain_submission_ids.is_empty()
+        {
+            self.auto_continue_on_empty_cancel = false;
+            return true;
+        }
+        false
+    }
+
+    #[cfg(test)]
+    pub(in crate::file_backed) fn enter_submits_agent_task(&self) -> bool {
+        if self.form.is_some() || self.pending_yield.is_some() || self.completion.is_some() {
+            return false;
+        }
+        let text = self.composer.text().trim();
+        !text.is_empty() && (self.input_intent != InputIntent::Agent || !text.starts_with('/'))
+    }
+}

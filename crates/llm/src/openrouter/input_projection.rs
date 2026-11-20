@@ -5,7 +5,49 @@ use serde_json::Value;
 use super::{OrMessage, Role, convert_tool_calls_for_openrouter};
 use crate::{Message, MessageContentPart, MessageRole};
 
+pub(super) fn is_openrouter_openai_reasoning_model(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    let Some(slug) = lower.strip_prefix("openai/") else {
+        return false;
+    };
+    slug.starts_with("gpt-5")
+        || slug == "o1"
+        || slug.starts_with("o1-")
+        || slug == "o3"
+        || slug.starts_with("o3-")
+        || slug == "o4"
+        || slug.starts_with("o4-")
+}
+
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "model-agnostic wrapper preserved during OpenRouter model-role projection rollout"
+    )
+)]
 pub(super) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<Vec<OrMessage>> {
+    convert_messages_for_openrouter_model("", messages)
+}
+
+pub(super) fn convert_messages_for_openrouter_model(
+    model: &str,
+    messages: Vec<Message>,
+) -> Result<Vec<OrMessage>> {
+    let openai_reasoning = is_openrouter_openai_reasoning_model(model);
+    let instruction_role = if openai_reasoning {
+        Role::Developer
+    } else {
+        Role::System
+    };
+    let context_role = if openai_reasoning {
+        Role::Developer
+    } else {
+        // Non-OpenAI providers (including Anthropic and strict chat templates)
+        // treat mid/trailing `system` messages as invalid or cache-busting system hoists.
+        Role::User
+    };
+
     messages
         .into_iter()
         .map(|message| {
@@ -19,9 +61,10 @@ pub(super) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<
             } = message;
 
             Ok(match role {
-                MessageRole::System => {
-                    OrMessage::new(Role::System, project_text(content, content_parts)?)
-                }
+                MessageRole::System => OrMessage::new(
+                    instruction_role.clone(),
+                    project_text(content, content_parts)?,
+                ),
                 MessageRole::User => project_user_message(content, content_parts)?,
                 MessageRole::Assistant => {
                     let content = project_text(content, content_parts)?;
@@ -46,7 +89,7 @@ pub(super) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<
                     OrMessage::tool_response(&tool_call_id, content)
                 }
                 MessageRole::Context => {
-                    OrMessage::new(Role::System, project_text(content, content_parts)?)
+                    OrMessage::new(context_role.clone(), project_text(content, content_parts)?)
                 }
             })
         })

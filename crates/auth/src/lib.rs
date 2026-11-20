@@ -1,4 +1,8 @@
+pub mod browser;
 mod chatgpt;
+pub mod google;
+pub mod magpie;
+pub mod openrouter;
 mod pkce;
 mod storage;
 mod token_data;
@@ -9,7 +13,9 @@ pub use chatgpt::{
     ChatgptRequestAuth, DeviceCodeLoginOptions, DeviceCodePrompt, ImportedChatgptTokenBundle,
     PendingBrowserLogin, new_chatgpt_session_id,
 };
-pub use storage::{ACCESS_TOKEN_REFRESH_WINDOW_SECS, AuthStorage, AuthStore, StoredChatgptAuth};
+pub use storage::{
+    ACCESS_TOKEN_REFRESH_WINDOW_SECS, AuthStorage, AuthStore, StoredChatgptAuth, StoredGoogleAuth,
+};
 pub use token_data::{
     ChatgptIdTokenInfo, ChatgptTokenData, parse_chatgpt_jwt_claims, parse_jwt_expiration,
 };

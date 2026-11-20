@@ -28,7 +28,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file's contents. For images, returns metadata. Host files use line offset/limit. Follow a retained result reference at your concrete /agent/<pid>/actions/<id>/output using byte_offset/byte_limit, without another Host grant or rerunning the producer. Evidence returns at most 4096 original bytes with total_bytes and next_byte_offset for subsequent ranges."
+        "Read a file's contents. Text files return `1| `-prefixed line-numbered lines (default up to 1000 lines; use `offset` and `limit` for large files). Supported images (<= 512 KiB) are returned as multimodal image content plus metadata. Retained action outputs at `/agent/<pid>/actions/<id>/output` can be paged with `byte_offset` and `byte_limit` (at most 4096 bytes per read) without rerunning the producer."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -38,7 +38,7 @@ impl Tool for ReadFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Alan OS path to the file, or a path relative to Process cwd"
+                    "description": "alan9 path to the file, or a path relative to Process cwd"
                 },
                 "offset": {
                     "type": "integer",
@@ -189,7 +189,7 @@ impl Tool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file. Creates parent directories if needed."
+        "Create a new file or overwrite an existing file with the given content, creating parent directories if needed. Prefer `edit_file` for targeted modifications to existing files."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -199,7 +199,7 @@ impl Tool for WriteFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Alan OS path to the file, or a path relative to Process cwd"
+                    "description": "alan9 path to the file, or a path relative to Process cwd"
                 },
                 "content": {
                     "type": "string",
@@ -252,7 +252,7 @@ impl Tool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Edit a file by replacing search text with replacement text."
+        "Make targeted search-and-replace edits in an existing file. Read the file with `read_file` first. Pass exact text in `old_string` (omitting `read_file`'s `N| ` line-number prefixes); `old_string` must match uniquely unless `replace_all: true`."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -262,7 +262,7 @@ impl Tool for EditFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file"
+                    "description": "alan9 path to the file, or a path relative to Process cwd"
                 },
                 "old_string": {
                     "type": "string",

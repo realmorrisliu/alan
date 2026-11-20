@@ -19,8 +19,20 @@ pub async fn run_stdio_task(
     let task = StdioTaskWaitContext::new(input)?;
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
+    let attachment = open_stdio_tail_attachment(&shell, &agent_path)
+        .await
+        .map_err(humanize_anyhow_error)?;
     run_opened_plain_stdio_task(&shell, task, attachment, interrupt).await
+}
+
+pub(super) fn humanize_anyhow_error(error: anyhow::Error) -> anyhow::Error {
+    let raw = format!("{error:#}");
+    let humanized = super::app::humanize_protocol_message(&raw);
+    if humanized != raw.trim() {
+        anyhow::anyhow!("{humanized}")
+    } else {
+        error
+    }
 }
 
 pub(super) async fn run_opened_plain_stdio_task(
@@ -33,7 +45,7 @@ pub(super) async fn run_opened_plain_stdio_task(
 
     let result = wait_for_stdio_answer(shell, task, &mut attachment, interrupt).await;
     let close_result = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-    let answer = result?;
+    let answer = result.map_err(humanize_anyhow_error)?;
     close_result?;
 
     let (out, err, exit_code, add_newline) = match answer {
@@ -265,6 +277,10 @@ pub(super) fn finish_stdio_task_if_ready(
         return Ok(Some(StdioTaskOutput::Command(output)));
     }
     if let Some(message) = snapshot.task_error.take() {
+        let humanized = super::app::humanize_protocol_message(&message);
+        if humanized != message.trim() {
+            bail!("{humanized}");
+        }
         bail!("Agent task failed: {message}");
     }
     if let Some(answer) = snapshot.assistant_answer.take() {

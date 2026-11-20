@@ -225,6 +225,8 @@ impl RuntimeSubmissionQueues {
                     | Op::Resume { .. }
                     | Op::SelectModel { .. }
                     | Op::SelectProjectDirectory { .. }
+                    | Op::ResetSession
+                    | Op::SetTrustPosture { .. }
             ) {
                 return Some(input);
             }
@@ -276,8 +278,32 @@ impl RuntimeSubmissionQueues {
         if self.model_control(submission).await {
             return true;
         }
-        if matches!(submission.op, Op::SelectProjectDirectory { .. }) && cancel.is_some() {
-            self.reject_active_directory(files, submission).await;
+        if cancel.is_some()
+            && matches!(
+                submission.op,
+                Op::SelectProjectDirectory { .. } | Op::ResetSession | Op::SetTrustPosture { .. }
+            )
+        {
+            match &submission.op {
+                Op::SelectProjectDirectory { .. } => {
+                    self.reject_active_directory(files, submission).await;
+                }
+                Op::ResetSession => {
+                    let _ = crate::runtime::ui_surfaces::warning(
+                        files,
+                        "Session reset requires settled work; interrupt first.",
+                    )
+                    .await;
+                }
+                Op::SetTrustPosture { .. } => {
+                    let _ = crate::runtime::ui_surfaces::warning(
+                        files,
+                        "Trust posture change requires settled work; wait for completion or interrupt.",
+                    )
+                    .await;
+                }
+                _ => {}
+            }
             return true;
         }
         if submission.intent == alan_agent_protocol::InputIntent::Command
@@ -569,7 +595,7 @@ impl RuntimeSubmissionQueues {
     }
 }
 
-async fn publish_cancelled_input(
+pub(super) async fn publish_cancelled_input(
     files: &NamespaceAgentFiles,
     id: &str,
     message: &str,

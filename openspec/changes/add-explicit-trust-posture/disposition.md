@@ -25,3 +25,21 @@ no-tamper-resistance rules are unchanged. This change also carries the
 OS-boundary rule recorded in its design and in the new `os-boundary-security`
 delta. Still planning, not shipped behavior; user merge and specification sync
 remain required.
+
+## Implementation status and post-merge readiness — 2026-11-20
+
+Implementation tasks `1.1–1.4` and `1b.1–1b.2` are complete and locally verified
+in M3 (`f91f35c3`) on branch `alan_ux_tui_evaluation` (supplemented by M4
+`ConfinedTrusted` `EmbeddedAlan` boundary tests in `0e8d4c95` and M6 in-TUI
+`Shift+Tab` runtime toggling strictly between `Governed` and
+`ConfinedTrusted`).
+
+- Pruned the stale `MODIFIED` copy of `Reviewer activation requires distinct
+  shadow qualification` from `specs/autonomous-review-mode/spec.md` to stay
+  aligned with `delegate-project-autonomy` after ADR-0061 pruned the Guardian
+  shadow-corpus requirement.
+- Tasks `2.1–2.5` remain open pending combined disposable-canary downgrade matrix
+  testing, separate live trust-cohort observation, final M6 current-head CI and
+  review, and user merge to `main`.
+- Ready for post-merge `sync + archive` once remaining verification and the
+  M1–M6 branch merge to `main` complete.

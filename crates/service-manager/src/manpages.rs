@@ -129,6 +129,7 @@ COMPOSER & COMMANDS
   : <task>              send a task to the Root Agent Process
   ! <command>           run an explicit command through alan-shell
   /new  /model  /tape   reset view, switch model/effort, inspect Turing Tape
+  /login                connect or authenticate an LLM provider in place
   /man [topic]          read /man manual pages inside the TUI
   /project [revoke]     explicitly grant or revoke a Host Mount
   /compact  /rollback   summarize context or undo the last turn
@@ -183,6 +184,7 @@ NAME
   alan connection - manage provider connection profiles and credentials
 
 SYNOPSIS
+  alan login [PROVIDER]
   alan connection list
   alan connection current
   alan connection add <PROVIDER> [--profile <ID>] [--setting key=val] [--default]
@@ -196,8 +198,10 @@ FIRST-PARTY PROVIDERS (ADR-0061)
   magpie                local/self-hosted gateway (keyless by default)
   openai_responses      OpenAI Responses API
   chatgpt               ChatGPT / Codex OAuth managed session
-  vertex_gemini         Google Cloud Vertex AI (ADC or Express Mode)
-  openrouter            OpenRouter unified model catalog
+  vertex                Google Cloud Vertex AI (Google OAuth / ADC / Express Mode)
+  openrouter            OpenRouter PKCE browser OAuth or API key
+
+  Use `alan login` (CLI) or `/login` (inside the TUI) for guided provider setup.
 
   Anthropic is supported as a protocol adapter / Quartermaster (`q`)
   package rather than a built-in first-party provider.

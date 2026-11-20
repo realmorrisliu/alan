@@ -3,6 +3,7 @@ pub mod attachments;
 pub mod connection;
 pub mod dispatch;
 pub mod host;
+pub mod login;
 pub mod man;
 pub mod memory;
 pub mod q;

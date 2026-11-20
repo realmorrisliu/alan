@@ -4,7 +4,7 @@
 
 The delegate-project-autonomy change reuses existing Connection capabilities for Guardian qualification. It does not require general mixed-Machine completion, new cognitive Process types, or automatic input routing.
 
-See [the accepted roadmap](../qualify-personal-daily-development/roadmap.md).
+See [the accepted roadmap](../../qualify-personal-daily-development/roadmap.md).
 
 ## Current delivery — 2026-10-09
 
@@ -27,10 +27,10 @@ See [typed-entry-delivery.md](typed-entry-delivery.md) and
 ## Historical entry decisions
 
 Discussion update (2026-09-24):
-[unify-agent-command-input](../archive/2026-11-19-unify-agent-command-input/disposition.md) owns
+[unify-agent-command-input](../2026-11-19-unify-agent-command-input/disposition.md) owns
 unified input and deterministic command operations. Its first slice uses explicit
-prefixes. Automatic intent integration and qualification now belong to the active
-[qualify-agent-input-routing](../qualify-agent-input-routing/disposition.md) successor. Generic typed
+prefixes. Automatic intent integration and qualification now belong to the parked
+[qualify-agent-input-routing](../../qualify-agent-input-routing/disposition.md) successor. Generic typed
 capability contracts remain here; Jev support is not claimed implemented.
 
 Direction accepted. Typed evaluation is queued after the first usable-agent
@@ -58,9 +58,21 @@ claim a then-implemented provider adapter or authorize canonical sync before mer
 The delivered finite-choice evaluation, TypeSafe adapter and no-effect Machine
 shadow slice remain canonical. All remaining scope (general mixed transitions,
 broad `cognitive-model-routing` and any provider-specific evaluator) is frozen as
-deferred research. It is not on the M1–M5 execution order in the
-[personal daily-use roadmap](../qualify-personal-daily-development/roadmap.md), is
+deferred research. It is not on the M1–M6 execution order in the
+[personal daily-use roadmap](../../qualify-personal-daily-development/roadmap.md), is
 not authorized for implementation, and requires explicit reactivation with a new
 planning decision. Automatic routing stays disabled. Terminal-host acceptance
 steps in the retained evidence documents are historical; Alan does not depend on a
 specific terminal host (ADR-0061).
+
+## Archived without syncing deferred research — 2026-11-20
+
+Archived under `openspec/changes/archive/2026-11-20-add-cognitive-model-routing/`
+without synchronizing deferred research deltas into canonical `openspec/specs/`.
+Only the previously merged finite-choice Connection evaluation, TypeSafe adapter,
+no-effect Machine shadow slice (`#1035`), and bounded read-only source-owner
+Machine program (`#1039`/`#1040`) are canonical. The unfinished `cognitive-model-routing`,
+broad `alan-shell`, and `provider-request-controls` research artifacts remain
+historical, non-normative deferred R&D; reactivating general mixed-Machine work
+requires a new OpenSpec change, explicit planning decision, and standard-terminal
+(POSIX/VT) acceptance (`ADR-0061`).

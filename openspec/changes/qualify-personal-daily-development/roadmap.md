@@ -2,28 +2,33 @@
 
 Accepted 2026-10-14; resequenced 2026-11-19 by
 [ADR-0061](../../../docs/adr/0061-terminal-native-os-boundary-quartermaster-and-first-party-providers.md).
-This is the single coordinating plan; each linked change owns its behavior.
-Documentation completion does not complete product qualification.
+This is the single coordinating plan and the single active qualification plan;
+each linked change owns its behavior. Documentation completion or local branch
+commits do not substitute for PR merge, current-head CI, or measured daily-use
+qualification.
 
 ## Execution order
 
-| Milestone | Delivery | Exit evidence |
+| Milestone | Status & Delivery | Exit evidence |
 | --- | --- | --- |
-| M1 | [Terminal-native foundation](../deliver-terminal-native-foundation/): live streaming (output, thinking, usage surface), four first-party providers, TUI/CLI bugfixes, `--ephemeral`/`--cwd`, real-PTY tests, docs and OpenSpec hygiene | Focused engine/provider/TUI tests, PTY acceptance on a standard terminal, quality gate, strict validation with the CI-pinned validator, reviewed PR and current-head CI |
-| M2 | OS-boundary simplification, 7 core Root tools and standard-terminal TUI/CLI polish | No static shell-text bans or Guardian spam inside confined OS sandboxes, mounted `AGENTS.md`/`CLAUDE.md` readable as non-authoritative knowledge, polished 7 core Root tools and calm standard-terminal TUI/CLI |
-| M3 | [Explicit trust posture](../add-explicit-trust-posture/) (unblocked ahead of the delegation qualification corpus), slim [project delegation](../delegate-project-autonomy/), [Quartermaster `q` v1 extension hub](../add-quartermaster-extension-hub/) (`skill`, `mcp`, `tool`, `provider`), parallel subagents and [project continuity](../restore-project-continuity/) | Invocation-only trust posture and isolation distinction (separate cohort), saved delegation/revocation and budgets, atomic four-kind `q` lifecycle with no installation-time authority and Anthropic installable as a package, parallel subagents, inspectable summaries and explicit history selection without replay |
-| M4 | `EmbeddedAlan` V2 with Slowpage and Project-M3 integration | Clean V2 embedding facade, strict per-app isolation and verified Slowpage / Project-M3 host integration without TUI dependencies |
-| M5 | Personal Agent foundation: memory crates cleanup, FTS5/CJK recall and scheduled MCP workflows | Consolidated Memory Store crates, verified FTS5/CJK recall over explicit stores, governed scheduled MCP workflows with clear Process ownership |
-| Qualification | Two-week personal daily-use qualification (owned by this change) | >=50 real tasks, >=90% without rescue, interruption/reliability gates, Codex comparison (full-trust runs reported in a separate cohort) |
-| Deferred | Automatic input routing and general mixed-Machine work (`qualify-agent-input-routing`, `add-cognitive-model-routing`) | Frozen deferred research; needs an explicit new planning decision |
+| M1 | Completed locally (`8c2d011d`) — [Terminal-native foundation](../deliver-terminal-native-foundation/): live streaming (output, thinking, usage surface), four first-party providers, TUI/CLI bugfixes, `--ephemeral`/`--cwd`, real-PTY tests, docs and OpenSpec hygiene | Focused engine/provider/TUI tests, real Unix PTY acceptance (`pty_e2e`), quality gate, strict OpenSpec (`1.4.1`) |
+| M2 | Completed locally (`c94a9936`) — OS-boundary simplification, 7 core Root tools and standard-terminal TUI/CLI polish | No static shell-text bans or Guardian prompts inside confined OS sandboxes, mounted `AGENTS.md`/`CLAUDE.md` readable as non-authoritative knowledge, 7 core Root tools (`read_file`, `write_file`, `edit_file`, `bash`, `grep`, `glob`, `list_dir`), calm POSIX/VT TUI/CLI (`Theme`, `/man`, `/tape`, `alan about`) |
+| M3 | Completed locally (`f91f35c3`) — [Explicit trust posture](../add-explicit-trust-posture/) (unblocked ahead of delegation corpus), slim [project delegation](../delegate-project-autonomy/), [Quartermaster `q` v1 extension hub](../add-quartermaster-extension-hub/) (`skill`, `mcp`, `tool`, `provider`), parallel subagents and [project continuity](../restore-project-continuity/) | Invocation-only trust posture (`Governed`/`ConfinedTrusted`/`HostAccountTrusted`), saved delegation/revocation and budgets, atomic four-kind `q` lifecycle with no installation-time authority and `anthropic-provider` package, parallel subagents, inspectable `/summary` and explicit `/resume` history selection without replay |
+| M4 | Completed locally (`0e8d4c95`) — `EmbeddedAlan` V2 with Slowpage (`bca4c263`) and Project-M3 (`442db7a4`) integration | Clean V2 embedding facade, writable `/mnt/<app>` mounts, `EmbedEvent` V2 streaming, `ToolPolicyHook`, multi-session isolation, feature-gated `alan-os-host` without TUI dependencies |
+| M5 | Completed locally (`e6222339`) — Personal Agent foundation: memory crates cleanup, pure-Rust BM25+CJK recall, `alan memory` & `alan workflow` CLIs, `personal-notes-mcp` package, and `alanworks.app` ADR-0061 alignment | Consolidated `alan-knowledge`/`alan-memfs` recall + revisions, secret-scrubbed BM25+CJK recall across domain-scoped Memory Stores, scheduled workflows over `alan -p --ephemeral --json`, confined stdio `personal-notes-mcp`, zero Herdr references on `website/` |
+| M6 | Active branch milestone — UX/OAuth/Prompts/OpenSpec cleanup: model-family system prompts & static cacheable prompt prefixes, `machine/ctl` session reset/rollback/`Shift+Tab` trust toggle, first-run TUI `/login` & `alan login` + smart cwd auto-mount + honest unconfigured boot, `/help` viewport ghosting fix & `/new`/`/fork`, [`scripts/check-embed-footprint.sh`](../../../scripts/check-embed-footprint.sh), and OpenSpec cleanup | Focused prompt/TUI/OAuth/CLI tests + real PTY E2E, minimal `alan-os-host` embed footprint check passing, `add-cognitive-model-routing` archived without sync, `qualify-agent-input-routing` parked in place, five M1–M5 changes ready for post-merge `sync + archive`, full quality gate + strict OpenSpec + current-head CI before user merge |
+| Qualification | Active qualification plan (owned by this change; formal sample starts after M1–M6 merge/install) | >=50 real tasks over two consecutive weeks across Alan and `realmorrisliu.com`, >=90% without rescue, interruption/reliability gates, Codex comparison (full-trust runs reported in a separate cohort) |
+| Deferred | Automatic input routing (`qualify-agent-input-routing` parked in place) and general mixed-Machine work (`2026-11-20-add-cognitive-model-routing` archived without sync) | Frozen deferred research outside M1–M6; requires an explicit new planning decision and standard-terminal (POSIX/VT) acceptance plan |
 
 ## Rules adopted by ADR-0061
 
 - Standard-terminal-native: acceptance uses ordinary POSIX/VT terminals and a real
-  Unix PTY; no terminal-host harness, detection or integration is required.
+  Unix PTY; no Herdr or other terminal-host harness, detection or integration is
+  required.
 - OS-boundary security: inside a confined sandbox the OS and mount grants are the
   boundary. No static shell-text bans or Guardian prompts for contained effects;
-  uncontained effects still escalate. Mounted `AGENTS.md`/`CLAUDE.md` are readable
+  uncontained effects still escalate, and the pre-ADR-0061 Guardian shadow-corpus
+  classifier gate is pruned. Mounted `AGENTS.md`/`CLAUDE.md` are readable
   non-authoritative knowledge.
 - Quartermaster `q` v1 is the one extension hub for `skill`, `mcp`, `tool` and
   `provider` packages; installation grants no authority.
@@ -36,6 +41,20 @@ Trust posture no longer waits for the full delegation corpus; its overlapping de
 rebase onto whichever change syncs first, never applied in reverse. Full-trust
 delivery has its own cohort and must not delay or inflate the default-mode
 readiness result.
+
+The five M1–M5 OpenSpec changes (`deliver-terminal-native-foundation`,
+`add-quartermaster-extension-hub`, `add-explicit-trust-posture`,
+`restore-project-continuity`, and `delegate-project-autonomy`) retain their
+checked local evidence on `alan_ux_tui_evaluation` and stay open until remaining
+docs/live checks, current-head CI, and user merge to `main`, after which they are
+ready for post-merge `sync + archive`.
+
+`qualify-agent-input-routing` remains in place under `openspec/changes/` solely as
+a `deferred-research / parked` directory because `scripts/harness/collect_routing_shadow_clients.py`,
+`scripts/harness/score_routing_shadow.py`, and `crates/tui/src/file_backed/shadow_admission_tests.rs`
+read its pinned corpus and budget JSON artifacts. `add-cognitive-model-routing` is
+archived at `openspec/changes/archive/2026-11-20-add-cognitive-model-routing/`
+without syncing deferred research into canonical specs.
 
 Observed UI defects are fixed in small owned changes throughout M1–M5. Do not start
 another broad UI redesign. Preserve Linux regression; expand Node/TypeScript or
@@ -52,7 +71,8 @@ not prove reliable delegation or unattended general bootstrap. Root fallback can
 qualify a failed child. No self-development runs start solely from this plan.
 
 Delivered and retired history: `embed-alan-runtime` and `unify-agent-command-input`
-are synced and archived; six retired desktop-era plans are archived without sync.
+are synced and archived; six retired desktop-era plans and deferred
+`2026-11-20-add-cognitive-model-routing` are archived without sync.
 
 Background/always-on root lifetime, multi-device entry, broad proactive permission
 learning and full mixed-Machine expansion remain out of scope for M1–M4; scheduled

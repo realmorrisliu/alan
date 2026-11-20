@@ -280,7 +280,18 @@ impl ServiceManager {
             selected_profile,
             &connections,
         ) {
-            Ok(client) => Some((llm_connection.clone(), client)),
+            Ok(client)
+                if selected_profile.is_some() || client.provider_name() != "unconfigured" =>
+            {
+                Some((llm_connection.clone(), client))
+            }
+            Ok(_) => {
+                tracing::info!(
+                    profile_id = %llm_connection,
+                    "No connection profile configured during boot; continuing without a callable provider"
+                );
+                None
+            }
             Err(_) => {
                 tracing::warn!(
                     profile_id = %llm_connection,

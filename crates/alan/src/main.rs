@@ -37,6 +37,10 @@ async fn main() -> Result<()> {
         cli.shadow_evaluator.is_none() || cli.command.is_none(),
         "`--shadow-evaluator` only applies to bare `alan`"
     );
+    anyhow::ensure!(
+        !cli.no_auto_mount || cli.command.is_none(),
+        "`--no-auto-mount` only applies to bare `alan`"
+    );
     cli::attachments::validate_cli_scripting_flags(
         cli.print.as_deref(),
         cli.json,
@@ -73,6 +77,7 @@ async fn main() -> Result<()> {
                 resume_rollout_id,
                 cli.ephemeral,
                 cwd_override,
+                cli.no_auto_mount,
                 cli.shadow_evaluator,
                 trust_options,
             )

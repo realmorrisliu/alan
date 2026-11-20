@@ -6,7 +6,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use super::{
-    about, connection, host, man, memory, q, skill_authoring, skills, skills_list, trust, workflow,
+    about, connection, host, login, man, memory, q, skill_authoring, skills, skills_list, trust,
+    workflow,
 };
 
 /// Top-level `alan` command-line interface.
@@ -26,6 +27,9 @@ pub struct Cli {
     /// Initial project directory candidate offered to bare `alan`.
     #[arg(long, value_name = "PATH")]
     pub cwd: Option<PathBuf>,
+    /// Do not automatically mount the launch project directory into `/mnt`.
+    #[arg(long)]
+    pub no_auto_mount: bool,
     /// Record typed input advice using this evaluator profile; never auto-run advice.
     #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
     pub shadow_evaluator: Option<String>,
@@ -61,6 +65,20 @@ pub enum Commands {
     Connection {
         #[command(subcommand)]
         action: ConnectionAction,
+    },
+    /// Authenticate and configure a first-party LLM provider profile
+    Login {
+        /// Provider id: chatgpt, openrouter, vertex, magpie, or openai
+        provider: Option<String>,
+        /// Print authorization URL instead of launching a web browser
+        #[arg(long = "no-browser")]
+        no_browser: bool,
+        /// Use device-code flow instead of browser callback (ChatGPT)
+        #[arg(long)]
+        device: bool,
+        /// Explicit connection profile id to create or update
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Inspect resolved skills, packages, and exposure state
     Skills {
@@ -508,6 +526,7 @@ pub fn uses_product_stores(command: Option<&Commands>) -> bool {
     matches!(
         command,
         None | Some(Commands::Connection { .. })
+            | Some(Commands::Login { .. })
             | Some(Commands::Q(_))
             | Some(Commands::Memory(_))
             | Some(Commands::Workflow(_))
@@ -535,6 +554,12 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
             }
         }
         Commands::Connection { action } => dispatch_connection(action).await?,
+        Commands::Login {
+            provider,
+            no_browser,
+            device,
+            profile,
+        } => login::run_login(provider, no_browser, device, profile).await?,
         Commands::Skills { action } => dispatch_skills(action)?,
         Commands::About => about::run()?,
         Commands::Man { topic } => man::run(topic.as_deref())?,

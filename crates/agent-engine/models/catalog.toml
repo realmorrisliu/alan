@@ -206,8 +206,8 @@ aliases = ["gemini-3.0-pro"]
 family = "gemini-3"
 context_window_tokens = 1_048_576
 supports_reasoning = true
-supported_reasoning_efforts = ["low", "medium", "high"]
-default_reasoning_effort = "medium"
+supported_reasoning_efforts = ["low", "high"]
+default_reasoning_effort = "high"
 
 [[google_gemini_generate_content.models]]
 slug = "gemini-3-flash-preview"
@@ -215,7 +215,7 @@ aliases = ["gemini-3.0-flash"]
 family = "gemini-3"
 context_window_tokens = 1_048_576
 supports_reasoning = true
-supported_reasoning_efforts = ["none", "minimal", "low", "medium", "high"]
+supported_reasoning_efforts = ["minimal", "low", "medium", "high"]
 default_reasoning_effort = "medium"
 
 [[google_gemini_generate_content.models]]

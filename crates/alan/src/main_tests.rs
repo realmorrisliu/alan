@@ -138,3 +138,31 @@ fn memory_and_workflow_subcommands_parse_cleanly() {
     let wf = Cli::try_parse_from(["alan", "workflow", "list", "--json"]).unwrap();
     assert!(matches!(wf.command, Some(Commands::Workflow(_))));
 }
+
+#[test]
+fn login_subcommand_and_no_auto_mount_flag_parse_cleanly() {
+    let login = Cli::try_parse_from(["alan", "login", "openrouter", "--no-browser"]).unwrap();
+    assert!(matches!(
+        login.command,
+        Some(Commands::Login {
+            provider: Some(_),
+            no_browser: true,
+            device: false,
+            profile: None,
+        })
+    ));
+
+    let chatgpt = Cli::try_parse_from(["alan", "login", "chatgpt", "--device"]).unwrap();
+    assert!(matches!(
+        chatgpt.command,
+        Some(Commands::Login {
+            device: true,
+            no_browser: false,
+            ..
+        })
+    ));
+
+    let bare = Cli::try_parse_from(["alan", "--no-auto-mount"]).unwrap();
+    assert!(bare.no_auto_mount);
+    assert!(bare.command.is_none());
+}

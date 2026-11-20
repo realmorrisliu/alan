@@ -93,6 +93,7 @@ pub(super) fn apply(
         Snapshot::Model(snapshot) if app.model.owner == owner => {
             app.model.apply(owner, snapshot);
             app.reconcile_model_chooser();
+            app.refresh_welcome_header();
         }
         Snapshot::Skills(snapshot) if app.skills.owner == owner => {
             app.apply_skills(owner, snapshot)

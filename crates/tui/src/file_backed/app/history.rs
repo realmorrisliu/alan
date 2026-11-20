@@ -212,7 +212,7 @@ impl FileBackedApp {
         }
     }
 
-    pub(super) fn queued_receipt_at(&self, index: usize) -> bool {
+    pub(in crate::file_backed) fn queued_receipt_at(&self, index: usize) -> bool {
         self.local_inputs
             .values()
             .any(|input| input.cell == Some(index) && !input.tape_seen)
@@ -339,6 +339,9 @@ impl FileBackedApp {
                     let index = self
                         .pending_remote_turn_start
                         .unwrap_or(self.transcript.len());
+                    let is_cmd =
+                        record.input_intent == Some(alan_agent_protocol::InputIntent::Command);
+                    self.turn_prompts.push((record.content.clone(), is_cmd));
                     self.insert_user_boundary(record.into_user_cell().with_input_cut(cut));
                     for id in &ids {
                         if let Some(input) = self.local_inputs.get_mut(id) {

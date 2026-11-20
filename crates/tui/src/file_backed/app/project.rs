@@ -2,21 +2,24 @@ use super::*;
 
 pub(super) fn default_commands() -> Vec<CompletionCandidate> {
     [
-        ("project", "select or revoke a project directory"),
-        ("compact", "summarize context"),
-        ("rollback", "undo the last turn"),
-        ("continue", "continue paused input"),
-        ("discard", "discard paused input"),
-        ("clear", "clear the transcript"),
-        ("help", "show key bindings"),
-        ("man", "read alan9 manual pages"),
-        ("tape", "inspect Turing Tape timeline"),
-        ("quit", "exit alan"),
+        ("login", "connect or authenticate a model provider"),
         ("model", "choose model and reasoning effort"),
         ("resume", "inspect and switch retained rollout session"),
+        ("new", "start a fresh session"),
+        ("fork", "branch from an earlier prompt into composer"),
+        ("permissions", "switch runtime trust posture (Shift+Tab)"),
+        ("help", "show key bindings"),
+        ("project", "select or revoke a project directory"),
+        ("man", "read alan9 manual pages"),
+        ("tape", "inspect Turing Tape timeline"),
         ("summary", "inspect, edit, or delete project summary"),
         ("status", "inspect project, model and queue"),
-        ("new", "start a fresh session view"),
+        ("compact", "summarize context"),
+        ("rollback", "undo the last turn"),
+        ("clear", "clear the transcript"),
+        ("quit", "exit alan"),
+        ("continue", "continue paused input"),
+        ("discard", "discard paused input"),
     ]
     .into_iter()
     .map(|(value, detail)| CompletionCandidate::new(value, Some(detail.to_string())))

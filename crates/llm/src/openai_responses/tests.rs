@@ -776,3 +776,44 @@ fn test_convert_openai_responses_output_extracts_final_tool_arguments() {
         Some(Some(4))
     );
 }
+
+#[test]
+fn test_build_responses_request_omits_temperature_for_active_openai_reasoning_models() {
+    use crate::ReasoningEffort;
+    use crate::openai_chat_completions::build_responses_request_for_model;
+
+    for model in ["gpt-5.4", "gpt-5.3-codex", "o1", "o3-mini", "o4-mini"] {
+        let req = GenerationRequest::new()
+            .with_user_message("hello")
+            .with_temperature(0.4)
+            .with_reasoning_effort(ReasoningEffort::Medium);
+        let built = build_responses_request_for_model(model.to_string(), req, false).unwrap();
+        assert_eq!(
+            built.temperature, None,
+            "{model} should omit temperature when reasoning is active"
+        );
+    }
+
+    // ReasoningEffort::None or non-reasoning models preserve temperature.
+    let none_effort = build_responses_request_for_model(
+        "gpt-5.4".to_string(),
+        GenerationRequest::new()
+            .with_user_message("hello")
+            .with_temperature(0.4)
+            .with_reasoning_effort(ReasoningEffort::None),
+        false,
+    )
+    .unwrap();
+    assert_eq!(none_effort.temperature, Some(0.4));
+
+    let gpt4o = build_responses_request_for_model(
+        "gpt-4o".to_string(),
+        GenerationRequest::new()
+            .with_user_message("hello")
+            .with_temperature(0.4)
+            .with_reasoning_effort(ReasoningEffort::Low),
+        false,
+    )
+    .unwrap();
+    assert_eq!(gpt4o.temperature, Some(0.4));
+}

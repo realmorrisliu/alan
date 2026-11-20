@@ -554,6 +554,60 @@ impl AgentMachine {
         self.clear_responses_continuation("machine_cleared");
     }
 
+    /// Reset in-memory session state and rotate to a fresh durable rollout when configured.
+    pub(crate) async fn reset_session(
+        &mut self,
+        process_path: &str,
+        model: &str,
+        rollouts_dir: Option<&Path>,
+        rollout_cwd: Option<&Path>,
+        reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
+    ) -> anyhow::Result<Option<RolloutRecorder>> {
+        self.tape.clear();
+        self.has_active_task = false;
+        self.last_turn_context_snapshot_fingerprint = None;
+        self.clear_responses_continuation("session_reset");
+        self.reset_session_transition_state();
+        self.effect_index.clear();
+        self.user_turn_ordinal = 0;
+        self.compaction_failure_streak = 0;
+        self.latest_compaction_attempt = None;
+        self.latest_memory_flush_attempt = None;
+        self.evaluation_observation = None;
+        self.owner_work = None;
+        self.task_budget = None;
+        self.task_budget_wait = None;
+        self.inherited_budget_wait = None;
+        self.pending_delegated_resumes.clear();
+        self.auto_memory_flush_attempted_in_cycle = false;
+        self.active_turn_response_schema = None;
+        self.memory_record_id = uuid::Uuid::new_v4().to_string();
+
+        if let Some(old_recorder) = self.recorder.take() {
+            if let Err(err) = old_recorder.flush().await {
+                tracing::warn!(error = %err, "Failed to flush prior rollout recorder during session reset");
+            }
+            if let Err(err) = old_recorder.close().await {
+                tracing::warn!(error = %err, "Failed to close prior rollout recorder during session reset");
+            }
+        }
+
+        let Some(rollouts_dir) = rollouts_dir else {
+            return Ok(None);
+        };
+        let next_recorder = RolloutRecorder::new_in_dir_with_cwd_and_reasoning_effort(
+            process_path,
+            model,
+            rollouts_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await?;
+        self.memory_record_id = next_recorder.rollout_id().to_string();
+        self.recorder = Some(next_recorder.clone());
+        Ok(Some(next_recorder))
+    }
+
     /// Roll back the last `num_turns` user turns from in-memory context.
     ///
     /// This mutation is intentionally non-durable: recovery from persisted rollout

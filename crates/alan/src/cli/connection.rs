@@ -2,6 +2,8 @@ use alan_agent_engine::{Config, LlmProvider};
 use alan_auth::{
     BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager, DeviceCodeLoginOptions,
 };
+
+mod test_connectivity;
 use alan_os_host::{HostStorePaths, SecretStore, SystemStorePaths, apply_profile_to_config};
 use alan_service_manager::{
     ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
@@ -17,20 +19,21 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+use test_connectivity::verify_connection_connectivity;
 
 /// Existing Connection Service request selected by a native renderer adapter.
 /// The value is an opaque request id, never credential material.
 pub const NATIVE_CONNECTION_REQUEST_ENV: &str = "ALAN_NATIVE_CONNECTION_REQUEST_ID";
 
-struct ConnectionStores {
+pub(super) struct ConnectionStores {
     _installation_access: alan_os_host::installation::InstallationAccess,
-    credentials_dir: PathBuf,
-    managed_auth: PathBuf,
+    pub(super) credentials_dir: PathBuf,
+    pub(super) managed_auth: PathBuf,
     shell: Shell,
-    expected_metadata: String,
+    pub(super) expected_metadata: String,
 }
 
-async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
+pub(super) async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
     alan_os_host::installation::validate_current_invocation()?;
     let installation_access = alan_os_host::installation::InstallationPaths::detect()?.access()?;
 
@@ -72,7 +75,10 @@ async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
     Ok((stores, connections))
 }
 
-async fn save_connections(stores: &ConnectionStores, connections: &ConnectionsFile) -> Result<()> {
+pub(super) async fn save_connections(
+    stores: &mut ConnectionStores,
+    connections: &ConnectionsFile,
+) -> Result<()> {
     let command = serde_json::json!({
         "op": "replace_metadata",
         "expected": &stores.expected_metadata,
@@ -85,10 +91,12 @@ async fn save_connections(stores: &ConnectionStores, connections: &ConnectionsFi
             &serde_json::to_vec(&command).context("encode Connection Service command")?,
         )
         .await
-        .map_err(|error| anyhow::anyhow!("update Connection Service metadata: {error}"))
+        .map_err(|error| anyhow::anyhow!("update Connection Service metadata: {error}"))?;
+    stores.expected_metadata = connections.fingerprint()?;
+    Ok(())
 }
 
-async fn request_native(
+pub(super) async fn request_native(
     stores: &ConnectionStores,
     profile_id: &str,
     action: &str,
@@ -137,7 +145,7 @@ async fn request_native(
     Ok(request_id)
 }
 
-async fn respond_native(
+pub(super) async fn respond_native(
     stores: &ConnectionStores,
     request_id: &str,
     opaque_credential_ref: Option<String>,
@@ -158,26 +166,34 @@ async fn respond_native(
         .map_err(|error| anyhow::anyhow!("answer native Connection request: {error}"))
 }
 
-fn secret_store(stores: &ConnectionStores) -> Result<SecretStore> {
+pub(super) fn secret_store(stores: &ConnectionStores) -> Result<SecretStore> {
     SecretStore::from_directory(&stores.credentials_dir)
 }
 
-fn chatgpt_auth_manager(stores: &ConnectionStores) -> Result<ChatgptAuthManager> {
+pub(super) fn chatgpt_auth_manager(stores: &ConnectionStores) -> Result<ChatgptAuthManager> {
     Ok(ChatgptAuthManager::new(
         ChatgptAuthConfig::with_storage_path(stores.managed_auth.clone()),
     )?)
 }
 
-fn display_identifier(value: &str) -> String {
+pub(super) fn require_non_empty(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
+pub(super) fn display_identifier(value: &str) -> String {
     sanitize_identifier(value).unwrap_or_else(|| "<redacted>".to_string())
 }
 
-fn validated_profile_id(profile_id: &str) -> Result<String> {
+pub(super) fn validated_profile_id(profile_id: &str) -> Result<String> {
     sanitize_identifier(profile_id)
         .ok_or_else(|| anyhow::anyhow!("Invalid profile id `{profile_id}`"))
 }
 
-fn connection_profile<'a>(
+pub(super) fn connection_profile<'a>(
     connections: &'a ConnectionsFile,
     profile_id: &str,
 ) -> Result<&'a ConnectionProfile> {
@@ -187,7 +203,7 @@ fn connection_profile<'a>(
         .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))
 }
 
-fn ensure_credential_metadata(
+pub(super) fn ensure_credential_metadata(
     connections: &mut ConnectionsFile,
     credential_id: &str,
     provider: LlmProvider,
@@ -270,7 +286,10 @@ fn parse_setting_pairs(pairs: &[String]) -> Result<BTreeMap<String, String>> {
         .collect()
 }
 
-fn suggested_profile_id(provider: LlmProvider, requested: Option<String>) -> Result<String> {
+pub(super) fn suggested_profile_id(
+    provider: LlmProvider,
+    requested: Option<String>,
+) -> Result<String> {
     if let Some(requested) = requested {
         return validated_profile_id(&requested);
     }
@@ -281,14 +300,14 @@ fn suggested_profile_id(provider: LlmProvider, requested: Option<String>) -> Res
         LlmProvider::OpenAiChatCompletions => "openai-chat-main",
         LlmProvider::OpenAiChatCompletionsCompatible => "compatible-main",
         LlmProvider::OpenRouter => "openrouter-main",
-        LlmProvider::GoogleGeminiGenerateContent => "gemini",
+        LlmProvider::GoogleGeminiGenerateContent => "vertex-main",
         LlmProvider::AnthropicMessages => "anthropic-main",
         LlmProvider::TypesafeEvaluation => "typesafe-main",
     }
     .to_string())
 }
 
-fn prompt_secret_line(profile_id: &str) -> Result<String> {
+pub(super) fn prompt_secret_line(profile_id: &str) -> Result<String> {
     print!("Secret for {}: ", display_identifier(profile_id));
     io::stdout().flush()?;
     let echo_guard = alan_tui::terminal::StdinEchoGuard::disable_if_tty()
@@ -404,7 +423,7 @@ pub async fn run_connection_add(
         .as_ref()
         .map(|(pkg_id, _)| provider_packages::provider_package_source(pkg_id))
         .unwrap_or_else(|| "managed".to_string());
-    let (stores, mut connections) = load_connections().await?;
+    let (mut stores, mut connections) = load_connections().await?;
     anyhow::ensure!(
         !connections.profiles.contains_key(&profile_id),
         "Connection profile `{profile_id}` already exists"
@@ -443,7 +462,7 @@ pub async fn run_connection_add(
     if make_default || (connections.default_profile.is_none() && provider.supports_generation()) {
         connections.default_profile = Some(profile_id.clone());
     }
-    save_connections(&stores, &connections).await?;
+    save_connections(&mut stores, &connections).await?;
     println!(
         "Created connection profile {}",
         display_identifier(&profile_id)
@@ -461,7 +480,7 @@ pub async fn run_connection_edit(
     let credential_id = credential_id
         .map(|credential_id| validated_profile_id(&credential_id))
         .transpose()?;
-    let (stores, mut connections) = load_connections().await?;
+    let (mut stores, mut connections) = load_connections().await?;
     let (provider, credential_label) = {
         let profile = connections
             .profiles
@@ -491,13 +510,14 @@ pub async fn run_connection_edit(
         profile.credential_id = Some(credential_id);
     }
     if !setting_pairs.is_empty() {
-        let settings =
-            normalize_profile_settings(profile.provider, &parse_setting_pairs(setting_pairs)?);
+        let mut merged = profile.settings.clone();
+        merged.extend(parse_setting_pairs(setting_pairs)?);
+        let settings = normalize_profile_settings(profile.provider, &merged);
         validate_profile_settings(profile.provider, &settings)?;
         profile.settings = settings;
     }
     profile.updated_at = Utc::now();
-    save_connections(&stores, &connections).await?;
+    save_connections(&mut stores, &connections).await?;
     println!(
         "Updated connection profile {}",
         display_identifier(&profile_id)
@@ -509,7 +529,7 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
     let secret = value
         .map(Ok)
         .unwrap_or_else(|| prompt_secret_line(profile_id))?;
-    let (stores, mut connections) = load_connections().await?;
+    let (mut stores, mut connections) = load_connections().await?;
     let (provider, profile_label, existing_credential_id) = {
         let profile = connection_profile(&connections, profile_id)?;
         anyhow::ensure!(
@@ -532,7 +552,7 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
                 profile.credential_id = Some(id.clone());
                 profile.updated_at = Utc::now();
             }
-            save_connections(&stores, &connections).await?;
+            save_connections(&mut stores, &connections).await?;
             id
         }
     };
@@ -554,51 +574,77 @@ pub async fn run_connection_login(
     use_device_code: bool,
     open_browser: bool,
 ) -> Result<()> {
-    let (stores, connections) = load_connections().await?;
-    let profile = connection_profile(&connections, profile_id)?;
+    let (mut stores, mut connections) = load_connections().await?;
+    let provider = connection_profile(&connections, profile_id)?.provider;
     anyhow::ensure!(
-        profile.provider == LlmProvider::Chatgpt,
-        "managed login is supported only for chatgpt"
+        !use_device_code || provider == LlmProvider::Chatgpt,
+        "device code login is supported only for chatgpt"
     );
-    let request_id = request_native(
-        &stores,
-        profile_id,
-        if use_device_code {
-            "device_login"
-        } else {
-            "browser_login"
-        },
-    )
-    .await?;
-    let manager = chatgpt_auth_manager(&stores)?;
-    if use_device_code {
-        let prompt = manager.start_device_code().await?;
-        println!(
-            "Open this URL in your browser:\n{}",
-            prompt.verification_url
-        );
-        println!("Enter this one-time code:\n{}", prompt.user_code);
-        manager
-            .complete_device_code(&prompt, DeviceCodeLoginOptions::default())
+    match provider {
+        LlmProvider::Chatgpt => {
+            let request_id = request_native(
+                &stores,
+                profile_id,
+                if use_device_code {
+                    "device_login"
+                } else {
+                    "browser_login"
+                },
+            )
             .await?;
-    } else {
-        manager
-            .login_with_browser(BrowserLoginOptions {
+            let manager = chatgpt_auth_manager(&stores)?;
+            if use_device_code {
+                let prompt = manager.start_device_code().await?;
+                println!(
+                    "Open this URL in your browser:\n{}",
+                    prompt.verification_url
+                );
+                println!("Enter this one-time code:\n{}", prompt.user_code);
+                manager
+                    .complete_device_code(&prompt, DeviceCodeLoginOptions::default())
+                    .await?;
+            } else {
+                manager
+                    .login_with_browser(BrowserLoginOptions {
+                        open_browser,
+                        forced_workspace_id: None,
+                        timeout: Duration::from_secs(300),
+                        redirect_uri: None,
+                        login_id: None,
+                    })
+                    .await?;
+            }
+            respond_native(
+                &stores,
+                &request_id,
+                Some(format!("host-managed-auth:{profile_id}")),
+                "ready",
+            )
+            .await?;
+        }
+        LlmProvider::OpenRouter => {
+            super::login::login_openrouter_into_profile(
+                &mut stores,
+                &mut connections,
+                profile_id,
                 open_browser,
-                forced_workspace_id: None,
-                timeout: Duration::from_secs(300),
-                redirect_uri: None,
-                login_id: None,
-            })
+            )
             .await?;
+        }
+        LlmProvider::GoogleGeminiGenerateContent => {
+            super::login::login_vertex_into_profile(
+                &mut stores,
+                &mut connections,
+                profile_id,
+                open_browser,
+            )
+            .await?;
+        }
+        other => anyhow::bail!(
+            "login is supported for chatgpt, openrouter, and vertex profiles (found `{}`)",
+            other.as_str()
+        ),
     }
-    respond_native(
-        &stores,
-        &request_id,
-        Some(format!("host-managed-auth:{profile_id}")),
-        "ready",
-    )
-    .await?;
     println!("Logged in to {}.", display_identifier(profile_id));
     Ok(())
 }
@@ -650,13 +696,13 @@ pub async fn run_connection_current() -> Result<()> {
 
 pub async fn run_connection_default_set(profile_id: &str) -> Result<()> {
     let profile_id = validated_profile_id(profile_id)?;
-    let (stores, mut connections) = load_connections().await?;
+    let (mut stores, mut connections) = load_connections().await?;
     anyhow::ensure!(
         connections.profiles.contains_key(&profile_id),
         "Unknown connection profile `{profile_id}`"
     );
     connections.default_profile = Some(profile_id.clone());
-    save_connections(&stores, &connections).await?;
+    save_connections(&mut stores, &connections).await?;
     println!(
         "Default profile set to {}.",
         display_identifier(&profile_id)
@@ -665,9 +711,9 @@ pub async fn run_connection_default_set(profile_id: &str) -> Result<()> {
 }
 
 pub async fn run_connection_default_clear() -> Result<()> {
-    let (stores, mut connections) = load_connections().await?;
+    let (mut stores, mut connections) = load_connections().await?;
     connections.default_profile = None;
-    save_connections(&stores, &connections).await?;
+    save_connections(&mut stores, &connections).await?;
     println!("Cleared default profile.");
     Ok(())
 }
@@ -690,190 +736,23 @@ pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
         &secret_store(&stores)?,
         &mut config,
     )?;
-    if resolved.provider == LlmProvider::Chatgpt
-        && chatgpt_auth_manager(&stores)?.status().await?.is_none()
-    {
-        anyhow::bail!("ChatGPT profile `{profile_id}` is not logged in");
-    }
     let _provider_config = config.to_provider_config()?;
-    verify_connection_connectivity(&profile_id, resolved.provider, &config).await?;
+    verify_connection_connectivity(&stores, &profile_id, resolved.provider, &config).await?;
     println!("profile_id: {}", display_identifier(&profile_id));
     println!("provider: {}", profile.provider.as_str());
     println!("status: success");
     Ok(())
 }
 
-async fn verify_connection_connectivity(
-    profile_id: &str,
-    provider: LlmProvider,
-    config: &Config,
-) -> Result<()> {
-    if matches!(
-        provider,
-        LlmProvider::TypesafeEvaluation | LlmProvider::Chatgpt
-    ) {
-        return Ok(());
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|err| anyhow::anyhow!("build HTTP client for connection test: {err}"))?;
-
-    let non_empty = |value: &Option<String>| {
-        value
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(ToString::to_string)
-    };
-    fn require_base<'a>(profile_id: &str, raw: &'a str) -> Result<&'a str> {
-        let trimmed = raw.trim();
-        anyhow::ensure!(
-            !trimmed.is_empty(),
-            "profile `{profile_id}` is missing a base URL"
-        );
-        Ok(trimmed)
-    }
-
-    let request = match provider {
-        LlmProvider::Magpie
-        | LlmProvider::OpenAiResponses
-        | LlmProvider::OpenAiChatCompletions
-        | LlmProvider::OpenAiChatCompletionsCompatible
-        | LlmProvider::OpenRouter => {
-            let (raw_base, key) = match provider {
-                LlmProvider::Magpie => (&config.magpie_base_url, non_empty(&config.magpie_api_key)),
-                LlmProvider::OpenAiResponses => (
-                    &config.openai_responses_base_url,
-                    non_empty(&config.openai_responses_api_key),
-                ),
-                LlmProvider::OpenAiChatCompletions => (
-                    &config.openai_chat_completions_base_url,
-                    non_empty(&config.openai_chat_completions_api_key),
-                ),
-                LlmProvider::OpenAiChatCompletionsCompatible => (
-                    &config.openai_chat_completions_compatible_base_url,
-                    non_empty(&config.openai_chat_completions_compatible_api_key),
-                ),
-                LlmProvider::OpenRouter => (
-                    &config.openrouter_base_url,
-                    non_empty(&config.openrouter_api_key),
-                ),
-                _ => unreachable!(),
-            };
-            let base = require_base(profile_id, raw_base)?;
-            let url = format!("{}/models", base.trim_end_matches('/'));
-            let mut req = client.get(&url);
-            if let Some(key) = key {
-                req = req.bearer_auth(key);
-            } else if !matches!(
-                provider,
-                LlmProvider::Magpie | LlmProvider::OpenAiChatCompletionsCompatible
-            ) {
-                anyhow::bail!("profile `{profile_id}` has no API key configured");
-            }
-            if provider == LlmProvider::OpenRouter {
-                if let Some(referer) = non_empty(&config.openrouter_http_referer) {
-                    req = req.header("HTTP-Referer", referer);
-                }
-                if let Some(title) = non_empty(&config.openrouter_x_title) {
-                    req = req.header("X-Title", title);
-                }
-            }
-            req
-        }
-        LlmProvider::AnthropicMessages => {
-            let base = require_base(profile_id, &config.anthropic_messages_base_url)?;
-            let trimmed = base.trim_end_matches('/');
-            let url = if trimmed.ends_with("/v1") {
-                format!("{trimmed}/models")
-            } else {
-                format!("{trimmed}/v1/models")
-            };
-            let key = non_empty(&config.anthropic_messages_api_key).ok_or_else(|| {
-                anyhow::anyhow!("profile `{profile_id}` has no API key configured")
-            })?;
-            let mut req = client
-                .get(&url)
-                .header("x-api-key", key)
-                .header("anthropic-version", "2023-06-01");
-            if let Some(ua) = non_empty(&config.anthropic_messages_user_agent) {
-                req = req.header("User-Agent", ua);
-            }
-            req
-        }
-        LlmProvider::GoogleGeminiGenerateContent => {
-            if let Some(key) = non_empty(&config.google_gemini_generate_content_api_key) {
-                let url = "https://aiplatform.googleapis.com/v1/publishers/google/models";
-                client.get(url).header("x-goog-api-key", key)
-            } else {
-                let project_id = non_empty(&config.google_gemini_generate_content_project_id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Vertex profile `{profile_id}` is missing project_id")
-                    })?;
-                let location = config.google_gemini_generate_content_location.trim();
-                let location = if location.is_empty() {
-                    "global"
-                } else {
-                    location
-                };
-                let token_out = tokio::process::Command::new("gcloud")
-                    .args(["auth", "print-access-token"])
-                    .output()
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "run `gcloud auth print-access-token` for `{profile_id}`: {err}"
-                        )
-                    })?;
-                if !token_out.status.success() {
-                    anyhow::bail!(
-                        "gcloud access token unavailable for Vertex profile `{profile_id}`"
-                    );
-                }
-                let token = String::from_utf8_lossy(&token_out.stdout)
-                    .trim()
-                    .to_string();
-                anyhow::ensure!(
-                    !token.is_empty(),
-                    "gcloud returned an empty access token for Vertex profile `{profile_id}`"
-                );
-                let host = if location == "global" {
-                    "aiplatform.googleapis.com".to_string()
-                } else {
-                    format!("{location}-aiplatform.googleapis.com")
-                };
-                let url = format!(
-                    "https://{host}/v1/projects/{project_id}/locations/{location}/publishers/google/models"
-                );
-                client.get(&url).bearer_auth(token)
-            }
-        }
-        LlmProvider::TypesafeEvaluation | LlmProvider::Chatgpt => unreachable!(),
-    };
-
-    let response = request.send().await.map_err(|err| {
-        anyhow::anyhow!("connection test failed for profile `{profile_id}`: {err}")
-    })?;
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        anyhow::bail!("authentication failed for profile `{profile_id}` (HTTP {status})");
-    }
-    if !status.is_success() {
-        anyhow::bail!("connection test failed for profile `{profile_id}` (HTTP {status})");
-    }
-    Ok(())
-}
-
 pub async fn run_connection_remove(profile_id: &str) -> Result<()> {
     let profile_id = validated_profile_id(profile_id)?;
-    let (stores, mut connections) = load_connections().await?;
+    let (mut stores, mut connections) = load_connections().await?;
     let removed = connections.profiles.remove(&profile_id).is_some();
     if connections.default_profile.as_deref() == Some(&profile_id) {
         connections.default_profile = None;
     }
     if removed {
-        save_connections(&stores, &connections).await?;
+        save_connections(&mut stores, &connections).await?;
     }
     println!(
         "Connection profile {} {}.",

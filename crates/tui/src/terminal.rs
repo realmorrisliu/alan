@@ -479,11 +479,12 @@ impl TerminalSession {
         }
 
         let top = self.terminal.get_frame().area().y;
+        let clear_y = inline_clear_y(top, terminal_size.height, height);
         execute!(
             self.terminal.backend_mut(),
-            MoveTo(0, top),
+            MoveTo(0, clear_y),
             Clear(ClearType::FromCursorDown),
-            MoveTo(0, top)
+            MoveTo(0, clear_y)
         )
         .context("failed to clear the previous inline viewport")?;
 
@@ -533,6 +534,33 @@ impl TerminalSession {
             })
             .context("failed to append transcript to terminal scrollback")
     }
+}
+
+/// Compute the top row to clear before rebuilding an inline viewport of `new_height`.
+/// When an inline viewport expands upward, `new_height` claims rows above the old `top`;
+/// clearing from `min(top, screen_height - new_height)` wipes prior scrollback/banner cells.
+pub(crate) fn inline_clear_y(top: u16, screen_height: u16, new_height: u16) -> u16 {
+    top.min(screen_height.saturating_sub(new_height))
+}
+
+/// Restore terminal modes, write `\r\n`, and suspend the current foreground process via `SIGTSTP`.
+#[cfg(unix)]
+pub(crate) fn suspend_current_process() -> Result<()> {
+    restore_terminal_modes();
+    let mut out = stdout();
+    let _ = out.write_all(b"\r\n");
+    let _ = out.flush();
+    // SAFETY: `libc::raise(libc::SIGTSTP)` sends standard POSIX job-control stop to this process.
+    if unsafe { libc::raise(libc::SIGTSTP) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("raise SIGTSTP");
+    }
+    Ok(())
+}
+
+/// Non-Unix no-op fallback for job suspend.
+#[cfg(not(unix))]
+pub(crate) fn suspend_current_process() -> Result<()> {
+    Ok(())
 }
 
 pub(crate) fn anchored_inline_height(base: u16, desired: u16, screen: u16, top: u16) -> u16 {
@@ -732,5 +760,17 @@ mod tests {
         let mut out = Vec::new();
         write_osc_title_to(&mut out, "alan · repo · ready").unwrap();
         assert_eq!(out, b"\x1b]0;alan \xc2\xb7 repo \xc2\xb7 ready\x07");
+    }
+
+    #[test]
+    fn inline_clear_y_clears_upward_expansion_origins() {
+        // Welcome drained to rows 0..3 -> top=4; /help grows viewport to 24 rows -> must clear from 0.
+        assert_eq!(inline_clear_y(4, 24, 24), 0);
+        // Partial upward growth from row 12 to 22-row viewport at 24-row screen -> clear from row 2.
+        assert_eq!(inline_clear_y(12, 24, 22), 2);
+        // Shrinking from row 2 to 5 rows -> keeps clearing from row 2 downward.
+        assert_eq!(inline_clear_y(2, 24, 5), 2);
+        // Zero-anchored expansion stays at 0.
+        assert_eq!(inline_clear_y(0, 24, 15), 0);
     }
 }

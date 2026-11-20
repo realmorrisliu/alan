@@ -669,6 +669,16 @@ impl ToolProcessRunner {
             .insert(pid, trust_posture);
     }
 
+    /// Return the explicit invocation trust posture registered for one Agent Process, if any.
+    pub fn process_trust_posture(&self, pid: u64) -> Option<crate::policy::TrustPosture> {
+        self.inner
+            .process_trust_postures
+            .lock()
+            .expect("process trust posture mutex poisoned")
+            .get(&pid)
+            .copied()
+    }
+
     /// Remove all Tool execution state when its owning Process exits.
     pub fn unregister_process(&self, pid: u64) {
         let inner = &self.inner;

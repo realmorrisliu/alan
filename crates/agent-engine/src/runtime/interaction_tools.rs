@@ -702,7 +702,7 @@ pub(super) fn request_confirmation_tool_definition() -> ToolDefinition {
                 },
                 "checkpoint_type": {
                     "type": "string",
-                    "description": "The type of checkpoint (e.g., 'business_understanding', 'supplier_recommendation', 'final_confirmation'). Defaults to 'confirmation'."
+                    "description": "The type of checkpoint (e.g., 'destructive_change', 'schema_migration', 'deployment', 'final_confirmation'). Defaults to 'confirmation'."
                 },
                 "summary": {
                     "type": "string",

@@ -1,5 +1,13 @@
 # Disposition — 2026-09-26
 
+> **Status: deferred-research / parked (ADR-0061, 2026-11-20).** Automatic input
+> routing remains disabled and unauthorized. This directory stays in place solely
+> because `scripts/harness/collect_routing_shadow_clients.py`,
+> `scripts/harness/score_routing_shadow.py`, and
+> `crates/tui/src/file_backed/shadow_admission_tests.rs` reference its pinned
+> `shadow-corpus.v1.json` and `shadow-budgets.v1.json` paths. Do not execute or
+> sync these deltas without an explicit new planning decision.
+
 ## Planning handoff — 2026-10-14
 
 The personal daily-use roadmap prioritizes project delegation, approval-friction reduction and continuity before further input-routing qualification. Guardian permission judgment has independent gates; routing remains disabled.
@@ -32,7 +40,8 @@ The user authorized this handoff as part of explicit-input delivery and archival
 No classifier, provider adapter, measured qualification or activation is claimed.
 
 Generic typed evaluation remains owned by
-[add-cognitive-model-routing](../add-cognitive-model-routing/disposition.md).
+[add-cognitive-model-routing](../archive/2026-11-20-add-cognitive-model-routing/disposition.md)
+(archived 2026-11-20 without syncing deferred research).
 This change consumes that delivered capability; it does not activate that owner's
 queued implementation or require a specific provider such as Jev. Effecting automatic
 routing stays disabled until this change's qualification and explicit activation gates pass.

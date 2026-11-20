@@ -1,6 +1,7 @@
 //! Actual managed-unavailable startup must preserve deterministic command dispatch.
 use super::*;
 use crate::host_mount::{HostMountExport, HostMountToolProjection};
+use alan_agent_engine::runtime::model_binding::ConnectionAuthority;
 use alan_agent_engine::tools::{Sandbox, ToolExecutionAdapter};
 use alan_agent_protocol::{UiEvent, UiInputStatus};
 use std::path::{Path, PathBuf};
@@ -263,4 +264,72 @@ async fn unavailable_managed_default_dispatches_direct_command_without_generatio
         probe.recorded_requests().is_empty(),
         "unavailable managed profile must not invoke injection"
     );
+}
+
+struct UnconfiguredTestProvider;
+
+#[async_trait::async_trait]
+impl alan_llm::LlmProvider for UnconfiguredTestProvider {
+    async fn generate(
+        &mut self,
+        _: alan_llm::GenerationRequest,
+    ) -> Result<alan_llm::GenerationResponse> {
+        anyhow::bail!("unconfigured")
+    }
+    async fn chat(&mut self, _: Option<&str>, _: &str) -> Result<String> {
+        anyhow::bail!("unconfigured")
+    }
+    async fn generate_stream(
+        &mut self,
+        _: alan_llm::GenerationRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<alan_llm::StreamChunk>> {
+        anyhow::bail!("unconfigured")
+    }
+    fn provider_name(&self) -> &'static str {
+        "unconfigured"
+    }
+}
+
+#[derive(Debug)]
+struct UnconfiguredProviderFactory;
+
+impl LlmClientFactory for UnconfiguredProviderFactory {
+    fn create(
+        &self,
+        _: &alan_agent_engine::Config,
+        selected_profile: Option<&str>,
+        _: &ConnectionsFile,
+    ) -> Result<LlmClient> {
+        ensure!(selected_profile.is_none(), "expected no selected profile");
+        Ok(LlmClient::new(UnconfiguredTestProvider))
+    }
+}
+
+#[tokio::test]
+async fn unconfigured_boot_reports_none_root_model_and_publishes_no_fake_fallback() {
+    let mut cfg = ServiceManagerConfig::ephemeral(
+        AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
+        LlmClient::new(UnconfiguredTestProvider),
+        ToolRegistry::new(),
+    );
+    cfg.llm_factory = Arc::new(UnconfiguredProviderFactory);
+    let manager = ServiceManager::boot(cfg).await.unwrap();
+    assert_eq!(
+        manager.root_model(),
+        None,
+        "unconfigured boot must report None root_model instead of a fake default model"
+    );
+    let authority = crate::connection::process_binding::ProcessConnection {
+        service: manager.connection(),
+        profile: "default".into(),
+        namespace: alan_kernel::LiveNamespace::new(alan_kernel::Namespace::new()),
+        evaluator: None,
+        guardian_profile: None,
+    };
+    assert!(
+        authority.capture_initial().await.unwrap().is_none(),
+        "unconfigured boot must not publish a fake callable"
+    );
+    manager.shutdown().await.unwrap();
 }

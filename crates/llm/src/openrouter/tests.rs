@@ -467,3 +467,72 @@ async fn generate_stream_requests_and_parses_usage_accounting() {
         })
     );
 }
+
+#[test]
+fn openai_reasoning_models_use_developer_role_and_omit_temperature_when_active() {
+    let mut request = GenerationRequest::new()
+        .with_system_prompt("Static instructions")
+        .with_user_message("hello")
+        .with_temperature(0.4)
+        .with_reasoning_effort(ReasoningEffort::High);
+    request.messages.push(Message::context("trailing recall"));
+
+    let payload = build_openrouter_chat_request_payload("openai/gpt-5.4", request).unwrap();
+    assert_eq!(payload["messages"][0]["role"], "developer");
+    assert_eq!(payload["messages"][1]["role"], "user");
+    assert_eq!(payload["messages"][2]["role"], "developer");
+    assert!(
+        payload.get("temperature").is_none() || payload["temperature"].is_null(),
+        "temperature must be omitted for openai/gpt-5.4 with active reasoning: {payload}"
+    );
+}
+
+#[test]
+fn anthropic_claude_attaches_cache_control_breakpoints_and_preserves_system_prefix() {
+    let mut request = GenerationRequest::new()
+        .with_system_prompt("Static system prompt")
+        .with_user_message("turn 1")
+        .with_assistant_message("reply 1");
+    request.messages.push(Message::user("turn 2"));
+    request.messages.push(Message::context("per-turn context"));
+
+    let payload =
+        build_openrouter_chat_request_payload("anthropic/claude-sonnet-4.5", request).unwrap();
+    assert_eq!(payload["messages"][0]["role"], "system");
+    assert_eq!(
+        payload["messages"][0]["content"],
+        json!([{
+            "type": "text",
+            "text": "Static system prompt",
+            "cache_control": {"type": "ephemeral"}
+        }])
+    );
+    assert_eq!(payload["messages"][4]["role"], "user");
+    assert_eq!(
+        payload["messages"][4]["content"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+    assert_eq!(
+        payload["messages"][3]["content"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+}
+
+#[test]
+fn honors_session_key_via_stable_derived_session_id() {
+    let req_a = GenerationRequest::new()
+        .with_user_message("a")
+        .with_session_key("boot-1/agent/root");
+    let req_b = GenerationRequest::new()
+        .with_user_message("b")
+        .with_session_key("boot-1/agent/root");
+    let payload_a =
+        build_openrouter_chat_request_payload("anthropic/claude-sonnet-4.5", req_a).unwrap();
+    let payload_b =
+        build_openrouter_chat_request_payload("anthropic/claude-sonnet-4.5", req_b).unwrap();
+    let sid = payload_a["session_id"]
+        .as_str()
+        .expect("session_id present");
+    assert_ne!(sid, "boot-1/agent/root");
+    assert_eq!(sid, payload_b["session_id"].as_str().unwrap());
+}

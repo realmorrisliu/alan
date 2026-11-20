@@ -158,7 +158,7 @@ fn explicit_input_prefix_is_consumed_once_and_preserves_its_body() {
 }
 
 #[test]
-fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
+fn project_picker_defaults_read_write_and_supports_toggle_cancel_and_revoke() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     let mut app = FileBackedApp::new("/agent/root".into());
@@ -169,11 +169,11 @@ fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
     app.project_candidate = Some(std::path::PathBuf::from("/tmp/fixture"));
     assert!(app.handle_command("/project").is_none());
     assert_eq!(app.composer.text(), "/tmp/fixture");
-    assert!(app.notice.as_deref().unwrap().contains("read-only"));
+    assert!(app.notice.as_deref().unwrap().contains("read-write"));
     assert_eq!(app.input_prompt_prefix(), "! ");
 
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert!(app.notice.as_deref().unwrap().contains("read-write"));
+    assert!(app.notice.as_deref().unwrap().contains("read-only"));
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(app.composer.text().is_empty());
     assert!(app.project_selection.is_none());
@@ -186,13 +186,13 @@ fn project_picker_defaults_read_only_and_supports_toggle_cancel_and_revoke() {
         panic!("project approval action")
     };
     assert_eq!(host_path, std::path::PathBuf::from("/tmp/fixture"));
-    assert_eq!(access, ProjectAccess::ReadOnly);
+    assert_eq!(access, ProjectAccess::ReadWrite);
 
     app.project = Some(ProjectMountReceipt {
         grant_id: "request-1".into(),
         namespace_path: "/mnt/project-request-1".into(),
         label: "fixture".into(),
-        access: ProjectAccess::ReadOnly,
+        access: ProjectAccess::ReadWrite,
     });
     assert!(matches!(
         app.handle_command("/project revoke"),
@@ -216,7 +216,7 @@ fn settled_paused_project_picker_is_available_without_continuing_queue() {
     );
     app.activity.state = alan_agent_protocol::UiActivityState::Paused;
     app.handle_command("/project");
-    assert_eq!(app.project_selection, Some(ProjectAccess::ReadOnly));
+    assert_eq!(app.project_selection, Some(ProjectAccess::ReadWrite));
     assert_eq!(
         app.activity.state,
         alan_agent_protocol::UiActivityState::Paused

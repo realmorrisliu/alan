@@ -34,6 +34,8 @@ mod model_controls;
 mod model_status;
 #[path = "engine_queue_controls.rs"]
 mod queue_controls;
+#[path = "engine_session_controls.rs"]
+mod session_controls;
 use queue_controls::{
     push_submission_ahead_of_deferred, requeue_leftover_inband_submissions,
     should_requeue_deferred_action,
@@ -392,6 +394,7 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
+        let initial_reasoning_effort = machine_request_controls.reasoning_effort();
         let startup = match initialize_agent_machine(
             AgentMachineLaunchContext {
                 process_path: &process_path,
@@ -638,6 +641,18 @@ fn spawn_with_prepared_runtime_environment(
                     {
                         continue;
                     }
+                    if Box::pin(queues.handle_session_controls(
+                        &mut state,
+                        &submission,
+                        rollouts_dir.as_deref(),
+                        Some(rollout_cwd.as_path()),
+                        &model,
+                        initial_reasoning_effort,
+                    ))
+                    .await
+                    {
+                        continue;
+                    }
                     if queues
                         .outer_queue
                         .lock()
@@ -738,12 +753,12 @@ fn spawn_with_prepared_runtime_environment(
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.agent_files();
                     let namespace_heartbeat = state.agent_files();
-                    let submission_fut = advance_accepted_submission(
+                    let submission_fut = Box::pin(advance_accepted_submission(
                         &mut state,
                         submission,
                         &broker_for_submission,
                         &cancel,
-                    );
+                    ));
                     let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(5));
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 

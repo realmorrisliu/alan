@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use crate::connection_profile::{
     ConnectionProfile, ConnectionStoreBindings, ConnectionsFile, sanitize_identifier,
@@ -14,8 +14,11 @@ use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod catalog;
 pub(crate) mod process_binding;
 pub mod provider_packages;
+
+use catalog::{ModelCatalogPublication, build_published_catalog, needs_live_catalog_discovery};
 
 const FILES: &[(&str, bool)] = &[
     ("metadata", false),
@@ -152,8 +155,6 @@ impl State {
     }
 }
 
-type ModelCatalogPublication = Arc<OnceLock<Option<Arc<alan_agent_engine::ModelCatalog>>>>;
-
 struct CallableRegistry {
     llmfs: Arc<alan_llmfs::LlmFs>,
     factory: Arc<dyn LlmClientFactory>,
@@ -164,6 +165,7 @@ struct CallableRegistry {
     published_accounts: BTreeMap<String, String>,
     published_fallbacks: BTreeSet<String>,
     published_default: Option<String>,
+    live_default_redirect: bool,
 }
 
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
@@ -318,6 +320,7 @@ impl ConnectionService {
             published_accounts: BTreeMap::new(),
             published_fallbacks: BTreeSet::new(),
             published_default: None,
+            live_default_redirect: false,
         });
         drop(callables);
         self.refresh_callables().await;
@@ -350,6 +353,30 @@ impl ConnectionService {
         }
         self.refresh_callables().await;
         Ok(())
+    }
+
+    /// Force-reload Connection metadata and rebuild all published callables and catalogs so
+    /// in-TUI `/login` takes effect immediately without restarting Alan.
+    pub async fn reload_connections(&self) -> Result<()> {
+        {
+            let mut callables = self.callables.lock().await;
+            if let Some(registry) = callables.as_mut() {
+                let published: Vec<String> = registry.published_profiles.keys().cloned().collect();
+                for profile_id in published {
+                    registry.llmfs.unregister_connection(&profile_id).await;
+                }
+                if registry.published_default.take().is_some()
+                    || registry.published_fallbacks.remove("default")
+                {
+                    registry.llmfs.unregister_connection("default").await;
+                }
+                registry.published_profiles.clear();
+                registry.published_catalogs.clear();
+                registry.published_accounts.clear();
+                registry.live_default_redirect = true;
+            }
+        }
+        self.refresh().await
     }
 
     /// Capture a refreshed Process binding while registry replacement is excluded.
@@ -663,8 +690,9 @@ impl ConnectionService {
 
         let mut catalog_requests = Vec::new();
         for (profile_id, profile) in ready_profiles {
+            let provider_kind = profile.provider;
             let already_published = registry.published_profiles.get(&profile_id) == Some(&profile);
-            let needs_catalog = profile.provider == alan_agent_engine::LlmProvider::Chatgpt
+            let needs_catalog = needs_live_catalog_discovery(provider_kind)
                 && !registry.published_catalogs.contains_key(&profile_id);
             if !already_published {
                 let hydrated = provider_packages::hydrate_connections_with_package_defaults(
@@ -722,11 +750,11 @@ impl ConnectionService {
                     .insert(profile_id.clone(), profile);
             }
             if needs_catalog {
-                let publication = Arc::new(OnceLock::new());
+                let publication = Arc::new(std::sync::OnceLock::new());
                 registry
                     .published_catalogs
                     .insert(profile_id.clone(), publication.clone());
-                catalog_requests.push((profile_id.clone(), publication));
+                catalog_requests.push((profile_id.clone(), provider_kind, publication));
             }
             validation.insert(profile_id, "ready".to_string());
         }
@@ -767,12 +795,18 @@ impl ConnectionService {
         }
         self.state.lock().unwrap().validation = validation;
         drop(callables);
-        for (profile_id, publication) in catalog_requests {
-            self.discover_catalog(&profile_id, &publication).await;
+        for (profile_id, provider_kind, publication) in catalog_requests {
+            self.discover_catalog(&profile_id, provider_kind, &publication)
+                .await;
         }
     }
 
-    async fn discover_catalog(&self, profile_id: &str, publication: &ModelCatalogPublication) {
+    async fn discover_catalog(
+        &self,
+        profile_id: &str,
+        provider_kind: alan_agent_engine::LlmProvider,
+        publication: &ModelCatalogPublication,
+    ) {
         let discovery = async {
             let (client, base_catalog) = {
                 let callables = self.callables.lock().await;
@@ -793,19 +827,31 @@ impl ConnectionService {
                         && registry.published_profiles.contains_key(profile_id),
                     "profile publication changed"
                 );
-                let client = registry.factory.create(
-                    &registry.base_config,
-                    Some(profile_id),
+                let packages = self.package_service();
+                let hydrated = provider_packages::hydrate_connections_with_package_defaults(
+                    packages.as_deref(),
                     &connections,
-                )?;
-                let account = registry
-                    .published_accounts
-                    .get(profile_id)
-                    .context("managed catalog account unavailable")?;
-                ensure!(
-                    client.account_identity() == Some(account.as_str()),
-                    "provider account changed since callable publication"
+                    profile_id,
                 );
+                let client =
+                    registry
+                        .factory
+                        .create(&registry.base_config, Some(profile_id), &hydrated)?;
+                if provider_kind == alan_agent_engine::LlmProvider::Chatgpt {
+                    let account = registry
+                        .published_accounts
+                        .get(profile_id)
+                        .context("managed catalog account unavailable")?;
+                    ensure!(
+                        client.account_identity() == Some(account.as_str()),
+                        "provider account changed since callable publication"
+                    );
+                } else if let Some(account) = registry.published_accounts.get(profile_id) {
+                    ensure!(
+                        client.account_identity() == Some(account.as_str()),
+                        "provider account changed since callable publication"
+                    );
+                }
                 (
                     client,
                     registry.base_config.resolved_model_catalog().clone(),
@@ -817,7 +863,8 @@ impl ConnectionService {
                 .model_catalog()
                 .await?
                 .context("model catalog unavailable")?;
-            base_catalog.with_chatgpt_models(models).map(Arc::new)
+            build_published_catalog(provider_kind, &base_catalog, models)
+                .context("model catalog unavailable")
         }
         .await;
         // A settled failure is cached too. Only explicit selection retries it.

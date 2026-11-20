@@ -44,7 +44,7 @@ async fn standard_namespace_mounts_real_adr0061_manpages_at_man() {
         "magpie",
         "openai_responses",
         "chatgpt",
-        "vertex_gemini",
+        "vertex",
         "openrouter",
     ] {
         assert!(
@@ -52,6 +52,8 @@ async fn standard_namespace_mounts_real_adr0061_manpages_at_man() {
             "missing provider {provider}: {conn1}"
         );
     }
+    assert!(conn1.contains("alan login"), "{conn1}");
+    assert!(alan1.contains("/login"), "{alan1}");
 
     let agentfs4 = String::from_utf8(shell.cat("/man/4/agentfs").await.unwrap()).unwrap();
     assert!(agentfs4.contains("AGENTFS(4)"), "{agentfs4}");

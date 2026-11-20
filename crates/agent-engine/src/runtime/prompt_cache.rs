@@ -161,6 +161,16 @@ impl PromptAssemblyCache {
         self.system_prompt_mode = mode;
     }
 
+    /// Return the current cached `## Memory Store Bootstrap` section without rebuilding skills.
+    pub(crate) fn current_memory_bootstrap_section(&mut self) -> Option<String> {
+        self.memory_store_section_with_cache().0
+    }
+
+    /// Clear the session-bootstrapped Memory Store snapshot so the next session reloads it.
+    pub(crate) fn reset_memory_bootstrap(&mut self) {
+        self.memory_store_snapshot = None;
+    }
+
     #[cfg(test)]
     pub(crate) fn set_host_capabilities(&mut self, host_capabilities: SkillHostCapabilities) {
         if self.host_capabilities != host_capabilities {
@@ -433,10 +443,13 @@ impl PromptAssemblyCache {
             return (None, true);
         }
 
+        // Keep the session's initial Memory Store Bootstrap snapshot static across turns
+        // so turn-end writes to `handoffs/LATEST.md` and `daily/*.md` do not bust the
+        // system prompt prefix cache; dynamic recall handles mid-session updates instead.
         let cache_hit = self
             .memory_store_snapshot
             .as_ref()
-            .is_some_and(|snapshot| snapshot.is_current_for(memory_dir));
+            .is_some_and(|snapshot| snapshot.memory_dir == memory_dir);
         if !cache_hit {
             self.memory_store_snapshot = Some(CachedMemoryStore::load(memory_dir));
         }

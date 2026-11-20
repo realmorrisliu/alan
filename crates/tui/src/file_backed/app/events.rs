@@ -40,6 +40,17 @@ pub(in crate::file_backed) enum FileBackedAction {
     DeleteProjectSummary {
         expected_revision: Option<u64>,
     },
+    LoginListProviders {
+        generation: u64,
+    },
+    LoginSubmit {
+        generation: u64,
+        submission: super::super::login::LoginSubmission,
+        progress_rx:
+            Option<tokio::sync::mpsc::UnboundedReceiver<super::super::login::LoginProgress>>,
+    },
+    CancelLogin,
+    Suspend,
     Interrupt,
     Quit,
 }
@@ -71,6 +82,18 @@ pub(in crate::file_backed) enum FileBackedEvent {
     ProjectSummaryResult {
         action_label: Option<&'static str>,
         result: Result<super::super::summary_view::ProjectSummaryViewDto, String>,
+    },
+    LoginProvidersLoaded {
+        generation: u64,
+        result: Result<super::super::login::LoginResult, String>,
+    },
+    LoginProgress {
+        generation: u64,
+        progress: super::super::login::LoginProgress,
+    },
+    LoginStepCompleted {
+        generation: u64,
+        result: Result<super::super::login::LoginResult, String>,
     },
     ActionDetails {
         path: String,

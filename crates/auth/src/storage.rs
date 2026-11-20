@@ -80,12 +80,43 @@ impl StoredChatgptAuth {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredGoogleAuth {
+    pub refresh_token: String,
+    pub access_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_refresh_at: Option<DateTime<Utc>>,
+}
+
+impl StoredGoogleAuth {
+    /// Whether a request at `now` must refresh before dispatch: the access token is
+    /// expired or expires within [`ACCESS_TOKEN_REFRESH_WINDOW_SECS`], or lacks an expiry.
+    pub fn should_refresh(&self, now: DateTime<Utc>) -> bool {
+        match self.expires_at {
+            Some(exp) => exp <= now + chrono::Duration::seconds(ACCESS_TOKEN_REFRESH_WINDOW_SECS),
+            None => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AuthStore {
     #[serde(default)]
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chatgpt: Option<StoredChatgptAuth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google: Option<StoredGoogleAuth>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +142,7 @@ impl AuthStorage {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AuthStore {
                 version: 1,
                 chatgpt: None,
+                google: None,
             }),
             Err(error) => Err(error),
         }
@@ -132,7 +164,7 @@ impl AuthStorage {
         };
         let value: serde_json::Value =
             serde_json::from_slice(&fs::read(path)?).map_err(|_| invalid())?;
-        validate_fields(&value, &["version", "chatgpt"])?;
+        validate_fields(&value, &["version", "chatgpt", "google"])?;
         if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
             return Err(invalid());
         }
@@ -154,12 +186,32 @@ impl AuthStorage {
                 &["id_token", "access_token", "refresh_token"],
             )?;
         }
+        if let Some(auth) = value.get("google").filter(|value| !value.is_null()) {
+            validate_fields(
+                auth,
+                &[
+                    "refresh_token",
+                    "access_token",
+                    "expires_at",
+                    "client_id",
+                    "client_secret",
+                    "token_uri",
+                    "email",
+                    "last_refresh_at",
+                ],
+            )?;
+        }
         let store: AuthStore = serde_json::from_value(value).map_err(|_| invalid())?;
         if let Some(auth) = store.chatgpt
             && (auth.account_id.is_empty()
                 || auth.tokens.id_token.account_id.as_deref() != Some(auth.account_id.as_str())
                 || auth.tokens.access_token.is_empty()
                 || auth.tokens.refresh_token.is_empty())
+        {
+            return Err(invalid());
+        }
+        if let Some(auth) = store.google
+            && (auth.access_token.is_empty() || auth.refresh_token.is_empty())
         {
             return Err(invalid());
         }
@@ -206,6 +258,16 @@ impl AuthStorage {
         self.save_locked(store)
     }
 
+    /// Atomically load, mutate, and persist the auth store under `auth.json.lock`.
+    pub fn update(&self, mutate: impl FnOnce(&mut AuthStore)) -> io::Result<AuthStore> {
+        let _guard = self.lock("auth.json.lock")?;
+        let mut store = self.load()?;
+        store.version = 1;
+        mutate(&mut store);
+        self.save_locked(&store)?;
+        Ok(store)
+    }
+
     fn save_locked(&self, store: &AuthStore) -> io::Result<()> {
         let root_dir = self.resolve_root_dir()?;
         fs::create_dir_all(&root_dir)?;
@@ -228,6 +290,13 @@ impl AuthStorage {
         let _guard = self.lock("auth.json.lock")?;
         let mut store = self.load()?;
         store.chatgpt = None;
+        self.save_locked(&store)
+    }
+
+    pub fn clear_google(&self) -> io::Result<()> {
+        let _guard = self.lock("auth.json.lock")?;
+        let mut store = self.load()?;
+        store.google = None;
         self.save_locked(&store)
     }
 
@@ -371,6 +440,7 @@ mod tests {
             .save(&AuthStore {
                 version: 1,
                 chatgpt: Some(auth.clone()),
+                google: None,
             })
             .expect("save");
 

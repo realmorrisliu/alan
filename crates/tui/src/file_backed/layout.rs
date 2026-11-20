@@ -319,7 +319,7 @@ pub(super) fn live_region_lines_at(
         ));
     }
     if let Some(notice) = &app.notice {
-        if let Some(help_lines) = super::help::try_render_help_lines(notice, app.theme) {
+        if let Some(help_lines) = super::help::try_render_help_lines(notice, app.theme, width) {
             lines.extend(help_lines);
         } else {
             let (prefix, style) = match notice.kind {
@@ -377,15 +377,16 @@ pub(super) fn live_region_lines_at(
                 .skip(start)
                 .take(MAX_COMPLETION_ROWS)
                 .collect();
-            let trigger = if app.model_chooser.active {
-                ""
-            } else {
-                match state.kind {
-                    CompletionKind::Command => "/",
-                    CompletionKind::Skill => "$",
-                    CompletionKind::File => "@",
-                }
-            };
+            let trigger =
+                if app.model_chooser.active || app.login.is_active() || app.fork_picker.active {
+                    ""
+                } else {
+                    match state.kind {
+                        CompletionKind::Command => "/",
+                        CompletionKind::Skill => "$",
+                        CompletionKind::File => "@",
+                    }
+                };
             let has_details = visible.iter().any(|(_, c)| c.detail.is_some());
             let max_left = width.saturating_sub(14).clamp(10, 32);
             let left_col_width = if has_details {
@@ -401,6 +402,7 @@ pub(super) fn live_region_lines_at(
             } else {
                 0
             };
+            let visible_len = visible.len();
             for (idx, candidate) in visible {
                 let selected = idx == state.selected;
                 let (prefix_style, left_style, detail_style) =
@@ -422,6 +424,14 @@ pub(super) fn live_region_lines_at(
                     spans.push(Span::styled(left_raw, left_style));
                 }
                 lines.push(Line::from(spans));
+            }
+            let total = state.matches.len();
+            if total > MAX_COMPLETION_ROWS {
+                let end = start + visible_len;
+                lines.push(Line::styled(
+                    format!("  ({}-{}/{total} · ↑↓)", start + 1, end),
+                    app.theme.muted_style(),
+                ));
             }
         }
         if app.completion.is_none()
@@ -521,8 +531,19 @@ pub(super) fn inline_viewport_height(
 }
 
 fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usize) -> (u16, u16) {
-    let text = app.composer.text();
-    let cursor = app.composer.cursor().min(text.len());
+    let (text, cursor) = if let Some((buf, cur, masked)) = app.login.input_display() {
+        if masked {
+            let display = "*".repeat(buf.chars().count());
+            let mapped = buf[..cur.min(buf.len())].chars().count();
+            (display, mapped)
+        } else {
+            (buf.to_string(), cur.min(buf.len()))
+        }
+    } else {
+        let text = app.composer.text().to_string();
+        let cursor = app.composer.cursor().min(text.len());
+        (text, cursor)
+    };
     let before_cursor = text.get(..cursor).unwrap_or_default();
     let line_index = before_cursor.bytes().filter(|byte| *byte == b'\n').count();
     let cursor_in_line = before_cursor

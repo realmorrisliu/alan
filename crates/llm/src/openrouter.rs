@@ -25,7 +25,6 @@ mod streaming;
 mod usage;
 
 use extra_params::{apply_openrouter_extra_params, non_negative_u32, openrouter_effort};
-use input_projection::convert_messages_for_openrouter;
 use streaming::consume_openrouter_raw_stream;
 #[cfg(test)]
 use streaming::{consume_openrouter_stream, consume_router_bytes, tool_delta_from_value};
@@ -199,21 +198,51 @@ pub(crate) fn build_openrouter_chat_request(
         temperature,
         max_tokens,
         reasoning,
-        session_key: _,
+        session_key,
         response_schema: _,
         mut extra_params,
     } = request;
 
+    let openai_reasoning_model = input_projection::is_openrouter_openai_reasoning_model(model);
+    let system_role = if openai_reasoning_model {
+        Role::Developer
+    } else {
+        Role::System
+    };
+
     let mut projected_messages = Vec::new();
     if let Some(system_prompt) = system_prompt.filter(|value| !value.is_empty()) {
-        projected_messages.push(OrMessage::new(Role::System, system_prompt));
+        projected_messages.push(OrMessage::new(system_role, system_prompt));
     }
-    projected_messages.extend(convert_messages_for_openrouter(messages)?);
+    projected_messages.extend(input_projection::convert_messages_for_openrouter_model(
+        model, messages,
+    )?);
 
     let mut builder = ChatCompletionRequest::builder();
     builder.model(model).messages(projected_messages);
 
-    if let Some(temperature) = temperature {
+    let reasoning_active = reasoning
+        .effort
+        .is_some_and(|effort| effort != crate::ReasoningEffort::None)
+        || extra_params
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .is_some_and(|effort| {
+                let trimmed = effort.trim();
+                !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("none")
+            })
+        || extra_params
+            .get("reasoning")
+            .and_then(|value| value.get("effort"))
+            .and_then(Value::as_str)
+            .is_some_and(|effort| {
+                let trimmed = effort.trim();
+                !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("none")
+            });
+
+    if let Some(temperature) = temperature
+        && !(openai_reasoning_model && reasoning_active)
+    {
         builder.temperature(f64::from(temperature));
     }
     if let Some(max_tokens) = max_tokens {
@@ -222,6 +251,15 @@ pub(crate) fn build_openrouter_chat_request(
     if let Some(effort) = reasoning.effort {
         extra_params.remove("reasoning_effort");
         builder.reasoning_effort(openrouter_effort(effort)?);
+    }
+
+    if let Some(session_key) = session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && !extra_params.contains_key("session_id")
+    {
+        builder.session_id(derive_openrouter_session_id(session_key));
     }
 
     let tools = convert_tools_for_openrouter(tools);
@@ -234,6 +272,99 @@ pub(crate) fn build_openrouter_chat_request(
     builder
         .build()
         .context("failed to build OpenRouter chat completion request")
+}
+
+fn is_openrouter_anthropic_claude_model(model: &str) -> bool {
+    model
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("anthropic/claude")
+}
+
+fn derive_openrouter_session_id(session_key: &str) -> String {
+    use std::hash::{DefaultHasher, Hasher};
+
+    let mut words = [0_u64; 2];
+    for (salt, word) in words.iter_mut().enumerate() {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(b"alan-session-affinity");
+        hasher.write_usize(salt);
+        hasher.write(session_key.as_bytes());
+        *word = hasher.finish();
+    }
+    format!("{:016x}{:016x}", words[0], words[1])
+}
+
+fn attach_openrouter_ephemeral_cache_control(message: &mut Value) -> bool {
+    let Some(obj) = message.as_object_mut() else {
+        return false;
+    };
+    let Some(content) = obj.get_mut("content") else {
+        return false;
+    };
+    match content {
+        Value::String(text) => {
+            if text.trim().is_empty() {
+                return false;
+            }
+            let text = std::mem::take(text);
+            *content = serde_json::json!([{
+                "type": "text",
+                "text": text,
+                "cache_control": { "type": "ephemeral" }
+            }]);
+            true
+        }
+        Value::Array(parts) => {
+            let Some(last_obj) = parts.last_mut().and_then(Value::as_object_mut) else {
+                return false;
+            };
+            if last_obj.get("type").and_then(Value::as_str) != Some("text") {
+                return false;
+            }
+            last_obj.insert(
+                "cache_control".to_string(),
+                serde_json::json!({ "type": "ephemeral" }),
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+fn apply_openrouter_anthropic_prompt_cache(payload: &mut Value) {
+    const MAX_BREAKPOINTS: usize = 4;
+    const MAX_RECENT_TURNS: usize = 2;
+
+    let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    let mut used = 0usize;
+    for message in messages.iter_mut() {
+        if message.get("role").and_then(Value::as_str) == Some("system")
+            && attach_openrouter_ephemeral_cache_control(message)
+        {
+            used += 1;
+            break;
+        }
+    }
+
+    let mut remaining_recent = MAX_BREAKPOINTS.saturating_sub(used).min(MAX_RECENT_TURNS);
+    for message in messages.iter_mut().rev() {
+        if remaining_recent == 0 {
+            break;
+        }
+        let Some(role) = message.get("role").and_then(Value::as_str) else {
+            continue;
+        };
+        if !matches!(role, "user" | "tool") {
+            continue;
+        }
+        if attach_openrouter_ephemeral_cache_control(message) {
+            remaining_recent -= 1;
+        }
+    }
 }
 
 fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest) -> Result<Value> {
@@ -263,6 +394,9 @@ fn build_openrouter_chat_request_payload(model: &str, request: GenerationRequest
     }
     preserve_openrouter_reasoning_fields(&mut payload, &alan_messages)?;
     request_usage_accounting(&mut payload, false);
+    if is_openrouter_anthropic_claude_model(model) {
+        apply_openrouter_anthropic_prompt_cache(&mut payload);
+    }
     Ok(payload)
 }
 

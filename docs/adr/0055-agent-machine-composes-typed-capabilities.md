@@ -36,6 +36,6 @@ Delivery update, 2026-10-14: #1035 shipped finite-choice Connection evaluation
 and no-effect Machine shadow advice; #1039/#1040 shipped and synchronized a bounded
 read-only source-owner Machine program. General mixed transitions remain unfinished
 and automatic input routing remains unqualified and disabled. The owning change
-is [add-cognitive-model-routing](../../openspec/changes/add-cognitive-model-routing/disposition.md).
+is [add-cognitive-model-routing](../../openspec/changes/archive/2026-11-20-add-cognitive-model-routing/disposition.md).
 [ADR-0060](0060-explicit-delegation-separates-approval-and-isolation.md) reuses these
 boundaries for planned Guardian work without making System 1 an authority tier.

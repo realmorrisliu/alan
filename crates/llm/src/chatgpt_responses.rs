@@ -81,23 +81,17 @@ impl ChatgptResponsesClient {
     /// Credentials for one request. `rejected` names the access token a backend `401`
     /// just rejected; it forces a refresh unless another request already rotated it.
     async fn request_auth(&self, rejected: Option<&str>) -> Result<alan_auth::ChatgptRequestAuth> {
-        // A client constructed while logged out remains unavailable until Connection
-        // publication constructs a newly bound callable; it cannot borrow a later login.
-        let account = self
-            .expected_account_id
-            .as_deref()
-            .ok_or(ChatgptAuthError::NotLoggedIn)?;
+        // Re-read ChatgptAuthManager on every request so a client constructed while logged
+        // out picks up a later live `/login` on the very next turn without restarting Alan,
+        // while clients already bound to a workspace account keep rejecting account swaps.
+        let account = self.expected_account_id.as_deref();
         Ok(match rejected {
             Some(token) => {
                 self.auth_manager
-                    .refresh_rejected_auth_for_account(Some(account), token)
+                    .refresh_rejected_auth_for_account(account, token)
                     .await?
             }
-            None => {
-                self.auth_manager
-                    .request_auth_for_account(Some(account))
-                    .await?
-            }
+            None => self.auth_manager.request_auth_for_account(account).await?,
         })
     }
 

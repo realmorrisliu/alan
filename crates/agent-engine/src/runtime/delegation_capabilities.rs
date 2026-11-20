@@ -164,7 +164,7 @@ pub(crate) fn evaluate_delegated_namespace(
             recovery: DelegatedCapabilityRecovery::Narrowed,
             narrowed_task: Some(format!(
                 "[NARROWED DELEGATION SCOPE]\n\
-                 Work only from mounted Alan OS paths and return inspection or guidance; do not perform withheld operations.\n\
+                 Work only from mounted alan9 paths and return inspection or guidance; do not perform withheld operations.\n\
                  Withheld capabilities: {withheld}.\n\
                  Do not infer or substitute unavailable Host resources. The parent remains responsible for the withheld part.\n\
                  Original task: {original_task}"

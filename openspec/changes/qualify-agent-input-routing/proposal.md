@@ -1,5 +1,12 @@
 # Proposal
 
+> **Status: deferred-research / parked (ADR-0061, 2026-11-20).** Frozen outside
+> the M1–M6 delivery order; automatic input routing stays disabled. Retained in
+> place only because `scripts/harness/collect_routing_shadow_clients.py`,
+> `scripts/harness/score_routing_shadow.py`, and
+> `crates/tui/src/file_backed/shadow_admission_tests.rs` read pinned corpus and
+> budget JSON artifacts from this directory.
+
 ## Why
 
 The explicit unified-input delivery preserves unprefixed Agent behavior. Automatic

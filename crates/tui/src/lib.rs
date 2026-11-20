@@ -12,7 +12,9 @@ mod transcript_ui;
 
 use crate::completion::CompletionCandidate;
 pub use file_backed::{
-    FileBackedRunConfig, ProjectAccess, ProjectControl, ProjectControlFuture,
+    FileBackedRunConfig, LoginControl, LoginControlFuture, LoginControlHandler, LoginInputField,
+    LoginMethod, LoginProgress, LoginProgressSender, LoginProviderChoice, LoginResult,
+    LoginSelectOption, LoginSubmission, ProjectAccess, ProjectControl, ProjectControlFuture,
     ProjectControlHandler, ProjectControlResult, ProjectMountReceipt, StdioTaskOptions,
     run as run_file_backed, run_stdio_task, run_stdio_task_with_options,
 };

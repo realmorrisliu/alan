@@ -16,9 +16,17 @@ use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 mod action_detail_io;
 mod app;
 mod file_surface;
+mod fork_picker;
 mod history_merge;
 mod interrupt;
 mod layout;
+mod login;
+mod login_flow;
+pub use login::{
+    LoginControl, LoginControlFuture, LoginControlHandler, LoginInputField, LoginMethod,
+    LoginProgress, LoginProgressSender, LoginProviderChoice, LoginResult, LoginSelectOption,
+    LoginSubmission,
+};
 mod model;
 #[cfg(test)]
 mod model_layout_tests;
@@ -165,6 +173,12 @@ pub struct FileBackedRunConfig {
     pub trust_posture_label: Option<String>,
     /// Optional image/content attachments queued for the first user prompt (from `--image`).
     pub initial_attachments: Vec<alan_agent_protocol::ContentPart>,
+    /// Host-local interactive login/connection handler for `/login`.
+    pub login_control: Option<LoginControlHandler>,
+    /// Pre-mounted project receipt + canonical Host root hydrated on frame 1.
+    pub initial_project_mount: Option<(ProjectMountReceipt, PathBuf)>,
+    /// Explicit Host report of whether any callable model connection is configured at boot.
+    pub connection_configured: Option<bool>,
 }
 
 impl FileBackedRunConfig {
@@ -183,6 +197,9 @@ impl FileBackedRunConfig {
             sandbox_backend: None,
             trust_posture_label: None,
             initial_attachments: Vec::new(),
+            login_control: None,
+            initial_project_mount: None,
+            connection_configured: None,
         }
     }
 }
@@ -202,10 +219,20 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         app.sandbox_backend = Some(sandbox.clone());
     }
     app.trust_posture_label = config.trust_posture_label.clone();
+    app.login_available = config.login_control.is_some();
+    app.connection_configured = config.connection_configured;
     if !config.initial_attachments.is_empty() {
         app.pending_attachments = config.initial_attachments.clone();
     }
-    if let Some(host_root) = &config.host_file_completion_root {
+    if let Some((receipt, completion_root)) = &config.initial_project_mount {
+        app.namespace_cwd = PathBuf::from(&receipt.namespace_path);
+        app.project = Some(receipt.clone());
+        app.project_host_root = Some(completion_root.clone());
+        app.set_file_candidates(super::build_file_index(
+            completion_root,
+            crate::FILE_INDEX_LIMIT,
+        ));
+    } else if let Some(host_root) = &config.host_file_completion_root {
         app.set_file_candidates(super::build_file_index(host_root, crate::FILE_INDEX_LIMIT));
         app.project_host_root = Some(host_root.clone());
     }
@@ -254,6 +281,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
     let mut grant_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut grant_read_pending = false;
+    let mut active_login_task: Option<(u64, tokio::task::AbortHandle)> = None;
     let mut draw_result = Ok(());
     loop {
         tokio::select! {
@@ -362,6 +390,28 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 root_agent_pid_retry.send_replace(());
                             }
                             Err(error) => app.push_error(format!("rollout switch failed: {error}")),
+                        }
+                    }
+                    FileBackedEvent::LoginStepCompleted { generation, result } => {
+                        if active_login_task
+                            .as_ref()
+                            .is_some_and(|(task_gen, _)| *task_gen == generation)
+                        {
+                            active_login_task = None;
+                        }
+                        if let Some((_, connected_model)) =
+                            app.apply_login_step_result(generation, result)
+                        {
+                            let owner = watchers
+                                .root_agent_pid
+                                .and_then(|pid| root_agent_path_for_pid(&app.agent_path, pid))
+                                .unwrap_or_else(|| app.model.owner.clone());
+                            login::spawn_post_login_model_sync(
+                                config.root_transport.clone(),
+                                owner,
+                                connected_model,
+                                model_reads.clone(),
+                            );
                         }
                     }
                     FileBackedEvent::GitStatusUpdated { root, status } => {
@@ -617,6 +667,61 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                 FileBackedAction::DeleteProjectSummary { expected_revision } => {
                                     summary_view::spawn_delete(&shell, &tx, expected_revision);
                                 }
+                                FileBackedAction::LoginListProviders { generation } => {
+                                    if let Some((_, prev)) = active_login_task.take() {
+                                        prev.abort();
+                                    }
+                                    if let Some(handler) = config.login_control.clone() {
+                                        let abort = login::spawn_list_providers(
+                                            handler,
+                                            tx.clone(),
+                                            generation,
+                                        );
+                                        active_login_task = Some((generation, abort));
+                                    }
+                                }
+                                FileBackedAction::LoginSubmit {
+                                    generation,
+                                    submission,
+                                    progress_rx,
+                                } => {
+                                    if let Some((_, prev)) = active_login_task.take() {
+                                        prev.abort();
+                                    }
+                                    if let Some(handler) = config.login_control.clone() {
+                                        let abort = login::spawn_login_submit(
+                                            handler,
+                                            tx.clone(),
+                                            generation,
+                                            submission,
+                                            progress_rx,
+                                        );
+                                        active_login_task = Some((generation, abort));
+                                    }
+                                }
+                                FileBackedAction::CancelLogin => {
+                                    if let Some((_, prev)) = active_login_task.take() {
+                                        prev.abort();
+                                    }
+                                }
+                                FileBackedAction::Suspend => {
+                                    reader_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    let _ = terminal_reader.await;
+                                    drop(terminal.take());
+                                    if let Err(error) = crate::terminal::suspend_current_process() {
+                                        app.push_error(format!("suspend failed: {error:#}"));
+                                    }
+                                    terminal = Some(TerminalSession::enter()?);
+                                    last_osc_title = None;
+                                    reader_stop = std::sync::Arc::new(
+                                        std::sync::atomic::AtomicBool::new(false),
+                                    );
+                                    terminal_reader = spawn_terminal_events_with_stop(
+                                        tx.clone(),
+                                        reader_stop.clone(),
+                                    );
+                                    last_drawn_second = None;
+                                }
                                 FileBackedAction::Quit => break,
                             }
                         }
@@ -719,6 +824,9 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
+    if let Some((_, prev)) = active_login_task.take() {
+        prev.abort();
+    }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
     watchers.stop().await;
@@ -824,6 +932,9 @@ mod ux_m2_tests;
 #[cfg(test)]
 #[path = "file_backed/ux_m3_tests.rs"]
 mod ux_m3_tests;
+#[cfg(test)]
+#[path = "file_backed/ux_m6_tests.rs"]
+mod ux_m6_tests;
 #[cfg(test)]
 #[path = "file_backed/ux_tests.rs"]
 mod ux_tests;

@@ -408,10 +408,10 @@ impl ChatgptAuthManager {
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
         })?;
-        let mut store = self.inner.storage.load()?;
-        store.version = 1;
-        store.chatgpt = Some(persisted.clone());
-        self.inner.storage.save(&store)?;
+        let persisted_clone = persisted.clone();
+        self.inner.storage.update(move |store| {
+            store.chatgpt = Some(persisted_clone);
+        })?;
         Ok(persisted)
     }
 

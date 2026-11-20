@@ -70,10 +70,28 @@ pub(crate) fn build_turn_recall_bundle(
     build_turn_recall_bundle_for_project(memory_dir, user_input, None)
 }
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "project-only wrapper preserved for memory recall unit tests"
+    )
+)]
 pub(crate) fn build_turn_recall_bundle_for_project(
     memory_dir: Option<&Path>,
     user_input: Option<&[ContentPart]>,
     project_cwd: Option<&str>,
+) -> Option<String> {
+    build_turn_recall_bundle_for_turn(memory_dir, user_input, project_cwd, None)
+}
+
+/// Build the per-turn runtime memory recall bundle, omitting `USER.md`, `MEMORY.md`,
+/// and `handoffs/LATEST.md` when they are already injected verbatim in `## Memory Store Bootstrap`.
+pub(crate) fn build_turn_recall_bundle_for_turn(
+    memory_dir: Option<&Path>,
+    user_input: Option<&[ContentPart]>,
+    project_cwd: Option<&str>,
+    memory_bootstrap_section: Option<&str>,
 ) -> Option<String> {
     let memory_dir = memory_dir?;
     if !memory_dir.exists() {
@@ -106,23 +124,32 @@ pub(crate) fn build_turn_recall_bundle_for_project(
         return None;
     }
 
+    let user_md_path = memory_dir.join("USER.md");
+    let memory_md_path = memory_dir.join("MEMORY.md");
+    let latest_handoff_path = memory_dir.join("handoffs").join("LATEST.md");
+    let user_bootstrapped =
+        is_bootstrapped_verbatim(memory_bootstrap_section, &user_md_path, "USER.md");
+    let memory_bootstrapped =
+        is_bootstrapped_verbatim(memory_bootstrap_section, &memory_md_path, "MEMORY.md");
+    let latest_handoff_bootstrapped = is_bootstrapped_verbatim(
+        memory_bootstrap_section,
+        &latest_handoff_path,
+        "handoffs/LATEST.md",
+    );
+
     let mut selected_paths = Vec::new();
-    if identity_query {
-        let user_md = memory_dir.join("USER.md");
-        if is_non_stub_markdown(&user_md, "# User Memory") {
-            selected_paths.push(user_md);
-        }
+    if identity_query && !user_bootstrapped && is_non_stub_markdown(&user_md_path, "# User Memory")
+    {
+        selected_paths.push(user_md_path);
     }
-    if domain_query {
-        let memory_md = memory_dir.join("MEMORY.md");
-        if is_non_stub_markdown(&memory_md, "# Memory") {
-            selected_paths.push(memory_md);
-        }
+    if domain_query && !memory_bootstrapped && is_non_stub_markdown(&memory_md_path, "# Memory") {
+        selected_paths.push(memory_md_path);
     }
     if continuity_query {
-        let latest = memory_dir.join("handoffs").join("LATEST.md");
-        if is_non_stub_markdown(&latest, "# Latest Handoff") {
-            selected_paths.push(latest);
+        if !latest_handoff_bootstrapped
+            && is_non_stub_markdown(&latest_handoff_path, "# Latest Handoff")
+        {
+            selected_paths.push(latest_handoff_path);
         }
         if let Some(summary_md) =
             super::memory_surfaces::project_summary::active_summary_markdown_path(
@@ -169,19 +196,23 @@ pub(crate) fn build_turn_recall_bundle_for_project(
         candidate_paths.extend(topics);
     }
 
-    // Include root-level authored markdown (USER.md, MEMORY.md, custom *.md) and handoffs when non-stub.
+    // Include root-level authored markdown (USER.md, MEMORY.md, custom *.md) and handoffs when non-stub
+    // and not already injected verbatim into `## Memory Store Bootstrap`.
     for path in collect_markdown_files(memory_dir, &canonical_memory_root, MAX_CANDIDATE_SCAN_FILES)
     {
         let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if (file_name == "USER.md" && !is_non_stub_markdown(&path, "# User Memory"))
-            || (file_name == "MEMORY.md" && !is_non_stub_markdown(&path, "# Memory"))
+        if (file_name == "USER.md"
+            && (user_bootstrapped || !is_non_stub_markdown(&path, "# User Memory")))
+            || (file_name == "MEMORY.md"
+                && (memory_bootstrapped || !is_non_stub_markdown(&path, "# Memory")))
         {
             continue;
         }
         candidate_paths.push(path);
     }
     let latest_handoff = memory_dir.join("handoffs").join("LATEST.md");
-    if is_non_stub_markdown(&latest_handoff, "# Latest Handoff")
+    if !latest_handoff_bootstrapped
+        && is_non_stub_markdown(&latest_handoff, "# Latest Handoff")
         && path_is_safe_recall_file(&latest_handoff, &canonical_memory_root)
     {
         candidate_paths.push(latest_handoff);
@@ -596,6 +627,36 @@ fn is_non_stub_markdown(path: &Path, stub_header: &str) -> bool {
     };
     let trimmed = content.trim();
     !trimmed.is_empty() && trimmed != stub_header
+}
+
+fn is_bootstrapped_verbatim(
+    memory_bootstrap_section: Option<&str>,
+    path: &Path,
+    label: &str,
+) -> bool {
+    let Some(section) = memory_bootstrap_section else {
+        return false;
+    };
+    if !section.contains("## Memory Store Bootstrap") {
+        return false;
+    }
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > crate::prompts::MEMORY_STORE_MAX_CHARS {
+        return false;
+    }
+    let marker = format!("### {label}\n");
+    let Some(start) = section.find(&marker) else {
+        return false;
+    };
+    let after = &section[start + marker.len()..];
+    let body = match after.find("\n### ") {
+        Some(next) => &after[..next],
+        None => after,
+    };
+    body.contains(trimmed) && !body.contains("[...truncated,")
 }
 
 fn compute_file_recency(path: &Path, relative_path: &str) -> u64 {

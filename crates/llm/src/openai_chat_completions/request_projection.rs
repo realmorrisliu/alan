@@ -119,6 +119,14 @@ pub(crate) fn build_responses_request_for_model(
     }
 
     let reasoning = build_openai_responses_reasoning(reasoning.effort, &mut extra_params);
+    let reasoning_active = reasoning
+        .as_ref()
+        .is_some_and(|r| !r.effort.eq_ignore_ascii_case("none"));
+    let temperature = if is_openai_reasoning_model(&model) && reasoning_active {
+        None
+    } else {
+        temperature
+    };
     let include = normalize_responses_include(
         take_string_array_extra_param("include", &mut extra_params),
         should_include_reasoning_encrypted_content(&messages, &tools, reasoning.is_some()),
@@ -289,6 +297,14 @@ pub(super) fn build_chat_completions_request_for_model(
 
     let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
     let reasoning_effort = build_reasoning_effort(reasoning.effort, &mut extra_params);
+    let reasoning_active = reasoning_effort
+        .as_deref()
+        .is_some_and(|effort| !effort.eq_ignore_ascii_case("none"));
+    let temperature = if is_openai_reasoning_model(&model) && reasoning_active {
+        None
+    } else {
+        temperature
+    };
     let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
 
     Ok(OpenAiChatCompletionsRequest {
@@ -315,6 +331,18 @@ pub(super) fn build_chat_completions_request_for_model(
         }),
         extra_params,
     })
+}
+
+pub(crate) fn is_openai_reasoning_model(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    let slug = lower.strip_prefix("openai/").unwrap_or(&lower);
+    slug.starts_with("gpt-5")
+        || slug == "o1"
+        || slug.starts_with("o1-")
+        || slug == "o3"
+        || slug.starts_with("o3-")
+        || slug == "o4"
+        || slug.starts_with("o4-")
 }
 
 fn build_openai_responses_reasoning(

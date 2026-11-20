@@ -4,12 +4,18 @@ impl FileBackedApp {
     pub(in crate::file_backed) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.turn_prompts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
             };
             if record.kind == "message" {
                 self.reconciler.on_hydrated_message_record(&record.role);
+                if record.role == "user" {
+                    let is_cmd =
+                        record.input_intent == Some(alan_agent_protocol::InputIntent::Command);
+                    self.turn_prompts.push((record.content, is_cmd));
+                }
             }
         }
     }
@@ -23,7 +29,11 @@ impl FileBackedApp {
         self.skills = super::super::skills::SkillProjection::default();
         self.completion_sources.skills.clear();
         self.queue = super::super::queue::QueueProjection::default();
-        let mut project_notice = if self.retained_project_grant().is_some() {
+        let mut project_notice = if (self.pending_project_control.is_some()
+            || self.retained_project_mount.is_some()
+            || self.project_cleanup.is_some())
+            && self.retained_project_grant().is_some()
+        {
             self.fence_project_control();
             self.notice.take()
         } else {

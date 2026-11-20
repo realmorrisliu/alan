@@ -89,6 +89,7 @@ async fn status_reports_saved_login() {
                 })
                 .expect("stored auth"),
             ),
+            google: None,
         })
         .expect("save");
 
@@ -263,6 +264,7 @@ async fn request_auth_rejects_mismatched_account_constraint() {
                 })
                 .expect("stored auth"),
             ),
+            google: None,
         })
         .expect("save");
 

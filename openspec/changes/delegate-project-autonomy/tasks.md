@@ -15,9 +15,19 @@
 - [x] 2.5 Apply the OS-boundary rule: skip Guardian for effects contained by the active confinement and review only uncontained effects; verify no repeated prompts for contained work and no grant from reviewer output.
 
 ## 3. Qualification and integration
-- [ ] 3.1 Freeze a bounded pilot and labeled shadow corpus; measure and freeze false-denial/latency/cost thresholds before formal evaluation, requiring zero observed high-impact unauthorized allows.
-- [ ] 3.2 Run the formal reviewer comparison and actual macOS project delegation flow; do not activate an unqualified candidate or substitute input-routing metrics.
-- [ ] 3.3 Validate relevant Rust/authority tests, quality, native UI, strict specs and current-head review/CI; publish actual platform and cost limits.
+
+> **Pruned under ADR-0061 (2026-11-20):** Retired the pre-ADR-0061 Guardian
+> shadow-corpus freeze, classifier false-denial/latency/cost threshold gate, and
+> formal shadow reviewer comparison (former `3.1` and shadow-comparison clause in
+> `3.2`). Under ADR-0061, the OS sandbox and explicit mount grants are the
+> security boundary: contained effects bypass Guardian, uncontainable/out-of-grant
+> effects remain governed by deterministic red lines and fail-closed human
+> fallback, Guardian never grants authority, and M3 shipped slim project
+> delegation directly without a shadow classifier corpus. Pilot budget calibration
+> and daily-use measurement belong to `qualify-personal-daily-development`.
+
+- [ ] 3.2 Run the actual macOS project delegation flow and publish observed platform and cost limits; do not substitute input-routing metrics.
+- [ ] 3.3 Validate relevant Rust/authority tests, quality, native UI, strict specs and current-head review/CI.
 - [ ] 3.4 After user merge, verify canonical adoption and delivered controls before archive readiness.
 
 ## Workflow follow-up

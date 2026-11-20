@@ -41,7 +41,13 @@ pub(in crate::file_backed) fn from_app(app: &FileBackedApp) -> WelcomeBanner {
         .prompt_binding(false)
         .map(|b| super::model::safe(&b.model))
         .or_else(|| app.effective_model.as_deref().map(super::model::safe))
-        .unwrap_or_else(|| "model unset".to_string());
+        .unwrap_or_else(|| {
+            if app.is_connection_unconfigured() {
+                "Not connected".to_string()
+            } else {
+                "model unset".to_string()
+            }
+        });
     let sandbox = app
         .sandbox_backend
         .clone()
@@ -86,12 +92,15 @@ pub(crate) fn render_banner_lines(
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
+    let unconfigured = banner.model == "Not connected";
     if width >= 64 {
         let right_budget = width.saturating_sub(21).max(1);
-        let hints = clamp_width(
-            ": task · !shell · /help · /model · /resume · /man",
-            right_budget,
-        );
+        let hints_raw = if unconfigured {
+            "/login to connect a provider · /help · /man · : task"
+        } else {
+            ": task · !shell · /help · /model · /resume · /man"
+        };
+        let hints = clamp_width(hints_raw, right_budget);
         let tagline = clamp_width("Everything is a file. Even an agent.", right_budget);
         let title = clamp_width("ALAN(1) · alan9", right_budget);
         let summary_line = if let Some(badge) = posture_badge_span(banner, theme, right_budget) {
@@ -171,7 +180,12 @@ pub(crate) fn render_banner_lines(
                 Span::styled(summary, Style::default()),
             ])
         };
-        let hints = clamp_width(": task · !shell · /help · /model · /resume · /man", width);
+        let hints_raw = if unconfigured {
+            "/login to connect · /help · /man"
+        } else {
+            ": task · !shell · /help · /model · /resume · /man"
+        };
+        let hints = clamp_width(hints_raw, width);
         vec![line_top, Line::styled(hints, theme.muted_style())]
     }
 }

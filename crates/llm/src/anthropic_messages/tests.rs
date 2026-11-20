@@ -434,7 +434,7 @@ fn test_build_thinking_params_adjusts_max_tokens_and_temperature() {
 
     assert!(thinking.is_some());
     assert_eq!(temperature, Some(1.0));
-    assert_eq!(max_tokens, 1025);
+    assert_eq!(max_tokens, 1024 + THINKING_OUTPUT_HEADROOM_TOKENS);
 }
 
 #[test]
@@ -444,7 +444,59 @@ fn test_build_thinking_params_maps_reasoning_effort_to_budget() {
 
     assert_eq!(thinking.unwrap().budget_tokens, 8192);
     assert_eq!(temperature, Some(1.0));
-    assert_eq!(max_tokens, 8193);
+    assert_eq!(max_tokens, 8192 + THINKING_OUTPUT_HEADROOM_TOKENS);
+}
+
+#[test]
+fn test_build_thinking_params_caps_at_known_model_limit_and_preserves_headroom() {
+    // Unknown model gets unconstrained budget + 4096 headroom when caller max_tokens is small.
+    let (_, _, max_tokens) = build_thinking_params_for_model(
+        "claude-sonnet-4-5",
+        Some(ReasoningEffort::High),
+        Some(0.3),
+        2048,
+    )
+    .unwrap();
+    assert_eq!(max_tokens, 8192 + 4096);
+
+    // Caller max_tokens above known model limit (claude-opus-4 = 32_000) is capped cleanly.
+    let (_, _, capped) = build_thinking_params_for_model(
+        "claude-opus-4-20250514",
+        Some(ReasoningEffort::High),
+        Some(0.3),
+        100_000,
+    )
+    .unwrap();
+    assert_eq!(capped, 32_000);
+
+    // Non-thinking Claude 3.5 clamps default 16_384 down to 8_192.
+    let (thinking, _, claude35_cap) =
+        build_thinking_params_for_model("claude-3-5-sonnet-20241022", None, Some(0.3), 16_384)
+            .unwrap();
+    assert!(thinking.is_none());
+    assert_eq!(claude35_cap, 8_192);
+}
+
+#[test]
+fn test_context_role_projects_to_user_messages_not_system_prompt() {
+    let messages = vec![
+        Message::user("first question"),
+        Message::assistant("first answer"),
+        Message::user("follow up"),
+        Message::context("ephemeral recall and cwd"),
+    ];
+
+    let (converted, system) =
+        convert_messages_for_anthropic_messages(messages, Some("Static base prompt".to_string()))
+            .unwrap();
+
+    assert_eq!(system.as_deref(), Some("Static base prompt"));
+    assert_eq!(converted.len(), 4);
+    assert_eq!(converted[3].role, "user");
+    match &converted[3].content[0] {
+        ContentBlockInput::Text { text, .. } => assert_eq!(text, "ephemeral recall and cwd"),
+        _ => panic!("expected text block for context message"),
+    }
 }
 
 #[test]

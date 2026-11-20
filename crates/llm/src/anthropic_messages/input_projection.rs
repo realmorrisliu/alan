@@ -85,7 +85,7 @@ pub(super) fn convert_messages_for_anthropic_messages(
                 };
                 ("user", blocks)
             }
-            MessageRole::System | MessageRole::Context => {
+            MessageRole::System => {
                 let content = plain_text_content(
                     content,
                     content_parts,
@@ -95,6 +95,10 @@ pub(super) fn convert_messages_for_anthropic_messages(
                     system_parts.push(content);
                 }
                 continue;
+            }
+            MessageRole::Context => {
+                let blocks = content_blocks(content, content_parts, false)?;
+                ("user", blocks)
             }
         };
 

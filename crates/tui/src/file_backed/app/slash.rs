@@ -8,9 +8,14 @@ impl FileBackedApp {
         let command = text.strip_prefix('/')?;
         let name = command.split_whitespace().next().unwrap_or("");
         match name {
+            "login" => self.login_command(command.strip_prefix("login").unwrap_or("")),
             "status" => self.model_status_command(),
             "model" => self.model_command(command.strip_prefix("model").unwrap_or("").trim()),
             "resume" => self.resume_command(command.strip_prefix("resume").unwrap_or("")),
+            "fork" => self.fork_command(command.strip_prefix("fork").unwrap_or("")),
+            "permissions" => {
+                self.permissions_command(command.strip_prefix("permissions").unwrap_or(""))
+            }
             "summary" => self.summary_command(command.strip_prefix("summary").unwrap_or("")),
             "new" => self.new_session_command(),
             "tape" if command.trim() == "tape" => {
@@ -50,7 +55,7 @@ impl FileBackedApp {
                 } else if self.project.is_some() {
                     self.notice = Some("revoke the active project before selecting another".into());
                 } else {
-                    self.project_selection = Some(ProjectAccess::ReadOnly);
+                    self.project_selection = Some(ProjectAccess::ReadWrite);
                     self.input_intent = InputIntent::Command;
                     self.composer.set_text(
                         self.project_candidate
@@ -61,7 +66,7 @@ impl FileBackedApp {
                     self.notice = Some(
                         format!(
                             "project path · {} · Enter approve · Tab toggle · Esc cancel",
-                            ProjectAccess::ReadOnly.label()
+                            ProjectAccess::ReadWrite.label()
                         )
                         .into(),
                     );
@@ -111,6 +116,7 @@ impl FileBackedApp {
             "clear" => {
                 self.clear_local_receipts();
                 self.transcript.clear();
+                self.turn_prompts.clear();
                 self.action_cells.clear();
                 self.pending_remote_turn_start = None;
                 self.scrollback_front_is_partial = false;
@@ -127,6 +133,73 @@ impl FileBackedApp {
         }
     }
 
+    pub(in crate::file_backed) fn permissions_command(
+        &mut self,
+        argument: &str,
+    ) -> Option<FileBackedAction> {
+        let arg = argument.trim().to_ascii_lowercase();
+        match arg.as_str() {
+            "" => self.toggle_trust_posture(),
+            "governed" => self.set_trust_posture(false),
+            "trusted" | "confined" | "confined-trusted" | "confined/trusted"
+            | "confined_trusted" => self.set_trust_posture(true),
+            _ => {
+                self.notice = Some(Notice::warning(
+                    "usage: /permissions [governed|trusted] (or press Shift+Tab to cycle)",
+                ));
+                None
+            }
+        }
+    }
+
+    pub(in crate::file_backed) fn toggle_trust_posture(&mut self) -> Option<FileBackedAction> {
+        let currently_confined_trusted = self.trust_posture_label.as_deref().is_some_and(|l| {
+            let trimmed = l.trim();
+            trimmed.eq_ignore_ascii_case("confined/trusted")
+                || trimmed.eq_ignore_ascii_case("confined-trusted")
+                || trimmed.eq_ignore_ascii_case("confined_trusted")
+        });
+        self.set_trust_posture(!currently_confined_trusted)
+    }
+
+    fn set_trust_posture(&mut self, confined_trusted: bool) -> Option<FileBackedAction> {
+        if self
+            .trust_posture_label
+            .as_deref()
+            .is_some_and(presentation::is_unsandboxed_posture)
+        {
+            self.notice = Some(Notice::warning(
+                "Started with --unsafe-host-account; runtime trust posture switching is disabled.",
+            ));
+            return None;
+        }
+        if self.turn_active() || self.pending_yield.is_some() {
+            self.notice = Some(Notice::warning(
+                "Wait for or interrupt the active turn before switching trust posture.",
+            ));
+            return None;
+        }
+        if confined_trusted {
+            self.trust_posture_label = Some("confined/trusted".to_string());
+            self.refresh_welcome_header();
+            let msg = "Trust posture: confined/trusted (OS sandbox active; Shift+Tab cycles).";
+            self.notice = Some(msg.into());
+            Some(FileBackedAction::MachineCtl {
+                command: "trust-posture confined-trusted".to_string(),
+                success_notice: msg.to_string(),
+            })
+        } else {
+            self.trust_posture_label = Some("governed".to_string());
+            self.refresh_welcome_header();
+            let msg = "Trust posture: governed (OS sandbox + approvals; Shift+Tab cycles).";
+            self.notice = Some(msg.into());
+            Some(FileBackedAction::MachineCtl {
+                command: "trust-posture governed".to_string(),
+                success_notice: msg.to_string(),
+            })
+        }
+    }
+
     fn new_session_command(&mut self) -> Option<FileBackedAction> {
         if self.turn_active() || self.pending_yield.is_some() {
             self.notice = Some(Notice::warning(
@@ -136,6 +209,7 @@ impl FileBackedApp {
         }
         self.clear_local_receipts();
         self.transcript.clear();
+        self.turn_prompts.clear();
         self.action_cells.clear();
         self.projected_actions.clear();
         self.running_tools.clear();
@@ -151,19 +225,10 @@ impl FileBackedApp {
         self.auto_continue_on_empty_cancel = false;
         self.input_intent = InputIntent::Agent;
         self.history_draft_intent = None;
-        let queue_paused = self
-            .queue
-            .snapshot
-            .as_ref()
-            .is_some_and(|q| q.known && q.paused && q.pending_submission_ids.is_empty());
-        if queue_paused {
-            Some(FileBackedAction::MachineCtl {
-                command: "queue-v1 continue".to_string(),
-                success_notice: "Started a fresh session view.".to_string(),
-            })
-        } else {
-            self.notice = Some("Started a fresh session view.".into());
-            None
-        }
+        self.notice = Some("Started a fresh session.".into());
+        Some(FileBackedAction::MachineCtl {
+            command: "reset-session".to_string(),
+            success_notice: "Started a fresh session.".to_string(),
+        })
     }
 }

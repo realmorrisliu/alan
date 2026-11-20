@@ -108,7 +108,7 @@ pub fn validate_canonical_tool_name(name: &str) -> Result<()> {
     );
     ensure!(
         !matches!(name, "q" | "alan-agent" | "alan-work"),
-        "Tool name `{name}` collides with a reserved Alan OS executable"
+        "Tool name `{name}` collides with a reserved alan9 executable"
     );
     Ok(())
 }

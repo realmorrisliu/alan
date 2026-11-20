@@ -284,8 +284,12 @@ impl AnthropicMessagesClient {
             );
         }
 
-        let (thinking, temperature, max_tokens) =
-            build_thinking_params(reasoning.effort, temperature, max_tokens.unwrap_or(4096))?;
+        let (thinking, temperature, max_tokens) = build_thinking_params_for_model(
+            &self.model,
+            reasoning.effort,
+            temperature,
+            max_tokens.unwrap_or(4096),
+        )?;
 
         let mut anthropic_request = AnthropicMessagesRequest {
             model: self.model.clone(),
@@ -343,9 +347,55 @@ fn convert_tools_for_anthropic_messages(
     }
 }
 
+const THINKING_OUTPUT_HEADROOM_TOKENS: i32 = 4096;
+
+fn anthropic_model_max_output_tokens(model: &str) -> Option<i32> {
+    let lower = model.trim().to_ascii_lowercase();
+    let slug = lower.strip_prefix("anthropic/").unwrap_or(&lower);
+    if slug.is_empty() {
+        return None;
+    }
+    let normalized = slug.replace('.', "-");
+    if normalized.contains("claude-opus-4-6") {
+        Some(128_000)
+    } else if normalized.contains("claude-sonnet-4-6")
+        || normalized.contains("claude-opus-4-5")
+        || normalized.contains("claude-sonnet-4-5")
+        || normalized.contains("claude-haiku-4-5")
+        || normalized.contains("claude-sonnet-4")
+        || normalized.contains("claude-3-7-sonnet")
+    {
+        Some(64_000)
+    } else if normalized.contains("claude-opus-4") {
+        Some(32_000)
+    } else if normalized.contains("claude-3-5-") {
+        Some(8_192)
+    } else if normalized.contains("claude-3-") {
+        Some(4_096)
+    } else {
+        None
+    }
+}
+
 /// Build thinking-related parameters for Anthropic API.
 /// When thinking is enabled: temperature must be 1.0, max_tokens must > budget_tokens.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "model-agnostic wrapper preserved for unit tests during thinking-headroom calibration"
+    )
+)]
 fn build_thinking_params(
+    reasoning_effort: Option<ReasoningEffort>,
+    temperature: Option<f32>,
+    max_tokens: i32,
+) -> Result<(Option<ThinkingConfig>, Option<f32>, i32)> {
+    build_thinking_params_for_model("", reasoning_effort, temperature, max_tokens)
+}
+
+fn build_thinking_params_for_model(
+    model: &str,
     reasoning_effort: Option<ReasoningEffort>,
     temperature: Option<f32>,
     max_tokens: i32,
@@ -355,6 +405,7 @@ fn build_thinking_params(
         Some(effort) => Some(anthropic_budget_for_effort(effort)?),
         None => None,
     };
+    let model_limit = anthropic_model_max_output_tokens(model);
 
     match resolved_budget {
         Some(budget) => {
@@ -368,11 +419,19 @@ fn build_thinking_params(
             let budget_i32 =
                 i32::try_from(budget).context("Anthropic budget_tokens exceeds supported range")?;
 
-            // Anthropic requires max_tokens > budget_tokens.
+            // Anthropic requires max_tokens > budget_tokens; reserve output headroom so
+            // thinking does not starve final text or tool calls to a single token.
             let min_max_tokens = budget_i32
-                .checked_add(1)
+                .checked_add(THINKING_OUTPUT_HEADROOM_TOKENS)
                 .context("Anthropic budget_tokens is too large")?;
-            let adjusted_max = max_tokens.max(min_max_tokens);
+            let desired_max = max_tokens.max(min_max_tokens);
+            let adjusted_max = match model_limit {
+                Some(limit) => {
+                    let strict_min = budget_i32.saturating_add(1);
+                    desired_max.min(limit).max(strict_min)
+                }
+                None => desired_max,
+            };
             if let Some(temp) = temperature
                 && (temp - 1.0).abs() > f32::EPSILON
             {
@@ -392,7 +451,13 @@ fn build_thinking_params(
                 adjusted_max,
             ))
         }
-        None => Ok((None, temperature, max_tokens)),
+        None => {
+            let capped_max = match model_limit {
+                Some(limit) => max_tokens.min(limit),
+                None => max_tokens,
+            };
+            Ok((None, temperature, capped_max))
+        }
     }
 }
 

@@ -1,15 +1,12 @@
 #![cfg(unix)]
 
-use std::ffi::OsStr;
-use std::io::{Read, Write};
-use std::num::NonZeroU16;
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
-use std::os::unix::process::CommandExt;
+mod pty_support;
+
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use alan_agent_protocol::{
     UiActivitySnapshot, UiActivityState, UiEvent, UiInputStatus, UiModelBinding, UiModelCatalog,
@@ -21,323 +18,20 @@ use alan_ap::{Fid, InProcessTransport, OpenMode, Request, Response};
 use alan_kernel::{Access, MountFs, Namespace, ProcFs};
 use alan_shell::Shell;
 use alan_tui::{
-    FileBackedRunConfig, ProjectControl, ProjectControlResult, ProjectMountReceipt,
-    run_file_backed, terminal,
+    FileBackedRunConfig, LoginControl, LoginControlHandler, LoginMethod, LoginProviderChoice,
+    LoginResult, ProjectControl, ProjectControlResult, ProjectMountReceipt, run_file_backed,
+    terminal,
 };
 use anyhow::{Context, Result, bail};
+use pty_support::{
+    CHILD_MODE_ENV, ChildGuard, PtyScreen, open_pty, resize_pty, spawn_in_pty, spawn_master_reader,
+    stdin_restored_canon_and_echo, write_master,
+};
 
-const CHILD_MODE_ENV: &str = "ALAN_PTY_E2E_CHILD";
 const CHILD_PROJECT_ENV: &str = "ALAN_PTY_E2E_PROJECT";
 const EXEC_SPEC: &str =
     r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#;
 const PID_MOUNT: &str = "/mnt/service-manager/units/root-agent";
-
-struct PtyState {
-    parser: vt100::Parser,
-    raw: Vec<u8>,
-    eof: bool,
-}
-
-#[derive(Clone)]
-struct PtyScreen {
-    shared: Arc<(Mutex<PtyState>, Condvar)>,
-}
-
-impl PtyScreen {
-    fn new(rows: u16, cols: u16) -> Self {
-        Self {
-            shared: Arc::new((
-                Mutex::new(PtyState {
-                    parser: vt100::Parser::new(
-                        NonZeroU16::new(rows).expect("nonzero rows"),
-                        NonZeroU16::new(cols).expect("nonzero cols"),
-                        0,
-                    ),
-                    raw: Vec::new(),
-                    eof: false,
-                }),
-                Condvar::new(),
-            )),
-        }
-    }
-
-    fn push_bytes(&self, bytes: &[u8]) {
-        let mut guard = self.shared.0.lock().expect("pty state lock");
-        guard.raw.extend_from_slice(bytes);
-        guard.parser.process(bytes);
-        self.shared.1.notify_all();
-    }
-
-    fn mark_eof(&self) {
-        let mut guard = self.shared.0.lock().expect("pty state lock");
-        guard.eof = true;
-        self.shared.1.notify_all();
-    }
-
-    fn resize_parser(&self, rows: u16, cols: u16) {
-        let mut guard = self.shared.0.lock().expect("pty state lock");
-        guard.parser.screen_mut().set_size(
-            NonZeroU16::new(rows).expect("nonzero rows"),
-            NonZeroU16::new(cols).expect("nonzero cols"),
-        );
-        self.shared.1.notify_all();
-    }
-
-    fn cursor_one_based(&self) -> (u16, u16) {
-        let guard = self.shared.0.lock().expect("pty state lock");
-        let (r, c) = guard.parser.screen().cursor_position();
-        (r.saturating_add(1), c.saturating_add(1))
-    }
-
-    fn contents(&self) -> String {
-        let guard = self.shared.0.lock().expect("pty state lock");
-        guard.parser.screen().contents()
-    }
-
-    fn wait_for<F>(&self, label: &str, timeout: Duration, mut predicate: F) -> Result<String>
-    where
-        F: FnMut(&str, bool) -> bool,
-    {
-        let deadline = Instant::now() + timeout;
-        let mut guard = self.shared.0.lock().expect("pty state lock");
-        loop {
-            let contents = guard.parser.screen().contents();
-            if predicate(&contents, guard.eof) {
-                return Ok(contents);
-            }
-            if guard.eof {
-                bail!("PTY reached EOF before `{label}` was satisfied.\nScreen:\n{contents}");
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                bail!("timed out waiting for `{label}`.\nScreen:\n{contents}");
-            }
-            let (next_guard, wait_res) = self
-                .shared
-                .1
-                .wait_timeout(guard, deadline - now)
-                .expect("condvar wait");
-            guard = next_guard;
-            if wait_res.timed_out() {
-                let contents = guard.parser.screen().contents();
-                if predicate(&contents, guard.eof) {
-                    return Ok(contents);
-                }
-                bail!("timed out waiting for `{label}`.\nScreen:\n{contents}");
-            }
-        }
-    }
-
-    fn wait_eof(&self, timeout: Duration) -> Result<Vec<u8>> {
-        let deadline = Instant::now() + timeout;
-        let mut guard = self.shared.0.lock().expect("pty state lock");
-        while !guard.eof {
-            let now = Instant::now();
-            if now >= deadline {
-                bail!(
-                    "timed out waiting for PTY EOF.\nScreen:\n{}",
-                    guard.parser.screen().contents()
-                );
-            }
-            let (next_guard, _) = self
-                .shared
-                .1
-                .wait_timeout(guard, deadline - now)
-                .expect("condvar wait");
-            guard = next_guard;
-        }
-        Ok(guard.raw.clone())
-    }
-}
-
-struct ChildGuard(Option<Child>);
-
-impl ChildGuard {
-    fn new(child: Child) -> Self {
-        Self(Some(child))
-    }
-
-    fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        Ok(self.0.as_mut().expect("child").try_wait()?)
-    }
-
-    fn wait_with_timeout(&mut self, timeout: Duration) -> Result<std::process::ExitStatus> {
-        let deadline = Instant::now() + timeout;
-        let child = self.0.as_mut().expect("child");
-        loop {
-            if let Some(status) = child.try_wait()? {
-                self.0.take();
-                return Ok(status);
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                self.0.take();
-                bail!("child process did not exit within {:?}", timeout);
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-fn open_pty(rows: u16, cols: u16) -> Result<(OwnedFd, OwnedFd)> {
-    let mut master: RawFd = -1;
-    let mut slave: RawFd = -1;
-    let ws = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    // SAFETY: `master`, `slave`, and `ws` are valid aligned pointers; `name` and `termp` are null.
-    let rc = unsafe {
-        libc::openpty(
-            &mut master,
-            &mut slave,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &ws as *const libc::winsize as *mut libc::winsize,
-        )
-    };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error()).context("openpty");
-    }
-    // SAFETY: `openpty` returned 0, so `master` and `slave` are newly created owned file descriptors.
-    Ok(unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) })
-}
-
-fn spawn_in_pty(
-    slave: &OwnedFd,
-    master_to_close: RawFd,
-    test_name: &str,
-    mode: &str,
-    extra_env: &[(&str, &OsStr)],
-) -> Result<Child> {
-    let exe = std::env::current_exe().context("locate test executable")?;
-    let slave_fd: RawFd = std::os::fd::AsRawFd::as_raw_fd(slave);
-    let mut cmd = Command::new(exe);
-    cmd.args(["--exact", test_name, "--nocapture"])
-        .env(CHILD_MODE_ENV, mode)
-        .env("TERM", "xterm-256color")
-        .env("COLORTERM", "truecolor")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-
-    // SAFETY: `pre_exec` invokes only async-signal-safe POSIX syscalls (`setsid`, `ioctl`, `dup2`, `close`).
-    unsafe {
-        cmd.pre_exec(move || {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0) == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            for target in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
-                if libc::dup2(slave_fd, target) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
-            if slave_fd > libc::STDERR_FILENO {
-                libc::close(slave_fd);
-            }
-            if master_to_close > libc::STDERR_FILENO {
-                libc::close(master_to_close);
-            }
-            Ok(())
-        });
-    }
-
-    cmd.spawn().context("spawn pty child test")
-}
-
-fn spawn_master_reader(
-    master_read: OwnedFd,
-    master_write: Arc<Mutex<std::fs::File>>,
-    screen: PtyScreen,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut reader = std::fs::File::from(master_read);
-        let mut buf = [0u8; 4096];
-        let mut tail = Vec::new();
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => {
-                    screen.mark_eof();
-                    break;
-                }
-                Ok(n) => {
-                    let chunk = &buf[..n];
-                    screen.push_bytes(chunk);
-                    tail.extend_from_slice(chunk);
-                    if tail.windows(4).any(|w| w == b"\x1b[6n") {
-                        let (row, col) = screen.cursor_one_based();
-                        let reply = format!("\x1b[{row};{col}R");
-                        if let Ok(mut w) = master_write.lock() {
-                            let _ = w.write_all(reply.as_bytes());
-                            let _ = w.flush();
-                        }
-                        tail.clear();
-                    } else if tail.len() > 8 {
-                        let drain = tail.len() - 4;
-                        tail.drain(..drain);
-                    }
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => {
-                    screen.mark_eof();
-                    break;
-                }
-            }
-        }
-    })
-}
-
-fn write_master(master: &Arc<Mutex<std::fs::File>>, data: &[u8]) -> Result<()> {
-    let mut guard = master.lock().expect("master write lock");
-    guard.write_all(data)?;
-    guard.flush()?;
-    Ok(())
-}
-
-fn resize_pty(fd: RawFd, rows: u16, cols: u16) -> Result<()> {
-    let ws = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    // SAFETY: `fd` is an open PTY master descriptor and `ws` is a valid `libc::winsize`.
-    let rc = unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as _, &ws as *const libc::winsize) };
-    if rc == -1 {
-        return Err(std::io::Error::last_os_error()).context("TIOCSWINSZ");
-    }
-    Ok(())
-}
-
-fn stdin_restored_canon_and_echo() -> Result<bool> {
-    // SAFETY: `libc::termios` is a plain C struct initialized immediately by `tcgetattr`.
-    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
-    // SAFETY: `STDIN_FILENO` is a valid fd and `termios` points to valid writable storage.
-    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } != 0 {
-        return Err(std::io::Error::last_os_error()).context("tcgetattr stdin");
-    }
-    let has_canon = (termios.c_lflag & libc::ICANON) != 0;
-    let has_echo = (termios.c_lflag & libc::ECHO) != 0;
-    Ok(has_canon && has_echo)
-}
 
 async fn allocate_clone_id(transport: &InProcessTransport, path: &str) -> Result<String> {
     let fid = Fid(90_000);
@@ -374,7 +68,14 @@ async fn allocate_clone_id(transport: &InProcessTransport, path: &str) -> Result
     Ok(String::from_utf8(bytes)?.trim().to_string())
 }
 
-async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
+struct PtyAgentEnv {
+    root_transport: InProcessTransport,
+    shell: Shell,
+    owner: String,
+    process_path: String,
+}
+
+async fn boot_pty_agent_env(model_snapshot: Option<UiModelSnapshot>) -> Result<PtyAgentEnv> {
     terminal::install_panic_hook();
 
     let procfs = Arc::new(ProcFs::new());
@@ -413,9 +114,60 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
     );
 
     let process_path = format!("/proc/{pid}");
-    let model_snapshot = UiModelSnapshot {
+    let owner = format!("/agent/{pid}");
+    let initial_models = model_snapshot.unwrap_or(UiModelSnapshot {
         version: 1,
         process_path: process_path.clone(),
+        publication_version: 1,
+        known: true,
+        selected_next: None,
+        active: None,
+        catalog: None,
+        admitted: Vec::new(),
+    });
+    shell
+        .write(
+            &format!("{owner}/machine/ui/models"),
+            &serde_json::to_vec(&initial_models)?,
+        )
+        .await
+        .context("write ui/models")?;
+    shell
+        .write(
+            &format!("{owner}/machine/ui/queue"),
+            &serde_json::to_vec(&UiQueueSnapshot {
+                known: false,
+                revision: 0,
+                ..Default::default()
+            })?,
+        )
+        .await
+        .context("write ui/queue")?;
+    shell
+        .write(
+            &format!("{owner}/machine/ui/activity"),
+            &serde_json::to_vec(&UiActivitySnapshot {
+                version: 1,
+                state: UiActivityState::Idle,
+                started_at_ms: None,
+                waiting_submission_ids: Vec::new(),
+            })?,
+        )
+        .await
+        .context("write ui/activity")?;
+
+    Ok(PtyAgentEnv {
+        root_transport,
+        shell,
+        owner,
+        process_path,
+    })
+}
+
+async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
+    let model_snapshot = UiModelSnapshot {
+        version: 1,
+        process_path: String::new(),
         publication_version: 1,
         known: true,
         selected_next: Some(UiModelBinding {
@@ -443,37 +195,22 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
         }),
         admitted: Vec::new(),
     };
-    let owner = format!("/agent/{pid}");
+    let env = boot_pty_agent_env(Some(model_snapshot)).await?;
+    let root_transport = env.root_transport;
+    let shell = env.shell;
+    let owner = env.owner;
+    let process_path = env.process_path;
+    let updated_models = UiModelSnapshot {
+        process_path: process_path.clone(),
+        ..serde_json::from_slice(&shell.cat(&format!("{owner}/machine/ui/models")).await?)?
+    };
     shell
         .write(
             &format!("{owner}/machine/ui/models"),
-            &serde_json::to_vec(&model_snapshot)?,
+            &serde_json::to_vec(&updated_models)?,
         )
         .await
-        .context("write ui/models")?;
-    shell
-        .write(
-            &format!("{owner}/machine/ui/queue"),
-            &serde_json::to_vec(&UiQueueSnapshot {
-                known: false,
-                revision: 0,
-                ..Default::default()
-            })?,
-        )
-        .await
-        .context("write ui/queue")?;
-    shell
-        .write(
-            &format!("{owner}/machine/ui/activity"),
-            &serde_json::to_vec(&UiActivitySnapshot {
-                version: 1,
-                state: UiActivityState::Idle,
-                started_at_ms: None,
-                waiting_submission_ids: Vec::new(),
-            })?,
-        )
-        .await
-        .context("write ui/activity")?;
+        .context("update ui/models process_path")?;
     shell
         .write(
             &format!("{owner}/machine/tape"),
@@ -535,11 +272,46 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
         })
     });
 
-    let control_shell = shell.clone();
-    let control_transport = root_transport.clone();
-    let control_owner = owner.clone();
-    let control_process_path = process_path.clone();
-    let control_task = tokio::spawn(async move {
+    let control_task = spawn_pty_control_task(
+        shell.clone(),
+        root_transport.clone(),
+        owner.clone(),
+        process_path.clone(),
+        "openai-main".into(),
+    );
+
+    let mut cfg = FileBackedRunConfig::new(root_transport, "/agent/root");
+    cfg.effective_model = Some("gpt-5.4".into());
+    cfg.project_candidate = Some(project_dir);
+    cfg.project_control = Some(project_control);
+
+    run_file_backed(cfg).await?;
+    control_task.abort();
+
+    if !stdin_restored_canon_and_echo()? {
+        bail!("stdin raw mode or ECHO was not restored after clean exit");
+    }
+    let events = String::from_utf8(shell.cat("/agent/root/events").await?)?;
+    if events.contains("interrupt") {
+        bail!("idle Esc unexpectedly emitted interrupt event: {events:?}");
+    }
+    if !events.contains("select-model") {
+        bail!("expected Enter on /model highlighted item to select model: {events:?}");
+    }
+    if !mounted.load(Ordering::SeqCst) {
+        bail!("expected /project mount handler to have run");
+    }
+    Ok(())
+}
+
+fn spawn_pty_control_task(
+    control_shell: Shell,
+    control_transport: InProcessTransport,
+    control_owner: String,
+    control_process_path: String,
+    catalog_profile: String,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
         let Ok(mut tail) = control_shell.tail(&format!("{control_owner}/events")).await else {
             return;
         };
@@ -563,7 +335,7 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
                         publication_version: model_pub_ver,
                         known: true,
                         selected_next: Some(UiModelBinding {
-                            profile: "openai-main".into(),
+                            profile: catalog_profile.clone(),
                             provider: "openai_responses".into(),
                             model: model.to_string(),
                             reasoning: Default::default(),
@@ -571,7 +343,7 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
                         }),
                         active: None,
                         catalog: Some(UiModelCatalog {
-                            profile: "openai-main".into(),
+                            profile: catalog_profile.clone(),
                             models: vec![
                                 UiModelChoice {
                                     model: "gpt-5.4".into(),
@@ -646,28 +418,119 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
                 }
             }
         }
+    })
+}
+
+async fn run_child_m6() -> Result<()> {
+    let env = boot_pty_agent_env(None).await?;
+    let control_task = spawn_pty_control_task(
+        env.shell.clone(),
+        env.root_transport.clone(),
+        env.owner.clone(),
+        env.process_path.clone(),
+        "chatgpt-main".into(),
+    );
+    let input_shell = env.shell.clone();
+    let input_owner = env.owner.clone();
+    let input_task = tokio::spawn(async move {
+        let Ok(mut tail) = input_shell.tail(&format!("{input_owner}/io/input")).await else {
+            return;
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        while let Ok(bytes) = tail.read(4096).await {
+            if bytes.is_empty() {
+                break;
+            }
+            buf.extend_from_slice(&bytes);
+            while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                let Ok(len_str) = std::str::from_utf8(&buf[..nl]) else {
+                    buf.drain(..=nl);
+                    continue;
+                };
+                let Ok(len) = len_str.trim().parse::<usize>() else {
+                    buf.drain(..=nl);
+                    continue;
+                };
+                if buf.len() < nl + 1 + len {
+                    break;
+                }
+                let payload = buf[nl + 1..nl + 1 + len].to_vec();
+                buf.drain(..nl + 1 + len);
+                if let Ok(Some(record)) =
+                    alan_agent_protocol::UserInputRecord::decode_payload(&payload)
+                {
+                    let mut ev = serde_json::to_vec(&UiEvent::InputCompleted {
+                        submission_ids: vec![record.submission_id],
+                        status: UiInputStatus::Failed,
+                        error: Some(
+                            "No confirmed callable binding; generation input not admitted.".into(),
+                        ),
+                    })
+                    .unwrap_or_default();
+                    ev.push(b'\n');
+                    let _ = input_shell
+                        .write(&format!("{input_owner}/machine/ui/events"), &ev)
+                        .await;
+                }
+            }
+        }
     });
 
-    let mut cfg = FileBackedRunConfig::new(root_transport, "/agent/root");
-    cfg.effective_model = Some("gpt-5.4".into());
-    cfg.project_candidate = Some(project_dir);
-    cfg.project_control = Some(project_control);
+    let login_control: LoginControlHandler = Arc::new(|control| {
+        Box::pin(async move {
+            match control {
+                LoginControl::ListProviders => Ok(LoginResult::Providers(vec![
+                    LoginProviderChoice {
+                        id: "chatgpt".into(),
+                        label: "ChatGPT (Plus / Pro OAuth)".into(),
+                        detail: "browser OAuth".into(),
+                        default_profile: "chatgpt-main".into(),
+                        method: LoginMethod::BrowserOrAuto,
+                    },
+                    LoginProviderChoice {
+                        id: "openai".into(),
+                        label: "OpenAI API".into(),
+                        detail: "API key".into(),
+                        default_profile: "openai-main".into(),
+                        method: LoginMethod::ApiKey {
+                            allow_base_url: true,
+                        },
+                    },
+                ])),
+                LoginControl::Submit(sub) => Ok(LoginResult::Connected {
+                    profile: format!("{}-main", sub.provider_id),
+                    provider: sub.provider_id,
+                    model: Some("gpt-5.4".into()),
+                    message: None,
+                }),
+            }
+        })
+    });
+
+    let mut cfg = FileBackedRunConfig::new(env.root_transport, "/agent/root");
+    cfg.connection_configured = Some(false);
+    cfg.effective_model = None;
+    cfg.login_control = Some(login_control);
 
     run_file_backed(cfg).await?;
     control_task.abort();
+    input_task.abort();
 
     if !stdin_restored_canon_and_echo()? {
         bail!("stdin raw mode or ECHO was not restored after clean exit");
     }
-    let events = String::from_utf8(shell.cat("/agent/root/events").await?)?;
+    let events = String::from_utf8(env.shell.cat("/agent/root/events").await?)?;
     if events.contains("interrupt") {
         bail!("idle Esc unexpectedly emitted interrupt event: {events:?}");
     }
-    if !events.contains("select-model") {
-        bail!("expected Enter on /model highlighted item to select model: {events:?}");
+    if !events.contains("ctl:trust-posture confined-trusted") {
+        bail!("expected Shift+Tab to emit trust-posture confined-trusted: {events:?}");
     }
-    if !mounted.load(Ordering::SeqCst) {
-        bail!("expected /project mount handler to have run");
+    if !events.contains("ctl:trust-posture governed") {
+        bail!("expected Shift+Tab to emit trust-posture governed: {events:?}");
+    }
+    if !events.contains("ctl:select-model ") || !events.contains("gpt-5.4") {
+        bail!("expected /login completion to sync gpt-5.4 via select-model: {events:?}");
     }
     Ok(())
 }
@@ -687,6 +550,15 @@ fn pty_e2e_child_runner() {
             .expect("tokio runtime");
         if let Err(err) = rt.block_on(run_child_file_backed(project_dir)) {
             eprintln!("pty child failed: {err:#}");
+            std::process::exit(2);
+        }
+    } else if mode == "m6" {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        if let Err(err) = rt.block_on(run_child_m6()) {
+            eprintln!("pty m6 child failed: {err:#}");
             std::process::exit(2);
         }
     } else if mode == "panic" {
@@ -829,7 +701,7 @@ fn pty_e2e_tui_startup_modals_ctrl_q_esc_ctrl_c_cjk_and_resize() -> Result<()> {
         // /project opens picker, Ctrl+Q does NOT exit inside picker, Enter mounts project.
         write_master(&master_write, b"/project\r")?;
         screen.wait_for("project picker open", Duration::from_secs(3), |s, _| {
-            s.contains("read-only") || s.contains("Mount")
+            s.contains("read-write") || s.contains("read-only") || s.contains("Mount")
         })?;
         write_master(&master_write, b"\x11")?;
         std::thread::sleep(Duration::from_millis(120));
@@ -878,6 +750,138 @@ fn pty_e2e_tui_startup_modals_ctrl_q_esc_ctrl_c_cjk_and_resize() -> Result<()> {
     drop(child);
     let _ = reader_handle.join();
     let _ = std::fs::remove_dir_all(&project_dir);
+    res
+}
+
+#[test]
+fn pty_e2e_m6_help_no_ghost_esc_dismiss_completion_shift_tab_and_login() -> Result<()> {
+    let (master, slave) = open_pty(24, 80)?;
+    let master_fd = std::os::fd::AsRawFd::as_raw_fd(&master);
+    let master_read = master.try_clone().context("clone master fd")?;
+    let master_write = Arc::new(Mutex::new(std::fs::File::from(master)));
+
+    let child = spawn_in_pty(&slave, master_fd, "pty_e2e_child_runner", "m6", &[])?;
+    drop(slave);
+    let mut child = ChildGuard::new(child);
+
+    let screen = PtyScreen::new(24, 80);
+    let reader_handle = spawn_master_reader(master_read, master_write.clone(), screen.clone());
+
+    let res = (|| -> Result<()> {
+        let startup =
+            screen.wait_for("m6 unconfigured startup", Duration::from_secs(6), |s, _| {
+                s.contains("=(o.o)=") && s.contains("Not connected") && s.contains("/login")
+            })?;
+        assert!(
+            !startup.contains("gpt-5.4"),
+            "unconfigured boot unexpectedly displayed gpt-5.4:\n{startup}"
+        );
+
+        // '/' shows prioritized commands near the top with truncation counter; Esc closes popup.
+        write_master(&master_write, b"/")?;
+        let slash_popup =
+            screen.wait_for("prioritized slash popup", Duration::from_secs(3), |s, _| {
+                s.contains("/login") && s.contains("/model") && s.contains("1-6/")
+            })?;
+        let login_idx = slash_popup.find("/login").expect("/login present");
+        let model_idx = slash_popup.find("/model").expect("/model present");
+        assert!(
+            login_idx < model_idx,
+            "expected /login ordered ahead of /model:\n{slash_popup}"
+        );
+        write_master(&master_write, b"\x1b")?;
+        screen.wait_for("close slash popup", Duration::from_secs(3), |s, _| {
+            !s.contains("1-6/")
+        })?;
+        write_master(&master_write, b"\x7f")?;
+        screen.wait_for("clear slash draft", Duration::from_secs(3), |s, _| {
+            !s.contains(": /")
+        })?;
+
+        // /help at 80x24 leaves zero welcome-banner ghosting and wraps with hanging indent.
+        write_master(&master_write, b"/help\r")?;
+        let help_screen =
+            screen.wait_for("/help rendered cleanly", Duration::from_secs(3), |s, _| {
+                s.contains("Commands:")
+                    && s.contains("Shortcuts & Modals:")
+                    && s.contains("arrows, Esc)")
+            })?;
+        assert!(
+            !help_screen.contains("=(o.o)="),
+            "welcome banner ghosting detected inside /help:\n{help_screen}"
+        );
+        assert!(
+            !help_screen.contains("ALAN(1)") && !help_screen.contains("Everything is a file."),
+            "welcome banner text bled into /help:\n{help_screen}"
+        );
+        let continuation_line = help_screen
+            .lines()
+            .find(|line| line.contains("arrows, Esc)"))
+            .expect("wrapped Ctrl+O continuation line");
+        assert!(
+            continuation_line.starts_with("   "),
+            "expected /help right-column wrap to keep hanging indent: {continuation_line:?}\n{help_screen}"
+        );
+
+        // Idle Esc dismisses /help notice cleanly without interrupting.
+        write_master(&master_write, b"\x1b")?;
+        screen.wait_for("Esc dismisses /help", Duration::from_secs(3), |s, _| {
+            !s.contains("Shortcuts & Modals:") && !s.contains("Commands:")
+        })?;
+
+        // Shift+Tab cycles trust posture confined/trusted <-> governed.
+        write_master(&master_write, b"\x1b[Z")?;
+        screen.wait_for(
+            "Shift+Tab confined/trusted",
+            Duration::from_secs(3),
+            |s, _| s.contains("confined/trusted"),
+        )?;
+        write_master(&master_write, b"\x1b[Z")?;
+        screen.wait_for(
+            "Shift+Tab back to governed",
+            Duration::from_secs(3),
+            |s, _| s.contains("Trust posture: governed"),
+        )?;
+
+        // Unconfigured prompt submission settles cleanly, shows guidance, and clears composer so /login runs right after.
+        write_master(&master_write, b"hello\r")?;
+        screen.wait_for(
+            "unconfigured failure clears hello",
+            Duration::from_secs(3),
+            |s, _| {
+                s.contains("No active model connection is configured")
+                    && !s.lines().any(|line| line.starts_with(": hello"))
+            },
+        )?;
+
+        // /login inside TUI selects provider and hot-refreshes connected model/status.
+        write_master(&master_write, b"/login\r")?;
+        screen.wait_for("/login provider picker", Duration::from_secs(3), |s, _| {
+            s.contains("ChatGPT") && s.contains("OpenAI")
+        })?;
+        write_master(&master_write, b"\r")?;
+        screen.wait_for("/login hot refresh", Duration::from_secs(3), |s, _| {
+            s.contains("Connected chatgpt (chatgpt-main)")
+                && s.contains("gpt-5.4")
+                && !s.contains("Not connected")
+        })?;
+
+        // Clean Ctrl+Q exit restores cooked TTY modes & disables bracketed paste.
+        write_master(&master_write, b"\x11")?;
+        let status = child.wait_with_timeout(Duration::from_secs(5))?;
+        assert!(status.success(), "m6 PTY child failed with {status:?}");
+        drop(master_write);
+        let raw = screen.wait_eof(Duration::from_secs(3))?;
+        let raw_text = String::from_utf8_lossy(&raw);
+        assert!(
+            raw_text.contains("\x1b[?2004l"),
+            "missing bracketed paste disable sequence on exit"
+        );
+        Ok(())
+    })();
+
+    drop(child);
+    let _ = reader_handle.join();
     res
 }
 

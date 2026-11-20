@@ -7,6 +7,7 @@ mod assembler;
 mod definition;
 mod loader;
 mod memory;
+mod model_family;
 pub mod project_knowledge;
 
 pub(crate) use assembler::build_agent_system_prompt_with_mode;
@@ -28,9 +29,10 @@ pub use memory::{MEMORY_DAILY_DIRNAME, ensure_memory_store_layout_at};
     reason = "crate-private re-exports keep adjacent prompt tests on the module boundary"
 )]
 pub(crate) use memory::{
-    MEMORY_INBOX_DIRNAME, MEMORY_STORE_FILENAME, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
-    memory_store_tracked_paths, render_memory_store_context,
+    MEMORY_INBOX_DIRNAME, MEMORY_STORE_FILENAME, MEMORY_STORE_MAX_CHARS, MEMORY_TOPICS_DIRNAME,
+    MEMORY_USER_FILENAME, memory_store_tracked_paths, render_memory_store_context,
 };
+pub(crate) use model_family::format_system_prompt_for_model;
 
 // ============================================================================
 // Compile-time embedded prompts

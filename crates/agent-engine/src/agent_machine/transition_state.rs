@@ -281,6 +281,17 @@ impl AgentMachine {
         self.transition_state.plan_snapshot_message_count = None;
     }
 
+    /// Reset all session-scoped transition state (used by `Op::ResetSession`).
+    pub(crate) fn reset_session_transition_state(&mut self) {
+        self.reset_turn();
+        self.clear_plan_snapshot();
+        self.transition_state.current_submission_id = None;
+        self.transition_state.related_submission_ids.clear();
+        self.transition_state.submission_cancelled = false;
+        self.transition_state.deferred_runtime_actions.clear();
+        self.transition_state.session_tool_allowlist = SessionToolAllowlist::default();
+    }
+
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
         self.transition_state.compactions_this_turn = 0;
         self.transition_state.last_compaction_prompt_tokens = None;

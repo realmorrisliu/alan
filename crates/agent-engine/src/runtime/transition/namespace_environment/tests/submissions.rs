@@ -109,6 +109,76 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         assert_eq!(matches!(control.op, Op::DiscardQueue), discard);
         assert_eq!(matches!(control.op, Op::ContinueQueue), !discard);
     }
+
+    shell
+        .write("/agent/1/machine/ctl", b"rollback 3")
+        .await
+        .unwrap();
+    let rollback_3 = agent_files
+        .read_next_runtime_submission()
+        .await
+        .unwrap()
+        .expect("rollback 3 should produce a submission");
+    assert!(matches!(rollback_3.op, Op::Rollback { turns: 3 }));
+
+    shell
+        .write("/agent/1/machine/ctl", b"rollback 0")
+        .await
+        .unwrap();
+    assert!(
+        agent_files
+            .read_next_runtime_submission()
+            .await
+            .unwrap()
+            .is_none(),
+        "rollback 0 must be ignored cleanly"
+    );
+
+    shell
+        .write("/agent/1/machine/ctl", b"reset-session")
+        .await
+        .unwrap();
+    let reset = agent_files
+        .read_next_runtime_submission()
+        .await
+        .unwrap()
+        .expect("reset-session should produce a submission");
+    assert!(matches!(reset.op, Op::ResetSession));
+
+    for (verb, expected) in [
+        ("trust-posture governed", false),
+        ("trust-posture confined-trusted", true),
+    ] {
+        shell
+            .write("/agent/1/machine/ctl", verb.as_bytes())
+            .await
+            .unwrap();
+        let posture = agent_files
+            .read_next_runtime_submission()
+            .await
+            .unwrap()
+            .expect("trust-posture verb should produce a submission");
+        assert!(matches!(
+            posture.op,
+            Op::SetTrustPosture { confined_trusted } if confined_trusted == expected
+        ));
+    }
+
+    shell
+        .write(
+            "/agent/1/machine/ctl",
+            b"trust-posture host-account-trusted",
+        )
+        .await
+        .unwrap();
+    assert!(
+        agent_files
+            .read_next_runtime_submission()
+            .await
+            .unwrap()
+            .is_none(),
+        "unsupported trust-posture value must not parse into a submission"
+    );
 }
 
 #[tokio::test]

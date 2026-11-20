@@ -181,7 +181,7 @@ delegated_target: {target}
 This skill executes through alan's delegated runtime path.
 Do not inline or restate the full `SKILL.md` body in this machine.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
-The delegated runtime receives only descriptors and inherited namespace mounts. Use an Alan OS `cwd` already present in that namespace; request a Host Mount before delegation when required files are absent.
+The delegated runtime receives only descriptors and inherited namespace mounts. Use an alan9 `cwd` already present in that namespace; request a Host Mount before delegation when required files are absent.
 The tool returns a bounded result object with `status`, `summary`, optional `child_run`, optional inline `output_text`, optional namespace-path `output_ref`, optional `structured_output`, and explicit `truncation` metadata.
 If `output_ref` or truncation metadata is present, treat the inline text as a preview. When the full delegated output is needed, open or read the namespace file at `output_ref.path`; raw rollout/machine paths are debug metadata, not evidence access paths.
 Use `child_run` metadata only for delegation-scoped launch and handoff context. Inspect live child state through `/agent/<pid>/children` and `/proc`. Parent Agent Processes terminate children through governed `terminate_child_run` handling; external operators may stop a child through `/proc/<pid>/ctl` with `cancel` or `interrupt`. Inspect and control execution only through the owning file surfaces.
@@ -416,7 +416,7 @@ pub fn render_skills_list(
                 } else {
                     lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
                 }
-                lines.push("  note: delegated children receive descriptors and inherited mounts; pass only an Alan OS `cwd` already present in the child namespace".to_string());
+                lines.push("  note: delegated children receive descriptors and inherited mounts; pass only an alan9 `cwd` already present in the child namespace".to_string());
             }
             _ => {
                 if builtin_package {

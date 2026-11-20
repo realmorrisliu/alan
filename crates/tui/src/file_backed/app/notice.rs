@@ -90,14 +90,16 @@ pub(in crate::file_backed) fn humanize_protocol_message(raw: &str) -> String {
         || lower.contains("invalid_api_key")
         || lower.contains("unauthorized (401)")
     {
-        return "Authentication failed for the active connection. Run `alan connection login <profile>` or `alan connection set-secret <profile>` (see `alan connection list`).".to_string();
+        return "Authentication failed for the active connection. Run `/login` (or `alan login` / `alan connection login <profile>` / `alan connection set-secret <profile>`).".to_string();
     }
-    if lower.contains("no connection service profile selected")
+    if lower.contains("no callable connection is available")
+        || lower.contains("no connection service profile selected")
+        || lower.contains("no connection profile selected")
         || lower.contains("no confirmed callable binding")
         || lower.contains("missing connection authority")
         || lower.contains("connection catalog unavailable")
     {
-        return "No active model connection is configured. Run `alan connection add openai_responses --profile main --default` (or `chatgpt`), then `alan connection login main` or `alan connection set-secret main`.".to_string();
+        return "No active model connection is configured. Run `/login` (or `alan login` / `alan connection add openai_responses --profile main --default`).".to_string();
     }
     if lower.contains("stream_error:rate_limit") {
         return "Provider rate limit reached. Wait a moment and retry, or switch models with `/model`.".to_string();

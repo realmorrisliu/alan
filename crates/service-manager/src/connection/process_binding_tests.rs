@@ -66,7 +66,16 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
         };
         let captured = authority.capture_initial().await.unwrap().unwrap();
         assert!(captured.config.effective_model_info().is_none());
-        assert!(authority.catalog().await.is_err());
+        let has_static_catalog = matches!(
+            provider,
+            ProviderId::GoogleGeminiGenerateContent | ProviderId::AnthropicMessages
+        );
+        if has_static_catalog {
+            let static_catalog = authority.catalog().await.unwrap();
+            assert!(!static_catalog["models"].as_array().unwrap().is_empty());
+        } else {
+            assert!(authority.catalog().await.is_err());
+        }
         assert!(
             authority
                 .capture(Some("arbitrary-new-model"))
@@ -82,7 +91,11 @@ async fn managed_none_catalog_exact_restore_preserves_full_authority() {
             captured.identity,
             "unchanged managed {provider:?} capture must restore"
         );
-        assert!(authority.catalog().await.is_err());
+        if has_static_catalog {
+            assert!(authority.catalog().await.is_ok());
+        } else {
+            assert!(authority.catalog().await.is_err());
+        }
         for field in ["model", "provider", "credential", "revision", "profile"] {
             let mut wrong = captured.identity.clone();
             match field {

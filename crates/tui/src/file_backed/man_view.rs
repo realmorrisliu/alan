@@ -22,7 +22,7 @@ const TOPICS: &[(&str, &str, &str)] = &[
     (
         "1/connection",
         "connection",
-        "CONNECTION(1)           Connection Service           CONNECTION(1)\n\nFIRST-PARTY PROVIDERS (ADR-0061)\n  magpie · openai_responses · chatgpt · vertex_gemini · openrouter\n  (Anthropic is a protocol adapter / Quartermaster `q` package.)\n\nCOMMANDS\n  alan connection list | current | add | login | set-secret | default set | test",
+        "CONNECTION(1)           Connection Service           CONNECTION(1)\n\nFIRST-PARTY PROVIDERS (ADR-0061)\n  magpie · openai_responses · chatgpt · vertex · openrouter\n  (Anthropic is a protocol adapter / Quartermaster `q` package.)\n\nCOMMANDS\n  /login | alan login\n  alan connection list | current | add | login | set-secret | default set | test",
     ),
     (
         "4/agentfs",

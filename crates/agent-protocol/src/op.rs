@@ -140,6 +140,17 @@ pub enum Op {
         /// Number of user turns to remove (must be >= 1)
         turns: u32,
     },
+
+    /// Reset the active Agent Process session to an empty tape and fresh rollout boundary.
+    ResetSession,
+
+    /// Switch runtime trust posture between `Governed` and `ConfinedTrusted`.
+    ///
+    /// Changes to or from `HostAccountTrusted` are refused at runtime.
+    SetTrustPosture {
+        /// Enable (`true`) or disable (`false`) confined auto-approval posture.
+        confined_trusted: bool,
+    },
 }
 
 /// Turn context metadata — attached to Turn ops.
@@ -498,5 +509,30 @@ mod tests {
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
         assert!(matches!(deserialized, Op::Interrupt));
+    }
+
+    #[test]
+    fn test_op_serialization_reset_session_and_trust_posture() {
+        let reset_json = serde_json::to_string(&Op::ResetSession).unwrap();
+        assert_eq!(reset_json, r#"{"type":"reset_session"}"#);
+        assert!(matches!(
+            serde_json::from_str::<Op>(&reset_json).unwrap(),
+            Op::ResetSession
+        ));
+
+        let trust_json = serde_json::to_string(&Op::SetTrustPosture {
+            confined_trusted: true,
+        })
+        .unwrap();
+        assert_eq!(
+            trust_json,
+            r#"{"type":"set_trust_posture","confined_trusted":true}"#
+        );
+        assert!(matches!(
+            serde_json::from_str::<Op>(&trust_json).unwrap(),
+            Op::SetTrustPosture {
+                confined_trusted: true
+            }
+        ));
     }
 }

@@ -511,7 +511,7 @@ fn model_and_status_remain_visible_across_prompt_widths() {
 
 #[test]
 fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
-    for width in [40, 60, 80, 120] {
+    for width in [40usize, 60, 80, 120] {
         let mut app = FileBackedApp::new("/agent/root".into());
         let mut typed = String::new();
         let mut heights = Vec::new();
@@ -533,24 +533,41 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
                 .map(|c| c.label.as_str())
                 .collect::<Vec<_>>();
             assert!(labels.contains(&"project"), "{typed}: {labels:?}");
-            if typed.len() >= 3 {
+            if typed.len() >= 5 {
                 assert_eq!(labels, ["project"]);
             }
+            let max_left = width.saturating_sub(14).clamp(10, 32);
+            let left_col_width = state
+                .matches
+                .iter()
+                .take(MAX_COMPLETION_ROWS)
+                .map(|c| 1 + unicode_width::UnicodeWidthStr::width(c.label.as_str()))
+                .max()
+                .unwrap_or(0)
+                .min(max_left);
             let expected_hint_rows = state
                 .matches
                 .iter()
                 .take(MAX_COMPLETION_ROWS)
                 .map(|c| {
+                    let left_raw = format!("/{}", c.label);
+                    let left_w = unicode_width::UnicodeWidthStr::width(left_raw.as_str());
+                    let pad = left_col_width.saturating_sub(left_w) + 2;
                     let hint = ratatui::text::Line::from(format!(
-                        "  /{}  - {}",
-                        c.label,
+                        "  {left_raw}{}{}",
+                        " ".repeat(pad),
                         c.detail.as_ref().unwrap()
                     ));
                     crate::transcript_ui::wrapped_line_count(&[hint], width)
                 })
                 .sum::<usize>();
+            let counter_rows = usize::from(state.matches.len() > MAX_COMPLETION_ROWS);
             let height = inline_viewport_height(&app, width, 22);
-            assert_eq!(height as usize, expected_hint_rows + 4, "{width}: {typed}");
+            assert_eq!(
+                height as usize,
+                expected_hint_rows + counter_rows + 4,
+                "{width}: {typed}"
+            );
             heights.push(height);
             let mut terminal = Terminal::new(TestBackend::new(width as u16, height)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -569,11 +586,15 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(
-                rendered.contains("/project"),
-                "{width}: {typed}: {rendered}"
-            );
-            assert!(rendered.contains("select or revoke"), "{rendered}");
+            if typed.len() >= 2 {
+                assert!(
+                    rendered.contains("/project"),
+                    "{width}: {typed}: {rendered}"
+                );
+                assert!(rendered.contains("select or revoke"), "{rendered}");
+            } else {
+                assert!(rendered.contains("/login"), "{width}: {typed}: {rendered}");
+            }
             let cursor = terminal.backend().cursor_position();
             assert_eq!((cursor.x, cursor.y), ((2 + typed.len()) as u16, 3));
             assert!(app.drain_committed_scrollback(width, 22).is_empty());
@@ -583,10 +604,13 @@ fn slash_project_character_sequence_keeps_dynamic_hints_cursor_and_history() {
             );
         }
         assert!(
-            heights[0] > heights[1] && heights[1] > heights[2],
+            heights[0] > heights[1]
+                && heights[1] > heights[2]
+                && heights[2] >= heights[3]
+                && heights[3] > heights[4],
             "{width}: {heights:?}"
         );
-        assert!(heights[2..].iter().all(|h| *h == heights[2]));
+        assert!(heights[4..].iter().all(|h| *h == heights[4]));
         let saved_height = *heights.last().unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
         assert_eq!(inline_viewport_height(&app, width, 22), 22);
@@ -626,13 +650,15 @@ fn completion_candidates_render_below_the_inline_prompt_without_entering_history
     };
 
     assert_eq!(line(6), ": /");
-    assert!(line(7).contains("/project"));
-    assert!(line(8).contains("/compact"));
-    assert!(line(10).contains("/continue"));
-    assert!(line(11).contains("/discard"));
-    assert!(line(12).contains("/clear"));
+    assert!(line(7).contains("/login"));
+    assert!(line(8).contains("/model"));
+    assert!(line(9).contains("/resume"));
+    assert!(line(10).contains("/new"));
+    assert!(line(11).contains("/fork"));
+    assert!(line(12).contains("/permissions"));
+    assert!(line(13).contains("1-6/"));
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
-    assert_eq!(inline_viewport_height(&app, 80, 14), 13);
+    assert_eq!(inline_viewport_height(&app, 80, 14), 14);
 }
 
 #[test]

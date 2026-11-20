@@ -86,7 +86,25 @@ pub async fn run_stdio_task_with_options(
     let task = StdioTaskWaitContext::new_with_parts(input, options.parts)?;
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
+    let mut attachment = match open_stdio_tail_attachment(&shell, &agent_path).await {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            if options.json {
+                let msg = humanize_protocol_message(&format!("{error:#}"));
+                let _ = emit_json_event(&JsonStreamEvent::Error {
+                    message: msg.clone(),
+                })
+                .await;
+                let _ = emit_json_event(&JsonStreamEvent::TurnFinished {
+                    status: "failed".to_string(),
+                    answer: String::new(),
+                })
+                .await;
+                bail!("{msg}");
+            }
+            return Err(super::stdio_runner::humanize_anyhow_error(error));
+        }
+    };
     if !options.json {
         return super::stdio_runner::run_opened_plain_stdio_task(
             &shell, task, attachment, interrupt,
@@ -229,15 +247,25 @@ async fn wait_for_stdio_json_answer(
                         }
                     }
                 }
-                if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
-                    let (status, text, code) = match answer {
-                        super::stdio_runner::StdioTaskOutput::Agent(a) => ("completed".to_string(), a, 0),
-                        super::stdio_runner::StdioTaskOutput::Command(c) => {
-                            let status = if c.exit_code == 0 { "completed" } else { "failed" };
-                            (status.to_string(), c.stdout, c.exit_code)
-                        }
-                    };
-                    break Ok((status, text, code));
+                match finish_stdio_task_if_ready(&mut snapshot) {
+                    Ok(Some(answer)) => {
+                        let (status, text, code) = match answer {
+                            super::stdio_runner::StdioTaskOutput::Agent(a) => {
+                                ("completed".to_string(), a, 0)
+                            }
+                            super::stdio_runner::StdioTaskOutput::Command(c) => {
+                                let status = if c.exit_code == 0 {
+                                    "completed"
+                                } else {
+                                    "failed"
+                                };
+                                (status.to_string(), c.stdout, c.exit_code)
+                            }
+                        };
+                        break Ok((status, text, code));
+                    }
+                    Ok(None) => {}
+                    Err(error) => break Err(error),
                 }
             }
             bytes = attachment.ui_tail.read(4096) => {
@@ -307,15 +335,25 @@ async fn wait_for_stdio_json_answer(
                     emit_json_event(&JsonStreamEvent::Error { message: msg.clone() }).await?;
                     break Ok((status.to_string(), msg, 1));
                 }
-                if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
-                    let (status, text, code) = match answer {
-                        super::stdio_runner::StdioTaskOutput::Agent(a) => ("completed".to_string(), a, 0),
-                        super::stdio_runner::StdioTaskOutput::Command(c) => {
-                            let status = if c.exit_code == 0 { "completed" } else { "failed" };
-                            (status.to_string(), c.stdout, c.exit_code)
-                        }
-                    };
-                    break Ok((status, text, code));
+                match finish_stdio_task_if_ready(&mut snapshot) {
+                    Ok(Some(answer)) => {
+                        let (status, text, code) = match answer {
+                            super::stdio_runner::StdioTaskOutput::Agent(a) => {
+                                ("completed".to_string(), a, 0)
+                            }
+                            super::stdio_runner::StdioTaskOutput::Command(c) => {
+                                let status = if c.exit_code == 0 {
+                                    "completed"
+                                } else {
+                                    "failed"
+                                };
+                                (status.to_string(), c.stdout, c.exit_code)
+                            }
+                        };
+                        break Ok((status, text, code));
+                    }
+                    Ok(None) => {}
+                    Err(error) => break Err(error),
                 }
             }
             _ = root_agent_pid_tick.tick() => {

@@ -87,9 +87,10 @@ impl FileBackedApp {
                 },
             )
         });
+        let unconfigured = self.is_connection_unconfigured();
         let dot_state = if self.expected_terminal_error.is_some() || self.last_input_failed {
             crate::theme::DotState::Block
-        } else if self.pending_yield.is_some() || self.form.is_some() {
+        } else if self.pending_yield.is_some() || self.form.is_some() || unconfigured {
             crate::theme::DotState::Wait
         } else if self.turn_active() || self.project.is_some() {
             crate::theme::DotState::Run
@@ -98,12 +99,20 @@ impl FileBackedApp {
         };
         let (dot, dot_style) = self.theme.status_dot(dot_state);
         let dot_width = UnicodeWidthStr::width(dot) + 1;
-        let full_model = self.model.prompt_label(self.prefers_active_model());
-        let short_model = self
-            .model
-            .prompt_binding(self.prefers_active_model())
-            .map(|b| super::super::model::safe(&b.model))
-            .unwrap_or_else(|| full_model.clone());
+        let (full_model, short_model) = if unconfigured {
+            (
+                "Not connected · run /login".to_string(),
+                "Not connected".to_string(),
+            )
+        } else {
+            let full_model = self.model.prompt_label(self.prefers_active_model());
+            let short_model = self
+                .model
+                .prompt_binding(self.prefers_active_model())
+                .map(|b| super::super::model::safe(&b.model))
+                .unwrap_or_else(|| full_model.clone());
+            (full_model, short_model)
+        };
         let full_usage = self.usage.prompt_label();
         let short_usage = self.usage.short_prompt_label();
         let trust_chip = self.trust_posture_chip();
@@ -220,7 +229,11 @@ impl FileBackedApp {
             spans.push(Span::styled(gt, style));
             spans.push(Span::raw(" · "));
         }
-        spans.push(Span::raw(model));
+        if unconfigured {
+            spans.push(Span::styled(model, self.theme.wait_style()));
+        } else {
+            spans.push(Span::raw(model));
+        }
         if let Some(ut) = usage {
             spans.push(Span::styled(format!(" · {ut}"), self.theme.muted_style()));
         }
@@ -395,6 +408,17 @@ impl FileBackedApp {
     }
 
     pub(in crate::file_backed) fn composer_lines(&self) -> Vec<Line<'static>> {
+        if let Some((buf, _, masked)) = self.login.input_display() {
+            let display = if masked {
+                "*".repeat(buf.chars().count())
+            } else {
+                buf.to_string()
+            };
+            return vec![Line::from(vec![
+                Span::styled("? ", self.theme.run_style()),
+                Span::raw(display),
+            ])];
+        }
         let mut lines = Vec::new();
         let segments = self.composer.text().split('\n').collect::<Vec<_>>();
         for (idx, segment) in segments.iter().enumerate() {

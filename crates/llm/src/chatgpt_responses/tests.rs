@@ -69,6 +69,7 @@ fn seed_chatgpt_auth(storage_path: PathBuf, access_token: String, refresh_token:
                 })
                 .expect("stored auth"),
             ),
+            google: None,
         })
         .expect("save auth");
     storage_path
@@ -690,11 +691,12 @@ mod catalog_limits_tests;
 mod session_tests;
 
 #[tokio::test]
-async fn implicit_account_binding_cannot_follow_replaced_auth_storage() {
+async fn live_login_activates_previously_logged_out_client_while_bound_client_rejects_account_swap()
+{
     let (url, state, server) = spawn_chatgpt_test_server(TestResponseMode::AlwaysOk).await;
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("auth.json");
-    let unavailable = ChatgptResponsesClient::with_params(
+    let mut live_client = ChatgptResponsesClient::with_params(
         &url,
         "gpt-6.1-sol",
         HashMap::new(),
@@ -702,13 +704,25 @@ async fn implicit_account_binding_cannot_follow_replaced_auth_storage() {
         Some(path.clone()),
     )
     .unwrap();
-    seed_chatgpt_auth(path.clone(), valid_access_token(), "refresh");
     assert!(
-        unavailable.model_catalog().await.is_err(),
-        "an unbound client cannot borrow a later login"
+        live_client.model_catalog().await.is_err(),
+        "before login, client cleanly rejects requests as not logged in"
     );
     assert_eq!(state.response_count.load(Ordering::SeqCst), 0);
-    let mut client = ChatgptResponsesClient::with_params(
+
+    seed_chatgpt_auth(path.clone(), valid_access_token(), "refresh");
+    assert!(
+        live_client.model_catalog().await.unwrap().is_some(),
+        "live login in auth.json takes effect on next request without reconstructing client"
+    );
+    let response = live_client
+        .generate(GenerationRequest::new().with_user_message("hello after login"))
+        .await
+        .unwrap();
+    assert!(!response.content.is_empty());
+    assert_eq!(state.response_count.load(Ordering::SeqCst), 2);
+
+    let mut bound_client = ChatgptResponsesClient::with_params(
         &url,
         "gpt-6.1-sol",
         HashMap::new(),
@@ -716,19 +730,19 @@ async fn implicit_account_binding_cannot_follow_replaced_auth_storage() {
         Some(path.clone()),
     )
     .unwrap();
-    assert!(client.model_catalog().await.unwrap().is_some());
+    assert!(bound_client.model_catalog().await.unwrap().is_some());
     let storage = AuthStorage::new(path.clone()).unwrap();
     let mut replaced = storage.load().unwrap();
     replaced.chatgpt.as_mut().unwrap().account_id = "acct_replacement".into();
     storage.save(&replaced).unwrap();
-    assert!(client.model_catalog().await.is_err());
+    assert!(bound_client.model_catalog().await.is_err());
     assert!(
-        client
+        bound_client
             .generate(GenerationRequest::new().with_user_message("must not dispatch"))
             .await
             .is_err()
     );
-    assert_eq!(state.response_count.load(Ordering::SeqCst), 1);
+    assert_eq!(state.response_count.load(Ordering::SeqCst), 3);
     let replacement =
         ChatgptResponsesClient::with_params(&url, "gpt-6.1-sol", HashMap::new(), None, Some(path))
             .unwrap();

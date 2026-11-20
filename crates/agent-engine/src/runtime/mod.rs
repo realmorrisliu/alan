@@ -168,7 +168,7 @@ impl Default for RuntimeConfig {
             tool_repeat_limit: 4,
             llm_request_timeout_secs: 180,
             temperature: 0.3,
-            max_tokens: 2048,
+            max_tokens: 16_384,
             prompt_snapshot_enabled: false,
             prompt_snapshot_max_chars: 8000,
             compaction_trigger_messages: 60,
@@ -205,7 +205,7 @@ impl From<&crate::config::Config> for RuntimeConfig {
             tool_repeat_limit: config.tool_repeat_limit,
             llm_request_timeout_secs: config.llm_request_timeout_secs as u64,
             temperature: 0.3,
-            max_tokens: 2048,
+            max_tokens: 16_384,
             prompt_snapshot_enabled: config.prompt_snapshot_enabled,
             prompt_snapshot_max_chars: config.prompt_snapshot_max_chars,
             compaction_trigger_messages: 60,
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(config.tool_repeat_limit, 4);
         assert_eq!(config.llm_request_timeout_secs, 180);
         assert_eq!(config.temperature, 0.3);
-        assert_eq!(config.max_tokens, 2048);
+        assert_eq!(config.max_tokens, 16_384);
         assert!(!config.prompt_snapshot_enabled);
         assert_eq!(config.prompt_snapshot_max_chars, 8000);
         assert_eq!(config.compaction_trigger_messages, 60);

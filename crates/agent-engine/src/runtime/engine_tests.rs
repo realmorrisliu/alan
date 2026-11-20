@@ -455,6 +455,8 @@ mod recovery_boundary;
 mod recovery_ux;
 #[path = "engine_removal_boundary_tests.rs"]
 mod removal_boundary;
+#[path = "engine_session_controls_tests.rs"]
+mod session_controls;
 pub(crate) async fn admit_test_input(
     state: &crate::runtime::transition::RuntimeLoopState,
     input: &Submission,

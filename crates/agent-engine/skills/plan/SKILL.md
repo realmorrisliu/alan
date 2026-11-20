@@ -4,11 +4,10 @@ description: |
   Create and manage structured execution plans for complex multi-step tasks.
 
   Use this when:
-  - Task requires more than 3 distinct steps
-  - Work is expected to span multiple context windows
-  - There are logical dependencies between steps
-  - You need to track incremental progress
-  - User asks for something complex that benefits from a plan
+  - Work requires more than 3 distinct steps or spans multiple subsystems
+  - Steps have clear ordering or verification dependencies
+  - Progress spans turns or needs to be resumed across Agent Processes
+  - The user asks for a structured breakdown or milestone tracking
 
   Do NOT use for simple single-step tasks or quick questions.
 
@@ -16,205 +15,36 @@ metadata:
   short-description: Structured execution plans for complex tasks
   tags: [planning, orchestration, workflow, multi-step, incremental]
 capabilities:
-  required_tools: [read_file, write_file, edit_file, bash]
+  required_tools: [read_file, write_file, edit_file, grep, glob]
 ---
 
 # Plan Skill
 
-Create and manage JSON-based execution plans for complex, multi-step tasks.
+Plan and track multi-step engineering work cleanly using alan9's built-in `update_plan` virtual tool and, when cross-process durability is needed, the Memory Store at `/memory`.
 
-## Why Plan?
+## Core Workflow
 
-Without a plan, agents tend to:
-- **One-shot everything**: Try to do too much at once, exhausting context mid-work
-- **Leave messy state**: Half-implemented features with no documentation
-- **Declare premature completion**: See some progress and think the job is done
+1. **Explore before planning**: Inspect relevant files with `read_file`, `grep`, and `glob` so every step names concrete files, symbols, and checks.
+2. **Publish a concise live plan with `update_plan`**:
+   - Call `update_plan` with `explanation` (short intent/context) and `items` (`[{id, content, status}]`), where `status` is one of `"pending"`, `"in_progress"`, or `"completed"`.
+   - Keep at most one step `"in_progress"` at a time unless independent read/write work is genuinely executing concurrently.
+   - Update `update_plan` immediately when scope changes or a step finishes.
+3. **Persist cross-session plans in `/memory` (only when durable handoff is needed)**:
+   - Write longer architectural checklists or milestone logs under `/memory/working/` or `/memory/topics/` using `write_file` / `edit_file`.
+   - Do NOT create `.alan/plans/*.json` or ad-hoc plan artifacts inside the mounted host repository unless the user explicitly asks for repo-checked docs.
+4. **Verify before marking `"completed"`**:
+   - Run relevant builds, linters, or focused tests and observe them pass before flipping a step to `"completed"`.
+   - Never run `git add` or `git commit` automatically as part of finishing a plan step unless the user explicitly asks you to commit.
 
-A structured plan forces **incremental progress** — the single most important factor for long-running agent success.
-
-## Plan File Format
-
-Plans are stored as JSON in `.alan/plans/`:
-
-```
-.alan/plans/
-└── {plan-id}.json
-```
-
-### JSON Schema
+## `update_plan` Shape
 
 ```json
 {
-  "id": "plan-001",
-  "title": "Human-readable task description",
-  "created_at": "2026-02-25T09:00:00+08:00",
-  "updated_at": "2026-02-25T10:30:00+08:00",
-  "status": "in_progress",
-  "current_step": 2,
-  "steps": [
-    {
-      "id": 1,
-      "description": "Set up user model and database schema",
-      "status": "completed",
-      "notes": "Created users table with email, password_hash fields"
-    },
-    {
-      "id": 2,
-      "description": "Implement login endpoint",
-      "status": "in_progress",
-      "notes": ""
-    },
-    {
-      "id": 3,
-      "description": "Add JWT token generation",
-      "status": "pending",
-      "notes": ""
-    }
+  "explanation": "Align adapter defaults and verify cache invariants",
+  "items": [
+    { "id": "1", "content": "Inspect projection modules and callers", "status": "completed" },
+    { "id": "2", "content": "Update request projection and add unit tests", "status": "in_progress" },
+    { "id": "3", "content": "Run focused cargo test and clippy gates", "status": "pending" }
   ]
 }
 ```
-
-### Step Status Values
-
-| Status        | Meaning                                              |
-| ------------- | ---------------------------------------------------- |
-| `pending`     | Not started yet                                      |
-| `in_progress` | Currently working on this                            |
-| `completed`   | Finished successfully                                |
-| `blocked`     | Cannot proceed (needs user input or external action) |
-| `skipped`     | Decided not to do this step                          |
-
-## Plan Creation Protocol
-
-### Step 1: Analyze Complexity
-
-Determine if planning is needed:
-
-- **No plan needed**: Simple questions, single-step tasks, quick fixes
-- **Plan needed**: Multi-file changes, new features, refactoring, multi-step workflows
-
-### Step 2: Break Down into Steps
-
-Create 3-7 concrete, actionable steps:
-
-**Good steps** (single action, verifiable):
-- "Create database migration for users table"
-- "Implement POST /api/login endpoint"
-- "Add unit tests for auth module"
-
-**Bad steps** (vague, compound, or filler):
-- "Do the task" (too vague)
-- "Research, design, and implement auth" (compound)
-- "Think about the approach" (not actionable)
-
-### Step 3: Write the Plan
-
-```
-write_file .alan/plans/{plan-id}.json <plan JSON>
-```
-
-### Step 4: Present to User
-
-Show the plan before executing:
-
-```
-I've created a plan for this task:
-
-1. ⏳ Create database migration for users table
-2. ⏳ Implement POST /api/login endpoint
-3. ⏳ Add JWT token generation
-4. ⏳ Add unit tests for auth module
-5. ⏳ Update API documentation
-
-Shall I proceed with step 1?
-```
-
-## Incremental Execution Protocol
-
-**This is the most critical part.** Execute ONE step at a time:
-
-### For each step:
-
-1. **Update status to `in_progress`**:
-   ```
-   edit_file .alan/plans/{plan-id}.json
-   ```
-
-2. **Do the work** for this single step
-
-3. **Verify the work**: Run tests, check compilation, validate behavior
-
-4. **Commit progress** (clean state):
-   ```
-   bash git add -A && git commit -m "plan-{id} step {n}: {description}"
-   ```
-
-5. **Update plan**: Mark step as `completed`, add notes, advance `current_step`
-
-6. **Report progress** to user:
-   ```
-   ✅ Step 1: Created database migration
-       Notes: Added users table with email, password_hash, created_at fields
-
-   🔄 Starting step 2: Implement login endpoint...
-   ```
-
-### If context is running low:
-
-- Finish the current step
-- Commit and update the plan
-- Stop — the next Agent Process will pick up from the plan
-
-## Process Continuation Protocol
-
-When resuming work on an existing plan:
-
-1. **List available plans**:
-   ```
-   bash ls .alan/plans/
-   ```
-
-2. **Read the active plan**:
-   ```
-   read_file .alan/plans/{plan-id}.json
-   ```
-
-3. **Find the next step**: First step with status `pending` or `in_progress`
-
-4. **Verify previous work**: Run basic checks that prior steps are still working
-   ```
-   bash git log --oneline -5
-   ```
-
-5. **Continue execution** from the current step
-
-## Plan Adaptation
-
-Plans can evolve during execution:
-
-- **Add steps**: If you discover new requirements, insert steps
-- **Never delete completed steps**: They are historical record
-- **Can skip steps**: Mark as `skipped` with notes explaining why
-- **Update notes**: Add context as you learn more
-
-When adapting, explain the change to the user:
-
-```
-I discovered that we also need rate limiting. Updating the plan:
-
-1. ✅ Create database migration
-2. ✅ Implement login endpoint
-3. 🔄 Add JWT token generation (current)
-4. ⏳ Add rate limiting middleware  ← NEW
-5. ⏳ Add unit tests
-6. ⏳ Update API documentation
-```
-
-## Rules
-
-1. **One step at a time**: Never work on multiple steps simultaneously
-2. **Commit after each step**: Leave the codebase in a clean, working state
-3. **Update the plan JSON**: Keep it as the single source of truth for progress
-4. **Don't modify completed steps**: Only add notes, never change status back
-5. **Present plan before executing**: Get user buy-in on the approach
-6. **Be concrete**: Each step should produce a tangible, verifiable outcome

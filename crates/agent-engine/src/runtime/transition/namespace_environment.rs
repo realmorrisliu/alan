@@ -487,13 +487,18 @@ impl NamespaceRuntimeEnvironment {
         }
     }
 
-    /// Bind the invocation's explicit trust posture on the attached Tool Process runner.
-    pub(crate) fn with_trust_posture(self, trust_posture: crate::policy::TrustPosture) -> Self {
+    /// Update the invocation's active trust posture on the attached Tool Process runner.
+    pub(crate) fn set_trust_posture(&self, trust_posture: crate::policy::TrustPosture) {
         if let Some(context) = &self.tool_process_context {
             context
                 .tool_runner
                 .register_process_trust_posture(context.pid, trust_posture);
         }
+    }
+
+    /// Bind the invocation's explicit trust posture on the attached Tool Process runner.
+    pub(crate) fn with_trust_posture(self, trust_posture: crate::policy::TrustPosture) -> Self {
+        self.set_trust_posture(trust_posture);
         self
     }
 

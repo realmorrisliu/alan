@@ -107,14 +107,17 @@ fn new_session_resets_idle_view_blocks_active_turn_and_unpauses_empty_queue() {
         title: "bash".into(),
         tail_lines: vec!["working".into()],
     });
-    assert!(app.handle_command("/new").is_none());
+    assert!(matches!(
+        app.handle_command("/new"),
+        Some(FileBackedAction::MachineCtl { ref command, .. }) if command == "reset-session"
+    ));
     assert!(app.transcript.is_empty());
     assert!(app.action_cells.is_empty());
     assert!(app.running_tools.is_empty());
     assert!(
         app.notice
             .as_deref()
-            .is_some_and(|n| n.contains("Started a fresh session view"))
+            .is_some_and(|n| n.contains("Started a fresh session"))
     );
 
     app.queue.apply(
@@ -128,7 +131,7 @@ fn new_session_resets_idle_view_blocks_active_turn_and_unpauses_empty_queue() {
     );
     assert!(matches!(
         app.handle_command("/new"),
-        Some(FileBackedAction::MachineCtl { command, .. }) if command == "queue-v1 continue"
+        Some(FileBackedAction::MachineCtl { command, .. }) if command == "reset-session"
     ));
 }
 

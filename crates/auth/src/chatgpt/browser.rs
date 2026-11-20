@@ -4,22 +4,22 @@ use super::{
     BrowserLoginCallbackReceipt, ChatgptAuthError, ChatgptAuthManager, ChatgptLoginSuccess,
     to_login_success,
 };
+use crate::browser::{
+    LoopbackCallbackError, LoopbackCallbackServer, generate_state, open_browser, render_html,
+    write_http_response,
+};
+#[cfg(test)]
+pub(super) use crate::browser::{parse_http_request_target, read_http_request_headers};
 use crate::pkce::generate_pkce;
-use base64::Engine;
 use chrono::{DateTime, Utc};
-use rand::Rng;
 use reqwest::StatusCode;
 use std::io;
-use std::process::Command;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tracing::{debug, warn};
-use url::Url;
 
 const DEFAULT_AUTH_ORIGINATOR: &str = "codex_cli_rs";
 const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 300;
-const MAX_HTTP_REQUEST_HEADER_BYTES: usize = 64 * 1024;
+const CALLBACK_PATH: &str = "/auth/callback";
 
 #[derive(Debug, Clone)]
 pub struct BrowserLoginOptions {
@@ -121,120 +121,24 @@ impl ChatgptAuthManager {
         &self,
         pending: &PendingBrowserLogin,
     ) -> Result<BrowserLoginCallbackReceipt, ChatgptAuthError> {
-        let listener =
-            TcpListener::bind(("127.0.0.1", self.inner.config.browser_callback_port)).await?;
+        let server =
+            LoopbackCallbackServer::bind(self.inner.config.browser_callback_port, CALLBACK_PATH)
+                .await?;
         let remaining = (pending.expires_at - Utc::now())
             .to_std()
             .unwrap_or_default();
-        if remaining.is_zero() {
-            return Err(ChatgptAuthError::Io(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Timed out waiting for OAuth callback",
-            )));
-        }
+        let receipt = server
+            .wait_for_callback(remaining, Some(&pending.state), "ChatGPT Login Failed")
+            .await
+            .map_err(map_loopback_error)?;
 
-        tokio::time::timeout(remaining, async {
-            let (mut stream, _) = listener.accept().await?;
-            let request = read_http_request_headers(&mut stream).await?;
-            let path = parse_http_request_target(&request).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "Invalid OAuth callback request")
-            })?;
-            let callback = Url::parse(&format!("http://localhost{path}"))?;
-            let query = callback.query_pairs().collect::<Vec<_>>();
-
-            let code = query
-                .iter()
-                .find(|(key, _)| key == "code")
-                .map(|(_, value)| value.to_string());
-            let returned_state = query
-                .iter()
-                .find(|(key, _)| key == "state")
-                .map(|(_, value)| value.to_string());
-            let error_code = query
-                .iter()
-                .find(|(key, _)| key == "error")
-                .map(|(_, value)| value.to_string());
-            let error_description = query
-                .iter()
-                .find(|(key, _)| key == "error_description")
-                .map(|(_, value)| value.to_string());
-
-            if let Some(error_code) = error_code {
-                let message = error_description.unwrap_or_else(|| "Sign-in failed".to_string());
-                write_http_response(
-                    &mut stream,
-                    StatusCode::BAD_REQUEST,
-                    &render_html("ChatGPT Login Failed", &message),
-                )
-                .await?;
-                return Err(ChatgptAuthError::LoginFailed(format!(
-                    "{error_code}: {message}"
-                )));
-            }
-
-            let returned_state = match returned_state {
-                Some(state) => state,
-                None => {
-                    write_http_response(
-                        &mut stream,
-                        StatusCode::BAD_REQUEST,
-                        &render_html(
-                            "ChatGPT Login Failed",
-                            "OAuth callback did not include state.",
-                        ),
-                    )
-                    .await?;
-                    return Err(ChatgptAuthError::LoginFailed(
-                        "OAuth callback did not include state".to_string(),
-                    ));
-                }
-            };
-
-            if returned_state != pending.state {
-                write_http_response(
-                    &mut stream,
-                    StatusCode::BAD_REQUEST,
-                    &render_html("ChatGPT Login Failed", "State mismatch in OAuth callback."),
-                )
-                .await?;
-                return Err(ChatgptAuthError::LoginFailed(
-                    "OAuth state mismatch".to_string(),
-                ));
-            }
-
-            let code = match code {
-                Some(code) => code,
-                None => {
-                    write_http_response(
-                        &mut stream,
-                        StatusCode::BAD_REQUEST,
-                        &render_html(
-                            "ChatGPT Login Failed",
-                            "OAuth callback did not include code.",
-                        ),
-                    )
-                    .await?;
-                    return Err(ChatgptAuthError::LoginFailed(
-                        "OAuth callback did not include code".to_string(),
-                    ));
-                }
-            };
-
-            Ok(BrowserLoginCallbackReceipt {
-                stream,
-                completion: BrowserLoginCompletion {
-                    code,
-                    state: returned_state,
-                },
-            })
+        Ok(BrowserLoginCallbackReceipt {
+            stream: receipt.stream,
+            completion: BrowserLoginCompletion {
+                code: receipt.code,
+                state: receipt.state.unwrap_or_else(|| pending.state.clone()),
+            },
         })
-        .await
-        .map_err(|_| {
-            ChatgptAuthError::Io(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Timed out waiting for OAuth callback",
-            ))
-        })?
     }
 
     pub fn begin_browser_login(
@@ -253,7 +157,7 @@ impl ChatgptAuthManager {
         let state = generate_state();
         let redirect_uri = redirect_uri.unwrap_or_else(|| {
             format!(
-                "http://localhost:{}/auth/callback",
+                "http://localhost:{}{CALLBACK_PATH}",
                 self.inner.config.browser_callback_port
             )
         });
@@ -306,6 +210,32 @@ impl ChatgptAuthManager {
     }
 }
 
+fn map_loopback_error(error: LoopbackCallbackError) -> ChatgptAuthError {
+    match error {
+        LoopbackCallbackError::TimedOut => ChatgptAuthError::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Timed out waiting for OAuth callback",
+        )),
+        LoopbackCallbackError::ProviderError { error, description } => {
+            ChatgptAuthError::LoginFailed(format!("{error}: {description}"))
+        }
+        LoopbackCallbackError::MissingState => {
+            ChatgptAuthError::LoginFailed("OAuth callback did not include state".to_string())
+        }
+        LoopbackCallbackError::StateMismatch => {
+            ChatgptAuthError::LoginFailed("OAuth state mismatch".to_string())
+        }
+        LoopbackCallbackError::MissingCode => {
+            ChatgptAuthError::LoginFailed("OAuth callback did not include code".to_string())
+        }
+        LoopbackCallbackError::InvalidRequest(message) => {
+            ChatgptAuthError::Io(io::Error::new(io::ErrorKind::InvalidData, message))
+        }
+        LoopbackCallbackError::Io(error) => ChatgptAuthError::Io(error),
+        LoopbackCallbackError::Url(error) => ChatgptAuthError::Url(error),
+    }
+}
+
 pub(super) fn build_authorize_url(
     issuer: &str,
     client_id: &str,
@@ -342,123 +272,4 @@ pub(super) fn build_authorize_url(
         .collect::<Vec<_>>()
         .join("&");
     format!("{}/oauth/authorize?{query}", issuer.trim_end_matches('/'))
-}
-
-fn generate_state() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-}
-
-fn open_browser(url: &str) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(url);
-        command
-    };
-
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("rundll32");
-        command.args(["url.dll,FileProtocolHandler", url]);
-        command
-    };
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        return Err(io::Error::other(
-            "automatic browser launch is not supported on this platform",
-        ));
-    }
-
-    let status = command.status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other("browser launcher exited unsuccessfully"))
-    }
-}
-
-pub(super) fn parse_http_request_target(request: &str) -> Option<String> {
-    let mut lines = request.lines();
-    let line = lines.next()?;
-    let mut parts = line.split_whitespace();
-    let _method = parts.next()?;
-    let target = parts.next()?;
-    Some(target.to_string())
-}
-
-pub(super) async fn read_http_request_headers<R>(reader: &mut R) -> io::Result<String>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut request = Vec::with_capacity(1024);
-    let mut buffer = [0u8; 1024];
-
-    loop {
-        if request
-            .windows(b"\r\n\r\n".len())
-            .any(|window| window == b"\r\n\r\n")
-        {
-            return Ok(String::from_utf8_lossy(&request).into_owned());
-        }
-
-        if request.len() >= MAX_HTTP_REQUEST_HEADER_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "OAuth callback request headers exceeded limit",
-            ));
-        }
-
-        let read = reader.read(&mut buffer).await?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "OAuth callback request ended before headers were complete",
-            ));
-        }
-
-        request.extend_from_slice(&buffer[..read]);
-    }
-}
-
-async fn write_http_response(
-    stream: &mut tokio::net::TcpStream,
-    status: StatusCode,
-    body: &str,
-) -> io::Result<()> {
-    let response = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        status.as_u16(),
-        status.canonical_reason().unwrap_or("OK"),
-        body.len(),
-        body
-    );
-    stream.write_all(response.as_bytes()).await
-}
-
-fn render_html(title: &str, message: &str) -> String {
-    format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><p>{}</p></body></html>",
-        html_escape(title),
-        html_escape(title),
-        html_escape(message)
-    )
-}
-
-fn html_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }

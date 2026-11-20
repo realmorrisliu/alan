@@ -45,7 +45,7 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search for patterns in files using regex, respecting .gitignore by default."
+        "Search file contents using Rust regex syntax, skipping hidden directories and respecting .gitignore by default."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -386,7 +386,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Find files matching a glob pattern, respecting .gitignore and sorted by mtime descending."
+        "Find files matching a relative glob pattern under a base directory, skipping hidden entries, respecting .gitignore by default, and sorted by modification time (newest first)."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -581,7 +581,7 @@ impl Tool for ListDirTool {
     }
 
     fn description(&self) -> &str {
-        "List contents of a directory."
+        "List immediate (non-recursive) entries in a directory with entry types and sizes."
     }
 
     fn parameters_schema(&self) -> Value {

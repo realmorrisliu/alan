@@ -20,6 +20,16 @@ pub(in crate::file_backed) fn action_snapshot_to_history_cell(
     };
 
     let metadata = serde_json::from_str::<Value>(&snapshot.result).ok();
+    if snapshot.name == "cd"
+        && status == ToolStatus::Complete
+        && metadata
+            .as_ref()
+            .and_then(|v| v.get("title"))
+            .and_then(Value::as_str)
+            == Some("Select Process directory")
+    {
+        return None;
+    }
     let title = metadata
         .as_ref()
         .and_then(|v| v.get("title"))

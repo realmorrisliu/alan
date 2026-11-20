@@ -97,7 +97,7 @@ impl FileBackedApp {
                     .map_or_else(|| "default".to_string(), |e| e.to_string());
                 self.notice = Some(
                     format!(
-                        "Reasoning effort: {current}. Open `/model` and press Tab or ←/→ to inspect supported levels; set `model_reasoning_effort` on a profile via `alan connection add`."
+                        "Reasoning effort: {current}. Open `/model` and press Tab or ←/→ to inspect supported levels."
                     )
                     .into(),
                 );
@@ -107,7 +107,7 @@ impl FileBackedApp {
                 self.model_chooser.preferred_effort = Some(effort);
                 self.notice = Some(
                     format!(
-                        "Preferred reasoning effort noted: {effort} (live runtime uses connection profile setting `model_reasoning_effort`)."
+                        "Preferred reasoning effort noted: {effort} (press Tab/←/→ inside `/model` to preview supported levels)."
                     )
                     .into(),
                 );

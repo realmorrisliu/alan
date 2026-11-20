@@ -334,3 +334,64 @@ fn continuity_query_skips_handoff_paths_outside_memory_root() {
                 .is_some_and(|bundle| !bundle.contains("ZebraHandoffLeak"))
     );
 }
+
+#[test]
+fn build_turn_recall_bundle_for_turn_deduplicates_verbatim_bootstrapped_files() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let memory_dir = temp.path().join("memory-store");
+    crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
+    fs::write(
+        memory_dir.join("USER.md"),
+        "# User Memory\n- Unique identity preference: VimMotions99\n",
+    )
+    .unwrap();
+    fs::write(
+        memory_dir.join("MEMORY.md"),
+        "# Memory\n- Durable architecture decision: alan9 kernel invariants\n",
+    )
+    .unwrap();
+    fs::write(
+        memory_dir.join("handoffs/LATEST.md"),
+        "# Latest Handoff\n- Last session checkpoint: PromptCacheCleanup77\n",
+    )
+    .unwrap();
+    fs::write(
+        memory_dir.join("topics/alan9.md"),
+        "# alan9 Topic\n- Extra recall note about PromptCacheCleanup77 and VimMotions99.\n",
+    )
+    .unwrap();
+
+    let bootstrap = crate::prompts::render_memory_store_context(&memory_dir);
+    let deduplicated = build_turn_recall_bundle_for_turn(
+        Some(&memory_dir),
+        Some(&[crate::tape::ContentPart::text(
+            "What is my identity preference and what happened in PromptCacheCleanup77 last session?",
+        )]),
+        None,
+        Some(&bootstrap),
+    )
+    .expect("topics/alan9.md should still be recalled");
+
+    assert!(!deduplicated.contains("/memory/USER.md"));
+    assert!(!deduplicated.contains("/memory/MEMORY.md"));
+    assert!(!deduplicated.contains("/memory/handoffs/LATEST.md"));
+    assert!(deduplicated.contains("/memory/topics/alan9.md"));
+
+    // Oversized USER.md that was truncated in bootstrap (> MEMORY_STORE_MAX_CHARS) stays eligible for recall.
+    let large_user = format!(
+        "# User Memory\n{}\n- Secret tail preference: OversizedTailMarker42\n",
+        "padding line ".repeat(220)
+    );
+    fs::write(memory_dir.join("USER.md"), &large_user).unwrap();
+    let truncated_bootstrap = crate::prompts::render_memory_store_context(&memory_dir);
+    let recalled = build_turn_recall_bundle_for_turn(
+        Some(&memory_dir),
+        Some(&[crate::tape::ContentPart::text(
+            "What is my OversizedTailMarker42 preference?",
+        )]),
+        None,
+        Some(&truncated_bootstrap),
+    )
+    .expect("truncated USER.md should still be recalled");
+    assert!(recalled.contains("/memory/USER.md"));
+}

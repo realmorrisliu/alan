@@ -118,7 +118,7 @@ Normative deltas, design and acceptance tasks live in
 [unify-agent-command-input](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/proposal.md).
 [The interview record](../../openspec/changes/archive/2026-11-19-unify-agent-command-input/design-interview.md)
 retains the confirmed choices. Generic typed evaluation remains with
-[add-cognitive-model-routing](../../openspec/changes/add-cognitive-model-routing/).
+[add-cognitive-model-routing](../../openspec/changes/archive/2026-11-20-add-cognitive-model-routing/).
 Current code forwards `!` text into Agent input; the old bash specification is
 not evidence of a delivered deterministic command path.
 

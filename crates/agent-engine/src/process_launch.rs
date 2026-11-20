@@ -203,16 +203,13 @@ pub(crate) fn normalize_namespace_path(path: &str) -> Result<String> {
 }
 
 fn namespace_components(path: &str) -> Result<Vec<&str>> {
-    ensure!(
-        path.starts_with('/'),
-        "Alan OS path must be absolute: {path}"
-    );
+    ensure!(path.starts_with('/'), "alan9 path must be absolute: {path}");
     path.split('/')
         .filter(|component| !component.is_empty())
         .map(|component| {
             ensure!(
                 component != "." && component != "..",
-                "invalid Alan OS path: {path}"
+                "invalid alan9 path: {path}"
             );
             Ok(component)
         })

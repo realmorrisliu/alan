@@ -882,7 +882,7 @@ fn pty_e2e_m2_ergonomics_multiline_editor_modals_status_and_yield() -> Result<()
         // /new clears earlier tape messages and usage cleanly.
         write_master(&master_write, b"/new\r")?;
         screen.wait_for("session reset", Duration::from_secs(3), |s, _| {
-            s.contains("Started a fresh session view")
+            s.contains("Started a fresh session.")
                 && !s.contains("Allow file mutation?")
                 && !s.contains("ctx 10%")
         })?;

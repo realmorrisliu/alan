@@ -366,9 +366,7 @@ impl FileBackedApp {
         input.acknowledged = true;
         let body = input.body.clone();
         let intent = input.intent;
-        let consume = self.composer.draft_revision() == input.draft_revision
-            && self.composer.text() == body
-            && self.input_intent == intent;
+        let draft_revision = input.draft_revision;
         if !input.tape_seen {
             input.cell = Some(self.transcript.len());
             self.transcript
@@ -378,12 +376,41 @@ impl FileBackedApp {
                     crate::history::HistoryCell::User(body.clone())
                 });
         }
-        if consume {
+        self.consume_or_remember_local_input(&body, intent, draft_revision);
+        self.refresh_local_input_hint(id, owner);
+    }
+
+    pub(super) fn settle_nondispatched_local_input(&mut self, id: &str, owner: &str) {
+        let Some(input) = self.local_inputs.get_mut(id) else {
+            return;
+        };
+        if input.owner != owner || input.acknowledged {
+            return;
+        }
+        // Synchronous admission rejections settle directly to Failed/Cancelled without a
+        // QueueChanged acknowledgement; clear the unchanged draft without creating a
+        // transcript cell so nondispatched turns never resurrect in history.
+        input.acknowledged = true;
+        let body = input.body.clone();
+        let intent = input.intent;
+        let draft_revision = input.draft_revision;
+        self.consume_or_remember_local_input(&body, intent, draft_revision);
+    }
+
+    fn consume_or_remember_local_input(
+        &mut self,
+        body: &str,
+        intent: alan_agent_protocol::InputIntent,
+        draft_revision: u64,
+    ) {
+        if self.composer.draft_revision() == draft_revision
+            && self.composer.text() == body
+            && self.input_intent == intent
+        {
             self.accept_input();
         } else {
-            self.composer.remember_input(&body, intent);
+            self.composer.remember_input(body, intent);
         }
-        self.refresh_local_input_hint(id, owner);
     }
 }
 

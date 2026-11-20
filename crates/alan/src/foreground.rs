@@ -1,5 +1,7 @@
 use super::*;
 
+mod login;
+
 #[cfg_attr(
     not(test),
     allow(
@@ -30,6 +32,7 @@ fn interactive_config_with_posture(
     trust_posture: alan_agent_engine::TrustPosture,
 ) -> Result<alan_tui::FileBackedRunConfig> {
     let mut config = alan_tui::FileBackedRunConfig::new(root, "/agent/root");
+    config.connection_configured = Some(root_model.is_some());
     config.effective_model = root_model;
     config.project_candidate = project_candidate;
     config.history_path = Some(store.service("shell-ui")?.join("composer-history"));
@@ -81,6 +84,7 @@ pub(super) async fn run_bare_in_foreground_instance(
     resume_rollout_id: Option<String>,
     ephemeral: bool,
     cwd: Option<std::path::PathBuf>,
+    no_auto_mount: bool,
     shadow_evaluator: Option<String>,
     trust_options: cli::trust::ResolvedBareTrustOptions,
 ) -> Result<i32> {
@@ -145,6 +149,20 @@ pub(super) async fn run_bare_in_foreground_instance(
                         candidate_cwd.as_deref(),
                         &images,
                     )?;
+                    let initial_project_mount = if !no_auto_mount
+                        && let Some(candidate) = candidate_cwd.as_deref()
+                        && should_auto_mount_cwd(candidate)
+                    {
+                        auto_mount_initial_project(
+                            &paths,
+                            project_boot,
+                            candidate,
+                            attachment.root.clone(),
+                        )
+                        .await
+                    } else {
+                        None
+                    };
                     let mut config = interactive_config_with_posture(
                         attachment.root,
                         root_model,
@@ -153,6 +171,8 @@ pub(super) async fn run_bare_in_foreground_instance(
                         trust_posture,
                     )?;
                     config.initial_attachments = initial_attachments;
+                    config.initial_project_mount = initial_project_mount;
+                    config.login_control = Some(login::build_login_control_handler(paths.clone()));
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {
                         let paths = project_paths.clone();
@@ -269,4 +289,88 @@ pub(super) async fn run_bare_in_foreground_instance(
     let exit_code = run_result?;
     server_result?;
     Ok(exit_code)
+}
+
+/// Whether `candidate` is an ordinary project directory eligible for default `ReadWrite`
+/// auto-mount (excluding `/`, `$HOME`, and system `/tmp` / `TMPDIR` roots).
+pub(super) fn should_auto_mount_cwd(candidate: &Path) -> bool {
+    let canonical = std::fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
+    if !canonical.is_dir() {
+        return false;
+    }
+    if canonical == Path::new("/") {
+        return false;
+    }
+    if let Some(home) = dirs::home_dir() {
+        let canonical_home = std::fs::canonicalize(&home).unwrap_or(home);
+        if canonical == canonical_home {
+            return false;
+        }
+    }
+    for blocked_tmp in [PathBuf::from("/tmp"), std::env::temp_dir()] {
+        let canonical_tmp = std::fs::canonicalize(&blocked_tmp).unwrap_or(blocked_tmp);
+        if canonical == canonical_tmp {
+            return false;
+        }
+    }
+    true
+}
+
+async fn auto_mount_initial_project(
+    paths: &HostEndpointPaths,
+    project_boot: uuid::Uuid,
+    candidate: &Path,
+    root_transport: alan_ap::InProcessTransport,
+) -> Option<(alan_tui::ProjectMountReceipt, PathBuf)> {
+    let canonical = match std::fs::canonicalize(candidate) {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(%error, path = %candidate.display(), "failed to canonicalize initial project cwd");
+            return None;
+        }
+    };
+    let host = alan_os_host::HostCommandPlane::new(paths.clone());
+    let mounted = match host
+        .mount_project(
+            uuid::Uuid::new_v4(),
+            project_boot,
+            canonical,
+            alan_service_manager::HostMountAccess::ReadWrite,
+        )
+        .await
+    {
+        Ok(mounted) => mounted,
+        Err(error) => {
+            tracing::warn!(%error, "auto-mount of initial cwd skipped");
+            return None;
+        }
+    };
+    let label = mounted
+        .host_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project")
+        .to_string();
+    let command = format!(
+        "project-cwd-v1 {}",
+        serde_json::json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "path": mounted.grant.namespace_path,
+        })
+    );
+    if let Err(error) = alan_shell::Shell::new(root_transport)
+        .write("/agent/root/machine/ctl", command.as_bytes())
+        .await
+    {
+        tracing::warn!(%error, "failed to write initial project-cwd-v1 control");
+    }
+    Some((
+        alan_tui::ProjectMountReceipt {
+            grant_id: mounted.grant.id,
+            namespace_path: mounted.grant.namespace_path,
+            label,
+            access: alan_tui::ProjectAccess::ReadWrite,
+        },
+        mounted.host_path,
+    ))
 }

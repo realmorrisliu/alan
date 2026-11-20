@@ -20,6 +20,7 @@ use alan_service_manager::{BOOT_ID_PATH, BOOT_STATE_PATH, HostMountAccess, Servi
 
 use crate::HostBootConfig;
 
+mod connections;
 mod project_mount;
 pub use project_mount::{HostProjectMount, ProjectMountRejected};
 
@@ -51,6 +52,7 @@ enum LocalRequest {
     RevokeHostMount {
         grant_id: String,
     },
+    ReloadConnections,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -326,6 +328,7 @@ impl AlanOsHost {
                     }
                     let local_entry = self.service_manager.local_entry();
                     let host_mount = self.service_manager.host_mount();
+                    let connection = self.service_manager.connection();
                     let root_pid = self.service_manager.root_pid();
                     let boot_id = self.status.boot_id;
                     let project_operations = project_operations.clone();
@@ -397,6 +400,20 @@ impl AlanOsHost {
                             }
                             LocalRequest::RevokeHostMount { grant_id } => {
                                 let result = host_mount.revoke(&grant_id, "local-user");
+                                write_local_response(
+                                    &mut write,
+                                    LocalResponse {
+                                        operation_id: None,
+                                        boot_id,
+                                        grant: None,
+                                        host_path: None,
+                                        error: result.err().map(|error| error.to_string()),
+                                    },
+                                )
+                                .await
+                            }
+                            LocalRequest::ReloadConnections => {
+                                let result = connection.reload_connections().await;
                                 write_local_response(
                                     &mut write,
                                     LocalResponse {
@@ -571,55 +588,9 @@ impl HostCommandPlane {
     }
 }
 
-async fn write_local_request(
-    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
-    request: &LocalRequest,
-) -> Result<()> {
-    let bytes = serde_json::to_vec(request)?;
-    ensure!(
-        bytes.len() <= MAX_LOCAL_REQUEST_BYTES,
-        "Host request is too large"
-    );
-    writer.write_u32(bytes.len() as u32).await?;
-    writer.write_all(&bytes).await?;
-    Ok(())
-}
-
-async fn read_local_request(
-    reader: &mut (impl tokio::io::AsyncRead + Unpin),
-) -> Result<LocalRequest> {
-    let length = reader.read_u32().await? as usize;
-    ensure!(
-        length <= MAX_LOCAL_REQUEST_BYTES,
-        "Host request is too large"
-    );
-    let mut bytes = vec![0; length];
-    reader.read_exact(&mut bytes).await?;
-    serde_json::from_slice(&bytes).context("decode Host request")
-}
-
-async fn write_local_response(
-    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
-    response: LocalResponse,
-) -> Result<()> {
-    let bytes = serde_json::to_vec(&response)?;
-    writer.write_u32(bytes.len() as u32).await?;
-    writer.write_all(&bytes).await?;
-    Ok(())
-}
-
-async fn read_local_response(
-    reader: &mut (impl tokio::io::AsyncRead + Unpin),
-) -> Result<LocalResponse> {
-    let length = reader.read_u32().await? as usize;
-    ensure!(
-        length <= MAX_LOCAL_REQUEST_BYTES,
-        "Host response is too large"
-    );
-    let mut bytes = vec![0; length];
-    reader.read_exact(&mut bytes).await?;
-    serde_json::from_slice(&bytes).context("decode Host response")
-}
+use connections::{
+    read_local_request, read_local_response, write_local_request, write_local_response,
+};
 
 pub struct AttachedNamespace {
     pub boot_id: Uuid,

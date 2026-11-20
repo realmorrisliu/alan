@@ -808,11 +808,28 @@ fn machine_control_submission(command: &str) -> Option<Submission> {
             })
         });
     }
+    if let Some(turns_raw) = command.strip_prefix("rollback") {
+        let trimmed = turns_raw.trim();
+        if trimmed.is_empty() {
+            return Some(Submission::new(Op::Rollback { turns: 1 }));
+        }
+        return trimmed
+            .parse::<u32>()
+            .ok()
+            .filter(|turns| *turns >= 1)
+            .map(|turns| Submission::new(Op::Rollback { turns }));
+    }
     match command {
         "queue-v1 continue" => Some(Submission::new(Op::ContinueQueue)),
         "queue-v1 discard" => Some(Submission::new(Op::DiscardQueue)),
         "compact" => Some(Submission::new(Op::CompactWithOptions { focus: None })),
-        "rollback" => Some(Submission::new(Op::Rollback { turns: 1 })),
+        "reset-session" => Some(Submission::new(Op::ResetSession)),
+        "trust-posture governed" => Some(Submission::new(Op::SetTrustPosture {
+            confined_trusted: false,
+        })),
+        "trust-posture confined-trusted" => Some(Submission::new(Op::SetTrustPosture {
+            confined_trusted: true,
+        })),
         // Turn interrupt is agent-runtime control (stop the current turn,
         // keep the agent alive), not kernel process lifecycle:
         // `/proc/<pid>/ctl` interrupt terminates the process, which is the

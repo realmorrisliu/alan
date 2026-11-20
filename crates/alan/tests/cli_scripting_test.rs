@@ -258,7 +258,7 @@ fn cli_about_and_man_subcommands_cover_adr0061_and_no_color_fallback() {
         "magpie",
         "openai_responses",
         "chatgpt",
-        "vertex_gemini",
+        "vertex",
         "openrouter",
     ] {
         assert!(

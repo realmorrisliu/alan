@@ -80,6 +80,7 @@ fn seed_chatgpt_auth(data_dir: &Path) {
                 })
                 .unwrap(),
             ),
+            google: None,
         })
         .unwrap();
 }
@@ -323,4 +324,127 @@ fn spawn_models_mock_server(expected_token: &str) -> std::net::SocketAddr {
         }
     });
     addr
+}
+
+#[test]
+fn connection_edit_merges_settings_chatgpt_test_validates_token_and_login_openai_imports_env() {
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
+    let runtime = temp.path().join("runtime-root");
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+
+    let mock_addr = spawn_models_mock_server("sk-merged");
+    let base_setting = format!("base_url=http://{mock_addr}/v1");
+    alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &[
+            "connection",
+            "add",
+            "openai_responses",
+            "--profile",
+            "openai-main",
+            "--setting",
+            &base_setting,
+        ],
+    );
+    alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &[
+            "connection",
+            "set-secret",
+            "openai-main",
+            "--value",
+            "sk-merged",
+        ],
+    );
+    // Partial edit of `model` only must merge and preserve `base_url`!
+    alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &[
+            "connection",
+            "edit",
+            "openai-main",
+            "--setting",
+            "model=gpt-5.2",
+        ],
+    );
+    let tested = alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &["connection", "test", "openai-main"],
+    );
+    assert!(String::from_utf8_lossy(&tested.stdout).contains("status: success"));
+
+    // Top-level `alan login openai` imports OPENAI_API_KEY in non-TTY mode.
+    let login_out = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env("OPENAI_API_KEY", "sk-env-imported")
+        .env_remove("ALAN_INSTALL_CHANNEL")
+        .args(["login", "openai", "--profile", "openai-env"])
+        .output()
+        .unwrap();
+    assert!(
+        login_out.status.success(),
+        "alan login openai failed: {}",
+        String::from_utf8_lossy(&login_out.stderr)
+    );
+    let login_stdout = String::from_utf8_lossy(&login_out.stdout);
+    assert!(login_stdout.contains("Connected openai-env"));
+
+    // ChatGPT connection test checks real endpoint auth when logged in.
+    let chatgpt_base = format!("base_url=http://{mock_addr}");
+    alan_command(
+        &home,
+        &xdg_data,
+        &runtime,
+        &[
+            "connection",
+            "add",
+            "chatgpt",
+            "--profile",
+            "chatgpt-fail",
+            "--setting",
+            &chatgpt_base,
+        ],
+    );
+    let chatgpt_fail = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env_remove("ALAN_INSTALL_CHANNEL")
+        .args(["connection", "test", "chatgpt-fail"])
+        .output()
+        .unwrap();
+    assert!(!chatgpt_fail.status.success());
+
+    // Now seed valid JWT with a mismatched Bearer token -> must fail HTTP 401 instead of faking success.
+    seed_chatgpt_auth(&detected_data_dir(&home, &xdg_data));
+    let chatgpt_http_fail = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", &xdg_data)
+        .env("XDG_RUNTIME_DIR", runtime_base(&runtime))
+        .env("TMPDIR", &runtime)
+        .env_remove("ALAN_INSTALL_CHANNEL")
+        .args(["connection", "test", "chatgpt-fail"])
+        .output()
+        .unwrap();
+    assert!(!chatgpt_http_fail.status.success());
+    assert!(
+        String::from_utf8_lossy(&chatgpt_http_fail.stderr).contains("authentication failed"),
+        "expected HTTP 401 from mock server, got: {}",
+        String::from_utf8_lossy(&chatgpt_http_fail.stderr)
+    );
 }

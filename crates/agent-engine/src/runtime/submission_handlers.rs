@@ -62,8 +62,11 @@ where
     F: std::future::Future<Output = ()>,
 {
     match op {
-        Op::SelectModel { .. } | Op::SelectProjectDirectory { .. } => {
-            anyhow::bail!("directory selection must enter through the settled control boundary")
+        Op::SelectModel { .. }
+        | Op::SelectProjectDirectory { .. }
+        | Op::ResetSession
+        | Op::SetTrustPosture { .. } => {
+            anyhow::bail!("session control must enter through the settled control boundary")
         }
         Op::CompactWithOptions { .. } => {
             anyhow::bail!("manual compaction must enter through the accepted-submission transition")

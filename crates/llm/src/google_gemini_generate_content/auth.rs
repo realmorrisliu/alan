@@ -1,16 +1,17 @@
-//! Vertex AI credentials: Application Default Credentials via `gcloud`, or an
-//! Express Mode API key.
+//! Vertex AI credentials: Alan managed Google OAuth (`auth.json`), standard
+//! ADC `authorized_user` JSON, `gcloud` CLI fallback, or Express Mode API key.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use tracing::debug;
 
 /// How the client authenticates to Vertex AI.
 #[derive(Clone, PartialEq, Eq)]
 pub enum VertexAuth {
-    /// Application Default Credentials (`gcloud auth print-access-token`); requires a project.
+    /// OAuth/ADC priority chain (managed Google OAuth -> standard ADC JSON -> `gcloud`); requires a project.
     Adc,
     /// Vertex AI Express Mode API key sent as `x-goog-api-key`.
     ApiKey(String),
@@ -34,6 +35,37 @@ pub trait VertexAccessTokenSource: Send + Sync {
     async fn access_token(&self) -> Result<String>;
 }
 
+/// Fetches tokens using the priority chain:
+/// 1. Alan managed Google OAuth in `auth.json` (with single-flight refresh)
+/// 2. Standard ADC `authorized_user` JSON file (`GOOGLE_APPLICATION_CREDENTIALS` or gcloud ADC)
+/// 3. `gcloud auth application-default print-access-token` / `gcloud auth print-access-token`
+#[derive(Debug, Default, Clone)]
+pub struct VertexChainTokenSource {
+    storage_path: Option<PathBuf>,
+}
+
+impl VertexChainTokenSource {
+    /// Resolve tokens using a specific Host-managed `auth.json` before ADC/`gcloud` fallbacks.
+    #[cfg(test)]
+    pub(super) fn with_storage_path(storage_path: PathBuf) -> Self {
+        Self {
+            storage_path: Some(storage_path),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl VertexAccessTokenSource for VertexChainTokenSource {
+    async fn access_token(&self) -> Result<String> {
+        debug!("Fetching Vertex AI access token via auth priority chain");
+        let resolved = alan_auth::google::resolve_vertex_access_token(self.storage_path.as_deref())
+            .await
+            .map_err(anyhow::Error::from)?;
+        debug!(source = resolved.source.label(), "Resolved Vertex AI token");
+        Ok(resolved.access_token)
+    }
+}
+
 /// Fetches tokens with `gcloud auth print-access-token`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GcloudAccessTokenSource;
@@ -42,25 +74,9 @@ pub struct GcloudAccessTokenSource;
 impl VertexAccessTokenSource for GcloudAccessTokenSource {
     async fn access_token(&self) -> Result<String> {
         debug!("Fetching Vertex AI access token via gcloud");
-        let output = tokio::task::spawn_blocking(|| {
-            std::process::Command::new("gcloud")
-                .args(["auth", "print-access-token"])
-                .output()
-        })
-        .await
-        .context("gcloud token task failed")?
-        .context("Failed to run gcloud command. Is gcloud CLI installed and authenticated?")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("gcloud auth failed: {}", stderr.trim());
-        }
-        let token = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in access token")?
-            .trim()
-            .to_string();
-        anyhow::ensure!(!token.is_empty(), "gcloud returned an empty access token");
-        Ok(token)
+        alan_auth::google::gcloud_print_access_token()
+            .await
+            .map_err(anyhow::Error::from)
     }
 }
 
@@ -134,7 +150,7 @@ impl AuthState {
     pub(super) fn from_auth(auth: VertexAuth) -> Self {
         match auth {
             VertexAuth::Adc => Self::Adc(Arc::new(AdcTokenCache::new(
-                Arc::new(GcloudAccessTokenSource),
+                Arc::new(VertexChainTokenSource::default()),
                 ADC_TOKEN_TTL,
             ))),
             VertexAuth::ApiKey(key) => Self::ApiKey(Arc::from(key)),
@@ -181,5 +197,28 @@ mod tests {
     fn api_key_is_redacted_in_debug() {
         let rendered = format!("{:?}", VertexAuth::ApiKey("secret".into()));
         assert!(!rendered.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn chain_token_source_reads_managed_google_oauth_from_storage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let storage_path = dir.path().join("auth.json");
+        std::fs::write(
+            &storage_path,
+            r#"{
+                "version": 1,
+                "google": {
+                    "refresh_token": "refresh-1",
+                    "access_token": "managed-vertex-token",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                    "client_id": "cid",
+                    "last_refresh_at": "2026-01-01T00:00:00Z"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let source = VertexChainTokenSource::with_storage_path(storage_path);
+        assert_eq!(source.access_token().await.unwrap(), "managed-vertex-token");
     }
 }

@@ -44,15 +44,6 @@ use mid_turn_compaction::{
 };
 use namespace_generation::NamespaceTurnGeneration;
 
-fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instruction: &str) {
-    if let Some(system_prompt) = &mut request.system_prompt {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(instruction);
-    } else {
-        request.system_prompt = Some(instruction.to_string());
-    }
-}
-
 fn process_directory_instruction(execution: &NamespaceToolExecution) -> Option<String> {
     let cwd = execution.default_cwd()?;
     let path = serde_json::json!(cwd.to_str()?);
@@ -228,10 +219,12 @@ where
         let project_cwd = tool_execution
             .default_cwd()
             .map(|p| p.to_string_lossy().into_owned());
-        crate::runtime::memory_recall::build_turn_recall_bundle_for_project(
+        let memory_bootstrap_section = state.prompt_cache.current_memory_bootstrap_section();
+        crate::runtime::memory_recall::build_turn_recall_bundle_for_turn(
             state.core_config.memory.store_dir.as_deref(),
             user_input_for_skills.as_deref(),
             project_cwd.as_deref(),
+            memory_bootstrap_section.as_deref(),
         )
     } else {
         None
@@ -321,7 +314,7 @@ where
         .map(|skill| skill.metadata.id.clone())
         .collect::<Vec<_>>();
     let _domain_prompt = prompt_build.domain_prompt;
-    let system_prompt = prompt_build.system_prompt;
+    let base_system_prompt = prompt_build.system_prompt;
 
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
     let include_subagent_tool =
@@ -353,10 +346,19 @@ where
             state.machine.active_turn_request_control_intent(),
         )?
     };
+    let effective_provider = captured
+        .as_ref()
+        .map(|(_, callable)| callable.identity.provider.as_str())
+        .unwrap_or_else(|| state.core_config.llm_provider.as_str());
     let model = captured
         .as_ref()
         .map(|(_, callable)| callable.identity.model.clone())
         .unwrap_or_else(|| state.core_config.effective_model().to_string());
+    let system_prompt = crate::prompts::format_system_prompt_for_model(
+        &base_system_prompt,
+        effective_provider,
+        &model,
+    );
     let memory_enabled = state.core_config.memory.enabled;
     let context_items = state.machine.context_items().to_vec();
     let context_delta = state.machine.last_context_delta().clone();
@@ -418,7 +420,22 @@ where
                 ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
-        let llm_messages = crate::llm::project_messages(&messages, true);
+        let mut llm_messages = crate::llm::project_messages(&messages, true);
+        let mut trailing_context_parts = Vec::new();
+        if let Some(instruction) = directory_instruction.as_deref() {
+            trailing_context_parts.push(instruction);
+        }
+        if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
+            trailing_context_parts.push(recall_bundle);
+        }
+        if let Some(instruction) = pending_guardrail_instruction.as_deref() {
+            trailing_context_parts.push(instruction);
+        }
+        if !trailing_context_parts.is_empty() {
+            llm_messages.push(crate::llm::Message::context(
+                trailing_context_parts.join("\n\n"),
+            ));
+        }
         let llm_tools: Vec<crate::llm::ToolDefinition> = tools
             .iter()
             .map(|t| {
@@ -440,15 +457,6 @@ where
             Some(state.runtime_config.max_tokens as i32),
         );
         request.response_schema = active_response_schema.clone();
-        if let Some(instruction) = directory_instruction.as_deref() {
-            append_system_instruction(&mut request, instruction);
-        }
-        if let Some(recall_bundle) = turn_recall_bundle.as_deref() {
-            append_system_instruction(&mut request, recall_bundle);
-        }
-        if let Some(instruction) = pending_guardrail_instruction.as_deref() {
-            append_system_instruction(&mut request, instruction);
-        }
         let request_controls = turn_request_controls.clone();
         let session_key = state
             .machine

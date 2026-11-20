@@ -141,7 +141,7 @@ pub(super) fn spawn_subagent_tool_definition() -> ToolDefinition {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional normalized Alan OS namespace cwd for the subagent. Defaults to parent cwd if mounted or '/' otherwise.",
+                    "description": "Optional normalized alan9 namespace cwd for the subagent. Defaults to parent cwd if mounted or '/' otherwise.",
                     "maxLength": MAX_DELEGATED_PATH_CHARS
                 },
                 "host_mounts": {

@@ -167,7 +167,7 @@ pub(super) fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional Alan OS namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
+                    "description": "Optional alan9 namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
                     "maxLength": MAX_DELEGATED_PATH_CHARS
                 },
                 "host_mounts": {
