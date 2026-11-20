@@ -11,8 +11,10 @@ import tempfile
 
 from build_artifacts import identity, in_use, locked, open_paths
 
+_UNSET = object()
 
-def inspect_scratch(root, apply=False):
+
+def inspect_scratch(root, apply=False, open_paths_fn=None):
     row = {"path": str(root), "state": "unknown"}
     try:
         root_identity = identity(root)
@@ -42,7 +44,7 @@ def inspect_scratch(root, apply=False):
                 pass
             else:
                 raise ValueError("owner PID is live or reused; retain the store")
-            if in_use(root, open_paths()):
+            if in_use(root, (open_paths_fn or open_paths)()):
                 raise ValueError("temporary store still has an open consumer")
             current = marker.lstat()
             if (identity(root) != root_identity
@@ -60,7 +62,24 @@ def inspect_scratch(root, apply=False):
     return row
 
 
-def scratch_outputs(apply=False):
+def scratch_outputs(apply=False, consumers=_UNSET):
     # Old PID directories have no ownership evidence and are deliberately excluded.
     parent = Path(tempfile.gettempdir()).resolve()
-    return [inspect_scratch(root, apply) for root in sorted(parent.glob("alan-service-scratch-*"))]
+    cached = consumers
+    cached_error = (ValueError("cannot establish process/open-file state; cleanup skipped")
+                    if consumers is None else None)
+
+    def cached_open_paths():
+        nonlocal cached, cached_error
+        if cached_error is not None:
+            raise cached_error
+        if cached is _UNSET:
+            try:
+                cached = open_paths()
+            except (ValueError, OSError) as error:
+                cached_error = error
+                raise
+        return cached
+
+    return [inspect_scratch(root, apply, open_paths_fn=cached_open_paths)
+            for root in sorted(parent.glob("alan-service-scratch-*"))]

@@ -6,24 +6,105 @@
     <title>Alan — Everything is a file. Even an agent.</title>
     <meta
       name="description"
-      content="Alan is a programmable personal computing environment built on alan9—where agents are ordinary processes, state lives in namespaces, and your terminal is the interface."
+      content="Alan is a programmable personal computing environment on alan9—agents are ordinary processes, state lives in namespaces, and the terminal is the interface."
     />
+    <meta name="author" content="Morris Liu" />
+    <link rel="canonical" href="https://alanworks.app/" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Alan" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://alanworks.app/" />
     <meta property="og:title" content="Alan — Everything is a file. Even an agent." />
     <meta
       property="og:description"
       content="A programmable personal computing environment built on alan9. Agents are ordinary processes, state lives in namespaces, and your terminal is the interface."
     />
-    <meta property="og:image" content="./alan-riso-mascot.jpg" />
+    <meta property="og:image" content="https://alanworks.app/alan-riso-mascot.jpg" />
+    <meta property="og:image:width" content="1024" />
+    <meta property="og:image:height" content="1024" />
+    <meta property="og:image:alt" content="Alan — Risograph illustration of a rabbit at a retro terminal with Turing paper tape" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Alan — Everything is a file. Even an agent." />
     <meta
       name="twitter:description"
       content="Plan 9 discipline meets modern personal computing. Everything is a file—even an agent."
     />
-    <meta name="twitter:image" content="./alan-riso-mascot.jpg" />
+    <meta name="twitter:image" content="https://alanworks.app/alan-riso-mascot.jpg" />
+    <meta name="twitter:creator" content="@realmorrisliu" />
+    <meta name="theme-color" content="#f6f4ed" />
     <meta name="color-scheme" content="light" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "@id": "https://alanworks.app/#software",
+        "name": "Alan",
+        "alternateName": "alan9",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Linux",
+        "description": "A programmable personal computing environment built on alan9—where agents are ordinary processes, state lives in namespaces, and your terminal is the interface.",
+        "url": "https://alanworks.app/",
+        "codeRepository": "https://github.com/realmorrisliu/alan",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "image": "https://alanworks.app/alan-riso-mascot.jpg",
+        "author": {
+          "@type": "Person",
+          "@id": "https://realmorrisliu.com/#person",
+          "name": "Morris Liu",
+          "url": "https://realmorrisliu.com"
+        }
+      }
+    </script>
+    <script>
+      !(function (t, e) {
+        var o, n, p, r;
+        e.__SV ||
+          ((window.posthog = e),
+          (e._i = []),
+          (e.init = function (i, s, a) {
+            function g(t, e) {
+              var o = e.split('.');
+              (2 == o.length && ((t = t[o[0]]), (e = o[1])),
+                (t[e] = function () {
+                  t.push([e].concat(Array.prototype.slice.call(arguments, 0)));
+                }));
+            }
+            (((p = t.createElement('script')).type = 'text/javascript'),
+              (p.async = !0),
+              (p.src =
+                s.api_host.replace('.i.posthog.com', '-assets.i.posthog.com') +
+                '/static/array.js'),
+              (r = t.getElementsByTagName('script')[0]).parentNode.insertBefore(p, r));
+            var u = e;
+            for (
+              void 0 !== a ? (u = e[a] = []) : (a = 'posthog'),
+                u.people = u.people || [],
+                u.toString = function (t) {
+                  var e = 'posthog';
+                  return ('posthog' !== a && (e += '.' + a), t || (e += ' (stub)'), e);
+                },
+                u.people.toString = function () {
+                  return u.toString(1) + '.people (stub)';
+                },
+                o =
+                  'init capture register register_once register_for_session unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group identify setPersonProperties setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags resetGroups onFeatureFlags addFeatureFlagsHandler onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep'.split(
+                    ' ',
+                  ),
+                n = 0;
+              n < o.length;
+              n++
+            )
+              g(u, o[n]);
+            e._i.push([i, s, a]);
+          }),
+          (e.__SV = 1));
+      })(document, window.posthog || []);
+      posthog.init('phc_II5Kg671kzovEZVu93FUkChTt16G9YPE0ekISJd8DKJ', {
+        api_host: 'https://t.realmorrisliu.com',
+        defaults: '2026-01-30',
+      });
+    </script>
     <script>
       try {
         var t = localStorage.getItem('alan-theme');
@@ -121,13 +202,18 @@
                   <span class="riso-reg riso-reg--bl" aria-hidden="true"></span>
                   <span class="riso-reg riso-reg--br" aria-hidden="true"></span>
                   <div class="riso-plate__viewport">
-                    <img
-                      src="./alan-riso-mascot.jpg"
-                      alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
-                      class="riso-plate__img"
-                      width="352"
-                      height="352"
-                    />
+                    <picture class="riso-plate__picture">
+                      <source srcset="./alan-riso-mascot.webp" type="image/webp" />
+                      <img
+                        src="./alan-riso-mascot.jpg"
+                        alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
+                        class="riso-plate__img"
+                        width="352"
+                        height="352"
+                        fetchpriority="high"
+                        decoding="async"
+                      />
+                    </picture>
                     <pre class="riso-plate__ascii" aria-hidden="true">  (\_/)  +-------+
  =(o.o)= | /proc |
   / &gt;[]  |_______|
@@ -279,12 +365,16 @@
 
             <div class="exec-detail" aria-live="polite">
               <div>
-                <p class="exec-detail__owner" id="inspector-owner"></p>
+                <p class="exec-detail__owner" id="inspector-owner">ADR-0055: Tape + Transition function (deterministic code, typed evaluation, or generation) + Machine state + Side effects through descriptors. Rollout and checkpoint files own durable evidence.</p>
                 <button type="button" class="cmd-link" id="inspector-exec" data-exec="cat /agent/root/machine/tape">
                   Run in alan-shell →
                 </button>
               </div>
-              <pre class="exec-detail__code" id="inspector-code"></pre>
+              <pre class="exec-detail__code" id="inspector-code">0001  [in]         "inspect /srv and summarize active services"
+0002  [transition] eval -&gt; deterministic_read(/srv)
+0003  [tool]       ls /srv -&gt; agent-runtime connections memory package
+0004  [checkpoint] ckpt_0004  (persisted to System Store)
+0005  [out]        "4 file-server services mounted under /srv."</pre>
             </div>
           </div>
         </div>
@@ -359,8 +449,20 @@
               </div>
             </div>
 
-            <pre class="cli-screen" id="cli-screen"></pre>
-            <p class="cli-caption" id="cli-caption"></p>
+            <pre class="cli-screen" id="cli-screen">$ alan
+
+  alan   v0.1.0   project: alan (rw)   model: chatgpt-main   trust: governed
+: summarize recent changes in crates/kernel
+
+  ● tool  read_file crates/kernel/src/mountfs/mod.rs   [Ctrl+O details]
+
+  Mount table enforces lock discipline across async select! arms.
+  Namespace bindings remain process-local under /proc/&lt;pid&gt;/ns.
+
+  [Shift+Tab] trust -> confined/trusted   [/login] [/model] [/new] [/fork] [/permissions] [Ctrl+Z]
+! cargo test -p alan-kernel --quiet
+  ok. 42 passed; 0 failed (0.18s)</pre>
+            <p class="cli-caption" id="cli-caption">Bare <code>alan</code> boots one foreground alan9 instance, auto-mounts your project <code>cwd</code> (<code>--no-auto-mount</code> opts out), and attaches the TUI to <code>/agent/root</code> — with <code>/login</code>, <code>/model</code>, <code>/new</code>, <code>/fork</code>, <code>/permissions</code>, <code>Shift+Tab</code> trust toggle, <code>Ctrl+O</code> details, and <code>Ctrl+Z</code> suspend.</p>
           </div>
         </div>
       </section>
@@ -390,7 +492,8 @@
               <button type="button" class="cmd-link" data-exec="man q">q(1)</button>,
               <button type="button" class="cmd-link" data-exec="man connection">connection(1)</button>,
               <button type="button" class="cmd-link" data-exec="man update">update(1)</button>,
-              <a href="https://github.com/realmorrisliu/alan" target="_blank" rel="noopener noreferrer">github.com/realmorrisliu/alan</a>
+              <a href="https://github.com/realmorrisliu/alan" target="_blank" rel="noopener noreferrer">github.com/realmorrisliu/alan</a>,
+              <a href="https://realmorrisliu.com/thoughts/tags/alan" target="_blank" rel="noopener noreferrer">realmorrisliu.com/thoughts/tags/alan</a>
             </p>
           </div>
 
@@ -403,8 +506,11 @@
           </div>
 
           <div class="man-block">
-            <h3>LICENSE</h3>
-            <p>Apache License 2.0 · Early development</p>
+            <h3>AUTHOR &amp; LICENSE</h3>
+            <p>
+              <a href="https://realmorrisliu.com" target="_blank" rel="noopener noreferrer">Morris Liu</a>
+              · Apache License 2.0 · Early development
+            </p>
           </div>
         </div>
 

@@ -265,6 +265,14 @@ export class Alan9Shell {
                     '  standard POSIX/VT terminals (Ghostty, iTerm2, Kitty, WezTerm,',
                     '  Terminal.app, tmux, SSH) with Apple Developer ID notarized',
                     '  macOS binaries and Linux GNU builds.',
+                    '',
+                    'AUTHOR',
+                    '  Morris Liu <https://realmorrisliu.com>',
+                    '',
+                    'SEE ALSO',
+                    '  alan9(7), agentfs(4), q(1), connection(1), update(1)',
+                    '  Essays: https://realmorrisliu.com/thoughts/tags/alan',
+                    '  Source: https://github.com/realmorrisliu/alan',
                   ].join('\n'),
                 },
                 q: {
@@ -338,7 +346,7 @@ export class Alan9Shell {
                 alan9: {
                   type: 'file',
                   content:
-                    'ALAN9(7)                Architecture                 ALAN9(7)\n\nSTANDARD NAMESPACE\n  /proc   Process lifecycle truth\n  /agent  AgentFS views of Agent Processes\n  /srv    Mountable file-server handles\n  /bin    Tools & Agent Executables\n  /lib    Immutable Quartermaster packages (skill, mcp, tool, provider)\n  /man    Manual pages\n  /mnt    Explicitly authorized Host Mounts',
+                    'ALAN9(7)                Architecture                 ALAN9(7)\n\nSTANDARD NAMESPACE\n  /proc   Process lifecycle truth\n  /agent  AgentFS views of Agent Processes\n  /srv    Mountable file-server handles\n  /bin    Tools & Agent Executables\n  /lib    Immutable Quartermaster packages (skill, mcp, tool, provider)\n  /man    Manual pages\n  /mnt    Explicitly authorized Host Mounts\n\nSEE ALSO\n  alan(1), agentfs(4), q(1), connection(1), update(1)\n  Essays: https://realmorrisliu.com/thoughts/tags/alan\n  Author: https://realmorrisliu.com',
                 },
               },
             },

@@ -66,6 +66,7 @@
   text-decoration: underline;
 }
 
+:root[data-theme='dumb'] .riso-plate__picture,
 :root[data-theme='dumb'] .riso-plate__img {
   display: none;
 }

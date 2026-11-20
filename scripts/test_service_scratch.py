@@ -97,5 +97,52 @@ class ServiceScratchTests(unittest.TestCase):
         self.assertTrue((legacy / "source.patch").exists())
 
 
+    def _make_marked_scratch(self, name):
+        root = self.parent / name
+        root.mkdir(mode=0o700)
+        receipt = {"version": 1, "kind": "connection", "root": str(root),
+                   "pid": os.getpid(), "identity": artifacts.identity(root)}
+        (root / ".alan-scratch.json").write_text(json.dumps(receipt))
+        (root / "connections.toml").write_text("generated metadata")
+        (root / "connections.toml.lock").touch()
+        return root
+
+    def test_scratch_outputs_collects_open_paths_once_across_multiple_dead_roots(self):
+        extra1 = self._make_marked_scratch("alan-service-scratch-extra-1")
+        extra2 = self._make_marked_scratch("alan-service-scratch-extra-2")
+        with patch.object(scratch.tempfile, "gettempdir", return_value=str(self.parent)), \
+             patch.object(scratch.os, "kill", side_effect=ProcessLookupError), \
+             patch.object(scratch, "open_paths", return_value=[self.root / "connections.toml"]) as mock_open:
+            rows = scratch.scratch_outputs(True)
+        self.assertEqual(mock_open.call_count, 1)
+        by_path = {row["path"]: row["state"] for row in rows}
+        self.assertEqual(by_path[str(self.root)], "retained")
+        self.assertEqual(by_path[str(extra1)], "cleaned")
+        self.assertEqual(by_path[str(extra2)], "cleaned")
+        self.assertTrue(self.root.exists())
+        self.assertFalse(extra1.exists())
+        self.assertFalse(extra2.exists())
+
+    def test_scratch_outputs_skips_open_paths_when_no_root_is_eligible(self):
+        unmarked = self.parent / "alan-service-scratch-unmarked"
+        unmarked.mkdir(mode=0o700)
+        with patch.object(scratch.tempfile, "gettempdir", return_value=str(self.parent)), \
+             patch.object(scratch, "open_paths") as mock_open:
+            rows = scratch.scratch_outputs(True)
+        self.assertEqual(mock_open.call_count, 0)
+        self.assertEqual({row["state"] for row in rows}, {"retained"})
+
+    def test_scratch_outputs_caches_open_paths_failure_fail_closed(self):
+        extra = self._make_marked_scratch("alan-service-scratch-extra-fail")
+        with patch.object(scratch.tempfile, "gettempdir", return_value=str(self.parent)), \
+             patch.object(scratch.os, "kill", side_effect=ProcessLookupError), \
+             patch.object(scratch, "open_paths", side_effect=ValueError("lsof failed")) as mock_open:
+            rows = scratch.scratch_outputs(True)
+        self.assertEqual(mock_open.call_count, 1)
+        self.assertEqual([row["state"] for row in rows], ["retained", "retained"])
+        self.assertTrue(self.root.exists())
+        self.assertTrue(extra.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
