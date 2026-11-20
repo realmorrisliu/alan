@@ -75,10 +75,12 @@ pre {
   margin-inline: auto;
 }
 
-/* ---------- Plan 9 Acme-Inspired Top Tag Bar ---------- */
+/* ---------- Plan 9 Acme-Inspired Top Tag Bar (Fixed Under Hero Curtain) ---------- */
 .topbar {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 50;
   background: var(--bg-terminal-bar);
   border-bottom: 1px solid var(--klein);
@@ -249,248 +251,219 @@ pre {
   outline: none;
 }
 
-/* ---------- Staggered Print-Drop Hero Entrance ---------- */
-@keyframes ink-rise {
+/* ---------- Staggered Print-Drop Hero Entrance (Always Visible at Frame 0) ---------- */
+@keyframes ink-settle {
   from {
-    opacity: 0;
     transform: translateY(6px);
   }
   to {
-    opacity: 1;
     transform: translateY(0);
   }
 }
 
-.hero__eyebrow,
+.hero__mascot,
 .hero__title,
 .hero__subtitle,
-.hero__actions,
-.riso-plate,
-.rio-window {
-  animation: ink-rise 240ms var(--ease-out) backwards;
+.hero__install,
+.hero__scroll {
+  animation: ink-settle 260ms var(--ease-out) backwards;
 }
 
 .hero__title { animation-delay: 35ms; }
-.hero__subtitle { animation-delay: 75ms; }
-.hero__actions { animation-delay: 110ms; }
-.riso-plate { animation-delay: 145ms; }
-.rio-window { animation-delay: 95ms; }
+.hero__subtitle { animation-delay: 70ms; }
+.hero__install { animation-delay: 105ms; }
+.hero__scroll { animation-delay: 135ms; }
 
-/* ---------- 01. Hero Section (Archival Paper + Monograph Framing) ---------- */
+/* ---------- 00. Full-Bleed Klein Blue Printmaking Hero (Upper Curtain Layer) ---------- */
 .hero {
-  padding-block: clamp(2.25rem, 4.5vw, 3.75rem) clamp(3.5rem, 6vw, 5.25rem);
-  border-bottom: 1px solid var(--rule);
-  background-image: radial-gradient(color-mix(in srgb, var(--klein) 13%, transparent) 0.9px, transparent 0.9px);
-  background-size: 24px 24px;
-  background-position: -1px -1px;
-}
-
-.hero__eyebrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin: 0 0 clamp(1.75rem, 3.5vw, 2.5rem);
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--rule);
-}
-
-.hero__eyebrow strong {
-  color: var(--klein);
-  font-weight: 600;
-}
-
-.hero__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 0.98fr) minmax(0, 1.16fr);
-  gap: clamp(2rem, 4.5vw, 3.75rem);
-  align-items: stretch;
-}
-
-.hero__copy {
+  position: relative;
+  z-index: 60;
+  isolation: isolate;
+  min-height: 100svh;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  overflow: hidden;
+  padding-bottom: clamp(1.1rem, 2.5vh, 1.75rem);
+  background: radial-gradient(
+    ellipse 76% 68% at 50% 42%,
+    var(--hero-bg-center) 0%,
+    var(--hero-bg) 56%,
+    var(--hero-bg-edge) 100%
+  );
+  color: var(--hero-ink);
+  box-shadow: 0 14px 36px rgba(0, 14, 58, 0.18);
+}
+
+/* Tactile cotton printmaking paper & silkscreen pigment grain (no square grid) */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url('../assets/klein-print-grain.webp');
+  background-size: 256px 256px;
+  background-repeat: repeat;
+  mix-blend-mode: soft-light;
+  opacity: 0.28;
+}
+
+.hero__inner {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: clamp(2.5rem, 6vh, 4.5rem) var(--gutter) clamp(1.75rem, 4vh, 2.75rem);
+}
+
+.hero__mascot {
+  width: clamp(210px, 26vw, 345px);
+  margin-bottom: clamp(1.25rem, 2.8vh, 2.1rem);
+}
+
+.hero__mascot-picture {
+  display: block;
+}
+
+.hero__mascot-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: drop-shadow(3px 5px 0 rgba(0, 14, 58, 0.34));
+}
+
+.hero__ascii {
+  display: none;
 }
 
 .hero__title {
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: var(--text-hero);
-  line-height: 0.96;
-  letter-spacing: -0.02em;
-  margin: 0 0 1.5rem;
+  font-family: var(--font-poster);
+  font-weight: 700;
+  font-size: var(--text-poster);
+  line-height: 0.94;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: var(--hero-ink);
+  margin: 0 0 1rem;
+  text-shadow: 0 1px 0 rgba(0, 14, 58, 0.24);
 }
 
-.hero__title em {
-  font-style: italic;
-  color: var(--klein);
+.hero__title span {
   display: block;
 }
 
 .hero__subtitle {
-  font-size: var(--text-lg);
-  color: var(--ink-muted);
-  max-width: 40ch;
-  margin: 0 0 2rem;
+  font-family: var(--font-sans);
+  font-size: clamp(0.975rem, 0.9rem + 0.3vw, 1.125rem);
+  color: var(--hero-ink-muted);
+  max-width: 58ch;
+  margin: 0 0 1.85rem;
+  line-height: 1.5;
 }
 
-.hero__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1.35rem;
-  margin-bottom: 2.75rem;
-}
-
-.btn-primary {
+.hero__install {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  gap: 0.75rem;
+  padding: 0.72rem 1.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(246, 244, 237, 0.46);
+  background: rgba(0, 18, 72, 0.34);
+  color: var(--hero-ink);
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: 0.03em;
-  padding: 0.72rem 1.2rem;
-  background: var(--klein);
-  color: var(--klein-ink);
-  border: 1px solid var(--klein);
+  font-size: 0.875rem;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
-.btn-primary:hover {
-  background: var(--klein-hover);
-  border-color: var(--klein-hover);
+.hero__install code {
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
-.link-quiet {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 0.15rem;
-  transition: color var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out);
+.hero__install:hover,
+.hero__install:focus-visible {
+  background: rgba(0, 14, 58, 0.56);
+  border-color: rgba(246, 244, 237, 0.88);
+  outline: none;
 }
 
-.link-quiet:hover {
+.hero__install:active {
+  transform: translateY(1px);
+}
+
+.hero__install[data-copied='true'] {
+  background: var(--hero-ink);
   color: var(--klein);
-  border-bottom-color: var(--klein);
+  border-color: var(--hero-ink);
 }
 
-/* Risograph Mascot Plate — Iconic Bell Labs × 1980s Print Anchor */
-.riso-plate {
-  display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
-  gap: 1.35rem;
+.hero__install-cmd {
+  display: inline-flex;
   align-items: center;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--rule);
-  margin: 0;
+  gap: 0.45rem;
 }
 
-.riso-plate__frame {
-  position: relative;
-  border: 1px solid var(--klein);
-  background: #f4f1e6;
-  aspect-ratio: 1;
-  display: flex;
-  flex-direction: column;
+.hero__install-prompt {
+  opacity: 0.72;
+  user-select: none;
 }
 
-.riso-plate__viewport {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-}
-
-.riso-plate__stamp {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  color: var(--klein);
-  border-top: 1px solid var(--rule-klein);
-  background: var(--bg-paper);
-  padding: 0.22rem 0.4rem;
-  display: flex;
-  justify-content: space-between;
+.hero__install-status {
+  font-size: 11px;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
-.riso-reg {
-  position: absolute;
-  width: 9px;
-  height: 9px;
-  pointer-events: none;
-}
-
-.riso-reg::before,
-.riso-reg::after {
-  content: '';
-  position: absolute;
-  background: var(--klein);
-  opacity: 0.78;
-}
-
-.riso-reg::before {
-  width: 9px;
-  height: 1px;
-  top: 4px;
-  left: 0;
-}
-
-.riso-reg::after {
-  width: 1px;
-  height: 9px;
-  top: 0;
-  left: 4px;
-}
-
-.riso-reg--tl { top: -5px; left: -5px; }
-.riso-reg--tr { top: -5px; right: -5px; }
-.riso-reg--bl { bottom: -5px; left: -5px; }
-.riso-reg--br { bottom: -5px; right: -5px; }
-
-.riso-plate__picture {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.riso-plate__img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  transform: scale(1.22);
-  transform-origin: center 54%;
-  filter: contrast(1.04);
-}
-
-.riso-plate__ascii {
+.hero__install-status:empty {
   display: none;
 }
 
-.riso-plate__caption {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--ink-muted);
-  line-height: 1.55;
+.hero__install[data-copied='true'] .hero__install-icon {
+  display: none;
 }
 
-.riso-plate__tag {
-  display: inline-block;
-  color: var(--klein);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  margin-bottom: 0.3rem;
+.hero__install-icon {
+  opacity: 0.78;
+  flex-shrink: 0;
+}
+
+.hero__scroll {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--hero-ink-faint);
+  padding: 0.25rem 0.5rem;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.hero__scroll:hover,
+.hero__scroll:focus-visible {
+  color: var(--hero-ink);
+  outline: none;
+}
+
+/* ---------- 01. Relocated Interactive Shell Stage ---------- */
+.section--shell {
+  padding-top: calc(var(--topbar-h) + clamp(4rem, 7.5vw, 6.5rem));
+  scroll-margin-top: var(--topbar-h);
+}
+
+.shell-stage {
+  width: 100%;
 }
 
 .rio-window__chips {
@@ -1215,27 +1188,19 @@ dialog::backdrop {
 
 /* ---------- Floating Non-Blocking Acme Mini-Shell Drawer ---------- */
 .acme-drawer {
+  display: none;
   position: fixed;
   right: clamp(1rem, 2.5vw, 2rem);
   bottom: clamp(1rem, 2.5vw, 1.75rem);
-  z-index: 60;
+  z-index: 70;
   width: min(500px, calc(100vw - 2rem));
   border: 1px solid var(--klein);
   background: var(--bg-terminal);
   box-shadow: 5px 5px 0 var(--klein-soft);
-  transform: translateY(12px);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: transform 180ms var(--ease-out), opacity 160ms var(--ease-out), visibility 0s linear 180ms;
 }
 
 .acme-drawer[data-open='true'] {
-  transform: translateY(0);
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transition: transform 180ms var(--ease-out), opacity 160ms var(--ease-out), visibility 0s;
+  display: block;
 }
 
 .acme-drawer__bar {
@@ -1284,7 +1249,6 @@ dialog::backdrop {
 
 /* ---------- Responsive ---------- */
 @media (max-width: 920px) {
-  .hero__grid,
   .principles,
   .exec-detail {
     grid-template-columns: 1fr;
@@ -1294,6 +1258,17 @@ dialog::backdrop {
 @media (max-width: 640px) {
   .topbar__nav {
     display: none;
+  }
+  .hero__mascot {
+    width: clamp(185px, 52vw, 240px);
+  }
+  .hero__title {
+    font-size: clamp(2.15rem, 9.4vw, 2.75rem);
+  }
+  .hero__install {
+    font-size: 0.72rem;
+    padding: 0.62rem 1rem;
+    gap: 0.5rem;
   }
   .man-grid {
     grid-template-columns: 1fr;

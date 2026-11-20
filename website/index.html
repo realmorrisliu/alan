@@ -32,8 +32,9 @@
     />
     <meta name="twitter:image" content="https://alanworks.app/alan-riso-mascot.jpg" />
     <meta name="twitter:creator" content="@realmorrisliu" />
-    <meta name="theme-color" content="#f6f4ed" />
+    <meta name="theme-color" content="#002fa7" />
     <meta name="color-scheme" content="light" />
+    <link rel="preload" as="image" href="./alan-mascot-cutout.webp" type="image/webp" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -118,13 +119,74 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Oswald:wght@600;700&display=swap"
       rel="stylesheet"
     />
   </head>
   <body id="top">
-    <!-- Plan 9 Acme-Inspired Top Tag Bar -->
-    <header class="topbar">
+    <!-- 00. FULL-BLEED KLEIN BLUE PRINTMAKING HERO (Upper Curtain Layer) -->
+    <section class="hero" id="hero" aria-label="Alan — Everything is a file. Even an agent.">
+      <div class="hero__inner">
+        <div class="hero__mascot">
+          <picture class="hero__mascot-picture">
+            <source srcset="./alan-mascot-cutout.webp" type="image/webp" />
+            <img
+              src="./alan-mascot-cutout.png"
+              alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
+              class="hero__mascot-img"
+              width="750"
+              height="564"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </picture>
+          <pre class="hero__ascii" aria-hidden="true">  (\_/)  +-------+
+ =(o.o)= | /proc |
+  / &gt;[]  |_______|
+ (__)__) ==o===o==</pre>
+        </div>
+
+        <h1 class="hero__title">
+          <span>Everything is a file.</span>
+          <span>Even an agent.</span>
+        </h1>
+
+        <p class="hero__subtitle">
+          A programmable personal computing environment built on alan9.
+        </p>
+
+        <button
+          type="button"
+          class="hero__install"
+          data-copy="curl -fsSL https://alanworks.app/install.sh | sh"
+          aria-label="Copy install command: curl -fsSL https://alanworks.app/install.sh | sh"
+        >
+          <span class="hero__install-cmd">
+            <span class="hero__install-prompt" aria-hidden="true">$</span>
+            <code>curl -fsSL https://alanworks.app/install.sh | sh</code>
+          </span>
+          <span class="hero__install-status" aria-live="polite"></span>
+          <svg
+            class="hero__install-icon"
+            width="15"
+            height="15"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.35"
+            aria-hidden="true"
+          >
+            <rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.2" />
+            <path d="M10.75 5.25V3.45a1.2 1.2 0 0 0-1.2-1.2h-6.1a1.2 1.2 0 0 0-1.2 1.2v6.1a1.2 1.2 0 0 0 1.2 1.2h1.8" />
+          </svg>
+        </button>
+      </div>
+
+      <a href="#shell" class="hero__scroll">↓ scroll to explore</a>
+    </section>
+
+    <!-- Plan 9 Acme-Inspired Top Tag Bar (Revealed Beneath Hero Curtain, Sticky Below Fold) -->
+    <header class="topbar" id="topbar" inert>
       <div class="container topbar__inner">
         <div class="topbar__left">
           <a href="#top" class="brand">
@@ -138,6 +200,7 @@
         </div>
 
         <nav class="topbar__nav" aria-label="Primary">
+          <a href="#shell">/shell</a>
           <a href="#architecture">/architecture</a>
           <a href="#namespace">/namespace</a>
           <a href="#cli">/cli</a>
@@ -165,75 +228,15 @@
     </header>
 
     <main>
-      <!-- 01. HERO — Monograph Framing + Risograph Plate + Live Rio Shell -->
-      <section class="hero">
+      <!-- 01. INTERACTIVE SHELL — Relocated Full-Width Rio alan-shell -->
+      <section class="section section--shell" id="shell">
         <div class="container">
-          <div class="hero__eyebrow">
-            <span><strong>VOL. 01</strong> · ALAN9 PERSONAL COMPUTING ENVIRONMENT</span>
-            <span>RUST 2024 · APACHE-2.0 · EARLY DEVELOPMENT</span>
-          </div>
+          <p class="section__eyebrow">00 · INTERACTIVE SHELL</p>
+          <h2 class="section__heading">
+            Inspect a living agent like any <em>UNIX directory.</em>
+          </h2>
 
-          <div class="hero__grid">
-            <div class="hero__copy">
-              <div>
-                <h1 class="hero__title">
-                  Everything is a file.
-                  <em>Even an agent.</em>
-                </h1>
-                <p class="hero__subtitle">
-                  A programmable personal computing environment built on
-                  <button type="button" class="cmd-link" data-exec="man alan9">alan9</button>—where
-                  agents are ordinary processes in
-                  <button type="button" class="cmd-link" data-exec="ps">/proc</button> and state lives in
-                  <button type="button" class="cmd-link" data-exec="ls /agent/root">/agent</button>.
-                </p>
-
-                <div class="hero__actions">
-                  <a href="#cli" class="btn-primary" data-select-cli-tab="install">$ curl -fsSL https://alanworks.app/install.sh | sh</a>
-                  <a href="#architecture" class="link-quiet">Read the architecture ↓</a>
-                </div>
-              </div>
-
-              <!-- Focal Point #1: Risograph Print Plate -->
-              <figure class="riso-plate">
-                <div class="riso-plate__frame">
-                  <span class="riso-reg riso-reg--tl" aria-hidden="true"></span>
-                  <span class="riso-reg riso-reg--tr" aria-hidden="true"></span>
-                  <span class="riso-reg riso-reg--bl" aria-hidden="true"></span>
-                  <span class="riso-reg riso-reg--br" aria-hidden="true"></span>
-                  <div class="riso-plate__viewport">
-                    <picture class="riso-plate__picture">
-                      <source srcset="./alan-riso-mascot.webp" type="image/webp" />
-                      <img
-                        src="./alan-riso-mascot.jpg"
-                        alt="Minimalist Klein Blue and carbon-ink Risograph illustration of a rabbit wearing 1980s headphones at a retro terminal with punched Turing paper tape."
-                        class="riso-plate__img"
-                        width="352"
-                        height="352"
-                        fetchpriority="high"
-                        decoding="async"
-                      />
-                    </picture>
-                    <pre class="riso-plate__ascii" aria-hidden="true">  (\_/)  +-------+
- =(o.o)= | /proc |
-  / &gt;[]  |_______|
- (__)__) ==o===o==</pre>
-                  </div>
-                  <div class="riso-plate__stamp" aria-hidden="true">
-                    <span>PLATE 01</span>
-                    <span>KLEIN / CARBON</span>
-                  </div>
-                </div>
-                <figcaption class="riso-plate__caption">
-                  <span class="riso-plate__tag">FIG. 01 · RISOGRAPH PLATE</span><br />
-                  Plan 9 discipline meets 1980s print craft. Click any dashed
-                  <button type="button" class="cmd-link" data-exec="cat /agent/root/machine/tape">path</button>
-                  to execute it directly in the shell.
-                </figcaption>
-              </figure>
-            </div>
-
-            <!-- Focal Point #2: Live Interactive Rio Shell -->
+          <div class="shell-stage">
             <div class="rio-window" id="hero-terminal" aria-label="Interactive alan9 virtual shell">
               <div class="rio-window__bar">
                 <span class="rio-window__title">

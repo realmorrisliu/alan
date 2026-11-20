@@ -32,8 +32,17 @@
   --status-wait: #c26a06;
   --status-block: #d9382e;
 
+  /* Printmaking Hero (Full-Bleed Matte International Klein Blue) */
+  --hero-bg: #002fa7;
+  --hero-bg-center: #0736b5;
+  --hero-bg-edge: #002282;
+  --hero-ink: #f6f4ed;
+  --hero-ink-muted: rgba(246, 244, 237, 0.84);
+  --hero-ink-faint: rgba(246, 244, 237, 0.66);
+
   /* Typography */
   --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --font-poster: 'Oswald', 'Arial Narrow', 'Helvetica Neue', sans-serif;
   --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -44,12 +53,14 @@
   --text-lg: clamp(1.0625rem, 1rem + 0.35vw, 1.25rem);
   --text-xl: clamp(1.375rem, 1.15rem + 1vw, 1.875rem);
   --text-2xl: clamp(2rem, 1.5rem + 2.2vw, 3.25rem);
+  --text-poster: clamp(2.85rem, 5vw + 1rem, 5.35rem);
   --text-hero: clamp(3rem, 2.1rem + 4.4vw, 5.25rem);
 
   /* Spacing & Layout */
   --max-w: 1200px;
   --gutter: clamp(1.25rem, 3vw, 2.5rem);
   --section-gap: clamp(4.5rem, 8vw, 7.5rem);
+  --topbar-h: 44px;
   --radius: 2px;
 
   /* Easing (exponential deceleration — no bounce) */
@@ -91,6 +102,14 @@
   --status-run: #22d3a6;
   --status-wait: #f59e0b;
   --status-block: #f87171;
+
+  /* Printmaking Hero (Midnight Velvet Klein Ink) */
+  --hero-bg: #07143d;
+  --hero-bg-center: #0c2161;
+  --hero-bg-edge: #040c28;
+  --hero-ink: #edeae0;
+  --hero-ink-muted: rgba(237, 234, 224, 0.82);
+  --hero-ink-faint: rgba(237, 234, 224, 0.62);
 }
 
 /* View Transitions — crisp 180ms City Pop scanline wipe */
