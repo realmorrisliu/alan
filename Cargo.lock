@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "alan"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-engine",
  "alan-agent-protocol",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "alan-agent-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-protocol",
  "alan-agentfs",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "alan-agent-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "alan-agentfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "alan-kernel",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "alan-ap"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "alan-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "alan-branchfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "alan-knowledge",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "alan-editfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "async-trait",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "alan-hostfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "async-trait",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "alan-kernel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "async-trait",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "alan-knowledge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "serde",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "alan-llm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-protocol",
  "alan-auth",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "alan-llmfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "alan-llm",
@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "alan-memfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "alan-knowledge",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "alan-os-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-engine",
  "alan-agent-protocol",
@@ -300,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "alan-routefs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-ap",
  "alan-kernel",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "alan-service-manager"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-engine",
  "alan-agent-protocol",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "alan-shell"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agentfs",
  "alan-ap",
@@ -358,7 +358,7 @@ dependencies = [
 
 [[package]]
 name = "alan-swebench-tooling"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "alan-terminal-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-protocol",
  "alan-agentfs",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "alan-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alan-agent-engine",
  "alan-agent-protocol",
