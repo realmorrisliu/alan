@@ -108,7 +108,7 @@
                 </p>
 
                 <div class="hero__actions">
-                  <a href="#cli" class="btn-primary">$ just install</a>
+                  <a href="#cli" class="btn-primary" data-select-cli-tab="install">$ curl -fsSL https://alanworks.app/install.sh | sh</a>
                   <a href="#architecture" class="link-quiet">Read the architecture ↓</a>
                 </div>
               </div>
@@ -214,10 +214,12 @@
             <article class="principle">
               <h3>Explicit boundaries</h3>
               <p>
-                Launching <code>alan</code> never exposes your host directory. Host Mounts, Quartermaster
-                packages (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button> —
-                <code>skill</code>, <code>mcp</code>, <code>tool</code>, <code>provider</code> with zero
-                install-time authority), and Host Store credentials stay strictly separated.
+                OS confinement (<code>Seatbelt</code>/<code>Landlock</code>) contains execution to
+                explicit grants. Your project <code>cwd</code> auto-mounts read-write (opt out with
+                <code>--no-auto-mount</code> or manage via <code>/project</code>), while Quartermaster
+                (<button type="button" class="cmd-link" data-exec="q list">/bin/q</button> —
+                <code>skill</code>, <code>mcp</code>, <code>tool</code>, <code>provider</code>) and
+                Host Store credentials stay strictly separated.
               </p>
             </article>
 
@@ -347,10 +349,13 @@
                 <button type="button" class="cli-tab" role="tab" data-cli-tab="pipe" aria-selected="false">
                   UNIX Pipe — git diff | alan
                 </button>
+                <button type="button" class="cli-tab" role="tab" data-cli-tab="install" aria-selected="false">
+                  Install &amp; Auth — install.sh
+                </button>
               </div>
               <div class="install-inline">
-                <code>just install &amp;&amp; alan</code>
-                <button type="button" class="copy-btn" data-copy="just install && alan">copy</button>
+                <code>curl -fsSL https://alanworks.app/install.sh | sh</code>
+                <button type="button" class="copy-btn" data-copy="curl -fsSL https://alanworks.app/install.sh | sh">copy</button>
               </div>
             </div>
 
@@ -379,10 +384,12 @@
           <div class="man-block">
             <h3>SEE ALSO</h3>
             <p>
+              <button type="button" class="cmd-link" data-exec="man alan">alan(1)</button>,
               <button type="button" class="cmd-link" data-exec="man alan9">alan9(7)</button>,
               <button type="button" class="cmd-link" data-exec="man agentfs">agentfs(4)</button>,
               <button type="button" class="cmd-link" data-exec="man q">q(1)</button>,
               <button type="button" class="cmd-link" data-exec="man connection">connection(1)</button>,
+              <button type="button" class="cmd-link" data-exec="man update">update(1)</button>,
               <a href="https://github.com/realmorrisliu/alan" target="_blank" rel="noopener noreferrer">github.com/realmorrisliu/alan</a>
             </p>
           </div>

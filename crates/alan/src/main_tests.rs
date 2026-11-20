@@ -166,3 +166,41 @@ fn login_subcommand_and_no_auto_mount_flag_parse_cleanly() {
     assert!(bare.no_auto_mount);
     assert!(bare.command.is_none());
 }
+
+#[test]
+fn update_subcommand_parses_all_flags_cleanly() {
+    let parsed = Cli::try_parse_from([
+        "alan",
+        "update",
+        "--check",
+        "--json",
+        "--version",
+        "v0.2.0",
+        "--force",
+        "--install-dir",
+        "/tmp/alan-bin",
+        "--manifest-url",
+        "http://127.0.0.1:8080/latest.json",
+        "--quiet",
+    ])
+    .unwrap();
+    match parsed.command {
+        Some(Commands::Update(args)) => {
+            assert!(args.check);
+            assert!(args.json);
+            assert_eq!(args.version.as_deref(), Some("v0.2.0"));
+            assert!(args.force);
+            assert_eq!(
+                args.install_dir.as_deref(),
+                Some(std::path::Path::new("/tmp/alan-bin"))
+            );
+            assert_eq!(
+                args.manifest_url.as_deref(),
+                Some("http://127.0.0.1:8080/latest.json")
+            );
+            assert!(args.quiet);
+        }
+        _ => panic!("expected Commands::Update"),
+    }
+    assert!(!parsed.json);
+}

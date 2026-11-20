@@ -93,3 +93,16 @@ fn should_auto_mount_cwd_excludes_root_home_and_tmp_roots_but_allows_project_dir
     assert!(should_auto_mount_cwd(&project));
     assert!(!should_auto_mount_cwd(&temp.path().join("missing-dir")));
 }
+
+#[test]
+fn interactive_config_defaults_update_notice_to_none_and_passive_check_uses_system_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let product = alan_os_host::SystemStorePaths::from_data_dir(dir.path()).unwrap();
+    let cfg = config(&product);
+    assert!(cfg.update_notice.is_none());
+    assert!(cli::update::prepare_passive_tui_update_notice(&product, false).is_none());
+    assert_eq!(
+        cli::update::passive_check::passive_check_cache_path(&product).unwrap(),
+        product.service("updater").unwrap().join("last-check.json")
+    );
+}

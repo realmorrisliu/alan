@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use super::{
     about, connection, host, login, man, memory, q, skill_authoring, skills, skills_list, trust,
-    workflow,
+    update, workflow,
 };
 
 /// Top-level `alan` command-line interface.
@@ -98,6 +98,8 @@ pub enum Commands {
     Memory(memory::MemoryArgs),
     /// Manage and run scheduled personal workflows
     Workflow(workflow::WorkflowArgs),
+    /// Check for or install standalone `alan` CLI updates
+    Update(update::UpdateArgs),
 }
 
 /// Execution mode selected for bare `alan` (without subcommands).
@@ -566,6 +568,7 @@ pub async fn dispatch_subcommand(command: Commands) -> Result<Option<LegacyState
         Commands::Q(args) => q::run(args).await?,
         Commands::Memory(args) => memory::run(args).await?,
         Commands::Workflow(args) => workflow::run(args).await?,
+        Commands::Update(args) => update::run(args).await?,
     }
     Ok(None)
 }

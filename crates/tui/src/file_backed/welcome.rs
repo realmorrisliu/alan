@@ -53,11 +53,18 @@ pub(in crate::file_backed) fn from_app(app: &FileBackedApp) -> WelcomeBanner {
         .clone()
         .unwrap_or_else(|| "os-sandbox".to_string());
     let trust_posture = app.trust_posture_label.clone();
+    let update_notice = app
+        .update_notice
+        .as_deref()
+        .map(super::model::safe)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     WelcomeBanner {
         project,
         model,
         sandbox,
         trust_posture,
+        update_notice,
     }
 }
 
@@ -93,7 +100,7 @@ pub(crate) fn render_banner_lines(
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let unconfigured = banner.model == "Not connected";
-    if width >= 64 {
+    let mut lines = if width >= 64 {
         let right_budget = width.saturating_sub(21).max(1);
         let hints_raw = if unconfigured {
             "/login to connect a provider · /help · /man · : task"
@@ -187,7 +194,25 @@ pub(crate) fn render_banner_lines(
         };
         let hints = clamp_width(hints_raw, width);
         vec![line_top, Line::styled(hints, theme.muted_style())]
+    };
+
+    if let Some(notice) = banner
+        .update_notice
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let text = if width >= 64 {
+            clamp_width(&format!("  · {notice}"), width)
+        } else {
+            clamp_width(&format!("· {notice}"), width)
+        };
+        if !text.is_empty() {
+            lines.push(Line::styled(text, theme.wait_style()));
+        }
     }
+
+    lines
 }
 
 fn clamp_width(text: &str, max_width: usize) -> String {
@@ -212,4 +237,47 @@ fn clamp_width(text: &str, max_width: usize) -> String {
     }
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn welcome_banner_renders_optional_update_notice_without_changing_default_layout() {
+        let mut app = FileBackedApp::new("/agent/root".into());
+        app.effective_model = Some("gpt-5.4".into());
+        app.sandbox_backend = Some("seatbelt".into());
+
+        let default_banner = from_app(&app);
+        assert!(default_banner.update_notice.is_none());
+        assert_eq!(
+            render_banner_lines(&default_banner, 80, Theme::midnight()).len(),
+            4
+        );
+        assert_eq!(
+            render_banner_lines(&default_banner, 48, Theme::midnight()).len(),
+            2
+        );
+
+        app.update_notice = Some("Update available: v0.1.1 — run 'alan update'\x1b".into());
+        let with_notice = from_app(&app);
+        assert_eq!(
+            with_notice.update_notice.as_deref(),
+            Some("Update available: v0.1.1 — run 'alan update'")
+        );
+
+        let wide_lines = render_banner_lines(&with_notice, 80, Theme::midnight());
+        assert_eq!(wide_lines.len(), 5);
+        assert!(
+            wide_lines[4]
+                .to_string()
+                .contains("Update available: v0.1.1 — run 'alan update'")
+        );
+
+        let narrow_lines = render_banner_lines(&with_notice, 48, Theme::dumb());
+        assert_eq!(narrow_lines.len(), 3);
+        assert!(narrow_lines[2].to_string().width() <= 48);
+        assert!(narrow_lines[2].to_string().contains("Update available:"));
+    }
 }

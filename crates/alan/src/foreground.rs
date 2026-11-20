@@ -172,6 +172,8 @@ pub(super) async fn run_bare_in_foreground_instance(
                     )?;
                     config.initial_attachments = initial_attachments;
                     config.initial_project_mount = initial_project_mount;
+                    config.update_notice =
+                        cli::update::prepare_passive_tui_update_notice(&store, ephemeral);
                     config.login_control = Some(login::build_login_control_handler(paths.clone()));
                     let project_paths = paths.clone();
                     let project_control: alan_tui::ProjectControlHandler = Arc::new(move |command| {

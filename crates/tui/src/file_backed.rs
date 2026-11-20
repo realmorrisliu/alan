@@ -179,6 +179,8 @@ pub struct FileBackedRunConfig {
     pub initial_project_mount: Option<(ProjectMountReceipt, PathBuf)>,
     /// Explicit Host report of whether any callable model connection is configured at boot.
     pub connection_configured: Option<bool>,
+    /// Optional passive update notice shown in the initial welcome header.
+    pub update_notice: Option<String>,
 }
 
 impl FileBackedRunConfig {
@@ -200,6 +202,7 @@ impl FileBackedRunConfig {
             login_control: None,
             initial_project_mount: None,
             connection_configured: None,
+            update_notice: None,
         }
     }
 }
@@ -221,6 +224,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     app.trust_posture_label = config.trust_posture_label.clone();
     app.login_available = config.login_control.is_some();
     app.connection_configured = config.connection_configured;
+    app.update_notice = config.update_notice.clone();
     if !config.initial_attachments.is_empty() {
         app.pending_attachments = config.initial_attachments.clone();
     }

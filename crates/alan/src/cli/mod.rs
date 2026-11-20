@@ -12,4 +12,5 @@ pub mod skill_eval;
 pub mod skills;
 pub mod skills_list;
 pub mod trust;
+pub mod update;
 pub mod workflow;

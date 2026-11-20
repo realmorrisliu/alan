@@ -34,6 +34,13 @@ pub const PAGES: &[ManPage] = &[
         content: CONNECTION_1,
     },
     ManPage {
+        section: "1",
+        name: "update",
+        path: "1/update",
+        summary: "check for and install standalone alan CLI releases",
+        content: UPDATE_1,
+    },
+    ManPage {
         section: "4",
         name: "agentfs",
         path: "4/agentfs",
@@ -113,8 +120,10 @@ SYNOPSIS
   alan -p, --print <PROMPT> [--json] [--image <PATH>...]
   echo <TASK> | alan [--json]
   alan about | alan man [TOPIC]
+  alan login [PROVIDER]
   alan connection <SUBCOMMAND>
   alan skills <SUBCOMMAND>
+  alan update [OPTIONS]
 
 DESCRIPTION
   Each bare `alan` invocation boots one foreground alan9 instance and
@@ -140,10 +149,62 @@ ENVIRONMENT
   NO_COLOR              disable colors and text attributes when non-empty
   TERM=dumb             disable colors, attributes, and Kitty/OSC controls
   ALAN_NO_WELCOME=1     suppress the empty-session welcome header
+  ALAN_NO_UPDATE_CHECK=1
+                        skip passive 24h update check on interactive boot
+  ALAN_MANIFEST_URL     override release manifest URL (`latest.json`)
   ALAN_CONFIG_PATH      absolute path to an explicit agent.toml override
 
 SEE ALSO
-  alan9(7), agentfs(4), q(1), connection(1)
+  alan9(7), agentfs(4), q(1), connection(1), update(1)
+";
+
+const UPDATE_1: &str = "\
+UPDATE(1)                 Alan Manual                 UPDATE(1)
+
+NAME
+  alan update - check for and install standalone alan CLI releases
+
+SYNOPSIS
+  alan update [--check] [--json] [--version <VER_OR_TAG>] [--force]
+              [--install-dir <DIR>] [--manifest-url <URL>] [--quiet]
+
+DESCRIPTION
+  Fetches signed release metadata (`latest.json`), compares semantic
+  versions against the running `alan` binary, verifies the downloaded
+  archive SHA-256 digest before extracting `./alan`, and atomically
+  replaces the owned installation while leaving System Store and Host
+  Store data untouched.
+
+OPTIONS
+  --check               report update status without installing
+  --json                emit structured JSON output
+  --version <VER>       target a specific version or `v` tag
+  --force               allow replacing unowned binaries or downgrades
+  --install-dir <DIR>   override target installation directory
+  --manifest-url <URL>  override release manifest URL (`latest.json`)
+  --quiet               suppress routine status output
+
+SUPPORTED TARGETS
+  aarch64-apple-darwin       x86_64-apple-darwin
+  x86_64-unknown-linux-gnu   aarch64-unknown-linux-gnu
+
+OWNERSHIP & PASSIVE CHECK
+  Coordinates updates via `<install_dir>/.alan-cli-install.lock` and
+  `<install_dir>/.alan-cli-manifest` (`alan|<sha256>`), retiring legacy
+  `.alan-cli-manifest-stable` / `.alan-cli-manifest-dev` entries when
+  upgrading an owned installation.
+
+  Interactive TUI startup caches 24h passive check results in System
+  Store at `services/updater/last-check.json` and skips checks when
+  `ALAN_NO_UPDATE_CHECK=1`, `CI=1`, `--ephemeral`, or non-TTY stdio.
+
+ENVIRONMENT
+  ALAN_MANIFEST_URL          override default release manifest URL
+  ALAN_RELEASE_MANIFEST_URL  fallback manifest URL override
+  ALAN_NO_UPDATE_CHECK=1     disable passive 24h startup check
+
+SEE ALSO
+  alan(1), alan9(7), connection(1)
 ";
 
 const Q_1: &str = "\

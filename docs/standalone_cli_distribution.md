@@ -6,16 +6,125 @@ which links the foreground alan9 composition. There is one product installation.
 The active unified-input change tracks the delivered migration and remaining
 lifecycle work, including explicit recovery selection.
 
-## Local install
+## Install prebuilt release binaries
+
+```bash
+curl -fsSL https://alanworks.app/install.sh | sh
+```
+
+The remote installer (`scripts/install.sh`, hosted at `https://alanworks.app/install.sh`)
+is pure POSIX `sh`, defaults to `~/.local/bin`, verifies the tarball SHA-256
+before unpacking or replacing any executable, and installs only the standalone
+`alan` binary (never touching System/Host Store data or starting background
+services). After installation:
+
+```bash
+alan login   # connect ChatGPT, OpenRouter, Vertex AI, Magpie, or OpenAI
+alan         # launch the foreground alan9 TUI
+```
+
+Supported release targets:
+
+| Target triple | Platform | Signing & verification |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | macOS Apple Silicon | Developer ID signed & notarized (`codesign --verify`), SHA-256 |
+| `x86_64-apple-darwin` | macOS Intel | Developer ID signed & notarized (`codesign --verify`), SHA-256 |
+| `x86_64-unknown-linux-gnu` | Linux x86_64 (glibc) | SHA-256 verified |
+| `aarch64-unknown-linux-gnu` | Linux arm64 (glibc) | SHA-256 verified |
+
+Installer flags and environment variables:
+
+- `--version <VER_OR_TAG>` (`ALAN_VERSION`): install a specific version (`0.1.0` or `v0.1.0`).
+- `--install-dir <DIR>` (`ALAN_INSTALL_DIR`): override destination directory (default `~/.local/bin`).
+- `--manifest-url <URL>` (`ALAN_MANIFEST_URL`): override `latest.json` URL (default `https://alanworks.app/latest.json`).
+- `--force` (`ALAN_INSTALL_FORCE=1`): overwrite an existing unowned or modified `$INSTALL_DIR/alan`.
+- `--dry-run`: validate platform, manifest, and ownership preflight without writing to disk.
+- `--no-modify-path` (`ALAN_NO_MODIFY_PATH=1`): skip adding `$INSTALL_DIR` to shell startup files.
+- `ALAN_RELEASE_BASE_URL`: override release download base URL for `--version` installs.
+
+## Self-update (`alan update`)
+
+Installed binaries include built-in self-update over the same `latest.json` and
+ownership contract:
+
+```bash
+alan update --check             # check whether a newer release is available
+alan update --check --json      # machine-readable status check
+alan update                     # download, verify SHA-256, and replace atomically
+alan update --version 0.1.0     # target a specific release (--force to downgrade)
+```
+
+Interactive TUI launches also read a cached non-blocking 24-hour release check
+(`services/updater/last-check.json` inside the System Store) and surface a quiet
+notice when a newer version is available. Set `ALAN_NO_UPDATE_CHECK=1` (or
+`CI=1`) to disable startup checks; `--ephemeral` and piped/non-TTY runs skip
+checks automatically.
+
+## Ownership and upgrade safety
+
+`scripts/install.sh`, `alan update`, and `scripts/install-cli.sh` share one
+ownership and locking contract:
+
+- Concurrent installs/updates/uninstalls are serialized with `$INSTALL_DIR/.alan-cli-install.lock`.
+- Ownership is recorded in `$INSTALL_DIR/.alan-cli-manifest` as `alan|<64-hex-sha256>\n` (checksum of the installed `alan` binary).
+- Retired `ALAN_INSTALL_CHANNEL` environment overrides are rejected.
+- On upgrade, matching owned legacy `.alan-cli-manifest-stable`/`.alan-cli-manifest-dev` receipts and `alan-dev`, `alan-os-host`, and `alan-os-host-dev` files are verified before retirement; modified, unowned, symlinked, or malformed legacy paths stop the operation.
+- An unowned or locally modified `$INSTALL_DIR/alan` is refused unless `--force` (`ALAN_INSTALL_FORCE=1`) is passed explicitly.
+- Handled `INT`/`HUP`/`TERM` interruption during publication restores prior executables and receipts. After an unhandled termination, stop any remaining installer and inspect retained `.alan-cli-install.*` recovery files before removing the stale lock directory.
+
+## Apple Developer ID signing and release manifest (`latest.json`)
+
+macOS release executables (`aarch64-apple-darwin` and `x86_64-apple-darwin`) are
+signed with Apple Developer ID Application (`codesign --options runtime --timestamp`)
+and notarized via `xcrun notarytool`. Because bare Mach-O executables do not
+support `xcrun stapler staple`, releases verify `codesign --verify --strict --verbose=2`
+and publish signing proof and notary submission JSON artifacts alongside each
+release.
+
+`https://alanworks.app/latest.json` proxies the latest GitHub Release manifest
+(`https://github.com/realmorrisliu/alan/releases/latest/download/latest.json`),
+and every `v<version>` release attaches `latest.json`, `checksums.txt`, and
+per-archive `.sha256` files:
+
+```json
+{
+  "schema_version": 1,
+  "product": "alan",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "published_at": "2026-11-20T00:00:00Z",
+  "release_url": "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0",
+  "notes_url": "https://github.com/realmorrisliu/alan/releases/tag/v0.1.0",
+  "installer_url": "https://alanworks.app/install.sh",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "asset": "alan-0.1.0-aarch64-apple-darwin.tar.gz",
+      "url": "https://github.com/realmorrisliu/alan/releases/download/v0.1.0/alan-0.1.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "<64-hex>",
+      "size": 12345678,
+      "signed": true,
+      "notarized": true
+    }
+  }
+}
+```
+
+Each release tarball `alan-<version>-<target>.tar.gz` contains `./alan` and
+`./manifest.json` (`"binaries": ["alan"]`), with no separate `alan-dev` or
+`alan-os-host` executables.
+
+## Local source build (developer workflow)
+
+To build and install directly from a local git checkout:
 
 ```bash
 just install
 ```
 
-The installer defaults to `~/.local/bin`; set `ALAN_CLI_INSTALL_DIR` to an
-explicit alternative. The installer installs `alan`. It does not install or start a separate Host
-executable, registers launchd services, edits shell startup files, or touches
-System/Host Store data.
+The source installer (`scripts/install-cli.sh`) defaults to `~/.local/bin`; set
+`ALAN_CLI_INSTALL_DIR` to an explicit alternative. It installs `alan`, never
+touches shell startup files or System/Host Store data, and participates in the
+same `.alan-cli-manifest` ownership contract as `install.sh` and `alan update`.
 
 Build and installation reuse Cargo's configured target directory (the checkout's
 `target` by default). `ALAN_STANDALONE_TARGET_DIR` explicitly overrides it.
@@ -24,30 +133,25 @@ configured cross-target output. Controlled verification callers that set
 `ALAN_SKIP_BUILD=1` must also supply `ALAN_CLI_SOURCE` from their verified build;
 the installer does not guess a binary path. These scripts require `python3`.
 
-On upgrade, the installer checks `.alan-cli-manifest` and both historical
-`.alan-cli-manifest-stable`/`.alan-cli-manifest-dev` receipts before changing
-any executable. Matching owned `alan-dev`, `alan-os-host` and `alan-os-host-dev`
-files and old receipts are retired; modified, unowned, symlinked or malformed
-inputs stop the operation. The new `.alan-cli-manifest` owns only `alan`.
-Handled INT/HUP/TERM interruption restores the prior executables and receipts.
-Concurrent installers/uninstallers are excluded by `.alan-cli-install.lock`.
-After an unhandled termination, stop any remaining installer and inspect retained
-`.alan-cli-install.*` recovery files before removing the stale lock directory.
-
 Owned command files can be removed without removing stores:
 
 ```bash
 just uninstall
 ```
 
-## Release archive
+### Local release archive assembly
 
 ```bash
 just release
 ```
 
-The archive contains `alan` and a manifest, with a separate SHA-256 checksum. Set `ALAN_TARGET`, `ALAN_RELEASE_VERSION`, or `ALAN_RELEASE_OUT_DIR`
-to select the target, version label, or output directory.
+`scripts/assemble-cli-release.sh` builds `alan-<version>-<target>.tar.gz`
+containing `./alan` and `./manifest.json`, along with `<archive>.sha256`. Set
+`ALAN_TARGET`, `ALAN_RELEASE_VERSION`, or `ALAN_RELEASE_OUT_DIR` to select the
+target, version label, or output directory. When macOS signing credentials
+(`ALAN_SIGN_IDENTITY`, optional notary configuration) are configured on
+`*-apple-darwin`, `scripts/sign-notarize-macos.sh` signs and notarizes `./alan`
+before packing.
 
 ## Adopt an old installation explicitly
 
@@ -107,12 +211,16 @@ uninstalling the executable never performs either data migration.
 ## Verification
 
 ```bash
+bash scripts/test-remote-installer.sh
 just standalone-distribution-test
 just quality
 ```
 
-The check starts only `alan --version` and validates the installer, safe legacy
+The checks start only `alan --version` and validate both the remote POSIX curl
+installer (`latest.json`, SHA-256 verification, `.alan-cli-manifest` ownership,
+`--force`, `--dry-run`) and the local source-build installer, safe legacy
 upgrade, and CLI-only archive. Each ordinary invocation owns its foreground
-instance; selecting durable work for recovery is explicit and does not happen on ordinary startup. Alan.app, Sparkle, appcast, cask, and embedded-CLI workflows
+instance; selecting durable work for recovery is explicit and does not happen on
+ordinary startup. `Alan.app`, Sparkle, appcast, cask, and embedded-CLI workflows
 are retired. Desktop source has been removed; macOS credentials, Host Mounts
 and sandboxing remain owned by Rust runtime adapters.

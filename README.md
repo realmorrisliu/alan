@@ -19,9 +19,11 @@
 ---
 
 ```bash
-just install          # build & install standalone `alan` CLI (Rust 2024)
+curl -fsSL https://alanworks.app/install.sh | sh   # install signed/notarized binary (macOS/Linux)
+alan login            # connect ChatGPT, OpenRouter, Vertex AI, Magpie, or OpenAI
 alan                  # boot a foreground alan9 instance & open the terminal UI
 git diff | alan       # pipe stdin for a single task -> stdout
+alan update           # update to the latest release
 ```
 
 Alan is a programmable personal computing environment. The repository is in
@@ -146,14 +148,19 @@ use Cargo's own locks. Keep final reports outside disposable compiler directorie
 used by the versioned pre-commit hook and required CI. CI remains authoritative
 because local hooks can be bypassed with `--no-verify`.
 
-Standalone CLI distribution:
+Standalone CLI distribution (prebuilt releases + local source workflow):
 
 ```bash
-just install
-just standalone-distribution-test
+curl -fsSL https://alanworks.app/install.sh | sh   # end-user install (macOS notarized / Linux GNU)
+alan update                                        # built-in self-updater via latest.json
+
+just install                                       # developer workflow: build & install from source
+just standalone-distribution-test                  # verify local source installer & archive contract
+bash scripts/test-remote-installer.sh              # verify remote POSIX curl installer contract
 ```
 
-Standalone installation and release usage is documented
+Remote curl installation, `alan update`, Apple Developer ID signing and notarization,
+the `latest.json` release manifest schema, and `.alan-cli-manifest` ownership are documented
 [here](docs/standalone_cli_distribution.md). Desktop source has been removed;
 any ordinary terminal hosts Alan.
 
@@ -166,10 +173,14 @@ writes the final answer to stdout, sends diagnostics to stderr, and returns the
 task's exit status. A leading `!` in the interactive renderer requests a
 command through the governed `bash` Tool; it does not execute a host command
 directly.
-The two-line prompt shows project, model and activity information above `: `
-for Agent input or `! ` for an explicit command. Use `/project` to choose a
-project and approve its access, `/status` to inspect current state, and `/model`
-to inspect the Connection-owned catalog and select a model for subsequent input.
+The two-line prompt shows project, model and trust information above `: `
+for Agent input or `! ` for an explicit command. Ordinary project working
+directories auto-mount `ReadWrite` on launch (excluding `/`, `$HOME`, and
+`/tmp`; pass `--no-auto-mount` to opt out). Use `/login` to connect a provider,
+`/project` to manage Host Mounts, `/model` to switch models or reasoning effort,
+`/new` or `/fork` to start fresh or edit an earlier prompt, `/permissions` or
+`Shift+Tab` to toggle trust posture (`governed` ↔ `confined/trusted`),
+`Ctrl+Z` to suspend, and `/status` to inspect current state.
 Already-admitted work keeps its earlier model binding; an unavailable catalog
 is reported explicitly.
 
@@ -181,6 +192,8 @@ command. `/help` lists the available controls.
 The current direct command families are:
 
 ```text
+alan login [provider]
+alan update [--check]
 alan host ...
 alan connection ...
 alan skills ...
@@ -189,6 +202,9 @@ alan skills ...
 Examples:
 
 ```bash
+alan login            # guided OAuth/key onboarding (chatgpt, openrouter, vertex, magpie, openai)
+alan update --check   # check for a newer release via https://alanworks.app/latest.json
+
 alan host legacy-state inspect
 alan host legacy-state cleanup --source-root /path/to/former/project
 
@@ -204,10 +220,10 @@ alan skills validate /path/to/my-skill
 Alan Shell operates on the alan9 namespace inside the running instance; it does
 not provide desktop window or pane control.
 
-Host files do not enter alan9 because `alan` was launched from their
-directory. Authorize a Host Mount explicitly, then use its alan9 path from
-Alan Shell. The retired `alan init`, `alan workspace`, and boot-time `--agent`
-surfaces have no compatibility aliases.
+Outside the auto-mounted project `cwd` (or with `--no-auto-mount`), Host files
+never enter alan9 implicitly. Authorize any additional Host Mount explicitly
+via `/project`, then use its alan9 path from Alan Shell. The retired `alan init`,
+`alan workspace`, and boot-time `--agent` surfaces have no compatibility aliases.
 
 Package management is performed inside Alan Shell, over namespace paths:
 

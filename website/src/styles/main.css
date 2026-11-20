@@ -352,6 +352,8 @@ pre {
 .btn-primary {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   letter-spacing: 0.03em;
@@ -966,7 +968,8 @@ pre {
 
 .cli-tabs {
   display: inline-flex;
-  gap: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.5rem;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }

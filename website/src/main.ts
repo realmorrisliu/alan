@@ -399,7 +399,7 @@ const CLI_VIEWS = {
   interactive: {
     screen: `$ alan
 
-  project: /mnt/alan   model: chatgpt-main   state: idle
+  alan   v0.1.0   project: alan (rw)   model: chatgpt-main   trust: governed
 : summarize recent changes in crates/kernel
 
   ● tool  read_file crates/kernel/src/mountfs/mod.rs   [Ctrl+O details]
@@ -407,11 +407,11 @@ const CLI_VIEWS = {
   Mount table enforces lock discipline across async select! arms.
   Namespace bindings remain process-local under /proc/<pid>/ns.
 
-  project: /mnt/alan   model: chatgpt-main   state: idle
+  [Shift+Tab] trust -> confined/trusted   [/login] [/model] [/new] [/fork] [/permissions] [Ctrl+Z]
 ! cargo test -p alan-kernel --quiet
   ok. 42 passed; 0 failed (0.18s)`,
     caption:
-      'Bare `alan` boots one foreground alan9 instance and attaches the file-backed terminal renderer to `/agent/root`, with progressive disclosure on `Ctrl+O`.',
+      'Bare `alan` boots one foreground alan9 instance, auto-mounts your project `cwd` (`--no-auto-mount` opts out), and attaches the TUI to `/agent/root` — with `/login`, `/model`, `/new`, `/fork`, `/permissions`, `Shift+Tab` trust toggle, `Ctrl+O` details, and `Ctrl+Z` suspend.',
   },
   pipe: {
     screen: `$ git diff HEAD~1 | alan
@@ -426,7 +426,30 @@ $ echo $?
     caption:
       'Redirected stdin (or `alan -p --ephemeral --json`) submits one bounded task, streams the answer or NDJSON events to stdout, and returns the real exit status.',
   },
+  install: {
+    screen: `$ curl -fsSL https://alanworks.app/install.sh | sh
+Downloading Alan 0.1.0 (aarch64-apple-darwin)...
+Verified SHA-256 checksum (Apple Developer ID signed and notarized).
+Installed Alan 0.1.0 to ~/.local/bin/alan.
+
+$ alan login
+Select an LLM provider to connect:
+  1) chatgpt    - ChatGPT Plus / Pro browser or device OAuth
+  2) openrouter - OpenRouter browser OAuth PKCE
+  3) vertex     - Google Cloud Vertex AI (OAuth / ADC + project picker)
+  4) magpie     - Local/custom Magpie router (http://127.0.0.1:8080/v1)
+  5) openai     - OpenAI Responses API key
+Choice [1-5]: 1
+Connected chatgpt-main (provider=chatgpt, model=gpt-5.4) and set as default profile.
+
+$ alan update --check
+alan 0.1.0 is up to date (latest: v0.1.0 via https://alanworks.app/latest.json).`,
+    caption:
+      'macOS binaries (`aarch64-apple-darwin`, `x86_64-apple-darwin`) are Apple Developer ID signed and notarized; Linux GNU builds (`x86_64`, `aarch64`) verify SHA-256 against `latest.json` and update in place with `alan update`.',
+  },
 } as const;
+
+type CliTabMode = keyof typeof CLI_VIEWS;
 
 function renderInlineCode(parent: HTMLElement, text: string): void {
   const parts = text.split(/(`[^`]+`)/g);
@@ -446,7 +469,7 @@ function initCliSwitcher(): void {
   const screen = document.getElementById('cli-screen');
   const caption = document.getElementById('cli-caption');
 
-  const show = (mode: 'interactive' | 'pipe') => {
+  const show = (mode: CliTabMode) => {
     tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.cliTab === mode)));
     const data = CLI_VIEWS[mode];
     if (screen) screen.textContent = data.screen;
@@ -458,8 +481,15 @@ function initCliSwitcher(): void {
 
   tabs.forEach((t) => {
     t.addEventListener('click', () => {
-      const mode = t.dataset.cliTab as 'interactive' | 'pipe';
-      if (mode) show(mode);
+      const mode = t.dataset.cliTab as CliTabMode | undefined;
+      if (mode && mode in CLI_VIEWS) show(mode);
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-select-cli-tab]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const mode = el.dataset.selectCliTab as CliTabMode | undefined;
+      if (mode && mode in CLI_VIEWS) show(mode);
     });
   });
 
@@ -507,11 +537,14 @@ function initPaletteAndKeys(): void {
   const actions: PaletteAction[] = [
     { label: ': goto /architecture', hint: 'Principles & Turing tape', run: () => document.getElementById('architecture')?.scrollIntoView() },
     { label: ': goto /namespace', hint: 'Standard Namespace & q', run: () => document.getElementById('namespace')?.scrollIntoView() },
-    { label: ': goto /cli', hint: 'Interactive & Pipe modes', run: () => document.getElementById('cli')?.scrollIntoView() },
+    { label: ': goto /cli', hint: 'Interactive, Pipe & Install/Auth modes', run: () => document.getElementById('cli')?.scrollIntoView() },
     { label: '! ls /agent/root', hint: 'Inspect AgentFS', run: () => runShellCommand('ls /agent/root', true) },
     { label: '! cat /agent/root/machine/tape', hint: 'Read Turing Tape', run: () => runShellCommand('cat /agent/root/machine/tape', true) },
     { label: '! q list', hint: 'Quartermaster (skill, mcp, tool, provider)', run: () => runShellCommand('q list', true) },
     { label: '! cat /srv/connections', hint: 'First-party & q providers', run: () => runShellCommand('cat /srv/connections', true) },
+    { label: '! man alan', hint: 'Read ALAN(1) — CLI, login & TUI shortcuts', run: () => runShellCommand('man alan', true) },
+    { label: '! man connection', hint: 'Read CONNECTION(1) — alan login & OAuth', run: () => runShellCommand('man connection', true) },
+    { label: '! man update', hint: 'Read UPDATE(1) — curl install & alan update', run: () => runShellCommand('man update', true) },
     { label: '! man alan9', hint: 'Read ALAN9(7)', run: () => runShellCommand('man alan9', true) },
     { label: '! man q', hint: 'Read Q(1)', run: () => runShellCommand('man q', true) },
     { label: ': theme paper', hint: 'Archival Paper (Light)', run: () => setTheme('paper') },
