@@ -880,3 +880,120 @@ async fn passive_cache_refresh_writes_last_check_json_in_system_store() {
     );
     assert!(!needs_refresh);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_human_mode_emits_stage_progress_on_stderr_and_quiet_suppresses_it() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join("home");
+    let install_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&install_dir).unwrap();
+
+    let old_bin = b"#!/bin/sh\necho 'alan 0.1.0'\n";
+    let old_sha = sha256_hex(old_bin);
+    std::fs::write(install_dir.join("alan"), old_bin).unwrap();
+    std::fs::write(
+        install_dir.join(".alan-cli-manifest"),
+        format!("alan|{old_sha}\n"),
+    )
+    .unwrap();
+
+    let new_bin = b"#!/bin/sh\necho 'alan 0.2.0'\n";
+    let target = current_target();
+    let asset = format!("alan-0.2.0-{target}.tar.gz");
+    let archive_bytes = build_real_tar_gz_with_tar(new_bin, None);
+    let archive_sha = sha256_hex(&archive_bytes);
+
+    let archive_path = format!("/releases/{asset}");
+    let mut routes = HashMap::new();
+    routes.insert(
+        archive_path.clone(),
+        MockResponse {
+            status: 200,
+            content_type: "application/gzip",
+            body: archive_bytes.clone(),
+        },
+    );
+    let archive_server = MockHttpServer::start(routes).await;
+    let download_url = archive_server.url(&archive_path);
+    let manifest_bytes = manifest_json(
+        "0.2.0",
+        target,
+        &asset,
+        &download_url,
+        &archive_sha,
+        archive_bytes.len(),
+    );
+    let mut manifest_routes = HashMap::new();
+    manifest_routes.insert(
+        "/latest.json".to_string(),
+        MockResponse {
+            status: 200,
+            content_type: "application/json",
+            body: manifest_bytes,
+        },
+    );
+    let manifest_server = MockHttpServer::start(manifest_routes).await;
+    let manifest_url = manifest_server.url("/latest.json");
+
+    // 1. Human mode: stderr gets clear stages, stdout gets summary.
+    let human_out = run_alan_update(
+        &home,
+        &[
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+            "--manifest-url".into(),
+            manifest_url.clone(),
+        ],
+    )
+    .await;
+    assert!(
+        human_out.status.success(),
+        "human update failed: {}",
+        String::from_utf8_lossy(&human_out.stderr)
+    );
+    let human_stderr = String::from_utf8_lossy(&human_out.stderr);
+    let human_stdout = String::from_utf8_lossy(&human_out.stdout);
+    for stage in [
+        "Checking for updates...",
+        "Downloading ",
+        "Verifying archive and extracting...",
+        "Installing into ",
+    ] {
+        assert!(
+            human_stderr.contains(stage),
+            "stderr missing `{stage}`: {human_stderr}"
+        );
+    }
+    assert!(
+        human_stdout.contains("Updated alan "),
+        "stdout: {human_stdout}"
+    );
+
+    // 2. `--quiet --force` suppresses both stdout and stderr progress output.
+    let quiet_out = run_alan_update(
+        &home,
+        &[
+            "--quiet".into(),
+            "--force".into(),
+            "--install-dir".into(),
+            install_dir.display().to_string(),
+            "--manifest-url".into(),
+            manifest_url,
+        ],
+    )
+    .await;
+    assert!(
+        quiet_out.status.success(),
+        "quiet update failed: {}",
+        String::from_utf8_lossy(&quiet_out.stderr)
+    );
+    assert!(
+        quiet_out.stdout.is_empty(),
+        "expected empty stdout with --quiet"
+    );
+    assert!(
+        quiet_out.stderr.is_empty(),
+        "expected empty stderr with --quiet"
+    );
+}

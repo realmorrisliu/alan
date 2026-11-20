@@ -56,6 +56,7 @@ pub fn is_valid_sha256_hex(value: &str) -> bool {
 }
 
 /// Compute lowercase hex SHA-256 digest for an in-memory byte slice.
+#[cfg(test)]
 pub fn sha256_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     encode_lower_hex(&digest)
@@ -79,7 +80,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     Ok(encode_lower_hex(&hasher.finalize()))
 }
 
-fn encode_lower_hex(bytes: &[u8]) -> String {
+pub(super) fn encode_lower_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         let _ = write!(&mut out, "{byte:02x}");
