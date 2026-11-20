@@ -85,7 +85,15 @@ async fn test_os_backend_and_explicit_trust_allow_shell_expansions_and_attribute
         .await
         .unwrap();
     assert_eq!(glob_out.exit_code, 0, "{}", glob_out.stderr);
-    assert_eq!(glob_out.stdout.trim(), "ok cmd bt alpha.rs a b");
+    // `/bin/sh` is bash on macOS (expands `{a,b}`) and POSIX dash on Ubuntu (prints literal `{a,b}`).
+    assert!(
+        matches!(
+            glob_out.stdout.trim(),
+            "ok cmd bt alpha.rs a b" | "ok cmd bt alpha.rs {a,b}"
+        ),
+        "unexpected stdout: {}",
+        glob_out.stdout.trim()
+    );
 
     let seatbelt = Sandbox::with_backend(
         temp.path().to_path_buf(),
