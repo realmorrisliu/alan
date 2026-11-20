@@ -299,14 +299,22 @@ pub(in crate::file_backed) fn spawn_login_submit(
 pub(in crate::file_backed) fn spawn_post_login_model_sync(
     transport: alan_ap::InProcessTransport,
     owner: String,
+    profile: String,
     model: Option<String>,
     model_reads: super::observation_io::Request,
 ) {
     tokio::spawn(async move {
-        if let Some(model) = model.filter(|m| !m.trim().is_empty())
+        if let Some(model) = model
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
             && !owner.is_empty()
             && owner != "/agent/root"
         {
+            let selection = if profile.trim().is_empty() {
+                model
+            } else {
+                format!("{}::{model}", profile.trim())
+            };
             let shell = alan_shell::Shell::new(transport);
             let id = alan_agent_protocol::UserInputRecord::new(
                 InputIntent::Agent,
@@ -317,7 +325,7 @@ pub(in crate::file_backed) fn spawn_post_login_model_sync(
             let _ = super::file_surface::write_machine_ctl(
                 &shell,
                 &owner,
-                &format!("select-model {id} {model}"),
+                &format!("select-model {id} {selection}"),
             )
             .await;
         }

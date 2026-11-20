@@ -14,6 +14,7 @@ use super::login::{
 #[derive(Clone, Default)]
 pub(in crate::file_backed) struct LoginFlowState {
     pub generation: u64,
+    pub first_run_setup: bool,
     phase: LoginPhase,
 }
 
@@ -78,6 +79,7 @@ impl LoginFlowState {
 
     pub(in crate::file_backed) fn close(&mut self) {
         self.generation = self.generation.saturating_add(1);
+        self.first_run_setup = false;
         self.phase = LoginPhase::Idle;
     }
 
@@ -100,6 +102,28 @@ impl LoginFlowState {
 }
 
 impl FileBackedApp {
+    /// Enter the interactive First-Run Setup Wizard if `/login` Host control is available.
+    pub(in crate::file_backed) fn start_first_run_setup(&mut self) -> Option<FileBackedAction> {
+        if !self.login_available {
+            return None;
+        }
+        self.modal.active = false;
+        self.model_chooser.active = false;
+        self.resume_picker.close();
+        self.fork_picker.close();
+        self.settings.close();
+        self.completion = None;
+
+        let generation = self.login.next_generation();
+        self.login.first_run_setup = true;
+        self.login.phase = LoginPhase::LoadingProviders;
+        self.notice = Some(
+            "Welcome to Alan · First-Time Setup\nLoading available model providers… (Esc to skip)"
+                .into(),
+        );
+        Some(FileBackedAction::LoginListProviders { generation })
+    }
+
     /// Entry point for `/login [provider]`.
     pub(in crate::file_backed) fn login_command(
         &mut self,
@@ -239,6 +263,7 @@ impl FileBackedApp {
         {
             let connected_profile = profile.clone();
             let connected_model = model.clone().filter(|m| !m.trim().is_empty());
+            let was_setup = self.login.first_run_setup;
             self.login.close();
             self.completion = None;
             self.connection_configured = Some(true);
@@ -254,7 +279,12 @@ impl FileBackedApp {
                     .map_or_else(String::new, |m| format!(" · model {m}"));
                 format!("Connected {provider} ({profile}){model_suffix}")
             });
-            self.notice = Some(summary.into());
+            let notice = if was_setup {
+                format!("Setup complete · {summary}")
+            } else {
+                summary
+            };
+            self.notice = Some(notice.into());
             return Some((connected_profile, connected_model));
         }
         self.apply_login_step_result_inner(generation, result);
@@ -377,10 +407,15 @@ impl FileBackedApp {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         if key.code == KeyCode::Esc || (ctrl && key.code == KeyCode::Char('c')) {
+            let was_setup = self.login.first_run_setup;
             self.login.close();
             self.pending_login_submission = None;
             self.completion = None;
-            self.notice = Some("Login cancelled.".into());
+            self.notice = Some(if was_setup {
+                "Setup skipped — run `/login` or `/settings` anytime to connect a provider.".into()
+            } else {
+                "Login cancelled.".into()
+            });
             return Some(FileBackedAction::CancelLogin);
         }
         match &mut self.login.phase {
@@ -667,10 +702,16 @@ impl FileBackedApp {
                 } else {
                     format!(" · filter: \"{query}\"")
                 };
-                self.notice = Some(
-                    format!("Select provider{filter_part} · ↑↓ move · type to filter · Enter connect · Esc cancel")
-                        .into(),
-                );
+                self.notice = Some(if self.login.first_run_setup {
+                    format!(
+                        "Welcome to Alan · First-Time Setup{filter_part}\nChoose a provider to connect (↑↓ move · Enter connect · Esc skip)"
+                    )
+                } else {
+                    format!(
+                        "Select provider{filter_part} · ↑↓ move · type to filter · Enter connect · Esc cancel"
+                    )
+                }
+                .into());
             }
             LoginPhase::SelectingOption {
                 title,

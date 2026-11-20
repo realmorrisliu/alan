@@ -1,29 +1,26 @@
 //! Host-local interactive `/login` handler wired into the file-backed TUI.
 
+use crate::cli::connection_setup::{
+    atomic_upsert_profile_and_reload, load_connections_readonly, prioritize_gcp_projects,
+    probe_local_magpie_quick, resolve_valid_vertex_token,
+};
 use alan_agent_engine::LlmProvider;
 use alan_auth::google::{
-    GoogleAuthError, GoogleAuthManager, list_active_gcp_projects, resolve_vertex_access_token,
+    GoogleAuthError, GoogleAuthManager, gcloud_default_project, gcloud_is_available,
+    list_active_gcp_projects, resolve_vertex_access_token, run_gcloud_adc_login_streaming,
 };
 use alan_auth::magpie::{DEFAULT_MAGPIE_BASE_URL, probe_magpie_with_options};
 use alan_auth::openrouter::{OpenRouterOAuthConfig, PendingOpenRouterBrowserLogin};
 use alan_auth::{
     BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager, browser::open_browser,
 };
-use alan_os_host::{
-    HostCommandPlane, HostEndpointPaths, HostStorePaths, SecretStore, SystemStorePaths,
-};
-use alan_service_manager::{
-    ConnectionCredential, ConnectionProfile, ConnectionService, ConnectionsFile, CredentialKind,
-    default_credential_backend, normalize_profile_settings, sanitize_identifier,
-    validate_profile_settings,
-};
-use alan_shell::Shell;
+use alan_os_host::{HostEndpointPaths, HostStorePaths};
+use alan_service_manager::sanitize_identifier;
 use alan_tui::{
     LoginControl, LoginControlHandler, LoginInputField, LoginMethod, LoginProviderChoice,
     LoginResult, LoginSelectOption, LoginSubmission,
 };
 use anyhow::{Context, Result};
-use chrono::Utc;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,33 +44,39 @@ pub(super) fn build_login_control_handler(paths: HostEndpointPaths) -> LoginCont
 }
 
 async fn list_providers() -> Result<LoginResult> {
-    let connections = load_connections_readonly().await.unwrap_or_default();
+    let (connections_res, magpie_probe) =
+        tokio::join!(load_connections_readonly(), probe_local_magpie_quick());
+    let connections = connections_res.unwrap_or_default();
     let has = |provider: LlmProvider| {
         connections
             .profiles
             .values()
             .any(|p| p.provider == provider)
     };
-    let suffix = |provider: LlmProvider, base: &str| {
+    let suffix = |provider: LlmProvider, base: String| {
         if has(provider) {
             format!("{base} [configured]")
         } else {
-            base.to_string()
+            base
         }
     };
+    let magpie_detail = magpie_probe.map_or_else(
+        || format!("Auto-probe {DEFAULT_MAGPIE_BASE_URL}"),
+        |probe| format!("Local router ready ({} models)", probe.models.len()),
+    );
 
     Ok(LoginResult::Providers(vec![
         LoginProviderChoice {
             id: "chatgpt".to_string(),
             label: "ChatGPT (Plus / Pro OAuth)".to_string(),
-            detail: suffix(LlmProvider::Chatgpt, "Browser OAuth"),
+            detail: suffix(LlmProvider::Chatgpt, "Browser OAuth".to_string()),
             default_profile: "chatgpt-main".to_string(),
             method: LoginMethod::BrowserOrAuto,
         },
         LoginProviderChoice {
             id: "openrouter".to_string(),
             label: "OpenRouter".to_string(),
-            detail: suffix(LlmProvider::OpenRouter, "PKCE Browser OAuth"),
+            detail: suffix(LlmProvider::OpenRouter, "PKCE Browser OAuth".to_string()),
             default_profile: "openrouter-main".to_string(),
             method: LoginMethod::BrowserOrAuto,
         },
@@ -82,7 +85,7 @@ async fn list_providers() -> Result<LoginResult> {
             label: "Google Cloud Vertex AI".to_string(),
             detail: suffix(
                 LlmProvider::GoogleGeminiGenerateContent,
-                "Google OAuth / ADC + project picker",
+                "Google OAuth / ADC + project picker".to_string(),
             ),
             default_profile: "vertex-main".to_string(),
             method: LoginMethod::CloudProject,
@@ -90,14 +93,17 @@ async fn list_providers() -> Result<LoginResult> {
         LoginProviderChoice {
             id: "magpie".to_string(),
             label: "Magpie".to_string(),
-            detail: suffix(LlmProvider::Magpie, "Auto-probe http://127.0.0.1:3425/v1"),
+            detail: suffix(LlmProvider::Magpie, magpie_detail),
             default_profile: "magpie-main".to_string(),
             method: LoginMethod::BrowserOrAuto,
         },
         LoginProviderChoice {
             id: "openai".to_string(),
             label: "OpenAI".to_string(),
-            detail: suffix(LlmProvider::OpenAiResponses, "API key (OPENAI_API_KEY)"),
+            detail: suffix(
+                LlmProvider::OpenAiResponses,
+                "API key (OPENAI_API_KEY)".to_string(),
+            ),
             default_profile: "openai-main".to_string(),
             method: LoginMethod::ApiKey {
                 allow_base_url: true,
@@ -149,25 +155,26 @@ async fn submit_chatgpt(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resu
     let success = result?;
 
     let profile_id = normalized_profile_id(sub.profile_id.as_deref(), "chatgpt-main")?;
-    let model = upsert_profile_and_reload(
+    let model = atomic_upsert_profile_and_reload(
         paths,
         &profile_id,
         LlmProvider::Chatgpt,
         None,
+        None,
         BTreeMap::new(),
+        true,
     )
     .await?;
 
     Ok(LoginResult::Connected {
         profile: profile_id,
         provider: LlmProvider::Chatgpt.as_str().to_string(),
-        model: Some(model),
+        model,
         message: success.email.map(|email| format!("Signed in as {email}")),
     })
 }
 
 async fn submit_openrouter(paths: &HostEndpointPaths, sub: LoginSubmission) -> Result<LoginResult> {
-    let host_store = HostStorePaths::detect()?;
     sub.progress
         .status("Starting OpenRouter PKCE browser sign-in...");
     let pending = PendingOpenRouterBrowserLogin::start(OpenRouterOAuthConfig::default()).await?;
@@ -184,32 +191,62 @@ async fn submit_openrouter(paths: &HostEndpointPaths, sub: LoginSubmission) -> R
 
     let success = pending.wait_and_exchange(Duration::from_secs(300)).await?;
     let profile_id = normalized_profile_id(sub.profile_id.as_deref(), "openrouter-main")?;
-    SecretStore::from_directory(&host_store.credentials)?.save(&profile_id, &success.api_key)?;
-    let model = upsert_profile_and_reload(
+    let model = atomic_upsert_profile_and_reload(
         paths,
         &profile_id,
         LlmProvider::OpenRouter,
         Some(&profile_id),
+        Some(&success.api_key),
         BTreeMap::new(),
+        true,
     )
     .await?;
 
     Ok(LoginResult::Connected {
         profile: profile_id,
         provider: LlmProvider::OpenRouter.as_str().to_string(),
-        model: Some(model),
+        model,
         message: Some("OpenRouter connected via PKCE OAuth".to_string()),
     })
 }
 
 async fn submit_vertex(paths: &HostEndpointPaths, sub: LoginSubmission) -> Result<LoginResult> {
+    let profile_id = normalized_profile_id(sub.profile_id.as_deref(), "vertex-main")?;
+
+    if let Some(secret) = sub
+        .secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        sub.progress.status("Saving Vertex AI Express API key...");
+        let model = atomic_upsert_profile_and_reload(
+            paths,
+            &profile_id,
+            LlmProvider::GoogleGeminiGenerateContent,
+            Some(&profile_id),
+            Some(secret),
+            BTreeMap::new(),
+            true,
+        )
+        .await?;
+        return Ok(LoginResult::Connected {
+            profile: profile_id,
+            provider: LlmProvider::GoogleGeminiGenerateContent
+                .as_str()
+                .to_string(),
+            model,
+            message: Some("Vertex AI Express connected via API key".to_string()),
+        });
+    }
+
     let host_store = HostStorePaths::detect()?;
     sub.progress
         .status("Checking Google Cloud Vertex AI credentials...");
 
-    let resolved = match resolve_vertex_access_token(Some(&host_store.managed_auth)).await {
-        Ok(token) => token,
-        Err(_) => {
+    let resolved = match resolve_valid_vertex_token(&host_store.managed_auth).await {
+        Some(token) => token,
+        None => {
             let manager = GoogleAuthManager::with_storage_path(host_store.managed_auth.clone())?;
             match manager.start_browser_login().await {
                 Ok(pending) => {
@@ -227,10 +264,33 @@ async fn submit_vertex(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resul
                     resolve_vertex_access_token(Some(&host_store.managed_auth)).await?
                 }
                 Err(GoogleAuthError::OAuthClientNotConfigured) => {
-                    return Ok(LoginResult::Failed {
-                        message: "No Google OAuth client or ADC credentials found. Run `alan login vertex` in a shell (or set ALAN_GOOGLE_OAUTH_CLIENT_ID)."
-                            .to_string(),
-                    });
+                    if gcloud_is_available() {
+                        sub.progress.status(
+                            "Launching Google Cloud ADC sign-in (`gcloud auth application-default login`)...",
+                        );
+                        let progress = sub.progress.clone();
+                        run_gcloud_adc_login_streaming(move |url| {
+                            let _ = progress.browser_prompt(
+                                url,
+                                None,
+                                Some(
+                                    "Complete Google Cloud sign-in in your browser, then return here."
+                                        .to_string(),
+                                ),
+                            );
+                        })
+                        .await?;
+                        resolve_vertex_access_token(Some(&host_store.managed_auth)).await?
+                    } else {
+                        return Ok(LoginResult::NeedsInput {
+                            field: LoginInputField::Secret,
+                            title: "Vertex AI Express API Key".to_string(),
+                            prompt: "No `gcloud` CLI or Google OAuth client found. Enter a Vertex AI Express API key (or press Esc and run `gcloud auth application-default login`):".to_string(),
+                            masked: true,
+                            allow_empty: false,
+                            default_value: None,
+                        });
+                    }
                 }
                 Err(err) => return Err(err.into()),
             }
@@ -255,47 +315,53 @@ async fn submit_vertex(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resul
     } else {
         sub.progress
             .status("Listing active Google Cloud projects...");
-        match list_active_gcp_projects(&resolved.access_token).await {
-            Ok(projects) if !projects.is_empty() => {
-                let options = projects
-                    .into_iter()
-                    .map(|p| LoginSelectOption {
+        let (projects_res, default_proj) = tokio::join!(
+            list_active_gcp_projects(&resolved.access_token),
+            gcloud_default_project(),
+        );
+        let projects =
+            prioritize_gcp_projects(projects_res.unwrap_or_default(), default_proj.as_deref());
+        if !projects.is_empty() {
+            let options = projects
+                .into_iter()
+                .map(|p| {
+                    let is_default = default_proj.as_deref() == Some(p.project_id.as_str());
+                    LoginSelectOption {
                         id: p.project_id.clone(),
                         label: if p.name.is_empty() || p.name == p.project_id {
                             p.project_id
                         } else {
                             format!("{} ({})", p.name, p.project_id)
                         },
-                        detail: None,
-                    })
-                    .collect();
-                return Ok(LoginResult::NeedsSelection {
-                    title: "Select Google Cloud Project".to_string(),
-                    prompt: "Choose a GCP project for Vertex AI:".to_string(),
-                    options,
-                });
-            }
-            Ok(_) | Err(_) => {
-                return Ok(LoginResult::NeedsInput {
-                    field: LoginInputField::ProjectId,
-                    title: "Google Cloud Project ID".to_string(),
-                    prompt: "Enter your GCP project_id for Vertex AI:".to_string(),
-                    masked: false,
-                    allow_empty: false,
-                    default_value: None,
-                });
-            }
+                        detail: is_default.then(|| "gcloud default".to_string()),
+                    }
+                })
+                .collect();
+            return Ok(LoginResult::NeedsSelection {
+                title: "Select Google Cloud Project".to_string(),
+                prompt: "Choose a GCP project for Vertex AI:".to_string(),
+                options,
+            });
         }
+        return Ok(LoginResult::NeedsInput {
+            field: LoginInputField::ProjectId,
+            title: "Google Cloud Project ID".to_string(),
+            prompt: "Enter your GCP project_id for Vertex AI:".to_string(),
+            masked: false,
+            allow_empty: false,
+            default_value: default_proj,
+        });
     };
 
-    let profile_id = normalized_profile_id(sub.profile_id.as_deref(), "vertex-main")?;
     let overrides = BTreeMap::from([("project_id".to_string(), project_id.clone())]);
-    let model = upsert_profile_and_reload(
+    let model = atomic_upsert_profile_and_reload(
         paths,
         &profile_id,
         LlmProvider::GoogleGeminiGenerateContent,
         None,
+        None,
         overrides,
+        true,
     )
     .await?;
 
@@ -304,7 +370,7 @@ async fn submit_vertex(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resul
         provider: LlmProvider::GoogleGeminiGenerateContent
             .as_str()
             .to_string(),
-        model: Some(model),
+        model,
         message: Some(format!(
             "Vertex AI connected (project={project_id}, {})",
             resolved.source.label()
@@ -383,27 +449,28 @@ async fn submit_magpie(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resul
         overrides.insert("model".to_string(), model);
     }
 
-    let cred_id = if let Some(secret) = sub
+    let secret = sub
         .secret
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        let host_store = HostStorePaths::detect()?;
-        SecretStore::from_directory(&host_store.credentials)?.save(&profile_id, secret)?;
-        Some(profile_id.as_str())
-    } else {
-        None
-    };
+        .filter(|s| !s.is_empty());
+    let cred_id = secret.map(|_| profile_id.as_str());
 
-    let model =
-        upsert_profile_and_reload(paths, &profile_id, LlmProvider::Magpie, cred_id, overrides)
-            .await?;
+    let model = atomic_upsert_profile_and_reload(
+        paths,
+        &profile_id,
+        LlmProvider::Magpie,
+        cred_id,
+        secret,
+        overrides,
+        true,
+    )
+    .await?;
 
     Ok(LoginResult::Connected {
         profile: profile_id,
         provider: LlmProvider::Magpie.as_str().to_string(),
-        model: Some(model),
+        model,
         message: Some(format!("Connected Magpie ({})", probe.base_url)),
     })
 }
@@ -451,9 +518,7 @@ async fn submit_openai(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resul
         });
     };
 
-    let host_store = HostStorePaths::detect()?;
     let profile_id = normalized_profile_id(sub.profile_id.as_deref(), "openai-main")?;
-    SecretStore::from_directory(&host_store.credentials)?.save(&profile_id, &api_key)?;
 
     let mut overrides = BTreeMap::new();
     if let Some(base_url) = sub
@@ -465,19 +530,21 @@ async fn submit_openai(paths: &HostEndpointPaths, sub: LoginSubmission) -> Resul
         overrides.insert("base_url".to_string(), base_url.to_string());
     }
 
-    let model = upsert_profile_and_reload(
+    let model = atomic_upsert_profile_and_reload(
         paths,
         &profile_id,
         LlmProvider::OpenAiResponses,
         Some(&profile_id),
+        Some(&api_key),
         overrides,
+        true,
     )
     .await?;
 
     Ok(LoginResult::Connected {
         profile: profile_id,
         provider: LlmProvider::OpenAiResponses.as_str().to_string(),
-        model: Some(model),
+        model,
         message: Some("OpenAI connected".to_string()),
     })
 }
@@ -488,115 +555,4 @@ fn normalized_profile_id(requested: Option<&str>, default_id: &str) -> Result<St
         .filter(|v| !v.is_empty())
         .unwrap_or(default_id);
     sanitize_identifier(raw).ok_or_else(|| anyhow::anyhow!("Invalid profile id `{raw}`"))
-}
-
-fn open_connection_shell(
-    bindings: &alan_service_manager::ConnectionStoreBindings,
-) -> Result<Shell> {
-    let service = ConnectionService::open(bindings)?;
-    let mut namespace = alan_kernel::Namespace::new();
-    namespace.mount(
-        "/mnt/connections",
-        alan_ap::InProcessTransport::new(service.file_server()),
-        alan_kernel::Access::ReadWrite,
-    );
-    Ok(Shell::new(alan_ap::InProcessTransport::new(Arc::new(
-        alan_kernel::MountFs::new(namespace),
-    ))))
-}
-
-async fn load_connections_readonly() -> Result<ConnectionsFile> {
-    let system = SystemStorePaths::detect()?;
-    let shell = open_connection_shell(&system.connection_bindings()?)?;
-    let bytes = shell.cat("/mnt/connections/metadata").await?;
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-async fn upsert_profile_and_reload(
-    paths: &HostEndpointPaths,
-    profile_id: &str,
-    provider: LlmProvider,
-    credential_id: Option<&str>,
-    overrides: BTreeMap<String, String>,
-) -> Result<String> {
-    let system = SystemStorePaths::detect()?;
-    let shell = open_connection_shell(&system.connection_bindings()?)?;
-    let bytes = shell.cat("/mnt/connections/metadata").await?;
-    let mut connections: ConnectionsFile = serde_json::from_slice(&bytes)?;
-    let expected = connections.fingerprint()?;
-
-    let descriptor = ConnectionsFile::profile_descriptor(provider);
-    if let Some(cred_id) = credential_id {
-        let cred_kind = if descriptor.credential_kind == CredentialKind::AmbientCloudAuth
-            && descriptor.supports_secret_entry
-        {
-            CredentialKind::SecretString
-        } else {
-            descriptor.credential_kind
-        };
-        connections
-            .credentials
-            .entry(cred_id.to_string())
-            .or_insert_with(|| ConnectionCredential {
-                kind: cred_kind,
-                provider_family: provider,
-                label: format!("{} credential", descriptor.display_name),
-                backend: default_credential_backend(cred_kind).to_string(),
-            });
-    }
-
-    let now = Utc::now();
-    if let Some(existing) = connections.profiles.get_mut(profile_id) {
-        anyhow::ensure!(
-            existing.provider == provider,
-            "Profile `{profile_id}` already exists for `{}`",
-            existing.provider.as_str()
-        );
-        if let Some(cred_id) = credential_id {
-            existing.credential_id = Some(cred_id.to_string());
-        }
-        let mut merged = existing.settings.clone();
-        merged.extend(overrides);
-        let normalized = normalize_profile_settings(provider, &merged);
-        validate_profile_settings(provider, &normalized)?;
-        existing.settings = normalized;
-        existing.updated_at = now;
-    } else {
-        let settings = normalize_profile_settings(provider, &overrides);
-        validate_profile_settings(provider, &settings)?;
-        connections.profiles.insert(
-            profile_id.to_string(),
-            ConnectionProfile {
-                provider,
-                label: None,
-                credential_id: credential_id.map(ToOwned::to_owned),
-                created_at: now,
-                updated_at: now,
-                source: "managed".to_string(),
-                settings,
-            },
-        );
-    }
-
-    connections.default_profile = Some(profile_id.to_string());
-    let effective_model =
-        normalize_profile_settings(provider, &connections.profiles[profile_id].settings)
-            .get("model")
-            .cloned()
-            .unwrap_or_default();
-
-    let command = serde_json::json!({
-        "op": "replace_metadata",
-        "expected": expected,
-        "connections": connections,
-    });
-    shell
-        .write("/mnt/connections/ctl", &serde_json::to_vec(&command)?)
-        .await?;
-
-    HostCommandPlane::new(paths.clone())
-        .reload_connections()
-        .await?;
-
-    Ok(effective_model)
 }

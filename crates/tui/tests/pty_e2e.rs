@@ -192,6 +192,7 @@ async fn run_child_file_backed(project_dir: PathBuf) -> Result<()> {
                     default_reasoning_effort: None,
                 },
             ],
+            ..Default::default()
         }),
         admitted: Vec::new(),
     };
@@ -356,6 +357,7 @@ fn spawn_pty_control_task(
                                     default_reasoning_effort: None,
                                 },
                             ],
+                            ..Default::default()
                         }),
                         admitted: Vec::new(),
                     };

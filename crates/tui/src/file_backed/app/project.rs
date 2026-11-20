@@ -8,6 +8,10 @@ pub(super) fn default_commands() -> Vec<CompletionCandidate> {
         ("new", "start a fresh session"),
         ("fork", "branch from an earlier prompt into composer"),
         ("permissions", "switch runtime trust posture (Shift+Tab)"),
+        (
+            "settings",
+            "manage connections, model, trust, or reset Alan",
+        ),
         ("help", "show key bindings"),
         ("project", "select or revoke a project directory"),
         ("man", "read alan9 manual pages"),

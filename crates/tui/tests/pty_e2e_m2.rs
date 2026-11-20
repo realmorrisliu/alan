@@ -412,6 +412,7 @@ async fn run_child_m2_tui(project_dir: PathBuf) -> Result<()> {
                     default_reasoning_effort: Some(ReasoningEffort::Medium),
                 },
             ],
+            ..Default::default()
         }),
         admitted: Vec::new(),
     };

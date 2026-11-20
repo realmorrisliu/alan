@@ -113,7 +113,7 @@ impl FileBackedApp {
                 );
             } else {
                 self.notice = Some(Notice::warning(
-                    "Invalid reasoning effort; expected one of: none, minimal, low, medium, high, xhigh",
+                    "Invalid reasoning effort; expected one of: none, minimal, low, medium, high, xhigh, max, ultra",
                 ));
             }
             return None;
@@ -130,7 +130,7 @@ impl FileBackedApp {
             ));
             return None;
         };
-        if catalog.models.is_empty() {
+        if flattened_catalog_choices(catalog).is_empty() {
             self.notice = Some("Process model catalog is empty".into());
             return None;
         }
@@ -156,13 +156,23 @@ impl FileBackedApp {
             return;
         };
 
+        let entries = flattened_catalog_choices(catalog);
         let query = self.model_chooser.query.clone();
-        let mut filtered: Vec<(i32, usize)> = catalog
-            .models
+        let mut filtered: Vec<(i32, usize)> = entries
             .iter()
             .enumerate()
-            .filter_map(|(idx, choice)| {
-                crate::completion::fuzzy_score(&choice.model, &query).map(|score| (score, idx))
+            .filter_map(|(idx, entry)| {
+                let haystack = if entry.is_multi_profile {
+                    format!(
+                        "{} {} {}",
+                        entry.choice.model,
+                        entry.profile,
+                        entry.provider.unwrap_or("")
+                    )
+                } else {
+                    entry.choice.model.clone()
+                };
+                crate::completion::fuzzy_score(&haystack, &query).map(|score| (score, idx))
             })
             .collect();
         if !query.is_empty() {
@@ -184,16 +194,30 @@ impl FileBackedApp {
             .filtered
             .iter()
             .enumerate()
-            .map(|(visible_idx, &model_idx)| {
-                let m = &catalog.models[model_idx];
+            .map(|(visible_idx, &entry_idx)| {
+                let entry = &entries[entry_idx];
+                let m = entry.choice;
                 let name = super::super::model::safe(&m.model);
-                let detail = if m.supported_reasoning_efforts.is_empty() && query.is_empty() {
+                let detail = if !entry.is_multi_profile
+                    && m.supported_reasoning_efforts.is_empty()
+                    && query.is_empty()
+                {
                     "selected-next only".to_string()
                 } else {
-                    let mut detail_parts = vec![format!(
-                        "next turn · profile {}",
-                        super::super::model::safe(&catalog.profile)
-                    )];
+                    let mut detail_parts = if entry.is_multi_profile {
+                        let mut parts = vec![super::super::model::safe(entry.profile)];
+                        if let Some(provider) = entry.provider
+                            && !provider.trim().is_empty()
+                        {
+                            parts.push(super::super::model::safe(provider));
+                        }
+                        parts
+                    } else {
+                        vec![format!(
+                            "next turn · profile {}",
+                            super::super::model::safe(entry.profile)
+                        )]
+                    };
                     if !m.supported_reasoning_efforts.is_empty() {
                         let active_effort = if visible_idx == self.model_chooser.index {
                             highlighted_effort
@@ -247,8 +271,9 @@ impl FileBackedApp {
         &self,
         catalog: &alan_agent_protocol::UiModelCatalog,
     ) -> Option<alan_agent_protocol::ReasoningEffort> {
-        let model_idx = *self.model_chooser.filtered.get(self.model_chooser.index)?;
-        let choice = catalog.models.get(model_idx)?;
+        let entry_idx = *self.model_chooser.filtered.get(self.model_chooser.index)?;
+        let entries = flattened_catalog_choices(catalog);
+        let choice = entries.get(entry_idx)?.choice;
         choice
             .supported_reasoning_efforts
             .get(self.model_chooser.effort_index)
@@ -318,21 +343,26 @@ impl FileBackedApp {
                     self.notice = Some("model selection blocked by admitted input".into());
                     return None;
                 }
-                let model_idx = *self.model_chooser.filtered.get(self.model_chooser.index)?;
-                let model_entry = self
-                    .model
-                    .known()?
-                    .catalog
-                    .as_ref()?
-                    .models
-                    .get(model_idx)?;
-                let choice = model_entry.model.clone();
+                let catalog = self.model.known()?.catalog.as_ref()?;
+                let entries = flattened_catalog_choices(catalog);
+                let entry_idx = *self.model_chooser.filtered.get(self.model_chooser.index)?;
+                let entry = entries.get(entry_idx)?;
+                let choice = entry.choice.model.clone();
                 if choice.is_empty() || choice.chars().any(char::is_control) {
                     self.notice = Some("invalid catalog choice".into());
                     return None;
                 }
-                let effort =
-                    self.selected_effort_for_highlighted(self.model.known()?.catalog.as_ref()?);
+                let selection = if entry.is_multi_profile {
+                    format!("{}::{choice}", entry.profile)
+                } else {
+                    choice.clone()
+                };
+                let display_label = if entry.is_multi_profile {
+                    format!("{choice} ({})", entry.profile)
+                } else {
+                    choice
+                };
+                let effort = self.selected_effort_for_highlighted(catalog);
                 if let Some(effort) = effort {
                     self.model_chooser.preferred_effort = Some(effort);
                 }
@@ -345,14 +375,14 @@ impl FileBackedApp {
                 let owner = self.model.owner.clone();
                 self.model_chooser.active = false;
                 self.model_chooser.query.clear();
-                self.model_chooser.selected_model = Some(choice.clone());
+                self.model_chooser.selected_model = Some(display_label.clone());
                 self.model_chooser.pending = Some((owner.clone(), id.clone()));
                 self.completion = None;
-                self.notice = Some(format!("Switching next-turn model to {choice}…").into());
+                self.notice = Some(format!("Switching next-turn model to {display_label}…").into());
                 return Some(FileBackedAction::SelectModel {
                     owner,
                     id,
-                    op: alan_agent_protocol::Op::SelectModel { model: choice },
+                    op: alan_agent_protocol::Op::SelectModel { model: selection },
                 });
             }
             _ => {}
@@ -364,13 +394,14 @@ impl FileBackedApp {
         let Some(catalog) = self.model.known().and_then(|s| s.catalog.as_ref()).cloned() else {
             return;
         };
-        let Some(&model_idx) = self.model_chooser.filtered.get(self.model_chooser.index) else {
+        let entries = flattened_catalog_choices(&catalog);
+        let Some(&entry_idx) = self.model_chooser.filtered.get(self.model_chooser.index) else {
             return;
         };
-        let Some(choice) = catalog.models.get(model_idx) else {
+        let Some(entry) = entries.get(entry_idx) else {
             return;
         };
-        let efforts = &choice.supported_reasoning_efforts;
+        let efforts = &entry.choice.supported_reasoning_efforts;
         if efforts.is_empty() {
             self.notice =
                 Some("Selected model does not advertise alternate reasoning effort levels.".into());
@@ -463,6 +494,43 @@ impl FileBackedApp {
     }
 }
 
+struct FlattenedModelChoice<'a> {
+    profile: &'a str,
+    provider: Option<&'a str>,
+    choice: &'a alan_agent_protocol::UiModelChoice,
+    is_multi_profile: bool,
+}
+
+fn flattened_catalog_choices(
+    catalog: &alan_agent_protocol::UiModelCatalog,
+) -> Vec<FlattenedModelChoice<'_>> {
+    if !catalog.profiles.is_empty() {
+        let is_multi_profile = catalog.profiles.len() > 1;
+        return catalog
+            .profiles
+            .iter()
+            .flat_map(|group| {
+                group.models.iter().map(move |choice| FlattenedModelChoice {
+                    profile: group.profile.as_str(),
+                    provider: (!group.provider.is_empty()).then_some(group.provider.as_str()),
+                    choice,
+                    is_multi_profile,
+                })
+            })
+            .collect();
+    }
+    catalog
+        .models
+        .iter()
+        .map(|choice| FlattenedModelChoice {
+            profile: catalog.profile.as_str(),
+            provider: None,
+            choice,
+            is_multi_profile: false,
+        })
+        .collect()
+}
+
 fn parse_reasoning_effort(raw: &str) -> Option<alan_agent_protocol::ReasoningEffort> {
     use alan_agent_protocol::ReasoningEffort;
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -472,6 +540,8 @@ fn parse_reasoning_effort(raw: &str) -> Option<alan_agent_protocol::ReasoningEff
         "medium" => Some(ReasoningEffort::Medium),
         "high" => Some(ReasoningEffort::High),
         "xhigh" | "extra_high" => Some(ReasoningEffort::XHigh),
+        "max" => Some(ReasoningEffort::Max),
+        "ultra" => Some(ReasoningEffort::Ultra),
         _ => None,
     }
 }

@@ -166,6 +166,7 @@ struct CallableRegistry {
     published_fallbacks: BTreeSet<String>,
     published_default: Option<String>,
     live_default_redirect: bool,
+    reload_epoch: u64,
 }
 
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
@@ -213,6 +214,10 @@ impl LlmProvider for ConnectionLlmProvider {
 
     fn provider_name(&self) -> &'static str {
         self.client.provider_name()
+    }
+
+    async fn model_catalog(&self) -> Result<Option<Vec<alan_llm::ProviderModel>>> {
+        self.client.model_catalog().await
     }
 }
 
@@ -321,6 +326,7 @@ impl ConnectionService {
             published_fallbacks: BTreeSet::new(),
             published_default: None,
             live_default_redirect: false,
+            reload_epoch: 0,
         });
         drop(callables);
         self.refresh_callables().await;
@@ -374,6 +380,7 @@ impl ConnectionService {
                 registry.published_catalogs.clear();
                 registry.published_accounts.clear();
                 registry.live_default_redirect = true;
+                registry.reload_epoch = registry.reload_epoch.saturating_add(1);
             }
         }
         self.refresh().await

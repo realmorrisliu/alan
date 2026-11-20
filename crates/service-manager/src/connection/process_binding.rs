@@ -10,6 +10,44 @@ pub(crate) struct ProcessConnection {
     pub namespace: alan_kernel::LiveNamespace,
     pub evaluator: Option<CapturedCallable>,
     pub guardian_profile: Option<String>,
+    pub allow_profile_switch: bool,
+    pub selected_profile: std::sync::Mutex<Option<(u64, String)>>,
+}
+
+impl ProcessConnection {
+    fn selected_profile_override(&self) -> Option<(u64, String)> {
+        self.selected_profile
+            .lock()
+            .expect("selected profile mutex poisoned")
+            .clone()
+    }
+
+    async fn resolve_effective_profile(&self) -> (String, u64) {
+        let callables = self.service.callables.lock().await;
+        let connections = self.service.metadata();
+        let Some(registry) = callables.as_ref() else {
+            return (self.profile.clone(), 0);
+        };
+        let target = resolve_target_profile(
+            &self.profile,
+            self.allow_profile_switch,
+            self.selected_profile_override(),
+            &connections,
+            registry,
+        )
+        .unwrap_or_else(|| self.profile.clone());
+        (target, registry.reload_epoch)
+    }
+}
+
+fn parse_profile_model_selection(raw: &str) -> (Option<&str>, &str) {
+    if let Some((profile, model)) = raw.split_once("::")
+        && !profile.trim().is_empty()
+        && !model.trim().is_empty()
+    {
+        return (Some(profile.trim()), model.trim());
+    }
+    (None, raw)
 }
 
 #[async_trait::async_trait]
@@ -21,13 +59,23 @@ impl ConnectionAuthority for ProcessConnection {
             .as_ref()
             .context("callable registry unavailable")?;
         let connections = self.service.metadata();
-        let target_id = resolve_target_profile(&self.profile, &connections, registry);
+        let target_id = resolve_target_profile(
+            &self.profile,
+            self.allow_profile_switch,
+            self.selected_profile_override(),
+            &connections,
+            registry,
+        );
         let available = target_id.as_ref().is_some_and(|id| {
             registry.published_profiles.contains_key(id)
                 || registry.published_fallbacks.contains(id)
         });
         drop(callables);
         if !available {
+            *self
+                .selected_profile
+                .lock()
+                .expect("selected profile mutex poisoned") = None;
             // Existing unavailable-provider boot mode grants no capture/restore authority.
             return Ok(None);
         }
@@ -35,30 +83,96 @@ impl ConnectionAuthority for ProcessConnection {
     }
 
     async fn capture(&self, model: Option<&str>) -> Result<CapturedCallable> {
-        let target_id = self.service.resolve_process_profile(&self.profile).await;
-        self.service
-            .capture_model(&target_id, model, &self.namespace)
-            .await
+        let (target_id, _) = self.resolve_effective_profile().await;
+        match model.map(parse_profile_model_selection) {
+            Some((Some(explicit_profile), actual_model)) => {
+                ensure!(
+                    self.allow_profile_switch || explicit_profile == target_id,
+                    "profile switch is outside Process authority"
+                );
+                let captured = self
+                    .service
+                    .capture_model(explicit_profile, Some(actual_model), &self.namespace)
+                    .await?;
+                let epoch = self
+                    .service
+                    .callables
+                    .lock()
+                    .await
+                    .as_ref()
+                    .map_or(0, |registry| registry.reload_epoch);
+                *self
+                    .selected_profile
+                    .lock()
+                    .expect("selected profile mutex poisoned") =
+                    Some((epoch, explicit_profile.to_string()));
+                Ok(captured)
+            }
+            Some((None, actual_model)) => {
+                self.service
+                    .capture_model(&target_id, Some(actual_model), &self.namespace)
+                    .await
+            }
+            None => {
+                self.service
+                    .capture_model(&target_id, None, &self.namespace)
+                    .await
+            }
+        }
     }
 
     async fn restore(&self, identity: &CallableIdentity) -> Result<CapturedCallable> {
-        let target_id = self.service.resolve_process_profile(&self.profile).await;
+        let (target_id, epoch, is_published_gen) = {
+            let callables = self.service.callables.lock().await;
+            let registry = callables
+                .as_ref()
+                .context("callable registry unavailable")?;
+            let connections = self.service.metadata();
+            let target_id = resolve_target_profile(
+                &self.profile,
+                self.allow_profile_switch,
+                self.selected_profile_override(),
+                &connections,
+                registry,
+            )
+            .unwrap_or_else(|| self.profile.clone());
+            let is_published_gen = registry.published_profiles.contains_key(&identity.profile)
+                && connections
+                    .profiles
+                    .get(&identity.profile)
+                    .is_some_and(|prof| prof.provider.supports_generation());
+            (target_id, registry.reload_epoch, is_published_gen)
+        };
         ensure!(
-            identity.profile == self.profile || identity.profile == target_id,
+            identity.profile == self.profile
+                || identity.profile == target_id
+                || (self.allow_profile_switch && is_published_gen),
             "restore profile is outside Process authority"
         );
         // Exact recovery of the profile's original callable is not a new model
         // selection. Changed models still cross the existing catalog boundary.
-        let original = self.capture(None).await?;
+        let original = self
+            .service
+            .capture_model(&identity.profile, None, &self.namespace)
+            .await?;
         let captured = if original.identity.model == identity.model {
             original
         } else {
-            self.capture(Some(&identity.model)).await?
+            self.service
+                .capture_model(&identity.profile, Some(&identity.model), &self.namespace)
+                .await?
         };
         ensure!(
             &captured.identity == identity,
             "captured connection revision unavailable"
         );
+        if self.allow_profile_switch && is_published_gen {
+            *self
+                .selected_profile
+                .lock()
+                .expect("selected profile mutex poisoned") =
+                Some((epoch, identity.profile.clone()));
+        }
         Ok(captured)
     }
 
@@ -93,8 +207,14 @@ impl ConnectionAuthority for ProcessConnection {
             .as_ref()
             .context("callable registry unavailable")?;
         let connections = self.service.metadata();
-        let target_id = resolve_target_profile(&self.profile, &connections, registry)
-            .unwrap_or_else(|| self.profile.clone());
+        let target_id = resolve_target_profile(
+            &self.profile,
+            self.allow_profile_switch,
+            self.selected_profile_override(),
+            &connections,
+            registry,
+        )
+        .unwrap_or_else(|| self.profile.clone());
         let injected = registry.published_fallbacks.contains(&target_id)
             && !connections.profiles.contains_key(&target_id);
         let mut config = registry.base_config.clone();
@@ -106,6 +226,7 @@ impl ConnectionAuthority for ProcessConnection {
         if let Some(catalog) = published_catalog.and_then(|cat| cat.engine_catalog.as_ref()) {
             config.set_model_catalog(catalog.clone());
         }
+        let packages = self.service.package_service();
         if !injected {
             let profile = connections
                 .profiles
@@ -115,7 +236,6 @@ impl ConnectionAuthority for ProcessConnection {
                 registry.published_profiles.get(&target_id) == Some(profile),
                 "Process profile is not callable"
             );
-            let packages = self.service.package_service();
             let hydrated = provider_packages::hydrate_connections_with_package_defaults(
                 packages.as_deref(),
                 &connections,
@@ -125,15 +245,77 @@ impl ConnectionAuthority for ProcessConnection {
         }
         if injected {
             let info = config.effective_model_info();
-            return Ok(serde_json::json!({"profile":self.profile,"models":[{
+            return Ok(serde_json::json!({"profile":target_id,"models":[{
                 "model":config.effective_model(),
                 "supported_reasoning_efforts":info.as_ref().map(|info| &info.supported_reasoning_efforts).cloned().unwrap_or_default(),
                 "default_reasoning_effort":info.as_ref().and_then(|info| info.default_reasoning_effort)
             }]}));
         }
-        let entries =
-            crate::connection::catalog::catalog_entries_for_config(&config, published_catalog)?;
-        Ok(serde_json::json!({"profile":self.profile,"models":entries}))
+        let primary_entries =
+            crate::connection::catalog::catalog_entries_for_config(&config, published_catalog);
+        if !self.allow_profile_switch {
+            let entries = primary_entries?;
+            return Ok(serde_json::json!({"profile":target_id,"models":entries}));
+        }
+
+        let mut profile_ids = vec![target_id.clone()];
+        for (id, prof) in &connections.profiles {
+            if id != &target_id
+                && registry.published_profiles.get(id) == Some(prof)
+                && prof.provider.supports_generation()
+            {
+                profile_ids.push(id.clone());
+            }
+        }
+        let mut profiles_json = Vec::new();
+        for id in profile_ids {
+            let Some(prof) = connections.profiles.get(&id) else {
+                continue;
+            };
+            let mut p_config = registry.base_config.clone();
+            let p_published = registry
+                .published_catalogs
+                .get(&id)
+                .and_then(|publication| publication.get())
+                .and_then(Option::as_ref);
+            if let Some(catalog) = p_published.and_then(|cat| cat.engine_catalog.as_ref()) {
+                p_config.set_model_catalog(catalog.clone());
+            }
+            let hydrated = provider_packages::hydrate_connections_with_package_defaults(
+                packages.as_deref(),
+                &connections,
+                &id,
+            );
+            if hydrated
+                .apply_profile_metadata_to_config(Some(&id), &mut p_config)
+                .is_err()
+            {
+                continue;
+            }
+            if let Ok(p_entries) =
+                crate::connection::catalog::catalog_entries_for_config(&p_config, p_published)
+                && !p_entries.is_empty()
+            {
+                profiles_json.push(serde_json::json!({
+                    "profile": id,
+                    "provider": prof.provider.as_str(),
+                    "models": p_entries,
+                }));
+            }
+        }
+        let entries = match primary_entries {
+            Ok(entries) => entries,
+            Err(err) if !profiles_json.is_empty() => {
+                let _ = err;
+                Vec::new()
+            }
+            Err(err) => return Err(err),
+        };
+        Ok(serde_json::json!({
+            "profile": target_id,
+            "models": entries,
+            "profiles": profiles_json,
+        }))
     }
 }
 
@@ -186,24 +368,12 @@ impl ConnectionService {
         })
     }
 
-    async fn resolve_process_profile(&self, requested_profile: &str) -> String {
-        let callables = self.callables.lock().await;
-        let Some(registry) = callables.as_ref() else {
-            return requested_profile.to_string();
-        };
-        let connections = self.metadata();
-        resolve_target_profile(requested_profile, &connections, registry)
-            .unwrap_or_else(|| requested_profile.to_string())
-    }
-
     async fn capture_model(
         &self,
         profile_id: &str,
         model: Option<&str>,
         process_namespace: &alan_kernel::LiveNamespace,
     ) -> Result<CapturedCallable> {
-        let profile_id = self.resolve_process_profile(profile_id).await;
-        let profile_id = profile_id.as_str();
         if model.is_some() {
             let mut callables = self.callables.lock().await;
             if let Some(registry) = callables.as_mut()
@@ -281,6 +451,7 @@ impl ConnectionService {
         connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
         if let Some(model) = model {
             ensure!(!model.trim().is_empty(), "model selection is empty");
+            let current_default_model = original.settings.get("model").map(String::as_str);
             connections
                 .profiles
                 .get_mut(profile_id)
@@ -289,9 +460,24 @@ impl ConnectionService {
                 .insert("model".into(), model.into());
             connections.apply_profile_metadata_to_config(Some(profile_id), &mut config)?;
             ensure!(
-                crate::connection::catalog::is_model_authorized(&config, model, published_catalog,),
+                current_default_model == Some(model)
+                    || crate::connection::catalog::is_model_authorized(
+                        &config,
+                        model,
+                        published_catalog,
+                    ),
                 "model is unavailable in Connection catalog"
             );
+        }
+        if config.context_window_tokens.is_none()
+            && config.effective_model_info().is_none()
+            && let Some(published) = published_catalog
+            && let Some(model_meta) = published
+                .models
+                .iter()
+                .find(|entry| entry.slug == config.effective_model())
+        {
+            config.context_window_tokens = Some(model_meta.context_window_tokens);
         }
         let llmfs = if model.is_none()
             || model == Some(config.effective_model())
@@ -346,11 +532,19 @@ impl ConnectionService {
 
 fn resolve_target_profile(
     requested_profile: &str,
+    allow_profile_switch: bool,
+    selected_override: Option<(u64, String)>,
     connections: &ConnectionsFile,
     registry: &CallableRegistry,
 ) -> Option<String> {
+    if let Some((epoch, profile)) = selected_override
+        && epoch == registry.reload_epoch
+        && connections.profiles.contains_key(&profile)
+    {
+        return Some(profile);
+    }
     if registry.live_default_redirect
-        && requested_profile == "default"
+        && (allow_profile_switch || requested_profile == "default")
         && let Some(default_profile) = &connections.default_profile
         && connections.profiles.contains_key(default_profile)
     {

@@ -68,6 +68,7 @@ fn remaining_status_catalog_is_field_level() {
             Some(alan_agent_protocol::UiModelCatalog {
                 profile: "profile".into(),
                 models: vec![],
+                ..Default::default()
             }),
             "catalog: empty",
         ),

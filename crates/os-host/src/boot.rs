@@ -220,6 +220,28 @@ impl LlmProvider for LiveSecretProvider {
     fn provider_name(&self) -> &'static str {
         self.provider_name
     }
+
+    fn account_identity(&self) -> Option<&str> {
+        self.cached
+            .as_ref()
+            .and_then(|cached| cached.client.account_identity())
+    }
+
+    async fn model_catalog(&self) -> Result<Option<Vec<alan_llm::ProviderModel>>> {
+        let current_secret = match self.credential_id.as_deref() {
+            Some(id) => SecretStore::from_directory(&self.factory.credentials_dir)?.load(id)?,
+            None => None,
+        };
+        if let Some(cached) = self.cached.as_ref()
+            && cached.secret == current_secret
+        {
+            return cached.client.model_catalog().await;
+        }
+        let client =
+            self.factory
+                .resolve(&self.base_config, Some(&self.profile_id), &self.connections)?;
+        client.model_catalog().await
+    }
 }
 
 impl HostBootConfig {

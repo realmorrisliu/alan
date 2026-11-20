@@ -9,7 +9,10 @@ use crate::theme::Theme;
 const COL_WIDTH: usize = 26;
 
 const COMMAND_ROWS: &[(&str, &str)] = &[
-    ("/login /model [query]", "connect provider or pick model"),
+    (
+        "/login /model /settings",
+        "connect, pick model, or settings & reset",
+    ),
     ("/new /resume [query]", "fresh session or pick rollout"),
     ("/fork [query]", "roll back to earlier prompt & edit"),
     (

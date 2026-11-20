@@ -304,3 +304,41 @@ async fn magpie_streams_reasoning_deltas_and_projects_multimodal_images() {
         ])
     );
 }
+
+#[tokio::test]
+async fn magpie_model_catalog_parses_reasoning_levels_and_context_window() {
+    let state = Arc::new(MockRouterState {
+        models_payload: Mutex::new(json!({
+            "data": [{
+                "id": "auto/deepseek-v4.1-flash",
+                "context_window": 1_048_576,
+                "reasoning_levels": ["low", "high", "max"],
+                "supported_reasoning_levels": [
+                    {"effort": "low"},
+                    {"effort": "high"},
+                    {"effort": "max"}
+                ],
+                "default_reasoning_level": "high"
+            }]
+        })),
+        ..Default::default()
+    });
+    let base_url = start_mock_router(state).await;
+    let client = MagpieClient::new(Some(&base_url), None, "auto/deepseek-v4.1-flash");
+    let catalog = client.model_catalog().await.unwrap().unwrap();
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].slug, "auto/deepseek-v4.1-flash");
+    assert_eq!(catalog[0].context_window_tokens, 1_048_576);
+    assert_eq!(
+        catalog[0].supported_reasoning_efforts,
+        vec![
+            ReasoningEffort::Low,
+            ReasoningEffort::High,
+            ReasoningEffort::Max
+        ]
+    );
+    assert_eq!(
+        catalog[0].default_reasoning_effort,
+        Some(ReasoningEffort::High)
+    );
+}

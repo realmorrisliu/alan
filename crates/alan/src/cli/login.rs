@@ -6,16 +6,22 @@ use super::connection::{
     respond_native, run_connection_login, save_connections, secret_store, suggested_profile_id,
     validated_profile_id,
 };
+use super::connection_setup::{
+    atomic_upsert_profile, load_connections_readonly, prioritize_gcp_projects,
+    probe_local_magpie_quick, resolve_valid_vertex_token, vertex_auth_error_guidance,
+};
 use alan_agent_engine::LlmProvider;
 use alan_auth::google::{
-    GcpProject, GoogleAuthError, GoogleAuthManager, list_active_gcp_projects,
-    resolve_adc_credentials_path, resolve_vertex_access_token, run_gcloud_adc_login,
+    GcpProject, GoogleAuthError, GoogleAuthManager, ResolvedGoogleToken, gcloud_default_project,
+    gcloud_is_available, list_active_gcp_projects, resolve_adc_credentials_path,
+    resolve_vertex_access_token, run_gcloud_adc_login,
 };
 use alan_auth::magpie::{DEFAULT_MAGPIE_BASE_URL, probe_magpie, probe_magpie_with_options};
 use alan_auth::openrouter::{
     DEFAULT_OPENROUTER_KEY_EXCHANGE_URL, OpenRouterOAuthConfig, PendingOpenRouterBrowserLogin,
     exchange_openrouter_code, extract_authorization_code,
 };
+use alan_os_host::HostStorePaths;
 use alan_service_manager::{
     ConnectionProfile, ConnectionsFile, normalize_profile_settings, validate_profile_settings,
 };
@@ -23,6 +29,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,7 +106,8 @@ async fn prompt_provider_menu() -> Result<LoginProviderTarget> {
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "Provider argument required in non-interactive mode: `alan login <chatgpt|openrouter|vertex|magpie|openai>`"
     );
-    let (_, connections) = load_connections().await?;
+    let (loaded, magpie_probe) = tokio::join!(load_connections(), probe_local_magpie_quick());
+    let (_, connections) = loaded?;
     let has_provider = |provider: LlmProvider| {
         connections
             .profiles
@@ -113,6 +121,10 @@ async fn prompt_provider_menu() -> Result<LoginProviderTarget> {
             ""
         }
     };
+    let magpie_hint = magpie_probe.map_or_else(
+        || DEFAULT_MAGPIE_BASE_URL.to_string(),
+        |probe| format!("{}, {} models ready", probe.base_url, probe.models.len()),
+    );
     println!("Select an LLM provider to connect:");
     println!(
         "  1) chatgpt    - ChatGPT Plus / Pro browser or device OAuth{}",
@@ -127,7 +139,7 @@ async fn prompt_provider_menu() -> Result<LoginProviderTarget> {
         status(LlmProvider::GoogleGeminiGenerateContent)
     );
     println!(
-        "  4) magpie     - Local/custom Magpie router ({DEFAULT_MAGPIE_BASE_URL}){}",
+        "  4) magpie     - Local/custom Magpie router ({magpie_hint}){}",
         status(LlmProvider::Magpie)
     );
     println!(
@@ -197,19 +209,40 @@ async fn login_openrouter_command(profile_id: &str, open_browser: bool) -> Resul
 }
 
 async fn login_vertex_command(profile_id: &str, open_browser: bool) -> Result<()> {
-    let (mut stores, mut connections) = load_connections().await?;
-    ensure_profile_exists(
-        &mut stores,
-        &mut connections,
+    let host_store = HostStorePaths::detect()?;
+    let existing_project = load_connections_readonly()
+        .await
+        .ok()
+        .and_then(|connections| {
+            connections
+                .profiles
+                .get(profile_id)
+                .and_then(|profile| profile.settings.get("project_id").cloned())
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let (_, selected_project) = authenticate_vertex_and_select_project(
+        &host_store.managed_auth,
+        existing_project.as_deref(),
+        open_browser,
+    )
+    .await?;
+
+    let project_id = selected_project.context(
+        "Vertex AI ADC requires a GCP `project_id`. Configure `gcloud config set project <id>` or re-run `alan login vertex`.",
+    )?;
+    let overrides = BTreeMap::from([("project_id".to_string(), project_id)]);
+    let model = atomic_upsert_profile(
         profile_id,
         LlmProvider::GoogleGeminiGenerateContent,
         None,
-        BTreeMap::new(),
+        None,
+        overrides,
         true,
     )
-    .await?;
-    login_vertex_into_profile(&mut stores, &mut connections, profile_id, open_browser).await?;
-    let model = effective_profile_model(&connections, profile_id);
+    .await?
+    .unwrap_or_else(|| "<default>".to_string());
     println!(
         "Connected {} (provider=google_gemini_generate_content, model={}) and set as default profile.",
         display_identifier(profile_id),
@@ -422,66 +455,21 @@ pub(super) async fn login_vertex_into_profile(
     profile_id: &str,
     open_browser: bool,
 ) -> Result<()> {
-    let request_id = request_native(stores, profile_id, "browser_login").await?;
-    let manager = GoogleAuthManager::with_storage_path(stores.managed_auth.clone())?;
-
-    match manager.start_browser_login().await {
-        Ok(pending) => {
-            let authorize_url = pending.authorize_url().to_string();
-            if open_browser && let Err(err) = pending.open_browser() {
-                eprintln!("Could not launch browser automatically ({err}).");
-            }
-            println!("Open this URL in your browser:\n{authorize_url}");
-            if open_browser || !io::stdin().is_terminal() {
-                pending.wait_and_exchange(Duration::from_secs(300)).await?;
-            } else {
-                println!(
-                    "Waiting for callback, or paste the redirected URL / code and press Enter:"
-                );
-                let mut pasted = String::new();
-                io::stdin().read_line(&mut pasted)?;
-                let trimmed = pasted.trim();
-                if trimmed.is_empty() {
-                    pending.wait_and_exchange(Duration::from_secs(300)).await?;
-                } else {
-                    pending.exchange_pasted_input(trimmed).await?;
-                }
-            }
-        }
-        Err(GoogleAuthError::OAuthClientNotConfigured) => {
-            if let Some(adc_path) = resolve_adc_credentials_path() {
-                println!(
-                    "Using existing Google Application Default Credentials at {}.",
-                    adc_path.display()
-                );
-            } else {
-                println!(
-                    "No Google Desktop OAuth client configured (ALAN_GOOGLE_OAUTH_CLIENT_ID); running `gcloud auth application-default login`..."
-                );
-                run_gcloud_adc_login().await?;
-            }
-        }
-        Err(err) => return Err(err.into()),
-    }
-
-    let resolved = resolve_vertex_access_token(Some(&stores.managed_auth)).await?;
-    println!("Authenticated via {}.", resolved.source.label());
-
     let existing_project = connection_profile(connections, profile_id)?
         .settings
         .get("project_id")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let projects = match list_active_gcp_projects(&resolved.access_token).await {
-        Ok(list) => list,
-        Err(err) => {
-            tracing::warn!(%err, "failed to list active GCP projects");
-            Vec::new()
-        }
-    };
+    let request_id = request_native(stores, profile_id, "browser_login").await?;
+    let (_, selected_project) = authenticate_vertex_and_select_project(
+        &stores.managed_auth,
+        existing_project.as_deref(),
+        open_browser,
+    )
+    .await?;
 
-    if let Some(selected_project) = choose_gcp_project(projects, existing_project.as_deref())?
+    if let Some(selected_project) = selected_project
         && let Some(profile) = connections.profiles.get_mut(profile_id)
     {
         profile
@@ -499,6 +487,78 @@ pub(super) async fn login_vertex_into_profile(
     )
     .await?;
     Ok(())
+}
+
+async fn authenticate_vertex_and_select_project(
+    managed_auth: &Path,
+    existing_project: Option<&str>,
+    open_browser: bool,
+) -> Result<(ResolvedGoogleToken, Option<String>)> {
+    let resolved = match resolve_valid_vertex_token(managed_auth).await {
+        Some(token) => token,
+        None => {
+            let manager = GoogleAuthManager::with_storage_path(managed_auth.to_path_buf())?;
+            match manager.start_browser_login().await {
+                Ok(pending) => {
+                    let authorize_url = pending.authorize_url().to_string();
+                    if open_browser && let Err(err) = pending.open_browser() {
+                        eprintln!("Could not launch browser automatically ({err}).");
+                    }
+                    println!("Open this URL in your browser:\n{authorize_url}");
+                    if open_browser || !io::stdin().is_terminal() {
+                        pending.wait_and_exchange(Duration::from_secs(300)).await?;
+                    } else {
+                        println!(
+                            "Waiting for callback, or paste the redirected URL / code and press Enter:"
+                        );
+                        let mut pasted = String::new();
+                        io::stdin().read_line(&mut pasted)?;
+                        let trimmed = pasted.trim();
+                        if trimmed.is_empty() {
+                            pending.wait_and_exchange(Duration::from_secs(300)).await?;
+                        } else {
+                            pending.exchange_pasted_input(trimmed).await?;
+                        }
+                    }
+                    resolve_vertex_access_token(Some(managed_auth)).await?
+                }
+                Err(GoogleAuthError::OAuthClientNotConfigured) => {
+                    anyhow::ensure!(gcloud_is_available(), "{}", vertex_auth_error_guidance());
+                    if let Some(adc_path) = resolve_adc_credentials_path() {
+                        println!(
+                            "Existing Google Application Default Credentials at {} could not be refreshed; running `gcloud auth application-default login`...",
+                            adc_path.display()
+                        );
+                    } else {
+                        println!(
+                            "No Google Desktop OAuth client configured (ALAN_GOOGLE_OAUTH_CLIENT_ID); running `gcloud auth application-default login`..."
+                        );
+                    }
+                    run_gcloud_adc_login().await?;
+                    resolve_vertex_access_token(Some(managed_auth)).await?
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    };
+
+    println!("Authenticated via {}.", resolved.source.label());
+
+    let (projects_result, gcloud_default) = tokio::join!(
+        list_active_gcp_projects(&resolved.access_token),
+        gcloud_default_project(),
+    );
+    let projects = match projects_result {
+        Ok(list) => list,
+        Err(err) => {
+            tracing::warn!(%err, "failed to list active GCP projects");
+            Vec::new()
+        }
+    };
+    let preferred_project = existing_project.or(gcloud_default.as_deref());
+    let projects = prioritize_gcp_projects(projects, preferred_project);
+    let selected_project = choose_gcp_project(projects, preferred_project)?;
+    Ok((resolved, selected_project))
 }
 
 async fn ensure_profile_exists(

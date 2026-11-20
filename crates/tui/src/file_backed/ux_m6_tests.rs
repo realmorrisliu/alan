@@ -57,6 +57,7 @@ fn ready_app() -> FileBackedApp {
                     supported_reasoning_efforts: vec![],
                     default_reasoning_effort: None,
                 }],
+                ..Default::default()
             }),
             ..Default::default()
         }),

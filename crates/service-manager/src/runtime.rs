@@ -253,6 +253,7 @@ impl ServiceManager {
             .core_config
             .connection_profile
             .clone();
+        let allow_profile_switch = preferred_connection.is_none();
         let connection_service = match config.connection_store.as_ref() {
             Some(bindings) => ConnectionService::open(bindings)?,
             None if config.in_memory_stores => ConnectionService::in_memory(),
@@ -324,6 +325,7 @@ impl ServiceManager {
             connection_service,
             package_service,
             llm_connection,
+            allow_profile_switch,
             bootstrap,
             llm_factory: config.llm_factory.clone(),
             connection_base_config,
@@ -472,6 +474,7 @@ struct AssembleInputs {
     connection_service: Arc<ConnectionService>,
     package_service: Arc<PackageService>,
     llm_connection: String,
+    allow_profile_switch: bool,
     bootstrap: Option<(String, LlmClient)>,
     llm_factory: Arc<dyn LlmClientFactory>,
     connection_base_config: alan_agent_engine::Config,
@@ -495,6 +498,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         connection_service,
         package_service,
         llm_connection,
+        allow_profile_switch,
         bootstrap,
         llm_factory,
         connection_base_config,
@@ -772,6 +776,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         resume_root,
         input_shadow,
     )
+    .with_allow_profile_switch(allow_profile_switch)
     .with_ephemeral_rollout(ephemeral_rollout)
     .with_resume_rollout_id(resume_rollout_id);
     let root = agent_runtime

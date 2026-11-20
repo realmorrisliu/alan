@@ -377,16 +377,19 @@ pub(super) fn live_region_lines_at(
                 .skip(start)
                 .take(MAX_COMPLETION_ROWS)
                 .collect();
-            let trigger =
-                if app.model_chooser.active || app.login.is_active() || app.fork_picker.active {
-                    ""
-                } else {
-                    match state.kind {
-                        CompletionKind::Command => "/",
-                        CompletionKind::Skill => "$",
-                        CompletionKind::File => "@",
-                    }
-                };
+            let trigger = if app.model_chooser.active
+                || app.login.is_active()
+                || app.settings.is_active()
+                || app.fork_picker.active
+            {
+                ""
+            } else {
+                match state.kind {
+                    CompletionKind::Command => "/",
+                    CompletionKind::Skill => "$",
+                    CompletionKind::File => "@",
+                }
+            };
             let has_details = visible.iter().any(|(_, c)| c.detail.is_some());
             let max_left = width.saturating_sub(14).clamp(10, 32);
             let left_col_width = if has_details {

@@ -46,7 +46,6 @@ pub struct VertexChainTokenSource {
 
 impl VertexChainTokenSource {
     /// Resolve tokens using a specific Host-managed `auth.json` before ADC/`gcloud` fallbacks.
-    #[cfg(test)]
     pub(super) fn with_storage_path(storage_path: PathBuf) -> Self {
         Self {
             storage_path: Some(storage_path),
@@ -148,11 +147,24 @@ pub(super) enum AuthState {
 
 impl AuthState {
     pub(super) fn from_auth(auth: VertexAuth) -> Self {
+        Self::from_auth_with_storage_path(auth, None)
+    }
+
+    pub(super) fn from_auth_with_storage_path(
+        auth: VertexAuth,
+        storage_path: Option<PathBuf>,
+    ) -> Self {
         match auth {
-            VertexAuth::Adc => Self::Adc(Arc::new(AdcTokenCache::new(
-                Arc::new(VertexChainTokenSource::default()),
-                ADC_TOKEN_TTL,
-            ))),
+            VertexAuth::Adc => {
+                let source = match storage_path {
+                    Some(path) => VertexChainTokenSource::with_storage_path(path),
+                    None => VertexChainTokenSource::default(),
+                };
+                Self::Adc(Arc::new(AdcTokenCache::new(
+                    Arc::new(source),
+                    ADC_TOKEN_TTL,
+                )))
+            }
             VertexAuth::ApiKey(key) => Self::ApiKey(Arc::from(key)),
         }
     }

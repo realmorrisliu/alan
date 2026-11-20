@@ -46,7 +46,15 @@ pub struct GoogleGeminiGenerateContentClient {
 impl GoogleGeminiGenerateContentClient {
     /// Construct a client from an explicit Vertex AI configuration (ADC or Express Mode).
     pub fn from_vertex_config(cfg: VertexClientConfig) -> Result<Self> {
-        Self::build(cfg, None)
+        Self::build(cfg, None, None)
+    }
+
+    /// Construct a client from a Vertex AI configuration with an explicit Host `auth.json` path.
+    pub fn from_vertex_config_with_auth_storage(
+        cfg: VertexClientConfig,
+        auth_storage_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        Self::build(cfg, None, auth_storage_path)
     }
 
     /// Construct a client with an injected ADC token source (for tests or custom credentials).
@@ -54,7 +62,7 @@ impl GoogleGeminiGenerateContentClient {
         cfg: VertexClientConfig,
         token_source: Arc<dyn VertexAccessTokenSource>,
     ) -> Result<Self> {
-        Self::build(cfg, Some(token_source))
+        Self::build(cfg, Some(token_source), None)
     }
 
     /// Create an ADC-authenticated client with explicit project, location, and model.
@@ -72,6 +80,7 @@ impl GoogleGeminiGenerateContentClient {
     fn build(
         cfg: VertexClientConfig,
         token_source: Option<Arc<dyn VertexAccessTokenSource>>,
+        auth_storage_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
         let (api_key_mode, auth_state) = match cfg.auth {
             VertexAuth::Adc => {
@@ -79,7 +88,9 @@ impl GoogleGeminiGenerateContentClient {
                     Some(source) => {
                         AuthState::Adc(Arc::new(AdcTokenCache::new(source, ADC_TOKEN_TTL)))
                     }
-                    None => AuthState::from_auth(VertexAuth::Adc),
+                    None => {
+                        AuthState::from_auth_with_storage_path(VertexAuth::Adc, auth_storage_path)
+                    }
                 };
                 (false, auth)
             }

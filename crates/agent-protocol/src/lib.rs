@@ -57,7 +57,7 @@ pub use ui_skills::UiSkillSnapshot;
 mod ui_models;
 pub use ui_models::{
     UiAdmittedModel, UiModelBinding, UiModelCatalog, UiModelChoice, UiModelControlSource,
-    UiModelSnapshot,
+    UiModelSnapshot, UiProfileModelCatalog,
 };
 pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiInputStatus, UiNoticeKind,

@@ -414,15 +414,17 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                         crate::google_gemini_generate_content::VertexAuth::Adc
                     }
                 };
-                let client = GoogleGeminiGenerateContentClient::from_vertex_config(
-                    crate::google_gemini_generate_content::VertexClientConfig {
-                        project_id: config.project_id,
-                        location,
-                        model: config.model,
-                        auth,
-                        base_url: config.base_url,
-                    },
-                )?;
+                let client =
+                    GoogleGeminiGenerateContentClient::from_vertex_config_with_auth_storage(
+                        crate::google_gemini_generate_content::VertexClientConfig {
+                            project_id: config.project_id,
+                            location,
+                            model: config.model,
+                            auth,
+                            base_url: config.base_url,
+                        },
+                        config.chatgpt_auth_storage_path,
+                    )?;
                 Ok(Box::new(client))
             }
             #[cfg(not(feature = "provider-vertex"))]

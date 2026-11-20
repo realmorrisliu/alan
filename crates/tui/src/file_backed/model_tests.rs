@@ -54,6 +54,7 @@ pub(super) fn snapshot(pid: &str, version: u64) -> UiModelSnapshot {
                     default_reasoning_effort: None,
                 },
             ],
+            ..Default::default()
         }),
         ..Default::default()
     }
@@ -547,4 +548,70 @@ fn active_queue_binding_precedes_next_before_activity_event() {
         }),
     );
     assert!(app.context_line(80).to_string().contains("B / high"));
+}
+
+#[test]
+fn cross_profile_model_picker_filters_by_profile_and_emits_profile_qualified_selection() {
+    let mut app = ready();
+    let multi_catalog = alan_agent_protocol::UiModelCatalog {
+        profile: "chatgpt-main".into(),
+        models: vec![alan_agent_protocol::UiModelChoice {
+            model: "gpt-6.1-sol".into(),
+            supported_reasoning_efforts: vec![alan_agent_protocol::ReasoningEffort::Medium],
+            default_reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
+        }],
+        profiles: vec![
+            alan_agent_protocol::UiProfileModelCatalog {
+                profile: "chatgpt-main".into(),
+                provider: "chatgpt".into(),
+                models: vec![alan_agent_protocol::UiModelChoice {
+                    model: "gpt-6.1-sol".into(),
+                    supported_reasoning_efforts: vec![alan_agent_protocol::ReasoningEffort::Medium],
+                    default_reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
+                }],
+            },
+            alan_agent_protocol::UiProfileModelCatalog {
+                profile: "magpie-main".into(),
+                provider: "magpie".into(),
+                models: vec![alan_agent_protocol::UiModelChoice {
+                    model: "auto/deepseek-v4.1-flash".into(),
+                    supported_reasoning_efforts: vec![
+                        alan_agent_protocol::ReasoningEffort::Low,
+                        alan_agent_protocol::ReasoningEffort::High,
+                        alan_agent_protocol::ReasoningEffort::Max,
+                    ],
+                    default_reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::Low),
+                }],
+            },
+        ],
+    };
+    let mut next_snapshot = app.model.snapshot.clone().unwrap();
+    next_snapshot.publication_version += 1;
+    next_snapshot.catalog = Some(multi_catalog);
+    app.model
+        .apply(&app.model.owner.clone(), Some(next_snapshot));
+
+    app.handle_command("/model magpie");
+    let completion = app
+        .completion
+        .as_ref()
+        .expect("filtered cross-profile catalog");
+    assert_eq!(completion.matches.len(), 1);
+    assert_eq!(completion.matches[0].label, "auto/deepseek-v4.1-flash");
+    let detail = completion.matches[0].detail.as_deref().unwrap_or("");
+    assert!(detail.contains("magpie-main"), "detail={detail}");
+    assert!(detail.contains("max"), "detail={detail}");
+
+    let Some(FileBackedAction::SelectModel { op, .. }) =
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ))
+    else {
+        panic!("expected SelectModel action");
+    };
+    let alan_agent_protocol::Op::SelectModel { model } = op else {
+        panic!("expected SelectModel op");
+    };
+    assert_eq!(model, "magpie-main::auto/deepseek-v4.1-flash");
 }
