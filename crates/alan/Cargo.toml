@@ -38,8 +38,12 @@ sha2.workspace = true
 clap = { version = "4", features = ["derive"] }
 reqwest.workspace = true
 toml = "1.1"
+unicode-width.workspace = true
 urlencoding.workspace = true
 base64.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
 alan-llmfs = { path = "../llmfs" }
@@ -47,3 +51,4 @@ alan-llm = { workspace = true, features = ["mock"] }
 alan-agent-engine = { workspace = true, features = ["mock"] }
 async-trait.workspace = true
 tempfile.workspace = true
+vt100.workspace = true

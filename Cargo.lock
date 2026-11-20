@@ -48,6 +48,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -57,8 +58,10 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "unicode-width",
  "urlencoding",
  "uuid",
+ "vt100",
 ]
 
 [[package]]

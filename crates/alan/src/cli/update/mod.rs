@@ -3,21 +3,25 @@
 mod archive;
 mod ownership;
 pub mod passive_check;
+mod progress;
 pub mod semver;
 
 #[cfg(test)]
 mod tests;
 
 use archive::{
-    TempStagingDir, inspect_and_extract_alan, is_valid_sha256_hex, sha256_bytes, sha256_file,
+    TempStagingDir, encode_lower_hex, inspect_and_extract_alan, is_valid_sha256_hex, sha256_file,
 };
 use ownership::{InstallLock, atomic_install_binary, preflight_ownership, resolve_install_dir};
+use progress::UpdateProgress;
 use semver::{SemVer, current_target_triple, display_tag, normalize_version_str, parse_semver};
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::{BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -29,7 +33,9 @@ pub const DEFAULT_MANIFEST_URL: &str = "https://alanworks.app/latest.json";
 pub const DEFAULT_RELEASE_BASE_URL: &str =
     "https://github.com/realmorrisliu/alan/releases/download";
 const MANIFEST_FETCH_TIMEOUT_SECS: u64 = 15;
-const ARCHIVE_DOWNLOAD_TIMEOUT_SECS: u64 = 120;
+const ARCHIVE_CONNECT_TIMEOUT_SECS: u64 = 30;
+const ARCHIVE_CHUNK_IDLE_TIMEOUT_SECS: u64 = 30;
+const ARCHIVE_MAX_TOTAL_TIMEOUT_SECS: u64 = 900;
 
 /// Arguments for `alan update`.
 #[derive(Debug, Clone, Args)]
@@ -284,12 +290,14 @@ pub async fn run_with_options(
     let install_dir = resolve_install_dir(args.install_dir.as_deref(), current_exe, home_dir)?;
     let installed_binary = install_dir.join("alan");
     let manifest_url = resolve_manifest_url(args.manifest_url.as_deref(), args.version.as_deref())?;
+    let mut progress = UpdateProgress::new(!args.json && !args.quiet);
 
     let client = reqwest::Client::builder()
         .user_agent(format!("alan/{current_version}"))
         .build()
         .context("build release HTTP client")?;
 
+    progress.stage("Checking for updates...");
     let manifest = fetch_and_validate_manifest(
         &client,
         &manifest_url,
@@ -387,16 +395,24 @@ pub async fn run_with_options(
 
     let staging = TempStagingDir::new()?;
     let archive_path = staging.path().join(&asset);
-    download_and_verify_archive(
+    if let Err(err) = download_and_verify_archive(
         &client,
         &target_artifact.url,
+        &asset,
         &archive_sha256,
         target_artifact.size,
         &archive_path,
+        &mut progress,
     )
-    .await?;
+    .await
+    {
+        progress.finish_on_error();
+        return Err(err);
+    }
 
+    progress.stage("Verifying archive and extracting...");
     let extracted_bin = inspect_and_extract_alan(&archive_path, staging.path())?;
+    progress.stage(&format!("Installing into {}...", install_dir.display()));
     let (new_binary_sha256, retired_legacy) =
         atomic_install_binary(&install_dir, &extracted_bin, &preflight)?;
 
@@ -507,39 +523,101 @@ async fn fetch_and_validate_manifest(
 async fn download_and_verify_archive(
     client: &reqwest::Client,
     download_url: &str,
+    asset: &str,
     expected_sha256: &str,
     expected_size: u64,
     archive_path: &Path,
+    progress: &mut UpdateProgress,
 ) -> Result<()> {
-    let response = client
-        .get(download_url)
-        .timeout(Duration::from_secs(ARCHIVE_DOWNLOAD_TIMEOUT_SECS))
-        .send()
-        .await
-        .with_context(|| format!("download release archive from `{download_url}`"))?
-        .error_for_status()
-        .with_context(|| format!("release archive download failed for `{download_url}`"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .with_context(|| format!("read release archive body from `{download_url}`"))?;
+    let mut response = tokio::time::timeout(
+        Duration::from_secs(ARCHIVE_CONNECT_TIMEOUT_SECS),
+        client.get(download_url).send(),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "timed out after {ARCHIVE_CONNECT_TIMEOUT_SECS}s connecting to `{download_url}`"
+        )
+    })?
+    .with_context(|| format!("download release archive from `{download_url}`"))?
+    .error_for_status()
+    .with_context(|| format!("release archive download failed for `{download_url}`"))?;
+
+    let total_bytes = if expected_size > 0 {
+        Some(expected_size)
+    } else {
+        response.content_length()
+    };
+    progress.start_download(asset, total_bytes);
+
+    let file = std::fs::File::create(archive_path)
+        .with_context(|| format!("create staging archive `{}`", archive_path.display()))?;
+    let mut writer = BufWriter::new(file);
+    let mut hasher = Sha256::new();
+    let mut downloaded: u64 = 0;
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(ARCHIVE_MAX_TOTAL_TIMEOUT_SECS);
+    let idle_limit = Duration::from_secs(ARCHIVE_CHUNK_IDLE_TIMEOUT_SECS);
+
+    loop {
+        let now = tokio::time::Instant::now();
+        let Some(remaining) = deadline.checked_duration_since(now) else {
+            bail!(
+                "download of `{download_url}` exceeded {ARCHIVE_MAX_TOTAL_TIMEOUT_SECS}s overall timeout"
+            );
+        };
+        let chunk_timeout = remaining.min(idle_limit);
+        let chunk = match tokio::time::timeout(chunk_timeout, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => chunk,
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => {
+                return Err(err)
+                    .with_context(|| format!("stream release archive body from `{download_url}`"));
+            }
+            Err(_) => {
+                if remaining <= idle_limit {
+                    bail!(
+                        "download of `{download_url}` exceeded {ARCHIVE_MAX_TOTAL_TIMEOUT_SECS}s overall timeout"
+                    );
+                }
+                bail!(
+                    "download of `{download_url}` stalled (no data received for {ARCHIVE_CHUNK_IDLE_TIMEOUT_SECS}s)"
+                );
+            }
+        };
+
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if expected_size > 0 && downloaded > expected_size {
+            bail!(
+                "downloaded archive size mismatch for `{download_url}` (expected {expected_size} bytes, got more than {downloaded} bytes)"
+            );
+        }
+        writer
+            .write_all(&chunk)
+            .with_context(|| format!("write staged archive `{}`", archive_path.display()))?;
+        hasher.update(&chunk);
+        progress.advance_download(asset, downloaded, total_bytes);
+    }
+
+    writer
+        .flush()
+        .with_context(|| format!("flush staged archive `{}`", archive_path.display()))?;
+    drop(writer);
+    progress.finish_download(asset, downloaded, total_bytes);
 
     if expected_size > 0 {
         ensure!(
-            bytes.len() as u64 == expected_size,
-            "downloaded archive size mismatch for `{download_url}` (expected {expected_size} bytes, got {} bytes)",
-            bytes.len()
+            downloaded == expected_size,
+            "downloaded archive size mismatch for `{download_url}` (expected {expected_size} bytes, got {downloaded} bytes)"
         );
     }
 
-    let actual_sha256 = sha256_bytes(&bytes);
+    let actual_sha256 = encode_lower_hex(&hasher.finalize());
     ensure!(
         actual_sha256 == expected_sha256,
         "SHA-256 checksum mismatch for `{download_url}` (expected {expected_sha256}, got {actual_sha256})"
     );
 
-    std::fs::write(archive_path, &bytes)
-        .with_context(|| format!("write verified archive to `{}`", archive_path.display()))?;
     Ok(())
 }
 

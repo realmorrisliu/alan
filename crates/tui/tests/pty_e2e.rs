@@ -571,6 +571,9 @@ fn pty_e2e_child_runner() {
         let guard = terminal::StdinEchoGuard::disable_if_tty()
             .expect("disable_if_tty")
             .expect("slave tty must return echo guard");
+        // Signal the PTY parent only after `ECHO` is cleared so input never races child startup.
+        let _ = std::io::stdout().write_all(b"ECHO_DISABLED\n");
+        let _ = std::io::stdout().flush();
         let mut line = String::new();
         std::io::stdin().read_line(&mut line).expect("read secret");
         assert_eq!(line.trim(), "super-secret-key-123");
@@ -947,7 +950,9 @@ fn pty_e2e_stdin_echo_guard_hides_secret_and_restores_echo() -> Result<()> {
     let screen = PtyScreen::new(24, 80);
     let reader_handle = spawn_master_reader(master_read, master_write.clone(), screen.clone());
 
-    std::thread::sleep(Duration::from_millis(80));
+    screen.wait_for("ECHO_DISABLED", Duration::from_secs(5), |text, _| {
+        text.contains("ECHO_DISABLED")
+    })?;
     write_master(&master_write, b"super-secret-key-123\n")?;
     let status = child.wait_with_timeout(Duration::from_secs(5))?;
     assert!(status.success(), "secret child failed: {status:?}");
